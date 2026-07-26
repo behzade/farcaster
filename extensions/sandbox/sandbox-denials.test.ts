@@ -2,10 +2,22 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { parseFilesystemDenials } from "./sandbox-denials.ts";
 
-test("parses macOS sandbox file denials", () => {
+test("parses raw macOS sandbox file denials", () => {
 	const output = [
 		"Sandbox: bash(123) deny(1) file-read-data /Users/behzad/Projects/other/input.txt",
 		"Sandbox: cp(124) deny file-write-create \"/Users/behzad/Projects/other/output file.txt\"",
+	].join("\n");
+	assert.deepEqual(parseFilesystemDenials(output), [
+		{ access: "read", path: "/Users/behzad/Projects/other/input.txt" },
+		{ access: "write", path: "/Users/behzad/Projects/other/output file.txt" },
+	]);
+});
+
+test("parses the summary emitted by codex sandbox --log-denials", () => {
+	const output = [
+		"=== Sandbox denials ===",
+		"(cat) file-read-data /Users/behzad/Projects/other/input.txt",
+		"(bash) file-write-create /Users/behzad/Projects/other/output file.txt",
 	].join("\n");
 	assert.deepEqual(parseFilesystemDenials(output), [
 		{ access: "read", path: "/Users/behzad/Projects/other/input.txt" },

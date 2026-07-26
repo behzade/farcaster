@@ -3,12 +3,15 @@ export interface FilesystemDenial {
 	path: string;
 }
 
-const denialPattern = /\bdeny(?:\(\d+\))?\s+file-([a-z-]+)\s+("[^"]+"|\/\S.*)$/i;
+const rawDenialPattern = /\bdeny(?:\(\d+\))?\s+file-([a-z-]+)\s+("[^"]+"|\/\S.*)$/i;
+// `codex sandbox --log-denials` does not print the raw macOS log entry. It
+// prints each parsed denial as `(<process>) <capability>` after the command.
+const codexDenialPattern = /^\([^)]+\)\s+file-([a-z-]+)\s+("[^"]+"|\/\S.*)$/i;
 
 export function parseFilesystemDenials(output: string): FilesystemDenial[] {
 	const denials = new Map<string, FilesystemDenial>();
 	for (const line of output.split("\n")) {
-		const match = line.match(denialPattern);
+		const match = line.match(rawDenialPattern) ?? line.match(codexDenialPattern);
 		if (!match) continue;
 		const operation = match[1].toLowerCase();
 		const rawPath = match[2].trim();
