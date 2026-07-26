@@ -3,7 +3,8 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const themePath = new URL("../themes/gruvbox-dark-hard.json", import.meta.url);
-const denseToolsPath = new URL("../extensions/dense-tools.ts", import.meta.url);
+const denseToolsPath = new URL("../extensions/dense-tools/index.ts", import.meta.url);
+const pierreEditPath = new URL("../extensions/dense-tools/pierre-edit.ts", import.meta.url);
 const sandboxPath = new URL("../extensions/sandbox/index.ts", import.meta.url);
 
 const requiredColors = [
@@ -70,4 +71,13 @@ test("dense reads keep group state and hide follower rows", async () => {
   assert.match(source, /return new Container\(\)/);
   assert.match(source, /tool_execution_start/);
   assert.match(source, /message_end/);
+});
+
+test("Pierre edit renderer supports responsive split diffs and change backgrounds", async () => {
+  const source = await readFile(pierreEditPath, "utf8");
+  assert.match(source, /width >= 120/);
+  assert.match(source, /renderSplit/);
+  assert.match(source, /inlineBackground/);
+  assert.match(source, /#412724/);
+  assert.match(source, /#363922/);
 });

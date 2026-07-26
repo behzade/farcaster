@@ -5,7 +5,6 @@ import type {
   Theme,
 } from "@earendil-works/pi-coding-agent";
 import {
-  createEditTool,
   createFindTool,
   createGrepTool,
   createLsTool,
@@ -116,7 +115,6 @@ export default function denseTools(pi: ExtensionAPI) {
   const read = createReadTool(cwd);
   const tools = [
     createWriteTool(cwd),
-    createEditTool(cwd),
     createFindTool(cwd),
     createGrepTool(cwd),
     createLsTool(cwd),

@@ -23,11 +23,13 @@
         let
           pkgs = pkgsFor system;
           sandbox = pkgs.callPackage ./nix/pi-sandbox-extension.nix { };
+          denseTools = pkgs.callPackage ./nix/pi-dense-tools.nix { };
           subagents = pkgs.callPackage ./nix/pi-subagents.nix { };
           openaiServerCompaction = pkgs.callPackage ./nix/pi-openai-server-compaction.nix { };
         in
         {
           inherit sandbox subagents;
+          dense-tools = denseTools;
           openai-server-compaction = openaiServerCompaction;
           default = sandbox;
         }

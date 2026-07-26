@@ -1,0 +1,224 @@
+import type { EditToolDetails, ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
+import { createEditTool } from "@earendil-works/pi-coding-agent";
+import { Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import * as pierre from "./diffs.bundle.mjs";
+
+const THEME_NAME = "gruvbox-dark-hard";
+
+pierre.registerCustomTheme(THEME_NAME, async () => ({
+  name: THEME_NAME,
+  type: "dark",
+  colors: {
+    "editor.foreground": "#ebdbb2",
+    "editor.background": "#1d2021",
+  },
+  settings: [
+    { settings: { foreground: "#ebdbb2", background: "#1d2021" } },
+    { scope: ["comment", "punctuation.definition.comment"], settings: { foreground: "#928374", fontStyle: "italic" } },
+    { scope: ["keyword", "storage.type", "storage.modifier"], settings: { foreground: "#fb4934" } },
+    { scope: ["string", "string.quoted"], settings: { foreground: "#b8bb26" } },
+    { scope: ["constant.numeric", "constant.language"], settings: { foreground: "#d3869b" } },
+    { scope: ["entity.name.function", "support.function"], settings: { foreground: "#b8bb26" } },
+    { scope: ["entity.name.type", "support.type", "entity.name.class"], settings: { foreground: "#fabd2f" } },
+    { scope: ["variable", "meta.definition.variable.name"], settings: { foreground: "#83a598" } },
+    { scope: ["constant", "entity.name.tag"], settings: { foreground: "#d3869b" } },
+    { scope: ["punctuation", "keyword.operator"], settings: { foreground: "#fe8019" } },
+  ],
+}));
+
+const highlighter = await pierre.getSharedHighlighter({
+  themes: [THEME_NAME],
+  langs: ["typescript", "tsx", "javascript", "jsx", "json", "css", "html", "markdown", "bash", "python", "rust", "go", "nix", "yaml", "toml"],
+  preferredHighlighter: "shiki-js",
+});
+
+interface StyleState {
+  color?: string;
+  background?: string;
+  inlineBackground?: string;
+  italic?: boolean;
+}
+
+function ansi(style: StyleState): string {
+  const codes: string[] = [];
+  const match = style.color?.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+  if (match) codes.push(`38;2;${parseInt(match[1], 16)};${parseInt(match[2], 16)};${parseInt(match[3], 16)}`);
+  const background = style.background?.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+  if (background) codes.push(`48;2;${parseInt(background[1], 16)};${parseInt(background[2], 16)};${parseInt(background[3], 16)}`);
+  if (style.italic) codes.push("3");
+  return codes.length ? `\x1b[${codes.join(";")}m` : "";
+}
+
+function styleFromNode(node: any, inherited: StyleState): StyleState {
+  const next = { ...inherited };
+  const css = typeof node.properties?.style === "string" ? node.properties.style : "";
+  const color = css.match(/(?:^|;)color:\s*(#[0-9a-f]{6})/i)?.[1];
+  if (color) next.color = color;
+  if (/font-style:\s*italic/i.test(css)) next.italic = true;
+  if (node.properties?.["data-diff-span"] !== undefined && next.inlineBackground) next.background = next.inlineBackground;
+  return next;
+}
+
+function hastToAnsi(node: any, inherited: StyleState = {}): string {
+  if (node.type === "text") return `${ansi(inherited)}${node.value}\x1b[0m`;
+  const style = styleFromNode(node, inherited);
+  return Array.isArray(node.children) ? node.children.map((child: any) => hastToAnsi(child, style)).join("") : "";
+}
+
+function lineIndexes(node: any): { unified: number; split: number } {
+  const [unified = "0", split = unified] = String(node.properties?.["data-line-index"] ?? "0,0").split(",");
+  return { unified: Number.parseInt(unified, 10), split: Number.parseInt(split, 10) };
+}
+
+function lineType(node: any): string {
+  return String(node?.properties?.["data-line-type"] ?? "context");
+}
+
+function lineNumber(node: any): string {
+  return node ? String(node.properties?.["data-line"] ?? "") : "";
+}
+
+interface PierreRows {
+  deletions: any[];
+  additions: any[];
+}
+
+function parsePatchRows(patch: string): PierreRows | undefined {
+  const file = pierre.parsePatchFiles(patch)?.[0]?.files?.[0];
+  if (!file) return undefined;
+  const rendered = pierre.renderDiffWithHighlighter(file, highlighter, {
+    theme: THEME_NAME,
+    useTokenTransformer: true,
+    tokenizeMaxLineLength: 2000,
+    lineDiffType: "word-alt",
+    maxLineDiffLength: 2000,
+  });
+  return { deletions: rendered.code.deletionLines, additions: rendered.code.additionLines };
+}
+
+function fitCell(value: string, width: number, background?: string): string {
+  const fitted = truncateToWidth(value, width, "");
+  const padding = " ".repeat(Math.max(0, width - visibleWidth(fitted)));
+  return background
+    ? `${ansi({ background })}${fitted}${ansi({ background })}${padding}\x1b[0m`
+    : `${fitted}${padding}`;
+}
+
+function diffColors(type: string): { marker: string; foreground?: string; background?: string; inlineBackground?: string } {
+  if (type.includes("deletion")) {
+    return { marker: "-", foreground: "#fb4934", background: "#412724", inlineBackground: "#682e27" };
+  }
+  if (type.includes("addition")) {
+    return { marker: "+", foreground: "#b8bb26", background: "#363922", inlineBackground: "#525523" };
+  }
+  return { marker: " " };
+}
+
+function capLines(lines: string[], expanded: boolean, theme: Theme): string[] {
+  if (expanded || lines.length <= 30) return lines;
+  return [...lines.slice(0, 30), theme.fg("dim", `… ${lines.length - 30} more diff rows (Ctrl+O to expand)` )];
+}
+
+function renderUnified(rows: PierreRows, width: number, expanded: boolean, theme: Theme): string[] {
+  const changed = [...rows.deletions, ...rows.additions].filter((row) => lineType(row) !== "context");
+  const contextByIndex = new Map<number, any>();
+  for (const row of rows.deletions) if (lineType(row) === "context") contextByIndex.set(lineIndexes(row).unified, row);
+  for (const row of rows.additions) if (lineType(row) === "context") contextByIndex.set(lineIndexes(row).unified, row);
+  const ordered = [...changed, ...contextByIndex.values()].sort((a, b) => lineIndexes(a).unified - lineIndexes(b).unified);
+  const numberWidth = Math.max(1, ...ordered.map((row) => lineNumber(row).length));
+  return capLines(ordered.map((row) => {
+    const colors = diffColors(lineType(row));
+    const prefix = colors.foreground
+      ? `${ansi({ color: colors.foreground, background: colors.background })}${colors.marker}${lineNumber(row).padStart(numberWidth)} \x1b[0m`
+      : theme.fg("toolDiffContext", ` ${lineNumber(row).padStart(numberWidth)} `);
+    const content = hastToAnsi(row, { background: colors.background, inlineBackground: colors.inlineBackground });
+    return fitCell(`${prefix}${content}`, width, colors.background);
+  }), expanded, theme);
+}
+
+function renderSplit(rows: PierreRows, width: number, expanded: boolean, theme: Theme): string[] {
+  const oldBySplit = new Map(rows.deletions.map((row) => [lineIndexes(row).split, row]));
+  const newBySplit = new Map(rows.additions.map((row) => [lineIndexes(row).split, row]));
+  const indexes = [...new Set([...oldBySplit.keys(), ...newBySplit.keys()])].sort((a, b) => a - b);
+  const numberWidth = Math.max(1, ...[...rows.deletions, ...rows.additions].map((row) => lineNumber(row).length));
+  const separator = theme.fg("borderMuted", " │ ");
+  const cellWidth = Math.floor((width - 3) / 2);
+
+  const renderCell = (row: any, side: "old" | "new"): string => {
+    if (!row) return " ".repeat(cellWidth);
+    const type = lineType(row);
+    const changed = side === "old" ? type.includes("deletion") : type.includes("addition");
+    const colors = changed ? diffColors(type) : diffColors("context");
+    const prefix = colors.foreground
+      ? `${ansi({ color: colors.foreground, background: colors.background })}${colors.marker}${lineNumber(row).padStart(numberWidth)} \x1b[0m`
+      : theme.fg("toolDiffContext", ` ${lineNumber(row).padStart(numberWidth)} `);
+    const content = hastToAnsi(row, { background: colors.background, inlineBackground: colors.inlineBackground });
+    return fitCell(`${prefix}${content}`, cellWidth, colors.background);
+  };
+
+  const header = `${fitCell(theme.fg("muted", "before"), cellWidth)}${separator}${fitCell(theme.fg("muted", "after"), cellWidth)}`;
+  const body = indexes.map((index) => `${renderCell(oldBySplit.get(index), "old")}${separator}${renderCell(newBySplit.get(index), "new")}`);
+  return [header, ...capLines(body, expanded, theme)];
+}
+
+class PierreDiffComponent {
+  private rows?: PierreRows;
+  private error?: string;
+
+  constructor(private patch: string, private expanded: boolean, private theme: Theme) {
+    this.rebuild();
+  }
+
+  set(patch: string, expanded: boolean, theme: Theme): void {
+    this.patch = patch;
+    this.expanded = expanded;
+    this.theme = theme;
+    this.rebuild();
+  }
+
+  private rebuild(): void {
+    this.rows = parsePatchRows(this.patch);
+    this.error = this.rows ? undefined : "Pierre could not parse the edit patch";
+  }
+
+  render(width: number): string[] {
+    if (!this.rows) return [this.theme.fg("error", this.error ?? "Could not render diff")];
+    return width >= 120
+      ? renderSplit(this.rows, width, this.expanded, this.theme)
+      : renderUnified(this.rows, width, this.expanded, this.theme);
+  }
+
+  invalidate(): void {}
+}
+
+export default function (pi: ExtensionAPI) {
+  const edit = createEditTool(process.cwd());
+
+  pi.on("session_start", (_event, ctx) => {
+    const selected = ctx.ui.setTheme(THEME_NAME);
+    if (!selected.success) ctx.ui.notify(selected.error ?? `Could not select ${THEME_NAME}`, "error");
+  });
+
+  pi.registerTool({
+    ...edit,
+    renderShell: "self",
+    renderCall(args, theme, context) {
+      const text = context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
+      text.setText(`${theme.fg("toolTitle", theme.bold("edit"))} ${theme.fg("accent", args.path)}`);
+      return text;
+    },
+    renderResult(result, options, theme, context) {
+      if (context.isError) {
+        const message = result.content.filter((item) => item.type === "text").map((item: any) => item.text).join("\n");
+        return new Text(theme.fg("error", message), 0, 0);
+      }
+      const details = result.details as EditToolDetails | undefined;
+      if (!details?.patch) return new Text(theme.fg("success", "edited"), 0, 0);
+      const component = context.lastComponent instanceof PierreDiffComponent
+        ? context.lastComponent
+        : new PierreDiffComponent(details.patch, options.expanded, theme);
+      component.set(details.patch, options.expanded, theme);
+      return component;
+    },
+  });
+}

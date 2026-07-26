@@ -33,22 +33,27 @@ Build one extension with:
 
 ```sh
 nix build .#sandbox
+nix build .#dense-tools
 nix build .#subagents
 nix build .#openai-server-compaction
 ```
 
 `nix-config` consumes this repo as a flake input and deploys the source and
-built packages through Home Manager. It must link `extensions/dense-tools.ts`
-to Pi's extension directory, link `themes/gruvbox-dark-hard.json` to Pi's theme
-directory, and set Pi's theme to `gruvbox-dark-hard`.
+built packages through Home Manager. It must deploy the `dense-tools` flake
+package to Pi's extension directory, link `themes/gruvbox-dark-hard.json` to
+Pi's theme directory, and set Pi's theme to `gruvbox-dark-hard`.
 
 ## Dense tool display
 
-`extensions/dense-tools.ts` removes the padded shell from the built-in file
-tools. It combines each run of adjacent `read` calls into one display block;
-Ctrl+O still expands the grouped file contents. The sandbox remains the only
-owner of `bash` and applies the same dense shell to its bash tool, so the two
-extensions do not conflict.
+`extensions/dense-tools` removes the padded shell from the built-in file tools.
+It combines each run of adjacent `read` calls into one display block; Ctrl+O
+still expands the grouped file contents. Its edit renderer uses a pinned
+`@pierre/diffs` bundle for Shiki syntax highlighting, inline change marks, and
+a responsive before/after view at 120 columns or wider. Added and removed lines
+use low-intensity backgrounds blended from Gruvbox's canonical hard background
+and bright green/red; changed words use stronger blends of the same colors.
+The sandbox remains the only owner of `bash` and applies the same dense shell to
+its bash tool, so the two extensions do not conflict.
 
 ## Sandbox backend
 

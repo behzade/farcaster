@@ -1,0 +1,12 @@
+{
+  "name": "pi-extension-dense-tools",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./index.ts",
+      "./pierre-edit.ts"
+    ]
+  }
+}
