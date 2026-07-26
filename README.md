@@ -51,7 +51,9 @@ The default rights are:
 - keep `~/.pi/agent` and `~/.codex` read-only so a grant cannot change its own
   policy;
 - write the workspace, `/tmp`, and the system temp folder;
-- reach a small set of public package and source hosts;
+- pass only core shell variables such as `PATH`, `HOME`, locale, and temp paths;
+- remove variables whose names contain `KEY`, `SECRET`, or `TOKEN`;
+- block every public host until the user grants web access;
 - block local and private network targets.
 
 The model can call `request_io_permission` for an exact file or folder read,
@@ -87,3 +89,11 @@ project can add tighter rules at `.pi/sandbox.json`; project config cannot add
 rights or turn the sandbox off. Set `network.allowLocalNetwork` in the global
 file only if every Pi session should reach localhost and private-network targets
 or link-local targets without a prompt.
+
+`shellEnvironment` follows Codex's shell policy order. Its `inherit` value is
+`all`, `core`, or `none`; the default is `core`. Unless
+`ignoreDefaultExcludes` is true, variable names containing `KEY`, `SECRET`, or
+`TOKEN` are removed. `exclude` then removes case-insensitive glob matches,
+`set` adds host-configured values, and `includeOnly` applies a final allowlist.
+Only the global file may add values with `set`. A trusted project may choose a
+stricter inheritance mode, add excludes, or add an allowlist.

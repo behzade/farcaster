@@ -21,6 +21,7 @@ import {
 	DEFAULT_CONFIG,
 	applyProjectRestrictions,
 	buildCodexSandboxArgs,
+	buildShellEnvironment,
 	type CodexSandboxConfig,
 	type CodexSandboxGrants,
 	mergeGlobalConfig,
@@ -109,7 +110,7 @@ function createCodexSandboxOps(
 					cwd,
 					detached: true,
 					env: {
-						...process.env,
+						...buildShellEnvironment(config),
 						IN_SANDBOX: "1",
 						PI_SANDBOX: "codex",
 					},
@@ -544,12 +545,27 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 			const config = sandboxState.config;
+			const savedWeb = persistentPermissions.some(
+				(permission) => permission.kind === "web",
+			);
+			const allowedDomains = config.network?.allowedDomains ?? [];
 			ctx.ui.notify(
 				[
 					"Codex IO sandbox:",
 					`  Read: ${config.filesystem?.allowRead?.join(", ") || "(minimal only)"}`,
 					`  Write: ${config.filesystem?.allowWrite?.join(", ") || "(workspace only)"}`,
-					`  Public web: ${config.network?.enabled ? "allowed hosts only" : "off"}`,
+					`  Shell env: ${config.shellEnvironment?.inherit ?? "core"}, secret-name filter ${
+						config.shellEnvironment?.ignoreDefaultExcludes ? "off" : "on"
+					}`,
+					`  Public web: ${
+						config.network?.enabled === false
+							? "off"
+							: savedWeb
+								? "all public hosts (saved)"
+								: allowedDomains.length > 0
+									? allowedDomains.join(", ")
+									: "blocked until approved"
+					}`,
 					`  Local/private/link-local network: ${
 						(config.network?.allowLocalNetwork ?? false) ||
 						persistentPermissions.some(

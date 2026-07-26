@@ -3,6 +3,7 @@ import test from "node:test";
 import {
 	applyProjectRestrictions,
 	buildCodexSandboxArgs,
+	buildShellEnvironment,
 	DEFAULT_CONFIG,
 	mergeGlobalConfig,
 	normalizeConfig,
@@ -155,6 +156,62 @@ test("an omitted global domain list keeps the safe defaults", () => {
 	assert.equal(global.network?.allowAllUnixSockets, true);
 });
 
+test("default network policy has no external domains", () => {
+	assert.deepEqual(DEFAULT_CONFIG.network?.allowedDomains, []);
+	const profile = overrides(
+		buildCodexSandboxArgs("/repo", DEFAULT_CONFIG, "true"),
+	).find((value) => value.startsWith(`permissions.pi-sandbox-${process.pid}=`));
+	assert(profile);
+	assert(profile.includes('"domains" = {  }'));
+	assert.equal(profile.includes('"github.com" = "allow"'), false);
+	assert.equal(profile.includes('"registry.npmjs.org" = "allow"'), false);
+});
+
+test("shell environment defaults to Codex core variables and removes secret names", () => {
+	const environment = buildShellEnvironment(DEFAULT_CONFIG, {
+		PATH: "/bin",
+		HOME: "/home/test",
+		TMPDIR: "/tmp/test",
+		LANG: "en_US.UTF-8",
+		SHLVL: "2",
+		ANTHROPIC_AUTH_TOKEN: "secret",
+		MY_SECRET_FLAG: "secret",
+		XDG_CONFIG_HOME: "/home/test/.config",
+	});
+	assert.deepEqual(environment, {
+		PATH: "/bin",
+		HOME: "/home/test",
+		TMPDIR: "/tmp/test",
+		LANG: "en_US.UTF-8",
+		SHLVL: "2",
+	});
+});
+
+test("shell environment applies excludes, set values, then include-only filters", () => {
+	const environment = buildShellEnvironment(
+		{
+			shellEnvironment: {
+				inherit: "all",
+				ignoreDefaultExcludes: true,
+				exclude: ["AWS_*"],
+				set: { SAFE_FLAG: "set", DROP_ME: "set" },
+				includeOnly: ["PATH", "SAFE_*", "*TOKEN"],
+			},
+		},
+		{
+			PATH: "/bin",
+			AWS_PROFILE: "prod",
+			GH_TOKEN: "secret",
+			OTHER: "drop",
+		},
+	);
+	assert.deepEqual(environment, {
+		PATH: "/bin",
+		GH_TOKEN: "secret",
+		SAFE_FLAG: "set",
+	});
+});
+
 test("rejects malformed config instead of weakening policy", () => {
 	assert.throws(() => normalizeConfig({ network: { enabled: "yes" } }), /network.enabled/);
 	assert.throws(
@@ -164,6 +221,14 @@ test("rejects malformed config instead of weakening policy", () => {
 	assert.throws(() => normalizeConfig({ filesystem: { denyRead: [""] } }), /non-empty strings/);
 	assert.throws(() => normalizeConfig({ permissionProfile: 'bad" -c sandbox_mode' }), /permissionProfile/);
 	assert.throws(() => normalizeConfig({ filesystem: { allowWrites: ["."] } }), /unknown fields/);
+	assert.throws(
+		() => normalizeConfig({ shellEnvironment: { inherit: "everything" } }),
+		/shellEnvironment.inherit/,
+	);
+	assert.throws(
+		() => normalizeConfig({ shellEnvironment: { set: { "BAD-NAME": "value" } } }),
+		/valid environment names/,
+	);
 	assert.throws(
 		() => normalizeConfig({ network: { allowedDomains: ["localhost:8317"] } }),
 		/without schemes, paths, or ports/,
@@ -212,4 +277,29 @@ test("a local network grant enables Codex local binding and loopback hosts", () 
 	assert(profile.includes('"localhost" = "allow"'));
 	assert(profile.includes('"127.0.0.1" = "allow"'));
 	assert(profile.includes('"::1" = "allow"'));
+});
+
+test("a trusted project can only tighten the shell environment", () => {
+	const base = mergeGlobalConfig(DEFAULT_CONFIG, {
+		shellEnvironment: {
+			inherit: "core",
+			ignoreDefaultExcludes: false,
+			exclude: ["AWS_*"],
+			set: { HOST_FLAG: "1" },
+		},
+	});
+	const result = applyProjectRestrictions(base, {
+		shellEnvironment: {
+			inherit: "all",
+			ignoreDefaultExcludes: true,
+			exclude: ["AZURE_*"],
+			set: { PROJECT_FLAG: "1" },
+			includeOnly: ["PATH", "HOME"],
+		},
+	});
+	assert.equal(result.shellEnvironment?.inherit, "core");
+	assert.equal(result.shellEnvironment?.ignoreDefaultExcludes, false);
+	assert.deepEqual(result.shellEnvironment?.exclude, ["AWS_*", "AZURE_*"]);
+	assert.deepEqual(result.shellEnvironment?.set, { HOST_FLAG: "1" });
+	assert.deepEqual(result.shellEnvironment?.includeOnly, ["PATH", "HOME"]);
 });
