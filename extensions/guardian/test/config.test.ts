@@ -42,7 +42,8 @@ describe("config parsing", () => {
 			join(agentDir, "extensions", "guardian.json"),
 			JSON.stringify({
 				approvalMode: "auto",
-				model: { provider: "openai-codex", id: "gpt-5.6-luna" },
+				model: { provider: "openai-codex", id: "gpt-5.6-terra" },
+				reasoning: "low",
 				repeatThreshold: 2,
 			}),
 		);
@@ -50,7 +51,8 @@ describe("config parsing", () => {
 
 		const config = loadPersistentConfig();
 		expect(config.approvalMode).toBe("auto");
-		expect(config.model).toEqual({ provider: "openai-codex", id: "gpt-5.6-luna" });
+		expect(config.model).toEqual({ provider: "openai-codex", id: "gpt-5.6-terra" });
+		expect(config.reasoning).toBe("low");
 		expect(config.repeatThreshold).toBe(2);
 	});
 });

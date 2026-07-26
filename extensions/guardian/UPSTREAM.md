@@ -16,7 +16,8 @@ Local changes:
 - Track repeated model-approved actions.
 - Offer an exact project rule after the same action is approved twice.
 - Include a script content hash in exact action fingerprints.
-- Pin the reviewer to `openai-codex/gpt-5.6-luna` with no main-model fallback.
+- Pin the reviewer to `openai-codex/gpt-5.6-terra` at low reasoning with no
+  main-model fallback.
 - Review explicit mixed sibling verdicts in one model request.
 - Ignore project rules and settings until Pi trusts the project.
 - Hand exact one-shot outside-write grants to the OS sandbox.

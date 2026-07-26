@@ -13,8 +13,9 @@ export const DEFAULT_CONFIG: PreflightConfig = {
 	contextMessages: 1,
 	explainKey: "ctrl+e",
 	ruleSuggestionKey: "ctrl+n",
-	model: { provider: "openai-codex", id: "gpt-5.6-luna" },
+	model: { provider: "openai-codex", id: "gpt-5.6-terra" },
 	policyModel: "current",
+	reasoning: "low",
 	approvalMode: "auto",
 	repeatThreshold: 2,
 	debug: false,
@@ -86,6 +87,17 @@ export function parseConfig(value: unknown): Partial<PreflightConfig> {
 		config.policyModel = "current";
 	} else if (isModelRef(record.policyModel)) {
 		config.policyModel = record.policyModel;
+	}
+
+	if (
+		record.reasoning === "minimal" ||
+		record.reasoning === "low" ||
+		record.reasoning === "medium" ||
+		record.reasoning === "high" ||
+		record.reasoning === "xhigh" ||
+		record.reasoning === "max"
+	) {
+		config.reasoning = record.reasoning;
 	}
 
 	if (typeof record.approvalMode === "string") {

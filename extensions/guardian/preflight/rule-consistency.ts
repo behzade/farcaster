@@ -50,6 +50,7 @@ export async function evaluateRuleConsistency(
 			headers: modelWithKey.headers,
 			env: modelWithKey.env,
 			signal,
+			reasoning: config.reasoning,
 		});
 		for await (const _ of response) {
 			// Drain stream to completion.

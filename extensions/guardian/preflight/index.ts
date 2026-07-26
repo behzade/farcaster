@@ -642,6 +642,7 @@ function showStatus(ctx: ExtensionContext, config: PreflightConfig): void {
 		`Mode: ${formatApprovalMode(config.approvalMode)}`,
 		`Explain context: ${formatContextMessages(config.contextMessages)}`,
 		`Model: ${formatModelSetting(config.model, ctx.model)}`,
+		`Reasoning: ${config.reasoning}`,
 		`Policy model: ${formatModelSetting(config.policyModel, ctx.model)}`,
 		`Debug: ${config.debug ? "on" : "off"}`,
 		`Scope: ${sessionOverrideExists() ? "session override" : "persistent"}`,

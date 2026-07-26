@@ -24,6 +24,7 @@ const baseConfig: PreflightConfig = {
 	ruleSuggestionKey: "ctrl+n",
 	model: "current",
 	policyModel: "current",
+	reasoning: "low",
 	approvalMode: "all",
 	repeatThreshold: 2,
 	debug: true,
@@ -177,6 +178,11 @@ describe("buildPreflightMetadata", () => {
 		);
 
 		expect(streamMock).toHaveBeenCalledTimes(1);
+		expect(streamMock).toHaveBeenCalledWith(
+			model,
+			expect.any(Object),
+			expect.objectContaining({ reasoning: "low" }),
+		);
 		expect(result.status).toBe("ok");
 		if (result.status === "ok") {
 			expect(result.metadata["call-allow"].outcome).toBe("allow");

@@ -70,6 +70,7 @@ export async function buildPreflightMetadata(
 			policyRulesByToolCall,
 			preflightContext,
 			modelWithKey.model,
+			config.reasoning,
 			modelWithKey.apiKey,
 			modelWithKey.headers,
 			modelWithKey.env,
@@ -100,6 +101,7 @@ async function runPreflightAttempt(
 	policyRulesByToolCall: Record<string, string[]>,
 	preflightContext: Context,
 	model: Model<Api>,
+	reasoning: PreflightConfig["reasoning"],
 	apiKey: string,
 	headers: Record<string, string> | undefined,
 	env: ProviderEnv | undefined,
@@ -109,7 +111,13 @@ async function runPreflightAttempt(
 	explicitUserDirective: ExplicitUserDirective | undefined,
 ): Promise<PreflightAttempt> {
 	try {
-		const response = await streamSimple(model, preflightContext, { apiKey, headers, env, signal });
+		const response = await streamSimple(model, preflightContext, {
+			apiKey,
+			headers,
+			env,
+			signal,
+			reasoning,
+		});
 		for await (const _ of response) {
 			// Drain stream to completion.
 		}

@@ -24,6 +24,7 @@ const baseConfig: PreflightConfig = {
 	ruleSuggestionKey: "ctrl+n",
 	model: "current",
 	policyModel: "current",
+	reasoning: "low",
 	approvalMode: "all",
 	repeatThreshold: 2,
 	debug: false,

@@ -1,4 +1,4 @@
-import type { Api, Context, Model, ProviderEnv } from "@earendil-works/pi-ai";
+import type { Api, Context, Model, ProviderEnv, ThinkingLevel } from "@earendil-works/pi-ai";
 import type { KeyId } from "@earendil-works/pi-tui";
 
 export interface ToolPreflightMetadata {
@@ -36,6 +36,7 @@ export interface PreflightConfig {
 	ruleSuggestionKey: KeyId | KeyId[];
 	model: "current" | ModelRef;
 	policyModel: "current" | ModelRef;
+	reasoning: ThinkingLevel;
 	approvalMode: ApprovalMode;
 	repeatThreshold: number;
 	debug: boolean;
