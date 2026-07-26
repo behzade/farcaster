@@ -1,0 +1,137 @@
+import { existsSync, readFileSync } from "node:fs";
+import { basename, join } from "node:path";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { NotificationCoalescer, osc9Sequence, preview } from "./lib/notification-core.ts";
+type Condition = "always" | "unfocused" | "never";
+type NotificationType =
+  | "agent-turn-complete"
+  | "approval-command"
+  | "approval-file-write"
+  | "approval-mcp"
+  | "user-input";
+
+interface NotificationConfig {
+  condition: Condition;
+  types: NotificationType[];
+  method: "auto" | "osc9" | "native" | "bel";
+}
+
+interface PendingNotification {
+  type: NotificationType;
+  title: string;
+  message: string;
+  priority: number;
+}
+
+const defaults: NotificationConfig = {
+  condition: "unfocused",
+  types: ["agent-turn-complete", "approval-command", "approval-file-write", "approval-mcp", "user-input"],
+  method: "auto",
+};
+
+function loadConfig(): NotificationConfig {
+  const path = join(getAgentDir(), "extensions", "notifications.json");
+  if (!existsSync(path)) return defaults;
+  try {
+    return { ...defaults, ...(JSON.parse(readFileSync(path, "utf8")) as Partial<NotificationConfig>) };
+  } catch (error) {
+    console.error(`Could not load notification settings ${path}: ${error}`);
+    return defaults;
+  }
+}
+
+function supportsOsc9(): boolean {
+  const terminal = process.env.TERM_PROGRAM?.toLowerCase();
+  return (
+    terminal === "ghostty" || terminal === "iterm.app" || terminal === "wezterm" ||
+    terminal === "warpterminal" || process.env.KITTY_WINDOW_ID !== undefined
+  );
+}
+
+export default function (pi: ExtensionAPI) {
+  const config = loadConfig();
+  let lastAssistantText = "Turn ended";
+  let terminalFocused = true;
+  let focusTail = "";
+  const queue = new NotificationCoalescer<PendingNotification>();
+  let flushTimer: NodeJS.Timeout | undefined;
+  let focusReporting = false;
+
+  const shouldPost = (type: NotificationType) =>
+    config.types.includes(type) && config.condition !== "never" &&
+    (config.condition === "always" || !terminalFocused);
+
+  const post = async ({ title, message }: PendingNotification) => {
+    if ((config.method === "auto" && supportsOsc9()) || config.method === "osc9") {
+      process.stdout.write(osc9Sequence(message, Boolean(process.env.TMUX)));
+    } else if (config.method === "bel") {
+      process.stdout.write("\u0007");
+    } else if (process.platform === "darwin") {
+      await pi.exec("terminal-notifier", ["-title", title, "-message", preview(message), "-group", "pi", "-activate", "com.mitchellh.ghostty"]).catch(() => undefined);
+    } else if (process.platform === "linux") {
+      await pi.exec("notify-send", ["--app-name=Pi", title, preview(message)]).catch(() => undefined);
+    }
+  };
+
+  const flush = () => {
+    flushTimer = undefined;
+    const next = queue.take();
+    if (next && shouldPost(next.type)) void post(next);
+  };
+
+  const enqueue = (next: PendingNotification) => {
+    if (!shouldPost(next.type)) return;
+    queue.push(next);
+    if (!flushTimer) flushTimer = setTimeout(flush, 75);
+  };
+
+  const onInput = (chunk: Buffer | string) => {
+    focusTail = `${focusTail}${chunk.toString()}`.slice(-32);
+    const gained = focusTail.lastIndexOf("\u001b[I");
+    const lost = focusTail.lastIndexOf("\u001b[O");
+    if (gained >= 0 || lost >= 0) terminalFocused = gained > lost;
+  };
+
+  const unsubscribeApproval = pi.events.on("approval:requested", (data: unknown) => {
+    const request = data as { kind?: string; title?: string; summary?: string };
+    const type = request.kind === "command" ? "approval-command"
+      : request.kind === "file-write" ? "approval-file-write"
+      : request.kind === "mcp" ? "approval-mcp" : "user-input";
+    enqueue({ type, title: request.title ?? "Pi needs approval", message: request.summary ?? "Input needed", priority: type === "user-input" ? 3 : 2 });
+  });
+
+  pi.on("session_start", (_event, ctx) => {
+    terminalFocused = ctx.mode === "tui";
+    if (ctx.mode === "tui" && process.stdin.isTTY) {
+      process.stdin.on("data", onInput);
+      process.stdout.write("\u001b[?1004h");
+      focusReporting = true;
+    }
+  });
+
+  pi.on("message_end", (event) => {
+    if (event.message.role !== "assistant") return;
+    const text = event.message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
+    if (text.trim()) lastAssistantText = preview(text);
+  });
+
+  pi.on("agent_settled", (_event, ctx) => {
+    if (ctx.hasPendingMessages()) return;
+    enqueue({ type: "agent-turn-complete", title: `Pi finished — ${basename(ctx.cwd) || ctx.cwd}`, message: lastAssistantText, priority: 1 });
+  });
+
+  pi.on("session_shutdown", () => {
+    unsubscribeApproval();
+    if (flushTimer) clearTimeout(flushTimer);
+    if (focusReporting) {
+      process.stdin.off("data", onInput);
+      process.stdout.write("\u001b[?1004l");
+    }
+  });
+
+  pi.registerCommand("notifications", {
+    description: "Show notification settings",
+    handler: (_args, ctx) => ctx.ui.notify(`Notifications: ${config.condition}; ${config.method}; ${config.types.join(", ")}`, "info"),
+  });
+}

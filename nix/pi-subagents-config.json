@@ -1,0 +1,5 @@
+{
+  "artifactDir": "session",
+  "asyncByDefault": true,
+  "toolDescriptionMode": "compact"
+}

@@ -1,0 +1,19 @@
+diff --git a/dist/sandbox/linux-sandbox-utils.js b/dist/sandbox/linux-sandbox-utils.js
+index 8546552..5429c32 100644
+--- a/dist/sandbox/linux-sandbox-utils.js
++++ b/dist/sandbox/linux-sandbox-utils.js
+@@ -450,11 +450,9 @@ async function generateFilesystemArgs(readConfig, writeConfig, ripgrepConfig = {
+                     normalizedPath.startsWith(allowedPath + '/'));
+                 if (ancestorIsWithinAllowedPath) {
+-                    // Mount /dev/null at the first non-existent path component
+-                    // This blocks creation of the entire path by making the first
+-                    // missing component appear as an empty file (mkdir will fail)
++                    // Bubblewrap creates missing bind targets in writable host mounts.
++                    // Skip the bind so sandbox setup never changes the host tree.
+                     const firstNonExistent = findFirstNonExistentComponent(normalizedPath);
+-                    args.push('--ro-bind', '/dev/null', firstNonExistent);
+-                    logForDebugging(`[Sandbox Linux] Mounted /dev/null at ${firstNonExistent} to block creation of ${normalizedPath}`);
++                    logForDebugging(`[Sandbox Linux] Skipping missing deny path ${normalizedPath} at ${firstNonExistent}`);
+                 }
+                 else {
+                     logForDebugging(`[Sandbox Linux] Skipping non-existent deny path not within allowed paths: ${normalizedPath}`);
