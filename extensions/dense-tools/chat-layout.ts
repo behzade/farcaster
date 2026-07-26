@@ -1,5 +1,6 @@
 import {
   AssistantMessageComponent,
+  ToolExecutionComponent,
   UserMessageComponent,
 } from "@earendil-works/pi-coding-agent";
 
@@ -26,7 +27,7 @@ function indent(line: string): string {
 function patchRender(
   prototype: any,
   color: string,
-  frame: "around" | "before",
+  frame: "around" | "plain",
 ): void {
   if (prototype[PATCHED]) return;
   const original = prototype.render;
@@ -34,12 +35,11 @@ function patchRender(
     const lines = original.call(this, Math.max(1, width - EXTRA_LEFT_MARGIN));
     if (lines.length === 0) return lines;
     const body = lines.map(indent);
-    return frame === "around"
-      ? [rule(width, color), ...body, rule(width, color)]
-      : [rule(width, color), ...body];
+    return frame === "around" ? [rule(width, color), ...body, rule(width, color)] : body;
   };
   prototype[PATCHED] = true;
 }
 
 patchRender(UserMessageComponent.prototype, USER_RULE, "around");
-patchRender(AssistantMessageComponent.prototype, ASSISTANT_RULE, "before");
+patchRender(AssistantMessageComponent.prototype, ASSISTANT_RULE, "plain");
+patchRender(ToolExecutionComponent.prototype, ASSISTANT_RULE, "plain");

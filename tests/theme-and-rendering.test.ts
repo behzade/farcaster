@@ -93,13 +93,15 @@ test("Pierre edit renderer supports responsive split diffs and change background
   assert.match(source, /#363922/);
 });
 
-test("chat layout frames user and assistant messages with Gruvbox rules and margin", async () => {
+test("chat layout frames user messages and gives chat rows a margin", async () => {
   const source = await readFile(chatLayoutPath, "utf8");
   assert.match(source, /UserMessageComponent/);
   assert.match(source, /AssistantMessageComponent/);
+  assert.match(source, /ToolExecutionComponent/);
   assert.match(source, /EXTRA_LEFT_MARGIN = 1/);
   assert.match(source, /USER_RULE = "#665c54"/);
   assert.match(source, /ASSISTANT_RULE = "#3c3836"/);
   assert.match(source, /"around"/);
-  assert.match(source, /"before"/);
+  assert.match(source, /"plain"/);
+  assert.doesNotMatch(source, /"before"/);
 });
