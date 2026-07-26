@@ -57,6 +57,10 @@ test("secret paths cannot be granted", () => {
 			),
 		/Protected secret or control/,
 	);
+	assert.throws(
+		() => normalizePermission({ kind: "write", path: join(workspace, ".git", "index") }, workspace),
+		/Protected secret or control/,
+	);
 	assert.doesNotThrow(() =>
 		normalizePermission(
 			{ kind: "read", path: join(homedir(), ".pi", "agent"), targetType: "folder" },

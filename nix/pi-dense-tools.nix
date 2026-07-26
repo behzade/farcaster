@@ -8,14 +8,14 @@ let
 in
 stdenvNoCC.mkDerivation {
   pname = "pi-dense-tools-extension";
-  version = "0.1.0";
+  version = "0.2.0";
 
   src = ../extensions/dense-tools;
 
   installPhase = ''
     runHook preInstall
     mkdir -p $out/themes
-    cp index.ts pierre-edit.ts package.json NOTICE.md $out/
+    cp index.ts chat-layout.ts pierre-edit.ts package.json NOTICE.md $out/
     cp ${../themes/gruvbox-dark-hard.json} $out/themes/gruvbox-dark-hard.json
     cp ${pierreDiffs} $out/diffs.bundle.mjs
     substituteInPlace $out/diffs.bundle.mjs \

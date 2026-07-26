@@ -83,14 +83,14 @@ permission-request turn. Protected paths and explicit deny rules remain blocked
 without a prompt. Saved rights live in `~/.pi/agent/io-permissions.json`, keyed
 by the real workspace path.
 
-For bash on macOS, Codex records denied filesystem operations with
-`--log-denials`. The sandbox turns each exact, grantable path denial into the
-same approval prompt and retries the command inside the original tool call. It
-allows at most three retries. A retry can repeat work completed before the
-denied operation, so the prompt says that bash will retry. Protected paths and
-explicit deny rules never prompt. If Codex reports no exact filesystem denial,
-the original failure returns unchanged. Web and network failures remain blocked
-because their denial records do not provide a safe host-level grant.
+For bash, the sandbox checks failed command output for access errors such as
+`Operation not permitted` and `Permission denied`. If the same error line has
+one exact absolute path and the active policy identifies it as a write denial,
+the sandbox shows the same approval prompt and retries inside the original tool
+call. It allows at most three retries. A retry can repeat work completed before
+the denied operation, so the prompt says that bash will retry. Protected paths
+and explicit deny rules never prompt. Failures without a safe exact path return
+unchanged as regular command failures. Web and network failures remain blocked.
 
 Workspace write access includes creating, changing, and deleting workspace
 files. The sandbox does not inspect command text, so it does not add a second

@@ -119,6 +119,11 @@ function capLines(lines: string[], expanded: boolean, theme: Theme): string[] {
   return [...lines.slice(0, 30), theme.fg("dim", `… ${lines.length - 30} more diff rows (Ctrl+O to expand)` )];
 }
 
+function frameDiff(lines: string[], width: number, theme: Theme): string[] {
+  const rule = theme.fg("borderMuted", "─".repeat(Math.max(0, width)));
+  return [rule, ...lines, rule];
+}
+
 function renderUnified(rows: PierreRows, width: number, expanded: boolean, theme: Theme): string[] {
   const changed = [...rows.deletions, ...rows.additions].filter((row) => lineType(row) !== "context");
   const contextByIndex = new Map<number, any>();
@@ -126,7 +131,7 @@ function renderUnified(rows: PierreRows, width: number, expanded: boolean, theme
   for (const row of rows.additions) if (lineType(row) === "context") contextByIndex.set(lineIndexes(row).unified, row);
   const ordered = [...changed, ...contextByIndex.values()].sort((a, b) => lineIndexes(a).unified - lineIndexes(b).unified);
   const numberWidth = Math.max(1, ...ordered.map((row) => lineNumber(row).length));
-  return capLines(ordered.map((row) => {
+  const body = capLines(ordered.map((row) => {
     const colors = diffColors(lineType(row));
     const prefix = colors.foreground
       ? `${ansi({ color: colors.foreground, background: colors.background })}${colors.marker}${lineNumber(row).padStart(numberWidth)} \x1b[0m`
@@ -134,6 +139,7 @@ function renderUnified(rows: PierreRows, width: number, expanded: boolean, theme
     const content = hastToAnsi(row, { background: colors.background, inlineBackground: colors.inlineBackground });
     return fitCell(`${prefix}${content}`, width, colors.background);
   }), expanded, theme);
+  return frameDiff(body, width, theme);
 }
 
 function renderSplit(rows: PierreRows, width: number, expanded: boolean, theme: Theme): string[] {
@@ -156,9 +162,8 @@ function renderSplit(rows: PierreRows, width: number, expanded: boolean, theme: 
     return fitCell(`${prefix}${content}`, cellWidth, colors.background);
   };
 
-  const header = `${fitCell(theme.fg("muted", "before"), cellWidth)}${separator}${fitCell(theme.fg("muted", "after"), cellWidth)}`;
   const body = indexes.map((index) => `${renderCell(oldBySplit.get(index), "old")}${separator}${renderCell(newBySplit.get(index), "new")}`);
-  return [header, ...capLines(body, expanded, theme)];
+  return frameDiff(capLines(body, expanded, theme), width, theme);
 }
 
 class PierreDiffComponent {

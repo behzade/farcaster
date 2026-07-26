@@ -47,7 +47,7 @@ import {
 	isBaseWriteAllowed,
 	isDeniedByConfig,
 } from "./io-policy.ts";
-import { parseFilesystemDenials } from "./sandbox-denials.ts";
+import { parseFilesystemFailurePaths } from "./sandbox-failures.ts";
 
 function readConfig(path: string): CodexSandboxConfig | undefined {
 	if (!existsSync(path)) return undefined;
@@ -252,42 +252,51 @@ export default function (pi: ExtensionAPI) {
 
 			for (let attempt = 0; attempt < 4; attempt++) {
 				const chunks: Buffer[] = [];
-				let displayPending = "";
-				let suppressDenialLog = false;
 				lastResult = await createCodexSandboxOps(config, grants).exec(command, cwd, {
 					...options,
 					onData(data) {
 						chunks.push(data);
-						displayPending += data.toString("utf8");
-						let newline = displayPending.indexOf("\n");
-						while (newline >= 0) {
-							const line = displayPending.slice(0, newline + 1);
-							displayPending = displayPending.slice(newline + 1);
-							if (line.trim() === "=== Sandbox denials ===") suppressDenialLog = true;
-							if (!suppressDenialLog) options.onData(Buffer.from(line));
-							newline = displayPending.indexOf("\n");
-						}
+						options.onData(data);
 					},
 				});
-				if (!suppressDenialLog && displayPending) {
-					options.onData(Buffer.from(displayPending));
-				}
 				if (lastResult.exitCode === 0 || options.signal?.aborted) return lastResult;
 
-				const denials = parseFilesystemDenials(Buffer.concat(chunks).toString("utf8"));
-				if (denials.length === 0) return lastResult;
+				const failurePaths = parseFilesystemFailurePaths(
+					Buffer.concat(chunks).toString("utf8"),
+				);
+				if (failurePaths.length === 0) return lastResult;
 				const permissions: FilePermission[] = [];
-				for (const denial of denials) {
-					const path = resolvePermissionPath(denial.path, cwd);
+				for (const failurePath of failurePaths) {
+					const path = resolvePermissionPath(failurePath, cwd);
+					// The current profile can read the whole filesystem. A path that is
+					// readable but not writable therefore identifies a write denial. If
+					// policy does not identify one exact access kind, treat it as a
+					// regular command failure rather than asking for broad access.
+					const readAllowed = isBaseReadAllowed(path, config, cwd);
+					const writeAllowed = isBaseWriteAllowed(path, config, cwd);
+					if (!readAllowed || writeAllowed) return lastResult;
+					const access = "write" as const;
+					const alreadyGranted = (grants.write ?? []).some((root) => {
+						const grantPath = resolvePermissionPath(root, cwd);
+						return permissionCoversPath(
+							{
+								kind: "write",
+								path: grantPath,
+								directory: existsSync(grantPath) && statSync(grantPath).isDirectory(),
+							},
+							path,
+						);
+					});
+					if (alreadyGranted) return lastResult;
 					if (
 						isProtectedPath(path) ||
-						(denial.access === "write" && isProtectedWritePath(path)) ||
-						isDeniedByConfig(path, denial.access, config, cwd)
+						isProtectedWritePath(path) ||
+						isDeniedByConfig(path, access, config, cwd)
 					) {
 						return lastResult;
 					}
 					permissions.push({
-						kind: denial.access,
+						kind: access,
 						path,
 						directory: existsSync(path) && statSync(path).isDirectory(),
 					});

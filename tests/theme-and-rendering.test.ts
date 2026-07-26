@@ -5,6 +5,7 @@ import test from "node:test";
 const themePath = new URL("../themes/gruvbox-dark-hard.json", import.meta.url);
 const denseToolsPath = new URL("../extensions/dense-tools/index.ts", import.meta.url);
 const pierreEditPath = new URL("../extensions/dense-tools/pierre-edit.ts", import.meta.url);
+const chatLayoutPath = new URL("../extensions/dense-tools/chat-layout.ts", import.meta.url);
 const sandboxPath = new URL("../extensions/sandbox/index.ts", import.meta.url);
 
 const requiredColors = [
@@ -54,6 +55,7 @@ test("Gruvbox dark hard uses the canonical palette and every Pi color", async ()
   assert.equal(theme.name, "gruvbox-dark-hard");
   assert.deepEqual(theme.vars, canonicalPalette);
   for (const color of requiredColors) assert.ok(color in theme.colors, `missing ${color}`);
+  assert.equal(theme.colors.userMessageBg, "bg0");
   assert.equal(theme.export.pageBg, canonicalPalette.bg0Hard);
 });
 
@@ -85,6 +87,19 @@ test("Pierre edit renderer supports responsive split diffs and change background
   assert.match(source, /width >= 120/);
   assert.match(source, /renderSplit/);
   assert.match(source, /inlineBackground/);
+  assert.match(source, /frameDiff/);
+  assert.doesNotMatch(source, /theme\.fg\("muted", "before"\)/);
   assert.match(source, /#412724/);
   assert.match(source, /#363922/);
+});
+
+test("chat layout frames user and assistant messages with Gruvbox rules and margin", async () => {
+  const source = await readFile(chatLayoutPath, "utf8");
+  assert.match(source, /UserMessageComponent/);
+  assert.match(source, /AssistantMessageComponent/);
+  assert.match(source, /EXTRA_LEFT_MARGIN = 1/);
+  assert.match(source, /USER_RULE = "#665c54"/);
+  assert.match(source, /ASSISTANT_RULE = "#3c3836"/);
+  assert.match(source, /"around"/);
+  assert.match(source, /"before"/);
 });

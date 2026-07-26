@@ -1,3 +1,5 @@
+import "./chat-layout.ts";
+
 import type {
   AgentToolResult,
   ExtensionAPI,

@@ -2,14 +2,14 @@
 
 stdenvNoCC.mkDerivation {
   pname = "pi-sandbox-extension";
-  version = "2.1.0";
+  version = "2.2.0";
 
   src = ../extensions/sandbox;
 
   installPhase = ''
     runHook preInstall
     mkdir -p $out
-    cp index.ts codex-command.ts io-permissions.ts io-policy.ts sandbox-denials.ts package.json $out/
+    cp index.ts codex-command.ts io-permissions.ts io-policy.ts sandbox-failures.ts package.json $out/
     runHook postInstall
   '';
 

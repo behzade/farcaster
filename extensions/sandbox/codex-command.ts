@@ -687,7 +687,6 @@ export function buildCodexSandboxArgs(
 		"--cd",
 		cwd,
 		"--include-managed-config",
-		"--log-denials",
 		"--",
 		"bash",
 		"-c",

@@ -87,6 +87,7 @@ export function isProtectedPath(path: string): boolean {
 export function isProtectedWritePath(path: string): boolean {
 	if (isProtectedPath(path)) return true;
 	const actual = canonicalize(path);
+	if (actual.split(sep).includes(".git")) return true;
 	const home = canonicalize(homedir());
 	return protectedWriteRoots.some((name) =>
 		isInside(canonicalize(resolve(home, name)), actual),
