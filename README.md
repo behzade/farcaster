@@ -75,15 +75,22 @@ The default rights are:
 - block every public host until the user grants web access;
 - block local and private network targets.
 
-The model can call `request_io_permission` for an exact file or folder read,
-an exact file or folder write, public web access, or local network access. Pi
-asks the user to allow it once, always for this workspace, or not at all. A
-denial can include a comment. Codex cannot limit localhost access to one
-destination port, so a request for one port says that approval opens every
-localhost port and may reach private-network or link-local targets. Saved rights live in
-`~/.pi/agent/io-permissions.json`, keyed by the real workspace path. A one-time
-right lasts for that shell call and any child process which remains alive from
-it.
+When `read`, `write`, `edit`, or `ls` targets a path outside the current IO
+rights, the sandbox pauses that tool call and asks the user to allow it once,
+always for this workspace, or not at all. A denial can include a comment. The
+model does not receive a separate permission tool and does not need a failed
+permission-request turn. Protected paths and explicit deny rules remain blocked
+without a prompt. Saved rights live in `~/.pi/agent/io-permissions.json`, keyed
+by the real workspace path.
+
+For bash on macOS, Codex records denied filesystem operations with
+`--log-denials`. The sandbox turns each exact, grantable path denial into the
+same approval prompt and retries the command inside the original tool call. It
+allows at most three retries. A retry can repeat work completed before the
+denied operation, so the prompt says that bash will retry. Protected paths and
+explicit deny rules never prompt. If Codex reports no exact filesystem denial,
+the original failure returns unchanged. Web and network failures remain blocked
+because their denial records do not provide a safe host-level grant.
 
 Workspace write access includes creating, changing, and deleting workspace
 files. The sandbox does not inspect command text, so it does not add a second

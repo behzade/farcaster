@@ -1,12 +1,12 @@
 {
 	"name": "pi-extension-sandbox",
 	"private": true,
-	"version": "2.0.0",
+	"version": "2.1.0",
 	"type": "module",
 	"scripts": {
 		"clean": "echo 'nothing to clean'",
 		"build": "echo 'nothing to build'",
-		"check": "node --test codex-command.test.ts io-permissions.test.ts io-policy.test.ts"
+		"check": "node --test codex-command.test.ts io-permissions.test.ts io-policy.test.ts sandbox-denials.test.ts"
 	},
 	"pi": {
 		"extensions": [

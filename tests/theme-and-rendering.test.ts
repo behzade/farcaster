@@ -64,6 +64,13 @@ test("dense tools leave bash to the sandbox", async () => {
   assert.match(sandbox, /renderShell:\s*["']self["']/);
 });
 
+test("sandbox prompts rejected path tool calls without exposing a model tool", async () => {
+  const sandbox = await readFile(sandboxPath, "utf8");
+  assert.doesNotMatch(sandbox, /name:\s*["']request_io_permission["']/);
+  assert.match(sandbox, /promptForToolPermission/);
+  assert.match(sandbox, /await promptForToolPermission\(permission, event, ctx\)/);
+});
+
 test("dense reads keep group state and hide follower rows", async () => {
   const source = await readFile(denseToolsPath, "utf8");
   assert.match(source, /readGroupsById/);

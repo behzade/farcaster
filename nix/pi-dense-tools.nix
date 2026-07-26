@@ -14,8 +14,9 @@ stdenvNoCC.mkDerivation {
 
   installPhase = ''
     runHook preInstall
-    mkdir -p $out
+    mkdir -p $out/themes
     cp index.ts pierre-edit.ts package.json NOTICE.md $out/
+    cp ${../themes/gruvbox-dark-hard.json} $out/themes/gruvbox-dark-hard.json
     cp ${pierreDiffs} $out/diffs.bundle.mjs
     substituteInPlace $out/diffs.bundle.mjs \
       --replace-fail '"/node/process.mjs"' '"node:process"' \

@@ -7,16 +7,19 @@
  */
 
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import type { ExtensionAPI, ToolCallEvent } from "@earendil-works/pi-coding-agent";
+import type {
+	ExtensionAPI,
+	ExtensionContext,
+	ToolCallEvent,
+} from "@earendil-works/pi-coding-agent";
 import {
 	type BashOperations,
 	CONFIG_DIR_NAME,
 	createBashTool,
 	getAgentDir,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
 import {
 	DEFAULT_CONFIG,
 	applyProjectRestrictions,
@@ -30,12 +33,10 @@ import {
 import {
 	grantsToRuntime,
 	type IoPermission,
-	isDefaultWritePath,
 	isProtectedPath,
 	isProtectedWritePath,
 	loadWorkspacePermissions,
 	mcpPermissionFromInput,
-	normalizePermission,
 	permissionCoversPath,
 	permissionLabel,
 	resolvePermissionPath,
@@ -46,26 +47,7 @@ import {
 	isBaseWriteAllowed,
 	isDeniedByConfig,
 } from "./io-policy.ts";
-
-const PermissionParams = Type.Union([
-	Type.Object({
-		kind: Type.Union([Type.Literal("read"), Type.Literal("write")]),
-		path: Type.String({ description: "Exact file or folder path" }),
-		targetType: Type.Optional(
-			Type.Union([Type.Literal("file"), Type.Literal("folder")]),
-		),
-		reason: Type.String({ description: "Why this IO right is needed" }),
-	}),
-	Type.Object({
-		kind: Type.Literal("web"),
-		reason: Type.String({ description: "Why public web access is needed" }),
-	}),
-	Type.Object({
-		kind: Type.Literal("local_port"),
-		port: Type.Integer({ minimum: 1, maximum: 65535 }),
-		reason: Type.String({ description: "Why this local port is needed" }),
-	}),
-]);
+import { parseFilesystemDenials } from "./sandbox-denials.ts";
 
 function readConfig(path: string): CodexSandboxConfig | undefined {
 	if (!existsSync(path)) return undefined;
@@ -166,6 +148,14 @@ type SandboxState =
 	| { kind: "ready"; config: CodexSandboxConfig }
 	| { kind: "failed"; reason: string };
 
+type FilePermission = Extract<IoPermission, { kind: "read" | "write" }>;
+
+interface ApprovalDecision {
+	allowed: boolean;
+	persistent: boolean;
+	reason?: string;
+}
+
 export default function (pi: ExtensionAPI) {
 	pi.registerFlag("no-sandbox", {
 		description: "Disable OS-level sandboxing for bash commands",
@@ -178,13 +168,9 @@ export default function (pi: ExtensionAPI) {
 	const permissionFile = resolve(getAgentDir(), "io-permissions.json");
 	let sandboxState: SandboxState = { kind: "initializing" };
 	let persistentPermissions: IoPermission[] = [];
-	let oneShotPermissions: IoPermission[] = [];
 
-	const runtimeGrants = (includeOneShot: boolean): CodexSandboxGrants => {
-		const permissions = includeOneShot
-			? [...persistentPermissions, ...oneShotPermissions]
-			: persistentPermissions;
-		const grants = grantsToRuntime(permissions);
+	const runtimeGrants = (): CodexSandboxGrants => {
+		const grants = grantsToRuntime(persistentPermissions);
 		return {
 			read: grants.read,
 			write: grants.write,
@@ -193,155 +179,129 @@ export default function (pi: ExtensionAPI) {
 		};
 	};
 
-	pi.registerTool({
-		name: "request_io_permission",
-		label: "Request IO permission",
-		description:
-			"Ask the user for one IO right. Request a file or folder read/write right, public web access, or local network access. A local_port request opens every localhost port and may reach private or link-local targets because Codex cannot limit it to one destination port. Do not request permission for a command, executable, interpreter, or script. Most system reads, workspace writes, and temp writes are already allowed.",
-		promptSnippet:
-			"Use request_io_permission only for an IO right outside the current sandbox.",
-		parameters: PermissionParams,
-		executionMode: "sequential",
-		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
-			if (sandboxState.kind !== "ready") {
-				return {
-					content: [{ type: "text", text: "The sandbox is not ready, so no right was granted." }],
-					details: { granted: false, reason: "sandbox-not-ready" },
-					isError: true,
-				};
-			}
-			let permission: IoPermission;
-			try {
-				permission = normalizePermission(params, ctx.cwd);
-			} catch (error) {
-				return {
-					content: [
-						{ type: "text", text: error instanceof Error ? error.message : String(error) },
-					],
-					details: { granted: false, reason: "invalid-request" },
-					isError: true,
-				};
-			}
-			if (
-				permission.kind === "write" &&
-				isDefaultWritePath(permission.path, ctx.cwd) &&
-				!isDeniedByConfig(permission.path, "write", sandboxState.config, ctx.cwd)
-			) {
-				return {
-					content: [{ type: "text", text: "That path is already writable." }],
-					details: { granted: true, existing: true },
-				};
-			}
-			if (
-				permission.kind === "read" &&
-				isBaseReadAllowed(permission.path, sandboxState.config, ctx.cwd) &&
-				!isDeniedByConfig(permission.path, "read", sandboxState.config, ctx.cwd)
-			) {
-				return {
-					content: [{ type: "text", text: "That path is already readable." }],
-					details: { granted: true, existing: true },
-				};
-			}
-			if (permission.kind === "web" && sandboxState.config.network?.enabled === false) {
-				return {
-					content: [{ type: "text", text: "Web access is disabled by the sandbox policy." }],
-					details: { granted: false, reason: "web-disabled" },
-					isError: true,
-				};
-			}
-			if (
-				permission.kind === "local_network" &&
-				sandboxState.config.network?.enabled === false
-			) {
-				return {
-					content: [
-						{
-							type: "text",
-							text: "Local, private, and link-local network access is disabled by the sandbox policy.",
-						},
-					],
-					details: { granted: false, reason: "network-disabled" },
-					isError: true,
-				};
-			}
-			if (
-				permission.kind === "local_network" &&
-				((sandboxState.config.network?.allowLocalNetwork ?? false) ||
-					[...persistentPermissions, ...oneShotPermissions].some(
-						(entry) => entry.kind === "local_network",
-					))
-			) {
-				return {
-					content: [
-						{
-							type: "text",
-							text: "Localhost, private-network, and link-local access is already granted.",
-						},
-					],
-					details: { granted: true, existing: true },
-				};
-			}
-			if (!ctx.hasUI) {
-				return {
-					content: [{ type: "text", text: "The user cannot approve IO rights in this mode." }],
-					details: { granted: false, reason: "no-ui" },
-					isError: true,
-				};
-			}
+	const promptForToolPermission = async (
+		permission: IoPermission,
+		tool: { toolName: string; toolCallId: string },
+		ctx: ExtensionContext,
+	): Promise<ApprovalDecision> => {
+		const label = permissionLabel(permission);
+		if (!ctx.hasUI) {
+			return { allowed: false, persistent: false, reason: `${label} needs user approval` };
+		}
 
-			const label =
-				params.kind === "local_port"
-					? `${permissionLabel(permission)} (requested port ${params.port})`
-					: permissionLabel(permission);
-			pi.events.emit("approval:requested", {
-				kind: "io-permission",
-				title: "Agent requests an IO right",
-				summary: `${label}\nReason: ${params.reason}`,
-				toolName: "request_io_permission",
-				toolCallId,
-				sessionId: ctx.sessionManager.getSessionId(),
-				cwd: ctx.cwd,
-			});
-			const selection = await ctx.ui.select(
-				`Allow ${label}?\n\nReason: ${params.reason}`,
-				["Allow once", "Always allow in this workspace", "No", "No, with comment"],
-			);
-			let comment: string | undefined;
-			if (selection === "No, with comment") {
-				comment = await ctx.ui.input("Tell the agent what to do instead", "Short note");
-			}
-			const allow = selection === "Allow once" || selection === "Always allow in this workspace";
-			if (selection === "Allow once") {
-				oneShotPermissions.push(permission);
-			}
-			if (selection === "Always allow in this workspace") {
-				saveWorkspacePermission(permissionFile, ctx.cwd, permission);
-				persistentPermissions = loadWorkspacePermissions(permissionFile, ctx.cwd);
-			}
-			pi.events.emit("approval:resolved", {
-				kind: "io-permission",
-				toolName: "request_io_permission",
-				toolCallId,
-				decision: allow ? "allowed" : "denied",
-			});
+		pi.events.emit("approval:requested", {
+			kind: "io-permission",
+			title: "Tool requests an IO right",
+			summary: `${tool.toolName} requests ${label}`,
+			toolName: tool.toolName,
+			toolCallId: tool.toolCallId,
+			sessionId: ctx.sessionManager.getSessionId(),
+			cwd: ctx.cwd,
+		});
+		const allowOnce = tool.toolName === "bash" ? "Allow once and retry" : "Allow once";
+		const allowAlways =
+			tool.toolName === "bash"
+				? "Always allow in this workspace and retry"
+				: "Always allow in this workspace";
+		const selection = await ctx.ui.select(
+			`Allow ${tool.toolName} to access ${label}?`,
+			[allowOnce, allowAlways, "No", "No, with comment"],
+		);
+		let comment: string | undefined;
+		if (selection === "No, with comment") {
+			comment = await ctx.ui.input("Tell the agent what to do instead", "Short note");
+		}
+		const allow = selection === allowOnce || selection === allowAlways;
+		if (selection === allowAlways) {
+			saveWorkspacePermission(permissionFile, ctx.cwd, permission);
+			persistentPermissions = loadWorkspacePermissions(permissionFile, ctx.cwd);
+		}
+		pi.events.emit("approval:resolved", {
+			kind: "io-permission",
+			toolName: tool.toolName,
+			toolCallId: tool.toolCallId,
+			decision: allow ? "allowed" : "denied",
+		});
+		if (allow) {
 			return {
-				content: [
-					{
-						type: "text",
-						text: allow
-							? `${label} granted ${selection === "Allow once" ? "once" : "for this workspace"}.`
-							: comment
-								? `Permission denied. User comment: ${comment}`
-								: "Permission denied.",
-					},
-				],
-				details: {
-					granted: allow,
-					scope: selection === "Allow once" ? "once" : selection === "Always allow in this workspace" ? "workspace" : "none",
-					comment,
-				},
-				isError: !allow,
+				allowed: true,
+				persistent: selection === allowAlways,
 			};
+		}
+		return {
+			allowed: false,
+			persistent: false,
+			reason: comment ? `Permission denied. User comment: ${comment}` : "Permission denied by user",
+		};
+	};
+
+	const createApprovingSandboxOps = (
+		config: CodexSandboxConfig,
+		initialGrants: CodexSandboxGrants,
+		tool: { toolName: string; toolCallId: string },
+		ctx: ExtensionContext,
+	): BashOperations => ({
+		async exec(command, cwd, options) {
+			const grants: CodexSandboxGrants = {
+				read: [...(initialGrants.read ?? [])],
+				write: [...(initialGrants.write ?? [])],
+				web: initialGrants.web,
+				localNetwork: initialGrants.localNetwork,
+			};
+			let lastResult: { exitCode: number | null } = { exitCode: 1 };
+
+			for (let attempt = 0; attempt < 4; attempt++) {
+				const chunks: Buffer[] = [];
+				let displayPending = "";
+				let suppressDenialLog = false;
+				lastResult = await createCodexSandboxOps(config, grants).exec(command, cwd, {
+					...options,
+					onData(data) {
+						chunks.push(data);
+						displayPending += data.toString("utf8");
+						let newline = displayPending.indexOf("\n");
+						while (newline >= 0) {
+							const line = displayPending.slice(0, newline + 1);
+							displayPending = displayPending.slice(newline + 1);
+							if (line.trim() === "=== Sandbox denials ===") suppressDenialLog = true;
+							if (!suppressDenialLog) options.onData(Buffer.from(line));
+							newline = displayPending.indexOf("\n");
+						}
+					},
+				});
+				if (!suppressDenialLog && displayPending) {
+					options.onData(Buffer.from(displayPending));
+				}
+				if (lastResult.exitCode === 0 || options.signal?.aborted) return lastResult;
+
+				const denials = parseFilesystemDenials(Buffer.concat(chunks).toString("utf8"));
+				if (denials.length === 0) return lastResult;
+				const permissions: FilePermission[] = [];
+				for (const denial of denials) {
+					const path = resolvePermissionPath(denial.path, cwd);
+					if (
+						isProtectedPath(path) ||
+						(denial.access === "write" && isProtectedWritePath(path)) ||
+						isDeniedByConfig(path, denial.access, config, cwd)
+					) {
+						return lastResult;
+					}
+					permissions.push({
+						kind: denial.access,
+						path,
+						directory: existsSync(path) && statSync(path).isDirectory(),
+					});
+				}
+
+				for (const permission of permissions) {
+					const decision = await promptForToolPermission(permission, tool, ctx);
+					if (!decision.allowed) return lastResult;
+					const paths = permission.kind === "read" ? grants.read! : grants.write!;
+					if (!paths.includes(permission.path)) paths.push(permission.path);
+				}
+				options.onData(Buffer.from("\n[Retrying command with approved IO rights]\n"));
+			}
+			return lastResult;
 		},
 	});
 
@@ -349,7 +309,7 @@ export default function (pi: ExtensionAPI) {
 		...localBash,
 		label: "bash (Codex sandbox)",
 		renderShell: "self",
-		async execute(id, params, signal, onUpdate) {
+		async execute(id, params, signal, onUpdate, ctx) {
 			if (sandboxState.kind === "disabled") {
 				return localBash.execute(id, params, signal, onUpdate);
 			}
@@ -360,16 +320,20 @@ export default function (pi: ExtensionAPI) {
 						: "Sandbox is still initializing; command blocked",
 				);
 			}
-			const grants = runtimeGrants(true);
-			oneShotPermissions = [];
+			const grants = runtimeGrants();
 			return createBashTool(localCwd, {
-				operations: createCodexSandboxOps(sandboxState.config, grants),
+				operations: createApprovingSandboxOps(
+					sandboxState.config,
+					grants,
+					{ toolName: "bash", toolCallId: id },
+					ctx,
+				),
 			}).execute(id, params, signal, onUpdate);
 		},
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
-		if (event.toolName === "bash" || event.toolName === "request_io_permission") return;
+		if (event.toolName === "bash") return;
 		if (event.toolName === "mcp_enable") {
 			const permission = mcpPermissionFromInput(event.input);
 			if (!permission) {
@@ -450,26 +414,23 @@ export default function (pi: ExtensionAPI) {
 		) {
 			return { block: true, reason: `Protected or denied ${access} path: ${path}` };
 		}
-		const permissions = [...persistentPermissions, ...oneShotPermissions];
-		const matchingIndex = permissions.findIndex(
-			(permission) =>
-				permission.kind === access && permissionCoversPath(permission, path),
-		);
 		const allowed =
-			matchingIndex >= 0 ||
+			persistentPermissions.some(
+				(permission) =>
+					permission.kind === access && permissionCoversPath(permission, path),
+			) ||
 			(access === "read"
 				? isBaseReadAllowed(path, activeConfig(sandboxState), ctx.cwd)
 				: isBaseWriteAllowed(path, activeConfig(sandboxState), ctx.cwd));
 		if (!allowed) {
-			return {
-				block: true,
-				reason:
-					`${access} access is outside the current IO rights: ${path}. ` +
-					"Request the exact file or folder with request_io_permission.",
+			const permission: IoPermission = {
+				kind: access,
+				path,
+				directory:
+					event.toolName === "ls" || (existsSync(path) && statSync(path).isDirectory()),
 			};
-		}
-		if (matchingIndex >= persistentPermissions.length) {
-			oneShotPermissions.splice(matchingIndex - persistentPermissions.length, 1);
+			const decision = await promptForToolPermission(permission, event, ctx);
+			if (!decision.allowed) return { block: true, reason: decision.reason };
 		}
 		if ("path" in event.input && typeof event.input.path === "string") {
 			event.input.path = path;
@@ -479,7 +440,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("user_bash", () => {
 		if (sandboxState.kind === "disabled") return;
 		if (sandboxState.kind === "ready") {
-			return { operations: createCodexSandboxOps(sandboxState.config, runtimeGrants(false)) };
+			return { operations: createCodexSandboxOps(sandboxState.config, runtimeGrants()) };
 		}
 		return {
 			operations: unavailableBashOps(
@@ -491,7 +452,6 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
-		oneShotPermissions = [];
 		persistentPermissions = loadWorkspacePermissions(permissionFile, ctx.cwd);
 		if (pi.getFlag("no-sandbox") as boolean) {
 			sandboxState = { kind: "disabled", reason: "disabled via --no-sandbox" };
@@ -526,7 +486,6 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", () => {
-		oneShotPermissions = [];
 		persistentPermissions = [];
 		sandboxState = { kind: "initializing" };
 	});

@@ -23,13 +23,14 @@ function overrides(args: string[]): string[] {
 test("builds a direct codex sandbox command with an explicit profile and cwd", () => {
 	const args = buildCodexSandboxArgs("/repo", DEFAULT_CONFIG, "printf '%s' hello");
 	const profile = `pi-sandbox-${process.pid}`;
-	assert.deepEqual(args.slice(-10), [
+	assert.deepEqual(args.slice(-11), [
 		"sandbox",
 		"--permission-profile",
 		profile,
 		"--cd",
 		"/repo",
 		"--include-managed-config",
+		"--log-denials",
 		"--",
 		"bash",
 		"-c",

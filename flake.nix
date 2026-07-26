@@ -45,7 +45,8 @@
             node --test \
               ${self}/extensions/sandbox/codex-command.test.ts \
               ${self}/extensions/sandbox/io-permissions.test.ts \
-              ${self}/extensions/sandbox/io-policy.test.ts
+              ${self}/extensions/sandbox/io-policy.test.ts \
+              ${self}/extensions/sandbox/sandbox-denials.test.ts
             touch "$out"
           '';
 
