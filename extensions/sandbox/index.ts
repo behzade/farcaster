@@ -348,6 +348,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		...localBash,
 		label: "bash (Codex sandbox)",
+		renderShell: "self",
 		async execute(id, params, signal, onUpdate) {
 			if (sandboxState.kind === "disabled") {
 				return localBash.execute(id, params, signal, onUpdate);

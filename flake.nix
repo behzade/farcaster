@@ -48,7 +48,9 @@
           '';
 
           governance = pkgs.runCommand "pi-governance-tests" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
-            node --test ${self}/tests/governance.test.ts
+            node --test \
+              ${self}/tests/governance.test.ts \
+              ${self}/tests/theme-and-rendering.test.ts
             touch "$out"
           '';
         }

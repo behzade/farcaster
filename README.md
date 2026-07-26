@@ -11,7 +11,11 @@ hosts, and notification settings. This repo owns code and package pins.
 
 - `extensions/sandbox`: fail-closed `codex sandbox` adapter and IO permission
   prompt.
-- `extensions/*.ts`: local notification, input, session, and title hooks.
+- `extensions/*.ts`: local notification, input, session, title, and dense tool
+  rendering hooks.
+- `themes/gruvbox-dark-hard.json`: Gruvbox's canonical dark-hard palette for
+  Pi. The palette values come from
+  [morhetz/gruvbox](https://github.com/morhetz/gruvbox/blob/master/colors/gruvbox.vim).
 - `skills/background-jobs`: non-blocking shell job control.
 - `nix`: pinned package builds for the sandbox, subagents, and server
   compaction.
@@ -34,7 +38,17 @@ nix build .#openai-server-compaction
 ```
 
 `nix-config` consumes this repo as a flake input and deploys the source and
-built packages through Home Manager.
+built packages through Home Manager. It must link `extensions/dense-tools.ts`
+to Pi's extension directory, link `themes/gruvbox-dark-hard.json` to Pi's theme
+directory, and set Pi's theme to `gruvbox-dark-hard`.
+
+## Dense tool display
+
+`extensions/dense-tools.ts` removes the padded shell from the built-in file
+tools. It combines each run of adjacent `read` calls into one display block;
+Ctrl+O still expands the grouped file contents. The sandbox remains the only
+owner of `bash` and applies the same dense shell to its bash tool, so the two
+extensions do not conflict.
 
 ## Sandbox backend
 

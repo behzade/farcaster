@@ -1,0 +1,73 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+const themePath = new URL("../themes/gruvbox-dark-hard.json", import.meta.url);
+const denseToolsPath = new URL("../extensions/dense-tools.ts", import.meta.url);
+const sandboxPath = new URL("../extensions/sandbox/index.ts", import.meta.url);
+
+const requiredColors = [
+  "accent", "border", "borderAccent", "borderMuted", "success", "error", "warning",
+  "muted", "dim", "text", "thinkingText", "selectedBg", "userMessageBg",
+  "userMessageText", "customMessageBg", "customMessageText", "customMessageLabel",
+  "toolPendingBg", "toolSuccessBg", "toolErrorBg", "toolTitle", "toolOutput",
+  "mdHeading", "mdLink", "mdLinkUrl", "mdCode", "mdCodeBlock", "mdCodeBlockBorder",
+  "mdQuote", "mdQuoteBorder", "mdHr", "mdListBullet", "toolDiffAdded",
+  "toolDiffRemoved", "toolDiffContext", "syntaxComment", "syntaxKeyword",
+  "syntaxFunction", "syntaxVariable", "syntaxString", "syntaxNumber", "syntaxType",
+  "syntaxOperator", "syntaxPunctuation", "thinkingOff", "thinkingMinimal", "thinkingLow",
+  "thinkingMedium", "thinkingHigh", "thinkingXhigh", "thinkingMax", "bashMode",
+] as const;
+
+const canonicalPalette = {
+  bg0Hard: "#1d2021",
+  bg0: "#282828",
+  bg1: "#3c3836",
+  bg2: "#504945",
+  bg3: "#665c54",
+  bg4: "#7c6f64",
+  gray: "#928374",
+  fg4: "#a89984",
+  fg3: "#bdae93",
+  fg2: "#d5c4a1",
+  fg1: "#ebdbb2",
+  fg0: "#fbf1c7",
+  red: "#cc241d",
+  green: "#98971a",
+  yellow: "#d79921",
+  blue: "#458588",
+  purple: "#b16286",
+  aqua: "#689d6a",
+  orange: "#d65d0e",
+  brightRed: "#fb4934",
+  brightGreen: "#b8bb26",
+  brightYellow: "#fabd2f",
+  brightBlue: "#83a598",
+  brightPurple: "#d3869b",
+  brightAqua: "#8ec07c",
+  brightOrange: "#fe8019",
+};
+
+test("Gruvbox dark hard uses the canonical palette and every Pi color", async () => {
+  const theme = JSON.parse(await readFile(themePath, "utf8"));
+  assert.equal(theme.name, "gruvbox-dark-hard");
+  assert.deepEqual(theme.vars, canonicalPalette);
+  for (const color of requiredColors) assert.ok(color in theme.colors, `missing ${color}`);
+  assert.equal(theme.export.pageBg, canonicalPalette.bg0Hard);
+});
+
+test("dense tools leave bash to the sandbox", async () => {
+  const denseTools = await readFile(denseToolsPath, "utf8");
+  const sandbox = await readFile(sandboxPath, "utf8");
+  assert.doesNotMatch(denseTools, /createBashTool|name:\s*["']bash["']/);
+  assert.match(sandbox, /renderShell:\s*["']self["']/);
+});
+
+test("dense reads keep group state and hide follower rows", async () => {
+  const source = await readFile(denseToolsPath, "utf8");
+  assert.match(source, /readGroupsById/);
+  assert.match(source, /group\.entries\[0\] !== entry/);
+  assert.match(source, /return new Container\(\)/);
+  assert.match(source, /tool_execution_start/);
+  assert.match(source, /message_end/);
+});
