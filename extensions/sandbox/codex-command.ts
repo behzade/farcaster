@@ -64,7 +64,6 @@ export const DEFAULT_CONFIG: Required<Pick<CodexSandboxConfig, "enabled" | "code
 			"~/.gnupg",
 			"/**/.env",
 			"/**/.env.*",
-			"/**/*.pem",
 			"/**/*.key",
 		],
 		allowWrite: [".", ":tmpdir", ":slash_tmp"],

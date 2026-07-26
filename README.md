@@ -46,8 +46,8 @@ failed Codex check blocks shell commands.
 The default rights are:
 
 - read most of the system;
-- deny reads and writes for `.env` files, key files, `.ssh`, `.aws`, and
-  `.gnupg`;
+- deny reads and writes for `.env` and `.key` files and for `.ssh`, `.aws`,
+  and `.gnupg`; keep PEM certificate bundles readable but read-only;
 - keep `~/.pi/agent` and `~/.codex` read-only so a grant cannot change its own
   policy;
 - write the workspace, `/tmp`, and the system temp folder;

@@ -141,7 +141,6 @@ test("a trusted project can only tighten global policy", () => {
 		"~/.gnupg",
 		"/**/.env",
 		"/**/.env.*",
-		"/**/*.pem",
 		"/**/*.key",
 		"/secret",
 	]);
