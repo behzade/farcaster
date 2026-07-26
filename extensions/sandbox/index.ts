@@ -1,261 +1,157 @@
 /**
- * Sandbox Extension - OS-level sandboxing for bash commands
+ * Pi sandbox and explicit IO permission broker.
  *
- * Uses @anthropic-ai/sandbox-runtime to enforce filesystem and network
- * restrictions on bash commands at the OS level (sandbox-exec on macOS,
- * bubblewrap on Linux).
- *
- * Note: this example intentionally overrides the built-in `bash` tool to show
- * how built-in tools can be replaced. Alternatively, you could sandbox `bash`
- * via `tool_call` input mutation without replacing the tool.
- *
- * Config files:
- * - ~/.pi/agent/extensions/sandbox.json (global)
- * - <cwd>/.pi/sandbox.json (trusted project-local restrictions only)
- *
- * Example .pi/sandbox.json:
- * ```json
- * {
- *   "enabled": true,
- *   "network": {
- *     "allowedDomains": ["github.com", "*.github.com"],
- *     "deniedDomains": []
- *   },
- *   "filesystem": {
- *     "denyRead": ["~/.ssh", "~/.aws"],
- *     "allowWrite": [".", "/tmp"],
- *     "denyWrite": [".env"]
- *   }
- * }
- * ```
- *
- * Usage:
- * - `pi -e ./sandbox` - sandbox enabled with default/config settings
- * - `pi -e ./sandbox --no-sandbox` - disable sandboxing
- * - `/sandbox` - show current sandbox configuration
- *
- * Setup:
- * 1. Copy sandbox/ directory to ~/.pi/agent/extensions/
- * 2. Run `npm install` in ~/.pi/agent/extensions/sandbox/
- *
- * Linux also requires: bubblewrap, socat, ripgrep
+ * Commands may use any interpreter or child process. Codex applies the same
+ * filesystem and network profile to the whole process tree. The model may ask
+ * for a concrete IO right, but it may not ask to bypass the sandbox.
  */
 
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { SandboxManager, type SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { type BashOperations, CONFIG_DIR_NAME, createBashTool, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { resolve } from "node:path";
+import type { ExtensionAPI, ToolCallEvent } from "@earendil-works/pi-coding-agent";
+import {
+	type BashOperations,
+	CONFIG_DIR_NAME,
+	createBashTool,
+	getAgentDir,
+} from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+import {
+	DEFAULT_CONFIG,
+	applyProjectRestrictions,
+	buildCodexSandboxArgs,
+	type CodexSandboxConfig,
+	type CodexSandboxGrants,
+	mergeGlobalConfig,
+	normalizeConfig,
+} from "./codex-command.ts";
+import {
+	grantsToRuntime,
+	type IoPermission,
+	isDefaultWritePath,
+	isProtectedPath,
+	isProtectedWritePath,
+	loadWorkspacePermissions,
+	mcpPermissionFromInput,
+	normalizePermission,
+	permissionCoversPath,
+	permissionLabel,
+	resolvePermissionPath,
+	saveWorkspacePermission,
+} from "./io-permissions.ts";
+import {
+	isBaseReadAllowed,
+	isBaseWriteAllowed,
+	isDeniedByConfig,
+} from "./io-policy.ts";
 
-interface SandboxConfig extends SandboxRuntimeConfig {
-	enabled?: boolean;
+const PermissionParams = Type.Union([
+	Type.Object({
+		kind: Type.Union([Type.Literal("read"), Type.Literal("write")]),
+		path: Type.String({ description: "Exact file or folder path" }),
+		targetType: Type.Optional(
+			Type.Union([Type.Literal("file"), Type.Literal("folder")]),
+		),
+		reason: Type.String({ description: "Why this IO right is needed" }),
+	}),
+	Type.Object({
+		kind: Type.Literal("web"),
+		reason: Type.String({ description: "Why public web access is needed" }),
+	}),
+	Type.Object({
+		kind: Type.Literal("local_port"),
+		port: Type.Integer({ minimum: 1, maximum: 65535 }),
+		reason: Type.String({ description: "Why this local port is needed" }),
+	}),
+]);
+
+function readConfig(path: string): CodexSandboxConfig | undefined {
+	if (!existsSync(path)) return undefined;
+	const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+	return normalizeConfig(parsed);
 }
 
-const DEFAULT_CONFIG: SandboxConfig = {
-	enabled: true,
-	network: {
-		allowedDomains: [
-			"npmjs.org",
-			"*.npmjs.org",
-			"registry.npmjs.org",
-			"registry.yarnpkg.com",
-			"pypi.org",
-			"*.pypi.org",
-			"github.com",
-			"*.github.com",
-			"api.github.com",
-			"raw.githubusercontent.com",
-			"opencode.ai",
-			"*.opencode.ai",
-			"models.dev",
-		],
-		deniedDomains: [],
-	},
-	filesystem: {
-		denyRead: ["~/.ssh", "~/.aws", "~/.gnupg"],
-		allowWrite: [".", "/tmp"],
-		denyWrite: [".env", ".env.*", "*.pem", "*.key"],
-	},
-};
-
-function loadConfig(cwd: string, projectTrusted: boolean): SandboxConfig {
-	const projectConfigPath = join(cwd, CONFIG_DIR_NAME, "sandbox.json");
-	const globalConfigPath = join(getAgentDir(), "extensions", "sandbox.json");
-
-	let globalConfig: Partial<SandboxConfig> = {};
-	let projectConfig: Partial<SandboxConfig> = {};
-
-	if (existsSync(globalConfigPath)) {
-		try {
-			globalConfig = JSON.parse(readFileSync(globalConfigPath, "utf-8"));
-		} catch (e) {
-			console.error(`Warning: Could not parse ${globalConfigPath}: ${e}`);
-		}
-	}
-
-	if (projectTrusted && existsSync(projectConfigPath)) {
-		try {
-			projectConfig = JSON.parse(readFileSync(projectConfigPath, "utf-8"));
-		} catch (e) {
-			console.error(`Warning: Could not parse ${projectConfigPath}: ${e}`);
-		}
-	}
-
-	return applyProjectRestrictions(deepMerge(DEFAULT_CONFIG, globalConfig), projectConfig);
+function loadConfig(cwd: string, projectTrusted: boolean): CodexSandboxConfig {
+	const globalPath = resolve(getAgentDir(), "extensions", "sandbox.json");
+	const projectPath = resolve(cwd, CONFIG_DIR_NAME, "sandbox.json");
+	const global = readConfig(globalPath) ?? {};
+	const base = mergeGlobalConfig(DEFAULT_CONFIG, global);
+	if (!projectTrusted) return base;
+	return applyProjectRestrictions(base, readConfig(projectPath) ?? {});
 }
 
-function applyProjectRestrictions(base: SandboxConfig, project: Partial<SandboxConfig>): SandboxConfig {
-	const result = deepMerge(base, {});
-	if (project.allowPty === false) result.allowPty = false;
-	if (project.network?.deniedDomains) {
-		result.network = {
-			...result.network,
-			deniedDomains: unique([
-				...(result.network?.deniedDomains ?? []),
-				...project.network.deniedDomains,
-			]),
-		};
-	}
-	if (project.filesystem?.denyRead || project.filesystem?.denyWrite) {
-		result.filesystem = {
-			...result.filesystem,
-			denyRead: unique([
-				...(result.filesystem?.denyRead ?? []),
-				...(project.filesystem.denyRead ?? []),
-			]),
-			denyWrite: unique([
-				...(result.filesystem?.denyWrite ?? []),
-				...(project.filesystem.denyWrite ?? []),
-			]),
-		};
-	}
-	const projectExt = project as { enableWeakerNestedSandbox?: boolean };
-	if (projectExt.enableWeakerNestedSandbox === false) {
-		(result as { enableWeakerNestedSandbox?: boolean }).enableWeakerNestedSandbox = false;
-	}
-	return result;
+function checkCodex(command: string): Promise<void> {
+	return new Promise((resolveCheck, reject) => {
+		const child = spawn(command, ["sandbox", "--help"], { stdio: "ignore" });
+		child.once("error", reject);
+		child.once("close", (code) => {
+			if (code === 0) resolveCheck();
+			else reject(
+				new Error(`${command} sandbox --help exited with status ${code ?? "unknown"}`),
+			);
+		});
+	});
 }
 
-function unique(values: string[]): string[] {
-	return [...new Set(values)];
-}
-
-function deepMerge(base: SandboxConfig, overrides: Partial<SandboxConfig>): SandboxConfig {
-	const result: SandboxConfig = { ...base };
-
-	if (overrides.enabled !== undefined) result.enabled = overrides.enabled;
-	if (overrides.allowPty !== undefined) result.allowPty = overrides.allowPty;
-	if (overrides.network) {
-		result.network = { ...base.network, ...overrides.network };
-	}
-	if (overrides.filesystem) {
-		result.filesystem = { ...base.filesystem, ...overrides.filesystem };
-	}
-
-	const extOverrides = overrides as {
-		ignoreViolations?: Record<string, string[]>;
-		enableWeakerNestedSandbox?: boolean;
-	};
-	const extResult = result as { ignoreViolations?: Record<string, string[]>; enableWeakerNestedSandbox?: boolean };
-
-	if (extOverrides.ignoreViolations) {
-		extResult.ignoreViolations = extOverrides.ignoreViolations;
-	}
-	if (extOverrides.enableWeakerNestedSandbox !== undefined) {
-		extResult.enableWeakerNestedSandbox = extOverrides.enableWeakerNestedSandbox;
-	}
-
-	return result;
-}
-
-function createSandboxedBashOps(baseAllowWrite: string[], extraAllowWrite: string[] = []): BashOperations {
+function createCodexSandboxOps(
+	config: CodexSandboxConfig,
+	grants: CodexSandboxGrants,
+): BashOperations {
 	return {
 		async exec(command, cwd, { onData, signal, timeout }) {
-			if (!existsSync(cwd)) {
-				throw new Error(`Working directory does not exist: ${cwd}`);
-			}
+			if (!existsSync(cwd)) throw new Error(`Working directory does not exist: ${cwd}`);
+			const args = buildCodexSandboxArgs(cwd, config, command, grants);
+			const codexCommand = config.codexCommand ?? DEFAULT_CONFIG.codexCommand;
 
-			const allowWrite = unique([...baseAllowWrite, ...extraAllowWrite]);
-			const customConfig = allowWrite.length
-				? ({
-						filesystem: { allowWrite },
-					} as Partial<SandboxRuntimeConfig>)
-				: undefined;
-			const wrappedCommand = await SandboxManager.wrapWithSandbox(
-				command,
-				undefined,
-				customConfig,
-				signal,
-			);
-
-			return new Promise((resolve, reject) => {
-				const child = spawn("bash", ["-c", wrappedCommand], {
+			return new Promise((resolveExec, reject) => {
+				const child = spawn(codexCommand, args, {
 					cwd,
 					detached: true,
 					env: {
 						...process.env,
 						IN_SANDBOX: "1",
-						PI_SANDBOX: process.platform === "darwin" ? "seatbelt" : "bubblewrap",
-						PI_SANDBOX_NETWORK_RESTRICTED: "1",
+						PI_SANDBOX: "codex",
 					},
 					stdio: ["ignore", "pipe", "pipe"],
 				});
-
 				let timedOut = false;
-				let timeoutHandle: NodeJS.Timeout | undefined;
-
+				let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+				const kill = () => {
+					if (!child.pid) return;
+					try {
+						process.kill(-child.pid, "SIGKILL");
+					} catch {
+						child.kill("SIGKILL");
+					}
+				};
 				if (timeout !== undefined && timeout > 0) {
 					timeoutHandle = setTimeout(() => {
 						timedOut = true;
-						if (child.pid) {
-							try {
-								process.kill(-child.pid, "SIGKILL");
-							} catch {
-								child.kill("SIGKILL");
-							}
-						}
+						kill();
 					}, timeout * 1000);
 				}
-
 				child.stdout?.on("data", onData);
 				child.stderr?.on("data", onData);
-
-				child.on("error", (err) => {
+				child.once("error", (error) => {
 					if (timeoutHandle) clearTimeout(timeoutHandle);
-					reject(err);
+					signal?.removeEventListener("abort", kill);
+					reject(error);
 				});
-
-				const onAbort = () => {
-					if (child.pid) {
-						try {
-							process.kill(-child.pid, "SIGKILL");
-						} catch {
-							child.kill("SIGKILL");
-						}
-					}
-				};
-
-				signal?.addEventListener("abort", onAbort, { once: true });
-
-				child.on("close", (code) => {
+				signal?.addEventListener("abort", kill, { once: true });
+				child.once("close", (code) => {
 					if (timeoutHandle) clearTimeout(timeoutHandle);
-					signal?.removeEventListener("abort", onAbort);
-
-					if (signal?.aborted) {
-						reject(new Error("aborted"));
-					} else if (timedOut) {
-						reject(new Error(`timeout:${timeout}`));
-					} else {
-						resolve({ exitCode: code });
-					}
+					signal?.removeEventListener("abort", kill);
+					if (signal?.aborted) reject(new Error("aborted"));
+					else if (timedOut) reject(new Error(`timeout:${timeout}`));
+					else resolveExec({ exitCode: code ?? 1 });
 				});
 			});
 		},
 	};
 }
 
-function createUnavailableBashOps(reason: string): BashOperations {
+function unavailableBashOps(reason: string): BashOperations {
 	return {
 		async exec() {
 			throw new Error(reason);
@@ -266,7 +162,7 @@ function createUnavailableBashOps(reason: string): BashOperations {
 type SandboxState =
 	| { kind: "disabled"; reason: string }
 	| { kind: "initializing" }
-	| { kind: "ready"; config: SandboxConfig }
+	| { kind: "ready"; config: CodexSandboxConfig }
 	| { kind: "failed"; reason: string };
 
 export default function (pi: ExtensionAPI) {
@@ -278,28 +174,180 @@ export default function (pi: ExtensionAPI) {
 
 	const localCwd = process.cwd();
 	const localBash = createBashTool(localCwd);
-
+	const permissionFile = resolve(getAgentDir(), "io-permissions.json");
 	let sandboxState: SandboxState = { kind: "initializing" };
-	const oneShotWriteGrants = new Map<string, string[]>();
-	let unsubscribeGuardian: (() => void) | undefined;
+	let persistentPermissions: IoPermission[] = [];
+	let oneShotPermissions: IoPermission[] = [];
 
-	const subscribeGuardian = () => {
-		unsubscribeGuardian?.();
-		unsubscribeGuardian = pi.events.on("guardian:sandbox-allow-once", (data: unknown) => {
-			if (!data || typeof data !== "object") return;
-			const grant = data as { toolCallId?: unknown; allowWrite?: unknown };
-			if (typeof grant.toolCallId !== "string" || !Array.isArray(grant.allowWrite)) return;
-			const paths = grant.allowWrite.filter(
-				(path): path is string => typeof path === "string" && path.length > 0,
-			);
-			if (paths.length > 0) oneShotWriteGrants.set(grant.toolCallId, paths);
-		});
+	const runtimeGrants = (includeOneShot: boolean): CodexSandboxGrants => {
+		const permissions = includeOneShot
+			? [...persistentPermissions, ...oneShotPermissions]
+			: persistentPermissions;
+		const grants = grantsToRuntime(permissions);
+		return {
+			read: grants.read,
+			write: grants.write,
+			web: grants.web,
+			localNetwork: grants.localNetwork,
+		};
 	};
 
 	pi.registerTool({
+		name: "request_io_permission",
+		label: "Request IO permission",
+		description:
+			"Ask the user for one IO right. Request a file or folder read/write right, public web access, or local network access. A local_port request opens every localhost port and may reach private or link-local targets because Codex cannot limit it to one destination port. Do not request permission for a command, executable, interpreter, or script. Most system reads, workspace writes, and temp writes are already allowed.",
+		promptSnippet:
+			"Use request_io_permission only for an IO right outside the current sandbox.",
+		parameters: PermissionParams,
+		executionMode: "sequential",
+		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+			if (sandboxState.kind !== "ready") {
+				return {
+					content: [{ type: "text", text: "The sandbox is not ready, so no right was granted." }],
+					details: { granted: false, reason: "sandbox-not-ready" },
+					isError: true,
+				};
+			}
+			let permission: IoPermission;
+			try {
+				permission = normalizePermission(params, ctx.cwd);
+			} catch (error) {
+				return {
+					content: [
+						{ type: "text", text: error instanceof Error ? error.message : String(error) },
+					],
+					details: { granted: false, reason: "invalid-request" },
+					isError: true,
+				};
+			}
+			if (
+				permission.kind === "write" &&
+				isDefaultWritePath(permission.path, ctx.cwd) &&
+				!isDeniedByConfig(permission.path, "write", sandboxState.config, ctx.cwd)
+			) {
+				return {
+					content: [{ type: "text", text: "That path is already writable." }],
+					details: { granted: true, existing: true },
+				};
+			}
+			if (
+				permission.kind === "read" &&
+				isBaseReadAllowed(permission.path, sandboxState.config, ctx.cwd) &&
+				!isDeniedByConfig(permission.path, "read", sandboxState.config, ctx.cwd)
+			) {
+				return {
+					content: [{ type: "text", text: "That path is already readable." }],
+					details: { granted: true, existing: true },
+				};
+			}
+			if (permission.kind === "web" && sandboxState.config.network?.enabled === false) {
+				return {
+					content: [{ type: "text", text: "Web access is disabled by the sandbox policy." }],
+					details: { granted: false, reason: "web-disabled" },
+					isError: true,
+				};
+			}
+			if (
+				permission.kind === "local_network" &&
+				sandboxState.config.network?.enabled === false
+			) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: "Local, private, and link-local network access is disabled by the sandbox policy.",
+						},
+					],
+					details: { granted: false, reason: "network-disabled" },
+					isError: true,
+				};
+			}
+			if (
+				permission.kind === "local_network" &&
+				((sandboxState.config.network?.allowLocalNetwork ?? false) ||
+					[...persistentPermissions, ...oneShotPermissions].some(
+						(entry) => entry.kind === "local_network",
+					))
+			) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: "Localhost, private-network, and link-local access is already granted.",
+						},
+					],
+					details: { granted: true, existing: true },
+				};
+			}
+			if (!ctx.hasUI) {
+				return {
+					content: [{ type: "text", text: "The user cannot approve IO rights in this mode." }],
+					details: { granted: false, reason: "no-ui" },
+					isError: true,
+				};
+			}
+
+			const label =
+				params.kind === "local_port"
+					? `${permissionLabel(permission)} (requested port ${params.port})`
+					: permissionLabel(permission);
+			pi.events.emit("approval:requested", {
+				kind: "io-permission",
+				title: "Agent requests an IO right",
+				summary: `${label}\nReason: ${params.reason}`,
+				toolName: "request_io_permission",
+				toolCallId,
+				sessionId: ctx.sessionManager.getSessionId(),
+				cwd: ctx.cwd,
+			});
+			const selection = await ctx.ui.select(
+				`Allow ${label}?\n\nReason: ${params.reason}`,
+				["Allow once", "Always allow in this workspace", "No", "No, with comment"],
+			);
+			let comment: string | undefined;
+			if (selection === "No, with comment") {
+				comment = await ctx.ui.input("Tell the agent what to do instead", "Short note");
+			}
+			const allow = selection === "Allow once" || selection === "Always allow in this workspace";
+			if (selection === "Allow once") {
+				oneShotPermissions.push(permission);
+			}
+			if (selection === "Always allow in this workspace") {
+				saveWorkspacePermission(permissionFile, ctx.cwd, permission);
+				persistentPermissions = loadWorkspacePermissions(permissionFile, ctx.cwd);
+			}
+			pi.events.emit("approval:resolved", {
+				kind: "io-permission",
+				toolName: "request_io_permission",
+				toolCallId,
+				decision: allow ? "allowed" : "denied",
+			});
+			return {
+				content: [
+					{
+						type: "text",
+						text: allow
+							? `${label} granted ${selection === "Allow once" ? "once" : "for this workspace"}.`
+							: comment
+								? `Permission denied. User comment: ${comment}`
+								: "Permission denied.",
+					},
+				],
+				details: {
+					granted: allow,
+					scope: selection === "Allow once" ? "once" : selection === "Always allow in this workspace" ? "workspace" : "none",
+					comment,
+				},
+				isError: !allow,
+			};
+		},
+	});
+
+	pi.registerTool({
 		...localBash,
-		label: "bash (sandboxed)",
-		async execute(id, params, signal, onUpdate, _ctx) {
+		label: "bash (Codex sandbox)",
+		async execute(id, params, signal, onUpdate) {
 			if (sandboxState.kind === "disabled") {
 				return localBash.execute(id, params, signal, onUpdate);
 			}
@@ -310,30 +358,129 @@ export default function (pi: ExtensionAPI) {
 						: "Sandbox is still initializing; command blocked",
 				);
 			}
-
-			const allowWrite = oneShotWriteGrants.get(id);
-			oneShotWriteGrants.delete(id);
-			const sandboxedBash = createBashTool(localCwd, {
-				operations: createSandboxedBashOps(
-					sandboxState.config.filesystem?.allowWrite ?? [],
-					allowWrite ?? [],
-				),
-			});
-			return sandboxedBash.execute(id, params, signal, onUpdate);
+			const grants = runtimeGrants(true);
+			oneShotPermissions = [];
+			return createBashTool(localCwd, {
+				operations: createCodexSandboxOps(sandboxState.config, grants),
+			}).execute(id, params, signal, onUpdate);
 		},
+	});
+
+	pi.on("tool_call", async (event, ctx) => {
+		if (event.toolName === "bash" || event.toolName === "request_io_permission") return;
+		if (event.toolName === "mcp_enable") {
+			const permission = mcpPermissionFromInput(event.input);
+			if (!permission) {
+				return {
+					block: true,
+					reason: "MCP service name is missing; access stays blocked",
+				};
+			}
+			if (
+				persistentPermissions.some(
+					(entry) =>
+						entry.kind === "mcp" && entry.server === permission.server,
+				)
+			) {
+				return;
+			}
+			if (!ctx.hasUI) {
+				return {
+					block: true,
+					reason: `MCP service ${permission.server} needs user approval`,
+				};
+			}
+			const label = permissionLabel(permission);
+			pi.events.emit("approval:requested", {
+				kind: "io-permission",
+				title: "Agent requests service access",
+				summary: label,
+				toolName: "mcp_enable",
+				toolCallId: event.toolCallId,
+				sessionId: ctx.sessionManager.getSessionId(),
+				cwd: ctx.cwd,
+			});
+			const selection = await ctx.ui.select(
+				`Allow ${label}?`,
+				["Allow once", "Always allow in this workspace", "No", "No, with comment"],
+			);
+			let comment: string | undefined;
+			if (selection === "No, with comment") {
+				comment = await ctx.ui.input("Tell the agent what to do instead", "Short note");
+			}
+			const allow =
+				selection === "Allow once" ||
+				selection === "Always allow in this workspace";
+			if (selection === "Always allow in this workspace") {
+				saveWorkspacePermission(permissionFile, ctx.cwd, permission);
+				persistentPermissions = loadWorkspacePermissions(permissionFile, ctx.cwd);
+			}
+			pi.events.emit("approval:resolved", {
+				kind: "io-permission",
+				toolName: "mcp_enable",
+				toolCallId: event.toolCallId,
+				decision: allow ? "allowed" : "denied",
+			});
+			if (allow) return;
+			return {
+				block: true,
+				reason: comment
+					? `MCP access denied. User comment: ${comment}`
+					: "MCP access denied",
+			};
+		}
+		if (!["read", "write", "edit", "grep", "find", "ls"].includes(event.toolName)) return;
+		if (event.toolName === "grep" || event.toolName === "find") {
+			return {
+				block: true,
+				reason:
+					`Use ${event.toolName === "grep" ? "rg" : "fd"} through bash. ` +
+					"The built-in recursive tool cannot inherit the OS file policy.",
+			};
+		}
+		const path = toolPath(event, ctx.cwd);
+		if (!path) return { block: true, reason: "File path is missing" };
+		const access = event.toolName === "write" || event.toolName === "edit" ? "write" : "read";
+		if (
+			isProtectedPath(path) ||
+			(access === "write" && isProtectedWritePath(path)) ||
+			isDeniedByConfig(path, access, activeConfig(sandboxState), ctx.cwd)
+		) {
+			return { block: true, reason: `Protected or denied ${access} path: ${path}` };
+		}
+		const permissions = [...persistentPermissions, ...oneShotPermissions];
+		const matchingIndex = permissions.findIndex(
+			(permission) =>
+				permission.kind === access && permissionCoversPath(permission, path),
+		);
+		const allowed =
+			matchingIndex >= 0 ||
+			(access === "read"
+				? isBaseReadAllowed(path, activeConfig(sandboxState), ctx.cwd)
+				: isBaseWriteAllowed(path, activeConfig(sandboxState), ctx.cwd));
+		if (!allowed) {
+			return {
+				block: true,
+				reason:
+					`${access} access is outside the current IO rights: ${path}. ` +
+					"Request the exact file or folder with request_io_permission.",
+			};
+		}
+		if (matchingIndex >= persistentPermissions.length) {
+			oneShotPermissions.splice(matchingIndex - persistentPermissions.length, 1);
+		}
+		if ("path" in event.input && typeof event.input.path === "string") {
+			event.input.path = path;
+		}
 	});
 
 	pi.on("user_bash", () => {
 		if (sandboxState.kind === "disabled") return;
 		if (sandboxState.kind === "ready") {
-			return {
-				operations: createSandboxedBashOps(
-					sandboxState.config.filesystem?.allowWrite ?? [],
-				),
-			};
+			return { operations: createCodexSandboxOps(sandboxState.config, runtimeGrants(false)) };
 		}
 		return {
-			operations: createUnavailableBashOps(
+			operations: unavailableBashOps(
 				sandboxState.kind === "failed"
 					? sandboxState.reason
 					: "Sandbox is still initializing; command blocked",
@@ -342,81 +489,48 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
-		subscribeGuardian();
-		oneShotWriteGrants.clear();
-		const noSandbox = pi.getFlag("no-sandbox") as boolean;
-
-		if (noSandbox) {
+		oneShotPermissions = [];
+		persistentPermissions = loadWorkspacePermissions(permissionFile, ctx.cwd);
+		if (pi.getFlag("no-sandbox") as boolean) {
 			sandboxState = { kind: "disabled", reason: "disabled via --no-sandbox" };
 			ctx.ui.notify("Sandbox disabled via --no-sandbox", "warning");
 			return;
 		}
-
-		const config = loadConfig(ctx.cwd, ctx.isProjectTrusted());
-
-		if (!config.enabled) {
-			sandboxState = { kind: "disabled", reason: "disabled via global config" };
-			ctx.ui.notify("Sandbox disabled via config", "info");
-			return;
-		}
-
-		const platform = process.platform;
-		if (platform !== "darwin" && platform !== "linux") {
-			const reason = `Sandbox is not supported on ${platform}; commands are blocked`;
-			sandboxState = { kind: "failed", reason };
-			ctx.ui.notify(reason, "error");
-			return;
-		}
-
-		sandboxState = { kind: "initializing" };
 		try {
-			const configExt = config as unknown as {
-				ignoreViolations?: Record<string, string[]>;
-				enableWeakerNestedSandbox?: boolean;
-			};
-
-			await SandboxManager.initialize({
-				network: config.network,
-				filesystem: config.filesystem,
-				allowPty: config.allowPty,
-				ignoreViolations: configExt.ignoreViolations,
-				enableWeakerNestedSandbox: configExt.enableWeakerNestedSandbox,
-			});
-
+			const config = loadConfig(ctx.cwd, ctx.isProjectTrusted());
+			if (!config.enabled) {
+				sandboxState = { kind: "disabled", reason: "disabled via global config" };
+				ctx.ui.notify("Sandbox disabled via global config", "warning");
+				return;
+			}
+			sandboxState = { kind: "initializing" };
+			await checkCodex(config.codexCommand ?? DEFAULT_CONFIG.codexCommand);
 			sandboxState = { kind: "ready", config };
-
-			const networkCount = config.network?.allowedDomains?.length ?? 0;
-			const writeCount = config.filesystem?.allowWrite?.length ?? 0;
 			ctx.ui.setStatus(
 				"sandbox",
-				ctx.ui.theme.fg("accent", `🔒 Sandbox: ${networkCount} domains, ${writeCount} write paths`),
+				ctx.ui.theme.fg(
+					"accent",
+					`🔒 Codex IO sandbox: ${config.permissionProfile ?? DEFAULT_CONFIG.permissionProfile}`,
+				),
 			);
-			ctx.ui.notify("Sandbox initialized", "info");
-		} catch (err) {
-			const reason = `Sandbox initialization failed; commands are blocked: ${
-				err instanceof Error ? err.message : err
+			ctx.ui.notify("Codex IO sandbox ready", "info");
+		} catch (error) {
+			const reason = `Codex sandbox unavailable; commands are blocked: ${
+				error instanceof Error ? error.message : error
 			}`;
 			sandboxState = { kind: "failed", reason };
 			ctx.ui.notify(reason, "error");
 		}
 	});
 
-	pi.on("session_shutdown", async () => {
-		oneShotWriteGrants.clear();
-		unsubscribeGuardian?.();
-		unsubscribeGuardian = undefined;
-		if (sandboxState.kind === "ready") {
-			try {
-				await SandboxManager.reset();
-			} catch {
-				// Ignore cleanup errors
-			}
-		}
+	pi.on("session_shutdown", () => {
+		oneShotPermissions = [];
+		persistentPermissions = [];
 		sandboxState = { kind: "initializing" };
 	});
 
 	pi.registerCommand("sandbox", {
-		description: "Show sandbox configuration",
+		description: "Show Codex sandbox rights",
 		handler: async (_args, ctx) => {
 			if (sandboxState.kind !== "ready") {
 				ctx.ui.notify(
@@ -429,21 +543,38 @@ export default function (pi: ExtensionAPI) {
 				);
 				return;
 			}
-
 			const config = sandboxState.config;
-			const lines = [
-				"Sandbox Configuration:",
-				"",
-				"Network:",
-				`  Allowed: ${config.network?.allowedDomains?.join(", ") || "(none)"}`,
-				`  Denied: ${config.network?.deniedDomains?.join(", ") || "(none)"}`,
-				"",
-				"Filesystem:",
-				`  Deny Read: ${config.filesystem?.denyRead?.join(", ") || "(none)"}`,
-				`  Allow Write: ${config.filesystem?.allowWrite?.join(", ") || "(none)"}`,
-				`  Deny Write: ${config.filesystem?.denyWrite?.join(", ") || "(none)"}`,
-			];
-			ctx.ui.notify(lines.join("\n"), "info");
+			ctx.ui.notify(
+				[
+					"Codex IO sandbox:",
+					`  Read: ${config.filesystem?.allowRead?.join(", ") || "(minimal only)"}`,
+					`  Write: ${config.filesystem?.allowWrite?.join(", ") || "(workspace only)"}`,
+					`  Public web: ${config.network?.enabled ? "allowed hosts only" : "off"}`,
+					`  Local/private/link-local network: ${
+						(config.network?.allowLocalNetwork ?? false) ||
+						persistentPermissions.some(
+							(permission) => permission.kind === "local_network",
+						)
+							? "all allowed"
+							: "blocked until approved"
+					}`,
+					`  Unix sockets: ${config.network?.allowUnixSockets?.join(", ") || "(none)"}`,
+					`  Saved workspace rights: ${persistentPermissions.map(permissionLabel).join(", ") || "(none)"}`,
+				].join("\n"),
+				"info",
+			);
 		},
 	});
+}
+
+function activeConfig(state: SandboxState): CodexSandboxConfig {
+	return state.kind === "ready" ? state.config : DEFAULT_CONFIG;
+}
+
+function toolPath(event: ToolCallEvent, cwd: string): string | undefined {
+	if (!("path" in event.input) || event.input.path === undefined) {
+		return event.toolName === "ls" ? resolvePermissionPath(cwd, cwd) : undefined;
+	}
+	if (typeof event.input.path !== "string") return undefined;
+	return resolvePermissionPath(event.input.path, cwd);
 }

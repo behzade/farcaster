@@ -1,19 +1,16 @@
 {
 	"name": "pi-extension-sandbox",
 	"private": true,
-	"version": "1.11.1",
+	"version": "2.0.0",
 	"type": "module",
 	"scripts": {
 		"clean": "echo 'nothing to clean'",
 		"build": "echo 'nothing to build'",
-		"check": "echo 'nothing to check'"
+		"check": "node --test codex-command.test.ts io-permissions.test.ts io-policy.test.ts"
 	},
 	"pi": {
 		"extensions": [
 			"./index.ts"
 		]
-	},
-	"dependencies": {
-		"@anthropic-ai/sandbox-runtime": "0.0.26"
 	}
 }

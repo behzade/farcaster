@@ -22,15 +22,14 @@
         system:
         let
           pkgs = pkgsFor system;
-          guardian = pkgs.callPackage ./nix/pi-guardian.nix { };
           sandbox = pkgs.callPackage ./nix/pi-sandbox-extension.nix { };
           subagents = pkgs.callPackage ./nix/pi-subagents.nix { };
           openaiServerCompaction = pkgs.callPackage ./nix/pi-openai-server-compaction.nix { };
         in
         {
-          inherit guardian sandbox subagents;
+          inherit sandbox subagents;
           openai-server-compaction = openaiServerCompaction;
-          default = guardian;
+          default = sandbox;
         }
       );
 
@@ -40,26 +39,13 @@
           pkgs = pkgsFor system;
         in
         {
-          guardian-tests = pkgs.buildNpmPackage {
-            pname = "pi-guardian-tests";
-            version = "1.0.0";
-            src = ./extensions/guardian;
-            npmDepsHash = "sha256-6XZSjIW0APmtD0jcIJYaQCJx4EjYPELU4vTJ5gD3FTE=";
-            npmDepsFetcherVersion = 2;
-            dontNpmBuild = true;
-
-            buildPhase = ''
-              runHook preBuild
-              npm test
-              runHook postBuild
-            '';
-
-            installPhase = ''
-              runHook preInstall
-              touch "$out"
-              runHook postInstall
-            '';
-          };
+          sandbox-tests = pkgs.runCommand "pi-sandbox-tests" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
+            node --test \
+              ${self}/extensions/sandbox/codex-command.test.ts \
+              ${self}/extensions/sandbox/io-permissions.test.ts \
+              ${self}/extensions/sandbox/io-policy.test.ts
+            touch "$out"
+          '';
 
           governance = pkgs.runCommand "pi-governance-tests" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
             node --test ${self}/tests/governance.test.ts
