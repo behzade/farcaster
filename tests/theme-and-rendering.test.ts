@@ -88,6 +88,7 @@ test("Pierre edit renderer supports responsive split diffs and change background
   assert.match(source, /renderSplit/);
   assert.match(source, /inlineBackground/);
   assert.match(source, /frameDiff/);
+  assert.match(source, /DIFF_BACKGROUND = "#191b1c"/);
   assert.doesNotMatch(source, /theme\.fg\("muted", "before"\)/);
   assert.match(source, /#412724/);
   assert.match(source, /#363922/);

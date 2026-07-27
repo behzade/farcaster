@@ -4,16 +4,18 @@ import { Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import * as pierre from "./diffs.bundle.mjs";
 
 const THEME_NAME = "gruvbox-dark-hard";
+// Gruvbox dark-hard, reduced by 15% so diff code stays distinct from the page.
+const DIFF_BACKGROUND = "#191b1c";
 
 pierre.registerCustomTheme(THEME_NAME, async () => ({
   name: THEME_NAME,
   type: "dark",
   colors: {
     "editor.foreground": "#ebdbb2",
-    "editor.background": "#1d2021",
+    "editor.background": DIFF_BACKGROUND,
   },
   settings: [
-    { settings: { foreground: "#ebdbb2", background: "#1d2021" } },
+    { settings: { foreground: "#ebdbb2", background: DIFF_BACKGROUND } },
     { scope: ["comment", "punctuation.definition.comment"], settings: { foreground: "#928374", fontStyle: "italic" } },
     { scope: ["keyword", "storage.type", "storage.modifier"], settings: { foreground: "#fb4934" } },
     { scope: ["string", "string.quoted"], settings: { foreground: "#b8bb26" } },
@@ -111,7 +113,7 @@ function diffColors(type: string): { marker: string; foreground?: string; backgr
   if (type.includes("addition")) {
     return { marker: "+", foreground: "#b8bb26", background: "#363922", inlineBackground: "#525523" };
   }
-  return { marker: " " };
+  return { marker: " ", background: DIFF_BACKGROUND };
 }
 
 function capLines(lines: string[], expanded: boolean, theme: Theme): string[] {
@@ -151,7 +153,7 @@ function renderSplit(rows: PierreRows, width: number, expanded: boolean, theme: 
   const cellWidth = Math.floor((width - 3) / 2);
 
   const renderCell = (row: any, side: "old" | "new"): string => {
-    if (!row) return " ".repeat(cellWidth);
+    if (!row) return fitCell("", cellWidth, DIFF_BACKGROUND);
     const type = lineType(row);
     const changed = side === "old" ? type.includes("deletion") : type.includes("addition");
     const colors = changed ? diffColors(type) : diffColors("context");
