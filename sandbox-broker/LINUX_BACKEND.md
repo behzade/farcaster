@@ -4,15 +4,15 @@
 
 The Rust broker does not execute commands on Linux. `sandbox-broker/src/main.rs` reports `can_exec: false`, the extension accepts only a macOS `seatbelt` readiness frame, and `extensions/sandbox/index.ts` rejects `native-preview` outside macOS. Linux therefore stays on the Codex backend.
 
-The first Linux release should match the current native protocol v1 scope:
+The first Linux release should match the current native protocol v1 execution scope, while leaving macOS-only denial collection out:
 
 - one foreground command at a time;
 - read, write, exact-file, exact-tree, and hard-deny policy;
 - blocked network and host Unix sockets;
 - filtered environment, bounded output, timeout, cancellation, and shutdown;
-- no native background jobs, approved network hosts, Unix socket grants, PTY, or denial hints.
+- no native background jobs, approved network hosts, Unix socket grants, PTY, or Linux denial hints.
 
-Do not widen protocol v1 while adding Linux. Add those features as separate work after the blocked-network backend ships.
+Do not widen protocol v1 while adding Linux. The existing `denials` event is active on macOS and remains optional for Linux because Linux enforcement does not use unified Seatbelt logs. Add the other features as separate work after the blocked-network backend ships.
 
 ## Source and license work
 
@@ -179,7 +179,7 @@ Add a Linux release test, such as `sandbox-broker/tests/linux_release.rs`, that 
 - one-time rights stay on one command ID;
 - a second active command is rejected;
 - approved network hosts, Unix socket grants, and background jobs remain unavailable;
-- the first Linux broker emits no denial hints, while the client keeps validating the event shape reserved by protocol v1.
+- the first Linux broker emits no denial hints, while the client keeps the active protocol v1 shape used by macOS.
 
 ## Definition of done
 
@@ -193,4 +193,4 @@ The Linux backend is ready only when all of these are true:
 - `UPSTREAM.md`, licenses, README, threat model, and machine config match the shipped behavior;
 - machine config switches Linux from `codex` to `native-preview` only after the release gate passes.
 
-Approved network hosts and Unix socket grants require a later protocol version. Native background jobs and use of the reserved denial event remain separate reviewed milestones with their own tests.
+Approved network hosts and Unix socket grants require a later protocol version. Native background jobs and any future Linux denial source remain separate reviewed milestones with their own tests.

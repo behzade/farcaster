@@ -2,6 +2,7 @@ use std::io;
 #[cfg(target_os = "macos")]
 use std::path::Path;
 
+use pi_sandbox_broker::denial_collector::DenialCollector;
 use pi_sandbox_broker::executor::Runtime;
 use pi_sandbox_broker::framing::read_frame;
 use pi_sandbox_broker::protocol::{
@@ -15,16 +16,26 @@ use pi_sandbox_broker::validation::validate_exec;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stdin = io::stdin();
     let mut reader = stdin.lock();
-    let runtime = Runtime::new(io::stdout());
 
     let hard_policy = HardPolicy::from_host();
     #[cfg(target_os = "macos")]
-    let can_exec = Path::new(SANDBOX_EXEC).is_file()
+    let seatbelt_ready = Path::new(SANDBOX_EXEC).is_file()
         && hard_policy
             .as_ref()
             .is_ok_and(|policy| self_test(policy).is_ok());
+    #[cfg(target_os = "macos")]
+    let denial_collector = seatbelt_ready
+        .then(DenialCollector::start)
+        .transpose()
+        .ok()
+        .flatten();
+    #[cfg(not(target_os = "macos"))]
+    let denial_collector = None;
+    #[cfg(target_os = "macos")]
+    let can_exec = seatbelt_ready && denial_collector.is_some();
     #[cfg(not(target_os = "macos"))]
     let can_exec = false;
+    let runtime = Runtime::new_with_collector(io::stdout(), denial_collector);
     runtime.send(&ServerEvent::Ready {
         version: PROTOCOL_VERSION,
         platform: std::env::consts::OS.to_owned(),

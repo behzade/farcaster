@@ -68,7 +68,7 @@ call from `sandbox.json`. Every interpreter and child process keeps the same
 profile. A failed backend check blocks shell commands.
 
 The tree also contains an opt-in macOS native preview. Its full unsandboxed
-macOS integration gate passes. Cleanup
+macOS integration and denial-collector gate passes. Cleanup
 uses a process group plus a best-effort kqueue descendant tracker with process
 start-time checks. Deliberate fast `setpgid`, `setsid`, or double-fork escape is
 out of scope because macOS has no unprivileged atomic process-tree owner; a
@@ -79,7 +79,8 @@ in [`sandbox-broker/LINUX_BACKEND.md`](sandbox-broker/LINUX_BACKEND.md) passes
 its release gates. A custom `brokerPath` must be absolute and can come only from
 global config; project config cannot switch backends or replace the broker.
 Protocol v1 keeps network and Unix sockets blocked and has no native background
-jobs or denial collector. `backend: "codex"` remains the default. To opt in on
+jobs. On macOS, one bounded session collector returns incomplete structured
+Seatbelt denial hints. `backend: "codex"` remains the default. To opt in on
 macOS, set this in the global `~/.pi/agent/extensions/sandbox.json` file:
 
 ```json
@@ -130,6 +131,13 @@ network host rights. The sandbox checks those rights and asks before launch. An 
 kept in that one tool call's generated profile, so another command cannot use
 it. This handles tools that hide the OS access error, such as a stateful CLI
 that reports only that its service is unavailable.
+
+On the native macOS backend, a failed command can return a best-effort kernel
+denial hint even when the app hides `EPERM`. Pi prompts and retries only when
+the hint names one exact policy-safe file path. Empty, late, malformed,
+protected, or denied hints grant nothing, and every retry still needs user
+approval. Unified logging can miss denials, so declared rights remain the
+reliable path.
 
 On the Codex backend, undeclared bash rights still use a limited fallback. The
 sandbox checks failed command output for access errors such as `Operation not

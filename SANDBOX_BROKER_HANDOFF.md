@@ -11,11 +11,13 @@ Work continued from this handoff in the Pi checkout. The current tree now includ
 - no shared one-time network grant queue;
 - pinned Nix builds for the broker and extension.
 
-The preview keeps network and Unix sockets blocked and rejects native background starts. It has no denial collector or
-Linux backend yet. Cleanup now combines a process group with a best-effort kqueue descendant tracker and process
-start-time checks. Pi explicitly places deliberate fast `setpgid`, `setsid`, and double-fork escape out of scope because
-macOS has no unprivileged atomic owner for that tree; survivors retain Seatbelt limits. The unsandboxed
-`sandbox-broker/tests/macos_release.rs` gate passes, so native activation is available on macOS. Linux still uses Codex:
+The preview keeps network and Unix sockets blocked and rejects native background starts. Its session-long macOS denial
+collector emits bounded structured hints, and the extension can ask for one exact safe file right and retry without
+parsing application errors. It has no Linux backend yet. Cleanup combines a process group with a best-effort kqueue
+descendant tracker and process start-time checks. Pi explicitly places deliberate fast `setpgid`, `setsid`, and
+double-fork escape out of scope because
+macOS has no unprivileged atomic owner for that tree; survivors retain Seatbelt limits. The unsandboxed macOS release
+gate passes with structured denial collection. Linux still uses Codex:
 the Rust broker reports `can_exec: false`, the client accepts only macOS/Seatbelt, and no bubblewrap launcher or Linux
 release gate exists. The authoritative remaining-work checklist is
 [`sandbox-broker/LINUX_BACKEND.md`](sandbox-broker/LINUX_BACKEND.md). Do not treat the later stage text below as current
@@ -502,7 +504,7 @@ framed channel that child processes never inherit.
 
 This stage should already remove the Codex CLI dependency from normal macOS shell calls.
 
-### Stage 3: Persistent macOS Denial Collector
+### Stage 3: Persistent macOS Denial Collector (implemented)
 
 - Adapt the improved unmerged collector.
 - Wait for collector readiness once per session.
@@ -513,7 +515,7 @@ This stage should already remove the Codex CLI dependency from normal macOS shel
 - test very short commands and delayed log delivery;
 - document that absence of a record is inconclusive.
 
-Do not block Stage 2 on perfect denial discovery.
+This stage now uses best-effort, bounded hints and still does not claim complete denial discovery.
 
 ### Stage 4: Linux Bubblewrap Backend
 
@@ -638,9 +640,11 @@ The macOS architecture and explicit-right shape are implemented. Remaining choic
 4. Which reviewed seccomp policy and architecture set should the first Linux release support?
 5. After blocked-network Linux ships, should approved hosts use the same future host-owned proxy design as macOS?
 6. Should native background jobs land before or after Linux foreground parity?
-7. Should denial hints remain a later macOS-only task, or wait for one cross-platform diagnostic design?
 
-None of these choices may weaken protocol v1 or delay fail-closed Linux readiness checks.
+The macOS-only denial hint stage has landed in protocol v1. Linux foreground parity may omit denial events; it must not
+fake complete diagnostics or weaken fail-closed readiness.
+
+None of the remaining choices may weaken protocol v1 or delay fail-closed Linux readiness checks.
 
 ## First Commands For The Linux Session
 

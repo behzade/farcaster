@@ -24,7 +24,6 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { SandboxBrokerClient } from "./broker-client.ts";
-import { buildBrokerExecRequest } from "./broker-policy.ts";
 import {
 	isBackgroundJobSocket,
 	isValidBackgroundJobName,
@@ -69,6 +68,10 @@ import {
 	isBaseWriteAllowed,
 	isDeniedByConfig,
 } from "./io-policy.ts";
+import {
+	createApprovingNativeSandboxOps,
+	createNativeSandboxOps,
+} from "./native-sandbox-ops.ts";
 import { parseFilesystemFailurePaths } from "./sandbox-failures.ts";
 
 function readConfig(path: string): CodexSandboxConfig | undefined {
@@ -155,29 +158,6 @@ function createCodexSandboxOps(
 					else resolveExec({ exitCode: code ?? 1 });
 				});
 			});
-		},
-	};
-}
-
-function createNativeSandboxOps(
-	client: SandboxBrokerClient,
-	config: CodexSandboxConfig,
-	permissions: readonly FilePermission[],
-	networkHosts: readonly string[],
-	commandId: string,
-): BashOperations {
-	return {
-		async exec(command, cwd, { onData, signal, timeout }) {
-			const request = buildBrokerExecRequest(
-				commandId,
-				command,
-				cwd,
-				timeout,
-				config,
-				permissions,
-				networkHosts,
-			);
-			return client.exec(request, onData, signal);
 		},
 	};
 }
@@ -367,6 +347,7 @@ export default function (pi: ExtensionAPI) {
 			reason?: string;
 			retry?: boolean;
 			allowOnce?: boolean;
+			signal?: AbortSignal;
 		},
 		ctx: ExtensionContext,
 	): Promise<ApprovalDecision> => {
@@ -399,10 +380,13 @@ export default function (pi: ExtensionAPI) {
 				tool.reason ? `\n\nReason: ${tool.reason}` : ""
 			}`,
 			choices,
+			{ signal: tool.signal },
 		);
 		let comment: string | undefined;
 		if (selection === "No, with comment") {
-			comment = await ctx.ui.input("Tell the agent what to do instead", "Short note");
+			comment = await ctx.ui.input("Tell the agent what to do instead", "Short note", {
+				signal: tool.signal,
+			});
 		}
 		const allow = selection === allowOnce || selection === allowAlways;
 		if (selection === allowAlways) {
@@ -585,9 +569,10 @@ export default function (pi: ExtensionAPI) {
 				for (const permission of permissions.values()) {
 					const decision = await promptForToolPermission(
 						permission,
-						{ ...tool, retry: true },
+						{ ...tool, retry: true, signal: options.signal },
 						ctx,
 					);
+					if (options.signal?.aborted) throw new Error("aborted");
 					if (!decision.allowed) return lastResult;
 					const paths = permission.kind === "read" ? grants.read! : grants.write!;
 					const runtimePath = canonicalize(permission.path);
@@ -887,13 +872,28 @@ export default function (pi: ExtensionAPI) {
 					),
 					...declaredPermissions,
 				];
-				operations = createNativeSandboxOps(
-					brokerClient,
-					sandboxState.config,
-					filePermissions,
-					[],
-					`${id}/attempt-0`,
-				);
+				operations = createApprovingNativeSandboxOps({
+					client: brokerClient,
+					config: sandboxState.config,
+					initialPermissions: filePermissions,
+					toolCallId: id,
+					blockedPaths: [
+						sandboxState.config.brokerPath ?? PACKAGED_BROKER_PATH,
+					],
+					async approve(permission, approvalSignal) {
+						const decision = await promptForToolPermission(
+							permission,
+							{
+								toolName: "bash",
+								toolCallId: id,
+								retry: true,
+								signal: approvalSignal,
+							},
+							ctx,
+						);
+						return decision.allowed;
+					},
+				});
 			} else {
 				operations = createApprovingSandboxOps(
 					sandboxState.config,
@@ -1171,7 +1171,9 @@ export default function (pi: ExtensionAPI) {
 									: "blocked until an exact host or IP is approved"
 					}`,
 					`  Unix sockets: ${native ? "blocked by native protocol v1" : unixSockets.join(", ") || "(none)"}`,
-					...(native ? ["  Background jobs: unavailable", "  Denial hints: unavailable"] : []),
+					...(native
+						? ["  Background jobs: unavailable", "  Denial hints: best effort"]
+						: []),
 					`  Saved workspace rights: ${persistentPermissions.map(permissionLabel).join(", ") || "(none)"}`,
 				].join("\n"),
 				"info",

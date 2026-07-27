@@ -54,6 +54,8 @@
               ${self}/extensions/sandbox/declared-permissions.test.ts \
               ${self}/extensions/sandbox/io-permissions.test.ts \
               ${self}/extensions/sandbox/io-policy.test.ts \
+              ${self}/extensions/sandbox/native-denials.test.ts \
+              ${self}/extensions/sandbox/native-sandbox-ops.test.ts \
               ${self}/extensions/sandbox/sandbox-failures.test.ts
             touch "$out"
           '';

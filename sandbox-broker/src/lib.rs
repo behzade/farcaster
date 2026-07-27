@@ -1,3 +1,4 @@
+pub mod denial_collector;
 pub mod executor;
 pub mod framing;
 pub mod pid_tracker;

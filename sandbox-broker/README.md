@@ -1,8 +1,8 @@
 # Pi Sandbox Broker
 
-This directory holds Pi's OS sandbox broker. It defines the private protocol, threat model, source record, and the first macOS Seatbelt backend. The backend supports one foreground command, command-bound file and tree rights, hard denies, blocked network, a launch barrier, bounded output, timeout, cancellation, and shutdown cleanup.
+This directory holds Pi's OS sandbox broker. It defines the private protocol, threat model, source record, and the first macOS Seatbelt backend. The backend supports one foreground command, command-bound file and tree rights, hard denies, blocked network, a launch barrier, bounded output, timeout, cancellation, shutdown cleanup, and best-effort structured Seatbelt denial hints.
 
-The sandbox extension can use this broker through the opt-in global `backend: "native-preview"` setting on macOS. Linux reports `can_exec: false`, and macOS reports false if `/usr/bin/sandbox-exec` or the hard host policy is unavailable. Codex remains the default backend.
+The sandbox extension can use this broker through the opt-in global `backend: "native-preview"` setting on macOS. Linux reports `can_exec: false`, and macOS reports false if `/usr/bin/sandbox-exec`, the hard host policy, or the fixed `/usr/bin/log` denial collector is unavailable. Codex remains the default backend.
 
 ## Approved direction
 
@@ -32,4 +32,4 @@ cargo clippy --manifest-path sandbox-broker/Cargo.toml --all-targets -- -D warni
 cargo test --manifest-path sandbox-broker/Cargo.toml -- --ignored
 ```
 
-The macOS integration and extension-client gates pass. Cleanup combines a process group with a best-effort kqueue descendant tracker and process start-time checks. Deliberate fast `setpgid`, `setsid`, or double-fork escape is out of scope because macOS offers no unprivileged atomic owner for that process tree. A survivor remains under its command's Seatbelt profile. Protocol v1 keeps network and Unix sockets blocked and has no native background-job support.
+The macOS integration and extension-client gates pass. The release gate checks that a command which hides `EPERM` behind a generic app error still yields an exact structured denial hint. Cleanup combines a process group with a best-effort kqueue descendant tracker and process start-time checks. Deliberate fast `setpgid`, `setsid`, or double-fork escape is out of scope because macOS offers no unprivileged atomic owner for that process tree. A survivor remains under its command's Seatbelt profile. Protocol v1 keeps network and Unix sockets blocked and has no native background-job support.

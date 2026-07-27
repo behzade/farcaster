@@ -42,7 +42,11 @@ interface PermissionFile {
 const EMPTY_FILE: PermissionFile = { version: 2, workspaces: {} };
 const protectedHomeRoots = [".ssh", ".aws", ".gnupg"];
 const protectedWriteRoots = [".pi", ".codex"];
-const protectedAuthFiles = [".pi/agent/auth.json", ".codex/auth.json"];
+const protectedAuthFiles = [
+	".pi/agent/auth.json",
+	".pi/agent/extensions/sandbox.json",
+	".codex/auth.json",
+];
 const secretNames = [/^\.env(?:\..*)?$/, /\.(?:pem|key)$/];
 
 export function canonicalize(path: string): string {

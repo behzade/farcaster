@@ -13,6 +13,7 @@ use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
 use nix::sys::signal::{Signal, killpg};
 use nix::unistd::Pid;
 
+use crate::denial_collector::DenialCollector;
 use crate::framing::write_frame;
 use crate::pid_tracker::{PidTracker, ProcessGuard, cleanup as cleanup_tracked_processes};
 use crate::protocol::{ErrorCode, ServerEvent};
@@ -53,6 +54,7 @@ struct RuntimeState {
 pub struct Runtime {
     state: SharedState,
     writer: SharedWriter,
+    denial_collector: Option<DenialCollector>,
 }
 
 impl Drop for Runtime {
@@ -64,9 +66,18 @@ impl Drop for Runtime {
 impl Runtime {
     #[must_use]
     pub fn new(stdout: std::io::Stdout) -> Self {
+        Self::new_with_collector(stdout, None)
+    }
+
+    #[must_use]
+    pub fn new_with_collector(
+        stdout: std::io::Stdout,
+        denial_collector: Option<DenialCollector>,
+    ) -> Self {
         Self {
             state: Arc::new((Mutex::new(RuntimeState::default()), Condvar::new())),
             writer: Arc::new(Mutex::new(BufWriter::new(stdout))),
+            denial_collector,
         }
     }
 
@@ -118,8 +129,15 @@ impl Runtime {
 
         let state = Arc::clone(&self.state);
         let writer = Arc::clone(&self.writer);
+        let denial_collector = self.denial_collector.clone();
         thread::spawn(move || {
-            run_command(&request, &control, &writer, &state);
+            run_command(
+                &request,
+                &control,
+                &writer,
+                &state,
+                denial_collector.as_ref(),
+            );
             clear_active(&state, &control);
         });
         Ok(())
@@ -176,6 +194,9 @@ impl Runtime {
             signal_group(&control, Signal::SIGTERM);
         }
         self.wait_for_idle(Duration::from_secs(3));
+        if let Some(collector) = &self.denial_collector {
+            collector.shutdown();
+        }
     }
 
     fn wait_for_idle(&self, timeout: Duration) {
@@ -206,6 +227,7 @@ fn run_command(
     control: &Arc<CommandControl>,
     writer: &SharedWriter,
     state: &SharedState,
+    denial_collector: Option<&DenialCollector>,
 ) {
     let command = launch_command(request);
     let args = match build_args(&command, &request.rights, &request.denies) {
@@ -243,12 +265,33 @@ fn run_command(
     };
     let pid = i32::try_from(child.id()).unwrap_or(i32::MAX);
     control.pid.store(pid, Ordering::Release);
+    let observer = match denial_collector.map(|collector| collector.begin(&request.id)) {
+        Some(Ok(observer)) => Some(observer),
+        Some(Err(message)) => {
+            terminate_child(&mut child, control);
+            clear_process(control);
+            send_terminal_error(
+                writer,
+                state,
+                control,
+                ErrorCode::CommandStartFailed,
+                message,
+            );
+            return;
+        }
+        None => None,
+    };
     // The fixed shell wrapper is still blocked on stdin here. Register the
     // root with the best-effort descendant tracker before user code can fork.
-    let tracker = match PidTracker::start(pid) {
+    let tracker_result = match observer {
+        Some(observer) => PidTracker::start_observed(pid, observer),
+        None => PidTracker::start(pid),
+    };
+    let tracker = match tracker_result {
         Ok(tracker) => tracker,
         Err(message) => {
             terminate_child(&mut child, control);
+            abort_denials(denial_collector, &request.id);
             clear_process(control);
             send_terminal_error(
                 writer,
@@ -263,6 +306,7 @@ fn run_command(
     let Ok(mut root) = control.root.lock() else {
         terminate_child(&mut child, control);
         cleanup_tracked_processes(tracker, TERMINATE_GRACE);
+        abort_denials(denial_collector, &request.id);
         clear_process(control);
         send_terminal_error(
             writer,
@@ -287,6 +331,7 @@ fn run_command(
     {
         terminate_child(&mut child, control);
         cleanup_tracked_processes(tracker, TERMINATE_GRACE);
+        abort_denials(denial_collector, &request.id);
         clear_process(control);
         send_terminal_error(
             writer,
@@ -308,6 +353,7 @@ fn run_command(
     {
         terminate_child(&mut child, control);
         cleanup_tracked_processes(tracker, TERMINATE_GRACE);
+        abort_denials(denial_collector, &request.id);
         clear_process(control);
         return;
     }
@@ -380,6 +426,16 @@ fn run_command(
     if let Some(reader) = stderr {
         finish_stream_reader(reader);
     }
+    if let Some(collector) = denial_collector {
+        let _ = send_event(
+            writer,
+            &ServerEvent::Denials {
+                id: request.id.clone(),
+                items: collector.finish(&request.id),
+                complete: false,
+            },
+        );
+    }
     clear_process(control);
     let _ = send_event(
         writer,
@@ -392,6 +448,12 @@ fn run_command(
             output_truncated: output_truncated.load(Ordering::Acquire),
         },
     );
+}
+
+fn abort_denials(collector: Option<&DenialCollector>, id: &str) {
+    if let Some(collector) = collector {
+        collector.abort(id);
+    }
 }
 
 fn launch_command(request: &ValidatedExec) -> Vec<String> {

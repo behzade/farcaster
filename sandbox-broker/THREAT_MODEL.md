@@ -24,7 +24,9 @@ The user account and Pi host process remain outside this boundary. The broker li
 
 ## Current release status
 
-The opt-in native backend is released on macOS after its unsandboxed release gate passed. Protocol v1 has no approved network, Unix socket, background-job, or denial-collector support. Process-group cleanup, bounded pipe draining, and a best-effort macOS descendant tracker have landed. The tracker registers the root before the launch barrier opens, follows kqueue fork events with `proc_listchildpids` snapshots, and checks process start times before signaling observed survivors.
+The opt-in native backend is released on macOS after its unsandboxed release gate passed. Protocol v1 has no approved network, Unix socket, or background-job support. A session-long, bounded macOS denial collector now emits structured hints with `complete: false`. Process-group cleanup, bounded pipe draining, and a best-effort macOS descendant tracker have landed. The tracker registers the root before the launch barrier opens, follows kqueue fork events with `proc_listchildpids` snapshots, and checks process start times before signaling observed survivors.
+
+Unified denial records carry a PID but no process start time. A fast PID reuse or delayed record can therefore misattribute a hint even though cleanup signaling still checks process identity. Hints always need user approval and never prove command membership.
 
 A child can still win the non-atomic fork-and-enumeration race, then leave the process group with `setpgid`, `setsid`, or a double fork. Public unprivileged macOS APIs do not provide a kill-and-reap container for such children; creating a new kernel coalition fails with `EPERM` for a normal user process. Pi explicitly places deliberate daemon escape outside the native backend's threat model. Any survivor keeps its Seatbelt limits, but it may continue using CPU and rights that the command received until it exits or the user kills it.
 
@@ -39,9 +41,9 @@ The Rust broker does not execute commands on Linux yet. Linux stays on Codex unt
 5. **No path alias escape.** Existing symlinks resolve before policy build. For a missing leaf, the broker resolves the nearest existing ancestor and appends checked normal components. Tests cover symlinks, `..`, missing paths, and protected children under broad roots.
 6. **Private control channel.** Commands inherit only their stdin/stdout/stderr and needed job handles. They do not inherit broker protocol handles or a public control socket.
 7. **Lifecycle control.** On macOS, the backend registers the root before the launch barrier and combines process-group cleanup with best-effort descendant observations. It does not claim atomic ownership of a child that deliberately wins the macOS fork-and-reparent race. The Linux backend must use a PID namespace with an init/reaper and prove that cancellation, timeout, shutdown, `setsid`, and double-fork cases leave that namespace empty.
-8. **Bounded data.** Frame, request, output, diagnostic, active-command, process-observation, and later denial/job limits are fixed. The broker drains capped output and marks it truncated. The macOS tracker keeps at most 4,096 process identities per command.
+8. **Bounded data.** Frame, request, output, diagnostic, active-command, process-observation, denial, and later job limits are fixed. The broker drains capped output and marks it truncated. The macOS tracker keeps at most 4,096 process identities per command; the collector also caps raw lines, retained records, and per-command results.
 9. **Explicit local service rights.** Network starts blocked. A later approved-host stage must use a host-owned allowlisting proxy. A later Unix socket stage must keep roots separate and must never give normal bash the background-job control socket.
-10. **Hints do not grant.** A later Seatbelt denial collector may explain one exact right. Missing, late, unrelated, or ambiguous denial data never adds access.
+10. **Hints do not grant.** The Seatbelt denial collector may explain one exact right. The extension checks the exact path against base rights, saved or command rights, hard protected paths, and configured denies, then asks the user before retrying. Missing, late, unrelated, or ambiguous denial data never adds access.
 11. **Environment is replaced.** The child receives the filtered map in its request. It does not inherit the broker environment. The broker adds only fixed status markers and later required proxy values.
 12. **Background parity.** Before native background jobs ship, they must use the same policy builder. Their one-time rights must last for that job's sandbox only and never enter another job.
 
@@ -71,6 +73,6 @@ The Rust broker does not execute commands on Linux yet. Linux stays on Codex unt
 
 ## Release gates
 
-`tests/macos_release.rs` is the unsandboxed macOS gate. It passes with filesystem rules, blocked network and sockets, environment replacement, output limits, cancellation, timeout, shutdown, process-group cleanup, and cleanup of an observed detached child. Deliberate fast `setsid` or double-fork escape is not a macOS release assertion.
+`tests/macos_release.rs` is the unsandboxed macOS gate. It passes with filesystem rules, blocked network and sockets, environment replacement, output limits, structured denial collection for a generic application error, cancellation, timeout, shutdown, process-group cleanup, and cleanup of an observed detached child. Deliberate fast `setsid` or double-fork escape is not a macOS release assertion.
 
 Linux needs a separate release gate on x86_64 and aarch64. It must cover read-only root mounts, exact writable mounts, hidden read denies, protected child mounts, symlink and missing-path cases, blocked network and host Unix sockets, user/PID namespace availability, `no_new_privs`, seccomp, environment, framing, output bounds, cancellation, timeout, shutdown, and strict descendant cleanup. Linux remains on Codex until every required item in [LINUX_BACKEND.md](LINUX_BACKEND.md) passes.

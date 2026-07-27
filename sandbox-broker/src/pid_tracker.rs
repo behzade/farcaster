@@ -22,6 +22,8 @@ mod platform {
     use std::thread::{self, JoinHandle};
     use std::time::{Duration, Instant};
 
+    use crate::denial_collector::PidObserver;
+
     const STOP_IDENT: libc::uintptr_t = 1;
     const EVENTS_CAPACITY: usize = 32;
     const MAX_TRACKED_PROCESSES: usize = 4_096;
@@ -100,13 +102,21 @@ mod platform {
     struct TrackerState {
         seen: HashSet<ProcessIdentity>,
         active: HashMap<i32, ProcessIdentity>,
+        observer: Option<PidObserver>,
     }
 
     impl TrackerState {
-        fn new() -> Self {
+        fn new(observer: Option<PidObserver>) -> Self {
             Self {
                 seen: HashSet::new(),
                 active: HashMap::new(),
+                observer,
+            }
+        }
+
+        fn observe(&self, pid: i32) {
+            if let Some(observer) = &self.observer {
+                observer.observe(pid);
             }
         }
 
@@ -144,6 +154,7 @@ mod platform {
                 }
                 self.seen.insert(identity);
                 self.active.insert(pid, identity);
+                self.observe(pid);
                 pending.extend(
                     list_child_pids(pid)
                         .into_iter()
@@ -214,6 +225,19 @@ mod platform {
         /// Returns an error when the root cannot be identified and watched or
         /// when the tracker cannot create its kqueue descriptors and thread.
         pub fn start(root_pid: i32) -> Result<Self, String> {
+            Self::start_inner(root_pid, None)
+        }
+
+        /// Registers the root and reports each accepted PID to the denial collector.
+        ///
+        /// # Errors
+        ///
+        /// Returns the same setup errors as [`Self::start`].
+        pub fn start_observed(root_pid: i32, observer: PidObserver) -> Result<Self, String> {
+            Self::start_inner(root_pid, Some(observer))
+        }
+
+        fn start_inner(root_pid: i32, observer: Option<PidObserver>) -> Result<Self, String> {
             if root_pid <= 0 {
                 return Err("cannot track an invalid root PID".to_owned());
             }
@@ -230,7 +254,7 @@ mod platform {
             register_stop_event(kqueue.as_raw_fd())
                 .map_err(|error| format!("cannot register process tracker stop event: {error}"))?;
 
-            let mut state = TrackerState::new();
+            let mut state = TrackerState::new(observer);
             let root = ProcessIdentity::read(root_pid)
                 .ok_or_else(|| format!("cannot identify command root PID {root_pid}"))?;
             watch_pid(kqueue.as_raw_fd(), root_pid)
@@ -242,6 +266,7 @@ mod platform {
             }
             state.seen.insert(root);
             state.active.insert(root_pid, root);
+            state.observe(root_pid);
             state.add_children(kqueue.as_raw_fd(), root_pid);
 
             // Keep a second descriptor so the tracking thread cannot close
@@ -551,6 +576,8 @@ mod platform {
 mod platform {
     use std::time::Duration;
 
+    use crate::denial_collector::PidObserver;
+
     #[derive(Clone, Copy, Debug)]
     pub struct ProcessGuard;
 
@@ -565,6 +592,10 @@ mod platform {
 
     impl PidTracker {
         pub fn start(_root_pid: i32) -> Result<Self, String> {
+            Ok(Self)
+        }
+
+        pub fn start_observed(_root_pid: i32, _observer: PidObserver) -> Result<Self, String> {
             Ok(Self)
         }
 

@@ -3,7 +3,7 @@ import { accessSync, constants } from "node:fs";
 
 const PROTOCOL_VERSION = 1;
 export const MAX_BROKER_FRAME_BYTES = 1024 * 1024;
-const READY_TIMEOUT_MS = 2_000;
+const READY_TIMEOUT_MS = 5_000;
 const SHUTDOWN_TIMEOUT_MS = 5_000;
 const BROKER_ERROR_CODES = new Set([
 	"backend_unavailable",
@@ -27,6 +27,18 @@ export interface BrokerFilesystemDeny {
 	access: "read" | "write" | "read_write";
 	pattern: string;
 	scope: "file" | "tree" | "glob";
+}
+
+export interface BrokerDenial {
+	operation: string;
+	path: string | null;
+	process: string | null;
+}
+
+export interface BrokerExecResult {
+	exitCode: number | null;
+	denials: BrokerDenial[];
+	denialsComplete: boolean;
 }
 
 export interface BrokerExecRequest {
@@ -64,7 +76,7 @@ type BrokerEvent =
 	| {
 			type: "denials";
 			id: string;
-			items: { operation: string; path: string | null; process: string | null }[];
+			items: BrokerDenial[];
 			complete: boolean;
 	  }
 	| {
@@ -80,7 +92,7 @@ type BrokerEvent =
 
 interface PendingExec {
 	onData: (data: Buffer) => void;
-	resolve: (result: { exitCode: number | null }) => void;
+	resolve: (result: BrokerExecResult) => void;
 	reject: (error: Error) => void;
 	signal?: AbortSignal;
 	onAbort?: () => void;
@@ -88,6 +100,8 @@ interface PendingExec {
 	stdoutSequence: number;
 	stderrSequence: number;
 	timeoutSeconds?: number;
+	denials?: BrokerDenial[];
+	denialsComplete: boolean;
 }
 
 export class FramedJsonDecoder {
@@ -171,7 +185,7 @@ export class SandboxBrokerClient {
 		request: BrokerExecRequest,
 		onData: (data: Buffer) => void,
 		signal?: AbortSignal,
-	): Promise<{ exitCode: number | null }> {
+	): Promise<BrokerExecResult> {
 		if (!this.#ready || this.#closed) throw new Error("Sandbox broker is not ready");
 		if (this.#pending.has(request.id)) throw new Error(`Duplicate broker command ID: ${request.id}`);
 		return new Promise((resolve, reject) => {
@@ -183,6 +197,7 @@ export class SandboxBrokerClient {
 				started: false,
 				stdoutSequence: 0,
 				stderrSequence: 0,
+				denialsComplete: false,
 				timeoutSeconds:
 					request.timeout_ms === null ? undefined : request.timeout_ms / 1000,
 			};
@@ -282,6 +297,9 @@ export class SandboxBrokerClient {
 		if (event.type === "denials") {
 			const pending = this.#pending.get(event.id);
 			if (!pending?.started) throw new Error(`Broker denial has inactive command ID: ${event.id}`);
+			if (pending.denials) throw new Error(`Broker sent denials twice: ${event.id}`);
+			pending.denials = event.items;
+			pending.denialsComplete = event.complete;
 			return;
 		}
 		if (event.type === "stdout" || event.type === "stderr") {
@@ -297,15 +315,23 @@ export class SandboxBrokerClient {
 			return;
 		}
 		if (event.type === "exit") {
-			const pending = this.#finishPending(event.id);
+			const pending = this.#pending.get(event.id);
 			if (!pending?.started) throw new Error(`Broker exit has inactive command ID: ${event.id}`);
+			if (!pending.denials) throw new Error(`Broker exit arrived before denials: ${event.id}`);
+			this.#finishPending(event.id);
 			if (event.output_truncated) {
 				pending.onData(Buffer.from("\n[Sandbox output truncated at the broker limit]\n"));
 			}
 			if (pending.signal?.aborted || event.cancelled) pending.reject(new Error("aborted"));
 			else if (event.timed_out) {
 				pending.reject(new Error(`timeout:${pending.timeoutSeconds ?? "broker"}`));
-			} else pending.resolve({ exitCode: event.code ?? 1 });
+			} else {
+				pending.resolve({
+					exitCode: event.code ?? 1,
+					denials: pending.denials ?? [],
+					denialsComplete: pending.denialsComplete,
+				});
+			}
 			return;
 		}
 		if (event.id === null) throw new Error(`Sandbox broker error: ${event.message}`);

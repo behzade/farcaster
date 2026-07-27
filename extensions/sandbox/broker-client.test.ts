@@ -117,6 +117,7 @@ process.stdin.on("data", chunk => {
     if (message.type === "exec") {
       encode({ type: "started", id: message.id, pid: process.pid });
       encode({ type: "stdout", id: message.id, sequence: 0, data_base64: Buffer.from("ok\\n").toString("base64") });
+      encode({ type: "denials", id: message.id, items: [{ operation: "file-write-create", path: "/state/file", process: "tool" }], complete: false });
       encode({ type: "exit", id: message.id, code: 0, signal: null, timed_out: false, cancelled: false, output_truncated: false });
     } else if (message.type === "shutdown") {
       process.exit(0);
@@ -131,6 +132,14 @@ process.stdin.on("data", chunk => {
 	const output: Buffer[] = [];
 	assert.deepEqual(await client.exec(request(directory), (chunk) => output.push(chunk)), {
 		exitCode: 0,
+		denials: [
+			{
+				operation: "file-write-create",
+				path: "/state/file",
+				process: "tool",
+			},
+		],
+		denialsComplete: false,
 	});
 	assert.equal(Buffer.concat(output).toString("utf8"), "ok\n");
 	await client.shutdown();
@@ -170,6 +179,44 @@ process.stdin.on("data", chunk => {
 	await assert.rejects(
 		client.exec(request(directory), () => {}),
 		/pre-start error after starting command/,
+	);
+	await client.shutdown();
+});
+
+test("client requires denial hints before a started command exits", async () => {
+	const directory = mkdtempSync(join(tmpdir(), "pi-fake-broker-denials-"));
+	const broker = join(directory, "broker");
+	writeFileSync(
+		broker,
+		`#!/usr/bin/env node
+const encode = value => {
+  const body = Buffer.from(JSON.stringify(value));
+  const frame = Buffer.alloc(body.length + 4);
+  frame.writeUInt32BE(body.length, 0);
+  body.copy(frame, 4);
+  process.stdout.write(frame);
+};
+let pending = Buffer.alloc(0);
+encode({ type: "ready", version: 1, platform: "macos", backend: "seatbelt", can_exec: true, max_frame_bytes: ${MAX_BROKER_FRAME_BYTES} });
+process.stdin.on("data", chunk => {
+  pending = Buffer.concat([pending, chunk]);
+  if (pending.length < 4) return;
+  const size = pending.readUInt32BE(0);
+  if (pending.length < size + 4) return;
+  const message = JSON.parse(pending.subarray(4, size + 4));
+  if (message.type === "exec") {
+    encode({ type: "started", id: message.id, pid: process.pid });
+    encode({ type: "exit", id: message.id, code: 1, signal: null, timed_out: false, cancelled: false, output_truncated: false });
+  }
+});
+`,
+	);
+	chmodSync(broker, 0o700);
+
+	const client = await SandboxBrokerClient.start(broker);
+	await assert.rejects(
+		client.exec(request(directory), () => {}),
+		/exit arrived before denials/,
 	);
 	await client.shutdown();
 });

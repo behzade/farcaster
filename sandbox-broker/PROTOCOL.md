@@ -89,13 +89,13 @@ The broker signals the command process group, waits for a short fixed cleanup li
 { "type": "shutdown" }
 ```
 
-The broker stops all owned children and exits. A later collector stage must close its collector here too. EOF has the same cleanup rule.
+The broker stops all owned children, closes its session denial collector, and exits. EOF has the same cleanup rule.
 
 ## Events and state
 
 A command moves through `accepted -> started -> terminal`. It emits at most one `started` and exactly one terminal result. A pre-start `error` is terminal and has no `exit`. A started command ends with `exit`; broker loss is a host-side terminal error reported by the extension.
 
-A successful start emits zero or more stream events between `started` and `exit`. `timed_out` and `cancelled` state why the broker began termination; the exit code and signal state how the process ended. The `denials` shape below is reserved for the later collector stage and v1 brokers do not emit it yet:
+A successful start emits zero or more stream events between `started` and `exit`. The macOS backend also emits one bounded `denials` event after process and output cleanup and before `exit`. `timed_out` and `cancelled` state why the broker began termination; the exit code and signal state how the process ended:
 
 ```json
 { "type": "started", "id": "tool-call-id/attempt-0", "pid": 1234 }
@@ -117,7 +117,7 @@ A successful start emits zero or more stream events between `started` and `exit`
 }
 ```
 
-Stdout and stderr each have a zero-based sequence number. The broker preserves arbitrary bytes and caps each chunk and total output. `complete: false` states that an empty macOS denial set proves nothing. Pi may use an exact safe path as an approval hint. It may not infer a broad root or retry with more rights without user approval.
+Stdout and stderr each have a zero-based sequence number. The broker preserves arbitrary bytes and caps each chunk and total output. The macOS collector keeps a session-long `/usr/bin/log stream`, waits for readiness before `ready`, and attributes records through the command's observed PIDs and sequence window. It caps raw lines, retained records, command items, and command bytes. `complete: false` states that unified logging and PID discovery can miss records, so an empty set proves nothing. Log records also lack process start times, so PID reuse can misattribute a hint. Pi may use an exact safe path as an approval hint. It may not infer a broad root or retry with more rights without user approval. Linux v1 will emit no denial hints.
 
 ## Grant isolation
 

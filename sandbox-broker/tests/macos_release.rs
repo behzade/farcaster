@@ -12,7 +12,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use pi_sandbox_broker::framing::{read_frame, write_frame};
 use pi_sandbox_broker::protocol::{
-    Access, ClientRequest, CommandSpec, ExecRequest, FilesystemRight, MissingPathBehavior,
+    Access, ClientRequest, CommandSpec, Denial, ExecRequest, FilesystemRight, MissingPathBehavior,
     NetworkPolicy, PathScope, SandboxPolicy, ServerEvent,
 };
 
@@ -52,6 +52,7 @@ struct CommandResult {
     timed_out: bool,
     cancelled: bool,
     truncated: bool,
+    denials: Vec<Denial>,
 }
 
 #[derive(Clone, Copy)]
@@ -116,6 +117,7 @@ impl Broker {
         let mut started = false;
         let mut action_sent = matches!(start_action, StartAction::None);
         let mut output = Vec::new();
+        let mut denials = None;
         loop {
             let event = read_frame::<ServerEvent>(&mut self.output)
                 .expect("read broker event")
@@ -150,6 +152,15 @@ impl Broker {
                         action_sent = true;
                     }
                 }
+                ServerEvent::Denials {
+                    id: event_id,
+                    items,
+                    complete,
+                } if event_id == id => {
+                    assert!(started, "denials arrived before started");
+                    assert!(!complete, "macOS denial hints must stay incomplete");
+                    assert!(denials.replace(items).is_none(), "duplicate denials");
+                }
                 ServerEvent::Exit {
                     id: event_id,
                     code,
@@ -160,12 +171,15 @@ impl Broker {
                 } if event_id == id => {
                     assert!(started, "exit arrived before started");
                     assert!(action_sent, "command exited before its user-code marker");
+                    let denials =
+                        denials.expect("started command must emit denial hints before exit");
                     return CommandResult {
                         output,
                         code,
                         timed_out,
                         cancelled,
                         truncated: output_truncated,
+                        denials,
                     };
                 }
                 ServerEvent::Error {
@@ -335,6 +349,14 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
+fn canonical_missing_path(path: &Path) -> PathBuf {
+    path.parent()
+        .expect("test path parent")
+        .canonicalize()
+        .expect("canonical test path parent")
+        .join(path.file_name().expect("test path name"))
+}
+
 #[test]
 #[ignore = "release gate: requires an unsandboxed macOS runner"]
 #[allow(clippy::too_many_lines)]
@@ -371,6 +393,41 @@ fn native_broker_release_gate() {
     ));
     assert_ne!(denied.code, Some(0));
     assert!(!outside.exists());
+    let expected_outside = canonical_missing_path(&outside);
+    assert!(
+        denied.denials.iter().any(|denial| {
+            denial.operation.starts_with("file-write")
+                && denial.path.as_deref() == Some(expected_outside.to_string_lossy().as_ref())
+        }),
+        "missing exact denial for {}; got {:?}",
+        expected_outside.display(),
+        denied.denials
+    );
+
+    let generic_outside = root.0.join("generic-error.txt");
+    let generic = broker.exec(request(
+        "generic-error-denial",
+        &workspace,
+        format!(
+            "if {{ printf bad > {}; }} 2>/dev/null; then exit 0; else printf 'service unavailable\\n'; exit 1; fi",
+            shell_quote(&generic_outside.to_string_lossy())
+        ),
+        vec![],
+        None,
+        1024,
+    ));
+    assert_ne!(generic.code, Some(0));
+    assert_eq!(generic.output, b"service unavailable\n");
+    let expected_generic = canonical_missing_path(&generic_outside);
+    assert!(
+        generic.denials.iter().any(|denial| {
+            denial.operation.starts_with("file-write")
+                && denial.path.as_deref() == Some(expected_generic.to_string_lossy().as_ref())
+        }),
+        "missing exact denial for {}; got {:?}",
+        expected_generic.display(),
+        generic.denials
+    );
 
     let granted = broker.exec(request(
         "external-granted",
