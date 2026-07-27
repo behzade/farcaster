@@ -16,7 +16,8 @@ hosts, and notification settings. This repo owns code and package pins.
 - `themes/gruvbox-dark-hard.json`: Gruvbox's canonical dark-hard palette for
   Pi. The palette values come from
   [morhetz/gruvbox](https://github.com/morhetz/gruvbox/blob/master/colors/gruvbox.vim).
-- `skills/background-jobs`: non-blocking shell job control.
+- `skills/background-jobs`: sandboxed, non-blocking job control through a Pi
+  tool.
 - `nix`: pinned package builds for the sandbox, subagents, and server
   compaction.
 - `tests`: shared policy and notification checks.
@@ -68,7 +69,7 @@ The default rights are:
 - deny reads and writes for `.env` and `.key` files and for `.ssh`, `.aws`,
   and `.gnupg`; deny reads of Pi and Codex `auth.json`; keep PEM certificate
   bundles readable but read-only;
-- keep `~/.pi/agent` and `~/.codex` read-only so a grant cannot change its own
+- keep `~/.pi` and `~/.codex` read-only so a grant cannot change its own
   policy;
 - write the workspace, `/tmp`, and the system temp folder;
 - pass only core shell variables such as `PATH`, `HOME`, locale, and temp paths;
@@ -83,6 +84,11 @@ model does not receive a separate file permission tool and does not need a
 failed permission-request turn. Protected paths and explicit deny rules remain
 blocked without a prompt. Saved rights live in
 `~/.pi/agent/io-permissions.json`, keyed by the real workspace path.
+
+Project `.pi` is also read-only by default because it can load code and prompts
+on reload. A write asks for the whole project `.pi` folder, like repository
+control writes ask for `.git`. Global `~/.pi` stays blocked and cannot receive a
+model grant.
 
 When bash needs network access, the model can request one exact hostname or IP.
 The request rejects schemes, ports, paths, and wildcards. The user can allow
@@ -111,9 +117,14 @@ private data or act outside the shell sandbox. That approval is scoped to the
 named service and can be saved for one workspace.
 
 Unix socket access grants a right to another service. That service may do work
-outside the caller's file or network limits. The machine config allows only the Nix
-daemon and Pi's own tmux socket. Keep other service sockets blocked unless they
-form part of the intended trust boundary.
+outside the caller's file or network limits. The machine config allows the Nix
+daemon for normal Nix, flake, and direnv work. The reserved background-job tmux
+socket is never passed to normal bash even if an older config lists it.
+
+Use the `background_job` tool for dev servers, watchers, builds, and long tests.
+The tool owns the tmux socket and starts each command in a fresh Codex sandbox
+with the current workspace rights. It can list, inspect, send input to, and stop
+only jobs marked as broker-managed.
 
 Pi's built-in recursive `grep` and `find` tools do not run as child processes
 of the sandbox. The extension blocks them and tells the agent to use `rg` or

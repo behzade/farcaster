@@ -5,6 +5,7 @@ import {
 	gitControlRoot,
 	isDefaultWritePath,
 	isInside,
+	projectControlRoot,
 	resolvePermissionPath,
 } from "./io-permissions.ts";
 
@@ -29,6 +30,7 @@ export function isBaseWriteAllowed(
 	cwd: string,
 ): boolean {
 	if (gitControlRoot(path)) return false;
+	if (projectControlRoot(path, cwd)) return false;
 	if (isDefaultWritePath(path, cwd)) return true;
 	return (config.filesystem?.allowWrite ?? []).some((root) => {
 		if (root === "." || root === ":workspace_roots") {

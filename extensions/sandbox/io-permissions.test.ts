@@ -9,11 +9,13 @@ import {
 	gitControlRoot,
 	isDefaultWritePath,
 	isProtectedPath,
+	isProtectedWritePath,
 	loadWorkspacePermissions,
 	mcpPermissionFromInput,
 	normalizeNetworkHost,
 	normalizePermission,
 	permissionCoversPath,
+	projectControlRoot,
 	saveWorkspacePermission,
 } from "./io-permissions.ts";
 
@@ -63,6 +65,7 @@ test("secret paths cannot be granted", () => {
 	);
 	assert.equal(isProtectedPath(join(homedir(), ".pi", "agent", "auth.json")), true);
 	assert.equal(isProtectedPath(join(homedir(), ".codex", "auth.json")), true);
+	assert.equal(isProtectedWritePath(join(homedir(), ".pi", "other", "config.json")), true);
 	assert.throws(
 		() =>
 			normalizePermission(
@@ -74,6 +77,23 @@ test("secret paths cannot be granted", () => {
 	assert.doesNotThrow(() =>
 		normalizePermission(
 			{ kind: "read", path: join(homedir(), ".pi", "agent"), targetType: "folder" },
+			workspace,
+		),
+	);
+});
+
+test("project Pi paths widen to the project control folder", () => {
+	const root = mkdtempSync(join(tmpdir(), "pi-project-control-"));
+	const workspace = join(root, "workspace");
+	mkdirSync(workspace);
+	assert.equal(
+		projectControlRoot(join(workspace, ".pi", "extensions", "unsafe.ts"), workspace),
+		canonicalize(join(workspace, ".pi")),
+	);
+	assert.equal(projectControlRoot(join(workspace, "src", "index.ts"), workspace), undefined);
+	assert.doesNotThrow(() =>
+		normalizePermission(
+			{ kind: "write", path: join(workspace, ".pi"), targetType: "folder" },
 			workspace,
 		),
 	);

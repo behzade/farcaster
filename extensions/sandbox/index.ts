@@ -9,6 +9,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
@@ -22,6 +23,12 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
+	isBackgroundJobSocket,
+	isValidBackgroundJobName,
+	runBackgroundJobHelper,
+	sandboxedJobCommand,
+} from "./background-jobs.ts";
+import {
 	DEFAULT_CONFIG,
 	applyProjectRestrictions,
 	buildCodexSandboxArgs,
@@ -32,15 +39,18 @@ import {
 	normalizeConfig,
 } from "./codex-command.ts";
 import {
+	canonicalize,
 	gitControlRoot,
 	grantsToRuntime,
 	type IoPermission,
+	isInside,
 	isProtectedPath,
 	isProtectedWritePath,
 	loadWorkspacePermissions,
 	mcpPermissionFromInput,
 	permissionCoversPath,
 	permissionLabel,
+	projectControlRoot,
 	normalizePermission,
 	resolvePermissionPath,
 	saveWorkspacePermission,
@@ -160,6 +170,44 @@ const NetworkPermissionParams = Type.Object({
 	}),
 	reason: Type.String({ description: "Why this host is needed" }),
 });
+
+const BackgroundJobParams = Type.Union([
+	Type.Object({
+		action: Type.Literal("start"),
+		name: Type.String({ description: "Unique job name starting with pi-" }),
+		command: Type.String({ description: "Shell command to run in the background" }),
+		cwd: Type.Optional(Type.String({ description: "Working directory inside this workspace" })),
+	}),
+	Type.Object({ action: Type.Literal("list") }),
+	Type.Object({
+		action: Type.Literal("status"),
+		name: Type.String({ description: "Job name" }),
+	}),
+	Type.Object({
+		action: Type.Literal("read"),
+		name: Type.String({ description: "Job name" }),
+		lines: Type.Optional(Type.Integer({ minimum: 1, maximum: 10_000 })),
+	}),
+	Type.Object({
+		action: Type.Literal("write"),
+		name: Type.String({ description: "Job name" }),
+		text: Type.String({ description: "Text to send without Enter" }),
+	}),
+	Type.Object({
+		action: Type.Literal("line"),
+		name: Type.String({ description: "Job name" }),
+		text: Type.String({ description: "Text to send followed by Enter" }),
+	}),
+	Type.Object({
+		action: Type.Literal("keys"),
+		name: Type.String({ description: "Job name" }),
+		keys: Type.Array(Type.String(), { minItems: 1, maxItems: 20 }),
+	}),
+	Type.Object({
+		action: Type.Literal("stop"),
+		name: Type.String({ description: "Job name" }),
+	}),
+]);
 
 interface ApprovalDecision {
 	allowed: boolean;
@@ -299,7 +347,8 @@ export default function (pi: ExtensionAPI) {
 				for (const failurePath of failurePaths) {
 					const path = resolvePermissionPath(failurePath, cwd);
 					const gitRoot = gitControlRoot(path);
-					const permissionPath = gitRoot ?? path;
+					const piRoot = projectControlRoot(path, cwd);
+					const permissionPath = gitRoot ?? piRoot ?? path;
 					// The current profile can read the whole filesystem. A path that is
 					// readable but not writable therefore identifies a write denial. If
 					// policy does not identify one exact access kind, treat it as a
@@ -332,6 +381,7 @@ export default function (pi: ExtensionAPI) {
 						path: permissionPath,
 						directory:
 							gitRoot !== undefined ||
+							piRoot !== undefined ||
 							(existsSync(permissionPath) && statSync(permissionPath).isDirectory()),
 					});
 				}
@@ -352,9 +402,9 @@ export default function (pi: ExtensionAPI) {
 		name: "request_network_permission",
 		label: "Request network host",
 		description:
-			"Ask the user to allow one exact hostname or IP for the next bash call or for this workspace. Do not include a scheme, port, path, or wildcard.",
+			"Ask the user to allow one exact hostname or IP for the next bash or background job start, or for this workspace. Do not include a scheme, port, path, or wildcard.",
 		promptSnippet:
-			"Use request_network_permission before bash needs a network host that the sandbox has not allowed.",
+			"Use request_network_permission before bash or a background job needs a network host that the sandbox has not allowed.",
 		parameters: NetworkPermissionParams,
 		executionMode: "sequential",
 		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
@@ -426,7 +476,9 @@ export default function (pi: ExtensionAPI) {
 						type: "text",
 						text: decision.allowed
 							? `${permission.host} is allowed ${
-									decision.persistent ? "for this workspace" : "for the next bash call"
+									decision.persistent
+										? "for this workspace"
+										: "for the next bash or background job start"
 								}.`
 							: decision.reason ?? "Network host denied.",
 					},
@@ -441,6 +493,117 @@ export default function (pi: ExtensionAPI) {
 					host: permission.host,
 				},
 				isError: !decision.allowed,
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "background_job",
+		label: "Background job",
+		description:
+			"Start, list, inspect, interact with, or stop a long-running command. Started commands run in a fresh Codex sandbox. Job names must start with pi-.",
+		promptSnippet:
+			"Use background_job for long-running servers, watchers, builds, and tests instead of calling tmux through bash.",
+		parameters: BackgroundJobParams,
+		executionMode: "sequential",
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			const packagedHelperPath = fileURLToPath(new URL("./background-job.sh", import.meta.url));
+			const sourceHelperPath = fileURLToPath(
+				new URL("../../skills/background-jobs/scripts/job.sh", import.meta.url),
+			);
+			const skillHelperPath = resolve(
+				getAgentDir(),
+				"skills",
+				"background-jobs",
+				"scripts",
+				"job.sh",
+			);
+			const helperPath = [packagedHelperPath, sourceHelperPath, skillHelperPath].find(existsSync);
+			if (!helperPath) {
+				return {
+					content: [{ type: "text", text: "Background job helper is missing" }],
+					isError: true,
+				};
+			}
+			const config = activeConfig(sandboxState);
+			const environment = {
+				...buildShellEnvironment(config),
+				IN_SANDBOX: "1",
+				PI_SANDBOX: "codex",
+			};
+			let args: string[];
+			if ("name" in params && !isValidBackgroundJobName(params.name)) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: "Job names must start with pi- and use only letters, digits, dots, underscores, or hyphens.",
+						},
+					],
+					isError: true,
+				};
+			}
+			if (params.action === "start") {
+				if (sandboxState.kind !== "ready") {
+					return {
+						content: [
+							{
+								type: "text",
+								text: "The sandbox is not ready, so no background job was started.",
+							},
+						],
+						isError: true,
+					};
+				}
+				const cwd = resolvePermissionPath(params.cwd ?? ctx.cwd, ctx.cwd);
+				if (!isInside(canonicalize(ctx.cwd), cwd)) {
+					return {
+						content: [{ type: "text", text: "Background jobs must start inside the current workspace." }],
+						isError: true,
+					};
+				}
+				if (!existsSync(cwd) || !statSync(cwd).isDirectory()) {
+					return {
+						content: [{ type: "text", text: `Background job directory does not exist: ${cwd}` }],
+						isError: true,
+					};
+				}
+				const grants = runtimeGrants(true);
+				const codexCommand = config.codexCommand ?? DEFAULT_CONFIG.codexCommand;
+				const command = sandboxedJobCommand(
+					codexCommand,
+					buildCodexSandboxArgs(cwd, config, params.command, grants),
+					environment,
+				);
+				args = ["start", params.name, cwd, command];
+			} else if (params.action === "list") {
+				args = ["list"];
+			} else if (params.action === "status" || params.action === "stop") {
+				args = [params.action, params.name];
+			} else if (params.action === "read") {
+				args = ["read", params.name, String(params.lines ?? 200)];
+			} else if (params.action === "write" || params.action === "line") {
+				args = [params.action, params.name, params.text];
+			} else {
+				args = ["keys", params.name, ...params.keys];
+			}
+
+			const result = await runBackgroundJobHelper(helperPath, args, {
+				cwd: ctx.cwd,
+				environment,
+				signal,
+			});
+			return {
+				content: [
+					{
+						type: "text",
+						text:
+							result.output ||
+							(result.exitCode === 0 ? "Done" : "Background job request failed"),
+					},
+				],
+				details: { action: params.action, exitCode: result.exitCode },
+				isError: result.exitCode !== 0,
 			};
 		},
 	});
@@ -564,12 +727,14 @@ export default function (pi: ExtensionAPI) {
 				: isBaseWriteAllowed(path, activeConfig(sandboxState), ctx.cwd));
 		if (!allowed) {
 			const gitRoot = access === "write" ? gitControlRoot(path) : undefined;
-			const permissionPath = gitRoot ?? path;
+			const piRoot = access === "write" ? projectControlRoot(path, ctx.cwd) : undefined;
+			const permissionPath = gitRoot ?? piRoot ?? path;
 			const permission: IoPermission = {
 				kind: access,
 				path: permissionPath,
 				directory:
 					gitRoot !== undefined ||
+					piRoot !== undefined ||
 					event.toolName === "ls" ||
 					(existsSync(permissionPath) && statSync(permissionPath).isDirectory()),
 			};
@@ -655,6 +820,9 @@ export default function (pi: ExtensionAPI) {
 				.filter((permission): permission is NetworkPermission => permission.kind === "network_host")
 				.map((permission) => permission.host);
 			const networkHosts = [...new Set([...allowedDomains, ...savedHosts])].sort();
+			const unixSockets = (config.network?.allowUnixSockets ?? []).filter(
+				(socket) => !isBackgroundJobSocket(socket, canonicalize),
+			);
 			ctx.ui.notify(
 				[
 					"Codex IO sandbox:",
@@ -670,7 +838,7 @@ export default function (pi: ExtensionAPI) {
 								? networkHosts.join(", ")
 								: "blocked until an exact host or IP is approved"
 					}`,
-					`  Unix sockets: ${config.network?.allowUnixSockets?.join(", ") || "(none)"}`,
+					`  Unix sockets: ${unixSockets.join(", ") || "(none)"}`,
 					`  Saved workspace rights: ${persistentPermissions.map(permissionLabel).join(", ") || "(none)"}`,
 				].join("\n"),
 				"info",

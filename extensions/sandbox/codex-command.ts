@@ -1,4 +1,12 @@
-import { normalizeNetworkHost } from "./io-permissions.ts";
+import { resolve } from "node:path";
+import {
+	backgroundJobSocket,
+	isBackgroundJobSocket,
+} from "./background-jobs.ts";
+import {
+	canonicalize,
+	normalizeNetworkHost,
+} from "./io-permissions.ts";
 
 export interface CodexSandboxNetworkConfig {
 	enabled?: boolean;
@@ -70,7 +78,7 @@ export const DEFAULT_CONFIG: Required<Pick<CodexSandboxConfig, "enabled" | "code
 			".env.*",
 			"*.pem",
 			"*.key",
-			"~/.pi/agent",
+			"~/.pi",
 			"~/.codex",
 		],
 	},
@@ -589,6 +597,15 @@ export function buildCodexSandboxArgs(
 	const profile = `${profileBase}-${process.pid}`;
 
 	const filesystemEntries = new Map<string, FilesystemAccess>();
+	// Project-local Pi files can load code and prompts on reload. Keep the
+	// control folder read-only until the user grants it for this workspace.
+	const projectControlPath = canonicalize(resolve(cwd, ".pi"));
+	const projectControlGranted = (grants.write ?? []).some(
+		(path) => canonicalize(path) === projectControlPath,
+	);
+	if (!projectControlGranted) filesystemEntries.set(".pi", "read");
+	// Normal bash must not control the host-side background-job broker.
+	filesystemEntries.set(backgroundJobSocket(), "read");
 	for (const path of [...(effectiveConfig.filesystem?.allowRead ?? []), ...(grants.read ?? [])]) {
 		filesystemEntries.set(path, "read");
 	}
@@ -634,19 +651,23 @@ export function buildCodexSandboxArgs(
 	}
 	const networkEntries: [string, TomlValue][] = [["enabled", networkEnabled]];
 	if (networkEnabled) {
-			networkEntries.push(
-				["mode", "full"],
-				["allow_local_binding", false],
+		networkEntries.push(
+			["mode", "full"],
+			["allow_local_binding", false],
 			[
 				"domains",
-				rawToml(inlineTable(
-					[...domainEntries]
-						.sort(([left], [right]) => left.localeCompare(right))
-						.map(([domain, access]): [string, TomlValue] => [domain, access]),
-				)),
+				rawToml(
+					inlineTable(
+						[...domainEntries]
+							.sort(([left], [right]) => left.localeCompare(right))
+							.map(([domain, access]): [string, TomlValue] => [domain, access]),
+					),
+				),
 			],
 		);
-		const sockets = unique(effectiveConfig.network?.allowUnixSockets ?? []).sort();
+		const sockets = unique(effectiveConfig.network?.allowUnixSockets ?? [])
+			.filter((socket) => !isBackgroundJobSocket(socket, canonicalize))
+			.sort();
 		if (sockets.length > 0) {
 			networkEntries.push([
 				"unix_sockets",

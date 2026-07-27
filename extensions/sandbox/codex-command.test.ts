@@ -69,6 +69,7 @@ test("maps file, domain, and socket policy into Codex profile overrides", () => 
 	assert(profile.includes('"~/.ssh" = "deny"'));
 	assert(profile.includes('"~/.pi/agent/auth.json" = "deny"'));
 	assert(profile.includes('"~/.codex/auth.json" = "deny"'));
+	assert(profile.includes('".pi" = "read"'));
 	assert(values.includes("features.network_proxy=true"));
 	assert(profile.includes('"github.com" = "allow"'));
 	assert(profile.includes('"blocked.example" = "deny"'));
@@ -133,7 +134,7 @@ test("a trusted project can only tighten global policy", () => {
 		":slash_tmp",
 		"/global",
 	]);
-	assert(result.filesystem?.denyWrite?.includes("~/.pi/agent"));
+	assert(result.filesystem?.denyWrite?.includes("~/.pi"));
 	assert(result.filesystem?.denyWrite?.includes("~/.codex"));
 	assert.deepEqual(result.filesystem?.denyRead, [
 		"~/.ssh",
@@ -166,6 +167,43 @@ test("default network policy has no external domains", () => {
 	assert(profile.includes('"domains" = {  }'));
 	assert.equal(profile.includes('"github.com" = "allow"'), false);
 	assert.equal(profile.includes('"registry.npmjs.org" = "allow"'), false);
+});
+
+test("normal bash cannot reach the background tmux socket but keeps Nix", () => {
+	const profile = overrides(
+		buildCodexSandboxArgs(
+			"/repo",
+			{
+				network: {
+					allowUnixSockets: [
+						"/nix/var/nix/daemon-socket/socket",
+						"/tmp/pi-agent-tmux.sock",
+						"/private/tmp/pi-agent-tmux.sock",
+					],
+				},
+			},
+			"true",
+		),
+	).find((value) => value.startsWith(`permissions.pi-sandbox-${process.pid}=`));
+	assert(profile);
+	assert(profile.includes('"/nix/var/nix/daemon-socket/socket" = "allow"'));
+	assert.equal(profile.includes('"/tmp/pi-agent-tmux.sock" = "allow"'), false);
+	assert.equal(profile.includes('"/private/tmp/pi-agent-tmux.sock" = "allow"'), false);
+	assert(profile.includes('"/tmp/pi-agent-tmux.sock" = "read"'));
+});
+
+test("project Pi control files are read-only until their folder is granted", () => {
+	const denied = overrides(
+		buildCodexSandboxArgs("/repo", DEFAULT_CONFIG, "true"),
+	).find((value) => value.startsWith(`permissions.pi-sandbox-${process.pid}=`));
+	const granted = overrides(
+		buildCodexSandboxArgs("/repo", DEFAULT_CONFIG, "true", { write: ["/repo/.pi"] }),
+	).find((value) => value.startsWith(`permissions.pi-sandbox-${process.pid}=`));
+	assert(denied);
+	assert(granted);
+	assert(denied.includes('".pi" = "read"'));
+	assert.equal(granted.includes('".pi" = "read"'), false);
+	assert(granted.includes('"/repo/.pi" = "write"'));
 });
 
 test("shell environment defaults to Codex core variables and removes secret names", () => {

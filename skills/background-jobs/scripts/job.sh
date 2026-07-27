@@ -3,6 +3,7 @@ set -euo pipefail
 
 socket="${PI_BACKGROUND_TMUX_SOCKET:-/tmp/pi-agent-tmux.sock}"
 tmux_command=(tmux -S "$socket")
+managed_marker="pi-background-job-v1"
 
 usage() {
   echo "usage: job.sh start NAME CWD COMMAND" >&2
@@ -41,6 +42,17 @@ has_session() {
   "${tmux_command[@]}" has-session -t "=$1" 2>/dev/null
 }
 
+is_managed_session() {
+  [[ "$("${tmux_command[@]}" show-options -qv -t "$1" @pi-background-job 2>/dev/null)" == "$managed_marker" ]]
+}
+
+require_managed_session() {
+  has_session "$1" && is_managed_session "$1" || {
+    echo "unknown background job: $1" >&2
+    exit 1
+  }
+}
+
 paste_text() {
   local name="$1"
   local text="$2"
@@ -67,10 +79,11 @@ case "$action" in
       echo "job already exists: $name" >&2
       exit 1
     fi
-    "${tmux_command[@]}" new-session -d -s "$name" -c "$cwd"
+    "${tmux_command[@]}" new-session -d -s "$name" -c "$cwd" 'exec sleep 86400'
+    "${tmux_command[@]}" set-option -t "$name" @pi-background-job "$managed_marker"
     "${tmux_command[@]}" set-option -g history-limit 100000
     "${tmux_command[@]}" set-option -p -t "=${name}:0.0" remain-on-exit on
-    "${tmux_command[@]}" respawn-pane -k -t "=${name}:0.0" -- /bin/sh -lc "$command"
+    "${tmux_command[@]}" respawn-pane -k -t "=${name}:0.0" -- /bin/sh -c "$command"
     echo "started $name"
     ;;
   list)
@@ -79,16 +92,21 @@ case "$action" in
       echo "no background jobs"
       exit 0
     fi
-    "${tmux_command[@]}" list-sessions -F 'name=#{session_name} windows=#{session_windows} created=#{session_created_string}'
+    found=0
+    while IFS= read -r name; do
+      if valid_name "$name" && is_managed_session "$name"; then
+        "${tmux_command[@]}" list-sessions -t "$name" \
+          -F 'name=#{session_name} windows=#{session_windows} created=#{session_created_string}'
+        found=1
+      fi
+    done < <("${tmux_command[@]}" list-sessions -F '#{session_name}')
+    (( found == 1 )) || echo "no background jobs"
     ;;
   status)
     [[ $# -eq 2 ]] || usage
     name="$2"
     require_name "$name"
-    has_session "$name" || {
-      echo "unknown job: $name" >&2
-      exit 1
-    }
+    require_managed_session "$name"
     "${tmux_command[@]}" list-panes -t "=$name" \
       -F 'name=#{session_name} dead=#{pane_dead} exit=#{pane_dead_status} pid=#{pane_pid} command=#{pane_current_command}'
     ;;
@@ -101,20 +119,14 @@ case "$action" in
       echo "lines must be between 1 and 10000" >&2
       exit 2
     }
-    has_session "$name" || {
-      echo "unknown job: $name" >&2
-      exit 1
-    }
+    require_managed_session "$name"
     "${tmux_command[@]}" capture-pane -p -J -t "=${name}:0.0" -S "-$lines"
     ;;
   write | line)
     [[ $# -eq 3 ]] || usage
     name="$2"
     require_name "$name"
-    has_session "$name" || {
-      echo "unknown job: $name" >&2
-      exit 1
-    }
+    require_managed_session "$name"
     paste_text "$name" "$3"
     if [[ "$action" == "line" ]]; then
       "${tmux_command[@]}" send-keys -t "=${name}:0.0" Enter
@@ -125,10 +137,7 @@ case "$action" in
     (( $# >= 3 )) || usage
     name="$2"
     require_name "$name"
-    has_session "$name" || {
-      echo "unknown job: $name" >&2
-      exit 1
-    }
+    require_managed_session "$name"
     shift 2
     "${tmux_command[@]}" send-keys -t "=${name}:0.0" -- "$@"
     echo "sent keys to $name"
@@ -137,10 +146,7 @@ case "$action" in
     [[ $# -eq 2 ]] || usage
     name="$2"
     require_name "$name"
-    has_session "$name" || {
-      echo "unknown job: $name" >&2
-      exit 1
-    }
+    require_managed_session "$name"
     "${tmux_command[@]}" kill-session -t "=$name"
     cleanup_stale_socket
     echo "stopped $name"

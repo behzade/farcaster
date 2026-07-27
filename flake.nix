@@ -43,6 +43,7 @@
         {
           sandbox-tests = pkgs.runCommand "pi-sandbox-tests" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
             node --test \
+              ${self}/extensions/sandbox/background-jobs.test.ts \
               ${self}/extensions/sandbox/codex-command.test.ts \
               ${self}/extensions/sandbox/io-permissions.test.ts \
               ${self}/extensions/sandbox/io-policy.test.ts \

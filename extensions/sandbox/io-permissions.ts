@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { isIP } from "node:net";
 import { homedir, tmpdir } from "node:os";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { domainToASCII } from "node:url";
 
 export type IoPermission =
@@ -40,7 +40,7 @@ interface PermissionFile {
 
 const EMPTY_FILE: PermissionFile = { version: 2, workspaces: {} };
 const protectedHomeRoots = [".ssh", ".aws", ".gnupg"];
-const protectedWriteRoots = [".pi/agent", ".codex"];
+const protectedWriteRoots = [".pi", ".codex"];
 const protectedAuthFiles = [".pi/agent/auth.json", ".codex/auth.json"];
 const secretNames = [/^\.env(?:\..*)?$/, /\.(?:pem|key)$/];
 
@@ -107,6 +107,12 @@ export function gitControlRoot(path: string): string | undefined {
 	if (index < 0) return undefined;
 	const root = parts.slice(0, index + 1).join(sep);
 	return root || sep;
+}
+
+export function projectControlRoot(path: string, cwd: string): string | undefined {
+	const actual = canonicalize(path);
+	const root = canonicalize(resolve(cwd, ".pi"));
+	return isInside(root, actual) ? root : undefined;
 }
 
 export function normalizeNetworkHost(input: string): string {
@@ -225,6 +231,9 @@ export function isDefaultWritePath(path: string, cwd: string): boolean {
 export function permissionLabel(permission: IoPermission): string {
 	if (permission.kind === "network_host") return `network host ${permission.host}`;
 	if (permission.kind === "mcp") return `MCP service ${permission.server}`;
+	if (permission.kind === "write" && permission.directory && basename(permission.path) === ".pi") {
+		return `write Pi project control folder ${permission.path} (code there can run on reload)`;
+	}
 	return `${permission.kind} ${permission.directory ? "folder" : "file"} ${permission.path}`;
 }
 
