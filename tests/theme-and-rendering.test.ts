@@ -56,13 +56,15 @@ test("Gruvbox dark hard uses the canonical palette and every Pi color", async ()
   assert.deepEqual(theme.vars, canonicalPalette);
   for (const color of requiredColors) assert.ok(color in theme.colors, `missing ${color}`);
   assert.equal(theme.colors.userMessageBg, "bg0");
+  assert.equal(theme.colors.userMessageText, "fg1");
   assert.equal(theme.colors.border, "bg4");
+  assert.equal(theme.colors.text, "fg2");
   assert.equal(theme.colors.mdHeading, "fg0");
   assert.equal(theme.colors.mdLink, "brightAqua");
-  assert.equal(theme.colors.mdListBullet, "fg3");
+  assert.equal(theme.colors.mdListBullet, "brightAqua");
   assert.equal(theme.colors.syntaxKeyword, "fg0");
   assert.equal(theme.colors.syntaxString, "fg4");
-  assert.equal(theme.colors.thinkingMax, "fg0");
+  assert.equal(theme.colors.thinkingMax, "fg1");
   assert.equal(theme.export.pageBg, canonicalPalette.bg0Hard);
 });
 
@@ -103,7 +105,7 @@ test("Pierre edit renderer supports responsive split diffs and change background
   assert.match(source, /#363922/);
 });
 
-test("chat layout frames user messages and gives chat rows a margin", async () => {
+test("chat layout leaves messages unframed and gives chat rows a margin", async () => {
   const source = await readFile(chatLayoutPath, "utf8");
   assert.match(source, /UserMessageComponent/);
   assert.match(source, /AssistantMessageComponent/);
@@ -112,9 +114,8 @@ test("chat layout frames user messages and gives chat rows a margin", async () =
   assert.match(source, /COMPOSER_PADDING = 2/);
   assert.match(source, /setComposerMargin/);
   assert.match(source, /setPaddingX/);
-  assert.match(source, /USER_RULE = "#665c54"/);
-  assert.match(source, /ASSISTANT_RULE = "#3c3836"/);
-  assert.match(source, /"around"/);
-  assert.match(source, /"plain"/);
+  assert.match(source, /return lines\.map\(indent\)/);
+  assert.doesNotMatch(source, /USER_RULE|ASSISTANT_RULE/);
+  assert.doesNotMatch(source, /function rule|"around"|"plain"/);
   assert.doesNotMatch(source, /"before"/);
 });
