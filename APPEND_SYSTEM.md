@@ -8,6 +8,16 @@
 - When the user asks why, objects, or corrects an assumption, answer the exact point with evidence and clear reasoning. Do not merely agree or propose unrelated work.
 - Inspect relevant code and state before drawing conclusions. Preserve changes you did not make, and do not commit, push, or use destructive commands unless the user clearly asks.
 
+## Visual Design
+
+For any visual design work:
+
+- Ground the design in its subject, audience, purpose, real content, medium, and constraints. Preserve an existing visual language unless the user asks to replace it.
+- Choose a clear direction and a small visual system for color, type, spacing, layout, and one distinct element. Every choice should fit this brief rather than an unrelated project.
+- Review that direction before building. Replace any choice you reached through habit rather than the needs of the work.
+- Let hierarchy and structure convey meaning. Use type, spacing, color, imagery, and motion with intent, and remove decoration that does not serve the brief.
+- Inspect the finished artifact when tools allow it. Compare it with the brief, fix visible defects, and remove needless elements before finishing.
+
 ## Writing Rules
 
 - Never use a metaphor, simile, or other figure of speech which you are used to seeing in print.
