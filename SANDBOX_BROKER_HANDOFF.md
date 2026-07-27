@@ -372,8 +372,7 @@ The exact API is undecided. The important rules are:
 - make rights visible in the approval UI;
 - do not infer broad parent paths from vague failures.
 
-Observed Seatbelt denials can still support an automatic prompt-and-retry path when they contain one safe exact target.
-Missing denial data must not weaken enforcement.
+Observed Seatbelt denials can support an automatic prompt-and-retry path when they contain safe exact targets. Four sibling-file targets may be grouped into one user choice between the exact files and recursive access to their parent folder. Missing denial data must not weaken enforcement, and grouping must never add the parent without the user's choice.
 
 ## macOS Source Scope
 
@@ -511,7 +510,7 @@ This stage should already remove the Codex CLI dependency from normal macOS shel
 - bind records to command IDs as safely as available data permits;
 - bound all retained records;
 - return structured denial hints;
-- support prompt and retry only for an exact, policy-safe path;
+- support prompt and retry for exact policy-safe paths, with an explicit exact-files versus recursive-parent choice after four sibling-file hints;
 - test very short commands and delayed log delivery;
 - document that absence of a record is inconclusive.
 
@@ -576,6 +575,8 @@ See [`sandbox-broker/LINUX_BACKEND.md`](sandbox-broker/LINUX_BACKEND.md) for the
 - delayed denial delivery is collected within the broker policy;
 - short-lived child denial tests run repeatedly to expose races;
 - an empty denial set does not trigger a grant or unsandboxed retry;
+- four sibling-file denials produce one exact-files versus recursive-folder prompt, while fewer unrelated denials stay exact;
+- broad approved folders retain protected and configured-deny carve-outs;
 - `/dev` denial hints do not prompt and approved device rights are rejected;
 - unsafe socket and network access remain blocked.
 

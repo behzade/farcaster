@@ -2,7 +2,7 @@
 
 rustPlatform.buildRustPackage {
   pname = "pi-sandbox-broker";
-  version = "0.3.0";
+  version = "0.3.1";
 
   src = lib.cleanSource ../sandbox-broker;
   cargoLock.lockFile = ../sandbox-broker/Cargo.lock;

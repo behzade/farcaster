@@ -9,7 +9,7 @@ let
 in
 stdenvNoCC.mkDerivation {
   pname = "pi-sandbox-extension";
-  version = "2.8.0";
+  version = "2.9.0";
 
   src = ../extensions/sandbox;
 

@@ -1,4 +1,5 @@
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
+import { dirname } from "node:path";
 import type {
 	BrokerExecRequest,
 	BrokerExecResult,
@@ -10,7 +11,8 @@ import {
 	type NativeFilePermission,
 } from "./native-denials.ts";
 
-const MAX_NATIVE_ATTEMPTS = 4;
+const MAX_NATIVE_ATTEMPTS = 8;
+const FOLDER_SIBLING_THRESHOLD = 4;
 
 export interface NativeBroker {
 	exec(
@@ -18,6 +20,41 @@ export interface NativeBroker {
 		onData: (data: Buffer) => void,
 		signal?: AbortSignal,
 	): Promise<BrokerExecResult>;
+}
+
+export interface NativeApprovalRequest {
+	permissions: readonly NativeFilePermission[];
+	folderAlternative?: NativeFilePermission;
+}
+
+export type NativeApprovalChoice =
+	| "exact-once"
+	| "exact-always"
+	| "folder-once"
+	| "folder-always"
+	| "deny";
+
+export interface NativeApprovalSelection {
+	permissions: readonly NativeFilePermission[];
+	persistent: boolean;
+}
+
+export function resolveNativeApprovalChoice(
+	request: NativeApprovalRequest,
+	choice: NativeApprovalChoice,
+): NativeApprovalSelection | undefined {
+	if (choice === "deny") return undefined;
+	if (choice === "exact-once" || choice === "exact-always") {
+		return {
+			permissions: request.permissions,
+			persistent: choice === "exact-always",
+		};
+	}
+	if (!request.folderAlternative) return undefined;
+	return {
+		permissions: [request.folderAlternative],
+		persistent: choice === "folder-always",
+	};
 }
 
 export function createNativeSandboxOps(
@@ -50,13 +87,14 @@ export function createApprovingNativeSandboxOps(options: {
 	toolCallId: string;
 	blockedPaths: readonly string[];
 	approve: (
-		permission: NativeFilePermission,
+		request: NativeApprovalRequest,
 		signal: AbortSignal | undefined,
-	) => Promise<boolean>;
+	) => Promise<readonly NativeFilePermission[] | undefined>;
 }): BashOperations {
 	return {
 		async exec(command, cwd, execOptions) {
 			const permissions = [...options.initialPermissions];
+			const denialHistory = new Map<string, Map<string, NativeFilePermission>>();
 			let lastResult: BrokerExecResult = {
 				exitCode: 1,
 				denials: [],
@@ -93,19 +131,69 @@ export function createApprovingNativeSandboxOps(options: {
 					if (decision.kind === "unsafe") return lastResult;
 					if (decision.kind === "permission") {
 						const permission = decision.permission;
-						requested.set(
-							`${permission.kind}:${permission.directory}:${permission.path}`,
-							permission,
-						);
+						requested.set(permissionKey(permission), permission);
 					}
 				}
 				if (requested.size === 0) return lastResult;
 
 				for (const permission of requested.values()) {
-					const approved = await options.approve(permission, execOptions.signal);
+					if (permission.directory) continue;
+					const key = siblingGroupKey(permission);
+					const group = denialHistory.get(key) ?? new Map<string, NativeFilePermission>();
+					group.set(permission.path, permission);
+					denialHistory.set(key, group);
+				}
+
+				const approvalRequests: NativeApprovalRequest[] = [];
+				const grouped = new Set<string>();
+				for (const permission of requested.values()) {
+					if (!permission.directory) {
+						const groupKey = siblingGroupKey(permission);
+						const siblings = denialHistory.get(groupKey);
+						if (
+							siblings &&
+							siblings.size >= FOLDER_SIBLING_THRESHOLD &&
+							!grouped.has(groupKey)
+						) {
+							grouped.add(groupKey);
+							const folderDecision = permissionForNativeDenial(
+								{
+									operation:
+										permission.kind === "write"
+											? "file-write-create"
+											: "file-read-metadata",
+									path: dirname(permission.path),
+									process: "grouped-denials",
+								},
+								cwd,
+								options.config,
+								permissions,
+								options.blockedPaths,
+							);
+							approvalRequests.push({
+								permissions: [...siblings.values()],
+								folderAlternative:
+									folderDecision.kind === "permission" &&
+									folderDecision.permission.directory
+										? folderDecision.permission
+										: undefined,
+							});
+							continue;
+						}
+						if (grouped.has(groupKey)) continue;
+					}
+					approvalRequests.push({ permissions: [permission] });
+				}
+
+				for (const approvalRequest of approvalRequests) {
+					const approved = await options.approve(approvalRequest, execOptions.signal);
 					if (execOptions.signal?.aborted) throw new Error("aborted");
-					if (!approved) return lastResult;
-					permissions.push(permission);
+					if (!approved || approved.length === 0) return lastResult;
+					for (const permission of approved) {
+						if (!permissions.some((entry) => permissionKey(entry) === permissionKey(permission))) {
+							permissions.push(permission);
+						}
+					}
 				}
 				if (execOptions.signal?.aborted) throw new Error("aborted");
 				execOptions.onData(Buffer.from("\n[Retrying command with approved IO rights]\n"));
@@ -113,4 +201,12 @@ export function createApprovingNativeSandboxOps(options: {
 			return lastResult;
 		},
 	};
+}
+
+function permissionKey(permission: NativeFilePermission): string {
+	return `${permission.kind}:${permission.directory}:${permission.path}`;
+}
+
+function siblingGroupKey(permission: NativeFilePermission): string {
+	return `${permission.kind}:${dirname(permission.path)}`;
 }

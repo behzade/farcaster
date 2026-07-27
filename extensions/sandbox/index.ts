@@ -72,6 +72,9 @@ import {
 import {
 	createApprovingNativeSandboxOps,
 	createNativeSandboxOps,
+	type NativeApprovalChoice,
+	type NativeApprovalRequest,
+	resolveNativeApprovalChoice,
 } from "./native-sandbox-ops.ts";
 import { parseFilesystemFailurePaths } from "./sandbox-failures.ts";
 
@@ -420,6 +423,77 @@ export default function (pi: ExtensionAPI) {
 			persistent: false,
 			reason: comment ? `Permission denied. User comment: ${comment}` : "Permission denied by user",
 		};
+	};
+
+	const promptForNativeApproval = async (
+		request: NativeApprovalRequest,
+		tool: { toolName: string; toolCallId: string; signal?: AbortSignal },
+		ctx: ExtensionContext,
+	): Promise<readonly FilePermission[] | undefined> => {
+		const permissions = [...request.permissions];
+		const folder = request.folderAlternative;
+		if (!folder || permissions.length < 2) {
+			const approved: FilePermission[] = [];
+			for (const permission of permissions) {
+				const decision = await promptForToolPermission(
+					permission,
+					{ ...tool, retry: true },
+					ctx,
+				);
+				if (!decision.allowed) return undefined;
+				approved.push(permission);
+			}
+			return approved;
+		}
+
+		if (!ctx.hasUI) return undefined;
+		const access = permissions[0]?.kind ?? folder.kind;
+		const exactOnce = `Allow these ${permissions.length} files once and retry`;
+		const exactAlways = `Always allow these ${permissions.length} files in this workspace and retry`;
+		const folderOnce = `Allow ${folder.path} recursively once and retry`;
+		const folderAlways = `Always allow ${folder.path} recursively in this workspace and retry`;
+		const paths = permissions.map((permission) => `- ${permission.path}`).join("\n");
+		const summary =
+			`${tool.toolName} requests ${access} access to ${permissions.length} files in ${folder.path}. ` +
+			`The folder choices grant recursive ${access} access.`;
+		pi.events.emit("approval:requested", {
+			kind: "io-permission",
+			title: "Tool requests grouped IO rights",
+			summary,
+			toolName: tool.toolName,
+			toolCallId: tool.toolCallId,
+			sessionId: ctx.sessionManager.getSessionId(),
+			cwd: ctx.cwd,
+		});
+		const selection = await ctx.ui.select(
+			`${summary}\n\n${paths}`,
+			[exactOnce, exactAlways, folderOnce, folderAlways, "No"],
+			{ signal: tool.signal },
+		);
+		const choice: NativeApprovalChoice =
+			selection === exactOnce
+				? "exact-once"
+				: selection === exactAlways
+					? "exact-always"
+					: selection === folderOnce
+						? "folder-once"
+						: selection === folderAlways
+							? "folder-always"
+							: "deny";
+		const resolved = resolveNativeApprovalChoice(request, choice);
+		if (resolved?.persistent) {
+			for (const permission of resolved.permissions) {
+				saveWorkspacePermission(permissionFile, ctx.cwd, permission);
+			}
+			persistentPermissions = loadWorkspacePermissions(permissionFile, ctx.cwd);
+		}
+		pi.events.emit("approval:resolved", {
+			kind: "io-permission",
+			toolName: tool.toolName,
+			toolCallId: tool.toolCallId,
+			decision: resolved ? "allowed" : "denied",
+		});
+		return resolved?.permissions;
 	};
 
 	const approveDeclaredFilesystemPermissions = async (
@@ -887,19 +961,16 @@ export default function (pi: ExtensionAPI) {
 					blockedPaths: [
 						sandboxState.config.brokerPath ?? PACKAGED_BROKER_PATH,
 					],
-					async approve(permission, approvalSignal) {
-						const decision = await promptForToolPermission(
-							permission,
+					approve: (request, approvalSignal) =>
+						promptForNativeApproval(
+							request,
 							{
 								toolName: "bash",
 								toolCallId: id,
-								retry: true,
 								signal: approvalSignal,
 							},
 							ctx,
-						);
-						return decision.allowed;
-					},
+						),
 				});
 			} else {
 				operations = createApprovingSandboxOps(

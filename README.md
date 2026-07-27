@@ -144,12 +144,16 @@ kept in that one tool call's generated profile, so another command cannot use
 it. This handles tools that hide the OS access error, such as a stateful CLI
 that reports only that its service is unavailable.
 
-On the native macOS backend, a failed command can return a best-effort kernel
-denial hint even when the app hides `EPERM`. Pi prompts and retries only when
-the hint names one exact policy-safe file path. Empty, late, malformed,
-protected, denied, or `/dev` device hints grant nothing, and every retry still
-needs user approval. Unified logging can miss denials, so declared rights
-remain the reliable path.
+On the native macOS backend, a failed command can return best-effort kernel
+denial hints even when the app hides `EPERM`. Pi prompts and retries only when
+a hint names one exact policy-safe file or folder path. When four distinct file
+hints share one parent folder and access kind, Pi shows one prompt with choices
+to grant the exact files or their parent folder recursively, once or always for
+the workspace. It never widens access without the user's choice and stops after
+eight total attempts. A broad folder choice remains subject to hard protected
+paths and configured denies. Empty,
+late, malformed, protected, denied, or `/dev` device hints grant nothing.
+Unified logging can miss denials, so declared rights remain the reliable path.
 
 On the Codex backend, undeclared bash rights still use a limited fallback. The
 sandbox checks failed command output for access errors such as `Operation not

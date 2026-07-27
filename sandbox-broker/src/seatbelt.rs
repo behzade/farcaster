@@ -264,10 +264,13 @@ fn deny_matches_right(deny: &NormalizedDeny, right: &NormalizedRight) -> bool {
     }
     match deny.scope {
         DenyScope::File => deny.path.as_ref().is_some_and(|path| path == &right.path),
+        // A broader approved tree may contain a denied subtree. The generated
+        // allow rule carves that subtree out and the explicit deny still wins.
+        // Reject only rights that target the denied tree itself or a child.
         DenyScope::Tree => deny
             .path
             .as_ref()
-            .is_some_and(|path| right.path.starts_with(path) || path.starts_with(&right.path)),
+            .is_some_and(|path| right.path.starts_with(path)),
         DenyScope::Glob => seatbelt_regex_for_glob(&deny.pattern)
             .ok()
             .and_then(|pattern| regex_lite::Regex::new(&pattern).ok())
@@ -657,6 +660,48 @@ mod tests {
     }
 
     #[test]
+    fn approved_parent_tree_keeps_denied_children_carved_out() {
+        let tree_deny = NormalizedDeny {
+            access: DeniedAccess::ReadWrite,
+            pattern: "/home/user/.ssh".to_owned(),
+            scope: DenyScope::Tree,
+            path: Some(PathBuf::from("/home/user/.ssh")),
+        };
+        let file_deny = NormalizedDeny {
+            access: DeniedAccess::ReadWrite,
+            pattern: "/home/user/auth.json".to_owned(),
+            scope: DenyScope::File,
+            path: Some(PathBuf::from("/home/user/auth.json")),
+        };
+        let glob_deny = glob_deny(DeniedAccess::ReadWrite, "/**/*.key");
+        let parent = NormalizedRight {
+            access: Access::Write,
+            path: PathBuf::from("/home/user"),
+            scope: PathScope::Tree,
+            approved: true,
+        };
+        let child = NormalizedRight {
+            path: PathBuf::from("/home/user/.ssh/config"),
+            ..parent.clone()
+        };
+        assert!(!deny_matches_right(&tree_deny, &parent));
+        assert!(!deny_matches_right(&file_deny, &parent));
+        assert!(!deny_matches_right(&glob_deny, &parent));
+        assert!(deny_matches_right(&tree_deny, &child));
+
+        let args = build_args(
+            &["/usr/bin/true".to_owned()],
+            Path::new("/work"),
+            &[parent],
+            &[tree_deny, file_deny, glob_deny],
+        )
+        .expect("policy");
+        assert!(args[1].contains("WRITABLE_ROOT_0_EXCLUDED_0"));
+        assert!(args[1].contains("WRITABLE_ROOT_0_EXCLUDED_1"));
+        assert!(args[1].contains("(deny file-write* (regex"));
+    }
+
+    #[test]
     fn tree_denies_cover_the_root_and_descendants() {
         let denies = vec![NormalizedDeny {
             access: DeniedAccess::ReadWrite,
@@ -722,6 +767,53 @@ mod tests {
             output_limit_bytes: 1024,
         };
         assert!(normalize_policy(&policy, &hard).is_err());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires an unsandboxed macOS runner"]
+    fn real_seatbelt_broad_tree_keeps_denied_child_blocked() {
+        let root = temp_root("seatbelt-broad")
+            .canonicalize()
+            .expect("canonicalize test root");
+        let denied_root = root.join("protected");
+        fs::create_dir_all(&denied_root).expect("create denied child");
+        let allowed_file = root.join("allowed.txt");
+        let denied_file = denied_root.join("blocked.txt");
+        let rights = vec![NormalizedRight {
+            access: Access::Write,
+            path: root.clone(),
+            scope: PathScope::Tree,
+            approved: true,
+        }];
+        let policy_denies = vec![NormalizedDeny {
+            access: DeniedAccess::Write,
+            pattern: denied_root.to_string_lossy().into_owned(),
+            scope: DenyScope::Tree,
+            path: Some(denied_root),
+        }];
+
+        let command = vec![
+            "/bin/sh".to_owned(),
+            "-c".to_owned(),
+            format!(
+                "printf allowed > '{}'; printf blocked > '{}'",
+                allowed_file.display(),
+                denied_file.display()
+            ),
+        ];
+        let args = build_args(&command, &root, &rights, &policy_denies).expect("policy");
+        let output = Command::new(SANDBOX_EXEC)
+            .args(args)
+            .current_dir(&root)
+            .output()
+            .expect("run sandbox-exec");
+        assert!(!output.status.success());
+        assert_eq!(
+            fs::read_to_string(&allowed_file).expect("read allowed file"),
+            "allowed"
+        );
+        assert!(!denied_file.exists());
     }
 
     #[cfg(target_os = "macos")]

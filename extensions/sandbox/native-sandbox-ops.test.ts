@@ -2,15 +2,19 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import type {
 	BrokerExecRequest,
 	BrokerExecResult,
 } from "./broker-client.ts";
 import { DEFAULT_CONFIG } from "./codex-command.ts";
+import { canonicalize } from "./io-permissions.ts";
 import {
 	createApprovingNativeSandboxOps,
+	type NativeApprovalRequest,
 	type NativeBroker,
+	resolveNativeApprovalChoice,
 } from "./native-sandbox-ops.ts";
 
 class FakeBroker implements NativeBroker {
@@ -52,6 +56,36 @@ function failed(path: string): BrokerExecResult {
 	};
 }
 
+test("grouped approval choices preserve exact, folder, persistence, and denial intent", () => {
+	const exact = [
+		{ kind: "write" as const, path: "/state/a", directory: false },
+		{ kind: "write" as const, path: "/state/b", directory: false },
+	];
+	const folder = { kind: "write" as const, path: "/state", directory: true };
+	const request = { permissions: exact, folderAlternative: folder };
+	assert.deepEqual(resolveNativeApprovalChoice(request, "exact-once"), {
+		permissions: exact,
+		persistent: false,
+	});
+	assert.deepEqual(resolveNativeApprovalChoice(request, "exact-always"), {
+		permissions: exact,
+		persistent: true,
+	});
+	assert.deepEqual(resolveNativeApprovalChoice(request, "folder-once"), {
+		permissions: [folder],
+		persistent: false,
+	});
+	assert.deepEqual(resolveNativeApprovalChoice(request, "folder-always"), {
+		permissions: [folder],
+		persistent: true,
+	});
+	assert.equal(resolveNativeApprovalChoice(request, "deny"), undefined);
+	assert.equal(
+		resolveNativeApprovalChoice({ permissions: exact }, "folder-once"),
+		undefined,
+	);
+});
+
 test("native structured denial prompts and retries without parsing app output", async () => {
 	const cwd = mkdtempSync(join(tmpdir(), "pi-native-retry-"));
 	const path = join(homedir(), `pi-native-retry-${process.pid}`, "state.db");
@@ -70,9 +104,9 @@ test("native structured denial prompts and retries without parsing app output", 
 		initialPermissions: [],
 		toolCallId: "tool-1",
 		blockedPaths: [],
-		async approve(permission) {
-			approvals.push(permission.path);
-			return true;
+		async approve(request) {
+			approvals.push(...request.permissions.map((permission) => permission.path));
+			return request.permissions;
 		},
 	});
 
@@ -100,6 +134,137 @@ test("native structured denial prompts and retries without parsing app output", 
 	);
 });
 
+test("four sibling denials offer one recursive folder approval", async () => {
+	const cwd = mkdtempSync(join(tmpdir(), "pi-native-group-"));
+	const folder = fileURLToPath(new URL(".", import.meta.url));
+	const paths = ["issues.sqlite", "issues.sqlite-wal", "issues.sqlite-shm", "issues.sqlite.lock"].map(
+		(name) => join(folder, name),
+	);
+	const broker = new FakeBroker((request) =>
+		request.id.endsWith("attempt-0")
+			? {
+					exitCode: 1,
+					denials: paths.map((path) => ({
+						operation: "file-write-create",
+						path,
+						process: "issues",
+					})),
+					denialsComplete: false,
+				}
+			: { exitCode: 0, denials: [], denialsComplete: false },
+	);
+	const approvals: NativeApprovalRequest[] = [];
+	const operations = createApprovingNativeSandboxOps({
+		client: broker,
+		config: DEFAULT_CONFIG,
+		initialPermissions: [],
+		toolCallId: "tool-group",
+		blockedPaths: [],
+		async approve(request) {
+			approvals.push(request);
+			return request.folderAlternative ? [request.folderAlternative] : request.permissions;
+		},
+	});
+
+	const result = await operations.exec("issues search", cwd, { onData() {} });
+	assert.equal(result.exitCode, 0);
+	assert.equal(approvals.length, 1);
+	assert.deepEqual(
+		approvals[0]?.permissions.map((permission) => permission.path),
+		paths,
+	);
+	assert.deepEqual(approvals[0]?.folderAlternative, {
+		kind: "write",
+		path: canonicalize(folder),
+		directory: true,
+	});
+	assert.deepEqual(broker.requests[1]?.policy.grants, [
+		{
+			access: "write",
+			path: canonicalize(folder),
+			scope: "tree",
+			missing_path: "reject",
+		},
+	]);
+});
+
+test("grouped sibling denials can retain exact file rights", async () => {
+	const cwd = mkdtempSync(join(tmpdir(), "pi-native-group-exact-"));
+	const folder = fileURLToPath(new URL(".", import.meta.url));
+	const paths = ["exact.db", "exact.db-wal", "exact.db-shm", "exact.db-lock"].map((name) =>
+		join(folder, name),
+	);
+	const broker = new FakeBroker((request) =>
+		request.id.endsWith("attempt-0")
+			? {
+					exitCode: 1,
+					denials: paths.map((path) => ({
+						operation: "file-write-create",
+						path,
+						process: "issues",
+					})),
+					denialsComplete: false,
+				}
+			: { exitCode: 0, denials: [], denialsComplete: false },
+	);
+	const operations = createApprovingNativeSandboxOps({
+		client: broker,
+		config: DEFAULT_CONFIG,
+		initialPermissions: [],
+		toolCallId: "tool-group-exact",
+		blockedPaths: [],
+		async approve(request) {
+			return request.permissions;
+		},
+	});
+
+	const result = await operations.exec("issues search", cwd, { onData() {} });
+	assert.equal(result.exitCode, 0);
+	assert.deepEqual(
+		broker.requests[1]?.policy.grants.map((permission) => ({
+			path: permission.path,
+			scope: permission.scope,
+		})),
+		paths.map((path) => ({ path, scope: "file" })),
+	);
+});
+
+test("sibling denials accumulate across retries before offering the folder", async () => {
+	const cwd = mkdtempSync(join(tmpdir(), "pi-native-group-history-"));
+	const folder = fileURLToPath(new URL(".", import.meta.url));
+	const paths = ["state.db", "state.db-wal", "state.db-shm", "state.db-lock"].map((name) =>
+		join(folder, name),
+	);
+	const broker = new FakeBroker((request) => {
+		const attempt = Number(request.id.match(/attempt-(\d+)$/)?.[1] ?? 0);
+		if (attempt >= paths.length) return { exitCode: 0, denials: [], denialsComplete: false };
+		return failed(paths[attempt] ?? paths[0]!);
+	});
+	const approvalSizes: number[] = [];
+	const operations = createApprovingNativeSandboxOps({
+		client: broker,
+		config: DEFAULT_CONFIG,
+		initialPermissions: [],
+		toolCallId: "tool-history",
+		blockedPaths: [],
+		async approve(request) {
+			approvalSizes.push(request.permissions.length);
+			return request.folderAlternative ? [request.folderAlternative] : request.permissions;
+		},
+	});
+
+	const result = await operations.exec("issues search", cwd, { onData() {} });
+	assert.equal(result.exitCode, 0);
+	assert.deepEqual(approvalSizes, [1, 1, 1, 4]);
+	assert.equal(broker.requests.length, 5);
+	assert.equal(
+		broker.requests[4]?.policy.grants.some(
+			(permission) => permission.path === canonicalize(folder) && permission.scope === "tree",
+		),
+		true,
+	);
+});
+
 test("empty incomplete denial results do not prompt or retry", async () => {
 	const cwd = mkdtempSync(join(tmpdir(), "pi-native-no-retry-"));
 	const broker = new FakeBroker(() => ({
@@ -114,9 +279,9 @@ test("empty incomplete denial results do not prompt or retry", async () => {
 		initialPermissions: [],
 		toolCallId: "tool-2",
 		blockedPaths: [],
-		async approve() {
+		async approve(request) {
 			prompts += 1;
-			return true;
+			return request.permissions;
 		},
 	});
 
@@ -141,11 +306,11 @@ test("cancellation during native approval prevents retry", async () => {
 		initialPermissions: [],
 		toolCallId: "tool-3",
 		blockedPaths: [],
-		approve(_permission, signal) {
+		approve(_request, signal) {
 			approvalStarted?.();
-			return new Promise<boolean>((resolve) => {
-				if (signal?.aborted) resolve(false);
-				else signal?.addEventListener("abort", () => resolve(false), { once: true });
+			return new Promise<undefined>((resolve) => {
+				if (signal?.aborted) resolve(undefined);
+				else signal?.addEventListener("abort", () => resolve(undefined), { once: true });
 			});
 		},
 	});
