@@ -67,6 +67,8 @@ test("maps file, domain, and socket policy into Codex profile overrides", () => 
 	assert(profile.includes('"/repo/.env" = "read"'));
 	assert(profile.includes('"*.pem" = "deny"'));
 	assert(profile.includes('"~/.ssh" = "deny"'));
+	assert(profile.includes('"~/.pi/agent/auth.json" = "deny"'));
+	assert(profile.includes('"~/.codex/auth.json" = "deny"'));
 	assert(values.includes("features.network_proxy=true"));
 	assert(profile.includes('"github.com" = "allow"'));
 	assert(profile.includes('"blocked.example" = "deny"'));
@@ -97,7 +99,6 @@ test("a trusted project can only tighten global policy", () => {
 		network: {
 			enabled: true,
 			allowedDomains: ["github.com"],
-			allowLocalNetwork: true,
 			allowUnixSockets: ["/safe.sock"],
 		},
 		filesystem: { allowWrite: [".", "/global"] },
@@ -109,7 +110,6 @@ test("a trusted project can only tighten global policy", () => {
 		network: {
 			enabled: false,
 			allowedDomains: ["evil.example"],
-			allowLocalNetwork: false,
 			allowUnixSockets: ["/evil.sock"],
 			allowAllUnixSockets: true,
 			deniedDomains: ["blocked.example"],
@@ -124,7 +124,6 @@ test("a trusted project can only tighten global policy", () => {
 	assert.equal(result.permissionProfile, "pi-sandbox");
 	assert.equal(result.network?.enabled, false);
 	assert.deepEqual(result.network?.allowedDomains, ["github.com"]);
-	assert.equal(result.network?.allowLocalNetwork, false);
 	assert.deepEqual(result.network?.allowUnixSockets, ["/safe.sock"]);
 	assert.equal(result.network?.allowAllUnixSockets, false);
 	assert.deepEqual(result.network?.deniedDomains, ["blocked.example"]);
@@ -140,6 +139,8 @@ test("a trusted project can only tighten global policy", () => {
 		"~/.ssh",
 		"~/.aws",
 		"~/.gnupg",
+		"~/.pi/agent/auth.json",
+		"~/.codex/auth.json",
 		"/**/.env",
 		"/**/.env.*",
 		"/**/*.key",
@@ -214,10 +215,7 @@ test("shell environment applies excludes, set values, then include-only filters"
 
 test("rejects malformed config instead of weakening policy", () => {
 	assert.throws(() => normalizeConfig({ network: { enabled: "yes" } }), /network.enabled/);
-	assert.throws(
-		() => normalizeConfig({ network: { allowLocalNetwork: "yes" } }),
-		/network.allowLocalNetwork/,
-	);
+	assert.throws(() => normalizeConfig({ network: { allowLocalNetwork: true } }), /unknown fields/);
 	assert.throws(() => normalizeConfig({ filesystem: { denyRead: [""] } }), /non-empty strings/);
 	assert.throws(() => normalizeConfig({ permissionProfile: 'bad" -c sandbox_mode' }), /permissionProfile/);
 	assert.throws(() => normalizeConfig({ filesystem: { allowWrites: ["."] } }), /unknown fields/);
@@ -231,11 +229,19 @@ test("rejects malformed config instead of weakening policy", () => {
 	);
 	assert.throws(
 		() => normalizeConfig({ network: { allowedDomains: ["localhost:8317"] } }),
-		/without schemes, paths, or ports/,
+		/exact hostnames or IPs/,
+	);
+	assert.throws(
+		() => normalizeConfig({ network: { allowedDomains: ["*"] } }),
+		/exact hostnames or IPs/,
+	);
+	assert.throws(
+		() => buildCodexSandboxArgs("/repo", { network: { allowedDomains: ["*"] } }, "true"),
+		/exact hostname/,
 	);
 });
 
-test("a web grant opens public hosts while configured denies stay in force", () => {
+test("network grants add only exact hosts while configured denies stay in force", () => {
 	const profile = overrides(
 		buildCodexSandboxArgs(
 			"/repo",
@@ -249,34 +255,15 @@ test("a web grant opens public hosts while configured denies stay in force", () 
 				},
 			},
 			"true",
-			{ web: true },
+			{ networkHosts: ["registry.npmjs.org", "127.0.0.1"] },
 		),
 	).find((value) => value.startsWith(`permissions.pi-test-${process.pid}=`));
 	assert(profile);
-	assert(profile.includes('"*" = "allow"'));
-	assert(profile.includes('"blocked.example" = "deny"'));
-});
-
-test("a local network grant enables Codex local binding and loopback hosts", () => {
-	const profile = overrides(
-		buildCodexSandboxArgs(
-			"/repo",
-			{
-				permissionProfile: "pi-test",
-				network: {
-					enabled: true,
-					allowedDomains: ["github.com"],
-				},
-			},
-			"true",
-			{ localNetwork: true },
-		),
-	).find((value) => value.startsWith(`permissions.pi-test-${process.pid}=`));
-	assert(profile);
-	assert(profile.includes('"allow_local_binding" = true'));
-	assert(profile.includes('"localhost" = "allow"'));
+	assert(profile.includes('"registry.npmjs.org" = "allow"'));
 	assert(profile.includes('"127.0.0.1" = "allow"'));
-	assert(profile.includes('"::1" = "allow"'));
+	assert(profile.includes('"blocked.example" = "deny"'));
+	assert.equal(profile.includes('"*" = "allow"'), false);
+	assert(profile.includes('"allow_local_binding" = false'));
 });
 
 test("a trusted project can only tighten the shell environment", () => {

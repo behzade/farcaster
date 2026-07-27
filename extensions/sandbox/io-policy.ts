@@ -2,6 +2,7 @@ import { basename, relative, sep } from "node:path";
 import type { CodexSandboxConfig } from "./codex-command.ts";
 import {
 	canonicalize,
+	gitControlRoot,
 	isDefaultWritePath,
 	isInside,
 	resolvePermissionPath,
@@ -27,6 +28,7 @@ export function isBaseWriteAllowed(
 	config: CodexSandboxConfig,
 	cwd: string,
 ): boolean {
+	if (gitControlRoot(path)) return false;
 	if (isDefaultWritePath(path, cwd)) return true;
 	return (config.filesystem?.allowWrite ?? []).some((root) => {
 		if (root === "." || root === ":workspace_roots") {

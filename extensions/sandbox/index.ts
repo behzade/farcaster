@@ -20,6 +20,7 @@ import {
 	createBashTool,
 	getAgentDir,
 } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import {
 	DEFAULT_CONFIG,
 	applyProjectRestrictions,
@@ -31,6 +32,7 @@ import {
 	normalizeConfig,
 } from "./codex-command.ts";
 import {
+	gitControlRoot,
 	grantsToRuntime,
 	type IoPermission,
 	isProtectedPath,
@@ -39,6 +41,7 @@ import {
 	mcpPermissionFromInput,
 	permissionCoversPath,
 	permissionLabel,
+	normalizePermission,
 	resolvePermissionPath,
 	saveWorkspacePermission,
 } from "./io-permissions.ts";
@@ -149,11 +152,33 @@ type SandboxState =
 	| { kind: "failed"; reason: string };
 
 type FilePermission = Extract<IoPermission, { kind: "read" | "write" }>;
+type NetworkPermission = Extract<IoPermission, { kind: "network_host" }>;
+
+const NetworkPermissionParams = Type.Object({
+	host: Type.String({
+		description: "One exact hostname or IP, with no scheme, port, path, or wildcard",
+	}),
+	reason: Type.String({ description: "Why this host is needed" }),
+});
 
 interface ApprovalDecision {
 	allowed: boolean;
 	persistent: boolean;
 	reason?: string;
+}
+
+function networkRuleMatches(rule: string, host: string): boolean {
+	const normalized = rule.toLowerCase();
+	if (normalized === "*") return true;
+	if (normalized.startsWith("**.")) {
+		const base = normalized.slice(3);
+		return host === base || host.endsWith(`.${base}`);
+	}
+	if (normalized.startsWith("*.")) {
+		const base = normalized.slice(2);
+		return host !== base && host.endsWith(`.${base}`);
+	}
+	return normalized === host;
 }
 
 export default function (pi: ExtensionAPI) {
@@ -168,20 +193,22 @@ export default function (pi: ExtensionAPI) {
 	const permissionFile = resolve(getAgentDir(), "io-permissions.json");
 	let sandboxState: SandboxState = { kind: "initializing" };
 	let persistentPermissions: IoPermission[] = [];
+	let oneShotNetworkPermissions: NetworkPermission[] = [];
 
-	const runtimeGrants = (): CodexSandboxGrants => {
-		const grants = grantsToRuntime(persistentPermissions);
+	const runtimeGrants = (consumeOneShot = false): CodexSandboxGrants => {
+		const permissions = [...persistentPermissions, ...oneShotNetworkPermissions];
+		if (consumeOneShot) oneShotNetworkPermissions = [];
+		const grants = grantsToRuntime(permissions);
 		return {
 			read: grants.read,
 			write: grants.write,
-			web: grants.web,
-			localNetwork: grants.localNetwork,
+			networkHosts: grants.networkHosts,
 		};
 	};
 
 	const promptForToolPermission = async (
 		permission: IoPermission,
-		tool: { toolName: string; toolCallId: string },
+		tool: { toolName: string; toolCallId: string; reason?: string },
 		ctx: ExtensionContext,
 	): Promise<ApprovalDecision> => {
 		const label = permissionLabel(permission);
@@ -192,7 +219,9 @@ export default function (pi: ExtensionAPI) {
 		pi.events.emit("approval:requested", {
 			kind: "io-permission",
 			title: "Tool requests an IO right",
-			summary: `${tool.toolName} requests ${label}`,
+			summary: `${tool.toolName} requests ${label}${
+				tool.reason ? `\nReason: ${tool.reason}` : ""
+			}`,
 			toolName: tool.toolName,
 			toolCallId: tool.toolCallId,
 			sessionId: ctx.sessionManager.getSessionId(),
@@ -204,7 +233,9 @@ export default function (pi: ExtensionAPI) {
 				? "Always allow in this workspace and retry"
 				: "Always allow in this workspace";
 		const selection = await ctx.ui.select(
-			`Allow ${tool.toolName} to access ${label}?`,
+			`Allow ${tool.toolName} to access ${label}?${
+				tool.reason ? `\n\nReason: ${tool.reason}` : ""
+			}`,
 			[allowOnce, allowAlways, "No", "No, with comment"],
 		);
 		let comment: string | undefined;
@@ -245,8 +276,7 @@ export default function (pi: ExtensionAPI) {
 			const grants: CodexSandboxGrants = {
 				read: [...(initialGrants.read ?? [])],
 				write: [...(initialGrants.write ?? [])],
-				web: initialGrants.web,
-				localNetwork: initialGrants.localNetwork,
+				networkHosts: [...(initialGrants.networkHosts ?? [])],
 			};
 			let lastResult: { exitCode: number | null } = { exitCode: 1 };
 
@@ -265,9 +295,11 @@ export default function (pi: ExtensionAPI) {
 					Buffer.concat(chunks).toString("utf8"),
 				);
 				if (failurePaths.length === 0) return lastResult;
-				const permissions: FilePermission[] = [];
+				const permissions = new Map<string, FilePermission>();
 				for (const failurePath of failurePaths) {
 					const path = resolvePermissionPath(failurePath, cwd);
+					const gitRoot = gitControlRoot(path);
+					const permissionPath = gitRoot ?? path;
 					// The current profile can read the whole filesystem. A path that is
 					// readable but not writable therefore identifies a write denial. If
 					// policy does not identify one exact access kind, treat it as a
@@ -295,14 +327,16 @@ export default function (pi: ExtensionAPI) {
 					) {
 						return lastResult;
 					}
-					permissions.push({
+					permissions.set(permissionPath, {
 						kind: access,
-						path,
-						directory: existsSync(path) && statSync(path).isDirectory(),
+						path: permissionPath,
+						directory:
+							gitRoot !== undefined ||
+							(existsSync(permissionPath) && statSync(permissionPath).isDirectory()),
 					});
 				}
 
-				for (const permission of permissions) {
+				for (const permission of permissions.values()) {
 					const decision = await promptForToolPermission(permission, tool, ctx);
 					if (!decision.allowed) return lastResult;
 					const paths = permission.kind === "read" ? grants.read! : grants.write!;
@@ -311,6 +345,103 @@ export default function (pi: ExtensionAPI) {
 				options.onData(Buffer.from("\n[Retrying command with approved IO rights]\n"));
 			}
 			return lastResult;
+		},
+	});
+
+	pi.registerTool({
+		name: "request_network_permission",
+		label: "Request network host",
+		description:
+			"Ask the user to allow one exact hostname or IP for the next bash call or for this workspace. Do not include a scheme, port, path, or wildcard.",
+		promptSnippet:
+			"Use request_network_permission before bash needs a network host that the sandbox has not allowed.",
+		parameters: NetworkPermissionParams,
+		executionMode: "sequential",
+		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+			if (sandboxState.kind !== "ready") {
+				return {
+					content: [{ type: "text", text: "The sandbox is not ready, so no network host was granted." }],
+					details: { granted: false, reason: "sandbox-not-ready" },
+					isError: true,
+				};
+			}
+			let permission: NetworkPermission;
+			try {
+				permission = normalizePermission(
+					{ kind: "network_host", host: params.host },
+					ctx.cwd,
+				) as NetworkPermission;
+			} catch (error) {
+				return {
+					content: [
+						{ type: "text", text: error instanceof Error ? error.message : String(error) },
+					],
+					details: { granted: false, reason: "invalid-host" },
+					isError: true,
+				};
+			}
+			const config = sandboxState.config;
+			if (config.network?.enabled === false) {
+				return {
+					content: [{ type: "text", text: "Network access is disabled by the sandbox policy." }],
+					details: { granted: false, reason: "network-disabled" },
+					isError: true,
+				};
+			}
+			if (
+				(config.network?.deniedDomains ?? []).some((rule) =>
+					networkRuleMatches(rule, permission.host),
+				)
+			) {
+				return {
+					content: [{ type: "text", text: `${permission.host} is denied by the sandbox policy.` }],
+					details: { granted: false, reason: "host-denied" },
+					isError: true,
+				};
+			}
+			const existing = [
+				...(config.network?.allowedDomains ?? []),
+				...grantsToRuntime([
+					...persistentPermissions,
+					...oneShotNetworkPermissions,
+				]).networkHosts,
+			].some((rule) => networkRuleMatches(rule, permission.host));
+			if (existing) {
+				return {
+					content: [{ type: "text", text: `${permission.host} is already allowed.` }],
+					details: { granted: true, existing: true },
+				};
+			}
+			const decision = await promptForToolPermission(
+				permission,
+				{ toolName: "request_network_permission", toolCallId, reason: params.reason },
+				ctx,
+			);
+			if (decision.allowed && !decision.persistent) {
+				oneShotNetworkPermissions.push(permission);
+			}
+			return {
+				content: [
+					{
+						type: "text",
+						text: decision.allowed
+							? `${permission.host} is allowed ${
+									decision.persistent ? "for this workspace" : "for the next bash call"
+								}.`
+							: decision.reason ?? "Network host denied.",
+					},
+				],
+				details: {
+					granted: decision.allowed,
+					scope: decision.allowed
+						? decision.persistent
+							? "workspace"
+							: "once"
+						: "none",
+					host: permission.host,
+				},
+				isError: !decision.allowed,
+			};
 		},
 	});
 
@@ -329,7 +460,7 @@ export default function (pi: ExtensionAPI) {
 						: "Sandbox is still initializing; command blocked",
 				);
 			}
-			const grants = runtimeGrants();
+			const grants = runtimeGrants(true);
 			return createBashTool(localCwd, {
 				operations: createApprovingSandboxOps(
 					sandboxState.config,
@@ -342,7 +473,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
-		if (event.toolName === "bash") return;
+		if (event.toolName === "bash" || event.toolName === "request_network_permission") return;
 		if (event.toolName === "mcp_enable") {
 			const permission = mcpPermissionFromInput(event.input);
 			if (!permission) {
@@ -432,11 +563,15 @@ export default function (pi: ExtensionAPI) {
 				? isBaseReadAllowed(path, activeConfig(sandboxState), ctx.cwd)
 				: isBaseWriteAllowed(path, activeConfig(sandboxState), ctx.cwd));
 		if (!allowed) {
+			const gitRoot = access === "write" ? gitControlRoot(path) : undefined;
+			const permissionPath = gitRoot ?? path;
 			const permission: IoPermission = {
 				kind: access,
-				path,
+				path: permissionPath,
 				directory:
-					event.toolName === "ls" || (existsSync(path) && statSync(path).isDirectory()),
+					gitRoot !== undefined ||
+					event.toolName === "ls" ||
+					(existsSync(permissionPath) && statSync(permissionPath).isDirectory()),
 			};
 			const decision = await promptForToolPermission(permission, event, ctx);
 			if (!decision.allowed) return { block: true, reason: decision.reason };
@@ -496,6 +631,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_shutdown", () => {
 		persistentPermissions = [];
+		oneShotNetworkPermissions = [];
 		sandboxState = { kind: "initializing" };
 	});
 
@@ -514,10 +650,11 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 			const config = sandboxState.config;
-			const savedWeb = persistentPermissions.some(
-				(permission) => permission.kind === "web",
-			);
 			const allowedDomains = config.network?.allowedDomains ?? [];
+			const savedHosts = persistentPermissions
+				.filter((permission): permission is NetworkPermission => permission.kind === "network_host")
+				.map((permission) => permission.host);
+			const networkHosts = [...new Set([...allowedDomains, ...savedHosts])].sort();
 			ctx.ui.notify(
 				[
 					"Codex IO sandbox:",
@@ -526,22 +663,12 @@ export default function (pi: ExtensionAPI) {
 					`  Shell env: ${config.shellEnvironment?.inherit ?? "core"}, secret-name filter ${
 						config.shellEnvironment?.ignoreDefaultExcludes ? "off" : "on"
 					}`,
-					`  Public web: ${
+					`  Network hosts: ${
 						config.network?.enabled === false
 							? "off"
-							: savedWeb
-								? "all public hosts (saved)"
-								: allowedDomains.length > 0
-									? allowedDomains.join(", ")
-									: "blocked until approved"
-					}`,
-					`  Local/private/link-local network: ${
-						(config.network?.allowLocalNetwork ?? false) ||
-						persistentPermissions.some(
-							(permission) => permission.kind === "local_network",
-						)
-							? "all allowed"
-							: "blocked until approved"
+							: networkHosts.length > 0
+								? networkHosts.join(", ")
+								: "blocked until an exact host or IP is approved"
 					}`,
 					`  Unix sockets: ${config.network?.allowUnixSockets?.join(", ") || "(none)"}`,
 					`  Saved workspace rights: ${persistentPermissions.map(permissionLabel).join(", ") || "(none)"}`,

@@ -66,22 +66,28 @@ The default rights are:
 
 - read most of the system;
 - deny reads and writes for `.env` and `.key` files and for `.ssh`, `.aws`,
-  and `.gnupg`; keep PEM certificate bundles readable but read-only;
+  and `.gnupg`; deny reads of Pi and Codex `auth.json`; keep PEM certificate
+  bundles readable but read-only;
 - keep `~/.pi/agent` and `~/.codex` read-only so a grant cannot change its own
   policy;
 - write the workspace, `/tmp`, and the system temp folder;
 - pass only core shell variables such as `PATH`, `HOME`, locale, and temp paths;
 - remove variables whose names contain `KEY`, `SECRET`, or `TOKEN`;
-- block every public host until the user grants web access;
+- block every network host until the user grants that exact hostname or IP;
 - block local and private network targets.
 
 When `read`, `write`, `edit`, or `ls` targets a path outside the current IO
 rights, the sandbox pauses that tool call and asks the user to allow it once,
 always for this workspace, or not at all. A denial can include a comment. The
-model does not receive a separate permission tool and does not need a failed
-permission-request turn. Protected paths and explicit deny rules remain blocked
-without a prompt. Saved rights live in `~/.pi/agent/io-permissions.json`, keyed
-by the real workspace path.
+model does not receive a separate file permission tool and does not need a
+failed permission-request turn. Protected paths and explicit deny rules remain
+blocked without a prompt. Saved rights live in
+`~/.pi/agent/io-permissions.json`, keyed by the real workspace path.
+
+When bash needs network access, the model can request one exact hostname or IP.
+The request rejects schemes, ports, paths, and wildcards. The user can allow
+that host once or save it for the workspace. Old blanket `web` and
+`local_network` rights are ignored when saved rights load.
 
 For bash, the sandbox checks failed command output for access errors such as
 `Operation not permitted` and `Permission denied`. If the same error line has
@@ -90,19 +96,22 @@ the sandbox shows the same approval prompt and retries inside the original tool
 call. It allows at most three retries. A retry can repeat work completed before
 the denied operation, so the prompt says that bash will retry. Protected paths
 and explicit deny rules never prompt. Failures without a safe exact path return
-unchanged as regular command failures. Web and network failures remain blocked.
+unchanged as regular command failures. Network failures remain blocked until
+the model requests the exact host or IP.
 
 Workspace write access includes creating, changing, and deleting workspace
 files. The sandbox does not inspect command text, so it does not add a second
-prompt for a delete command. Codex keeps repository control data such as
-`.git` read-only, but use version control or backups for other workspace files.
+prompt for a delete command. Codex starts with repository control data such as
+`.git` read-only. If Git fails on a file under `.git`, the approval prompt asks
+for the repository's whole `.git` folder and retries the command. Use version
+control or backups for other workspace files.
 
 Enabling an MCP service also needs user approval because an MCP server can read
 private data or act outside the shell sandbox. That approval is scoped to the
 named service and can be saved for one workspace.
 
 Unix socket access grants a right to another service. That service may do work
-outside the caller's file or web limits. The machine config allows only the Nix
+outside the caller's file or network limits. The machine config allows only the Nix
 daemon and Pi's own tmux socket. Keep other service sockets blocked unless they
 form part of the intended trust boundary.
 
@@ -112,9 +121,9 @@ of the sandbox. The extension blocks them and tells the agent to use `rg` or
 
 Global sandbox config lives at `~/.pi/agent/extensions/sandbox.json`. A trusted
 project can add tighter rules at `.pi/sandbox.json`; project config cannot add
-rights or turn the sandbox off. Set `network.allowLocalNetwork` in the global
-file only if every Pi session should reach localhost and private-network targets
-or link-local targets without a prompt.
+rights or turn the sandbox off. Static `network.allowedDomains` entries must
+also be exact hostnames or IPs. Wildcards and broad local-network switches are
+not accepted.
 
 `shellEnvironment` follows Codex's shell policy order. Its `inherit` value is
 `all`, `core`, or `none`; the default is `core`. Unless

@@ -1,8 +1,9 @@
+import { normalizeNetworkHost } from "./io-permissions.ts";
+
 export interface CodexSandboxNetworkConfig {
 	enabled?: boolean;
 	allowedDomains?: string[];
 	deniedDomains?: string[];
-	allowLocalNetwork?: boolean;
 	allowUnixSockets?: string[];
 	allowAllUnixSockets?: boolean;
 }
@@ -27,8 +28,7 @@ export interface CodexSandboxShellEnvironmentConfig {
 export interface CodexSandboxGrants {
 	read?: readonly string[];
 	write?: readonly string[];
-	web?: boolean;
-	localNetwork?: boolean;
+	networkHosts?: readonly string[];
 }
 
 export interface CodexSandboxConfig {
@@ -49,7 +49,6 @@ export const DEFAULT_CONFIG: Required<Pick<CodexSandboxConfig, "enabled" | "code
 		enabled: true,
 		allowedDomains: [],
 		deniedDomains: [],
-		allowLocalNetwork: false,
 		allowUnixSockets: [],
 		allowAllUnixSockets: false,
 	},
@@ -59,6 +58,8 @@ export const DEFAULT_CONFIG: Required<Pick<CodexSandboxConfig, "enabled" | "code
 			"~/.ssh",
 			"~/.aws",
 			"~/.gnupg",
+			"~/.pi/agent/auth.json",
+			"~/.codex/auth.json",
 			"/**/.env",
 			"/**/.env.*",
 			"/**/*.key",
@@ -126,6 +127,20 @@ function domainPatterns(value: unknown, field: string): string[] | undefined {
 		throw new Error(`${field} accepts host patterns without schemes, paths, or ports`);
 	}
 	return entries;
+}
+
+function exactNetworkHosts(value: unknown, field: string): string[] | undefined {
+	const entries = nonEmptyStrings(value, field);
+	if (!entries) return undefined;
+	try {
+		return unique(entries.map(normalizeNetworkHost));
+	} catch (error) {
+		throw new Error(
+			`${field} must contain exact hostnames or IPs: ${
+				error instanceof Error ? error.message : error
+			}`,
+		);
+	}
 }
 
 function assertKnownKeys(value: Record<string, unknown>, allowed: readonly string[], field: string): void {
@@ -200,12 +215,6 @@ export function normalizeConfig(value: unknown): CodexSandboxConfig {
 	) {
 		throw new Error("network.allowAllUnixSockets must be a boolean");
 	}
-	if (
-		networkInput?.allowLocalNetwork !== undefined &&
-		typeof networkInput.allowLocalNetwork !== "boolean"
-	) {
-		throw new Error("network.allowLocalNetwork must be a boolean");
-	}
 	if (networkInput) {
 		assertKnownKeys(
 			networkInput,
@@ -213,7 +222,6 @@ export function normalizeConfig(value: unknown): CodexSandboxConfig {
 				"enabled",
 				"allowedDomains",
 				"deniedDomains",
-				"allowLocalNetwork",
 				"allowUnixSockets",
 				"allowAllUnixSockets",
 			],
@@ -274,9 +282,11 @@ export function normalizeConfig(value: unknown): CodexSandboxConfig {
 		network: networkInput
 			? {
 					enabled: networkInput.enabled as boolean | undefined,
-					allowedDomains: domainPatterns(networkInput.allowedDomains, "network.allowedDomains"),
+					allowedDomains: exactNetworkHosts(
+						networkInput.allowedDomains,
+						"network.allowedDomains",
+					),
 					deniedDomains: domainPatterns(networkInput.deniedDomains, "network.deniedDomains"),
-					allowLocalNetwork: networkInput.allowLocalNetwork as boolean | undefined,
 					allowUnixSockets: nonEmptyStrings(networkInput.allowUnixSockets, "network.allowUnixSockets"),
 					allowAllUnixSockets: networkInput.allowAllUnixSockets as boolean | undefined,
 				}
@@ -387,13 +397,8 @@ export function applyProjectRestrictions(
 				base.network?.enabled === false || project.network?.enabled === false
 					? false
 					: base.network?.enabled,
-			allowedDomains: base.network?.allowedDomains,
-			allowLocalNetwork:
-				base.network?.allowLocalNetwork === false ||
-				project.network?.allowLocalNetwork === false
-					? false
-					: base.network?.allowLocalNetwork,
-			deniedDomains: unique([
+				allowedDomains: base.network?.allowedDomains,
+				deniedDomains: unique([
 				...(base.network?.deniedDomains ?? []),
 				...(project.network?.deniedDomains ?? []),
 			]),
@@ -617,28 +622,21 @@ export function buildCodexSandboxArgs(
 		]);
 	}
 	const networkEnabled = effectiveConfig.network?.enabled ?? false;
-	const localNetworkEnabled =
-		networkEnabled &&
-		((effectiveConfig.network?.allowLocalNetwork ?? false) ||
-			(grants.localNetwork ?? false));
 	const domainEntries = new Map<string, "allow" | "deny">();
 	for (const domain of unique(effectiveConfig.network?.allowedDomains ?? [])) {
-		domainEntries.set(domain, "allow");
+		domainEntries.set(normalizeNetworkHost(domain), "allow");
 	}
-	if (grants.web && networkEnabled) domainEntries.set("*", "allow");
-	if (localNetworkEnabled) {
-		domainEntries.set("localhost", "allow");
-		domainEntries.set("127.0.0.1", "allow");
-		domainEntries.set("::1", "allow");
+	for (const host of unique(grants.networkHosts ?? [])) {
+		if (networkEnabled) domainEntries.set(normalizeNetworkHost(host), "allow");
 	}
 	for (const domain of unique(effectiveConfig.network?.deniedDomains ?? [])) {
 		domainEntries.set(domain, "deny");
 	}
 	const networkEntries: [string, TomlValue][] = [["enabled", networkEnabled]];
 	if (networkEnabled) {
-		networkEntries.push(
-			["mode", "full"],
-			["allow_local_binding", localNetworkEnabled],
+			networkEntries.push(
+				["mode", "full"],
+				["allow_local_binding", false],
 			[
 				"domains",
 				rawToml(inlineTable(

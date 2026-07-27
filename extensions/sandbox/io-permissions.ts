@@ -7,8 +7,10 @@ import {
 	statSync,
 	writeFileSync,
 } from "node:fs";
+import { isIP } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { domainToASCII } from "node:url";
 
 export type IoPermission =
 	| {
@@ -17,10 +19,8 @@ export type IoPermission =
 			directory: boolean;
 	  }
 	| {
-			kind: "web";
-	  }
-	| {
-			kind: "local_network";
+			kind: "network_host";
+			host: string;
 	  }
 	| {
 			kind: "mcp";
@@ -30,18 +30,18 @@ export type IoPermission =
 export interface RuntimeIoGrants {
 	read: string[];
 	write: string[];
-	web: boolean;
-	localNetwork: boolean;
+	networkHosts: string[];
 }
 
 interface PermissionFile {
-	version: 1;
+	version: 2;
 	workspaces: Record<string, IoPermission[]>;
 }
 
-const EMPTY_FILE: PermissionFile = { version: 1, workspaces: {} };
+const EMPTY_FILE: PermissionFile = { version: 2, workspaces: {} };
 const protectedHomeRoots = [".ssh", ".aws", ".gnupg"];
 const protectedWriteRoots = [".pi/agent", ".codex"];
+const protectedAuthFiles = [".pi/agent/auth.json", ".codex/auth.json"];
 const secretNames = [/^\.env(?:\..*)?$/, /\.(?:pem|key)$/];
 
 export function canonicalize(path: string): string {
@@ -78,6 +78,13 @@ export function isProtectedPath(path: string): boolean {
 	) {
 		return true;
 	}
+	if (
+		protectedAuthFiles.some(
+			(name) => canonicalize(resolve(home, name)) === actual,
+		)
+	) {
+		return true;
+	}
 	if (actual.split(sep).some((part) => secretNames.some((pattern) => pattern.test(part)))) {
 		return true;
 	}
@@ -87,22 +94,69 @@ export function isProtectedPath(path: string): boolean {
 export function isProtectedWritePath(path: string): boolean {
 	if (isProtectedPath(path)) return true;
 	const actual = canonicalize(path);
-	if (actual.split(sep).includes(".git")) return true;
 	const home = canonicalize(homedir());
 	return protectedWriteRoots.some((name) =>
 		isInside(canonicalize(resolve(home, name)), actual),
 	);
 }
 
+export function gitControlRoot(path: string): string | undefined {
+	const actual = canonicalize(path);
+	const parts = actual.split(sep);
+	const index = parts.lastIndexOf(".git");
+	if (index < 0) return undefined;
+	const root = parts.slice(0, index + 1).join(sep);
+	return root || sep;
+}
+
+export function normalizeNetworkHost(input: string): string {
+	let value = input.trim();
+	if (value.startsWith("[") && value.endsWith("]")) {
+		value = value.slice(1, -1);
+		if (!isIP(value)) throw new Error("Invalid IP address");
+	}
+	if (isIP(value)) return value.toLowerCase();
+	if (
+		value.length === 0 ||
+		value.includes("*") ||
+		value.includes("/") ||
+		value.includes(":") ||
+		value.includes("?") ||
+		value.includes("#") ||
+		value.includes("@")
+	) {
+		throw new Error("Network access needs one exact hostname or IP without a scheme, port, path, or wildcard");
+	}
+	value = value.replace(/\.$/, "").toLowerCase();
+	if (/^[0-9.]+$/.test(value)) {
+		throw new Error("Invalid IP address");
+	}
+	const ascii = domainToASCII(value);
+	const labels = ascii.split(".");
+	if (
+		ascii.length === 0 ||
+		ascii.length > 253 ||
+		labels.some(
+			(label) =>
+				label.length === 0 ||
+				label.length > 63 ||
+				!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label),
+		)
+	) {
+		throw new Error("Invalid hostname");
+	}
+	return ascii;
+}
+
 export function normalizePermission(
 	input:
 		| { kind: "read" | "write"; path: string; targetType?: "file" | "folder" }
-		| { kind: "web" }
-		| { kind: "local_port"; port: number },
+		| { kind: "network_host"; host: string },
 	cwd: string,
 ): IoPermission {
-	if (input.kind === "web") return { kind: "web" };
-	if (input.kind === "local_port") return { kind: "local_network" };
+	if (input.kind === "network_host") {
+		return { kind: "network_host", host: normalizeNetworkHost(input.host) };
+	}
 	const path = resolvePermissionPath(input.path, cwd);
 	if (
 		isProtectedPath(path) ||
@@ -117,8 +171,7 @@ export function normalizePermission(
 }
 
 export function permissionCoversPath(permission: IoPermission, path: string): boolean {
-	if (permission.kind === "web") return false;
-	if (permission.kind === "local_network") return false;
+	if (permission.kind === "network_host") return false;
 	if (permission.kind === "mcp") return false;
 	const target = canonicalize(path);
 	return permission.directory ? isInside(permission.path, target) : permission.path === target;
@@ -147,15 +200,17 @@ export function mcpPermissionFromInput(input: unknown): IoPermission | undefined
 export function grantsToRuntime(permissions: readonly IoPermission[]): RuntimeIoGrants {
 	const read = new Set<string>();
 	const write = new Set<string>();
-	let web = false;
-	let localNetwork = false;
+	const networkHosts = new Set<string>();
 	for (const permission of permissions) {
 		if (permission.kind === "read") read.add(permission.path);
 		if (permission.kind === "write") write.add(permission.path);
-		if (permission.kind === "web") web = true;
-		if (permission.kind === "local_network") localNetwork = true;
+		if (permission.kind === "network_host") networkHosts.add(permission.host);
 	}
-	return { read: [...read].sort(), write: [...write].sort(), web, localNetwork };
+	return {
+		read: [...read].sort(),
+		write: [...write].sort(),
+		networkHosts: [...networkHosts].sort(),
+	};
 }
 
 export function isDefaultWritePath(path: string, cwd: string): boolean {
@@ -168,10 +223,7 @@ export function isDefaultWritePath(path: string, cwd: string): boolean {
 }
 
 export function permissionLabel(permission: IoPermission): string {
-	if (permission.kind === "web") return "public web access";
-	if (permission.kind === "local_network") {
-		return "localhost, private-network, and link-local access on all ports";
-	}
+	if (permission.kind === "network_host") return `network host ${permission.host}`;
 	if (permission.kind === "mcp") return `MCP service ${permission.server}`;
 	return `${permission.kind} ${permission.directory ? "folder" : "file"} ${permission.path}`;
 }
@@ -206,7 +258,11 @@ function readPermissionFile(filePath: string): PermissionFile {
 		const value: unknown = JSON.parse(readFileSync(filePath, "utf8"));
 		if (!value || typeof value !== "object" || Array.isArray(value)) return structuredClone(EMPTY_FILE);
 		const record = value as Record<string, unknown>;
-		if (record.version !== 1 || !record.workspaces || typeof record.workspaces !== "object") {
+		if (
+			(record.version !== 1 && record.version !== 2) ||
+			!record.workspaces ||
+			typeof record.workspaces !== "object"
+		) {
 			return structuredClone(EMPTY_FILE);
 		}
 		const workspaces: Record<string, IoPermission[]> = {};
@@ -214,7 +270,7 @@ function readPermissionFile(filePath: string): PermissionFile {
 			if (!Array.isArray(entries)) continue;
 			workspaces[workspace] = entries.filter(isIoPermission);
 		}
-		return { version: 1, workspaces };
+		return { version: 2, workspaces };
 	} catch {
 		return structuredClone(EMPTY_FILE);
 	}
@@ -223,9 +279,18 @@ function readPermissionFile(filePath: string): PermissionFile {
 function isIoPermission(value: unknown): value is IoPermission {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
 	const record = value as Record<string, unknown>;
-	if (record.kind === "web") return Object.keys(record).every((key) => key === "kind");
-	if (record.kind === "local_network") {
-		return Object.keys(record).every((key) => key === "kind");
+	if (record.kind === "network_host") {
+		if (
+			!Object.keys(record).every((key) => key === "kind" || key === "host") ||
+			typeof record.host !== "string"
+		) {
+			return false;
+		}
+		try {
+			return normalizeNetworkHost(record.host) === record.host;
+		} catch {
+			return false;
+		}
 	}
 	if (record.kind === "mcp") {
 		return (

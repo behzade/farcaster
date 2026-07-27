@@ -22,6 +22,7 @@ test("base rights allow broad reads and only workspace or temp writes", () => {
 	assert.equal(isBaseWriteAllowed(join(workspace, "out.txt"), DEFAULT_CONFIG, workspace), true);
 	assert.equal(isBaseWriteAllowed(join(tmpdir(), "out.txt"), DEFAULT_CONFIG, workspace), true);
 	assert.equal(isBaseWriteAllowed(outside, DEFAULT_CONFIG, workspace), false);
+	assert.equal(isBaseWriteAllowed(join(workspace, ".git", "index"), DEFAULT_CONFIG, workspace), false);
 });
 
 test("secret file rules cover top-level and nested paths", () => {

@@ -2,7 +2,7 @@
 
 stdenvNoCC.mkDerivation {
   pname = "pi-sandbox-extension";
-  version = "2.2.0";
+  version = "2.3.0";
 
   src = ../extensions/sandbox;
 
