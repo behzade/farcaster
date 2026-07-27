@@ -98,7 +98,7 @@ test("dense reads keep group state and hide follower rows", async () => {
   assert.match(source, /message_end/);
 });
 
-test("Pierre edit renderer supports responsive split diffs and change backgrounds", async () => {
+test("Pierre edit renderer wraps responsive split diffs and keeps change backgrounds", async () => {
   const source = await readFile(pierreEditPath, "utf8");
   assert.match(source, /width >= 120/);
   assert.match(source, /renderSplit/);
@@ -108,6 +108,13 @@ test("Pierre edit renderer supports responsive split diffs and change background
   assert.match(source, /cachedLines/);
   assert.match(source, /if \(patchChanged\) this\.rebuild\(\)/);
   assert.match(source, /if \(this\.cachedLines && this\.cachedWidth === width\) return this\.cachedLines/);
+  assert.match(source, /sliceByColumn/);
+  assert.match(source, /function wrapByColumns/);
+  assert.match(source, /function wrapCell/);
+  assert.match(source, /capped\.visible\.flatMap/);
+  assert.match(source, /Math\.max\(oldCell\.lines\.length, newCell\.lines\.length\)/);
+  assert.match(source, /oldCell\.lines\[lineIndex\] \?\? fitCell/);
+  assert.match(source, /newCell\.lines\[lineIndex\] \?\? fitCell/);
   assert.match(source, /inlineBackground/);
   assert.match(source, /frameDiff/);
   assert.match(source, /DIFF_BACKGROUND = "#191b1c"/);

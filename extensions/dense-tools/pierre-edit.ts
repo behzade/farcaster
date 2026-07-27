@@ -1,6 +1,6 @@
 import type { EditToolDetails, ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { createEditTool } from "@earendil-works/pi-coding-agent";
-import { Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { sliceByColumn, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import * as pierre from "./diffs.bundle.mjs";
 
 const THEME_NAME = "gruvbox-dark-hard";
@@ -107,6 +107,45 @@ function fitCell(value: string, width: number, background?: string): string {
     : `${fitted}${padding}`;
 }
 
+export function wrapByColumns(value: string, width: number): string[] {
+  if (!value || width <= 0) return [""];
+  const totalWidth = visibleWidth(value);
+  if (totalWidth <= width) return [value];
+
+  const lines: string[] = [];
+  let start = 0;
+  while (start < totalWidth) {
+    let chunk = sliceByColumn(value, start, width);
+    let chunkWidth = visibleWidth(chunk);
+
+    // A double-width character may begin in the final column. Move it to the
+    // next line instead of cutting or dropping it.
+    if (chunkWidth > width && width > 1) {
+      chunk = sliceByColumn(value, start, width - 1);
+      chunkWidth = visibleWidth(chunk);
+    }
+    if (chunkWidth === 0) {
+      chunk = sliceByColumn(value, start, 1);
+      chunkWidth = visibleWidth(chunk);
+    }
+
+    lines.push(chunk);
+    start += chunkWidth;
+  }
+  return lines;
+}
+
+export function wrapCell(prefix: string, content: string, width: number, background?: string): string[] {
+  const prefixWidth = visibleWidth(prefix);
+  if (width <= prefixWidth) return wrapByColumns(`${prefix}${content}`, width).map((line) => fitCell(line, width, background));
+
+  const contentWidth = width - prefixWidth;
+  const continuationPrefix = " ".repeat(prefixWidth);
+  return wrapByColumns(content, contentWidth).map((line, index) => {
+    return fitCell(`${index === 0 ? prefix : continuationPrefix}${line}`, width, background);
+  });
+}
+
 function diffColors(type: string): { marker: string; foreground?: string; background?: string; inlineBackground?: string } {
   if (type.includes("deletion")) {
     return { marker: "-", foreground: "#fb4934", background: "#412724", inlineBackground: "#682e27" };
@@ -135,7 +174,7 @@ function frameDiff(lines: string[], width: number, theme: Theme): string[] {
   return [rule, ...lines, rule];
 }
 
-function renderUnified(rows: PierreRows, width: number, expanded: boolean, theme: Theme): string[] {
+export function renderUnified(rows: PierreRows, width: number, expanded: boolean, theme: Theme): string[] {
   const changed = [...rows.deletions, ...rows.additions].filter((row) => lineType(row) !== "context");
   const contextByIndex = new Map<number, any>();
   for (const row of rows.deletions) if (lineType(row) === "context") contextByIndex.set(lineIndexes(row).unified, row);
@@ -143,18 +182,18 @@ function renderUnified(rows: PierreRows, width: number, expanded: boolean, theme
   const ordered = [...changed, ...contextByIndex.values()].sort((a, b) => lineIndexes(a).unified - lineIndexes(b).unified);
   const numberWidth = Math.max(1, ...ordered.map((row) => lineNumber(row).length));
   const capped = capRows(ordered, expanded);
-  const body = capped.visible.map((row) => {
+  const body = capped.visible.flatMap((row) => {
     const colors = diffColors(lineType(row));
     const prefix = colors.foreground
       ? `${ansi({ color: colors.foreground, background: colors.background })}${colors.marker}${lineNumber(row).padStart(numberWidth)} \x1b[0m`
       : theme.fg("toolDiffContext", ` ${lineNumber(row).padStart(numberWidth)} `);
     const content = hastToAnsi(row, { background: colors.background, inlineBackground: colors.inlineBackground });
-    return fitCell(`${prefix}${content}`, width, colors.background);
+    return wrapCell(prefix, content, width, colors.background);
   });
   return frameDiff(addHiddenRows(body, capped.hidden, theme), width, theme);
 }
 
-function renderSplit(rows: PierreRows, width: number, expanded: boolean, theme: Theme): string[] {
+export function renderSplit(rows: PierreRows, width: number, expanded: boolean, theme: Theme): string[] {
   const oldBySplit = new Map(rows.deletions.map((row) => [lineIndexes(row).split, row]));
   const newBySplit = new Map(rows.additions.map((row) => [lineIndexes(row).split, row]));
   const indexes = [...new Set([...oldBySplit.keys(), ...newBySplit.keys()])].sort((a, b) => a - b);
@@ -163,8 +202,8 @@ function renderSplit(rows: PierreRows, width: number, expanded: boolean, theme: 
   const separator = theme.fg("borderMuted", "│");
   const cellWidth = Math.floor((width - 1) / 2);
 
-  const renderCell = (row: any, side: "old" | "new"): string => {
-    if (!row) return fitCell("", cellWidth, DIFF_BACKGROUND);
+  const renderCell = (row: any, side: "old" | "new"): { lines: string[]; background: string } => {
+    if (!row) return { lines: [fitCell("", cellWidth, DIFF_BACKGROUND)], background: DIFF_BACKGROUND };
     const type = lineType(row);
     const changed = side === "old" ? type.includes("deletion") : type.includes("addition");
     const colors = changed ? diffColors(type) : diffColors("context");
@@ -172,10 +211,22 @@ function renderSplit(rows: PierreRows, width: number, expanded: boolean, theme: 
       ? `${ansi({ color: colors.foreground, background: colors.background })}${colors.marker}${lineNumber(row).padStart(numberWidth)} \x1b[0m`
       : theme.fg("toolDiffContext", ` ${lineNumber(row).padStart(numberWidth)} `);
     const content = hastToAnsi(row, { background: colors.background, inlineBackground: colors.inlineBackground });
-    return fitCell(`${prefix}${content}`, cellWidth, colors.background);
+    return {
+      lines: wrapCell(prefix, content, cellWidth, colors.background),
+      background: colors.background ?? DIFF_BACKGROUND,
+    };
   };
 
-  const body = capped.visible.map((index) => `${renderCell(oldBySplit.get(index), "old")}${separator}${renderCell(newBySplit.get(index), "new")}`);
+  const body = capped.visible.flatMap((index) => {
+    const oldCell = renderCell(oldBySplit.get(index), "old");
+    const newCell = renderCell(newBySplit.get(index), "new");
+    const height = Math.max(oldCell.lines.length, newCell.lines.length);
+    return Array.from({ length: height }, (_, lineIndex) => {
+      const oldLine = oldCell.lines[lineIndex] ?? fitCell("", cellWidth, oldCell.background);
+      const newLine = newCell.lines[lineIndex] ?? fitCell("", cellWidth, newCell.background);
+      return `${oldLine}${separator}${newLine}`;
+    });
+  });
   return frameDiff(addHiddenRows(body, capped.hidden, theme), width, theme);
 }
 
