@@ -102,6 +102,12 @@ test("Pierre edit renderer supports responsive split diffs and change background
   const source = await readFile(pierreEditPath, "utf8");
   assert.match(source, /width >= 120/);
   assert.match(source, /renderSplit/);
+  assert.match(source, /COLLAPSED_DIFF_ROWS = 30/);
+  assert.match(source, /capRows\(indexes, expanded\)/);
+  assert.match(source, /cachedWidth/);
+  assert.match(source, /cachedLines/);
+  assert.match(source, /if \(patchChanged\) this\.rebuild\(\)/);
+  assert.match(source, /if \(this\.cachedLines && this\.cachedWidth === width\) return this\.cachedLines/);
   assert.match(source, /inlineBackground/);
   assert.match(source, /frameDiff/);
   assert.match(source, /DIFF_BACKGROUND = "#191b1c"/);

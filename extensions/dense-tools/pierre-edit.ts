@@ -6,6 +6,7 @@ import * as pierre from "./diffs.bundle.mjs";
 const THEME_NAME = "gruvbox-dark-hard";
 // Gruvbox dark-hard, reduced by 15% so diff code stays distinct from the page.
 const DIFF_BACKGROUND = "#191b1c";
+const COLLAPSED_DIFF_ROWS = 30;
 
 pierre.registerCustomTheme(THEME_NAME, async () => ({
   name: THEME_NAME,
@@ -116,9 +117,17 @@ function diffColors(type: string): { marker: string; foreground?: string; backgr
   return { marker: " ", background: DIFF_BACKGROUND };
 }
 
-function capLines(lines: string[], expanded: boolean, theme: Theme): string[] {
-  if (expanded || lines.length <= 30) return lines;
-  return [...lines.slice(0, 30), theme.fg("dim", `… ${lines.length - 30} more diff rows (Ctrl+O to expand)` )];
+function capRows<T>(rows: T[], expanded: boolean): { visible: T[]; hidden: number } {
+  if (expanded || rows.length <= COLLAPSED_DIFF_ROWS) return { visible: rows, hidden: 0 };
+  return {
+    visible: rows.slice(0, COLLAPSED_DIFF_ROWS),
+    hidden: rows.length - COLLAPSED_DIFF_ROWS,
+  };
+}
+
+function addHiddenRows(lines: string[], hidden: number, theme: Theme): string[] {
+  if (hidden === 0) return lines;
+  return [...lines, theme.fg("dim", `… ${hidden} more diff rows (Ctrl+O to expand)`)];
 }
 
 function frameDiff(lines: string[], width: number, theme: Theme): string[] {
@@ -133,21 +142,23 @@ function renderUnified(rows: PierreRows, width: number, expanded: boolean, theme
   for (const row of rows.additions) if (lineType(row) === "context") contextByIndex.set(lineIndexes(row).unified, row);
   const ordered = [...changed, ...contextByIndex.values()].sort((a, b) => lineIndexes(a).unified - lineIndexes(b).unified);
   const numberWidth = Math.max(1, ...ordered.map((row) => lineNumber(row).length));
-  const body = capLines(ordered.map((row) => {
+  const capped = capRows(ordered, expanded);
+  const body = capped.visible.map((row) => {
     const colors = diffColors(lineType(row));
     const prefix = colors.foreground
       ? `${ansi({ color: colors.foreground, background: colors.background })}${colors.marker}${lineNumber(row).padStart(numberWidth)} \x1b[0m`
       : theme.fg("toolDiffContext", ` ${lineNumber(row).padStart(numberWidth)} `);
     const content = hastToAnsi(row, { background: colors.background, inlineBackground: colors.inlineBackground });
     return fitCell(`${prefix}${content}`, width, colors.background);
-  }), expanded, theme);
-  return frameDiff(body, width, theme);
+  });
+  return frameDiff(addHiddenRows(body, capped.hidden, theme), width, theme);
 }
 
 function renderSplit(rows: PierreRows, width: number, expanded: boolean, theme: Theme): string[] {
   const oldBySplit = new Map(rows.deletions.map((row) => [lineIndexes(row).split, row]));
   const newBySplit = new Map(rows.additions.map((row) => [lineIndexes(row).split, row]));
   const indexes = [...new Set([...oldBySplit.keys(), ...newBySplit.keys()])].sort((a, b) => a - b);
+  const capped = capRows(indexes, expanded);
   const numberWidth = Math.max(1, ...[...rows.deletions, ...rows.additions].map((row) => lineNumber(row).length));
   const separator = theme.fg("borderMuted", "│");
   const cellWidth = Math.floor((width - 1) / 2);
@@ -164,38 +175,56 @@ function renderSplit(rows: PierreRows, width: number, expanded: boolean, theme: 
     return fitCell(`${prefix}${content}`, cellWidth, colors.background);
   };
 
-  const body = indexes.map((index) => `${renderCell(oldBySplit.get(index), "old")}${separator}${renderCell(newBySplit.get(index), "new")}`);
-  return frameDiff(capLines(body, expanded, theme), width, theme);
+  const body = capped.visible.map((index) => `${renderCell(oldBySplit.get(index), "old")}${separator}${renderCell(newBySplit.get(index), "new")}`);
+  return frameDiff(addHiddenRows(body, capped.hidden, theme), width, theme);
 }
 
 class PierreDiffComponent {
   private rows?: PierreRows;
   private error?: string;
+  private cachedWidth?: number;
+  private cachedLines?: string[];
 
   constructor(private patch: string, private expanded: boolean, private theme: Theme) {
     this.rebuild();
   }
 
   set(patch: string, expanded: boolean, theme: Theme): void {
+    const patchChanged = patch !== this.patch;
+    const renderChanged = expanded !== this.expanded || theme !== this.theme;
     this.patch = patch;
     this.expanded = expanded;
     this.theme = theme;
-    this.rebuild();
+    if (patchChanged) this.rebuild();
+    else if (renderChanged) this.clearRenderCache();
+  }
+
+  private clearRenderCache(): void {
+    this.cachedWidth = undefined;
+    this.cachedLines = undefined;
   }
 
   private rebuild(): void {
     this.rows = parsePatchRows(this.patch);
     this.error = this.rows ? undefined : "Pierre could not parse the edit patch";
+    this.clearRenderCache();
   }
 
   render(width: number): string[] {
-    if (!this.rows) return [this.theme.fg("error", this.error ?? "Could not render diff")];
-    return width >= 120
-      ? renderSplit(this.rows, width, this.expanded, this.theme)
-      : renderUnified(this.rows, width, this.expanded, this.theme);
+    if (this.cachedLines && this.cachedWidth === width) return this.cachedLines;
+    const lines = !this.rows
+      ? [this.theme.fg("error", this.error ?? "Could not render diff")]
+      : width >= 120
+        ? renderSplit(this.rows, width, this.expanded, this.theme)
+        : renderUnified(this.rows, width, this.expanded, this.theme);
+    this.cachedWidth = width;
+    this.cachedLines = lines;
+    return lines;
   }
 
-  invalidate(): void {}
+  invalidate(): void {
+    this.clearRenderCache();
+  }
 }
 
 export default function (pi: ExtensionAPI) {
