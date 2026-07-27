@@ -89,6 +89,8 @@ test("Pierre edit renderer supports responsive split diffs and change background
   assert.match(source, /inlineBackground/);
   assert.match(source, /frameDiff/);
   assert.match(source, /DIFF_BACKGROUND = "#191b1c"/);
+  assert.match(source, /theme\.fg\("borderMuted", "│"\)/);
+  assert.doesNotMatch(source, /" │ "/);
   assert.doesNotMatch(source, /theme\.fg\("muted", "before"\)/);
   assert.match(source, /#412724/);
   assert.match(source, /#363922/);
@@ -100,6 +102,9 @@ test("chat layout frames user messages and gives chat rows a margin", async () =
   assert.match(source, /AssistantMessageComponent/);
   assert.match(source, /ToolExecutionComponent/);
   assert.match(source, /EXTRA_LEFT_MARGIN = 1/);
+  assert.match(source, /COMPOSER_PADDING = 2/);
+  assert.match(source, /setComposerMargin/);
+  assert.match(source, /setPaddingX/);
   assert.match(source, /USER_RULE = "#665c54"/);
   assert.match(source, /ASSISTANT_RULE = "#3c3836"/);
   assert.match(source, /"around"/);

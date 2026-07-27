@@ -1,11 +1,15 @@
 import {
   AssistantMessageComponent,
+  CustomEditor,
+  type ExtensionContext,
   ToolExecutionComponent,
   UserMessageComponent,
 } from "@earendil-works/pi-coding-agent";
 
 const PATCHED = Symbol.for("pi.dense-tools.chat-layout");
+const MARGIN_EDITOR = Symbol.for("pi.dense-tools.margin-editor");
 const EXTRA_LEFT_MARGIN = 1;
+const COMPOSER_PADDING = 2;
 const USER_RULE = "#665c54"; // Gruvbox bg3
 const ASSISTANT_RULE = "#3c3836"; // Gruvbox bg1
 
@@ -43,3 +47,17 @@ function patchRender(
 patchRender(UserMessageComponent.prototype, USER_RULE, "around");
 patchRender(AssistantMessageComponent.prototype, ASSISTANT_RULE, "plain");
 patchRender(ToolExecutionComponent.prototype, ASSISTANT_RULE, "plain");
+
+export function setComposerMargin(ctx: ExtensionContext): void {
+  const previous = ctx.ui.getEditorComponent();
+  if ((previous as any)?.[MARGIN_EDITOR]) return;
+  const factory = (tui: any, theme: any, keybindings: any) => {
+    const editor = previous
+      ? previous(tui, theme, keybindings)
+      : new CustomEditor(tui, theme, keybindings);
+    editor.setPaddingX?.(COMPOSER_PADDING);
+    return editor;
+  };
+  (factory as any)[MARGIN_EDITOR] = true;
+  ctx.ui.setEditorComponent(factory);
+}

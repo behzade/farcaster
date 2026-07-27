@@ -149,8 +149,8 @@ function renderSplit(rows: PierreRows, width: number, expanded: boolean, theme: 
   const newBySplit = new Map(rows.additions.map((row) => [lineIndexes(row).split, row]));
   const indexes = [...new Set([...oldBySplit.keys(), ...newBySplit.keys()])].sort((a, b) => a - b);
   const numberWidth = Math.max(1, ...[...rows.deletions, ...rows.additions].map((row) => lineNumber(row).length));
-  const separator = theme.fg("borderMuted", " │ ");
-  const cellWidth = Math.floor((width - 3) / 2);
+  const separator = theme.fg("borderMuted", "│");
+  const cellWidth = Math.floor((width - 1) / 2);
 
   const renderCell = (row: any, side: "old" | "new"): string => {
     if (!row) return fitCell("", cellWidth, DIFF_BACKGROUND);

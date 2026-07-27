@@ -1,4 +1,4 @@
-import "./chat-layout.ts";
+import { setComposerMargin } from "./chat-layout.ts";
 
 import type {
   AgentToolResult,
@@ -206,6 +206,7 @@ export default function denseTools(pi: ExtensionAPI) {
   });
 
   pi.on("session_start", (_event, ctx) => {
+    setComposerMargin(ctx);
     readGroupsById.clear();
     currentReadGroup = undefined;
 
