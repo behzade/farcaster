@@ -60,13 +60,9 @@ export function permissionForNativeDenial(
 		if (controlRoot && isControlRootSymlink(controlRoot)) return { kind: "unsafe" };
 		const permissionPath = controlRoot ?? path;
 		if (access === "read" && !existsSync(permissionPath)) return { kind: "ignore" };
-		if (
-			controlRoot === undefined &&
-			existsSync(permissionPath) &&
-			statSync(permissionPath).isDirectory()
-		) {
-			return { kind: "ignore" };
-		}
+		const directory =
+			controlRoot !== undefined ||
+			(existsSync(permissionPath) && statSync(permissionPath).isDirectory());
 
 		const baseAllowed =
 			access === "read"
@@ -91,7 +87,7 @@ export function permissionForNativeDenial(
 			permission: {
 				kind: access,
 				path: permissionPath,
-				directory: controlRoot !== undefined,
+				directory,
 			},
 		};
 	} catch {

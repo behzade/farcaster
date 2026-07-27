@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "./codex-command.ts";
+import { canonicalize } from "./io-permissions.ts";
 import { permissionForNativeDenial } from "./native-denials.ts";
 
 test("native write denials yield one exact file permission", () => {
@@ -76,7 +77,7 @@ test("native device denials are ignored instead of prompting", () => {
 	}
 });
 
-test("native ordinary directory denials do not widen to tree grants", () => {
+test("native directory denials ask for the exact recursive folder right", () => {
 	const cwd = mkdtempSync(join(tmpdir(), "pi-native-denial-dir-"));
 	const directory = fileURLToPath(new URL(".", import.meta.url));
 	const restrictedConfig = {
@@ -94,7 +95,10 @@ test("native ordinary directory denials do not widen to tree grants", () => {
 			restrictedConfig,
 			[],
 		),
-		{ kind: "ignore" },
+		{
+			kind: "permission",
+			permission: { kind: "read", path: canonicalize(directory), directory: true },
+		},
 	);
 });
 
