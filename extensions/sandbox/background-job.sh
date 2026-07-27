@@ -6,14 +6,14 @@ tmux_command=(tmux -S "$socket")
 managed_marker="pi-background-job-v1"
 
 usage() {
-  echo "usage: job.sh start NAME CWD COMMAND" >&2
-  echo "       job.sh list" >&2
-  echo "       job.sh status NAME" >&2
-  echo "       job.sh read NAME [LINES]" >&2
-  echo "       job.sh write NAME TEXT" >&2
-  echo "       job.sh line NAME TEXT" >&2
-  echo "       job.sh keys NAME KEY..." >&2
-  echo "       job.sh stop NAME" >&2
+  echo "usage: background-job.sh start NAME CWD COMMAND" >&2
+  echo "       background-job.sh list" >&2
+  echo "       background-job.sh status NAME" >&2
+  echo "       background-job.sh read NAME [LINES]" >&2
+  echo "       background-job.sh write NAME TEXT" >&2
+  echo "       background-job.sh line NAME TEXT" >&2
+  echo "       background-job.sh keys NAME KEY..." >&2
+  echo "       background-job.sh stop NAME" >&2
   exit 2
 }
 

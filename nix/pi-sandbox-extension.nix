@@ -10,7 +10,7 @@ stdenvNoCC.mkDerivation {
     runHook preInstall
     mkdir -p $out
     cp background-jobs.ts index.ts codex-command.ts io-permissions.ts io-policy.ts sandbox-failures.ts package.json $out/
-    install -Dm755 ${../skills/background-jobs/scripts/job.sh} $out/background-job.sh
+    install -Dm755 background-job.sh $out/background-job.sh
     runHook postInstall
   '';
 

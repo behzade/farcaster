@@ -243,6 +243,12 @@ export default function (pi: ExtensionAPI) {
 	let persistentPermissions: IoPermission[] = [];
 	let oneShotNetworkPermissions: NetworkPermission[] = [];
 
+	pi.on("session_start", () => {
+		pi.setActiveTools(
+			pi.getActiveTools().filter((name) => name !== "grep" && name !== "find"),
+		);
+	});
+
 	const runtimeGrants = (consumeOneShot = false): CodexSandboxGrants => {
 		const permissions = [...persistentPermissions, ...oneShotNetworkPermissions];
 		if (consumeOneShot) oneShotNetworkPermissions = [];
@@ -501,25 +507,14 @@ export default function (pi: ExtensionAPI) {
 		name: "background_job",
 		label: "Background job",
 		description:
-			"Start, list, inspect, interact with, or stop a long-running command. Started commands run in a fresh Codex sandbox. Job names must start with pi-.",
+			"Start, list, inspect, interact with, or stop a long-running command. Use only for long-running commands; never run sudo, password prompts, or destructive commands. Jobs run in a fresh Codex sandbox inside the workspace. Names must start with pi- and use only letters, digits, dots, underscores, or hyphens. Request needed network access before starting. After starting, do other work instead of tight polling. Stop only jobs created for the current task and report any left running when the task ends.",
 		promptSnippet:
-			"Use background_job for long-running servers, watchers, builds, and tests instead of calling tmux through bash.",
+			"Use background_job for long-running servers, watchers, builds, and tests instead of tmux through bash.",
 		parameters: BackgroundJobParams,
 		executionMode: "sequential",
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			const packagedHelperPath = fileURLToPath(new URL("./background-job.sh", import.meta.url));
-			const sourceHelperPath = fileURLToPath(
-				new URL("../../skills/background-jobs/scripts/job.sh", import.meta.url),
-			);
-			const skillHelperPath = resolve(
-				getAgentDir(),
-				"skills",
-				"background-jobs",
-				"scripts",
-				"job.sh",
-			);
-			const helperPath = [packagedHelperPath, sourceHelperPath, skillHelperPath].find(existsSync);
-			if (!helperPath) {
+			const helperPath = fileURLToPath(new URL("./background-job.sh", import.meta.url));
+			if (!existsSync(helperPath)) {
 				return {
 					content: [{ type: "text", text: "Background job helper is missing" }],
 					isError: true,

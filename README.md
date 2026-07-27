@@ -9,8 +9,8 @@ hosts, and notification settings. This repo owns code and package pins.
 
 ## Layout
 
-- `extensions/sandbox`: fail-closed `codex sandbox` adapter and IO permission
-  prompt.
+- `extensions/sandbox`: fail-closed `codex sandbox` adapter, IO permission
+  prompt, and background-job tool and helper.
 - `extensions/*.ts`: local notification, input, session, title, and dense tool
   rendering hooks.
 - `themes/gruvbox-dark-hard.json`: Gruvbox's canonical dark-hard palette for
@@ -18,8 +18,6 @@ hosts, and notification settings. This repo owns code and package pins.
   [morhetz/gruvbox](https://github.com/morhetz/gruvbox/blob/master/colors/gruvbox.vim).
   Its token roles follow Zenbones' contrast-first hierarchy: neutral lightness
   carries most structure, while hue marks links, active UI, state, and diffs.
-- `skills/background-jobs`: sandboxed, non-blocking job control through a Pi
-  tool.
 - `nix`: pinned package builds for the sandbox, subagents, and server
   compaction.
 - `tests`: shared policy and notification checks.
@@ -129,8 +127,9 @@ with the current workspace rights. It can list, inspect, send input to, and stop
 only jobs marked as broker-managed.
 
 Pi's built-in recursive `grep` and `find` tools do not run as child processes
-of the sandbox. The extension blocks them and tells the agent to use `rg` or
-`fd` through bash, where Codex enforces the same file policy.
+of the sandbox. The extension removes them from the active tool set, and still
+blocks calls if another extension turns them back on. Agents use `rg` or `fd`
+through bash, where Codex enforces the same file policy.
 
 Global sandbox config lives at `~/.pi/agent/extensions/sandbox.json`. A trusted
 project can add tighter rules at `.pi/sandbox.json`; project config cannot add
