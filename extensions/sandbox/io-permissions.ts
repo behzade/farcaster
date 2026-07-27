@@ -12,6 +12,7 @@ import { isIP } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { domainToASCII } from "node:url";
+import { developmentCacheRightForPath } from "./development-caches.ts";
 
 export type IoPermission =
 	| {
@@ -41,6 +42,7 @@ interface PermissionFile {
 
 const EMPTY_FILE: PermissionFile = { version: 2, workspaces: {} };
 const protectedHomeRoots = [".ssh", ".aws", ".gnupg"];
+const protectedSystemRoots = ["/dev"];
 const protectedWriteRoots = [".pi", ".codex"];
 const protectedAuthFiles = [
 	".pi/agent/auth.json",
@@ -82,7 +84,10 @@ export function isInside(root: string, path: string): boolean {
 export function isProtectedPath(path: string): boolean {
 	const home = canonicalize(homedir());
 	const lexical = resolve(path);
-	const protectedRoots = protectedHomeRoots.map((name) => resolve(home, name));
+	const protectedRoots = [
+		...protectedHomeRoots.map((name) => resolve(home, name)),
+		...protectedSystemRoots.map((path) => resolve(path)),
+	];
 	const protectedFiles = protectedAuthFiles.map((name) => resolve(home, name));
 	// Check fixed host paths before realpath. The OS sandbox may make those
 	// roots unreadable even to a test process, and a protected path must still
@@ -117,6 +122,17 @@ function namedControlRoot(path: string, name: ".git"): string | undefined {
 }
 
 export function gitControlRoot(path: string, cwd?: string): string | undefined {
+	// Package managers keep Git data in writable caches. Only treat `.git` as
+	// protected repository control data when it is inside the active workspace.
+	if (cwd) {
+		const workspace = resolve(cwd);
+		const lexicalPath = resolve(path);
+		const actualWorkspace = canonicalize(workspace);
+		const actualPath = canonicalize(path);
+		if (!isInside(workspace, lexicalPath) && !isInside(actualWorkspace, actualPath)) {
+			return undefined;
+		}
+	}
 	// Keep the lexical check first. Canonicalizing a `.git` symlink removes the
 	// control name and could otherwise make it look like a normal workspace path.
 	const lexical = namedControlRoot(path, ".git");
@@ -253,8 +269,15 @@ export function grantsToRuntime(permissions: readonly IoPermission[]): RuntimeIo
 	const write = new Set<string>();
 	const networkHosts = new Set<string>();
 	for (const permission of permissions) {
-		if (permission.kind === "read") read.add(canonicalize(permission.path));
-		if (permission.kind === "write" && !isControlRootSymlink(permission.path)) {
+		if (permission.kind === "read" && !isProtectedPath(permission.path)) {
+			read.add(canonicalize(permission.path));
+		}
+		if (
+			permission.kind === "write" &&
+			!isProtectedPath(permission.path) &&
+			!isProtectedWritePath(permission.path) &&
+			!isControlRootSymlink(permission.path)
+		) {
 			write.add(canonicalize(permission.path));
 		}
 		if (permission.kind === "network_host") networkHosts.add(permission.host);
@@ -268,11 +291,12 @@ export function grantsToRuntime(permissions: readonly IoPermission[]): RuntimeIo
 
 export function isDefaultWritePath(path: string, cwd: string): boolean {
 	const actual = canonicalize(path);
-	return [
-		canonicalize(cwd),
-		canonicalize("/tmp"),
-		canonicalize(tmpdir()),
-	].some((root) => isInside(root, actual));
+	return (
+		developmentCacheRightForPath(actual) !== undefined ||
+		[canonicalize(cwd), canonicalize("/tmp"), canonicalize(tmpdir())].some((root) =>
+			isInside(root, actual),
+		)
+	);
 }
 
 export function permissionLabel(permission: IoPermission): string {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, symlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { canonicalize } from "./io-permissions.ts";
@@ -178,6 +178,30 @@ test("an omitted global domain list keeps the safe defaults", () => {
 	);
 	assert.deepEqual(global.network?.allowedDomains, DEFAULT_CONFIG.network?.allowedDomains);
 	assert.equal(global.network?.allowAllUnixSockets, true);
+});
+
+test("default Codex profile includes narrow development caches", () => {
+	const profile = overrides(
+		buildCodexSandboxArgs("/repo", DEFAULT_CONFIG, "true"),
+	).find((value) => value.startsWith(`permissions.pi-sandbox-${process.pid}=`));
+	assert(profile);
+	assert(profile.includes(`${JSON.stringify(canonicalize(join(homedir(), ".cargo", "registry")))} = "write"`));
+	assert(profile.includes(`${JSON.stringify(canonicalize(join(homedir(), ".npm")))} = "write"`));
+	assert.equal(profile.includes(`${JSON.stringify(canonicalize(join(homedir(), ".cargo")))} = "write"`), false);
+	assert.equal(profile.includes(`${JSON.stringify(canonicalize(join(homedir(), ".cargo", "bin")))} = "write"`), false);
+});
+
+test("Codex omits cache roots that overlap the workspace", () => {
+	const profile = overrides(
+		buildCodexSandboxArgs(homedir(), DEFAULT_CONFIG, "true"),
+	).find((value) => value.startsWith(`permissions.pi-sandbox-${process.pid}=`));
+	assert(profile);
+	assert.equal(
+		profile.includes(
+			`${JSON.stringify(canonicalize(join(homedir(), ".cargo", "registry")))} = "write"`,
+		),
+		false,
+	);
 });
 
 test("default network policy has no external domains", () => {

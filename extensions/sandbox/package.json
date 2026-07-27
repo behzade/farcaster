@@ -1,12 +1,12 @@
 {
 	"name": "pi-extension-sandbox",
 	"private": true,
-	"version": "2.7.0",
+	"version": "2.8.0",
 	"type": "module",
 	"scripts": {
 		"clean": "echo 'nothing to clean'",
 		"build": "echo 'nothing to build'",
-		"check": "node --test background-jobs.test.ts broker-client.test.ts broker-policy.test.ts codex-command.test.ts declared-permissions.test.ts io-permissions.test.ts io-policy.test.ts native-denials.test.ts native-sandbox-ops.test.ts sandbox-failures.test.ts"
+		"check": "node --test background-jobs.test.ts broker-client.test.ts broker-policy.test.ts codex-command.test.ts declared-permissions.test.ts development-caches.test.ts io-permissions.test.ts io-policy.test.ts native-denials.test.ts native-sandbox-ops.test.ts sandbox-failures.test.ts"
 	},
 	"pi": {
 		"extensions": [

@@ -63,6 +63,15 @@ test("secret paths cannot be granted", () => {
 		/Protected secret/,
 	);
 	assert.throws(
+		() => normalizePermission({ kind: "write", path: "/dev/tty" }, workspace),
+		/Protected secret or control/,
+	);
+	assert.equal(isProtectedPath("/dev/dtracehelper"), true);
+	assert.deepEqual(
+		grantsToRuntime([{ kind: "write", path: "/dev/tty", directory: false }]),
+		{ read: [], write: [], networkHosts: [] },
+	);
+	assert.throws(
 		() =>
 			normalizePermission(
 				{ kind: "write", path: join(homedir(), ".pi", "agent"), targetType: "folder" },
@@ -113,6 +122,10 @@ test("git object paths widen only to the repository control folder", () => {
 	mkdirSync(git, { recursive: true });
 	assert.equal(gitControlRoot(join(git, "objects", "ab", "new-object")), canonicalize(git));
 	assert.equal(gitControlRoot(join(workspace, "src", "index.ts")), undefined);
+	assert.equal(
+		gitControlRoot(join(root, "cache", "checkout", ".git", "config"), workspace),
+		undefined,
+	);
 });
 
 test("a symlinked git folder keeps its lexical control root", () => {

@@ -4,6 +4,7 @@ import {
 	backgroundJobSocket,
 	isBackgroundJobSocket,
 } from "./background-jobs.ts";
+import { developmentCacheWriteRightsForWorkspace } from "./development-caches.ts";
 import {
 	canonicalize,
 	normalizeNetworkHost,
@@ -637,7 +638,14 @@ export function buildCodexSandboxArgs(
 	for (const path of [...(effectiveConfig.filesystem?.allowRead ?? []), ...(grants.read ?? [])]) {
 		filesystemEntries.set(path, "read");
 	}
-	for (const path of [...(effectiveConfig.filesystem?.allowWrite ?? []), ...(grants.write ?? [])]) {
+	const cacheWritePaths = developmentCacheWriteRightsForWorkspace(cwd).map(
+		(right) => right.path,
+	);
+	for (const path of [
+		...(effectiveConfig.filesystem?.allowWrite ?? []),
+		...cacheWritePaths,
+		...(grants.write ?? []),
+	]) {
 		filesystemEntries.set(path, "write");
 	}
 	for (const path of effectiveConfig.filesystem?.denyWrite ?? []) {

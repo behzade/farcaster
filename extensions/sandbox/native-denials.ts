@@ -6,6 +6,7 @@ import {
 	canonicalize,
 	gitControlRoot,
 	isControlRootSymlink,
+	isInside,
 	isProtectedPath,
 	isProtectedWritePath,
 	permissionCoversPath,
@@ -46,6 +47,9 @@ export function permissionForNativeDenial(
 	try {
 		const lexicalPath = resolveLexicalPermissionPath(denial.path, cwd);
 		const path = canonicalize(lexicalPath);
+		if (isInside("/dev", lexicalPath) || isInside(canonicalize("/dev"), path)) {
+			return { kind: "ignore" };
+		}
 		if (blockedPaths.some((blocked) => canonicalize(blocked) === path)) {
 			return { kind: "unsafe" };
 		}

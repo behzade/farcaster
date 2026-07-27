@@ -29,6 +29,38 @@ test("base rights allow broad reads and only workspace or temp writes", () => {
 	);
 });
 
+test("development caches are writable without granting whole tool homes", () => {
+	const workspace = "/work";
+	for (const path of [
+		join(homedir(), ".cargo", "registry", "cache", "package.crate"),
+		join(homedir(), ".cargo", "git", "checkouts", "package", ".git", "index.lock"),
+		join(homedir(), ".npm", "_cacache", "entry"),
+		join(homedir(), ".bun", "install", "cache", "package"),
+		join(homedir(), "go", "pkg", "mod", "cache", "download", "module"),
+	]) {
+		assert.equal(isBaseWriteAllowed(path, DEFAULT_CONFIG, workspace), true, path);
+	}
+	for (const path of [
+		join(homedir(), ".cargo", "config.toml"),
+		join(homedir(), ".cargo", "credentials.toml"),
+		join(homedir(), ".cargo", "bin", "cargo-tool"),
+		join(homedir(), ".npm-other", "entry"),
+	]) {
+		assert.equal(isBaseWriteAllowed(path, DEFAULT_CONFIG, workspace), false, path);
+	}
+});
+
+test("git metadata in a configured cache stays writable", () => {
+	assert.equal(
+		isBaseWriteAllowed(
+			"/cache/cargo/git/checkouts/package/.git/config",
+			{ filesystem: { allowWrite: ["/cache"] } },
+			"/work",
+		),
+		true,
+	);
+});
+
 test("a symlinked workspace git folder stays read-only", () => {
 	const root = mkdtempSync(join(tmpdir(), "pi-policy-git-link-"));
 	const workspace = join(root, "workspace");

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -37,6 +37,36 @@ test("maps current base rights and command-local folder grants", () => {
 				right.scope === "tree",
 		),
 	);
+	const cargoRegistry = canonicalize(join(homedir(), ".cargo", "registry"));
+	assert.deepEqual(
+		request.policy.base_rights.find((right) => right.path === cargoRegistry),
+		{
+			access: "write",
+			path: cargoRegistry,
+			scope: "tree",
+			missing_path: existsSync(cargoRegistry) ? "reject" : "create_tree",
+		},
+	);
+	const cargoLock = canonicalize(join(homedir(), ".cargo", ".package-cache"));
+	assert.deepEqual(
+		request.policy.base_rights.find((right) => right.path === cargoLock),
+		{
+			access: "write",
+			path: cargoLock,
+			scope: "file",
+			missing_path: existsSync(cargoLock) ? "reject" : "create_file",
+		},
+	);
+	const broadCacheRoots = [
+		canonicalize(join(homedir(), ".cargo")),
+		canonicalize(join(homedir(), "Library", "Caches")),
+	];
+	assert.equal(
+		request.policy.base_rights.some(
+			(right) => right.access === "write" && broadCacheRoots.includes(right.path),
+		),
+		false,
+	);
 	assert.deepEqual(request.policy.grants, [
 		{
 			access: "write",
@@ -49,6 +79,25 @@ test("maps current base rights and command-local folder grants", () => {
 		request.policy.denies.some(
 			(rule) => rule.access === "read_write" && rule.pattern === "/**/*.key",
 		),
+	);
+});
+
+test("native cache rights overlapping the workspace are omitted", () => {
+	const cwd = canonicalize(homedir());
+	const request = buildBrokerExecRequest(
+		"home-workspace",
+		"true",
+		cwd,
+		undefined,
+		DEFAULT_CONFIG,
+		[],
+		[],
+	);
+	assert.equal(
+		request.policy.base_rights.some(
+			(right) => right.path === canonicalize(join(homedir(), ".cargo", "registry")),
+		),
+		false,
 	);
 });
 

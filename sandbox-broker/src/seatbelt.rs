@@ -137,6 +137,12 @@ pub fn normalize_policy(
     }
     for right in &policy.grants {
         let right = normalize_right(right, true)?;
+        if right.path.starts_with("/dev") {
+            return Err(format!(
+                "approved rights cannot target device paths: {}",
+                right.path.display()
+            ));
+        }
         if denies.iter().any(|deny| deny_matches_right(deny, &right)) {
             return Err(format!(
                 "approved right conflicts with a deny: {}",
@@ -282,6 +288,7 @@ fn deny_applies_to(denied: DeniedAccess, requested: Access) -> bool {
 /// Returns an error if a deny glob cannot be translated safely.
 pub fn build_args(
     command: &[String],
+    cwd: &Path,
     rights: &[NormalizedRight],
     denies: &[NormalizedDeny],
 ) -> Result<Vec<String>, String> {
@@ -302,6 +309,7 @@ pub fn build_args(
     let read_policy = build_access_policy(
         "file-read*",
         "READABLE_ROOT",
+        cwd,
         &read_roots,
         denies,
         Access::Read,
@@ -310,6 +318,7 @@ pub fn build_args(
     let write_policy = build_access_policy(
         "file-write*",
         "WRITABLE_ROOT",
+        cwd,
         &write_roots,
         denies,
         Access::Write,
@@ -332,6 +341,7 @@ pub fn build_args(
 fn build_access_policy(
     action: &str,
     prefix: &str,
+    cwd: &Path,
     roots: &[NormalizedRight],
     denies: &[NormalizedDeny],
     access: Access,
@@ -345,7 +355,9 @@ fn build_access_policy(
             components.push(format!("(literal (param \"{root_key}\"))"));
             continue;
         }
-        let mut requirements = vec![format!("(subpath (param \"{root_key}\"))")];
+        let mut requirements = vec![format!(
+            "(require-any (literal (param \"{root_key}\")) (subpath (param \"{root_key}\")))"
+        )];
         let mut excluded = BTreeSet::new();
         for deny in denies {
             if !deny_applies_to(deny.access, access) || deny.scope == DenyScope::Glob {
@@ -362,9 +374,12 @@ fn build_access_policy(
             requirements.push(format!("(require-not (literal (param \"{key}\")))"));
             requirements.push(format!("(require-not (subpath (param \"{key}\")))"));
         }
-        if access == Access::Write && !is_control_grant(root) {
+        if access == Access::Write
+            && !is_control_grant(root)
+            && (cwd.starts_with(&root.path) || root.path.starts_with(cwd))
+        {
             for name in PROTECTED_METADATA_NAMES {
-                let pattern = protected_name_regex(&root.path, name).replace('"', "\\\"");
+                let pattern = protected_name_regex(cwd, name).replace('"', "\\\"");
                 requirements.push(format!("(require-not (regex #\"{pattern}\"))"));
             }
         }
@@ -442,7 +457,12 @@ pub fn self_test(hard: &HardPolicy) -> Result<(), String> {
         scope: PathScope::Tree,
         approved: false,
     }];
-    let args = build_args(&["/usr/bin/true".to_owned()], &rights, &hard.denies)?;
+    let args = build_args(
+        &["/usr/bin/true".to_owned()],
+        Path::new("/"),
+        &rights,
+        &hard.denies,
+    )?;
     let output = std::process::Command::new(SANDBOX_EXEC)
         .args(args)
         .output()
@@ -506,6 +526,31 @@ mod tests {
     }
 
     #[test]
+    fn approved_device_rights_are_rejected() {
+        let device = FilesystemRight {
+            access: Access::Write,
+            path: "/dev/null".to_owned(),
+            scope: PathScope::File,
+            missing_path: MissingPathBehavior::Reject,
+        };
+        let policy = SandboxPolicy {
+            base_rights: vec![FilesystemRight {
+                access: Access::Read,
+                ..device.clone()
+            }],
+            grants: vec![device],
+            denies: vec![],
+            network: crate::protocol::NetworkPolicy::Blocked,
+            output_limit_bytes: 1_024,
+        };
+        assert!(
+            normalize_policy(&policy, &HardPolicy { denies: vec![] })
+                .expect_err("device grant must fail")
+                .contains("device paths")
+        );
+    }
+
+    #[test]
     fn file_and_tree_rights_use_distinct_filters() {
         let rights = vec![
             NormalizedRight {
@@ -521,24 +566,76 @@ mod tests {
                 approved: false,
             },
         ];
-        let args = build_args(&["/usr/bin/true".to_owned()], &rights, &[]).expect("policy");
+        let args = build_args(
+            &["/usr/bin/true".to_owned()],
+            Path::new("/work"),
+            &rights,
+            &[],
+        )
+        .expect("policy");
         let policy = &args[1];
         assert!(policy.contains("(literal (param \"READABLE_ROOT_0\"))"));
+        assert!(policy.contains("(literal (param \"WRITABLE_ROOT_0\"))"));
         assert!(policy.contains("(subpath (param \"WRITABLE_ROOT_0\"))"));
     }
 
     #[test]
-    fn broad_writes_protect_git_and_pi_names() {
+    fn broad_writes_protect_control_names_only_below_the_workspace() {
         let rights = vec![NormalizedRight {
             access: Access::Write,
-            path: PathBuf::from("/work"),
+            path: PathBuf::from("/"),
             scope: PathScope::Tree,
             approved: false,
         }];
-        let args = build_args(&["/usr/bin/true".to_owned()], &rights, &[]).expect("policy");
+        let args = build_args(
+            &["/usr/bin/true".to_owned()],
+            Path::new("/work"),
+            &rights,
+            &[],
+        )
+        .expect("policy");
         let policy = &args[1];
         assert!(policy.contains("^/work/(.*/)?\\.git(/.*)?$"));
         assert!(policy.contains("^/work/(.*/)?\\.pi(/.*)?$"));
+        assert!(!policy.contains("^/(.*/)?\\.git(/.*)?$"));
+    }
+
+    #[test]
+    fn cache_roots_do_not_block_package_manager_git_metadata() {
+        let rights = vec![NormalizedRight {
+            access: Access::Write,
+            path: PathBuf::from("/home/user/.cargo/git"),
+            scope: PathScope::Tree,
+            approved: false,
+        }];
+        let args = build_args(
+            &["/usr/bin/true".to_owned()],
+            Path::new("/work"),
+            &rights,
+            &[],
+        )
+        .expect("policy");
+        assert!(!args[1].contains("^/home/user/\\.cargo/git/(.*/)?\\.git"));
+        assert!(!args[1].contains("^/home/user/\\.cargo/git/(.*/)?\\.pi"));
+    }
+
+    #[test]
+    fn cache_root_inside_workspace_keeps_workspace_control_carveouts() {
+        let rights = vec![NormalizedRight {
+            access: Access::Write,
+            path: PathBuf::from("/work/.cache/package-manager"),
+            scope: PathScope::Tree,
+            approved: false,
+        }];
+        let args = build_args(
+            &["/usr/bin/true".to_owned()],
+            Path::new("/work"),
+            &rights,
+            &[],
+        )
+        .expect("policy");
+        assert!(args[1].contains("^/work/(.*/)?\\.git(/.*)?$"));
+        assert!(args[1].contains("^/work/(.*/)?\\.pi(/.*)?$"));
     }
 
     #[test]
@@ -549,7 +646,13 @@ mod tests {
             scope: PathScope::Tree,
             approved: true,
         }];
-        let args = build_args(&["/usr/bin/true".to_owned()], &rights, &[]).expect("policy");
+        let args = build_args(
+            &["/usr/bin/true".to_owned()],
+            Path::new("/work"),
+            &rights,
+            &[],
+        )
+        .expect("policy");
         assert!(!args[1].contains("^/work/\\.git/\\.git"));
     }
 
@@ -630,7 +733,13 @@ mod tests {
             .expect("canonicalize test root");
         let git = root.join("nested/repository/.git");
         fs::create_dir_all(&git).expect("create nested git control root");
+        let cache = temp_root("seatbelt-cache")
+            .canonicalize()
+            .expect("canonicalize cache root");
+        let cache_git = cache.join("checkouts/package/.git");
+        fs::create_dir_all(&cache_git).expect("create cache git metadata");
         let allowed = root.join("allowed.txt");
+        let cache_allowed = cache_git.join("index.lock");
         let protected = git.join("config");
         let rights = vec![
             NormalizedRight {
@@ -645,13 +754,19 @@ mod tests {
                 scope: PathScope::Tree,
                 approved: false,
             },
+            NormalizedRight {
+                access: Access::Write,
+                path: cache.clone(),
+                scope: PathScope::Tree,
+                approved: false,
+            },
         ];
         let write_allowed = vec![
             "/bin/sh".to_owned(),
             "-c".to_owned(),
             format!("printf ok > '{}'", allowed.display()),
         ];
-        let args = build_args(&write_allowed, &rights, &[]).expect("allowed policy");
+        let args = build_args(&write_allowed, &root, &rights, &[]).expect("allowed policy");
         let output = Command::new(SANDBOX_EXEC)
             .args(args)
             .current_dir(&root)
@@ -664,12 +779,30 @@ mod tests {
             "ok"
         );
 
+        let write_cache_git = vec![
+            "/bin/sh".to_owned(),
+            "-c".to_owned(),
+            format!("printf cache > '{}'", cache_allowed.display()),
+        ];
+        let args = build_args(&write_cache_git, &root, &rights, &[]).expect("cache policy");
+        let output = Command::new(SANDBOX_EXEC)
+            .args(args)
+            .current_dir(&root)
+            .output()
+            .expect("run sandbox-exec");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "cache write failed: {stderr}");
+        assert_eq!(
+            fs::read_to_string(&cache_allowed).expect("read cache file"),
+            "cache"
+        );
+
         let write_protected = vec![
             "/bin/sh".to_owned(),
             "-c".to_owned(),
             format!("printf bad > '{}'", protected.display()),
         ];
-        let args = build_args(&write_protected, &rights, &[]).expect("protected policy");
+        let args = build_args(&write_protected, &root, &rights, &[]).expect("protected policy");
         let output = Command::new(SANDBOX_EXEC)
             .args(args)
             .current_dir(&root)

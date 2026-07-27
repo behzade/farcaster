@@ -97,11 +97,23 @@ The default rights are:
   bundles readable but read-only;
 - keep `~/.pi` and `~/.codex` read-only so a grant cannot change its own
   policy;
-- write the workspace, `/tmp`, and the system temp folder;
+- write the workspace, `/tmp`, the system temp folder, and narrow development
+  cache roots used by Cargo, Go, npm, pnpm, Bun, Yarn, Corepack, Deno, pip, and
+  uv; package-manager config, credential files, and global install bins stay
+  outside these implicit write rights;
 - pass only core shell variables such as `PATH`, `HOME`, locale, and temp paths;
 - remove variables whose names contain `KEY`, `SECRET`, or `TOKEN`;
 - block every network host until the user grants that exact hostname or IP;
 - block local and private network targets.
+
+Pi creates missing fixed cache directories from the trusted host before the
+sandbox starts. Cache rights are typed as files or folders and omitted when the
+root or an ancestor below the home folder is a symlink. They are shared
+across workspaces, so a hostile project can still poison mutable cache state for
+a later build; use separate users or disposable homes when that risk matters.
+These rights support local builds and already-cached dependencies. Native
+protocol v1 still cannot fetch missing dependencies because network grants have
+not landed.
 
 When `read`, `write`, `edit`, or `ls` targets a path outside the current IO
 rights, the sandbox pauses that tool call and asks the user to allow it once,
@@ -135,9 +147,9 @@ that reports only that its service is unavailable.
 On the native macOS backend, a failed command can return a best-effort kernel
 denial hint even when the app hides `EPERM`. Pi prompts and retries only when
 the hint names one exact policy-safe file path. Empty, late, malformed,
-protected, or denied hints grant nothing, and every retry still needs user
-approval. Unified logging can miss denials, so declared rights remain the
-reliable path.
+protected, denied, or `/dev` device hints grant nothing, and every retry still
+needs user approval. Unified logging can miss denials, so declared rights
+remain the reliable path.
 
 On the Codex backend, undeclared bash rights still use a limited fallback. The
 sandbox checks failed command output for access errors such as `Operation not
@@ -153,10 +165,12 @@ the model requests the exact host or IP.
 
 Workspace write access includes creating, changing, and deleting workspace
 files. The sandbox does not inspect command text, so it does not add a second
-prompt for a delete command. Codex starts with repository control data such as
-`.git` read-only. If Git fails on a file under `.git`, the approval prompt asks
-for the repository's whole `.git` folder and retries the command. Use version
-control or backups for other workspace files.
+prompt for a delete command. Repository control data under the active workspace,
+including nested repositories, starts read-only. If Git fails on a file under
+`.git`, the approval prompt asks for that repository's whole `.git` folder and
+retries the command. `.git` data under configured package caches or temp paths
+is normal cache data and does not trigger a repository-control prompt. Use
+version control or backups for other workspace files.
 
 Enabling an MCP service also needs user approval because an MCP server can read
 private data or act outside the shell sandbox. That approval is scoped to the

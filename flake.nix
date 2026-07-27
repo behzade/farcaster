@@ -52,6 +52,7 @@
               ${self}/extensions/sandbox/broker-policy.test.ts \
               ${self}/extensions/sandbox/codex-command.test.ts \
               ${self}/extensions/sandbox/declared-permissions.test.ts \
+              ${self}/extensions/sandbox/development-caches.test.ts \
               ${self}/extensions/sandbox/io-permissions.test.ts \
               ${self}/extensions/sandbox/io-policy.test.ts \
               ${self}/extensions/sandbox/native-denials.test.ts \

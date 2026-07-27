@@ -34,6 +34,7 @@ import {
 	checkDeclaredFilesystemPermissions,
 	type FilePermission,
 } from "./declared-permissions.ts";
+import { ensureDevelopmentCacheDirectories } from "./development-caches.ts";
 import {
 	DEFAULT_CONFIG,
 	applyProjectRestrictions,
@@ -188,6 +189,15 @@ type DeclaredNetworkPermission = {
 	host: string;
 	reason: string;
 };
+
+function isSafeSavedFilePermission(permission: IoPermission): permission is FilePermission {
+	return (
+		(permission.kind === "read" || permission.kind === "write") &&
+		!isProtectedPath(permission.path) &&
+		(permission.kind !== "write" || !isProtectedWritePath(permission.path)) &&
+		!isControlRootSymlink(permission.path)
+	);
+}
 
 const NetworkPermissionParams = Type.Object({
 	host: Type.String({
@@ -866,10 +876,7 @@ export default function (pi: ExtensionAPI) {
 			if (sandboxState.config.backend === "native-preview") {
 				if (!brokerClient) throw new Error("Native sandbox broker is not ready");
 				const filePermissions = [
-					...persistentPermissions.filter(
-						(permission): permission is FilePermission =>
-							permission.kind === "read" || permission.kind === "write",
-					),
+					...persistentPermissions.filter(isSafeSavedFilePermission),
 					...declaredPermissions,
 				];
 				operations = createApprovingNativeSandboxOps({
@@ -1042,10 +1049,7 @@ export default function (pi: ExtensionAPI) {
 				if (!brokerClient) {
 					return { operations: unavailableBashOps("Native sandbox broker is not ready") };
 				}
-				const filePermissions = persistentPermissions.filter(
-					(permission): permission is FilePermission =>
-						permission.kind === "read" || permission.kind === "write",
-				);
+				const filePermissions = persistentPermissions.filter(isSafeSavedFilePermission);
 				return {
 					operations: createNativeSandboxOps(
 						brokerClient,
@@ -1083,6 +1087,7 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 			sandboxState = { kind: "initializing" };
+			ensureDevelopmentCacheDirectories();
 			if (config.backend === "native-preview") {
 				if (process.platform !== "darwin") {
 					throw new Error("the native sandbox preview supports macOS only");

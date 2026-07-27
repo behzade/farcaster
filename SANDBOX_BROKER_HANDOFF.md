@@ -561,7 +561,10 @@ See [`sandbox-broker/LINUX_BACKEND.md`](sandbox-broker/LINUX_BACKEND.md) for the
 - explicit deny overrides an approval request;
 - project config cannot broaden global policy;
 - symlink and relative-path cases stay within the approved root;
-- `.git` asks for repository control as one unit;
+- `.git` below the active workspace asks for repository control as one unit;
+- `.git` data in configured development caches stays writable without a control prompt;
+- standard Cargo, Go, Node, Bun, pnpm, Yarn, Corepack, Deno, pip, and uv cache writes work by default;
+- package-manager credentials, config, and global install bins remain outside implicit cache-write rights;
 - project `.pi` asks for the project control directory;
 - global `~/.pi` and `~/.codex` remain protected.
 
@@ -573,6 +576,7 @@ See [`sandbox-broker/LINUX_BACKEND.md`](sandbox-broker/LINUX_BACKEND.md) for the
 - delayed denial delivery is collected within the broker policy;
 - short-lived child denial tests run repeatedly to expose races;
 - an empty denial set does not trigger a grant or unsandboxed retry;
+- `/dev` denial hints do not prompt and approved device rights are rejected;
 - unsafe socket and network access remain blocked.
 
 ### Issues Reproduction

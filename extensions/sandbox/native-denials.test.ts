@@ -58,6 +58,24 @@ test("native denial mapping rejects protected and blocked paths", () => {
 	);
 });
 
+test("native device denials are ignored instead of prompting", () => {
+	const cwd = mkdtempSync(join(tmpdir(), "pi-native-denial-device-"));
+	for (const [operation, path] of [
+		["file-write-data", "/dev/tty"],
+		["file-write-data", "/dev/dtracehelper"],
+	] as const) {
+		assert.deepEqual(
+			permissionForNativeDenial(
+				{ operation, path, process: "runtime" },
+				cwd,
+				DEFAULT_CONFIG,
+				[],
+			),
+			{ kind: "ignore" },
+		);
+	}
+});
+
 test("native ordinary directory denials do not widen to tree grants", () => {
 	const cwd = mkdtempSync(join(tmpdir(), "pi-native-denial-dir-"));
 	const directory = fileURLToPath(new URL(".", import.meta.url));
@@ -74,6 +92,24 @@ test("native ordinary directory denials do not widen to tree grants", () => {
 			{ operation: "file-read-metadata", path: directory, process: "tool" },
 			cwd,
 			restrictedConfig,
+			[],
+		),
+		{ kind: "ignore" },
+	);
+});
+
+test("native package-cache git denials do not prompt", () => {
+	const cwd = mkdtempSync(join(tmpdir(), "pi-native-denial-cache-"));
+	const cache = join(homedir(), ".cargo");
+	assert.deepEqual(
+		permissionForNativeDenial(
+			{
+				operation: "file-write-create",
+				path: join(cache, "git", "checkouts", "package", ".git", "index.lock"),
+				process: "cargo",
+			},
+			cwd,
+			DEFAULT_CONFIG,
 			[],
 		),
 		{ kind: "ignore" },

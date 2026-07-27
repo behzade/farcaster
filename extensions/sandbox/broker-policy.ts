@@ -6,6 +6,7 @@ import type {
 	BrokerFilesystemDeny,
 	BrokerFilesystemRight,
 } from "./broker-client.ts";
+import { developmentCacheWriteRightsForWorkspace } from "./development-caches.ts";
 import {
 	DEFAULT_CONFIG,
 	buildShellEnvironment,
@@ -74,6 +75,19 @@ function baseRights(
 	cwd: string,
 ): BrokerFilesystemRight[] {
 	const rights = new Map<string, BrokerFilesystemRight>();
+	for (const cache of developmentCacheWriteRightsForWorkspace(cwd)) {
+		const right: BrokerFilesystemRight = {
+			access: "write",
+			path: cache.path,
+			scope: cache.directory ? "tree" : "file",
+			missing_path: existsSync(cache.path)
+				? "reject"
+				: cache.directory
+					? "create_tree"
+					: "create_file",
+		};
+		rights.set(`write:${right.path}:${right.scope}`, right);
+	}
 	for (const entry of config.filesystem?.allowRead ?? []) {
 		const right = configRight("read", entry, cwd);
 		if (right) rights.set(`read:${right.path}:${right.scope}`, right);

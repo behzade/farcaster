@@ -230,7 +230,7 @@ fn run_command(
     denial_collector: Option<&DenialCollector>,
 ) {
     let command = launch_command(request);
-    let args = match build_args(&command, &request.rights, &request.denies) {
+    let args = match build_args(&command, &request.cwd, &request.rights, &request.denies) {
         Ok(args) => args,
         Err(message) => {
             send_terminal_error(writer, state, control, ErrorCode::PolicyRejected, message);

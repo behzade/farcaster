@@ -63,7 +63,7 @@ The Linux mount plan must enforce the same normalized rights as Seatbelt:
 
 - expose the host root read-only;
 - bind approved writable trees and files at their exact paths;
-- reapply `.git`, project `.pi`, global control roots, secrets, and explicit denies after broad mounts;
+- reapply active-workspace `.git`, project `.pi`, global control roots, package-manager control files, secrets, and explicit denies after broad mounts while leaving configured development-cache Git data writable;
 - keep denied reads hidden, not merely read-only;
 - preserve file-versus-directory type;
 - handle missing approved files and trees without broadening the parent;
@@ -155,7 +155,7 @@ Add a Linux release test, such as `sandbox-broker/tests/linux_release.rs`, that 
 - external writes fail without a grant and work with one exact grant;
 - exact-file rights do not widen to the parent;
 - missing file and tree grants create only the approved target;
-- `.git` and project `.pi` stay read-only until explicitly approved;
+- active-workspace `.git` and project `.pi` stay read-only until explicitly approved, while configured development-cache Git data stays writable;
 - global `~/.pi`, `~/.codex`, auth files, SSH/AWS/GnuPG roots, `.env`, and key files stay protected;
 - explicit denies override broad reads, writes, and grants;
 - symlink, `..`, rename, and mount-order cases cannot escape a right;
