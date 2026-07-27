@@ -12,6 +12,24 @@ import {
 	type BrokerExecRequest,
 } from "./broker-client.ts";
 
+function request(cwd: string, id = "command-1"): BrokerExecRequest {
+	return {
+		type: "exec",
+		id,
+		command: { program: "/bin/true", args: [] },
+		cwd,
+		env: { PATH: "/usr/bin:/bin" },
+		timeout_ms: 1000,
+		policy: {
+			base_rights: [],
+			grants: [],
+			denies: [],
+			network: { mode: "blocked" },
+			output_limit_bytes: 1024,
+		},
+	};
+}
+
 test("framed JSON survives split and joined chunks", () => {
 	const first = encodeBrokerFrame({ type: "one", text: "line one\nline two" });
 	const second = encodeBrokerFrame({ type: "two" });
@@ -62,6 +80,16 @@ test("event validation rejects unknown fields and non-canonical output", () => {
 			}),
 		/data_base64 is invalid/,
 	);
+	assert.throws(
+		() =>
+			validateBrokerEvent({
+				type: "error",
+				id: "one",
+				code: "made_up",
+				message: "bad",
+			}),
+		/error.code is invalid/,
+	);
 });
 
 test("client requires readiness and streams typed command output", async () => {
@@ -101,22 +129,47 @@ process.stdin.on("data", chunk => {
 
 	const client = await SandboxBrokerClient.start(broker);
 	const output: Buffer[] = [];
-	const request: BrokerExecRequest = {
-		type: "exec",
-		id: "command-1",
-		command: { program: "/bin/true", args: [] },
-		cwd: directory,
-		env: { PATH: "/usr/bin:/bin" },
-		timeout_ms: 1000,
-		policy: {
-			base_rights: [],
-			grants: [],
-			denies: [],
-			network: { mode: "blocked" },
-			output_limit_bytes: 1024,
-		},
-	};
-	assert.deepEqual(await client.exec(request, (chunk) => output.push(chunk)), { exitCode: 0 });
+	assert.deepEqual(await client.exec(request(directory), (chunk) => output.push(chunk)), {
+		exitCode: 0,
+	});
 	assert.equal(Buffer.concat(output).toString("utf8"), "ok\n");
+	await client.shutdown();
+});
+
+test("client rejects a pre-start error after started", async () => {
+	const directory = mkdtempSync(join(tmpdir(), "pi-fake-broker-state-"));
+	const broker = join(directory, "broker");
+	writeFileSync(
+		broker,
+		`#!/usr/bin/env node
+const encode = value => {
+  const body = Buffer.from(JSON.stringify(value));
+  const frame = Buffer.alloc(body.length + 4);
+  frame.writeUInt32BE(body.length, 0);
+  body.copy(frame, 4);
+  process.stdout.write(frame);
+};
+let pending = Buffer.alloc(0);
+encode({ type: "ready", version: 1, platform: "macos", backend: "seatbelt", can_exec: true, max_frame_bytes: ${MAX_BROKER_FRAME_BYTES} });
+process.stdin.on("data", chunk => {
+  pending = Buffer.concat([pending, chunk]);
+  if (pending.length < 4) return;
+  const size = pending.readUInt32BE(0);
+  if (pending.length < size + 4) return;
+  const message = JSON.parse(pending.subarray(4, size + 4));
+  if (message.type === "exec") {
+    encode({ type: "started", id: message.id, pid: process.pid });
+    encode({ type: "error", id: message.id, code: "protocol_error", message: "late" });
+  }
+});
+`,
+	);
+	chmodSync(broker, 0o700);
+
+	const client = await SandboxBrokerClient.start(broker);
+	await assert.rejects(
+		client.exec(request(directory), () => {}),
+		/pre-start error after starting command/,
+	);
 	await client.shutdown();
 });

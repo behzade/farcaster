@@ -1150,6 +1150,7 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 			const config = sandboxState.config;
+			const native = config.backend === "native-preview";
 			const allowedDomains = config.network?.allowedDomains ?? [];
 			const savedHosts = persistentPermissions
 				.filter((permission): permission is NetworkPermission => permission.kind === "network_host")
@@ -1167,13 +1168,16 @@ export default function (pi: ExtensionAPI) {
 						config.shellEnvironment?.ignoreDefaultExcludes ? "off" : "on"
 					}`,
 					`  Network hosts: ${
-						config.network?.enabled === false
-							? "off"
-							: networkHosts.length > 0
-								? networkHosts.join(", ")
-								: "blocked until an exact host or IP is approved"
+						native
+							? "blocked by native protocol v1"
+							: config.network?.enabled === false
+								? "off"
+								: networkHosts.length > 0
+									? networkHosts.join(", ")
+									: "blocked until an exact host or IP is approved"
 					}`,
-					`  Unix sockets: ${unixSockets.join(", ") || "(none)"}`,
+					`  Unix sockets: ${native ? "blocked by native protocol v1" : unixSockets.join(", ") || "(none)"}`,
+					...(native ? ["  Background jobs: unavailable", "  Denial hints: unavailable"] : []),
 					`  Saved workspace rights: ${persistentPermissions.map(permissionLabel).join(", ") || "(none)"}`,
 				].join("\n"),
 				"info",

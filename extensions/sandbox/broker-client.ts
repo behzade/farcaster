@@ -5,6 +5,16 @@ const PROTOCOL_VERSION = 1;
 export const MAX_BROKER_FRAME_BYTES = 1024 * 1024;
 const READY_TIMEOUT_MS = 2_000;
 const SHUTDOWN_TIMEOUT_MS = 5_000;
+const BROKER_ERROR_CODES = new Set([
+	"backend_unavailable",
+	"duplicate_command_id",
+	"invalid_request",
+	"policy_rejected",
+	"command_start_failed",
+	"cancelled",
+	"protocol_error",
+	"not_found",
+]);
 
 export interface BrokerFilesystemRight {
 	access: "read" | "write";
@@ -299,8 +309,12 @@ export class SandboxBrokerClient {
 			return;
 		}
 		if (event.id === null) throw new Error(`Sandbox broker error: ${event.message}`);
-		const pending = this.#finishPending(event.id);
+		const pending = this.#pending.get(event.id);
 		if (!pending) throw new Error(`Broker error has unknown command ID: ${event.id}`);
+		if (pending.started) {
+			throw new Error(`Broker sent a pre-start error after starting command: ${event.id}`);
+		}
+		this.#finishPending(event.id);
 		pending.reject(new Error(`Sandbox broker ${event.code}: ${event.message}`));
 	}
 
@@ -393,6 +407,7 @@ export function validateBrokerEvent(value: unknown): BrokerEvent {
 		assertKeys(event, ["type", "id", "code", "message"]);
 		assertNullableString(event.id, "error.id");
 		assertString(event.code, "error.code");
+		if (!BROKER_ERROR_CODES.has(event.code)) throw new Error("error.code is invalid");
 		assertString(event.message, "error.message");
 	} else {
 		throw new Error(`Unknown broker event type: ${event.type}`);

@@ -157,6 +157,7 @@ function normalizeDeny(
 	cwd: string,
 ): Omit<BrokerFilesystemDeny, "access"> {
 	if (containsGlob(entry)) {
+		assertGlobHasNoDotSegments(entry);
 		let pattern: string;
 		if (entry.startsWith("~/")) pattern = `${homedir()}/${entry.slice(2)}`;
 		else if (isAbsolute(entry)) pattern = entry;
@@ -178,6 +179,12 @@ function lexicalPath(path: string, cwd: string): string {
 	if (path === "~") return homedir();
 	if (path.startsWith("~/")) return resolve(homedir(), path.slice(2));
 	return isAbsolute(path) ? resolve(path) : resolve(cwd, path);
+}
+
+function assertGlobHasNoDotSegments(value: string): void {
+	if (value.split("/").some((part) => part === "." || part === "..")) {
+		throw new Error(`Native sandbox deny globs cannot contain . or .. segments: ${value}`);
+	}
 }
 
 function containsGlob(value: string): boolean {

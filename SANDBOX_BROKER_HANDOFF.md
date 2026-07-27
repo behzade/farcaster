@@ -2,7 +2,7 @@
 
 ## Implementation Update
 
-Work continued from this handoff in the Pi checkout. The current uncommitted tree now includes:
+Work continued from this handoff in the Pi checkout. The current tree now includes:
 
 - `sandbox-broker/`: protocol v1, threat model, Apache provenance, a framed Rust broker, and a macOS Seatbelt preview backend;
 - `extensions/sandbox/broker-client.ts` and `broker-policy.ts`: strict client framing and TypeScript-to-Rust policy mapping;
@@ -12,7 +12,9 @@ Work continued from this handoff in the Pi checkout. The current uncommitted tre
 - pinned Nix builds for the broker and extension.
 
 The preview keeps network and Unix sockets blocked and rejects native background starts. It has no denial collector or
-Linux backend yet. Do not treat the later stage text below as current implementation status without checking the tree.
+Linux backend yet. Native activation also remains blocked because an unprivileged macOS process group cannot own hostile
+`setpgid`, `setsid`, or double-fork children. `sandbox-broker/tests/macos_release.rs` records that release gate. Do not
+treat the later stage text below as current implementation status without checking the tree.
 
 ## Purpose
 

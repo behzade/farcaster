@@ -136,10 +136,12 @@ impl Runtime {
                     "runtime state lock is poisoned".to_owned(),
                 )
             })?;
-            state
-                .active
-                .clone()
-                .ok_or_else(|| (ErrorCode::NotFound, format!("command is not active: {id}")))?
+            let Some(active) = state.active.clone() else {
+                // Cancellation is idempotent. The terminal event may have
+                // crossed the request on the private protocol pipe.
+                return Ok(());
+            };
+            active
         };
         if control.id != id {
             return Err((ErrorCode::NotFound, format!("command is not active: {id}")));
@@ -270,7 +272,6 @@ fn run_command(
     {
         terminate_child(&mut child, control);
         control.pid.store(0, Ordering::Release);
-        clear_active(state, control);
         return;
     }
     // The fixed shell wrapper waits on stdin. Release it only after the PID and
@@ -341,7 +342,6 @@ fn run_command(
         finish_stream_reader(reader);
     }
     control.pid.store(0, Ordering::Release);
-    clear_active(state, control);
     let _ = send_event(
         writer,
         &ServerEvent::Exit {
@@ -485,13 +485,19 @@ fn cleanup_group(control: &CommandControl) {
         return;
     }
     signal_group(control, Signal::SIGTERM);
-    let deadline = Instant::now() + TERMINATE_GRACE;
+    if wait_for_group_exit(control, TERMINATE_GRACE) {
+        return;
+    }
+    signal_group(control, Signal::SIGKILL);
+    let _ = wait_for_group_exit(control, TERMINATE_GRACE);
+}
+
+fn wait_for_group_exit(control: &CommandControl, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
     while group_exists(control) && Instant::now() < deadline {
         thread::sleep(POLL_INTERVAL);
     }
-    if group_exists(control) {
-        signal_group(control, Signal::SIGKILL);
-    }
+    !group_exists(control)
 }
 
 fn terminate_child(child: &mut std::process::Child, control: &CommandControl) {
@@ -526,12 +532,11 @@ fn clear_active(state: &SharedState, control: &Arc<CommandControl>) {
 
 fn send_terminal_error(
     writer: &SharedWriter,
-    state: &SharedState,
+    _state: &SharedState,
     control: &Arc<CommandControl>,
     code: ErrorCode,
     message: String,
 ) {
-    clear_active(state, control);
     let _ = send_event(
         writer,
         &ServerEvent::Error {
@@ -552,6 +557,12 @@ fn send_event(writer: &SharedWriter, event: &ServerEvent) -> Result<(), String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cancel_is_idempotent_after_a_command_is_gone() {
+        let runtime = Runtime::new(std::io::stdout());
+        assert!(runtime.cancel("already-finished").is_ok());
+    }
 
     #[test]
     fn output_claim_never_exceeds_limit() {

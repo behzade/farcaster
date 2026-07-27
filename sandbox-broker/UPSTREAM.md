@@ -18,6 +18,10 @@ The broker now includes a Pi-adapted macOS policy builder and the Codex base Sea
 
 The denial collector first came from Codex debug work at commit `0271c20d8f31f42545868076e1d10f4497f18b35`. Its own commit text calls collection best effort. Pi must keep that limit in code, tests, and user-facing text.
 
+## macOS ownership finding
+
+No Codex source inspected here provides atomic ownership of descendants that leave a process group. On 2026-07-27, Pi also checked Apple's public XNU coalition definitions and `bsd/kern/sys_coalition.c` from `apple-oss-distributions/xnu`. The kernel requires the caller to be in a privileged coalition before `coalition_create`; a direct normal-user probe returned `EPERM`. No Apple code was copied. This source check supports the release block in `THREAT_MODEL.md`; it does not add an Apple license to the broker.
+
 ## Rust dependencies
 
 | Crate | Version | License |

@@ -23,8 +23,9 @@ See [PROTOCOL.md](PROTOCOL.md), [THREAT_MODEL.md](THREAT_MODEL.md), and [UPSTREA
 ```sh
 cargo test --manifest-path sandbox-broker/Cargo.toml
 cargo clippy --manifest-path sandbox-broker/Cargo.toml --all-targets -- -D warnings
-# Release gate: run outside any existing Seatbelt profile.
+# Release gates: run outside any existing Seatbelt profile. This includes the
+# full broker flow and hostile setpgid/setsid/double-fork fixtures.
 cargo test --manifest-path sandbox-broker/Cargo.toml -- --ignored
 ```
 
-Do not switch the extension to this binary until the macOS integration, hostile-child cleanup, and extension-client gates pass. Protocol v1 keeps network blocked and has no Unix socket or background-job support.
+Do not switch the extension to this binary until the macOS integration, hostile-child cleanup, and extension-client gates pass. A process group cannot contain a hostile child that calls `setpgid` or `setsid`; the release needs a stronger owner boundary rather than best-effort PID polling. Protocol v1 keeps network blocked and has no Unix socket or background-job support.

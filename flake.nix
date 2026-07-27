@@ -23,7 +23,9 @@
         let
           pkgs = pkgsFor system;
           sandboxBroker = pkgs.callPackage ./nix/pi-sandbox-broker.nix { };
-          sandbox = pkgs.callPackage ./nix/pi-sandbox-extension.nix { };
+          sandbox = pkgs.callPackage ./nix/pi-sandbox-extension.nix {
+            sandboxBroker = if pkgs.stdenv.hostPlatform.isDarwin then sandboxBroker else null;
+          };
           denseTools = pkgs.callPackage ./nix/pi-dense-tools.nix { };
           subagents = pkgs.callPackage ./nix/pi-subagents.nix { };
           openaiServerCompaction = pkgs.callPackage ./nix/pi-openai-server-compaction.nix { };

@@ -24,7 +24,7 @@ The user account and Pi host process remain outside this boundary. The broker li
 
 ## Current release status
 
-The extension blocks native activation. Protocol v1 has no network, Unix socket, background-job, or denial-collector support. Process-group cleanup and bounded pipe draining have landed, but `setsid` and double-fork cleanup still need an unsandboxed macOS test and a stronger ownership control before release. The rules below are release requirements; later-stage rules do not claim current support.
+The extension blocks native activation. Protocol v1 has no network, Unix socket, background-job, or denial-collector support. Process-group cleanup and bounded pipe draining have landed. A hostile child can still leave that group with `setpgid`, `setsid`, or a double fork. Codex's `kqueue` plus `proc_listchildpids` tracker is best effort and cannot close that race. Public unprivileged macOS APIs do not provide a kill-and-reap container for such children; creating a new kernel coalition fails with `EPERM` for a normal user process. Native release therefore needs a different ownership boundary, such as a disposable VM or an approved privileged owner, or an explicit reduction of the threat model. The rules below remain release requirements.
 
 ## Security rules
 
@@ -34,7 +34,7 @@ The extension blocks native activation. Protocol v1 has no network, Unix socket,
 4. **Protected control state.** Commands cannot write the broker binary, broker policy, global `~/.pi`, global `~/.codex`, or auth and secret roots. Base workspace writes exclude `.git` and project `.pi`; only an exact approved command grant may add those project roots.
 5. **No path alias escape.** Existing symlinks resolve before policy build. For a missing leaf, the broker resolves the nearest existing ancestor and appends checked normal components. Tests cover symlinks, `..`, missing paths, and protected children under broad roots.
 6. **Private control channel.** Commands inherit only their stdin/stdout/stderr and needed job handles. They do not inherit broker protocol handles or a public control socket.
-7. **Whole-tree control.** The broker creates and records a process group before user code crosses its launch barrier. Cancel, timeout, shutdown, and broker failure stop the whole group and reap it.
+7. **Whole-tree control.** Before release, the backend must register a kernel-owned command boundary before user code crosses its launch barrier. Cancel, timeout, shutdown, and broker failure must stop that whole boundary and prove it empty before a terminal event. The current process group is only a fast cleanup layer and does not meet this rule by itself.
 8. **Bounded data.** Frame, request, output, diagnostic, active-command, and later denial/job limits are fixed. The broker drains capped output and marks it truncated.
 9. **Explicit local service rights.** Network starts blocked. A later approved-host stage must use a host-owned allowlisting proxy. A later Unix socket stage must keep roots separate and must never give normal bash the background-job control socket.
 10. **Hints do not grant.** A later Seatbelt denial collector may explain one exact right. Missing, late, unrelated, or ambiguous denial data never adds access.
@@ -49,7 +49,7 @@ The extension blocks native activation. Protocol v1 has no network, Unix socket,
 | Consume a sibling's one-time right | No shared grant queue; rights carried on one command ID |
 | Escape through symlink or `..` | Double normalization; nearest-existing-parent resolution; protected carve-outs |
 | Forge broker output | Framed private pipe; base64 child chunks; protocol handles closed in child |
-| Leave a daemon after timeout | New process group, launch barrier, group signal, reap tests |
+| Leave a daemon after timeout | Release-blocking kernel owner plus `setpgid`, `setsid`, and double-fork tests; the current process group alone is insufficient |
 | Reach Docker, SSH agent, tmux, or another local service | Unix sockets denied unless listed; reserved job socket always denied to normal bash |
 | Exfiltrate through network | Network blocked or forced through host allowlist proxy; no broad local targets |
 | Obtain a broad grant from an app's vague error | Explicit preflight right or one exact safe denial hint; no prose guessing |
@@ -65,4 +65,4 @@ The extension blocks native activation. Protocol v1 has no network, Unix socket,
 
 ## Release gates
 
-The extension must not switch a platform to this broker until integration tests show filesystem rules, network mode, sockets, environment replacement, output limits, cancellation, timeout, shutdown, and child cleanup on that platform. macOS may ship first. Linux stays on the old fail-closed backend until the bubblewrap gate passes.
+The extension must not switch a platform to this broker until integration tests show filesystem rules, network mode, sockets, environment replacement, output limits, cancellation, timeout, shutdown, and child cleanup on that platform. `tests/macos_release.rs` is the unsandboxed macOS gate and includes `setpgid` and `setsid`/double-fork fixtures. It must pass without its emergency fixture cleanup before activation. macOS may ship first. Linux stays on the old fail-closed backend until the bubblewrap gate passes.

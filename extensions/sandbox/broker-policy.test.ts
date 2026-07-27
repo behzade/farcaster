@@ -73,6 +73,28 @@ test("missing configured read roots are omitted instead of becoming create right
 	assert.equal(request.policy.base_rights.some((right) => right.path === missing), false);
 });
 
+test("native deny globs reject dot segments before reaching Rust", () => {
+	const cwd = mkdtempSync(join(tmpdir(), "pi-broker-policy-"));
+	for (const denyWrite of ["dir/../*.secret", "./*.secret", "/tmp/../*.secret"]) {
+		assert.throws(
+			() =>
+				buildBrokerExecRequest(
+					"one",
+					"true",
+					cwd,
+					undefined,
+					{
+						...DEFAULT_CONFIG,
+						filesystem: { ...DEFAULT_CONFIG.filesystem, denyWrite: [denyWrite] },
+					},
+					[],
+					[],
+				),
+			/cannot contain \. or \.\./,
+		);
+	}
+});
+
 test("native preview rejects requested hosts and omits configured socket rights", () => {
 	const cwd = mkdtempSync(join(tmpdir(), "pi-broker-policy-"));
 	assert.throws(

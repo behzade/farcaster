@@ -68,10 +68,13 @@ call from `sandbox.json`. Every interpreter and child process keeps the same
 profile. A failed backend check blocks shell commands.
 
 The tree also contains a macOS native preview, but the extension blocks
-activation until its hostile-child cleanup and unsandboxed macOS test gates
-pass. The broker has a separate pinned Nix package; the released Codex
-extension does not depend on it. The native release must pin that broker path
-into the extension. A custom `brokerPath` must be absolute and can come only
+activation until the full unsandboxed macOS integration gate passes and a
+kernel-owned boundary can clean hostile `setpgid`, `setsid`, and double-fork
+children. A process group and Codex's best-effort PID tracker cannot provide
+that guarantee. The broker has a separate pinned Nix package. On macOS, the extension
+package pins that exact broker store path, but the release gate prevents it
+from starting. Linux keeps an unavailable placeholder. A custom `brokerPath`
+must be absolute and can come only
 from global config; project config cannot switch backends or replace the broker.
 Protocol v1 keeps network and Unix sockets blocked and has no native background
 jobs or denial collector. `backend: "codex"` remains the only released backend.

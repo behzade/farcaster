@@ -186,9 +186,7 @@ fn normalize_deny(deny: &FilesystemDeny) -> Result<NormalizedDeny, String> {
         return Err("deny pattern contains NUL".to_owned());
     }
     if deny.scope == DenyScope::Glob {
-        if !deny.pattern.starts_with('/') {
-            return Err("deny glob must be absolute".to_owned());
-        }
+        assert_absolute_clean(Path::new(&deny.pattern))?;
         seatbelt_regex_for_glob(&deny.pattern)?;
         return Ok(NormalizedDeny {
             access: deny.access,
@@ -568,6 +566,16 @@ mod tests {
         assert!(policy.contains("(deny file-read* (subpath \"/secret\"))"));
         assert!(policy.contains("(deny file-write* (literal \"/secret\"))"));
         assert!(policy.contains("(deny file-write* (subpath \"/secret\"))"));
+    }
+
+    #[test]
+    fn dotted_deny_globs_are_rejected() {
+        let deny = FilesystemDeny {
+            access: DeniedAccess::ReadWrite,
+            pattern: "/work/dir/../*.secret".to_owned(),
+            scope: DenyScope::Glob,
+        };
+        assert!(normalize_deny(&deny).is_err());
     }
 
     #[test]

@@ -79,7 +79,7 @@ Rules:
 { "type": "cancel", "id": "tool-call-id/attempt-0" }
 ```
 
-The broker signals the command tree, waits for a short fixed cleanup limit, then kills what it can still identify. A timeout uses the same path. `exit` remains the final command event. macOS release tests must cover `setpgid`, `setsid`, and double-fork attempts; a process group alone does not satisfy the cleanup rule.
+The broker signals the command tree, waits for a short fixed cleanup limit, then kills what it can still identify. A timeout uses the same path. Cancellation is idempotent when no command is active because an `exit` event may cross a late cancel request. A cancel for a different active ID still fails. `exit` remains the final command event. macOS release tests must cover `setpgid`, `setsid`, and double-fork attempts; a process group alone does not satisfy the cleanup rule.
 
 ### `shutdown`
 
