@@ -100,7 +100,6 @@ function checkCodex(command: string): Promise<void> {
 }
 
 const PACKAGED_BROKER_PATH = "@PI_SANDBOX_BROKER@/bin/pi-sandbox-broker";
-const NATIVE_PREVIEW_RELEASED = false;
 const MAX_FAILURE_OUTPUT_BYTES = 1024 * 1024;
 
 function createCodexSandboxOps(
@@ -1085,11 +1084,6 @@ export default function (pi: ExtensionAPI) {
 			}
 			sandboxState = { kind: "initializing" };
 			if (config.backend === "native-preview") {
-				if (!NATIVE_PREVIEW_RELEASED) {
-					throw new Error(
-						"the native sandbox preview remains blocked until its cleanup release gates pass",
-					);
-				}
 				if (process.platform !== "darwin") {
 					throw new Error("the native sandbox preview supports macOS only");
 				}

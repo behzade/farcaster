@@ -61,6 +61,7 @@ name = "pi-sandbox-broker"
 version = "0.3.0"
 dependencies = [
  "base64",
+ "libc",
  "nix",
  "regex-lite",
  "serde",

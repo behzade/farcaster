@@ -6,15 +6,20 @@ Work continued from this handoff in the Pi checkout. The current tree now includ
 
 - `sandbox-broker/`: protocol v1, threat model, Apache provenance, a framed Rust broker, and a macOS Seatbelt preview backend;
 - `extensions/sandbox/broker-client.ts` and `broker-policy.ts`: strict client framing and TypeScript-to-Rust policy mapping;
-- a wired but release-blocked global `backend: "native-preview"` path on macOS, while `codex` remains the only released backend;
+- an opt-in global `backend: "native-preview"` path on macOS, while `codex` remains the default backend;
 - command-bound read, write, and exact network-host declarations for bash and Codex-backed background starts;
 - no shared one-time network grant queue;
 - pinned Nix builds for the broker and extension.
 
 The preview keeps network and Unix sockets blocked and rejects native background starts. It has no denial collector or
-Linux backend yet. Native activation also remains blocked because an unprivileged macOS process group cannot own hostile
-`setpgid`, `setsid`, or double-fork children. `sandbox-broker/tests/macos_release.rs` records that release gate. Do not
-treat the later stage text below as current implementation status without checking the tree.
+Linux backend yet. Cleanup now combines a process group with a best-effort kqueue descendant tracker and process
+start-time checks. Pi explicitly places deliberate fast `setpgid`, `setsid`, and double-fork escape out of scope because
+macOS has no unprivileged atomic owner for that tree; survivors retain Seatbelt limits. The unsandboxed
+`sandbox-broker/tests/macos_release.rs` gate passes, so native activation is available on macOS. Linux still uses Codex:
+the Rust broker reports `can_exec: false`, the client accepts only macOS/Seatbelt, and no bubblewrap launcher or Linux
+release gate exists. The authoritative remaining-work checklist is
+[`sandbox-broker/LINUX_BACKEND.md`](sandbox-broker/LINUX_BACKEND.md). Do not treat the later stage text below as current
+implementation status without checking the tree.
 
 ## Purpose
 
@@ -430,8 +435,12 @@ The current Codex Linux helper:
 - supports system and bundled bubblewrap;
 - handles signal forwarding and cleanup.
 
-Do not reduce this to a few unreviewed `bwrap` flags. Start with a narrow Linux milestone and preserve the security tests
-for every imported behavior. Decide whether Pi should require a system `bwrap` first and add bundled packaging later.
+Do not reduce this to a few unreviewed `bwrap` flags. The current broker has no Linux execution path: `main.rs` returns
+`can_exec: false`, `executor.rs` launches Seatbelt directly, the TypeScript client accepts only `macos`/`seatbelt`, and the
+extension rejects `native-preview` outside macOS. Start with protocol v1 foreground parity and keep approved network,
+Unix socket grants, background jobs, PTY, and denial hints out of that milestone. Preserve the security tests for every
+imported behavior. The full implementation order, packaging work, release matrix, and definition of done are in
+[`sandbox-broker/LINUX_BACKEND.md`](sandbox-broker/LINUX_BACKEND.md).
 
 ## Policy Ownership
 
@@ -508,10 +517,15 @@ Do not block Stage 2 on perfect denial discovery.
 
 ### Stage 4: Linux Bubblewrap Backend
 
-- Import and reduce the tested bubblewrap launcher.
-- Preserve filesystem, namespace, signal, timeout, environment, and network rules.
-- Package or require `bwrap` through Nix.
-- Add Linux integration tests.
+- Choose and record an exact Codex source commit before importing Linux code.
+- Split platform launch code so request validation and protocol handling remain shared.
+- Add a pinned bubblewrap launcher with read-only root mounts, exact writable mounts, protected child mounts, hidden read denies, and safe missing-path handling.
+- Add user, mount, PID, and blocked-network namespaces, `no_new_privs`, reviewed seccomp rules, and PID-namespace teardown.
+- Add Linux readiness self-tests and accept only the `linux`/`bubblewrap` readiness pair in the client.
+- Package the exact broker and bubblewrap paths for x86_64 and aarch64 Linux.
+- Pass the Linux integration and strict descendant-cleanup gates before machine config selects native Linux.
+
+See [`sandbox-broker/LINUX_BACKEND.md`](sandbox-broker/LINUX_BACKEND.md) for the complete checklist.
 
 ### Stage 5: Background Jobs And Cleanup
 
@@ -576,14 +590,20 @@ with an approved write right for `~/.local/share/issues`.
 
 ### Linux
 
-- root filesystem read-only;
-- writable roots work;
-- nested protected paths stay read-only;
-- missing and symlinked protected paths do not escape;
-- user, PID, and network namespace rules;
-- system `bwrap` selection cannot use a workspace-controlled binary;
-- signal forwarding and cleanup;
-- unavailable bubblewrap fails closed.
+Linux has no release gate yet. At minimum it must cover:
+
+- root filesystem read-only and denied reads hidden;
+- exact writable roots and files;
+- nested protected paths reapplied after broad mounts;
+- missing, symlinked, rename, and mount-order cases cannot escape;
+- user, mount, PID, IPC, and blocked-network namespace rules;
+- `no_new_privs` and reviewed seccomp on x86_64 and aarch64;
+- fixed host-owned `bwrap` selection, never workspace `PATH`;
+- cancellation, timeout, shutdown, `setsid`, and double-fork cleanup;
+- unavailable bubblewrap or user namespaces fail readiness closed;
+- protocol parity for environment, output, IDs, framing, and terminal ordering.
+
+The full test matrix is in [`sandbox-broker/LINUX_BACKEND.md`](sandbox-broker/LINUX_BACKEND.md).
 
 ## Build And Packaging Notes
 
@@ -596,73 +616,45 @@ nix flake check
 nix build .#sandbox
 ```
 
-The new helper needs a pinned Nix build and should ship next to, or at a deterministic path known by, the sandbox
-extension. Update:
+The broker and extension now have pinned Nix packages, and the macOS extension contains the exact broker store path. The
+Linux stage must keep that property and also inject an exact bubblewrap store path into the broker. Update:
 
-- `flake.nix`
-- `nix/pi-sandbox-extension.nix`
-- any new Rust package expression
-- `README.md`
+- `flake.nix` for x86_64 and aarch64 Linux checks;
+- `nix/pi-sandbox-broker.nix` with the pinned bubblewrap input;
+- `nix/pi-sandbox-extension.nix` without weakening the broker path substitution;
+- `README.md`, `UPSTREAM.md`, and machine config after release gates pass.
 
-The deployed extension must verify that the expected helper exists and fail closed if it does not. Do not search the
-workspace PATH for a broker binary.
+The deployed extension must verify the expected broker/backend pair and fail closed if either helper is unavailable. Do
+not search the workspace or user `PATH` for the broker or bubblewrap.
 
 ## Decisions Still Needed
 
-1. Should the explicit rights live as optional fields on `bash`, or in a separate request tool?
-2. Should the first release support macOS only, with the current Codex wrapper retained temporarily on Linux, or should
-   the hard cut wait for both platforms?
-3. Should Linux require system bubblewrap or package a vetted binary?
-4. How should the broker correlate Seatbelt denial records with short-lived descendants without treating unrelated
-   system denials as command denials?
-5. What post-exit completion rule is acceptable for best-effort unified logs?
-6. Should automatic denial-based retry remain enabled, or should denial hints only explain which explicit right to ask
-   for on the next call?
-7. How should command rights appear in Pi's tool rendering and approval UI?
-8. Should the current `--no-sandbox` flag remain available for a user-started Pi process? It must never be available as a
-   broker request from the model.
+The macOS architecture and explicit-right shape are implemented. Remaining choices are:
 
-## Recommended Answers To Start Discussion
+1. Which exact Codex commit should supply the Linux launcher, mount, namespace, and seccomp reference?
+2. Should non-Nix Linux require a fixed system bubblewrap path, or should Pi package a vetted binary there too?
+3. Which reviewed seccomp policy and architecture set should the first Linux release support?
+4. After blocked-network Linux ships, should approved hosts use the same future host-owned proxy design as macOS?
+5. Should native background jobs land before or after Linux foreground parity?
+6. Should denial hints remain a later macOS-only task, or wait for one cross-platform diagnostic design?
 
-- Put optional permission declarations on the `bash` call so approval and execution remain one tool call and one-time
-  rights bind to its command ID.
-- Build macOS first, but design the protocol around a platform-neutral policy.
-- Keep Linux on the existing fail-closed backend only during an explicit short migration period.
-- Treat denial records as hints. Do not retry with a grant unless the user approves an exact path.
-- Use a direct child process and private pipes, not tmux or a public Unix socket, for the broker.
-- Require system bubblewrap for the first Linux version unless Nix packaging a pinned binary is simple and reviewed.
+None of these choices may weaken protocol v1 or delay fail-closed Linux readiness checks.
 
-## First Commands For The Next Session
+## First Commands For The Linux Session
 
 ```sh
 cd /Users/behzad/Projects/personal/pi
 git status --short --branch
-git log --oneline -12
-sed -n '1,280p' SANDBOX_BROKER_HANDOFF.md
-sed -n '1,240p' README.md
-sed -n '1,860p' extensions/sandbox/index.ts
-sed -n '1,760p' extensions/sandbox/codex-command.ts
+sed -n '1,260p' sandbox-broker/LINUX_BACKEND.md
+sed -n '1,180p' sandbox-broker/THREAT_MODEL.md
+sed -n '1,220p' sandbox-broker/UPSTREAM.md
+sed -n '1,260p' sandbox-broker/src/main.rs
+sed -n '1,620p' sandbox-broker/src/executor.rs
+sed -n '230,290p' extensions/sandbox/broker-client.ts
+sed -n '1070,1120p' extensions/sandbox/index.ts
 ```
 
-Then inspect history:
-
-```sh
-git show 3855759 -- extensions/sandbox
-git show 64533eb -- extensions/sandbox
-git show a21d9ba -- extensions/sandbox README.md
-```
-
-Then inspect Codex:
-
-```sh
-cd /Users/behzad/Projects/personal/codex
-git status --short --branch
-git show -s --format=fuller 0271c20d8f
-git show 484518f284:codex-rs/sandboxing/src/seatbelt_denials/mod.rs
-git show f847460584 --stat
-git show HEAD:codex-rs/sandboxing/src/seatbelt.rs | sed -n '1,300p'
-sed -n '1,260p' codex-rs/linux-sandbox/README.md
-```
-
-Return to the Pi repository before editing. Start with the threat model, protocol, provenance layout, and a narrow macOS
-milestone. Do not begin by adding a delay or restoring `--log-denials` to the current per-command Codex CLI wrapper.
+Then inspect the complete Linux source and test surface at the Codex commit proposed for import. Record that commit and
+all copied paths in `UPSTREAM.md` before implementation. Keep the first Linux milestone to foreground protocol v1 with
+blocked network and host Unix sockets. Do not switch Linux machine config from Codex until the release matrix in
+`LINUX_BACKEND.md` passes on x86_64 and aarch64.

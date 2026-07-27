@@ -67,17 +67,26 @@ sandbox` command. It builds a fresh Codex permission profile for each shell
 call from `sandbox.json`. Every interpreter and child process keeps the same
 profile. A failed backend check blocks shell commands.
 
-The tree also contains a macOS native preview, but the extension blocks
-activation until the full unsandboxed macOS integration gate passes and a
-kernel-owned boundary can clean hostile `setpgid`, `setsid`, and double-fork
-children. A process group and Codex's best-effort PID tracker cannot provide
-that guarantee. The broker has a separate pinned Nix package. On macOS, the extension
-package pins that exact broker store path, but the release gate prevents it
-from starting. Linux keeps an unavailable placeholder. A custom `brokerPath`
-must be absolute and can come only
-from global config; project config cannot switch backends or replace the broker.
+The tree also contains an opt-in macOS native preview. Its full unsandboxed
+macOS integration gate passes. Cleanup
+uses a process group plus a best-effort kqueue descendant tracker with process
+start-time checks. Deliberate fast `setpgid`, `setsid`, or double-fork escape is
+out of scope because macOS has no unprivileged atomic process-tree owner; a
+survivor still keeps its command's Seatbelt limits. The broker has a separate
+pinned Nix package. On macOS, the extension package pins that exact broker store
+path. Linux keeps an unavailable placeholder and stays on Codex until the work
+in [`sandbox-broker/LINUX_BACKEND.md`](sandbox-broker/LINUX_BACKEND.md) passes
+its release gates. A custom `brokerPath` must be absolute and can come only from
+global config; project config cannot switch backends or replace the broker.
 Protocol v1 keeps network and Unix sockets blocked and has no native background
-jobs or denial collector. `backend: "codex"` remains the only released backend.
+jobs or denial collector. `backend: "codex"` remains the default. To opt in on
+macOS, set this in the global `~/.pi/agent/extensions/sandbox.json` file:
+
+```json
+{
+  "backend": "native-preview"
+}
+```
 
 The default rights are:
 

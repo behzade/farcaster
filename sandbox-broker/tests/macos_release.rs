@@ -17,6 +17,7 @@ use pi_sandbox_broker::protocol::{
 };
 
 const RELEASE_TEST_TIMEOUT: Duration = Duration::from_secs(5);
+const STARTED_MARKER: &[u8] = b"PI_RELEASE_READY\n";
 
 struct TempRoot(PathBuf);
 
@@ -51,6 +52,13 @@ struct CommandResult {
     timed_out: bool,
     cancelled: bool,
     truncated: bool,
+}
+
+#[derive(Clone, Copy)]
+enum StartAction {
+    None,
+    Cancel,
+    Shutdown,
 }
 
 impl Broker {
@@ -91,9 +99,22 @@ impl Broker {
     }
 
     fn exec(&mut self, request: ExecRequest) -> CommandResult {
+        self.exec_inner(request, StartAction::None)
+    }
+
+    fn exec_and_cancel(&mut self, request: ExecRequest) -> CommandResult {
+        self.exec_inner(request, StartAction::Cancel)
+    }
+
+    fn exec_and_shutdown(&mut self, request: ExecRequest) -> CommandResult {
+        self.exec_inner(request, StartAction::Shutdown)
+    }
+
+    fn exec_inner(&mut self, request: ExecRequest, start_action: StartAction) -> CommandResult {
         let id = request.id.clone();
         self.send(&ClientRequest::Exec(request));
         let mut started = false;
+        let mut action_sent = matches!(start_action, StartAction::None);
         let mut output = Vec::new();
         loop {
             let event = read_frame::<ServerEvent>(&mut self.output)
@@ -112,6 +133,22 @@ impl Broker {
                     ..
                 } if event_id == id => {
                     output.extend(BASE64.decode(data_base64).expect("base64 child output"));
+                    if !action_sent
+                        && output
+                            .windows(STARTED_MARKER.len())
+                            .any(|window| window == STARTED_MARKER)
+                    {
+                        match start_action {
+                            StartAction::None => {
+                                unreachable!("no start action was already marked sent")
+                            }
+                            StartAction::Cancel => {
+                                self.send(&ClientRequest::Cancel { id: id.clone() });
+                            }
+                            StartAction::Shutdown => self.send(&ClientRequest::Shutdown),
+                        }
+                        action_sent = true;
+                    }
                 }
                 ServerEvent::Exit {
                     id: event_id,
@@ -122,6 +159,7 @@ impl Broker {
                     ..
                 } if event_id == id => {
                     assert!(started, "exit arrived before started");
+                    assert!(action_sent, "command exited before its user-code marker");
                     return CommandResult {
                         output,
                         code,
@@ -139,10 +177,25 @@ impl Broker {
             }
         }
     }
+
+    fn wait_for_exit(&mut self) {
+        let deadline = Instant::now() + RELEASE_TEST_TIMEOUT;
+        while Instant::now() < deadline {
+            if let Some(status) = self.child.try_wait().expect("wait for broker") {
+                assert!(status.success(), "broker shutdown status: {status}");
+                return;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        panic!("broker did not exit after shutdown");
+    }
 }
 
 impl Drop for Broker {
     fn drop(&mut self) {
+        if self.child.try_wait().ok().flatten().is_some() {
+            return;
+        }
         self.send(&ClientRequest::Shutdown);
         let deadline = Instant::now() + RELEASE_TEST_TIMEOUT;
         while Instant::now() < deadline {
@@ -220,6 +273,8 @@ fn request(
 fn process_is_alive(pid: u32) -> bool {
     Command::new("/bin/kill")
         .args(["-0", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .is_ok_and(|status| status.success())
 }
@@ -227,6 +282,8 @@ fn process_is_alive(pid: u32) -> bool {
 fn kill_fixture(pid: u32) {
     let _ = Command::new("/bin/kill")
         .args(["-KILL", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status();
 }
 
@@ -241,20 +298,28 @@ fn wait_for_pid(path: &Path) -> u32 {
     panic!("detached fixture did not report its PID");
 }
 
-fn assert_detached_fixture_is_reaped(
-    broker: &mut Broker,
-    workspace: &Path,
-    id: &str,
-    python: &str,
-) {
-    let pid_file = workspace.join(format!("{id}.pid"));
+fn assert_observed_detached_fixture_is_reaped(broker: &mut Broker, workspace: &Path) {
+    let pid_file = workspace.join("observed-setsid.pid");
+    let python = "import os,sys,time; p=os.fork(); (os.waitpid(p,0) if p else None); (time.sleep(.2),os.setsid(),open(sys.argv[1],'w').write(str(os.getpid())),time.sleep(30)) if not p else None";
     let script = format!(
         "/usr/bin/python3 -c {} {}",
         shell_quote(python),
         shell_quote(&pid_file.to_string_lossy())
     );
-    let result = broker.exec(request(id, workspace, script, vec![], None, 1024));
-    assert_eq!(result.code, Some(0));
+    let result = broker.exec(request(
+        "observed-setsid-cleanup",
+        workspace,
+        script,
+        vec![],
+        Some(3_000),
+        1024,
+    ));
+    assert!(result.timed_out);
+    assert!(
+        pid_file.exists(),
+        "detached fixture did not start before timeout; output: {}",
+        String::from_utf8_lossy(&result.output)
+    );
     let pid = wait_for_pid(&pid_file);
     let alive = process_is_alive(pid);
     if alive {
@@ -262,7 +327,7 @@ fn assert_detached_fixture_is_reaped(
     }
     assert!(
         !alive,
-        "detached fixture PID {pid} survived terminal completion"
+        "observed detached fixture PID {pid} survived terminal completion"
     );
 }
 
@@ -373,6 +438,31 @@ fn native_broker_release_gate() {
     ));
     assert_ne!(socket.code, Some(0));
 
+    let outbound = broker.exec(request(
+        "outbound-blocked",
+        &workspace,
+        "/usr/bin/python3 -c 'import socket; s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.sendto(b\"x\",(\"127.0.0.1\",9))'".to_owned(),
+        vec![],
+        None,
+        1024,
+    ));
+    assert_ne!(outbound.code, Some(0));
+
+    let unix_socket_path = workspace.join("blocked.sock");
+    let unix_socket = broker.exec(request(
+        "unix-socket-blocked",
+        &workspace,
+        format!(
+            "/usr/bin/python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])' {}",
+            shell_quote(&unix_socket_path.to_string_lossy())
+        ),
+        vec![],
+        None,
+        1024,
+    ));
+    assert_ne!(unix_socket.code, Some(0));
+    assert!(!unix_socket_path.exists());
+
     let timed_out = broker.exec(request(
         "timeout",
         &workspace,
@@ -383,6 +473,17 @@ fn native_broker_release_gate() {
     ));
     assert!(timed_out.timed_out);
     assert!(!timed_out.cancelled);
+
+    let cancelled = broker.exec_and_cancel(request(
+        "active-cancel",
+        &workspace,
+        "printf 'PI_RELEASE_READY\\n'; sleep 30".to_owned(),
+        vec![],
+        None,
+        1024,
+    ));
+    assert!(cancelled.cancelled);
+    assert!(!cancelled.timed_out);
 
     broker.send(&ClientRequest::Cancel {
         id: "already-finished".to_owned(),
@@ -397,16 +498,18 @@ fn native_broker_release_gate() {
     ));
     assert_eq!(after_cancel.code, Some(0));
 
-    assert_detached_fixture_is_reaped(
-        &mut broker,
+    assert_observed_detached_fixture_is_reaped(&mut broker, &workspace);
+
+    let mut shutdown_broker = Broker::start();
+    let shutdown = shutdown_broker.exec_and_shutdown(request(
+        "active-shutdown",
         &workspace,
-        "setpgid-escape",
-        "import os,sys,time; p=os.fork(); (os._exit(0) if p else None); os.setpgid(0,0); open(sys.argv[1],'w').write(str(os.getpid())); time.sleep(30)",
-    );
-    assert_detached_fixture_is_reaped(
-        &mut broker,
-        &workspace,
-        "setsid-double-fork",
-        "import os,sys,time; p=os.fork(); (os._exit(0) if p else None); os.setsid(); p=os.fork(); (os._exit(0) if p else None); open(sys.argv[1],'w').write(str(os.getpid())); time.sleep(30)",
-    );
+        "printf 'PI_RELEASE_READY\\n'; sleep 30".to_owned(),
+        vec![],
+        None,
+        1024,
+    ));
+    assert!(shutdown.cancelled);
+    assert!(!shutdown.timed_out);
+    shutdown_broker.wait_for_exit();
 }

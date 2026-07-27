@@ -14,6 +14,7 @@ use nix::sys::signal::{Signal, killpg};
 use nix::unistd::Pid;
 
 use crate::framing::write_frame;
+use crate::pid_tracker::{PidTracker, ProcessGuard, cleanup as cleanup_tracked_processes};
 use crate::protocol::{ErrorCode, ServerEvent};
 use crate::seatbelt::{SANDBOX_EXEC, build_args};
 use crate::validation::ValidatedExec;
@@ -40,6 +41,7 @@ struct CommandControl {
     id: String,
     cancel: AtomicBool,
     pid: AtomicI32,
+    root: Mutex<Option<ProcessGuard>>,
     launch: AtomicU8,
 }
 
@@ -87,6 +89,7 @@ impl Runtime {
             id: request.id.clone(),
             cancel: AtomicBool::new(false),
             pid: AtomicI32::new(0),
+            root: Mutex::new(None),
             launch: AtomicU8::new(LAUNCH_PENDING),
         });
         {
@@ -240,6 +243,38 @@ fn run_command(
     };
     let pid = i32::try_from(child.id()).unwrap_or(i32::MAX);
     control.pid.store(pid, Ordering::Release);
+    // The fixed shell wrapper is still blocked on stdin here. Register the
+    // root with the best-effort descendant tracker before user code can fork.
+    let tracker = match PidTracker::start(pid) {
+        Ok(tracker) => tracker,
+        Err(message) => {
+            terminate_child(&mut child, control);
+            clear_process(control);
+            send_terminal_error(
+                writer,
+                state,
+                control,
+                ErrorCode::CommandStartFailed,
+                message,
+            );
+            return;
+        }
+    };
+    let Ok(mut root) = control.root.lock() else {
+        terminate_child(&mut child, control);
+        cleanup_tracked_processes(tracker, TERMINATE_GRACE);
+        clear_process(control);
+        send_terminal_error(
+            writer,
+            state,
+            control,
+            ErrorCode::CommandStartFailed,
+            "process identity lock is poisoned".to_owned(),
+        );
+        return;
+    };
+    *root = Some(tracker.root_guard());
+    drop(root);
     if control
         .launch
         .compare_exchange(
@@ -251,7 +286,8 @@ fn run_command(
         .is_err()
     {
         terminate_child(&mut child, control);
-        control.pid.store(0, Ordering::Release);
+        cleanup_tracked_processes(tracker, TERMINATE_GRACE);
+        clear_process(control);
         send_terminal_error(
             writer,
             state,
@@ -271,7 +307,8 @@ fn run_command(
     .is_err()
     {
         terminate_child(&mut child, control);
-        control.pid.store(0, Ordering::Release);
+        cleanup_tracked_processes(tracker, TERMINATE_GRACE);
+        clear_process(control);
         return;
     }
     // The fixed shell wrapper waits on stdin. Release it only after the PID and
@@ -334,14 +371,16 @@ fn run_command(
         }
         thread::sleep(POLL_INTERVAL);
     };
+    cancelled |= control.cancel.load(Ordering::Acquire);
     cleanup_group(control);
+    cleanup_tracked_processes(tracker, TERMINATE_GRACE);
     if let Some(reader) = stdout {
         finish_stream_reader(reader);
     }
     if let Some(reader) = stderr {
         finish_stream_reader(reader);
     }
-    control.pid.store(0, Ordering::Release);
+    clear_process(control);
     let _ = send_event(
         writer,
         &ServerEvent::Exit {
@@ -468,16 +507,32 @@ fn claim_output(used: &AtomicU64, limit: u64, requested: u64) -> u64 {
     }
 }
 
+fn root_is_current(control: &CommandControl) -> bool {
+    control
+        .root
+        .lock()
+        .ok()
+        .and_then(|root| *root)
+        .is_some_and(ProcessGuard::is_current)
+}
+
 fn signal_group(control: &CommandControl, signal: Signal) {
     let pid = control.pid.load(Ordering::Acquire);
-    if pid > 0 {
+    if pid > 0 && root_is_current(control) {
         let _ = killpg(Pid::from_raw(pid), signal);
     }
 }
 
 fn group_exists(control: &CommandControl) -> bool {
     let pid = control.pid.load(Ordering::Acquire);
-    pid > 0 && killpg(Pid::from_raw(pid), None).is_ok()
+    pid > 0 && root_is_current(control) && killpg(Pid::from_raw(pid), None).is_ok()
+}
+
+fn clear_process(control: &CommandControl) {
+    if let Ok(mut root) = control.root.lock() {
+        *root = None;
+    }
+    control.pid.store(0, Ordering::Release);
 }
 
 fn cleanup_group(control: &CommandControl) {

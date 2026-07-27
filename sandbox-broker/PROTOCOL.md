@@ -25,6 +25,8 @@ The first server frame is `ready`:
 
 Pi checks the version, platform, backend, and `can_exec`. It blocks shell calls if startup fails, the frame times out, or `can_exec` is false. It never falls back to a plain host process.
 
+A future Linux implementation of this same protocol version must identify itself with `platform: "linux"` and `backend: "bubblewrap"`. The current broker reports `can_exec: false` on Linux, and the current client does not accept that pair yet. Linux support must add a real bubblewrap namespace self-test before readiness; the presence of a binary alone is not enough. See [LINUX_BACKEND.md](LINUX_BACKEND.md).
+
 ## Requests
 
 ### `exec`
@@ -79,7 +81,7 @@ Rules:
 { "type": "cancel", "id": "tool-call-id/attempt-0" }
 ```
 
-The broker signals the command tree, waits for a short fixed cleanup limit, then kills what it can still identify. A timeout uses the same path. Cancellation is idempotent when no command is active because an `exit` event may cross a late cancel request. A cancel for a different active ID still fails. `exit` remains the final command event. macOS release tests must cover `setpgid`, `setsid`, and double-fork attempts; a process group alone does not satisfy the cleanup rule.
+The broker signals the command process group, waits for a short fixed cleanup limit, then kills what remains in that group. It also stops its best-effort macOS descendant tracker and signals observed processes whose PID and start time still match. A timeout uses the same path. Cancellation is idempotent when no command is active because an `exit` event may cross a late cancel request. A cancel for a different active ID still fails. `exit` remains the final command event. Deliberate fast `setpgid`, `setsid`, or double-fork escape from the non-atomic tracker is outside protocol v1's lifecycle guarantee.
 
 ### `shutdown`
 

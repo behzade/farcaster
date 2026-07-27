@@ -24,7 +24,11 @@ The user account and Pi host process remain outside this boundary. The broker li
 
 ## Current release status
 
-The extension blocks native activation. Protocol v1 has no network, Unix socket, background-job, or denial-collector support. Process-group cleanup and bounded pipe draining have landed. A hostile child can still leave that group with `setpgid`, `setsid`, or a double fork. Codex's `kqueue` plus `proc_listchildpids` tracker is best effort and cannot close that race. Public unprivileged macOS APIs do not provide a kill-and-reap container for such children; creating a new kernel coalition fails with `EPERM` for a normal user process. Native release therefore needs a different ownership boundary, such as a disposable VM or an approved privileged owner, or an explicit reduction of the threat model. The rules below remain release requirements.
+The opt-in native backend is released on macOS after its unsandboxed release gate passed. Protocol v1 has no approved network, Unix socket, background-job, or denial-collector support. Process-group cleanup, bounded pipe draining, and a best-effort macOS descendant tracker have landed. The tracker registers the root before the launch barrier opens, follows kqueue fork events with `proc_listchildpids` snapshots, and checks process start times before signaling observed survivors.
+
+A child can still win the non-atomic fork-and-enumeration race, then leave the process group with `setpgid`, `setsid`, or a double fork. Public unprivileged macOS APIs do not provide a kill-and-reap container for such children; creating a new kernel coalition fails with `EPERM` for a normal user process. Pi explicitly places deliberate daemon escape outside the native backend's threat model. Any survivor keeps its Seatbelt limits, but it may continue using CPU and rights that the command received until it exits or the user kills it.
+
+The Rust broker does not execute commands on Linux yet. Linux stays on Codex until the bubblewrap work in [LINUX_BACKEND.md](LINUX_BACKEND.md) passes. The Linux backend must use user, mount, PID, and blocked-network namespaces, `no_new_privs`, reviewed seccomp rules, protected mount ordering, and PID-namespace teardown. Missing bubblewrap or unavailable unprivileged namespaces must fail readiness rather than weaken isolation.
 
 ## Security rules
 
@@ -34,8 +38,8 @@ The extension blocks native activation. Protocol v1 has no network, Unix socket,
 4. **Protected control state.** Commands cannot write the broker binary, broker policy, global `~/.pi`, global `~/.codex`, or auth and secret roots. Base workspace writes exclude `.git` and project `.pi`; only an exact approved command grant may add those project roots.
 5. **No path alias escape.** Existing symlinks resolve before policy build. For a missing leaf, the broker resolves the nearest existing ancestor and appends checked normal components. Tests cover symlinks, `..`, missing paths, and protected children under broad roots.
 6. **Private control channel.** Commands inherit only their stdin/stdout/stderr and needed job handles. They do not inherit broker protocol handles or a public control socket.
-7. **Whole-tree control.** Before release, the backend must register a kernel-owned command boundary before user code crosses its launch barrier. Cancel, timeout, shutdown, and broker failure must stop that whole boundary and prove it empty before a terminal event. The current process group is only a fast cleanup layer and does not meet this rule by itself.
-8. **Bounded data.** Frame, request, output, diagnostic, active-command, and later denial/job limits are fixed. The broker drains capped output and marks it truncated.
+7. **Lifecycle control.** On macOS, the backend registers the root before the launch barrier and combines process-group cleanup with best-effort descendant observations. It does not claim atomic ownership of a child that deliberately wins the macOS fork-and-reparent race. The Linux backend must use a PID namespace with an init/reaper and prove that cancellation, timeout, shutdown, `setsid`, and double-fork cases leave that namespace empty.
+8. **Bounded data.** Frame, request, output, diagnostic, active-command, process-observation, and later denial/job limits are fixed. The broker drains capped output and marks it truncated. The macOS tracker keeps at most 4,096 process identities per command.
 9. **Explicit local service rights.** Network starts blocked. A later approved-host stage must use a host-owned allowlisting proxy. A later Unix socket stage must keep roots separate and must never give normal bash the background-job control socket.
 10. **Hints do not grant.** A later Seatbelt denial collector may explain one exact right. Missing, late, unrelated, or ambiguous denial data never adds access.
 11. **Environment is replaced.** The child receives the filtered map in its request. It does not inherit the broker environment. The broker adds only fixed status markers and later required proxy values.
@@ -49,7 +53,8 @@ The extension blocks native activation. Protocol v1 has no network, Unix socket,
 | Consume a sibling's one-time right | No shared grant queue; rights carried on one command ID |
 | Escape through symlink or `..` | Double normalization; nearest-existing-parent resolution; protected carve-outs |
 | Forge broker output | Framed private pipe; base64 child chunks; protocol handles closed in child |
-| Leave a daemon after timeout | Release-blocking kernel owner plus `setpgid`, `setsid`, and double-fork tests; the current process group alone is insufficient |
+| Leave an ordinary descendant after timeout | Process-group cleanup plus start-time-checked signaling of tracker observations |
+| Deliberately win the fork/reparent tracking race | Out of scope on native macOS; the survivor remains under its command's Seatbelt profile |
 | Reach Docker, SSH agent, tmux, or another local service | Unix sockets denied unless listed; reserved job socket always denied to normal bash |
 | Exfiltrate through network | Network blocked or forced through host allowlist proxy; no broad local targets |
 | Obtain a broad grant from an app's vague error | Explicit preflight right or one exact safe denial hint; no prose guessing |
@@ -62,7 +67,10 @@ The extension blocks native activation. Protocol v1 has no network, Unix socket,
 - Protecting the host from trusted Pi extensions, since extensions run in Pi's host process.
 - Proving that macOS unified logging reports every denial.
 - Interactive PTY support in the first normal-bash milestone.
+- Guaranteed collection of a child that deliberately escapes its process group and the non-atomic macOS descendant tracker. Strict lifetime containment requires a stronger boundary such as a disposable VM or an entitled system service.
 
 ## Release gates
 
-The extension must not switch a platform to this broker until integration tests show filesystem rules, network mode, sockets, environment replacement, output limits, cancellation, timeout, shutdown, and child cleanup on that platform. `tests/macos_release.rs` is the unsandboxed macOS gate and includes `setpgid` and `setsid`/double-fork fixtures. It must pass without its emergency fixture cleanup before activation. macOS may ship first. Linux stays on the old fail-closed backend until the bubblewrap gate passes.
+`tests/macos_release.rs` is the unsandboxed macOS gate. It passes with filesystem rules, blocked network and sockets, environment replacement, output limits, cancellation, timeout, shutdown, process-group cleanup, and cleanup of an observed detached child. Deliberate fast `setsid` or double-fork escape is not a macOS release assertion.
+
+Linux needs a separate release gate on x86_64 and aarch64. It must cover read-only root mounts, exact writable mounts, hidden read denies, protected child mounts, symlink and missing-path cases, blocked network and host Unix sockets, user/PID namespace availability, `no_new_privs`, seccomp, environment, framing, output bounds, cancellation, timeout, shutdown, and strict descendant cleanup. Linux remains on Codex until every required item in [LINUX_BACKEND.md](LINUX_BACKEND.md) passes.

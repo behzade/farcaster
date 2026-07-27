@@ -625,7 +625,9 @@ mod tests {
     #[test]
     #[ignore = "requires an unsandboxed macOS runner"]
     fn real_seatbelt_allows_workspace_write_and_blocks_git() {
-        let root = temp_root("seatbelt");
+        let root = temp_root("seatbelt")
+            .canonicalize()
+            .expect("canonicalize test root");
         let git = root.join("nested/repository/.git");
         fs::create_dir_all(&git).expect("create nested git control root");
         let allowed = root.join("allowed.txt");
