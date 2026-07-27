@@ -56,6 +56,13 @@ test("Gruvbox dark hard uses the canonical palette and every Pi color", async ()
   assert.deepEqual(theme.vars, canonicalPalette);
   for (const color of requiredColors) assert.ok(color in theme.colors, `missing ${color}`);
   assert.equal(theme.colors.userMessageBg, "bg0");
+  assert.equal(theme.colors.border, "bg4");
+  assert.equal(theme.colors.mdHeading, "fg0");
+  assert.equal(theme.colors.mdLink, "brightAqua");
+  assert.equal(theme.colors.mdListBullet, "fg3");
+  assert.equal(theme.colors.syntaxKeyword, "fg0");
+  assert.equal(theme.colors.syntaxString, "fg4");
+  assert.equal(theme.colors.thinkingMax, "fg0");
   assert.equal(theme.export.pageBg, canonicalPalette.bg0Hard);
 });
 

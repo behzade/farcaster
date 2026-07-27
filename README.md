@@ -16,6 +16,8 @@ hosts, and notification settings. This repo owns code and package pins.
 - `themes/gruvbox-dark-hard.json`: Gruvbox's canonical dark-hard palette for
   Pi. The palette values come from
   [morhetz/gruvbox](https://github.com/morhetz/gruvbox/blob/master/colors/gruvbox.vim).
+  Its token roles follow Zenbones' contrast-first hierarchy: neutral lightness
+  carries most structure, while hue marks links, active UI, state, and diffs.
 - `skills/background-jobs`: sandboxed, non-blocking job control through a Pi
   tool.
 - `nix`: pinned package builds for the sandbox, subagents, and server
