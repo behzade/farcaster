@@ -7,8 +7,9 @@
  */
 
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
 	ExtensionAPI,
@@ -22,12 +23,18 @@ import {
 	getAgentDir,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { SandboxBrokerClient } from "./broker-client.ts";
+import { buildBrokerExecRequest } from "./broker-policy.ts";
 import {
 	isBackgroundJobSocket,
 	isValidBackgroundJobName,
 	runBackgroundJobHelper,
 	sandboxedJobCommand,
 } from "./background-jobs.ts";
+import {
+	checkDeclaredFilesystemPermissions,
+	type FilePermission,
+} from "./declared-permissions.ts";
 import {
 	DEFAULT_CONFIG,
 	applyProjectRestrictions,
@@ -44,6 +51,7 @@ import {
 	grantsToRuntime,
 	type IoPermission,
 	isInside,
+	isControlRootSymlink,
 	isProtectedPath,
 	isProtectedWritePath,
 	loadWorkspacePermissions,
@@ -52,6 +60,7 @@ import {
 	permissionLabel,
 	projectControlRoot,
 	normalizePermission,
+	resolveLexicalPermissionPath,
 	resolvePermissionPath,
 	saveWorkspacePermission,
 } from "./io-permissions.ts";
@@ -89,6 +98,10 @@ function checkCodex(command: string): Promise<void> {
 		});
 	});
 }
+
+const PACKAGED_BROKER_PATH = "@PI_SANDBOX_BROKER@/bin/pi-sandbox-broker";
+const NATIVE_PREVIEW_RELEASED = false;
+const MAX_FAILURE_OUTPUT_BYTES = 1024 * 1024;
 
 function createCodexSandboxOps(
 	config: CodexSandboxConfig,
@@ -147,6 +160,29 @@ function createCodexSandboxOps(
 	};
 }
 
+function createNativeSandboxOps(
+	client: SandboxBrokerClient,
+	config: CodexSandboxConfig,
+	permissions: readonly FilePermission[],
+	networkHosts: readonly string[],
+	commandId: string,
+): BashOperations {
+	return {
+		async exec(command, cwd, { onData, signal, timeout }) {
+			const request = buildBrokerExecRequest(
+				commandId,
+				command,
+				cwd,
+				timeout,
+				config,
+				permissions,
+				networkHosts,
+			);
+			return client.exec(request, onData, signal);
+		},
+	};
+}
+
 function unavailableBashOps(reason: string): BashOperations {
 	return {
 		async exec() {
@@ -161,8 +197,18 @@ type SandboxState =
 	| { kind: "ready"; config: CodexSandboxConfig }
 	| { kind: "failed"; reason: string };
 
-type FilePermission = Extract<IoPermission, { kind: "read" | "write" }>;
 type NetworkPermission = Extract<IoPermission, { kind: "network_host" }>;
+type DeclaredFilesystemPermission = {
+	kind: "read" | "write";
+	path: string;
+	targetType?: "file" | "folder";
+	reason: string;
+};
+type DeclaredNetworkPermission = {
+	kind: "network_host";
+	host: string;
+	reason: string;
+};
 
 const NetworkPermissionParams = Type.Object({
 	host: Type.String({
@@ -171,12 +217,48 @@ const NetworkPermissionParams = Type.Object({
 	reason: Type.String({ description: "Why this host is needed" }),
 });
 
+const DeclaredFilesystemPermissionParams = Type.Object({
+	kind: Type.Union([Type.Literal("read"), Type.Literal("write")]),
+	path: Type.String({ description: "Exact file or folder path" }),
+	targetType: Type.Optional(
+		Type.Union([Type.Literal("file"), Type.Literal("folder")]),
+	),
+	reason: Type.String({ description: "Why this command needs the right" }),
+});
+
+const DeclaredNetworkPermissionParams = Type.Object({
+	kind: Type.Literal("network_host"),
+	host: Type.String({
+		description: "One exact hostname or IP, with no scheme, port, path, or wildcard",
+	}),
+	reason: Type.String({ description: "Why this command needs the host" }),
+});
+
+const DeclaredPermissionsParams = Type.Optional(
+	Type.Array(
+		Type.Union([
+			DeclaredFilesystemPermissionParams,
+			DeclaredNetworkPermissionParams,
+		]),
+		{ maxItems: 16 },
+	),
+);
+
+const BashParams = Type.Object({
+	command: Type.String({ description: "Bash command to execute" }),
+	timeout: Type.Optional(
+		Type.Number({ description: "Timeout in seconds (optional, no default timeout)" }),
+	),
+	permissions: DeclaredPermissionsParams,
+});
+
 const BackgroundJobParams = Type.Union([
 	Type.Object({
 		action: Type.Literal("start"),
 		name: Type.String({ description: "Unique job name starting with pi-" }),
 		command: Type.String({ description: "Shell command to run in the background" }),
 		cwd: Type.Optional(Type.String({ description: "Working directory inside this workspace" })),
+		permissions: DeclaredPermissionsParams,
 	}),
 	Type.Object({ action: Type.Literal("list") }),
 	Type.Object({
@@ -215,6 +297,24 @@ interface ApprovalDecision {
 	reason?: string;
 }
 
+function fileDeclarations(
+	permissions: readonly (DeclaredFilesystemPermission | DeclaredNetworkPermission)[] | undefined,
+): DeclaredFilesystemPermission[] {
+	return (permissions ?? []).filter(
+		(permission): permission is DeclaredFilesystemPermission =>
+			permission.kind === "read" || permission.kind === "write",
+	);
+}
+
+function networkDeclarations(
+	permissions: readonly (DeclaredFilesystemPermission | DeclaredNetworkPermission)[] | undefined,
+): DeclaredNetworkPermission[] {
+	return (permissions ?? []).filter(
+		(permission): permission is DeclaredNetworkPermission =>
+			permission.kind === "network_host",
+	);
+}
+
 function networkRuleMatches(rule: string, host: string): boolean {
 	const normalized = rule.toLowerCase();
 	if (normalized === "*") return true;
@@ -241,7 +341,9 @@ export default function (pi: ExtensionAPI) {
 	const permissionFile = resolve(getAgentDir(), "io-permissions.json");
 	let sandboxState: SandboxState = { kind: "initializing" };
 	let persistentPermissions: IoPermission[] = [];
-	let oneShotNetworkPermissions: NetworkPermission[] = [];
+	let brokerClient: SandboxBrokerClient | undefined;
+	let userBashCounter = 0;
+	let sessionGeneration = 0;
 
 	pi.on("session_start", () => {
 		pi.setActiveTools(
@@ -249,10 +351,8 @@ export default function (pi: ExtensionAPI) {
 		);
 	});
 
-	const runtimeGrants = (consumeOneShot = false): CodexSandboxGrants => {
-		const permissions = [...persistentPermissions, ...oneShotNetworkPermissions];
-		if (consumeOneShot) oneShotNetworkPermissions = [];
-		const grants = grantsToRuntime(permissions);
+	const runtimeGrants = (): CodexSandboxGrants => {
+		const grants = grantsToRuntime(persistentPermissions);
 		return {
 			read: grants.read,
 			write: grants.write,
@@ -262,7 +362,13 @@ export default function (pi: ExtensionAPI) {
 
 	const promptForToolPermission = async (
 		permission: IoPermission,
-		tool: { toolName: string; toolCallId: string; reason?: string },
+		tool: {
+			toolName: string;
+			toolCallId: string;
+			reason?: string;
+			retry?: boolean;
+			allowOnce?: boolean;
+		},
 		ctx: ExtensionContext,
 	): Promise<ApprovalDecision> => {
 		const label = permissionLabel(permission);
@@ -281,16 +387,19 @@ export default function (pi: ExtensionAPI) {
 			sessionId: ctx.sessionManager.getSessionId(),
 			cwd: ctx.cwd,
 		});
-		const allowOnce = tool.toolName === "bash" ? "Allow once and retry" : "Allow once";
-		const allowAlways =
-			tool.toolName === "bash"
-				? "Always allow in this workspace and retry"
-				: "Always allow in this workspace";
+		const allowOnce = tool.retry ? "Allow once and retry" : "Allow once";
+		const allowAlways = tool.retry
+			? "Always allow in this workspace and retry"
+			: "Always allow in this workspace";
+		const choices =
+			tool.allowOnce === false
+				? [allowAlways, "No", "No, with comment"]
+				: [allowOnce, allowAlways, "No", "No, with comment"];
 		const selection = await ctx.ui.select(
 			`Allow ${tool.toolName} to access ${label}?${
 				tool.reason ? `\n\nReason: ${tool.reason}` : ""
 			}`,
-			[allowOnce, allowAlways, "No", "No, with comment"],
+			choices,
 		);
 		let comment: string | undefined;
 		if (selection === "No, with comment") {
@@ -320,6 +429,79 @@ export default function (pi: ExtensionAPI) {
 		};
 	};
 
+	const approveDeclaredFilesystemPermissions = async (
+		declarations: readonly DeclaredFilesystemPermission[] | undefined,
+		tool: { toolName: string; toolCallId: string },
+		ctx: ExtensionContext,
+		config: CodexSandboxConfig,
+	): Promise<FilePermission[]> => {
+		const checked = checkDeclaredFilesystemPermissions(
+			declarations,
+			ctx.cwd,
+			config,
+			persistentPermissions,
+		);
+		for (const entry of checked) {
+			if (entry.alreadyAllowed) continue;
+			const decision = await promptForToolPermission(
+				entry.permission,
+				{ ...tool, reason: entry.reason, retry: false },
+				ctx,
+			);
+			if (!decision.allowed) {
+				throw new Error(decision.reason ?? "Permission denied by user");
+			}
+		}
+		return checked.map((entry) => entry.permission);
+	};
+
+	const approveDeclaredNetworkPermissions = async (
+		declarations: readonly DeclaredNetworkPermission[] | undefined,
+		tool: { toolName: string; toolCallId: string },
+		ctx: ExtensionContext,
+		config: CodexSandboxConfig,
+	): Promise<NetworkPermission[]> => {
+		if ((declarations?.length ?? 0) > 16) {
+			throw new Error("A command may declare at most 16 network hosts");
+		}
+		if ((declarations?.length ?? 0) > 0 && config.backend === "native-preview") {
+			throw new Error("Network access is not available in the native sandbox preview");
+		}
+		const grants = new Map<string, NetworkPermission>();
+		for (const declaration of declarations ?? []) {
+			const permission = normalizePermission(
+				{ kind: "network_host", host: declaration.host },
+				ctx.cwd,
+			) as NetworkPermission;
+			if (config.network?.enabled === false) {
+				throw new Error("Network access is disabled by the sandbox policy");
+			}
+			if (
+				(config.network?.deniedDomains ?? []).some((rule) =>
+					networkRuleMatches(rule, permission.host),
+				)
+			) {
+				throw new Error(`${permission.host} is denied by the sandbox policy`);
+			}
+			const alreadyAllowed = [
+				...(config.network?.allowedDomains ?? []),
+				...grantsToRuntime(persistentPermissions).networkHosts,
+			].some((rule) => networkRuleMatches(rule, permission.host));
+			if (!alreadyAllowed) {
+				const decision = await promptForToolPermission(
+					permission,
+					{ ...tool, reason: declaration.reason, retry: false },
+					ctx,
+				);
+				if (!decision.allowed) {
+					throw new Error(decision.reason ?? "Permission denied by user");
+				}
+			}
+			grants.set(permission.host, permission);
+		}
+		return [...grants.values()];
+	};
+
 	const createApprovingSandboxOps = (
 		config: CodexSandboxConfig,
 		initialGrants: CodexSandboxGrants,
@@ -336,10 +518,16 @@ export default function (pi: ExtensionAPI) {
 
 			for (let attempt = 0; attempt < 4; attempt++) {
 				const chunks: Buffer[] = [];
+				let retainedBytes = 0;
 				lastResult = await createCodexSandboxOps(config, grants).exec(command, cwd, {
 					...options,
 					onData(data) {
-						chunks.push(data);
+						if (retainedBytes < MAX_FAILURE_OUTPUT_BYTES) {
+							const remaining = MAX_FAILURE_OUTPUT_BYTES - retainedBytes;
+							const retained = data.subarray(0, remaining);
+							chunks.push(retained);
+							retainedBytes += retained.length;
+						}
 						options.onData(data);
 					},
 				});
@@ -351,10 +539,13 @@ export default function (pi: ExtensionAPI) {
 				if (failurePaths.length === 0) return lastResult;
 				const permissions = new Map<string, FilePermission>();
 				for (const failurePath of failurePaths) {
-					const path = resolvePermissionPath(failurePath, cwd);
-					const gitRoot = gitControlRoot(path);
-					const piRoot = projectControlRoot(path, cwd);
-					const permissionPath = gitRoot ?? piRoot ?? path;
+					const lexicalPath = resolveLexicalPermissionPath(failurePath, cwd);
+					const path = canonicalize(lexicalPath);
+					const gitRoot = gitControlRoot(lexicalPath, cwd);
+					const piRoot = projectControlRoot(lexicalPath, cwd);
+					const controlRoot = gitRoot ?? piRoot;
+					if (controlRoot && isControlRootSymlink(controlRoot)) return lastResult;
+					const permissionPath = controlRoot ?? path;
 					// The current profile can read the whole filesystem. A path that is
 					// readable but not writable therefore identifies a write denial. If
 					// policy does not identify one exact access kind, treat it as a
@@ -393,10 +584,15 @@ export default function (pi: ExtensionAPI) {
 				}
 
 				for (const permission of permissions.values()) {
-					const decision = await promptForToolPermission(permission, tool, ctx);
+					const decision = await promptForToolPermission(
+						permission,
+						{ ...tool, retry: true },
+						ctx,
+					);
 					if (!decision.allowed) return lastResult;
 					const paths = permission.kind === "read" ? grants.read! : grants.write!;
-					if (!paths.includes(permission.path)) paths.push(permission.path);
+					const runtimePath = canonicalize(permission.path);
+					if (!paths.includes(runtimePath)) paths.push(runtimePath);
 				}
 				options.onData(Buffer.from("\n[Retrying command with approved IO rights]\n"));
 			}
@@ -408,9 +604,9 @@ export default function (pi: ExtensionAPI) {
 		name: "request_network_permission",
 		label: "Request network host",
 		description:
-			"Ask the user to allow one exact hostname or IP for the next bash or background job start, or for this workspace. Do not include a scheme, port, path, or wildcard.",
+			"Ask the user to save one exact hostname or IP for this workspace. For a one-command host right, declare network_host in that bash or background-job start's permissions. Do not include a scheme, port, path, or wildcard.",
 		promptSnippet:
-			"Use request_network_permission before bash or a background job needs a network host that the sandbox has not allowed.",
+			"Declare a command-only network_host in bash permissions. Use request_network_permission only to save a host for this workspace.",
 		parameters: NetworkPermissionParams,
 		executionMode: "sequential",
 		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
@@ -437,6 +633,18 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 			const config = sandboxState.config;
+			if (config.backend === "native-preview") {
+				return {
+					content: [
+						{
+							type: "text",
+							text: "Network access is not available in the native sandbox preview.",
+						},
+					],
+					details: { granted: false, reason: "native-network-unsupported" },
+					isError: true,
+				};
+			}
 			if (config.network?.enabled === false) {
 				return {
 					content: [{ type: "text", text: "Network access is disabled by the sandbox policy." }],
@@ -457,10 +665,7 @@ export default function (pi: ExtensionAPI) {
 			}
 			const existing = [
 				...(config.network?.allowedDomains ?? []),
-				...grantsToRuntime([
-					...persistentPermissions,
-					...oneShotNetworkPermissions,
-				]).networkHosts,
+				...grantsToRuntime(persistentPermissions).networkHosts,
 			].some((rule) => networkRuleMatches(rule, permission.host));
 			if (existing) {
 				return {
@@ -470,32 +675,26 @@ export default function (pi: ExtensionAPI) {
 			}
 			const decision = await promptForToolPermission(
 				permission,
-				{ toolName: "request_network_permission", toolCallId, reason: params.reason },
+				{
+					toolName: "request_network_permission",
+					toolCallId,
+					reason: params.reason,
+					allowOnce: false,
+				},
 				ctx,
 			);
-			if (decision.allowed && !decision.persistent) {
-				oneShotNetworkPermissions.push(permission);
-			}
 			return {
 				content: [
 					{
 						type: "text",
 						text: decision.allowed
-							? `${permission.host} is allowed ${
-									decision.persistent
-										? "for this workspace"
-										: "for the next bash or background job start"
-								}.`
+							? `${permission.host} is allowed for this workspace.`
 							: decision.reason ?? "Network host denied.",
 					},
 				],
 				details: {
 					granted: decision.allowed,
-					scope: decision.allowed
-						? decision.persistent
-							? "workspace"
-							: "once"
-						: "none",
+					scope: decision.allowed ? "workspace" : "none",
 					host: permission.host,
 				},
 				isError: !decision.allowed,
@@ -507,12 +706,12 @@ export default function (pi: ExtensionAPI) {
 		name: "background_job",
 		label: "Background job",
 		description:
-			"Start, list, inspect, interact with, or stop a long-running command. Use only for long-running commands; never run sudo, password prompts, or destructive commands. Jobs run in a fresh Codex sandbox inside the workspace. Names must start with pi- and use only letters, digits, dots, underscores, or hyphens. Request needed network access before starting. After starting, do other work instead of tight polling. Stop only jobs created for the current task and report any left running when the task ends.",
+			"Start, list, inspect, interact with, or stop a long-running command. Use only for long-running commands; never run sudo, password prompts, or destructive commands. Jobs run in a fresh Codex sandbox inside the workspace. A start may declare exact read, write, or network_host rights so the user can approve them before launch. Names must start with pi- and use only letters, digits, dots, underscores, or hyphens. After starting, do other work instead of tight polling. Stop only jobs created for the current task and report any left running when the task ends.",
 		promptSnippet:
 			"Use background_job for long-running servers, watchers, builds, and tests instead of tmux through bash.",
 		parameters: BackgroundJobParams,
 		executionMode: "sequential",
-		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+		async execute(toolCallId, params, signal, _onUpdate, ctx) {
 			const helperPath = fileURLToPath(new URL("./background-job.sh", import.meta.url));
 			if (!existsSync(helperPath)) {
 				return {
@@ -550,6 +749,17 @@ export default function (pi: ExtensionAPI) {
 						isError: true,
 					};
 				}
+				if (config.backend === "native-preview") {
+					return {
+						content: [
+							{
+								type: "text",
+								text: "Background jobs are not available in the native sandbox preview.",
+							},
+						],
+						isError: true,
+					};
+				}
 				const cwd = resolvePermissionPath(params.cwd ?? ctx.cwd, ctx.cwd);
 				if (!isInside(canonicalize(ctx.cwd), cwd)) {
 					return {
@@ -563,7 +773,29 @@ export default function (pi: ExtensionAPI) {
 						isError: true,
 					};
 				}
-				const grants = runtimeGrants(true);
+				const declaredNetworkPermissions = await approveDeclaredNetworkPermissions(
+					networkDeclarations(params.permissions),
+					{ toolName: "background_job", toolCallId },
+					ctx,
+					config,
+				);
+				const declaredPermissions = await approveDeclaredFilesystemPermissions(
+					fileDeclarations(params.permissions),
+					{ toolName: "background_job", toolCallId },
+					ctx,
+					config,
+				);
+				const grants = runtimeGrants();
+				const declaredGrants = grantsToRuntime([
+					...declaredPermissions,
+					...declaredNetworkPermissions,
+				]);
+				grants.read = [...(grants.read ?? []), ...declaredGrants.read];
+				grants.write = [...(grants.write ?? []), ...declaredGrants.write];
+				grants.networkHosts = [
+					...(grants.networkHosts ?? []),
+					...declaredGrants.networkHosts,
+				];
 				const codexCommand = config.codexCommand ?? DEFAULT_CONFIG.codexCommand;
 				const command = sandboxedJobCommand(
 					codexCommand,
@@ -605,7 +837,12 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerTool({
 		...localBash,
-		label: "bash (Codex sandbox)",
+		label: "bash (OS sandbox)",
+		description:
+			"Execute a bash command in the OS sandbox. Declare any exact extra read, write, or network_host rights in permissions so the user can approve them before launch.",
+		promptSnippet:
+			"Use permissions on bash to declare exact extra filesystem or command-only network_host rights before launch.",
+		parameters: BashParams,
 		renderShell: "self",
 		async execute(id, params, signal, onUpdate, ctx) {
 			if (sandboxState.kind === "disabled") {
@@ -618,15 +855,60 @@ export default function (pi: ExtensionAPI) {
 						: "Sandbox is still initializing; command blocked",
 				);
 			}
-			const grants = runtimeGrants(true);
-			return createBashTool(localCwd, {
-				operations: createApprovingSandboxOps(
+			const declaredNetworkPermissions = await approveDeclaredNetworkPermissions(
+				networkDeclarations(params.permissions),
+				{ toolName: "bash", toolCallId: id },
+				ctx,
+				sandboxState.config,
+			);
+			const declaredPermissions = await approveDeclaredFilesystemPermissions(
+				fileDeclarations(params.permissions),
+				{ toolName: "bash", toolCallId: id },
+				ctx,
+				sandboxState.config,
+			);
+			const grants = runtimeGrants();
+			const declaredGrants = grantsToRuntime([
+				...declaredPermissions,
+				...declaredNetworkPermissions,
+			]);
+			grants.read = [...(grants.read ?? []), ...declaredGrants.read];
+			grants.write = [...(grants.write ?? []), ...declaredGrants.write];
+			grants.networkHosts = [
+				...(grants.networkHosts ?? []),
+				...declaredGrants.networkHosts,
+			];
+			let operations: BashOperations;
+			if (sandboxState.config.backend === "native-preview") {
+				if (!brokerClient) throw new Error("Native sandbox broker is not ready");
+				const filePermissions = [
+					...persistentPermissions.filter(
+						(permission): permission is FilePermission =>
+							permission.kind === "read" || permission.kind === "write",
+					),
+					...declaredPermissions,
+				];
+				operations = createNativeSandboxOps(
+					brokerClient,
+					sandboxState.config,
+					filePermissions,
+					[],
+					`${id}/attempt-0`,
+				);
+			} else {
+				operations = createApprovingSandboxOps(
 					sandboxState.config,
 					grants,
 					{ toolName: "bash", toolCallId: id },
 					ctx,
-				),
-			}).execute(id, params, signal, onUpdate);
+				);
+			}
+			return createBashTool(localCwd, { operations }).execute(
+				id,
+				params,
+				signal,
+				onUpdate,
+			);
 		},
 	});
 
@@ -702,34 +984,47 @@ export default function (pi: ExtensionAPI) {
 					"The built-in recursive tool cannot inherit the OS file policy.",
 			};
 		}
-		const path = toolPath(event, ctx.cwd);
-		if (!path) return { block: true, reason: "File path is missing" };
+		const lexicalPath = toolLexicalPath(event, ctx.cwd);
+		if (!lexicalPath) return { block: true, reason: "File path is missing" };
+		const path = canonicalize(lexicalPath);
 		const access = event.toolName === "write" || event.toolName === "edit" ? "write" : "read";
 		if (
-			isProtectedPath(path) ||
-			(access === "write" && isProtectedWritePath(path)) ||
+			isProtectedPath(lexicalPath) ||
+			(access === "write" && isProtectedWritePath(lexicalPath)) ||
 			isDeniedByConfig(path, access, activeConfig(sandboxState), ctx.cwd)
 		) {
 			return { block: true, reason: `Protected or denied ${access} path: ${path}` };
 		}
-		const allowed =
-			persistentPermissions.some(
-				(permission) =>
-					permission.kind === access && permissionCoversPath(permission, path),
-			) ||
-			(access === "read"
-				? isBaseReadAllowed(path, activeConfig(sandboxState), ctx.cwd)
-				: isBaseWriteAllowed(path, activeConfig(sandboxState), ctx.cwd));
+		const gitRoot = access === "write" ? gitControlRoot(lexicalPath, ctx.cwd) : undefined;
+		const piRoot = access === "write" ? projectControlRoot(lexicalPath, ctx.cwd) : undefined;
+		const controlRoot = gitRoot ?? piRoot;
+		if (controlRoot && isControlRootSymlink(controlRoot)) {
+			return {
+				block: true,
+				reason: `Writes to a symlinked control folder cannot be granted: ${controlRoot}`,
+			};
+		}
+		const allowed = controlRoot
+			? persistentPermissions.some(
+					(permission) =>
+						permission.kind === access &&
+						permission.directory &&
+						lexicalControlKey(permission.path) === lexicalControlKey(controlRoot),
+				)
+			: persistentPermissions.some(
+					(permission) =>
+						permission.kind === access && permissionCoversPath(permission, path),
+				) ||
+				(access === "read"
+					? isBaseReadAllowed(path, activeConfig(sandboxState), ctx.cwd)
+					: isBaseWriteAllowed(path, activeConfig(sandboxState), ctx.cwd));
 		if (!allowed) {
-			const gitRoot = access === "write" ? gitControlRoot(path) : undefined;
-			const piRoot = access === "write" ? projectControlRoot(path, ctx.cwd) : undefined;
-			const permissionPath = gitRoot ?? piRoot ?? path;
+			const permissionPath = controlRoot ?? path;
 			const permission: IoPermission = {
 				kind: access,
 				path: permissionPath,
 				directory:
-					gitRoot !== undefined ||
-					piRoot !== undefined ||
+					controlRoot !== undefined ||
 					event.toolName === "ls" ||
 					(existsSync(permissionPath) && statSync(permissionPath).isDirectory()),
 			};
@@ -744,6 +1039,24 @@ export default function (pi: ExtensionAPI) {
 	pi.on("user_bash", () => {
 		if (sandboxState.kind === "disabled") return;
 		if (sandboxState.kind === "ready") {
+			if (sandboxState.config.backend === "native-preview") {
+				if (!brokerClient) {
+					return { operations: unavailableBashOps("Native sandbox broker is not ready") };
+				}
+				const filePermissions = persistentPermissions.filter(
+					(permission): permission is FilePermission =>
+						permission.kind === "read" || permission.kind === "write",
+				);
+				return {
+					operations: createNativeSandboxOps(
+						brokerClient,
+						sandboxState.config,
+						filePermissions,
+						[],
+						`user-bash-${++userBashCounter}-${randomUUID()}`,
+					),
+				};
+			}
 			return { operations: createCodexSandboxOps(sandboxState.config, runtimeGrants()) };
 		}
 		return {
@@ -756,6 +1069,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
+		const generation = ++sessionGeneration;
 		persistentPermissions = loadWorkspacePermissions(permissionFile, ctx.cwd);
 		if (pi.getFlag("no-sandbox") as boolean) {
 			sandboxState = { kind: "disabled", reason: "disabled via --no-sandbox" };
@@ -770,18 +1084,40 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 			sandboxState = { kind: "initializing" };
-			await checkCodex(config.codexCommand ?? DEFAULT_CONFIG.codexCommand);
+			if (config.backend === "native-preview") {
+				if (!NATIVE_PREVIEW_RELEASED) {
+					throw new Error(
+						"the native sandbox preview remains blocked until its cleanup release gates pass",
+					);
+				}
+				if (process.platform !== "darwin") {
+					throw new Error("the native sandbox preview supports macOS only");
+				}
+				const client = await SandboxBrokerClient.start(
+					config.brokerPath ?? PACKAGED_BROKER_PATH,
+				);
+				if (generation !== sessionGeneration) {
+					await client.shutdown();
+					return;
+				}
+				brokerClient = client;
+			} else {
+				await checkCodex(config.codexCommand ?? DEFAULT_CONFIG.codexCommand);
+			}
+			if (generation !== sessionGeneration) return;
 			sandboxState = { kind: "ready", config };
+			const backendLabel =
+				config.backend === "native-preview"
+					? "native Seatbelt preview (network blocked)"
+					: `Codex IO: ${config.permissionProfile ?? DEFAULT_CONFIG.permissionProfile}`;
 			ctx.ui.setStatus(
 				"sandbox",
-				ctx.ui.theme.fg(
-					"accent",
-					`🔒 Codex IO sandbox: ${config.permissionProfile ?? DEFAULT_CONFIG.permissionProfile}`,
-				),
+				ctx.ui.theme.fg("accent", `🔒 ${backendLabel}`),
 			);
-			ctx.ui.notify("Codex IO sandbox ready", "info");
+			ctx.ui.notify(`${backendLabel} sandbox ready`, "info");
 		} catch (error) {
-			const reason = `Codex sandbox unavailable; commands are blocked: ${
+			if (generation !== sessionGeneration) return;
+			const reason = `Sandbox unavailable; commands are blocked: ${
 				error instanceof Error ? error.message : error
 			}`;
 			sandboxState = { kind: "failed", reason };
@@ -789,14 +1125,18 @@ export default function (pi: ExtensionAPI) {
 		}
 	});
 
-	pi.on("session_shutdown", () => {
+	pi.on("session_shutdown", async () => {
+		sessionGeneration += 1;
+		const client = brokerClient;
+		brokerClient = undefined;
+		if (client) await client.shutdown();
 		persistentPermissions = [];
-		oneShotNetworkPermissions = [];
+		userBashCounter = 0;
 		sandboxState = { kind: "initializing" };
 	});
 
 	pi.registerCommand("sandbox", {
-		description: "Show Codex sandbox rights",
+		description: "Show OS sandbox rights",
 		handler: async (_args, ctx) => {
 			if (sandboxState.kind !== "ready") {
 				ctx.ui.notify(
@@ -820,7 +1160,7 @@ export default function (pi: ExtensionAPI) {
 			);
 			ctx.ui.notify(
 				[
-					"Codex IO sandbox:",
+					`OS sandbox (${config.backend ?? "codex"}):`,
 					`  Read: ${config.filesystem?.allowRead?.join(", ") || "(minimal only)"}`,
 					`  Write: ${config.filesystem?.allowWrite?.join(", ") || "(workspace only)"}`,
 					`  Shell env: ${config.shellEnvironment?.inherit ?? "core"}, secret-name filter ${
@@ -846,10 +1186,14 @@ function activeConfig(state: SandboxState): CodexSandboxConfig {
 	return state.kind === "ready" ? state.config : DEFAULT_CONFIG;
 }
 
-function toolPath(event: ToolCallEvent, cwd: string): string | undefined {
+function lexicalControlKey(path: string): string {
+	return resolve(canonicalize(dirname(path)), basename(path));
+}
+
+function toolLexicalPath(event: ToolCallEvent, cwd: string): string | undefined {
 	if (!("path" in event.input) || event.input.path === undefined) {
-		return event.toolName === "ls" ? resolvePermissionPath(cwd, cwd) : undefined;
+		return event.toolName === "ls" ? resolve(cwd) : undefined;
 	}
 	if (typeof event.input.path !== "string") return undefined;
-	return resolvePermissionPath(event.input.path, cwd);
+	return resolveLexicalPermissionPath(event.input.path, cwd);
 }

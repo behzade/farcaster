@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
+import { canonicalize } from "./io-permissions.ts";
 import {
 	applyProjectRestrictions,
 	buildCodexSandboxArgs,
@@ -36,6 +40,18 @@ test("builds a direct codex sandbox command with an explicit profile and cwd", (
 		"printf '%s' hello",
 	]);
 	assert.equal(args.includes("linux"), false);
+});
+
+test("a symlinked project control folder adds a canonical read-only rule", () => {
+	const cwd = mkdtempSync(join(tmpdir(), "pi-codex-git-link-"));
+	const target = join(cwd, "git-control");
+	mkdirSync(target);
+	symlinkSync(target, join(cwd, ".git"));
+	const profile = overrides(buildCodexSandboxArgs(cwd, DEFAULT_CONFIG, "true")).find((value) =>
+		value.startsWith(`permissions.pi-sandbox-${process.pid}=`),
+	);
+	assert(profile);
+	assert(profile.includes(`${JSON.stringify(canonicalize(target))} = "read"`));
 });
 
 test("maps file, domain, and socket policy into Codex profile overrides", () => {
@@ -97,6 +113,8 @@ test("a deny rule outranks a one-shot write grant for the same path", () => {
 
 test("a trusted project can only tighten global policy", () => {
 	const global = mergeGlobalConfig(DEFAULT_CONFIG, {
+		backend: "native-preview",
+		brokerPath: "/nix/store/broker/bin/pi-sandbox-broker",
 		network: {
 			enabled: true,
 			allowedDomains: ["github.com"],
@@ -106,6 +124,8 @@ test("a trusted project can only tighten global policy", () => {
 	});
 	const result = applyProjectRestrictions(global, {
 		enabled: false,
+		backend: "codex",
+		brokerPath: "/workspace/broker",
 		codexCommand: "other-codex",
 		permissionProfile: "other",
 		network: {
@@ -121,6 +141,8 @@ test("a trusted project can only tighten global policy", () => {
 		},
 	});
 	assert.equal(result.enabled, true);
+	assert.equal(result.backend, "native-preview");
+	assert.equal(result.brokerPath, "/nix/store/broker/bin/pi-sandbox-broker");
 	assert.equal(result.codexCommand, "codex");
 	assert.equal(result.permissionProfile, "pi-sandbox");
 	assert.equal(result.network?.enabled, false);
@@ -253,6 +275,8 @@ test("shell environment applies excludes, set values, then include-only filters"
 
 test("rejects malformed config instead of weakening policy", () => {
 	assert.throws(() => normalizeConfig({ network: { enabled: "yes" } }), /network.enabled/);
+	assert.throws(() => normalizeConfig({ backend: "native" }), /backend/);
+	assert.throws(() => normalizeConfig({ brokerPath: "./broker" }), /absolute path/);
 	assert.throws(() => normalizeConfig({ network: { allowLocalNetwork: true } }), /unknown fields/);
 	assert.throws(() => normalizeConfig({ filesystem: { denyRead: [""] } }), /non-empty strings/);
 	assert.throws(() => normalizeConfig({ permissionProfile: 'bad" -c sandbox_mode' }), /permissionProfile/);

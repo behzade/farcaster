@@ -1,0 +1,122 @@
+import assert from "node:assert/strict";
+import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import {
+	FramedJsonDecoder,
+	MAX_BROKER_FRAME_BYTES,
+	SandboxBrokerClient,
+	encodeBrokerFrame,
+	validateBrokerEvent,
+	type BrokerExecRequest,
+} from "./broker-client.ts";
+
+test("framed JSON survives split and joined chunks", () => {
+	const first = encodeBrokerFrame({ type: "one", text: "line one\nline two" });
+	const second = encodeBrokerFrame({ type: "two" });
+	const bytes = Buffer.concat([first, second]);
+	const decoder = new FramedJsonDecoder();
+	assert.deepEqual(decoder.push(bytes.subarray(0, 3)), []);
+	assert.deepEqual(decoder.push(bytes.subarray(3)), [
+		{ type: "one", text: "line one\nline two" },
+		{ type: "two" },
+	]);
+	decoder.finish();
+});
+
+test("framing rejects partial, oversized, and malformed UTF-8 input", () => {
+	const partial = new FramedJsonDecoder();
+	partial.push(Buffer.from([0, 0]));
+	assert.throws(() => partial.finish(), /partial frame/);
+
+	const oversized = Buffer.alloc(4);
+	oversized.writeUInt32BE(MAX_BROKER_FRAME_BYTES + 1);
+	assert.throws(() => new FramedJsonDecoder().push(oversized), /exceeds/);
+
+	const malformed = Buffer.from([0, 0, 0, 2, 0xc3, 0x28]);
+	assert.throws(() => new FramedJsonDecoder().push(malformed));
+});
+
+test("event validation rejects unknown fields and non-canonical output", () => {
+	assert.throws(
+		() =>
+			validateBrokerEvent({
+				type: "ready",
+				version: 1,
+				platform: "macos",
+				backend: "seatbelt",
+				can_exec: true,
+				max_frame_bytes: MAX_BROKER_FRAME_BYTES,
+				extra: true,
+			}),
+		/fields are invalid/,
+	);
+	assert.throws(
+		() =>
+			validateBrokerEvent({
+				type: "stdout",
+				id: "one",
+				sequence: 0,
+				data_base64: "not base64",
+			}),
+		/data_base64 is invalid/,
+	);
+});
+
+test("client requires readiness and streams typed command output", async () => {
+	const directory = mkdtempSync(join(tmpdir(), "pi-fake-broker-"));
+	const broker = join(directory, "broker");
+	writeFileSync(
+		broker,
+		`#!/usr/bin/env node
+const encode = value => {
+  const body = Buffer.from(JSON.stringify(value));
+  const frame = Buffer.alloc(body.length + 4);
+  frame.writeUInt32BE(body.length, 0);
+  body.copy(frame, 4);
+  process.stdout.write(frame);
+};
+let pending = Buffer.alloc(0);
+encode({ type: "ready", version: 1, platform: "macos", backend: "seatbelt", can_exec: true, max_frame_bytes: ${MAX_BROKER_FRAME_BYTES} });
+process.stdin.on("data", chunk => {
+  pending = Buffer.concat([pending, chunk]);
+  while (pending.length >= 4) {
+    const size = pending.readUInt32BE(0);
+    if (pending.length < size + 4) return;
+    const message = JSON.parse(pending.subarray(4, size + 4));
+    pending = pending.subarray(size + 4);
+    if (message.type === "exec") {
+      encode({ type: "started", id: message.id, pid: process.pid });
+      encode({ type: "stdout", id: message.id, sequence: 0, data_base64: Buffer.from("ok\\n").toString("base64") });
+      encode({ type: "exit", id: message.id, code: 0, signal: null, timed_out: false, cancelled: false, output_truncated: false });
+    } else if (message.type === "shutdown") {
+      process.exit(0);
+    }
+  }
+});
+`,
+	);
+	chmodSync(broker, 0o700);
+
+	const client = await SandboxBrokerClient.start(broker);
+	const output: Buffer[] = [];
+	const request: BrokerExecRequest = {
+		type: "exec",
+		id: "command-1",
+		command: { program: "/bin/true", args: [] },
+		cwd: directory,
+		env: { PATH: "/usr/bin:/bin" },
+		timeout_ms: 1000,
+		policy: {
+			base_rights: [],
+			grants: [],
+			denies: [],
+			network: { mode: "blocked" },
+			output_limit_bytes: 1024,
+		},
+	};
+	assert.deepEqual(await client.exec(request, (chunk) => output.push(chunk)), { exitCode: 0 });
+	assert.equal(Buffer.concat(output).toString("utf8"), "ok\n");
+	await client.shutdown();
+});

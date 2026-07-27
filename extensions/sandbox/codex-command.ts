@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import {
 	backgroundJobSocket,
@@ -41,6 +42,8 @@ export interface CodexSandboxGrants {
 
 export interface CodexSandboxConfig {
 	enabled?: boolean;
+	backend?: "codex" | "native-preview";
+	brokerPath?: string;
 	codexCommand?: string;
 	permissionProfile?: string;
 	network?: CodexSandboxNetworkConfig;
@@ -48,9 +51,12 @@ export interface CodexSandboxConfig {
 	shellEnvironment?: CodexSandboxShellEnvironmentConfig;
 }
 
-export const DEFAULT_CONFIG: Required<Pick<CodexSandboxConfig, "enabled" | "codexCommand" | "permissionProfile">> &
+export const DEFAULT_CONFIG: Required<
+	Pick<CodexSandboxConfig, "enabled" | "backend" | "codexCommand" | "permissionProfile">
+> &
 	CodexSandboxConfig = {
 	enabled: true,
+	backend: "codex",
 	codexCommand: "codex",
 	permissionProfile: "pi-sandbox",
 	network: {
@@ -181,6 +187,8 @@ export function normalizeConfig(value: unknown): CodexSandboxConfig {
 		input,
 		[
 			"enabled",
+			"backend",
+			"brokerPath",
 			"codexCommand",
 			"permissionProfile",
 			"network",
@@ -191,10 +199,21 @@ export function normalizeConfig(value: unknown): CodexSandboxConfig {
 		"sandbox config",
 	);
 	const enabled = input.enabled;
+	const backend = input.backend;
+	const brokerPath = input.brokerPath;
 	const codexCommand = input.codexCommand;
 	const permissionProfile = input.permissionProfile;
 	if (enabled !== undefined && typeof enabled !== "boolean") {
 		throw new Error("enabled must be a boolean");
+	}
+	if (backend !== undefined && backend !== "codex" && backend !== "native-preview") {
+		throw new Error("backend must be codex or native-preview");
+	}
+	if (
+		brokerPath !== undefined &&
+		(typeof brokerPath !== "string" || !brokerPath.startsWith("/"))
+	) {
+		throw new Error("brokerPath must be an absolute path");
 	}
 	if (codexCommand !== undefined && (typeof codexCommand !== "string" || codexCommand.length === 0)) {
 		throw new Error("codexCommand must be a non-empty string");
@@ -285,6 +304,8 @@ export function normalizeConfig(value: unknown): CodexSandboxConfig {
 
 	return {
 		enabled: enabled as boolean | undefined,
+		backend: backend as "codex" | "native-preview" | undefined,
+		brokerPath: brokerPath as string | undefined,
 		codexCommand: codexCommand as string | undefined,
 		permissionProfile: permissionProfile as string | undefined,
 		network: networkInput
@@ -597,13 +618,20 @@ export function buildCodexSandboxArgs(
 	const profile = `${profileBase}-${process.pid}`;
 
 	const filesystemEntries = new Map<string, FilesystemAccess>();
+	// Codex's workspace profile protects `.git` by name. Add the canonical root
+	// too so a symlinked repository control folder stays read-only.
+	const gitControlPath = resolve(cwd, ".git");
+	if (existsSync(gitControlPath)) filesystemEntries.set(canonicalize(gitControlPath), "read");
 	// Project-local Pi files can load code and prompts on reload. Keep the
 	// control folder read-only until the user grants it for this workspace.
 	const projectControlPath = canonicalize(resolve(cwd, ".pi"));
 	const projectControlGranted = (grants.write ?? []).some(
 		(path) => canonicalize(path) === projectControlPath,
 	);
-	if (!projectControlGranted) filesystemEntries.set(".pi", "read");
+	if (!projectControlGranted) {
+		filesystemEntries.set(".pi", "read");
+		if (existsSync(resolve(cwd, ".pi"))) filesystemEntries.set(projectControlPath, "read");
+	}
 	// Normal bash must not control the host-side background-job broker.
 	filesystemEntries.set(backgroundJobSocket(), "read");
 	for (const path of [...(effectiveConfig.filesystem?.allowRead ?? []), ...(grants.read ?? [])]) {

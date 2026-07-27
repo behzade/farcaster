@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, symlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -25,6 +25,23 @@ test("base rights allow broad reads and only workspace or temp writes", () => {
 	assert.equal(isBaseWriteAllowed(join(workspace, ".git", "index"), DEFAULT_CONFIG, workspace), false);
 	assert.equal(
 		isBaseWriteAllowed(join(workspace, ".pi", "extensions", "unsafe.ts"), DEFAULT_CONFIG, workspace),
+		false,
+	);
+});
+
+test("a symlinked workspace git folder stays read-only", () => {
+	const root = mkdtempSync(join(tmpdir(), "pi-policy-git-link-"));
+	const workspace = join(root, "workspace");
+	const target = join(workspace, "git-control");
+	mkdirSync(target, { recursive: true });
+	symlinkSync(target, join(workspace, ".git"));
+
+	assert.equal(
+		isBaseWriteAllowed(join(workspace, ".git", "hooks", "pre-commit"), DEFAULT_CONFIG, workspace),
+		false,
+	);
+	assert.equal(
+		isBaseWriteAllowed(join(target, "hooks", "pre-commit"), DEFAULT_CONFIG, workspace),
 		false,
 	);
 });

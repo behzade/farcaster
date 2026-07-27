@@ -1,4 +1,5 @@
-import { basename, relative, sep } from "node:path";
+import { homedir } from "node:os";
+import { basename, isAbsolute, relative, resolve, sep } from "node:path";
 import type { CodexSandboxConfig } from "./codex-command.ts";
 import {
 	canonicalize,
@@ -14,13 +15,14 @@ export function isBaseReadAllowed(
 	config: CodexSandboxConfig,
 	cwd: string,
 ): boolean {
+	const actual = canonicalize(path);
 	return (config.filesystem?.allowRead ?? []).some((root) => {
 		if (root === ":root") return true;
 		if (root === ":workspace_roots" || root === ".") {
-			return isInside(canonicalize(cwd), path);
+			return isInside(canonicalize(cwd), actual);
 		}
 		if (root.startsWith(":")) return false;
-		return isInside(resolvePermissionPath(root, cwd), path);
+		return isInside(resolvePermissionPath(root, cwd), actual);
 	});
 }
 
@@ -29,18 +31,19 @@ export function isBaseWriteAllowed(
 	config: CodexSandboxConfig,
 	cwd: string,
 ): boolean {
-	if (gitControlRoot(path)) return false;
+	if (gitControlRoot(path, cwd)) return false;
 	if (projectControlRoot(path, cwd)) return false;
-	if (isDefaultWritePath(path, cwd)) return true;
+	const actual = canonicalize(path);
+	if (isDefaultWritePath(actual, cwd)) return true;
 	return (config.filesystem?.allowWrite ?? []).some((root) => {
 		if (root === "." || root === ":workspace_roots") {
-			return isInside(canonicalize(cwd), path);
+			return isInside(canonicalize(cwd), actual);
 		}
 		if (root === ":tmpdir" || root === ":slash_tmp") {
-			return isDefaultWritePath(path, cwd);
+			return isDefaultWritePath(actual, cwd);
 		}
 		if (root.startsWith(":")) return false;
-		return isInside(resolvePermissionPath(root, cwd), path);
+		return isInside(resolvePermissionPath(root, cwd), actual);
 	});
 }
 
@@ -60,7 +63,7 @@ export function isDeniedByConfig(
 export function matchesPathRule(rule: string, path: string, cwd: string): boolean {
 	if (rule.startsWith(":")) return false;
 	if (!containsGlob(rule)) {
-		return isInside(resolvePermissionPath(rule, cwd), path);
+		return isInside(resolveRulePath(rule, cwd), path);
 	}
 	const normalizedPath = path.split(sep).join("/");
 	const relativePath = relative(cwd, path).split(sep).join("/");
@@ -70,6 +73,24 @@ export function matchesPathRule(rule: string, path: string, cwd: string): boolea
 		pattern.test(relativePath) ||
 		pattern.test(basename(path))
 	);
+}
+
+function resolveRulePath(rule: string, cwd: string): string {
+	try {
+		return resolvePermissionPath(rule, cwd);
+	} catch (error) {
+		if (
+			error &&
+			typeof error === "object" &&
+			"code" in error &&
+			(error.code === "EACCES" || error.code === "EPERM")
+		) {
+			if (rule === "~") return homedir();
+			if (rule.startsWith("~/")) return resolve(homedir(), rule.slice(2));
+			return isAbsolute(rule) ? resolve(rule) : resolve(cwd, rule);
+		}
+		throw error;
+	}
 }
 
 function containsGlob(value: string): boolean {

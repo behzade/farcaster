@@ -82,6 +82,13 @@ test("sandbox prompts rejected path tool calls without exposing a model tool", a
   assert.match(sandbox, /await promptForToolPermission\(permission, event, ctx\)/);
 });
 
+test("one-time network rights stay on one command", async () => {
+  const sandbox = await readFile(sandboxPath, "utf8");
+  assert.match(sandbox, /kind:\s*Type\.Literal\(["']network_host["']\)/);
+  assert.match(sandbox, /declaredNetworkPermissions/);
+  assert.doesNotMatch(sandbox, /oneShotNetworkPermissions/);
+});
+
 test("dense reads keep group state and hide follower rows", async () => {
   const source = await readFile(denseToolsPath, "utf8");
   assert.match(source, /readGroupsById/);

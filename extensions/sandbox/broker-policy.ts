@@ -1,0 +1,185 @@
+import { existsSync, statSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { isAbsolute, resolve } from "node:path";
+import type {
+	BrokerExecRequest,
+	BrokerFilesystemDeny,
+	BrokerFilesystemRight,
+} from "./broker-client.ts";
+import {
+	DEFAULT_CONFIG,
+	buildShellEnvironment,
+	mergeGlobalConfig,
+	type CodexSandboxConfig,
+} from "./codex-command.ts";
+import {
+	canonicalize,
+	type IoPermission,
+	resolvePermissionPath,
+} from "./io-permissions.ts";
+
+const OUTPUT_LIMIT_BYTES = 10 * 1024 * 1024;
+
+type FilePermission = Extract<IoPermission, { kind: "read" | "write" }>;
+
+export function buildBrokerExecRequest(
+	id: string,
+	command: string,
+	cwd: string,
+	timeoutSeconds: number | undefined,
+	config: CodexSandboxConfig,
+	permissions: readonly FilePermission[],
+	networkHosts: readonly string[],
+): BrokerExecRequest {
+	const effective = mergeGlobalConfig(DEFAULT_CONFIG, config);
+	if (networkHosts.length > 0) {
+		throw new Error("The native sandbox preview does not yet support network hosts");
+	}
+	// Protocol v1 intentionally omits configured network and Unix socket rights.
+	// Running with fewer rights is safe; a command that needs either must use
+	// the Codex backend until the native proxy and socket stages land.
+	if (
+		timeoutSeconds !== undefined &&
+		(!Number.isFinite(timeoutSeconds) || timeoutSeconds > 86_400)
+	) {
+		throw new Error("Native sandbox timeout must be finite and no more than 24 hours");
+	}
+	const actualCwd = canonicalize(cwd);
+	return {
+		type: "exec",
+		id,
+		command: { program: "/bin/bash", args: ["-c", command] },
+		cwd: actualCwd,
+		env: {
+			...buildShellEnvironment(effective),
+			IN_SANDBOX: "1",
+			PI_SANDBOX: "seatbelt-broker",
+		},
+		timeout_ms:
+			timeoutSeconds === undefined || timeoutSeconds <= 0
+				? null
+				: Math.max(1, Math.round(timeoutSeconds * 1000)),
+		policy: {
+			base_rights: baseRights(effective, actualCwd),
+			grants: permissions.map(permissionRight),
+			denies: denyRules(effective, actualCwd),
+			network: { mode: "blocked" },
+			output_limit_bytes: OUTPUT_LIMIT_BYTES,
+		},
+	};
+}
+
+function baseRights(
+	config: CodexSandboxConfig,
+	cwd: string,
+): BrokerFilesystemRight[] {
+	const rights = new Map<string, BrokerFilesystemRight>();
+	for (const entry of config.filesystem?.allowRead ?? []) {
+		const right = configRight("read", entry, cwd);
+		if (right) rights.set(`read:${right.path}:${right.scope}`, right);
+	}
+	for (const entry of config.filesystem?.allowWrite ?? []) {
+		const right = configRight("write", entry, cwd);
+		if (right) rights.set(`write:${right.path}:${right.scope}`, right);
+	}
+	return [...rights.values()];
+}
+
+function configRight(
+	access: "read" | "write",
+	entry: string,
+	cwd: string,
+): BrokerFilesystemRight | undefined {
+	let path: string;
+	if (entry === ":root") path = "/";
+	else if (entry === "." || entry === ":workspace_roots") path = cwd;
+	else if (entry === ":tmpdir") path = canonicalize(tmpdir());
+	else if (entry === ":slash_tmp") path = canonicalize("/tmp");
+	else if (entry.startsWith(":")) return undefined;
+	else if (containsGlob(entry)) {
+		throw new Error(`Native sandbox read/write roots cannot contain globs: ${entry}`);
+	} else path = resolvePermissionPath(entry, cwd);
+
+	if (access === "read" && !existsSync(path)) return undefined;
+	const directory = path === "/" || !existsSync(path) || statSync(path).isDirectory();
+	return {
+		access,
+		path,
+		scope: directory ? "tree" : "file",
+		missing_path: existsSync(path)
+			? "reject"
+			: directory
+				? "create_tree"
+				: "create_file",
+	};
+}
+
+function permissionRight(permission: FilePermission): BrokerFilesystemRight {
+	return {
+		access: permission.kind,
+		path: permission.path,
+		scope: permission.directory ? "tree" : "file",
+		missing_path: existsSync(permission.path)
+			? "reject"
+			: permission.directory
+				? "create_tree"
+				: "create_file",
+	};
+}
+
+function denyRules(
+	config: CodexSandboxConfig,
+	cwd: string,
+): BrokerFilesystemDeny[] {
+	const rules = new Map<string, BrokerFilesystemDeny>();
+	for (const [access, entries] of [
+		["read" as const, config.filesystem?.denyRead ?? []],
+		["write" as const, config.filesystem?.denyWrite ?? []],
+	] as const) {
+		for (const entry of entries) {
+			const normalized = normalizeDeny(entry, cwd);
+			const key = `${normalized.pattern}:${normalized.scope}`;
+			const current = rules.get(key);
+			rules.set(key, {
+				...normalized,
+				access:
+					current && current.access !== access
+						? "read_write"
+						: current?.access ?? access,
+			});
+		}
+	}
+	return [...rules.values()];
+}
+
+function normalizeDeny(
+	entry: string,
+	cwd: string,
+): Omit<BrokerFilesystemDeny, "access"> {
+	if (containsGlob(entry)) {
+		let pattern: string;
+		if (entry.startsWith("~/")) pattern = `${homedir()}/${entry.slice(2)}`;
+		else if (isAbsolute(entry)) pattern = entry;
+		else if (entry.includes("/")) pattern = `${cwd}/${entry}`;
+		else pattern = `/**/${entry}`;
+		return { pattern, scope: "glob" };
+	}
+	const pattern = lexicalPath(entry, cwd);
+	let scope: "file" | "tree" = "tree";
+	try {
+		if (existsSync(pattern) && !statSync(pattern).isDirectory()) scope = "file";
+	} catch {
+		// An unreadable deny root stays a tree deny without probing it further.
+	}
+	return { pattern, scope };
+}
+
+function lexicalPath(path: string, cwd: string): string {
+	if (path === "~") return homedir();
+	if (path.startsWith("~/")) return resolve(homedir(), path.slice(2));
+	return isAbsolute(path) ? resolve(path) : resolve(cwd, path);
+}
+
+function containsGlob(value: string): boolean {
+	return value.includes("*") || value.includes("?") || value.includes("[");
+}

@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -8,6 +14,7 @@ import {
 	grantsToRuntime,
 	gitControlRoot,
 	isDefaultWritePath,
+	isControlRootSymlink,
 	isProtectedPath,
 	isProtectedWritePath,
 	loadWorkspacePermissions,
@@ -106,6 +113,22 @@ test("git object paths widen only to the repository control folder", () => {
 	mkdirSync(git, { recursive: true });
 	assert.equal(gitControlRoot(join(git, "objects", "ab", "new-object")), canonicalize(git));
 	assert.equal(gitControlRoot(join(workspace, "src", "index.ts")), undefined);
+});
+
+test("a symlinked git folder keeps its lexical control root", () => {
+	const root = mkdtempSync(join(tmpdir(), "pi-git-link-"));
+	const workspace = join(root, "workspace");
+	const target = join(workspace, "git-control");
+	const git = join(workspace, ".git");
+	mkdirSync(target, { recursive: true });
+	symlinkSync(target, git);
+	assert.equal(gitControlRoot(join(git, "hooks", "pre-commit"), workspace), git);
+	assert.equal(gitControlRoot(join(target, "hooks", "pre-commit"), workspace), git);
+	assert.equal(isControlRootSymlink(git), true);
+	assert.deepEqual(
+		grantsToRuntime([{ kind: "write", path: git, directory: true }]),
+		{ read: [], write: [], networkHosts: [] },
+	);
 });
 
 test("workspace and system temp paths are writable by default", () => {

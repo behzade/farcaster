@@ -1,16 +1,18 @@
 # Pi
 
 This repo owns Behzad's reviewed Pi coding-agent setup. It contains local
-extensions, a Codex sandbox adapter, background job support, tests, and pinned
-Nix builds for third-party extensions.
+extensions, Codex and native sandbox code, background job support, tests, and
+pinned Nix builds.
 
 Machine policy stays in `nix-config`. That repo sets sandbox paths, network
 hosts, and notification settings. This repo owns code and package pins.
 
 ## Layout
 
-- `extensions/sandbox`: fail-closed `codex sandbox` adapter, IO permission
-  prompt, and background-job tool and helper.
+- `extensions/sandbox`: fail-closed sandbox adapter, IO permission prompt,
+  native broker client, and background-job tool and helper.
+- `sandbox-broker`: protocol, threat model, provenance, and the first native
+  macOS Seatbelt backend.
 - `extensions/*.ts`: local notification, input, session, title, and dense tool
   rendering hooks.
 - `themes/gruvbox-dark-hard.json`: Gruvbox's canonical dark-hard palette for
@@ -26,6 +28,7 @@ hosts, and notification settings. This repo owns code and package pins.
 
 ```sh
 npm run check --prefix extensions/sandbox
+cargo test --manifest-path sandbox-broker/Cargo.toml
 node --test tests/governance.test.ts
 nix flake check
 ```
@@ -34,6 +37,7 @@ Build one extension with:
 
 ```sh
 nix build .#sandbox
+nix build .#sandbox-broker
 nix build .#dense-tools
 nix build .#subagents
 nix build .#openai-server-compaction
@@ -58,10 +62,19 @@ its bash tool, so the two extensions do not conflict.
 
 ## Sandbox backend
 
-The sandbox extension requires an installed Codex CLI with the `codex sandbox`
-command. It builds a fresh Codex permission profile for each shell call from
-`sandbox.json`. Every interpreter and child process keeps the same profile. A
-failed Codex check blocks shell commands.
+The sandbox extension defaults to the installed Codex CLI and its `codex
+sandbox` command. It builds a fresh Codex permission profile for each shell
+call from `sandbox.json`. Every interpreter and child process keeps the same
+profile. A failed backend check blocks shell commands.
+
+The tree also contains a macOS native preview, but the extension blocks
+activation until its hostile-child cleanup and unsandboxed macOS test gates
+pass. The broker has a separate pinned Nix package; the released Codex
+extension does not depend on it. The native release must pin that broker path
+into the extension. A custom `brokerPath` must be absolute and can come only
+from global config; project config cannot switch backends or replace the broker.
+Protocol v1 keeps network and Unix sockets blocked and has no native background
+jobs or denial collector. `backend: "codex"` remains the only released backend.
 
 The default rights are:
 
@@ -87,16 +100,29 @@ blocked without a prompt. Saved rights live in
 
 Project `.pi` is also read-only by default because it can load code and prompts
 on reload. A write asks for the whole project `.pi` folder, like repository
-control writes ask for `.git`. Global `~/.pi` stays blocked and cannot receive a
-model grant.
+control writes ask for `.git`. Symlinked `.git` and `.pi` control folders cannot
+receive write grants because their targets could be much broader than the path
+shown in the prompt. Global `~/.pi` stays blocked and cannot receive a model
+grant.
 
-When bash needs network access, the model can request one exact hostname or IP.
-The request rejects schemes, ports, paths, and wildcards. The user can allow
-that host once or save it for the workspace. Old blanket `web` and
+A Codex-backed bash or background-job start can declare one exact
+`network_host` right in its `permissions`. The request rejects schemes, ports,
+paths, and wildcards. An allow-once host stays in that command's generated
+profile and cannot move to a parallel call. The separate
+`request_network_permission` tool saves an exact host for the workspace; it no
+longer creates a shared next-command grant. Old blanket `web` and
 `local_network` rights are ignored when saved rights load.
 
-For bash, the sandbox checks failed command output for access errors such as
-`Operation not permitted` and `Permission denied`. If the same error line has
+A bash or background-job start can declare up to 16 exact read, write, or
+network host rights. The sandbox checks those rights and asks before launch. An allow-once choice is
+kept in that one tool call's generated profile, so another command cannot use
+it. This handles tools that hide the OS access error, such as a stateful CLI
+that reports only that its service is unavailable.
+
+On the Codex backend, undeclared bash rights still use a limited fallback. The
+sandbox checks failed command output for access errors such as `Operation not
+permitted` and `Permission denied`. If the
+same error line has
 one exact absolute path and the active policy identifies it as a write denial,
 the sandbox shows the same approval prompt and retries inside the original tool
 call. It allows at most three retries. A retry can repeat work completed before
@@ -121,10 +147,11 @@ outside the caller's file or network limits. The machine config allows the Nix
 daemon for normal Nix, flake, and direnv work. The reserved background-job tmux
 socket is never passed to normal bash even if an older config lists it.
 
-Use the `background_job` tool for dev servers, watchers, builds, and long tests.
-The tool owns the tmux socket and starts each command in a fresh Codex sandbox
-with the current workspace rights. It can list, inspect, send input to, and stop
-only jobs marked as broker-managed.
+On the Codex backend, use the `background_job` tool for dev servers, watchers,
+builds, and long tests. The tool owns the tmux socket and starts each command in
+a fresh Codex sandbox with the current workspace rights. It can list, inspect,
+send input to, and stop only jobs marked as broker-managed. Native preview
+background starts fail closed until they use the same broker policy.
 
 Pi's built-in recursive `grep` and `find` tools do not run as child processes
 of the sandbox. The extension removes them from the active tool set, and still
