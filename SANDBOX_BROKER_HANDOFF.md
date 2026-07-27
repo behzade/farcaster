@@ -520,6 +520,7 @@ Do not block Stage 2 on perfect denial discovery.
 - Choose and record an exact Codex source commit before importing Linux code.
 - Split platform launch code so request validation and protocol handling remain shared.
 - Add a pinned bubblewrap launcher with read-only root mounts, exact writable mounts, protected child mounts, hidden read denies, and safe missing-path handling.
+- Resolve recursive glob hard denies with a reviewed dynamic enforcement design; bubblewrap, Landlock, seccomp, and pre-launch match expansion do not enforce names created after launch.
 - Add user, mount, PID, and blocked-network namespaces, `no_new_privs`, reviewed seccomp rules, and PID-namespace teardown.
 - Add Linux readiness self-tests and accept only the `linux`/`bubblewrap` readiness pair in the client.
 - Package the exact broker and bubblewrap paths for x86_64 and aarch64 Linux.
@@ -632,11 +633,12 @@ not search the workspace or user `PATH` for the broker or bubblewrap.
 The macOS architecture and explicit-right shape are implemented. Remaining choices are:
 
 1. Which exact Codex commit should supply the Linux launcher, mount, namespace, and seccomp reference?
-2. Should non-Nix Linux require a fixed system bubblewrap path, or should Pi package a vetted binary there too?
-3. Which reviewed seccomp policy and architecture set should the first Linux release support?
-4. After blocked-network Linux ships, should approved hosts use the same future host-owned proxy design as macOS?
-5. Should native background jobs land before or after Linux foreground parity?
-6. Should denial hints remain a later macOS-only task, or wait for one cross-platform diagnostic design?
+2. What trusted mechanism will enforce recursive secret-name globs for paths created after launch? Bubblewrap-only snapshot masking is insufficient.
+3. Should non-Nix Linux require a fixed system bubblewrap path, or should Pi package a vetted binary there too?
+4. Which reviewed seccomp policy and architecture set should the first Linux release support?
+5. After blocked-network Linux ships, should approved hosts use the same future host-owned proxy design as macOS?
+6. Should native background jobs land before or after Linux foreground parity?
+7. Should denial hints remain a later macOS-only task, or wait for one cross-platform diagnostic design?
 
 None of these choices may weaken protocol v1 or delay fail-closed Linux readiness checks.
 

@@ -20,7 +20,7 @@ See [PROTOCOL.md](PROTOCOL.md), [THREAT_MODEL.md](THREAT_MODEL.md), [UPSTREAM.md
 
 ## Linux work remaining
 
-Linux currently reports `can_exec: false`; the client accepts only macOS/Seatbelt, and machine config keeps Linux on Codex. The Linux milestone must add a pinned bubblewrap launcher, read-only root and protected mount planning, user/mount/PID/network namespaces, `no_new_privs`, seccomp, strict process cleanup, Linux readiness/client wiring, Nix packages for x86_64 and aarch64, and a full Linux release gate. Protocol v1 must keep network, host Unix sockets, background jobs, and denial hints unavailable. The full implementation and test checklist is in [LINUX_BACKEND.md](LINUX_BACKEND.md).
+Linux currently reports `can_exec: false`; the client accepts only macOS/Seatbelt, and machine config keeps Linux on Codex. The Linux milestone must resolve dynamic secret-name glob enforcement, add a pinned bubblewrap launcher, read-only root and protected mount planning, user/mount/PID/network namespaces, `no_new_privs`, seccomp, strict process cleanup, Linux readiness/client wiring, Nix packages for x86_64 and aarch64, and a full Linux release gate. Protocol v1 must keep network, host Unix sockets, background jobs, and emitted denial hints unavailable. The full implementation and test checklist is in [LINUX_BACKEND.md](LINUX_BACKEND.md).
 
 ## Current checks
 

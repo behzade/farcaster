@@ -28,7 +28,7 @@ The opt-in native backend is released on macOS after its unsandboxed release gat
 
 A child can still win the non-atomic fork-and-enumeration race, then leave the process group with `setpgid`, `setsid`, or a double fork. Public unprivileged macOS APIs do not provide a kill-and-reap container for such children; creating a new kernel coalition fails with `EPERM` for a normal user process. Pi explicitly places deliberate daemon escape outside the native backend's threat model. Any survivor keeps its Seatbelt limits, but it may continue using CPU and rights that the command received until it exits or the user kills it.
 
-The Rust broker does not execute commands on Linux yet. Linux stays on Codex until the bubblewrap work in [LINUX_BACKEND.md](LINUX_BACKEND.md) passes. The Linux backend must use user, mount, PID, and blocked-network namespaces, `no_new_privs`, reviewed seccomp rules, protected mount ordering, and PID-namespace teardown. Missing bubblewrap or unavailable unprivileged namespaces must fail readiness rather than weaken isolation.
+The Rust broker does not execute commands on Linux yet. Linux stays on Codex until the bubblewrap work in [LINUX_BACKEND.md](LINUX_BACKEND.md) passes. The Linux backend must use user, mount, PID, and blocked-network namespaces, `no_new_privs`, reviewed seccomp rules, protected mount ordering, and PID-namespace teardown. It must also resolve recursive secret-name globs: static bubblewrap mounts cannot protect a matching path created after launch. Missing bubblewrap, unavailable unprivileged namespaces, or an unenforceable hard rule must fail readiness rather than weaken isolation.
 
 ## Security rules
 

@@ -24,7 +24,7 @@ stdenvNoCC.mkDerivation {
   '';
 
   meta = {
-    description = "Pi bash sandbox adapter with Codex and an unreleased native client";
+    description = "Pi bash sandbox adapter with Codex and native broker clients";
     license = lib.licenses.mit;
     platforms = lib.platforms.darwin ++ lib.platforms.linux;
   };

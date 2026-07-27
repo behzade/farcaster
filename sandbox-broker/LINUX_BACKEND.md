@@ -74,6 +74,17 @@ The Linux mount plan must enforce the same normalized rights as Seatbelt:
 
 Generate a mount plan first, validate it, then turn it into bubblewrap arguments. Do not let argument order silently undo protected child mounts.
 
+#### Resolve glob hard denies before implementation
+
+Bubblewrap mount rules protect concrete paths and trees. They do not enforce basename globs such as `/**/*.env`, `/**/*.key`, or write-denied `/**/*.pem` for files that appear after the mount plan is built. Landlock and seccomp also do not provide unprivileged path-pattern checks. Expanding current matches and masking them is useful defense in depth, but it is not equivalent: a host process could create a matching secret after launch, and a sandboxed process could create a newly forbidden name.
+
+This is a Linux release blocker. Before coding the mount backend, choose and review one enforceable policy:
+
+- add a trusted dynamic filesystem layer, such as a narrowly reviewed passthrough filesystem, that rejects protected names on every lookup and mutation; or
+- replace glob rules with an equally protective policy that the Linux kernel boundary can enforce, with an explicit threat-model review and migration plan.
+
+Until one of those designs lands, Linux policy compilation must reject every glob deny. Because the current hard policy always includes secret-name globs, the native Linux backend cannot report `can_exec: true` under the current defaults. Do not treat bounded pre-launch glob expansion as sufficient. If expansion remains as a supplement, cap traversal, matches, memory, and time, and test files created or renamed during execution.
+
 ### 4. Add namespaces and kernel controls
 
 The launcher must preserve the controls used by the reviewed Codex path:
@@ -167,7 +178,8 @@ Add a Linux release test, such as `sandbox-broker/tests/linux_release.rs`, that 
 - stdout and stderr cannot forge broker events;
 - one-time rights stay on one command ID;
 - a second active command is rejected;
-- approved network hosts, Unix socket grants, background jobs, and denial hints remain rejected in protocol v1.
+- approved network hosts, Unix socket grants, and background jobs remain unavailable;
+- the first Linux broker emits no denial hints, while the client keeps validating the event shape reserved by protocol v1.
 
 ## Definition of done
 
@@ -181,4 +193,4 @@ The Linux backend is ready only when all of these are true:
 - `UPSTREAM.md`, licenses, README, threat model, and machine config match the shipped behavior;
 - machine config switches Linux from `codex` to `native-preview` only after the release gate passes.
 
-Native background jobs, approved network hosts, Unix socket grants, and denial collection remain later milestones unless their protocol and tests land in the same reviewed change.
+Approved network hosts and Unix socket grants require a later protocol version. Native background jobs and use of the reserved denial event remain separate reviewed milestones with their own tests.
