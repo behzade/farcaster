@@ -76,6 +76,7 @@ import {
 	type NativeApprovalRequest,
 	resolveNativeApprovalChoice,
 } from "./native-sandbox-ops.ts";
+import { requestUserApproval } from "./permission-system-approval.ts";
 import { parseFilesystemFailurePaths } from "./sandbox-failures.ts";
 
 function readConfig(path: string): CodexSandboxConfig | undefined {
@@ -365,10 +366,6 @@ export default function (pi: ExtensionAPI) {
 		ctx: ExtensionContext,
 	): Promise<ApprovalDecision> => {
 		const label = permissionLabel(permission);
-		if (!ctx.hasUI) {
-			return { allowed: false, persistent: false, reason: `${label} needs user approval` };
-		}
-
 		pi.events.emit("approval:requested", {
 			kind: "io-permission",
 			title: "Tool requests an IO right",
@@ -384,25 +381,29 @@ export default function (pi: ExtensionAPI) {
 		const allowAlways = tool.retry
 			? "Always allow in this workspace and retry"
 			: "Always allow in this workspace";
-		const choices =
-			tool.allowOnce === false
-				? [allowAlways, "No", "No, with comment"]
-				: [allowOnce, allowAlways, "No", "No, with comment"];
-		const selection = await ctx.ui.select(
-			`Allow ${tool.toolName} to access ${label}?${
+		const result = await requestUserApproval(ctx, {
+			requestId: tool.toolCallId,
+			title: "Tool requests an IO right",
+			message: `Allow ${tool.toolName} to access ${label}?${
 				tool.reason ? `\n\nReason: ${tool.reason}` : ""
 			}`,
-			choices,
-			{ signal: tool.signal },
-		);
-		let comment: string | undefined;
-		if (selection === "No, with comment") {
-			comment = await ctx.ui.input("Tell the agent what to do instead", "Short note", {
-				signal: tool.signal,
-			});
-		}
-		const allow = selection === allowOnce || selection === allowAlways;
-		if (selection === allowAlways) {
+			source: "tool_call",
+			surface: permission.kind,
+			value: permission.path,
+			choices: [
+				...(tool.allowOnce === false
+					? []
+					: [{ id: "allow-once", label: allowOnce }]),
+				{ id: "allow-always", label: allowAlways },
+				{ id: "deny", label: "No" },
+				{ id: "deny-with-comment", label: "No, with comment", requestReason: true },
+			],
+			reasonTitle: "Tell the agent what to do instead",
+			reasonPlaceholder: "Short note",
+			signal: tool.signal,
+		});
+		const allow = result.choiceId === "allow-once" || result.choiceId === "allow-always";
+		if (result.choiceId === "allow-always") {
 			saveWorkspacePermission(permissionFile, ctx.cwd, permission);
 			persistentPermissions = loadWorkspacePermissions(permissionFile, ctx.cwd);
 		}
@@ -415,13 +416,15 @@ export default function (pi: ExtensionAPI) {
 		if (allow) {
 			return {
 				allowed: true,
-				persistent: selection === allowAlways,
+				persistent: result.choiceId === "allow-always",
 			};
 		}
 		return {
 			allowed: false,
 			persistent: false,
-			reason: comment ? `Permission denied. User comment: ${comment}` : "Permission denied by user",
+			reason: result.reason
+				? `Permission denied. User comment: ${result.reason}`
+				: (result.unavailableReason ?? "Permission denied by user"),
 		};
 	};
 
@@ -446,7 +449,6 @@ export default function (pi: ExtensionAPI) {
 			return approved;
 		}
 
-		if (!ctx.hasUI) return undefined;
 		const access = permissions[0]?.kind ?? folder.kind;
 		const exactOnce = `Allow these ${permissions.length} files once and retry`;
 		const exactAlways = `Always allow these ${permissions.length} files in this workspace and retry`;
@@ -465,21 +467,29 @@ export default function (pi: ExtensionAPI) {
 			sessionId: ctx.sessionManager.getSessionId(),
 			cwd: ctx.cwd,
 		});
-		const selection = await ctx.ui.select(
-			`${summary}\n\n${paths}`,
-			[exactOnce, exactAlways, folderOnce, folderAlways, "No"],
-			{ signal: tool.signal },
-		);
+		const result = await requestUserApproval(ctx, {
+			requestId: tool.toolCallId,
+			title: "Tool requests grouped IO rights",
+			message: `${summary}\n\n${paths}`,
+			source: "tool_call",
+			surface: access,
+			value: folder.path,
+			choices: [
+				{ id: "exact-once", label: exactOnce },
+				{ id: "exact-always", label: exactAlways },
+				{ id: "folder-once", label: folderOnce },
+				{ id: "folder-always", label: folderAlways },
+				{ id: "deny", label: "No" },
+			],
+			signal: tool.signal,
+		});
 		const choice: NativeApprovalChoice =
-			selection === exactOnce
-				? "exact-once"
-				: selection === exactAlways
-					? "exact-always"
-					: selection === folderOnce
-						? "folder-once"
-						: selection === folderAlways
-							? "folder-always"
-							: "deny";
+			result.choiceId === "exact-once" ||
+			result.choiceId === "exact-always" ||
+			result.choiceId === "folder-once" ||
+			result.choiceId === "folder-always"
+				? result.choiceId
+				: "deny";
 		const resolved = resolveNativeApprovalChoice(request, choice);
 		if (resolved?.persistent) {
 			for (const permission of resolved.permissions) {
@@ -1007,12 +1017,6 @@ export default function (pi: ExtensionAPI) {
 			) {
 				return;
 			}
-			if (!ctx.hasUI) {
-				return {
-					block: true,
-					reason: `MCP service ${permission.server} needs user approval`,
-				};
-			}
 			const label = permissionLabel(permission);
 			pi.events.emit("approval:requested", {
 				kind: "io-permission",
@@ -1023,18 +1027,25 @@ export default function (pi: ExtensionAPI) {
 				sessionId: ctx.sessionManager.getSessionId(),
 				cwd: ctx.cwd,
 			});
-			const selection = await ctx.ui.select(
-				`Allow ${label}?`,
-				["Allow once", "Always allow in this workspace", "No", "No, with comment"],
-			);
-			let comment: string | undefined;
-			if (selection === "No, with comment") {
-				comment = await ctx.ui.input("Tell the agent what to do instead", "Short note");
-			}
+			const approval = await requestUserApproval(ctx, {
+				requestId: event.toolCallId,
+				title: "Agent requests service access",
+				message: `Allow ${label}?`,
+				source: "tool_call",
+				surface: "mcp",
+				value: permission.server,
+				choices: [
+					{ id: "allow-once", label: "Allow once" },
+					{ id: "allow-always", label: "Always allow in this workspace" },
+					{ id: "deny", label: "No" },
+					{ id: "deny-with-comment", label: "No, with comment", requestReason: true },
+				],
+				reasonTitle: "Tell the agent what to do instead",
+				reasonPlaceholder: "Short note",
+			});
 			const allow =
-				selection === "Allow once" ||
-				selection === "Always allow in this workspace";
-			if (selection === "Always allow in this workspace") {
+				approval.choiceId === "allow-once" || approval.choiceId === "allow-always";
+			if (approval.choiceId === "allow-always") {
 				saveWorkspacePermission(permissionFile, ctx.cwd, permission);
 				persistentPermissions = loadWorkspacePermissions(permissionFile, ctx.cwd);
 			}
@@ -1047,9 +1058,9 @@ export default function (pi: ExtensionAPI) {
 			if (allow) return;
 			return {
 				block: true,
-				reason: comment
-					? `MCP access denied. User comment: ${comment}`
-					: "MCP access denied",
+				reason: approval.reason
+					? `MCP access denied. User comment: ${approval.reason}`
+					: (approval.unavailableReason ?? "MCP access denied"),
 			};
 		}
 		if (!["read", "write", "edit", "grep", "find", "ls"].includes(event.toolName)) return;

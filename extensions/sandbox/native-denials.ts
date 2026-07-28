@@ -59,6 +59,13 @@ export function permissionForNativeDenial(
 				: undefined;
 		if (controlRoot && isControlRootSymlink(controlRoot)) return { kind: "unsafe" };
 		const permissionPath = controlRoot ?? path;
+		if (
+			isProtectedPath(lexicalPath) ||
+			(access === "write" && isProtectedWritePath(lexicalPath)) ||
+			isDeniedByConfig(path, access, config, cwd)
+		) {
+			return { kind: "unsafe" };
+		}
 		if (access === "read" && !existsSync(permissionPath)) return { kind: "ignore" };
 		const directory =
 			controlRoot !== undefined ||
@@ -74,13 +81,6 @@ export function permissionForNativeDenial(
 				permissionCoversPath(permission, path),
 		);
 		if (baseAllowed || alreadyGranted) return { kind: "ignore" };
-		if (
-			isProtectedPath(path) ||
-			(access === "write" && isProtectedWritePath(path)) ||
-			isDeniedByConfig(path, access, config, cwd)
-		) {
-			return { kind: "unsafe" };
-		}
 
 		return {
 			kind: "permission",
