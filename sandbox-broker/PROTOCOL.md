@@ -25,7 +25,7 @@ The first server frame is `ready`:
 
 Pi checks the version, platform, backend, and `can_exec`. It blocks shell calls if startup fails, the frame times out, or `can_exec` is false. It never falls back to a plain host process.
 
-A future Linux implementation of this same protocol version must identify itself with `platform: "linux"` and `backend: "bubblewrap"`. The current broker reports `can_exec: false` on Linux, and the current client does not accept that pair yet. Linux support must add a real bubblewrap namespace self-test before readiness; the presence of a binary alone is not enough. See [LINUX_BACKEND.md](LINUX_BACKEND.md).
+Linux identifies itself with `platform: "linux"` and `backend: "bubblewrap"`. The client accepts that pair only on Linux. The broker reports `can_exec: true` only after the fixed Bubblewrap binary passes a real user/PID/network/IPC/UTS namespace, private `/proc`, seccomp, and `NoNewPrivs` self-test; finding a binary alone is not enough. See [LINUX_BACKEND.md](LINUX_BACKEND.md).
 
 ## Requests
 
@@ -95,7 +95,7 @@ The broker stops all owned children, closes its session denial collector, and ex
 
 A command moves through `accepted -> started -> terminal`. It emits at most one `started` and exactly one terminal result. A pre-start `error` is terminal and has no `exit`. A started command ends with `exit`; broker loss is a host-side terminal error reported by the extension.
 
-A successful start emits zero or more stream events between `started` and `exit`. The macOS backend also emits one bounded `denials` event after process and output cleanup and before `exit`. `timed_out` and `cancelled` state why the broker began termination; the exit code and signal state how the process ended:
+A successful start emits zero or more stream events between `started` and `exit`. The macOS backend also emits one bounded `denials` event after process and output cleanup and before `exit`; Linux emits no `denials` event. `timed_out` and `cancelled` state why the broker began termination; the exit code and signal state how the process ended:
 
 ```json
 { "type": "started", "id": "tool-call-id/attempt-0", "pid": 1234 }
@@ -117,7 +117,7 @@ A successful start emits zero or more stream events between `started` and `exit`
 }
 ```
 
-Stdout and stderr each have a zero-based sequence number. The broker preserves arbitrary bytes and caps each chunk and total output. The macOS collector keeps a session-long `/usr/bin/log stream`, waits for readiness before `ready`, and attributes records through the command's observed PIDs and sequence window. It caps raw lines, retained records, command items, and command bytes. `complete: false` states that unified logging and PID discovery can miss records, so an empty set proves nothing. Log records also lack process start times, so PID reuse can misattribute a hint. Pi may use an exact safe non-device path as an approval hint. `/dev` hints are ignored, and approved device rights are rejected by the broker. Pi may not infer a broad root or retry with more rights without user approval. Linux v1 will emit no denial hints.
+Stdout and stderr each have a zero-based sequence number. The broker preserves arbitrary bytes and caps each chunk and total output. The macOS collector keeps a session-long `/usr/bin/log stream`, waits for readiness before `ready`, and attributes records through the command's observed PIDs and sequence window. It caps raw lines, retained records, command items, and command bytes. `complete: false` states that unified logging and PID discovery can miss records, so an empty set proves nothing. Log records also lack process start times, so PID reuse can misattribute a hint. Pi may use an exact safe non-device path as an approval hint. `/dev` hints are ignored, and approved device rights are rejected by the broker. Pi may not infer a broad root or retry with more rights without user approval. Linux v1 emits no denial hints, and the client treats their absence as expected only for the verified Linux/Bubblewrap pair.
 
 ## Grant isolation
 

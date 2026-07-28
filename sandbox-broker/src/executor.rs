@@ -17,6 +17,7 @@ use crate::denial_collector::DenialCollector;
 use crate::framing::write_frame;
 use crate::pid_tracker::{PidTracker, ProcessGuard, cleanup as cleanup_tracked_processes};
 use crate::protocol::{ErrorCode, ServerEvent};
+#[cfg(target_os = "macos")]
 use crate::seatbelt::{SANDBOX_EXEC, build_args};
 use crate::validation::ValidatedExec;
 
@@ -30,6 +31,12 @@ const LAUNCH_CANCELLED: u8 = 2;
 
 type SharedWriter = Arc<Mutex<BufWriter<std::io::Stdout>>>;
 type SharedState = Arc<(Mutex<RuntimeState>, Condvar)>;
+
+struct PreparedResources {
+    _files: Vec<std::fs::File>,
+    #[cfg(target_os = "linux")]
+    _synthetic_directories: Vec<crate::linux::SyntheticDirectory>,
+}
 
 struct StreamReader {
     thread: thread::JoinHandle<()>,
@@ -230,21 +237,46 @@ fn run_command(
     denial_collector: Option<&DenialCollector>,
 ) {
     let command = launch_command(request);
-    let args = match build_args(&command, &request.cwd, &request.rights, &request.denies) {
-        Ok(args) => args,
+    #[cfg(target_os = "macos")]
+    let prepared =
+        build_args(&command, &request.cwd, &request.rights, &request.denies).map(|args| {
+            (
+                SANDBOX_EXEC,
+                args,
+                "seatbelt-broker",
+                PreparedResources { _files: Vec::new() },
+            )
+        });
+    #[cfg(target_os = "linux")]
+    let prepared = crate::linux::prepare(request, &command).map(|launch| {
+        (
+            launch.program,
+            launch.args,
+            "bubblewrap-broker",
+            PreparedResources {
+                _files: launch.resources,
+                _synthetic_directories: launch.synthetic_directories,
+            },
+        )
+    });
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let prepared: Result<(&str, Vec<String>, &str, PreparedResources), String> =
+        Err("native sandbox execution is unsupported on this platform".to_owned());
+    let (program, args, marker, resources) = match prepared {
+        Ok(prepared) => prepared,
         Err(message) => {
             send_terminal_error(writer, state, control, ErrorCode::PolicyRejected, message);
             return;
         }
     };
-    let mut process = Command::new(SANDBOX_EXEC);
+    let mut process = Command::new(program);
     process
         .args(args)
         .current_dir(&request.cwd)
         .env_clear()
         .envs(&request.env)
         .env("IN_SANDBOX", "1")
-        .env("PI_SANDBOX", "seatbelt-broker")
+        .env("PI_SANDBOX", marker)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -258,11 +290,14 @@ fn run_command(
                 state,
                 control,
                 ErrorCode::CommandStartFailed,
-                format!("cannot start {SANDBOX_EXEC}: {error}"),
+                format!("cannot start {program}: {error}"),
             );
             return;
         }
     };
+    // Keep inherited descriptors open and synthetic mount targets registered
+    // until Bubblewrap and every process in its PID namespace have exited.
+    let _resources = resources;
     let pid = i32::try_from(child.id()).unwrap_or(i32::MAX);
     control.pid.store(pid, Ordering::Release);
     let observer = match denial_collector.map(|collector| collector.begin(&request.id)) {

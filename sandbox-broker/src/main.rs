@@ -5,6 +5,8 @@ use std::path::Path;
 use pi_sandbox_broker::denial_collector::DenialCollector;
 use pi_sandbox_broker::executor::Runtime;
 use pi_sandbox_broker::framing::read_frame;
+#[cfg(target_os = "linux")]
+use pi_sandbox_broker::linux;
 use pi_sandbox_broker::protocol::{
     ClientRequest, ErrorCode, MAX_FRAME_BYTES, PROTOCOL_VERSION, ServerEvent,
 };
@@ -33,14 +35,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let denial_collector = None;
     #[cfg(target_os = "macos")]
     let can_exec = seatbelt_ready && denial_collector.is_some();
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    let can_exec = hard_policy.is_ok() && linux::self_test().is_ok();
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     let can_exec = false;
+    #[cfg(target_os = "macos")]
+    let backend_name = "seatbelt";
+    #[cfg(target_os = "linux")]
+    let backend_name = "bubblewrap";
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let backend_name = "native";
     let runtime = Runtime::new_with_collector(io::stdout(), denial_collector);
     runtime.send(&ServerEvent::Ready {
         version: PROTOCOL_VERSION,
         platform: std::env::consts::OS.to_owned(),
         backend: if can_exec {
-            "seatbelt".to_owned()
+            backend_name.to_owned()
         } else {
             "unavailable".to_owned()
         },
@@ -64,7 +74,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     runtime.send(&ServerEvent::Error {
                         id,
                         code: ErrorCode::BackendUnavailable,
-                        message: "the Seatbelt backend is unavailable; command blocked".to_owned(),
+                        message: format!(
+                            "the {backend_name} backend is unavailable; command blocked"
+                        ),
                     })?;
                     continue;
                 }

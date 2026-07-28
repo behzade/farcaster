@@ -67,21 +67,28 @@ sandbox` command. It builds a fresh Codex permission profile for each shell
 call from `sandbox.json`. Every interpreter and child process keeps the same
 profile. A failed backend check blocks shell commands.
 
-The tree also contains an opt-in macOS native preview. Its full unsandboxed
-macOS integration and denial-collector gate passes. Cleanup
+The tree also contains opt-in native backends for macOS Seatbelt and Linux
+Bubblewrap. The macOS integration and denial-collector gate passes. Its cleanup
 uses a process group plus a best-effort kqueue descendant tracker with process
 start-time checks. Deliberate fast `setpgid`, `setsid`, or double-fork escape is
-out of scope because macOS has no unprivileged atomic process-tree owner; a
-survivor still keeps its command's Seatbelt limits. The broker has a separate
-pinned Nix package. On macOS, the extension package pins that exact broker store
-path. Linux keeps an unavailable placeholder and stays on Codex until the work
-in [`sandbox-broker/LINUX_BACKEND.md`](sandbox-broker/LINUX_BACKEND.md) passes
-its release gates. A custom `brokerPath` must be absolute and can come only from
-global config; project config cannot switch backends or replace the broker.
-Protocol v1 keeps network and Unix sockets blocked and has no native background
-jobs. On macOS, one bounded session collector returns incomplete structured
-Seatbelt denial hints. `backend: "codex"` remains the default. To opt in on
-macOS, set this in the global `~/.pi/agent/extensions/sandbox.json` file:
+out of scope because macOS has no unprivileged process-tree owner; a survivor
+still keeps its command's Seatbelt limits.
+
+The Linux broker uses a Nix-pinned Bubblewrap path, a read-only host root, exact
+write mounts, protected child mounts, user/PID/network namespaces, and a
+reviewed blocked-network seccomp filter. It reports ready only after a real
+namespace, private `/proc`, seccomp, and `NoNewPrivs` self-test. Linux remains on
+Codex in machine config until its ignored release gate runs on both x86_64 and
+aarch64 Linux.
+
+The extension package pins the matching broker store path on both systems. A
+custom `brokerPath` must be absolute and can come only from global config;
+project config cannot switch backends or replace the broker. Protocol v1 keeps
+network and Unix sockets blocked and has no native background jobs. On macOS,
+one bounded session collector returns incomplete structured Seatbelt denial
+hints; Linux emits no denial hints. `backend: "codex"` remains the default. To
+opt in on a supported host, set this in the global
+`~/.pi/agent/extensions/sandbox.json` file:
 
 ```json
 {

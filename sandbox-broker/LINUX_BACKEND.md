@@ -2,7 +2,7 @@
 
 ## Current status
 
-The Rust broker does not execute commands on Linux. `sandbox-broker/src/main.rs` reports `can_exec: false`, the extension accepts only a macOS `seatbelt` readiness frame, and `extensions/sandbox/index.ts` rejects `native-preview` outside macOS. Linux therefore stays on the Codex backend.
+The Rust broker now has a foreground Bubblewrap backend and reports `linux`/`bubblewrap` only after a real namespace, `/proc`, seccomp, and `NoNewPrivs` self-test. It uses the same protocol-v1 validation, output, timeout, cancellation, and shutdown path as macOS, while Linux PID namespaces own descendant teardown. The client accepts the fixed Linux pair and Nix injects Bubblewrap's exact store path into the broker. No Linux release host has run the ignored integration gate yet, so machine config must stay on the Codex backend until the release work below lands.
 
 The first Linux release should match the current native protocol v1 execution scope, while leaving macOS-only denial collection out:
 
@@ -74,16 +74,11 @@ The Linux mount plan must enforce the same normalized rights as Seatbelt:
 
 Generate a mount plan first, validate it, then turn it into bubblewrap arguments. Do not let argument order silently undo protected child mounts.
 
-#### Resolve glob hard denies before implementation
+#### Glob deny snapshot semantics
 
-Bubblewrap mount rules protect concrete paths and trees. They do not enforce basename globs such as `/**/*.env`, `/**/*.key`, or write-denied `/**/*.pem` for files that appear after the mount plan is built. Landlock and seccomp also do not provide unprivileged path-pattern checks. Expanding current matches and masking them is useful defense in depth, but it is not equivalent: a host process could create a matching secret after launch, and a sandboxed process could create a newly forbidden name.
+Bubblewrap protects concrete mount targets, not future names. Pi follows the reviewed Codex startup-snapshot approach for protocol v1: it expands existing matches with strict traversal, depth, and match caps, then masks those paths after writable mounts. Root-wide patterns scan the active workspace and the broker HOME rather than the whole host root. More specific patterns scan their fixed non-glob prefix. Scan errors or cap overflow reject the command.
 
-This is a Linux release blocker. Before coding the mount backend, choose and review one enforceable policy:
-
-- add a trusted dynamic filesystem layer, such as a narrowly reviewed passthrough filesystem, that rejects protected names on every lookup and mutation; or
-- replace glob rules with an equally protective policy that the Linux kernel boundary can enforce, with an explicit threat-model review and migration plan.
-
-Until one of those designs lands, Linux policy compilation must reject every glob deny. Because the current hard policy always includes secret-name globs, the native Linux backend cannot report `can_exec: true` under the current defaults. Do not treat bounded pre-launch glob expansion as sufficient. If expansion remains as a supplement, cap traversal, matches, memory, and time, and test files created or renamed during execution.
+The host user and Pi process are trusted by the threat model, so a trusted host process creating a new secret after the snapshot is not an attacker in this boundary. A sandboxed command may create a new matching name in a writable tree; that file contains data the command already controls and is not a pre-existing host secret. This is intentionally name-snapshot protection, not a claim that Bubblewrap implements dynamic path-pattern mediation. Tests must cover existing matches, scan bounds, and this documented limit.
 
 ### 4. Add namespaces and kernel controls
 
@@ -99,7 +94,7 @@ The launcher must preserve the controls used by the reviewed Codex path:
 
 Treat PID namespace teardown as the Linux lifetime boundary. Test that descendants cannot survive cancellation, timeout, broker shutdown, or a double fork.
 
-### 5. Wire readiness and the extension
+### 5. Wire readiness and the extension (implemented)
 
 Linux readiness should use:
 
@@ -124,7 +119,7 @@ Update:
 
 Keep Linux on `backend: "codex"` in machine config until the Linux release gate passes.
 
-### 6. Package both Linux architectures
+### 6. Package both Linux architectures (wired; builds pending)
 
 Update the Nix package so the Linux broker closure contains the pinned bubblewrap binary and any seccomp data it needs. Verify:
 

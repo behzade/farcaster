@@ -572,7 +572,80 @@ mod platform {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+mod platform {
+    use std::fs;
+    use std::time::Duration;
+
+    use crate::denial_collector::PidObserver;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct ProcessGuard {
+        pid: i32,
+        start_ticks: u64,
+    }
+
+    impl ProcessGuard {
+        fn read(pid: i32) -> Option<Self> {
+            if pid <= 0 {
+                return None;
+            }
+            let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+            let fields = stat.rsplit_once(") ")?.1;
+            let start_ticks = fields.split_whitespace().nth(19)?.parse().ok()?;
+            Some(Self { pid, start_ticks })
+        }
+
+        #[must_use]
+        pub fn is_current(self) -> bool {
+            Self::read(self.pid) == Some(self)
+        }
+    }
+
+    pub struct PidTracker(ProcessGuard);
+
+    impl PidTracker {
+        pub fn start(root_pid: i32) -> Result<Self, String> {
+            ProcessGuard::read(root_pid)
+                .map(Self)
+                .ok_or_else(|| format!("cannot identify Linux sandbox process {root_pid}"))
+        }
+
+        pub fn start_observed(root_pid: i32, _observer: PidObserver) -> Result<Self, String> {
+            Self::start(root_pid)
+        }
+
+        #[must_use]
+        pub fn root_guard(&self) -> ProcessGuard {
+            self.0
+        }
+    }
+
+    // Bubblewrap's PID namespace is the descendant ownership boundary. When
+    // its init exits, the kernel kills every remaining process in that namespace.
+    pub fn cleanup(_tracker: PidTracker, _grace: Duration) {}
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn current_process_identity_is_stable() {
+            let guard = ProcessGuard::read(i32::try_from(std::process::id()).expect("PID fits"))
+                .expect("read current identity");
+            assert!(guard.is_current());
+            assert!(
+                !ProcessGuard {
+                    start_ticks: guard.start_ticks.wrapping_add(1),
+                    ..guard
+                }
+                .is_current()
+            );
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 mod platform {
     use std::time::Duration;
 

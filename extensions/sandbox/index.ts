@@ -1160,8 +1160,8 @@ export default function (pi: ExtensionAPI) {
 			sandboxState = { kind: "initializing" };
 			ensureDevelopmentCacheDirectories();
 			if (config.backend === "native-preview") {
-				if (process.platform !== "darwin") {
-					throw new Error("the native sandbox preview supports macOS only");
+				if (process.platform !== "darwin" && process.platform !== "linux") {
+					throw new Error("the native sandbox preview supports macOS and Linux only");
 				}
 				const client = await SandboxBrokerClient.start(
 					config.brokerPath ?? PACKAGED_BROKER_PATH,
@@ -1178,7 +1178,7 @@ export default function (pi: ExtensionAPI) {
 			sandboxState = { kind: "ready", config };
 			const backendLabel =
 				config.backend === "native-preview"
-					? "native Seatbelt preview (network blocked)"
+					? `native ${process.platform === "linux" ? "Bubblewrap" : "Seatbelt"} preview (network blocked)`
 					: `Codex IO: ${config.permissionProfile ?? DEFAULT_CONFIG.permissionProfile}`;
 			ctx.ui.setStatus(
 				"sandbox",

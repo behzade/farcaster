@@ -9,17 +9,20 @@ Work continued from this handoff in the Pi checkout. The current tree now includ
 - an opt-in global `backend: "native-preview"` path on macOS, while `codex` remains the default backend;
 - command-bound read, write, and exact network-host declarations for bash and Codex-backed background starts;
 - no shared one-time network grant queue;
-- pinned Nix builds for the broker and extension.
+- pinned Nix builds for the broker and extension;
+- a Linux Bubblewrap foreground backend, fixed-path Nix wiring, client readiness support, and an ignored Linux release-gate scaffold.
 
 The preview keeps network and Unix sockets blocked and rejects native background starts. Its session-long macOS denial
 collector emits bounded structured hints, and the extension can ask for one exact safe file right and retry without
-parsing application errors. It has no Linux backend yet. Cleanup combines a process group with a best-effort kqueue
-descendant tracker and process start-time checks. Pi explicitly places deliberate fast `setpgid`, `setsid`, and
-double-fork escape out of scope because
-macOS has no unprivileged atomic owner for that tree; survivors retain Seatbelt limits. The unsandboxed macOS release
-gate passes with structured denial collection. Linux still uses Codex:
-the Rust broker reports `can_exec: false`, the client accepts only macOS/Seatbelt, and no bubblewrap launcher or Linux
-release gate exists. The authoritative remaining-work checklist is
+parsing application errors. macOS cleanup combines a process group with a best-effort kqueue descendant tracker and
+process start-time checks. Pi explicitly places deliberate fast `setpgid`, `setsid`, and double-fork escape out of scope
+there because macOS has no unprivileged atomic owner for that tree; survivors retain Seatbelt limits. The unsandboxed
+macOS release gate passes with structured denial collection.
+
+Linux now prepares a read-only-root Bubblewrap sandbox with ordered exact write and deny mounts, user/PID/network/IPC/UTS
+namespaces, private `/proc`, `no_new_privs`, and blocked-network seccomp. Readiness runs that real pipeline. Linux emits no
+denial hints. Machine config must keep Linux on Codex until the broker builds and the full ignored release gate passes on
+x86_64 and aarch64 Linux. The authoritative remaining-work checklist is
 [`sandbox-broker/LINUX_BACKEND.md`](sandbox-broker/LINUX_BACKEND.md). Do not treat the later stage text below as current
 implementation status without checking the tree.
 
@@ -436,11 +439,10 @@ The current Codex Linux helper:
 - supports system and bundled bubblewrap;
 - handles signal forwarding and cleanup.
 
-Do not reduce this to a few unreviewed `bwrap` flags. The current broker has no Linux execution path: `main.rs` returns
-`can_exec: false`, `executor.rs` launches Seatbelt directly, the TypeScript client accepts only `macos`/`seatbelt`, and the
-extension rejects `native-preview` outside macOS. Start with protocol v1 foreground parity and keep approved network,
-Unix socket grants, background jobs, PTY, and denial hints out of that milestone. Preserve the security tests for every
-imported behavior. The full implementation order, packaging work, release matrix, and definition of done are in
+Do not reduce this to a few unreviewed `bwrap` flags. The broker now has the first Linux execution path and the extension
+accepts the verified `linux`/`bubblewrap` readiness pair. It remains protocol v1 foreground-only: approved network and
+Unix socket grants, background jobs, PTY, and Linux denial hints stay out. Preserve the security tests for every imported
+behavior. The remaining release matrix and definition of done are in
 [`sandbox-broker/LINUX_BACKEND.md`](sandbox-broker/LINUX_BACKEND.md).
 
 ## Policy Ownership

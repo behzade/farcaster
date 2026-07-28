@@ -1,11 +1,18 @@
-{ lib, rustPlatform }:
+{
+  bubblewrap,
+  lib,
+  rustPlatform,
+  stdenv,
+}:
 
 rustPlatform.buildRustPackage {
   pname = "pi-sandbox-broker";
-  version = "0.3.1";
+  version = "0.4.0";
 
   src = lib.cleanSource ../sandbox-broker;
   cargoLock.lockFile = ../sandbox-broker/Cargo.lock;
+
+  PI_BWRAP_PATH = lib.optionalString stdenv.hostPlatform.isLinux (lib.getExe bubblewrap);
 
   postInstall = ''
     install -Dm644 LICENSE-APACHE $out/share/doc/pi-sandbox-broker/LICENSE-APACHE
@@ -16,12 +23,15 @@ rustPlatform.buildRustPackage {
   '';
 
   meta = {
-    description = "Pi native sandbox broker with a macOS Seatbelt backend";
+    description = "Pi native sandbox broker with macOS Seatbelt and Linux Bubblewrap backends";
     license = with lib.licenses; [
       asl20
       mit
     ];
-    platforms = lib.platforms.darwin ++ lib.platforms.linux;
+    platforms = lib.platforms.darwin ++ [
+      "x86_64-linux"
+      "aarch64-linux"
+    ];
     mainProgram = "pi-sandbox-broker";
   };
 }

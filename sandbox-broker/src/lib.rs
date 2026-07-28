@@ -1,6 +1,8 @@
 pub mod denial_collector;
 pub mod executor;
 pub mod framing;
+#[cfg(target_os = "linux")]
+pub mod linux;
 pub mod pid_tracker;
 pub mod protocol;
 pub mod seatbelt;

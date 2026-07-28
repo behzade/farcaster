@@ -1,8 +1,8 @@
 # Pi Sandbox Broker
 
-This directory holds Pi's OS sandbox broker. It defines the private protocol, threat model, source record, and the first macOS Seatbelt backend. The backend supports one foreground command, command-bound file and tree rights, hard denies, blocked network, a launch barrier, bounded output, timeout, cancellation, shutdown cleanup, and best-effort structured Seatbelt denial hints.
+This directory holds Pi's OS sandbox broker. It defines the private protocol, threat model, source record, a macOS Seatbelt backend, and a Linux Bubblewrap backend. Both support one foreground command, command-bound file and tree rights, hard denies, blocked network, a launch barrier, bounded output, timeout, cancellation, and shutdown cleanup. macOS also returns best-effort structured Seatbelt denial hints.
 
-The sandbox extension can use this broker through the opt-in global `backend: "native-preview"` setting on macOS. Linux reports `can_exec: false`, and macOS reports false if `/usr/bin/sandbox-exec`, the hard host policy, or the fixed `/usr/bin/log` denial collector is unavailable. Codex remains the default backend.
+The sandbox extension can use this broker through the opt-in global `backend: "native-preview"` setting on macOS or Linux. macOS reports unavailable if `/usr/bin/sandbox-exec`, the hard host policy, or the fixed `/usr/bin/log` denial collector fails. Linux reports unavailable unless its fixed Bubblewrap binary passes a real namespace, private `/proc`, seccomp, and `NoNewPrivs` self-test. Codex remains the default backend.
 
 ## Approved direction
 
@@ -12,7 +12,7 @@ The sandbox extension can use this broker through the opt-in global `backend: "n
 - TypeScript owns config, approval state, and UI.
 - Rust checks paths again, builds the final OS policy, runs commands, and rejects hard protected paths.
 - Optional rights sit on the `bash` call and bind to that tool call's command ID.
-- macOS lands first. Linux keeps the current fail-closed backend during a short, clear migration.
+- macOS uses Seatbelt; Linux uses a fixed Bubblewrap binary and fails closed when namespaces or seccomp are unavailable.
 - macOS denial logs are hints. Missing logs grant nothing.
 - Linux first uses a fixed system or Nix-store bubblewrap path, never workspace `PATH`.
 
@@ -20,7 +20,7 @@ See [PROTOCOL.md](PROTOCOL.md), [THREAT_MODEL.md](THREAT_MODEL.md), [UPSTREAM.md
 
 ## Linux work remaining
 
-Linux currently reports `can_exec: false`; the client accepts only macOS/Seatbelt, and machine config keeps Linux on Codex. The Linux milestone must resolve dynamic secret-name glob enforcement, add a pinned bubblewrap launcher, read-only root and protected mount planning, user/mount/PID/network namespaces, `no_new_privs`, seccomp, strict process cleanup, Linux readiness/client wiring, Nix packages for x86_64 and aarch64, and a full Linux release gate. Protocol v1 must keep network, host Unix sockets, background jobs, and emitted denial hints unavailable. The full implementation and test checklist is in [LINUX_BACKEND.md](LINUX_BACKEND.md).
+The broker, client, and Nix path wiring are in place. Linux still needs builds and the ignored release gate on x86_64 and aarch64 hosts before machine config selects `native-preview`. That gate must verify mount policy, blocked host sockets and network, seccomp, timeout/cancellation/shutdown, and PID-namespace cleanup of `setsid` and double-fork descendants. Protocol v1 keeps approved network hosts, host Unix sockets, background jobs, and Linux denial hints unavailable. The full checklist is in [LINUX_BACKEND.md](LINUX_BACKEND.md).
 
 ## Current checks
 

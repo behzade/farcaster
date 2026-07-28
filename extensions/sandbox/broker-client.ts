@@ -144,13 +144,16 @@ export class SandboxBrokerClient {
 	readonly #child: ChildProcessWithoutNullStreams;
 	readonly #decoder = new FramedJsonDecoder();
 	readonly #pending = new Map<string, PendingExec>();
+	readonly #expectedPlatform: NodeJS.Platform;
 	#readyResolve?: () => void;
 	#readyReject?: (error: Error) => void;
 	#ready = false;
+	#requiresDenials = false;
 	#closed = false;
 
-	private constructor(child: ChildProcessWithoutNullStreams) {
+	private constructor(child: ChildProcessWithoutNullStreams, expectedPlatform: NodeJS.Platform) {
 		this.#child = child;
+		this.#expectedPlatform = expectedPlatform;
 		child.stdout.on("data", (chunk: Buffer) => this.#onChunk(chunk));
 		child.stderr.on("data", () => {
 			// Host diagnostics stay off the model-visible command stream.
@@ -170,13 +173,16 @@ export class SandboxBrokerClient {
 		});
 	}
 
-	static async start(path: string): Promise<SandboxBrokerClient> {
+	static async start(
+		path: string,
+		expectedPlatform: NodeJS.Platform = process.platform,
+	): Promise<SandboxBrokerClient> {
 		accessSync(path, constants.X_OK);
 		const child = spawn(path, [], {
 			stdio: ["pipe", "pipe", "pipe"],
 			env: buildBrokerEnvironment(),
 		});
-		const client = new SandboxBrokerClient(child);
+		const client = new SandboxBrokerClient(child, expectedPlatform);
 		await client.#waitUntilReady();
 		return client;
 	}
@@ -269,17 +275,12 @@ export class SandboxBrokerClient {
 	#onEvent(event: BrokerEvent): void {
 		if (event.type === "ready") {
 			if (this.#ready) throw new Error("Sandbox broker sent ready twice");
-			if (
-				event.version !== PROTOCOL_VERSION ||
-				event.platform !== "macos" ||
-				event.backend !== "seatbelt" ||
-				!event.can_exec ||
-				event.max_frame_bytes !== MAX_BROKER_FRAME_BYTES
-			) {
+			if (!isSupportedReadyEvent(event, this.#expectedPlatform)) {
 				throw new Error(
-					`Unsupported sandbox broker: version=${event.version}, backend=${event.backend}, can_exec=${event.can_exec}`,
+					`Unsupported sandbox broker: version=${event.version}, platform=${event.platform}, backend=${event.backend}, can_exec=${event.can_exec}`,
 				);
 			}
+			this.#requiresDenials = event.backend === "seatbelt";
 			this.#ready = true;
 			this.#readyResolve?.();
 			this.#readyResolve = undefined;
@@ -317,7 +318,9 @@ export class SandboxBrokerClient {
 		if (event.type === "exit") {
 			const pending = this.#pending.get(event.id);
 			if (!pending?.started) throw new Error(`Broker exit has inactive command ID: ${event.id}`);
-			if (!pending.denials) throw new Error(`Broker exit arrived before denials: ${event.id}`);
+			if (this.#requiresDenials && !pending.denials) {
+				throw new Error(`Broker exit arrived before denials: ${event.id}`);
+			}
 			this.#finishPending(event.id);
 			if (event.output_truncated) {
 				pending.onData(Buffer.from("\n[Sandbox output truncated at the broker limit]\n"));
@@ -369,6 +372,26 @@ export class SandboxBrokerClient {
 		}
 		this.#closed = true;
 	}
+}
+
+export function isSupportedReadyEvent(
+	event: Extract<BrokerEvent, { type: "ready" }>,
+	platform: NodeJS.Platform,
+): boolean {
+	const expected =
+		platform === "darwin"
+			? { platform: "macos", backend: "seatbelt" }
+			: platform === "linux"
+				? { platform: "linux", backend: "bubblewrap" }
+				: undefined;
+	return (
+		expected !== undefined &&
+		event.version === PROTOCOL_VERSION &&
+		event.platform === expected.platform &&
+		event.backend === expected.backend &&
+		event.can_exec &&
+		event.max_frame_bytes === MAX_BROKER_FRAME_BYTES
+	);
 }
 
 export function validateBrokerEvent(value: unknown): BrokerEvent {
