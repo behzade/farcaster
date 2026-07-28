@@ -20,6 +20,7 @@ test("development cache defaults use narrow typed paths", () => {
 	assert.equal(byPath.get(join(actualHome, ".cargo", "registry"))?.directory, true);
 	assert.equal(byPath.get(join(actualHome, ".cargo", ".package-cache"))?.directory, false);
 	assert.equal(byPath.get(join(actualHome, ".npm"))?.directory, true);
+	assert.equal(byPath.get(join(actualHome, ".cache", "nix"))?.directory, true);
 	assert.equal(byPath.get(join(actualHome, ".cache", "uv"))?.directory, true);
 	assert.equal(existsSync(join(actualHome, ".bun", "install", "cache")), true);
 	assert.equal(byPath.get(join(actualHome, "Library", "pnpm", "store"))?.directory, true);
@@ -71,6 +72,14 @@ test("development cache matching respects file rights and sibling prefixes", () 
 	assert.equal(
 		developmentCacheRightForPath(
 			join(home, ".cargo", "registry", "cache", "package.crate"),
+			home,
+			"darwin",
+		)?.directory,
+		true,
+	);
+	assert.equal(
+		developmentCacheRightForPath(
+			join(home, ".cache", "nix", "fetcher-cache-v4.sqlite"),
 			home,
 			"darwin",
 		)?.directory,

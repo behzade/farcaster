@@ -35,6 +35,7 @@ test("development caches are writable without granting whole tool homes", () => 
 		join(homedir(), ".cargo", "registry", "cache", "package.crate"),
 		join(homedir(), ".cargo", "git", "checkouts", "package", ".git", "index.lock"),
 		join(homedir(), ".npm", "_cacache", "entry"),
+		join(homedir(), ".cache", "nix", "fetcher-cache-v4.sqlite"),
 		join(homedir(), ".bun", "install", "cache", "package"),
 		join(homedir(), "go", "pkg", "mod", "cache", "download", "module"),
 	]) {

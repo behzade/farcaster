@@ -19,7 +19,10 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     hash = "sha256-ogX1c4WPbvh2J7nhD3skyjUXtL/TMTuwOB/RBlJjIbk=";
   };
 
-  patches = [ ../patches/pi-permission-system-user-approval.patch ];
+  patches = [
+    ../patches/pi-permission-system-user-approval.patch
+    ../patches/pi-permission-system-approval-transport-only.patch
+  ];
 
   pnpmDeps = fetchPnpmDeps {
     inherit (finalAttrs) pname version src;

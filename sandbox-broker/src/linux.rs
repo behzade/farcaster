@@ -72,12 +72,17 @@ impl Drop for SyntheticDirectory {
 
 /// Builds a fail-closed Bubblewrap invocation for one validated command.
 pub fn prepare(request: &ValidatedExec, command: &[String]) -> Result<PreparedLaunch, String> {
+    if !request.unix_socket_roots.is_empty() {
+        return Err(
+            "Unix socket roots are only supported by the macOS Seatbelt backend".to_owned(),
+        );
+    }
     if !request.rights.iter().any(|right| {
         right.access == Access::Read
             && right.scope == PathScope::Tree
             && right.path == Path::new("/")
     }) {
-        return Err("Linux protocol v1 requires an explicit read right for /".to_owned());
+        return Err("Linux protocol v2 requires an explicit read right for /".to_owned());
     }
     if command.is_empty() {
         return Err("command is empty".to_owned());
@@ -455,7 +460,7 @@ fn glob_scan_roots(pattern: &str, cwd: &Path) -> Result<BTreeSet<PathBuf>, Strin
         return Ok(BTreeSet::from([static_root.to_path_buf()]));
     }
 
-    // Root-wide startup scans are both costly and misleading. Protocol v1
+    // Root-wide startup scans are both costly and misleading. Protocol v2
     // protects the two user-controlled areas where agent secrets live. The
     // trusted host user is outside the threat model, so files created after
     // this snapshot are not treated as hostile host races.

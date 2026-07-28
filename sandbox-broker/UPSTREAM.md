@@ -29,7 +29,7 @@ The Linux backend is adapted from the same inspected Codex commit, `65ae4c26e088
 | `no_new_privs` and restricted seccomp | `codex-rs/linux-sandbox/src/landlock.rs` | Adapted in `src/linux.rs`; Pi directly encodes the reviewed x86_64/aarch64 cBPF rules and lets Bubblewrap apply them after namespace setup |
 | Bubblewrap readiness probe | `codex-rs/sandboxing/src/bwrap.rs`, `codex-rs/linux-sandbox/src/linux_run_main.rs` | Adapted in `src/linux.rs`; Pi requires the fixed binary to establish all release namespaces, private `/proc`, seccomp, and `NoNewPrivs` before readiness |
 | Bundled Bubblewrap | `codex-rs/linux-sandbox/src/bundled_bwrap.rs` | Studied, not imported; Nix supplies a fixed store path and non-Nix builds require `/usr/bin/bwrap` |
-| Network routing | `codex-rs/linux-sandbox/src/proxy_routing.rs` | Studied, not imported; protocol v1 remains blocked and has no proxy mode |
+| Network routing | `codex-rs/linux-sandbox/src/proxy_routing.rs` | Studied, not imported; protocol v2 keeps IP networking blocked and has no proxy mode |
 
 The required Linux behavior, packaging, and release tests are tracked in [LINUX_BACKEND.md](LINUX_BACKEND.md).
 

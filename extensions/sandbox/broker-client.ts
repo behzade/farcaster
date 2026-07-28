@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { accessSync, constants } from "node:fs";
 
-const PROTOCOL_VERSION = 1;
+const PROTOCOL_VERSION = 2;
 export const MAX_BROKER_FRAME_BYTES = 1024 * 1024;
 const READY_TIMEOUT_MS = 5_000;
 const SHUTDOWN_TIMEOUT_MS = 5_000;
@@ -53,6 +53,7 @@ export interface BrokerExecRequest {
 		grants: BrokerFilesystemRight[];
 		denies: BrokerFilesystemDeny[];
 		network: { mode: "blocked" };
+		unix_socket_roots: string[];
 		output_limit_bytes: number;
 	};
 }

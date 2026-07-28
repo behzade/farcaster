@@ -20,7 +20,7 @@ See [PROTOCOL.md](PROTOCOL.md), [THREAT_MODEL.md](THREAT_MODEL.md), [UPSTREAM.md
 
 ## Linux work remaining
 
-The broker, client, and Nix path wiring are in place. Linux still needs builds and the ignored release gate on x86_64 and aarch64 hosts before machine config selects `native-preview`. That gate must verify mount policy, blocked host sockets and network, seccomp, timeout/cancellation/shutdown, and PID-namespace cleanup of `setsid` and double-fork descendants. Protocol v1 keeps approved network hosts, host Unix sockets, background jobs, and Linux denial hints unavailable. The full checklist is in [LINUX_BACKEND.md](LINUX_BACKEND.md).
+The broker, client, and Nix path wiring are in place. Linux still needs builds and the ignored release gate on x86_64 and aarch64 hosts before machine config selects `native-preview`. That gate must verify mount policy, blocked host sockets and network, seccomp, timeout/cancellation/shutdown, and PID-namespace cleanup of `setsid` and double-fork descendants. Protocol v2 keeps approved network hosts, background jobs, and Linux denial hints unavailable. Linux rejects the macOS-only trusted Unix socket paths. The full checklist is in [LINUX_BACKEND.md](LINUX_BACKEND.md).
 
 ## Current checks
 
@@ -32,4 +32,4 @@ cargo clippy --manifest-path sandbox-broker/Cargo.toml --all-targets -- -D warni
 cargo test --manifest-path sandbox-broker/Cargo.toml -- --ignored
 ```
 
-The macOS integration and extension-client gates pass. The release gate checks that a command which hides `EPERM` behind a generic app error still yields an exact structured denial hint. Cleanup combines a process group with a best-effort kqueue descendant tracker and process start-time checks. Deliberate fast `setpgid`, `setsid`, or double-fork escape is out of scope because macOS offers no unprivileged atomic owner for that process tree. A survivor remains under its command's Seatbelt profile. Protocol v1 keeps network and Unix sockets blocked and has no native background-job support.
+The macOS integration and extension-client gates pass. The release gate checks that a command which hides `EPERM` behind a generic app error still yields an exact structured denial hint. Cleanup combines a process group with a best-effort kqueue descendant tracker and process start-time checks. Deliberate fast `setpgid`, `setsid`, or double-fork escape is out of scope because macOS offers no unprivileged atomic owner for that process tree. A survivor remains under its command's Seatbelt profile. Protocol v2 keeps IP network access blocked, allows only trusted exact-path Unix sockets, and has no native background-job support.

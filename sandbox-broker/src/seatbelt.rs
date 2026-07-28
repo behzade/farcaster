@@ -5,6 +5,7 @@
 //! and network integration with its own narrow, network-blocked policy.
 
 use std::collections::BTreeSet;
+use std::fmt::Write as _;
 use std::path::{Component, Path, PathBuf};
 
 use regex_lite::escape;
@@ -294,6 +295,7 @@ pub fn build_args(
     cwd: &Path,
     rights: &[NormalizedRight],
     denies: &[NormalizedDeny],
+    unix_socket_roots: &[PathBuf],
 ) -> Result<Vec<String>, String> {
     if command.is_empty() {
         return Err("command is empty".to_owned());
@@ -328,7 +330,15 @@ pub fn build_args(
         &mut params,
     );
     let deny_policy = build_explicit_deny_policy(denies)?;
-    let policy = [BASE_POLICY, &read_policy, &write_policy, &deny_policy].join("\n");
+    let socket_policy = build_unix_socket_policy(unix_socket_roots, &mut params);
+    let policy = [
+        BASE_POLICY,
+        &read_policy,
+        &write_policy,
+        &deny_policy,
+        &socket_policy,
+    ]
+    .join("\n");
 
     let mut args = vec!["-p".to_owned(), policy];
     args.extend(
@@ -339,6 +349,31 @@ pub fn build_args(
     args.push("--".to_owned());
     args.extend_from_slice(command);
     Ok(args)
+}
+
+fn build_unix_socket_policy(
+    socket_roots: &[PathBuf],
+    params: &mut Vec<(String, PathBuf)>,
+) -> String {
+    if socket_roots.is_empty() {
+        return String::new();
+    }
+    let mut policy = String::from("(allow system-socket (socket-domain AF_UNIX))\n");
+    for (index, path) in socket_roots.iter().enumerate() {
+        let key = format!("UNIX_SOCKET_PATH_{index}");
+        params.push((key.clone(), path.clone()));
+        writeln!(
+            policy,
+            "(allow network-bind (local unix-socket (literal (param \"{key}\"))))"
+        )
+        .expect("writing to a String cannot fail");
+        writeln!(
+            policy,
+            "(allow network-outbound (remote unix-socket (literal (param \"{key}\"))))"
+        )
+        .expect("writing to a String cannot fail");
+    }
+    policy
 }
 
 fn build_access_policy(
@@ -465,6 +500,7 @@ pub fn self_test(hard: &HardPolicy) -> Result<(), String> {
         Path::new("/"),
         &rights,
         &hard.denies,
+        &[],
     )?;
     let output = std::process::Command::new(SANDBOX_EXEC)
         .args(args)
@@ -544,6 +580,7 @@ mod tests {
             grants: vec![device],
             denies: vec![],
             network: crate::protocol::NetworkPolicy::Blocked,
+            unix_socket_roots: vec![],
             output_limit_bytes: 1_024,
         };
         assert!(
@@ -574,12 +611,37 @@ mod tests {
             Path::new("/work"),
             &rights,
             &[],
+            &[],
         )
         .expect("policy");
         let policy = &args[1];
         assert!(policy.contains("(literal (param \"READABLE_ROOT_0\"))"));
         assert!(policy.contains("(literal (param \"WRITABLE_ROOT_0\"))"));
         assert!(policy.contains("(subpath (param \"WRITABLE_ROOT_0\"))"));
+    }
+
+    #[test]
+    fn unix_socket_roots_add_only_exact_path_socket_rules() {
+        let socket = PathBuf::from("/nix/var/nix/daemon-socket/socket");
+        let args = build_args(
+            &["/usr/bin/true".to_owned()],
+            Path::new("/work"),
+            &[],
+            &[],
+            std::slice::from_ref(&socket),
+        )
+        .expect("policy");
+        let policy = &args[1];
+        assert!(policy.contains("(allow system-socket (socket-domain AF_UNIX))"));
+        assert!(policy.contains(
+            "(allow network-outbound (remote unix-socket (literal (param \"UNIX_SOCKET_PATH_0\"))))"
+        ));
+        assert!(!policy.contains("(subpath (param \"UNIX_SOCKET_PATH_0\"))"));
+        assert!(!policy.contains("\n(allow network-outbound)\n"));
+        assert!(
+            args.iter()
+                .any(|arg| { arg == "-DUNIX_SOCKET_PATH_0=/nix/var/nix/daemon-socket/socket" })
+        );
     }
 
     #[test]
@@ -594,6 +656,7 @@ mod tests {
             &["/usr/bin/true".to_owned()],
             Path::new("/work"),
             &rights,
+            &[],
             &[],
         )
         .expect("policy");
@@ -616,6 +679,7 @@ mod tests {
             Path::new("/work"),
             &rights,
             &[],
+            &[],
         )
         .expect("policy");
         assert!(!args[1].contains("^/home/user/\\.cargo/git/(.*/)?\\.git"));
@@ -635,6 +699,7 @@ mod tests {
             Path::new("/work"),
             &rights,
             &[],
+            &[],
         )
         .expect("policy");
         assert!(args[1].contains("^/work/(.*/)?\\.git(/.*)?$"));
@@ -653,6 +718,7 @@ mod tests {
             &["/usr/bin/true".to_owned()],
             Path::new("/work"),
             &rights,
+            &[],
             &[],
         )
         .expect("policy");
@@ -694,6 +760,7 @@ mod tests {
             Path::new("/work"),
             &[parent],
             &[tree_deny, file_deny, glob_deny],
+            &[],
         )
         .expect("policy");
         assert!(args[1].contains("WRITABLE_ROOT_0_EXCLUDED_0"));
@@ -764,6 +831,7 @@ mod tests {
             }],
             denies: vec![],
             network: crate::protocol::NetworkPolicy::Blocked,
+            unix_socket_roots: vec![],
             output_limit_bytes: 1024,
         };
         assert!(normalize_policy(&policy, &hard).is_err());
@@ -802,7 +870,7 @@ mod tests {
                 denied_file.display()
             ),
         ];
-        let args = build_args(&command, &root, &rights, &policy_denies).expect("policy");
+        let args = build_args(&command, &root, &rights, &policy_denies, &[]).expect("policy");
         let output = Command::new(SANDBOX_EXEC)
             .args(args)
             .current_dir(&root)
@@ -858,7 +926,7 @@ mod tests {
             "-c".to_owned(),
             format!("printf ok > '{}'", allowed.display()),
         ];
-        let args = build_args(&write_allowed, &root, &rights, &[]).expect("allowed policy");
+        let args = build_args(&write_allowed, &root, &rights, &[], &[]).expect("allowed policy");
         let output = Command::new(SANDBOX_EXEC)
             .args(args)
             .current_dir(&root)
@@ -876,7 +944,7 @@ mod tests {
             "-c".to_owned(),
             format!("printf cache > '{}'", cache_allowed.display()),
         ];
-        let args = build_args(&write_cache_git, &root, &rights, &[]).expect("cache policy");
+        let args = build_args(&write_cache_git, &root, &rights, &[], &[]).expect("cache policy");
         let output = Command::new(SANDBOX_EXEC)
             .args(args)
             .current_dir(&root)
@@ -894,7 +962,8 @@ mod tests {
             "-c".to_owned(),
             format!("printf bad > '{}'", protected.display()),
         ];
-        let args = build_args(&write_protected, &root, &rights, &[]).expect("protected policy");
+        let args =
+            build_args(&write_protected, &root, &rights, &[], &[]).expect("protected policy");
         let output = Command::new(SANDBOX_EXEC)
             .args(args)
             .current_dir(&root)

@@ -24,6 +24,7 @@ const COMMON_CACHES: readonly CacheDefinition[] = [
 	{ path: ".npm", directory: true },
 	{ path: ".bun/install/cache", directory: true },
 	{ path: ".yarn/berry", directory: true },
+	{ path: ".cache/nix", directory: true },
 	{ path: ".cache/uv", directory: true },
 	{ path: "go/pkg/mod", directory: true },
 	{ path: "go/pkg/sumdb", directory: true },

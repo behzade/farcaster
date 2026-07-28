@@ -1,0 +1,177 @@
+diff --git a/packages/pi-permission-system/README.md b/packages/pi-permission-system/README.md
+index 4f7129b..76f8e12 100644
+--- a/packages/pi-permission-system/README.md
++++ b/packages/pi-permission-system/README.md
+@@ -23,6 +23,7 @@ Permission enforcement extension for the [Pi](https://pi.mariozechner.at/) codin
+ - **Forwards prompts from subagents** — `ask` policies work even in non-UI execution contexts
+ - **Broadcasts UI prompt events** — `permissions:ui_prompt` fires only when the permission system is about to invoke the active user-facing permission UI
+ - **Shares approval transport** — other extensions can submit caller-owned choices through `PermissionsService.requestUserApproval()` while retaining their own policy and grant storage
++- **Supports approval-transport-only mode** — set `approvalTransportOnly` in the global config to publish and forward caller-owned prompts without registering tool, shell, path, or skill permission gates
+ - **Native [`@gotgenes/pi-subagents`](https://github.com/gotgenes/pi-subagents) integration** — in-process child sessions register with the permission system automatically, enabling per-agent policy enforcement and `ask`-state forwarding to the parent UI without configuration
+ 
+ ## Install
+diff --git a/packages/pi-permission-system/schemas/permissions.schema.json b/packages/pi-permission-system/schemas/permissions.schema.json
+index 22c9bc2..6354b7d 100644
+--- a/packages/pi-permission-system/schemas/permissions.schema.json
++++ b/packages/pi-permission-system/schemas/permissions.schema.json
+@@ -19,6 +19,12 @@
+       "default": true,
+       "type": "boolean"
+     },
++    "approvalTransportOnly": {
++      "description": "Publish and forward caller-owned approval prompts without enforcing tool, shell, path, or skill policy.",
++      "markdownDescription": "Publish `PermissionsService.requestUserApproval()` and keep parent/child prompt forwarding active, but do not register permission-system gates. Use this when another extension owns the permission boundary.",
++      "default": false,
++      "type": "boolean"
++    },
+     "yoloMode": {
+       "description": "Auto-approve ask-state permission checks, including subagent approval forwarding.",
+       "markdownDescription": "Auto-approve `ask`-state permission checks, including subagent approval forwarding.\n\n⚠️ **Use with caution** — this disables all interactive confirmation prompts.",
+diff --git a/packages/pi-permission-system/src/config-loader.ts b/packages/pi-permission-system/src/config-loader.ts
+index d4fd301..9705dc9 100644
+--- a/packages/pi-permission-system/src/config-loader.ts
++++ b/packages/pi-permission-system/src/config-loader.ts
+@@ -198,8 +198,8 @@ export function validateUnifiedConfig(
+  *   the override (override-wins, same as scalars).
+  */
+ // Scalar knobs merged by override-replaces-base; keep in sync with
+-// PermissionSystemExtensionConfig booleans (debugLog, permissionReviewLog,
+-// yoloMode, doublePressToConfirm).
++// PermissionSystemExtensionConfig booleans (debugLog, permissionReviewLog,
++// approvalTransportOnly, yoloMode, doublePressToConfirm).
+ export function mergeUnifiedConfigs(
+   base: UnifiedPermissionConfig,
+   override: UnifiedPermissionConfig,
+@@ -210,6 +210,7 @@ export function mergeUnifiedConfigs(
+   for (const key of [
+     "debugLog",
+     "permissionReviewLog",
++    "approvalTransportOnly",
+     "yoloMode",
+     "doublePressToConfirm",
+   ] as const) {
+diff --git a/packages/pi-permission-system/src/config-schema.ts b/packages/pi-permission-system/src/config-schema.ts
+index 4f8ee42..e71efb9 100644
+--- a/packages/pi-permission-system/src/config-schema.ts
++++ b/packages/pi-permission-system/src/config-schema.ts
+@@ -172,6 +172,13 @@ export const unifiedConfigSchema = z
+         "Write permission request and decision audit events to `logs/pi-permission-system-permission-review.jsonl` under the extension config directory.",
+       default: true,
+     }),
++    approvalTransportOnly: z.boolean().optional().meta({
++      description:
++        "Publish and forward caller-owned approval prompts without enforcing tool, shell, path, or skill policy.",
++      markdownDescription:
++        "Publish `PermissionsService.requestUserApproval()` and keep parent/child prompt forwarding active, but do not register permission-system gates. Use this when another extension owns the permission boundary.",
++      default: false,
++    }),
+     yoloMode: z.boolean().optional().meta({
+       description:
+         "Auto-approve ask-state permission checks, including subagent approval forwarding.",
+diff --git a/packages/pi-permission-system/src/config-modal.ts b/packages/pi-permission-system/src/config-modal.ts
+index bb042bb..3689927 100644
+--- a/packages/pi-permission-system/src/config-modal.ts
++++ b/packages/pi-permission-system/src/config-modal.ts
+@@ -49,6 +49,7 @@ function cloneDefaultConfig(): PermissionSystemExtensionConfig {
+   return {
+     debugLog: DEFAULT_EXTENSION_CONFIG.debugLog,
+     permissionReviewLog: DEFAULT_EXTENSION_CONFIG.permissionReviewLog,
++    approvalTransportOnly: DEFAULT_EXTENSION_CONFIG.approvalTransportOnly,
+     yoloMode: DEFAULT_EXTENSION_CONFIG.yoloMode,
+     doublePressToConfirm: DEFAULT_EXTENSION_CONFIG.doublePressToConfirm,
+   };
+diff --git a/packages/pi-permission-system/src/config-store.ts b/packages/pi-permission-system/src/config-store.ts
+index 6af6266..322962d 100644
+--- a/packages/pi-permission-system/src/config-store.ts
++++ b/packages/pi-permission-system/src/config-store.ts
+@@ -128,6 +128,7 @@ export class ConfigStore implements SessionConfigStore, CommandConfigStore {
+       warning: warning ?? null,
+       debugLog: runtimeConfig.debugLog,
+       permissionReviewLog: runtimeConfig.permissionReviewLog,
++      approvalTransportOnly: runtimeConfig.approvalTransportOnly,
+       yoloMode: runtimeConfig.yoloMode,
+       projectTrusted,
+     });
+@@ -154,5 +155,6 @@ export class ConfigStore implements SessionConfigStore, CommandConfigStore {
+       ...existing.config,
+       debugLog: normalized.debugLog,
+       permissionReviewLog: normalized.permissionReviewLog,
++      approvalTransportOnly: normalized.approvalTransportOnly,
+       yoloMode: normalized.yoloMode,
+     };
+@@ -185,5 +187,6 @@ export class ConfigStore implements SessionConfigStore, CommandConfigStore {
+     this.deps.logger.debug("config.saved", {
+       debugLog: normalized.debugLog,
+       permissionReviewLog: normalized.permissionReviewLog,
++      approvalTransportOnly: normalized.approvalTransportOnly,
+       yoloMode: normalized.yoloMode,
+     });
+diff --git a/packages/pi-permission-system/src/extension-config.ts b/packages/pi-permission-system/src/extension-config.ts
+index 348a7ef..0259bcd 100644
+--- a/packages/pi-permission-system/src/extension-config.ts
++++ b/packages/pi-permission-system/src/extension-config.ts
+@@ -15,5 +15,10 @@ export interface PermissionSystemExtensionConfig {
+   debugLog: boolean;
+   permissionReviewLog: boolean;
++  /**
++   * Keep only the approval service and parent/child prompt forwarding active.
++   * The caller remains the sole owner of policy and grant storage.
++   */
++  approvalTransportOnly: boolean;
+   yoloMode: boolean;
+   /** Require a confirming second press of a decision hotkey in the inline TUI dialog. Defaults to true. */
+   doublePressToConfirm: boolean;
+@@ -33,6 +38,7 @@ export interface PermissionSystemExtensionConfig {
+ export const DEFAULT_EXTENSION_CONFIG: PermissionSystemExtensionConfig = {
+   debugLog: false,
+   permissionReviewLog: true,
++  approvalTransportOnly: false,
+   yoloMode: false,
+   doublePressToConfirm: true,
+ };
+@@ -65,6 +71,7 @@ export function normalizePermissionSystemConfig(
+   const result: PermissionSystemExtensionConfig = {
+     debugLog: raw.debugLog === true,
+     permissionReviewLog: raw.permissionReviewLog !== false,
++    approvalTransportOnly: raw.approvalTransportOnly === true,
+     yoloMode: raw.yoloMode === true,
+     doublePressToConfirm: raw.doublePressToConfirm !== false,
+   };
+diff --git a/packages/pi-permission-system/src/index.ts b/packages/pi-permission-system/src/index.ts
+index e883918..1f58aba 100644
+--- a/packages/pi-permission-system/src/index.ts
++++ b/packages/pi-permission-system/src/index.ts
+@@ -279,16 +279,22 @@ export default function piPermissionSystemExtension(pi: ExtensionAPI): void {
+   pi.on("resources_discover", (event, ctx) =>
+     lifecycle.handleResourcesDiscover(event, ctx),
+   );
+   pi.on("session_shutdown", () => lifecycle.handleSessionShutdown());
+-  pi.on("before_agent_start", (event, ctx) => agentPrep.handle(event, ctx));
+-  pi.on("input", (event, ctx) => gates.handleInput(event, ctx));
+-  pi.on(
+-    "tool_call",
+-    createFailClosedToolCall(
+-      (event, ctx) => gates.handleToolCall(event, ctx),
+-      reporter,
+-      audit,
+-      logger,
+-    ),
+-  );
++
++  // Read this after the initial global-only refresh. A project config cannot
++  // turn enforcement off, and a project does not need a command allowlist when
++  // a separate sandbox owns the I/O boundary.
++  if (!configStore.current().approvalTransportOnly) {
++    pi.on("before_agent_start", (event, ctx) => agentPrep.handle(event, ctx));
++    pi.on("input", (event, ctx) => gates.handleInput(event, ctx));
++    pi.on(
++      "tool_call",
++      createFailClosedToolCall(
++        (event, ctx) => gates.handleToolCall(event, ctx),
++        reporter,
++        audit,
++        logger,
++      ),
++    );
++  }
+ }

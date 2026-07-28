@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufReader, BufWriter};
+use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::thread;
@@ -79,7 +80,7 @@ impl Broker {
             matches!(
                 ready,
                 ServerEvent::Ready {
-                    version: 1,
+                    version: 2,
                     ref platform,
                     ref backend,
                     can_exec: true,
@@ -279,6 +280,7 @@ fn request(
             grants,
             denies: vec![],
             network: NetworkPolicy::Blocked,
+            unix_socket_roots: vec![],
             output_limit_bytes,
         },
     }
@@ -519,6 +521,61 @@ fn native_broker_release_gate() {
     ));
     assert_ne!(unix_socket.code, Some(0));
     assert!(!unix_socket_path.exists());
+
+    let short_unix_socket_path = PathBuf::from(format!(
+        "/tmp/pi-broker-{}-allowed.sock",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&short_unix_socket_path);
+    let _allowed_unix_socket =
+        UnixListener::bind(&short_unix_socket_path).expect("bind allowed Unix socket fixture");
+    let allowed_unix_socket_path = short_unix_socket_path
+        .canonicalize()
+        .expect("canonical allowed Unix socket fixture");
+    let mut allowed_unix_socket_request = request(
+        "unix-socket-allowed",
+        &workspace,
+        format!(
+            "/usr/bin/python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1])' {}",
+            shell_quote(&allowed_unix_socket_path.to_string_lossy())
+        ),
+        vec![],
+        None,
+        1024,
+    );
+    allowed_unix_socket_request.policy.unix_socket_roots =
+        vec![allowed_unix_socket_path.to_string_lossy().into_owned()];
+    let allowed_unix_socket = broker.exec(allowed_unix_socket_request);
+    assert_eq!(allowed_unix_socket.code, Some(0));
+
+    let sibling_unix_socket_path = PathBuf::from(format!(
+        "/tmp/pi-broker-{}-sibling.sock",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&sibling_unix_socket_path);
+    let _sibling_unix_socket =
+        UnixListener::bind(&sibling_unix_socket_path).expect("bind sibling Unix socket fixture");
+    let sibling_unix_socket_path = sibling_unix_socket_path
+        .canonicalize()
+        .expect("canonical sibling Unix socket fixture");
+    let mut sibling_unix_socket_request = request(
+        "unix-socket-sibling-denied",
+        &workspace,
+        format!(
+            "/usr/bin/python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1])' {}",
+            shell_quote(&sibling_unix_socket_path.to_string_lossy())
+        ),
+        vec![],
+        None,
+        1024,
+    );
+    sibling_unix_socket_request.policy.unix_socket_roots =
+        vec![allowed_unix_socket_path.to_string_lossy().into_owned()];
+    let sibling_unix_socket = broker.exec(sibling_unix_socket_request);
+    assert_ne!(sibling_unix_socket.code, Some(0));
+
+    fs::remove_file(short_unix_socket_path).expect("remove allowed Unix socket fixture");
+    fs::remove_file(sibling_unix_socket_path).expect("remove sibling Unix socket fixture");
 
     let timed_out = broker.exec(request(
         "timeout",

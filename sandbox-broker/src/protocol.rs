@@ -2,11 +2,12 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+#[allow(clippy::large_enum_variant)]
 pub enum ClientRequest {
     Exec(ExecRequest),
     Cancel { id: String },
@@ -39,6 +40,9 @@ pub struct SandboxPolicy {
     pub grants: Vec<FilesystemRight>,
     pub denies: Vec<FilesystemDeny>,
     pub network: NetworkPolicy,
+    /// Trusted machine-configured Unix socket paths. These never come from a
+    /// command declaration or project config.
+    pub unix_socket_roots: Vec<String>,
     pub output_limit_bytes: u64,
 }
 
@@ -216,6 +220,7 @@ mod tests {
                     scope: DenyScope::Tree,
                 }],
                 network: NetworkPolicy::Blocked,
+                unix_socket_roots: vec!["/nix/var/nix/daemon-socket/socket".to_owned()],
                 output_limit_bytes: 1024,
             },
         });
@@ -225,7 +230,7 @@ mod tests {
     }
 
     #[test]
-    fn protocol_v1_has_no_network_or_socket_grant() {
+    fn protocol_v2_has_no_network_proxy_grant() {
         let with_proxy = br#"{"mode":"proxy","loopback_ports":[1234]}"#;
         assert!(serde_json::from_slice::<NetworkPolicy>(with_proxy).is_err());
     }

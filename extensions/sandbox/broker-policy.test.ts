@@ -57,6 +57,16 @@ test("maps current base rights and command-local folder grants", () => {
 			missing_path: existsSync(cargoLock) ? "reject" : "create_file",
 		},
 	);
+	const nixCache = canonicalize(join(homedir(), ".cache", "nix"));
+	assert.deepEqual(
+		request.policy.base_rights.find((right) => right.path === nixCache),
+		{
+			access: "write",
+			path: nixCache,
+			scope: "tree",
+			missing_path: existsSync(nixCache) ? "reject" : "create_tree",
+		},
+	);
 	const broadCacheRoots = [
 		canonicalize(join(homedir(), ".cargo")),
 		canonicalize(join(homedir(), "Library", "Caches")),
@@ -144,7 +154,7 @@ test("native deny globs reject dot segments before reaching Rust", () => {
 	}
 });
 
-test("native preview rejects requested hosts and omits configured socket rights", () => {
+test("native preview rejects requested hosts and keeps narrow configured socket rights", () => {
 	const cwd = mkdtempSync(join(tmpdir(), "pi-broker-policy-"));
 	assert.throws(
 		() => buildBrokerExecRequest("one", "true", cwd, undefined, DEFAULT_CONFIG, [], ["example.com"]),
@@ -163,5 +173,61 @@ test("native preview rejects requested hosts and omits configured socket rights"
 		[],
 	);
 	assert.deepEqual(request.policy.network, { mode: "blocked" });
-	assert.equal("unix_socket_roots" in request.policy, false);
+	assert.deepEqual(request.policy.unix_socket_roots, [canonicalize("/tmp/service.sock")]);
+});
+
+test("native preview rejects broad and relative Unix socket access", () => {
+	const cwd = mkdtempSync(join(tmpdir(), "pi-broker-policy-"));
+	assert.throws(
+		() =>
+			buildBrokerExecRequest(
+				"one",
+				"true",
+				cwd,
+				undefined,
+				{
+					...DEFAULT_CONFIG,
+					network: { ...DEFAULT_CONFIG.network, allowAllUnixSockets: true },
+				},
+				[],
+				[],
+			),
+		/does not support allowing all Unix sockets/,
+	);
+	assert.throws(
+		() =>
+			buildBrokerExecRequest(
+				"one",
+				"true",
+				cwd,
+				undefined,
+				{
+					...DEFAULT_CONFIG,
+					network: { ...DEFAULT_CONFIG.network, allowUnixSockets: ["service.sock"] },
+				},
+				[],
+				[],
+			),
+		/must be absolute/,
+	);
+});
+
+test("native preview never forwards the background job control socket", () => {
+	const cwd = mkdtempSync(join(tmpdir(), "pi-broker-policy-"));
+	const request = buildBrokerExecRequest(
+		"one",
+		"true",
+		cwd,
+		undefined,
+		{
+			...DEFAULT_CONFIG,
+			network: {
+				...DEFAULT_CONFIG.network,
+				allowUnixSockets: ["/tmp/pi-agent-tmux.sock"],
+			},
+		},
+		[],
+		[],
+	);
+	assert.deepEqual(request.policy.unix_socket_roots, []);
 });

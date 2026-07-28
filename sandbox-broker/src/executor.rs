@@ -97,7 +97,7 @@ impl Runtime {
         send_event(&self.writer, event)
     }
 
-    /// Starts one command. Protocol v1 permits no parallel command.
+    /// Starts one command. Protocol v2 permits no parallel command.
     ///
     /// # Errors
     ///
@@ -127,7 +127,7 @@ impl Runtime {
                 } else {
                     (
                         ErrorCode::InvalidRequest,
-                        "protocol v1 permits one active command".to_owned(),
+                        "protocol v2 permits one active command".to_owned(),
                     )
                 });
             }
@@ -238,15 +238,21 @@ fn run_command(
 ) {
     let command = launch_command(request);
     #[cfg(target_os = "macos")]
-    let prepared =
-        build_args(&command, &request.cwd, &request.rights, &request.denies).map(|args| {
-            (
-                SANDBOX_EXEC,
-                args,
-                "seatbelt-broker",
-                PreparedResources { _files: Vec::new() },
-            )
-        });
+    let prepared = build_args(
+        &command,
+        &request.cwd,
+        &request.rights,
+        &request.denies,
+        &request.unix_socket_roots,
+    )
+    .map(|args| {
+        (
+            SANDBOX_EXEC,
+            args,
+            "seatbelt-broker",
+            PreparedResources { _files: Vec::new() },
+        )
+    });
     #[cfg(target_os = "linux")]
     let prepared = crate::linux::prepare(request, &command).map(|launch| {
         (

@@ -21,6 +21,7 @@ pub struct ValidatedExec {
     pub output_limit_bytes: u64,
     pub rights: Vec<NormalizedRight>,
     pub denies: Vec<NormalizedDeny>,
+    pub unix_socket_roots: Vec<PathBuf>,
 }
 
 /// Validates a complete request before the broker starts a child.
@@ -77,6 +78,7 @@ pub fn validate_exec(request: ExecRequest, hard: &HardPolicy) -> Result<Validate
         return Err("timeout exceeds 24 hours".to_owned());
     }
     let (rights, denies) = normalize_policy(&request.policy, hard)?;
+    let unix_socket_roots = normalize_unix_socket_roots(&request.policy.unix_socket_roots)?;
     Ok(ValidatedExec {
         id: request.id,
         program,
@@ -87,7 +89,71 @@ pub fn validate_exec(request: ExecRequest, hard: &HardPolicy) -> Result<Validate
         output_limit_bytes,
         rights,
         denies,
+        unix_socket_roots,
     })
+}
+
+fn normalize_unix_socket_roots(paths: &[String]) -> Result<Vec<PathBuf>, String> {
+    if paths.len() > 16 {
+        return Err("Unix socket policy has too many entries".to_owned());
+    }
+    let mut normalized = paths
+        .iter()
+        .map(|path| canonical_socket_path(Path::new(path)))
+        .collect::<Result<Vec<_>, _>>()?;
+    normalized.sort();
+    normalized.dedup();
+    if normalized.iter().any(|path| {
+        path.file_name()
+            .is_some_and(|name| name == "pi-agent-tmux.sock")
+    }) {
+        return Err("normal commands cannot access the background-job control socket".to_owned());
+    }
+    Ok(normalized)
+}
+
+fn canonical_socket_path(path: &Path) -> Result<PathBuf, String> {
+    if !path.is_absolute() {
+        return Err(format!(
+            "Unix socket path must be absolute: {}",
+            path.display()
+        ));
+    }
+    if path.as_os_str().as_encoded_bytes().contains(&0) {
+        return Err("Unix socket path contains NUL".to_owned());
+    }
+    if path.components().any(|part| {
+        matches!(
+            part,
+            std::path::Component::ParentDir | std::path::Component::CurDir
+        )
+    }) {
+        return Err(format!(
+            "Unix socket path must not contain . or ..: {}",
+            path.display()
+        ));
+    }
+    if path.exists() {
+        return path.canonicalize().map_err(|error| {
+            format!(
+                "cannot canonicalize Unix socket {}: {error}",
+                path.display()
+            )
+        });
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("Unix socket path has no parent: {}", path.display()))?;
+    let parent = parent.canonicalize().map_err(|error| {
+        format!(
+            "cannot canonicalize Unix socket parent {}: {error}",
+            parent.display()
+        )
+    })?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| format!("Unix socket path has no file name: {}", path.display()))?;
+    Ok(parent.join(name))
 }
 
 fn validate_text(label: &str, value: &str, maximum: usize) -> Result<(), String> {
@@ -144,5 +210,29 @@ mod tests {
         assert!(!is_env_name("bad-name"));
         assert!(!is_env_name("1BAD"));
         assert!(!is_env_name(""));
+    }
+
+    #[test]
+    fn unix_socket_roots_are_absolute_narrow_and_deduplicated() {
+        let root = std::env::temp_dir()
+            .canonicalize()
+            .expect("canonical temp directory");
+        let socket = root.join("pi-sandbox-validation.sock");
+        let paths = vec![
+            socket.to_string_lossy().into_owned(),
+            socket.to_string_lossy().into_owned(),
+        ];
+        assert_eq!(
+            normalize_unix_socket_roots(&paths).expect("valid socket roots"),
+            vec![socket]
+        );
+        assert!(normalize_unix_socket_roots(&["relative.sock".to_owned()]).is_err());
+        assert!(
+            normalize_unix_socket_roots(&[root
+                .join("pi-agent-tmux.sock")
+                .to_string_lossy()
+                .into_owned()])
+            .is_err()
+        );
     }
 }

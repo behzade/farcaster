@@ -917,9 +917,9 @@ export default function (pi: ExtensionAPI) {
 		...localBash,
 		label: "bash (OS sandbox)",
 		description:
-			"Execute a bash command in the OS sandbox. Declare any exact extra read, write, or network_host rights in permissions so the user can approve them before launch.",
+			"Execute a bash command in the OS sandbox. The current workspace, temp folders, and fixed Cargo, Nix, npm, pnpm, Bun, Yarn, Python, Go, and Deno caches already have their needed rights. Declare only exact extra read, write, or network_host rights in permissions so the user can approve them before launch.",
 		promptSnippet:
-			"Use permissions on bash to declare exact extra filesystem or command-only network_host rights before launch.",
+			"Use permissions only for exact rights outside the current workspace, temp folders, and built-in development caches. Do not request a whole tool home such as ~/.cargo or ~/.npm.",
 		parameters: BashParams,
 		renderShell: "self",
 		async execute(id, params, signal, onUpdate, ctx) {
@@ -1250,14 +1250,14 @@ export default function (pi: ExtensionAPI) {
 					}`,
 					`  Network hosts: ${
 						native
-							? "blocked by native protocol v1"
+							? "blocked by native protocol v2"
 							: config.network?.enabled === false
 								? "off"
 								: networkHosts.length > 0
 									? networkHosts.join(", ")
 									: "blocked until an exact host or IP is approved"
 					}`,
-					`  Unix sockets: ${native ? "blocked by native protocol v1" : unixSockets.join(", ") || "(none)"}`,
+					`  Unix sockets: ${unixSockets.join(", ") || "(none)"}`,
 					...(native
 						? ["  Background jobs: unavailable", "  Denial hints: best effort"]
 						: []),

@@ -4,7 +4,7 @@
 
 The Rust broker now has a foreground Bubblewrap backend and reports `linux`/`bubblewrap` only after a real namespace, `/proc`, seccomp, and `NoNewPrivs` self-test. It uses the same protocol-v1 validation, output, timeout, cancellation, and shutdown path as macOS, while Linux PID namespaces own descendant teardown. The client accepts the fixed Linux pair and Nix injects Bubblewrap's exact store path into the broker. No Linux release host has run the ignored integration gate yet, so machine config must stay on the Codex backend until the release work below lands.
 
-The first Linux release should match the current native protocol v1 execution scope, while leaving macOS-only denial collection out:
+The first Linux release should match the current native protocol v2 execution scope, while leaving macOS-only denial collection and socket paths out:
 
 - one foreground command at a time;
 - read, write, exact-file, exact-tree, and hard-deny policy;
@@ -12,7 +12,7 @@ The first Linux release should match the current native protocol v1 execution sc
 - filtered environment, bounded output, timeout, cancellation, and shutdown;
 - no native background jobs, approved network hosts, Unix socket grants, PTY, or Linux denial hints.
 
-Do not widen protocol v1 while adding Linux. The existing `denials` event is active on macOS and remains optional for Linux because Linux enforcement does not use unified Seatbelt logs. Add the other features as separate work after the blocked-network backend ships.
+Do not widen Linux policy while adding the v2 transport. The existing `denials` event is active on macOS and remains optional for Linux because Linux enforcement does not use unified Seatbelt logs. Add the other features as separate work after the blocked-network backend ships.
 
 ## Source and license work
 
@@ -76,7 +76,7 @@ Generate a mount plan first, validate it, then turn it into bubblewrap arguments
 
 #### Glob deny snapshot semantics
 
-Bubblewrap protects concrete mount targets, not future names. Pi follows the reviewed Codex startup-snapshot approach for protocol v1: it expands existing matches with strict traversal, depth, and match caps, then masks those paths after writable mounts. Root-wide patterns scan the active workspace and the broker HOME rather than the whole host root. More specific patterns scan their fixed non-glob prefix. Scan errors or cap overflow reject the command.
+Bubblewrap protects concrete mount targets, not future names. Pi follows the reviewed Codex startup-snapshot approach for protocol v2: it expands existing matches with strict traversal, depth, and match caps, then masks those paths after writable mounts. Root-wide patterns scan the active workspace and the broker HOME rather than the whole host root. More specific patterns scan their fixed non-glob prefix. Scan errors or cap overflow reject the command.
 
 The host user and Pi process are trusted by the threat model, so a trusted host process creating a new secret after the snapshot is not an attacker in this boundary. A sandboxed command may create a new matching name in a writable tree; that file contains data the command already controls and is not a pre-existing host secret. This is intentionally name-snapshot protection, not a claim that Bubblewrap implements dynamic path-pattern mediation. Tests must cover existing matches, scan bounds, and this documented limit.
 
@@ -86,7 +86,7 @@ The launcher must preserve the controls used by the reviewed Codex path:
 
 - user and mount namespace isolation;
 - a PID namespace with an init/reaper so killing its owner empties the namespace;
-- a blocked network namespace for protocol v1;
+- a blocked network namespace for protocol v2;
 - IPC and other namespace isolation required by the selected source;
 - `no_new_privs` before user code;
 - the reviewed seccomp policy for the supported CPU architectures;
@@ -174,7 +174,7 @@ Add a Linux release test, such as `sandbox-broker/tests/linux_release.rs`, that 
 - one-time rights stay on one command ID;
 - a second active command is rejected;
 - approved network hosts, Unix socket grants, and background jobs remain unavailable;
-- the first Linux broker emits no denial hints, while the client keeps the active protocol v1 shape used by macOS.
+- the first Linux broker emits no denial hints and rejects non-empty Unix socket paths, while the client keeps the active protocol v2 shape used by macOS.
 
 ## Definition of done
 

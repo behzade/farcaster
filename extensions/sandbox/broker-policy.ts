@@ -1,6 +1,7 @@
 import { existsSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
+import { isBackgroundJobSocket } from "./background-jobs.ts";
 import type {
 	BrokerExecRequest,
 	BrokerFilesystemDeny,
@@ -36,9 +37,9 @@ export function buildBrokerExecRequest(
 	if (networkHosts.length > 0) {
 		throw new Error("The native sandbox preview does not yet support network hosts");
 	}
-	// Protocol v1 intentionally omits configured network and Unix socket rights.
-	// Running with fewer rights is safe; a command that needs either must use
-	// the Codex backend until the native proxy and socket stages land.
+	if (effective.network?.allowAllUnixSockets) {
+		throw new Error("The native sandbox does not support allowing all Unix sockets");
+	}
 	if (
 		timeoutSeconds !== undefined &&
 		(!Number.isFinite(timeoutSeconds) || timeoutSeconds > 86_400)
@@ -65,9 +66,23 @@ export function buildBrokerExecRequest(
 			grants: permissions.map(permissionRight),
 			denies: denyRules(effective, actualCwd),
 			network: { mode: "blocked" },
+			unix_socket_roots: unixSocketRoots(effective),
 			output_limit_bytes: OUTPUT_LIMIT_BYTES,
 		},
 	};
+}
+
+function unixSocketRoots(config: CodexSandboxConfig): string[] {
+	const roots = new Set<string>();
+	for (const socket of config.network?.allowUnixSockets ?? []) {
+		if (!isAbsolute(socket)) {
+			throw new Error(`Native sandbox Unix socket paths must be absolute: ${socket}`);
+		}
+		const path = canonicalize(socket);
+		if (isBackgroundJobSocket(path, canonicalize)) continue;
+		roots.add(path);
+	}
+	return [...roots].sort();
 }
 
 function baseRights(

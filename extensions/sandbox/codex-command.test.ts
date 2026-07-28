@@ -186,6 +186,7 @@ test("default Codex profile includes narrow development caches", () => {
 	).find((value) => value.startsWith(`permissions.pi-sandbox-${process.pid}=`));
 	assert(profile);
 	assert(profile.includes(`${JSON.stringify(canonicalize(join(homedir(), ".cargo", "registry")))} = "write"`));
+	assert(profile.includes(`${JSON.stringify(canonicalize(join(homedir(), ".cache", "nix")))} = "write"`));
 	assert(profile.includes(`${JSON.stringify(canonicalize(join(homedir(), ".npm")))} = "write"`));
 	assert.equal(profile.includes(`${JSON.stringify(canonicalize(join(homedir(), ".cargo")))} = "write"`), false);
 	assert.equal(profile.includes(`${JSON.stringify(canonicalize(join(homedir(), ".cargo", "bin")))} = "write"`), false);
