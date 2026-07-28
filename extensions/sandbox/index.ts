@@ -52,9 +52,11 @@ import {
 	type IoPermission,
 	isInside,
 	isControlRootSymlink,
+	isMcpPermissionApproved,
 	isProtectedPath,
 	isProtectedWritePath,
 	loadWorkspacePermissions,
+	mcpEndpointPermissionFromInput,
 	mcpPermissionFromInput,
 	permissionCoversPath,
 	permissionLabel,
@@ -69,6 +71,10 @@ import {
 	isBaseWriteAllowed,
 	isDeniedByConfig,
 } from "./io-policy.ts";
+import {
+	publishMcpApprovalService,
+	unpublishMcpApprovalService,
+} from "./mcp-approval-service.ts";
 import {
 	createApprovingNativeSandboxOps,
 	createNativeSandboxOps,
@@ -335,9 +341,24 @@ export default function (pi: ExtensionAPI) {
 	const permissionFile = resolve(getAgentDir(), "io-permissions.json");
 	let sandboxState: SandboxState = { kind: "initializing" };
 	let persistentPermissions: IoPermission[] = [];
+	const sessionMcpPermissions = new Set<string>();
+	const mcpApprovalOwner = {};
 	let brokerClient: SandboxBrokerClient | undefined;
 	let userBashCounter = 0;
 	let sessionGeneration = 0;
+
+	publishMcpApprovalService({
+		version: 1,
+		owner: mcpApprovalOwner,
+		isEndpointApproved: (endpoint) => {
+			const permission = { kind: "mcp", server: endpoint } as const;
+			return isMcpPermissionApproved(
+				permission,
+				persistentPermissions,
+				sessionMcpPermissions,
+			);
+		},
+	});
 
 	pi.on("session_start", () => {
 		pi.setActiveTools(
@@ -1011,20 +1032,27 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("tool_call", async (event, ctx) => {
 		if (event.toolName === "bash" || event.toolName === "request_network_permission") return;
-		if (event.toolName === "mcp_enable") {
-			const permission = mcpPermissionFromInput(event.input);
+		if (event.toolName === "mcp" || event.toolName === "mcp_enable") {
+			if (
+				event.toolName === "mcp" &&
+				typeof event.input === "object" &&
+				event.input !== null &&
+				!Array.isArray(event.input) &&
+				(event.input as { action?: unknown }).action === "disable"
+			) {
+				return;
+			}
+			const permission =
+				event.toolName === "mcp"
+					? mcpEndpointPermissionFromInput(event.input)
+					: mcpPermissionFromInput(event.input);
 			if (!permission) {
 				return {
 					block: true,
-					reason: "MCP service name is missing; access stays blocked",
+					reason: "MCP endpoint or service name is invalid; access stays blocked",
 				};
 			}
-			if (
-				persistentPermissions.some(
-					(entry) =>
-						entry.kind === "mcp" && entry.server === permission.server,
-				)
-			) {
+			if (isMcpPermissionApproved(permission, persistentPermissions, sessionMcpPermissions)) {
 				return;
 			}
 			const label = permissionLabel(permission);
@@ -1032,7 +1060,7 @@ export default function (pi: ExtensionAPI) {
 				kind: "io-permission",
 				title: "Agent requests service access",
 				summary: label,
-				toolName: "mcp_enable",
+				toolName: event.toolName,
 				toolCallId: event.toolCallId,
 				sessionId: ctx.sessionManager.getSessionId(),
 				cwd: ctx.cwd,
@@ -1045,7 +1073,7 @@ export default function (pi: ExtensionAPI) {
 				surface: "mcp",
 				value: permission.server,
 				choices: [
-					{ id: "allow-once", label: "Allow once" },
+					{ id: "allow-once", label: "Allow for this session" },
 					{ id: "allow-always", label: "Always allow in this workspace" },
 					{ id: "deny", label: "No" },
 					{ id: "deny-with-comment", label: "No, with comment", requestReason: true },
@@ -1055,13 +1083,14 @@ export default function (pi: ExtensionAPI) {
 			});
 			const allow =
 				approval.choiceId === "allow-once" || approval.choiceId === "allow-always";
+			if (allow) sessionMcpPermissions.add(permission.server);
 			if (approval.choiceId === "allow-always") {
 				saveWorkspacePermission(permissionFile, ctx.cwd, permission);
 				persistentPermissions = loadWorkspacePermissions(permissionFile, ctx.cwd);
 			}
 			pi.events.emit("approval:resolved", {
 				kind: "io-permission",
-				toolName: "mcp_enable",
+				toolName: event.toolName,
 				toolCallId: event.toolCallId,
 				decision: allow ? "allowed" : "denied",
 			});
@@ -1218,10 +1247,12 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_shutdown", async () => {
 		sessionGeneration += 1;
+		unpublishMcpApprovalService(mcpApprovalOwner);
 		const client = brokerClient;
 		brokerClient = undefined;
 		if (client) await client.shutdown();
 		persistentPermissions = [];
+		sessionMcpPermissions.clear();
 		userBashCounter = 0;
 		sandboxState = { kind: "initializing" };
 	});

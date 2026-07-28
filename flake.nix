@@ -27,12 +27,14 @@
             inherit sandboxBroker;
           };
           denseTools = pkgs.callPackage ./nix/pi-dense-tools.nix { };
+          mcpAdapter = pkgs.callPackage ./nix/pi-mcp-adapter.nix { };
           subagents = pkgs.callPackage ./nix/pi-subagents.nix { };
           openaiServerCompaction = pkgs.callPackage ./nix/pi-openai-server-compaction.nix { };
           permissionSystem = pkgs.callPackage ./nix/pi-permission-system.nix { };
         in
         {
           inherit sandbox subagents;
+          mcp-adapter = mcpAdapter;
           permission-system = permissionSystem;
           sandbox-broker = sandboxBroker;
           dense-tools = denseTools;
@@ -57,6 +59,7 @@
               ${self}/extensions/sandbox/development-caches.test.ts \
               ${self}/extensions/sandbox/io-permissions.test.ts \
               ${self}/extensions/sandbox/io-policy.test.ts \
+              ${self}/extensions/sandbox/mcp-approval-service.test.ts \
               ${self}/extensions/sandbox/native-denials.test.ts \
               ${self}/extensions/sandbox/native-sandbox-ops.test.ts \
               ${self}/extensions/sandbox/permission-system-approval.test.ts \
@@ -65,6 +68,7 @@
           '';
 
           sandbox-broker = pkgs.callPackage ./nix/pi-sandbox-broker.nix { };
+          mcp-adapter = pkgs.callPackage ./nix/pi-mcp-adapter.nix { };
           permission-system = pkgs.callPackage ./nix/pi-permission-system.nix { };
 
           governance = pkgs.runCommand "pi-governance-tests" { nativeBuildInputs = [ pkgs.nodejs ]; } ''

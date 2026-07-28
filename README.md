@@ -11,6 +11,8 @@ hosts, and notification settings. This repo owns code and package pins.
 
 - `extensions/sandbox`: fail-closed sandbox adapter, IO permission prompt,
   native broker client, and background-job tool and helper.
+- `extensions/mcp-adapter`: one lazy MCP control tool that connects approved
+  Streamable HTTP endpoints and activates their discovered tools for the session.
 - `sandbox-broker`: protocol, threat model, provenance, and the first native
   macOS Seatbelt backend.
 - `extensions/*.ts`: local notification, input, session, title, and dense tool
@@ -28,6 +30,8 @@ hosts, and notification settings. This repo owns code and package pins.
 
 ```sh
 npm run check --prefix extensions/sandbox
+npm ci --prefix extensions/mcp-adapter --ignore-scripts
+npm run check --prefix extensions/mcp-adapter
 cargo test --manifest-path sandbox-broker/Cargo.toml
 node --test tests/governance.test.ts
 nix flake check
@@ -39,6 +43,7 @@ Build one extension with:
 nix build .#sandbox
 nix build .#sandbox-broker
 nix build .#dense-tools
+nix build .#mcp-adapter
 nix build .#subagents
 nix build .#openai-server-compaction
 ```
@@ -183,9 +188,19 @@ retries the command. `.git` data under configured package caches or temp paths
 is normal cache data and does not trigger a repository-control prompt. Use
 version control or backups for other workspace files.
 
-Enabling an MCP service also needs user approval because an MCP server can read
-private data or act outside the shell sandbox. That approval is scoped to the
-named service and can be saved for one workspace.
+The MCP adapter initially exposes one `mcp` control tool. An enable call supplies
+an exact `http` or `https` host, port, and absolute path, then the adapter uses
+Streamable HTTP discovery to activate namespaced upstream tools for that session.
+A disable call deactivates those tools and closes the client. Redirects, embedded
+credentials, queries, and fragments are rejected; authentication, stdio, legacy
+SSE, MCP resources, and MCP prompts are intentionally unsupported.
+
+Enabling an MCP endpoint needs user approval because its server can read private
+data or act outside the shell sandbox. The adapter requires this repository's
+sandbox extension to publish the approval service and fails before connecting when
+that service is absent. Approval is keyed by the canonical endpoint, not its
+friendly namespace. Session approval lasts until shutdown; saved approval is scoped
+to the current workspace. MCP approval does not grant shell network access.
 
 Unix socket access grants a right to another service. That service may do work
 outside the caller's file or network limits. The machine config allows the Nix

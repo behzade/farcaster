@@ -15,9 +15,11 @@ import {
 	gitControlRoot,
 	isDefaultWritePath,
 	isControlRootSymlink,
+	isMcpPermissionApproved,
 	isProtectedPath,
 	isProtectedWritePath,
 	loadWorkspacePermissions,
+	mcpEndpointPermissionFromInput,
 	mcpPermissionFromInput,
 	normalizeNetworkHost,
 	normalizePermission,
@@ -242,4 +244,51 @@ test("MCP rights use the exact service name and do not change shell grants", () 
 		write: [],
 		networkHosts: [],
 	});
+});
+
+test("generic MCP rights use the exact canonical endpoint", () => {
+	assert.deepEqual(
+		mcpEndpointPermissionFromInput({
+			action: "enable",
+			name: "figma",
+			protocol: "http",
+			host: "LOCALHOST.",
+			port: 3845,
+			path: "/mcp",
+		}),
+		{ kind: "mcp", server: "http://localhost:3845/mcp" },
+	);
+	assert.deepEqual(
+		mcpEndpointPermissionFromInput({
+			action: "enable",
+			host: "::1",
+			port: 3845,
+			path: "/mcp",
+		}),
+		{ kind: "mcp", server: "http://[::1]:3845/mcp" },
+	);
+	assert.equal(mcpEndpointPermissionFromInput({ action: "disable", name: "figma" }), undefined);
+	assert.equal(
+		mcpEndpointPermissionFromInput({
+			action: "enable",
+			host: "example.com",
+			port: 443,
+			path: "/mcp?token=x",
+		}),
+		undefined,
+	);
+});
+
+test("session MCP approval is exact and separate from persistent rights", () => {
+	const permission = { kind: "mcp", server: "https://mcp.example:443/mcp" } as const;
+	assert.equal(isMcpPermissionApproved(permission, [], new Set()), false);
+	assert.equal(
+		isMcpPermissionApproved(permission, [], new Set(["https://mcp.example:443/mcp"])),
+		true,
+	);
+	assert.equal(
+		isMcpPermissionApproved(permission, [], new Set(["https://other.example:443/mcp"])),
+		false,
+	);
+	assert.equal(isMcpPermissionApproved(permission, [permission], new Set()), true);
 });

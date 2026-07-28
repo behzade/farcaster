@@ -29,6 +29,8 @@ export type IoPermission =
 			server: string;
 	  };
 
+export type McpPermission = Extract<IoPermission, { kind: "mcp" }>;
+
 export interface RuntimeIoGrants {
 	read: string[];
 	write: string[];
@@ -244,7 +246,7 @@ export function permissionCoversPath(permission: IoPermission, path: string): bo
 	return permission.directory ? isInside(root, target) : root === target;
 }
 
-export function mcpPermissionFromInput(input: unknown): IoPermission | undefined {
+export function mcpPermissionFromInput(input: unknown): McpPermission | undefined {
 	if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
 	const record = input as Record<string, unknown>;
 	for (const key of [
@@ -262,6 +264,51 @@ export function mcpPermissionFromInput(input: unknown): IoPermission | undefined
 		}
 	}
 	return undefined;
+}
+
+export function mcpEndpointPermissionFromInput(input: unknown): McpPermission | undefined {
+	if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
+	const record = input as Record<string, unknown>;
+	if (record.action !== "enable") return undefined;
+	const protocol = record.protocol ?? "http";
+	if (protocol !== "http" && protocol !== "https") return undefined;
+	if (typeof record.host !== "string" || typeof record.path !== "string") return undefined;
+	if (
+		typeof record.port !== "number" ||
+		!Number.isInteger(record.port) ||
+		record.port < 1 ||
+		record.port > 65_535 ||
+		!record.path.startsWith("/") ||
+		record.path.startsWith("//") ||
+		/[?#\\\s\x00-\x1f\x7f]/.test(record.path)
+	) {
+		return undefined;
+	}
+	try {
+		const host = normalizeNetworkHost(record.host);
+		const authority = isIP(host) === 6 ? `[${host}]` : host;
+		const parsed = new URL(`${protocol}://${authority}:${record.port}${record.path}`);
+		if (parsed.username || parsed.password || parsed.search || parsed.hash) return undefined;
+		return {
+			kind: "mcp",
+			server: `${protocol}://${authority}:${record.port}${parsed.pathname}`,
+		};
+	} catch {
+		return undefined;
+	}
+}
+
+export function isMcpPermissionApproved(
+	permission: McpPermission,
+	persistentPermissions: readonly IoPermission[],
+	sessionPermissions: ReadonlySet<string>,
+): boolean {
+	return (
+		sessionPermissions.has(permission.server) ||
+		persistentPermissions.some(
+			(entry) => entry.kind === "mcp" && entry.server === permission.server,
+		)
+	);
 }
 
 export function grantsToRuntime(permissions: readonly IoPermission[]): RuntimeIoGrants {
