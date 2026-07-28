@@ -920,7 +920,7 @@ export default function (pi: ExtensionAPI) {
 		description:
 			"Execute a bash command in the OS sandbox. The current workspace, temp folders, and fixed Cargo, Nix, npm, pnpm, Bun, Yarn, Python, Go, and Deno caches already have their needed rights. Declare only exact extra read, write, or network_host rights in permissions so the user can approve them before launch.",
 		promptSnippet:
-			"Use permissions only for exact rights outside the current workspace, temp folders, and built-in development caches. Do not request a whole tool home such as ~/.cargo or ~/.npm.",
+			"Use permissions only for exact rights outside the current workspace, temp folders, and built-in development caches. Do not request a whole tool home such as ~/.cargo or ~/.npm. Treat time blocked on permission approval as permission wait; never report it as no stall if the command did not start.",
 		parameters: BashParams,
 		renderShell: "self",
 		async execute(id, params, signal, onUpdate, ctx) {
