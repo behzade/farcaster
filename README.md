@@ -22,8 +22,7 @@ hosts, and notification settings. This repo owns code and package pins.
   [morhetz/gruvbox](https://github.com/morhetz/gruvbox/blob/master/colors/gruvbox.vim).
   Its token roles follow Zenbones' contrast-first hierarchy: neutral lightness
   carries most structure, while hue marks links, active UI, state, and diffs.
-- `nix`: pinned package builds for the sandbox, subagents, and server
-  compaction.
+- `nix`: the complete Pi agent package plus pinned component builds.
 - `tests`: shared policy and notification checks.
 
 ## Checks
@@ -37,7 +36,13 @@ node --test tests/governance.test.ts
 nix flake check
 ```
 
-Build one extension with:
+Build the complete deployable agent tree with:
+
+```sh
+nix build
+```
+
+Individual components remain available for focused development:
 
 ```sh
 nix build .#sandbox
@@ -48,10 +53,10 @@ nix build .#subagents
 nix build .#openai-server-compaction
 ```
 
-`nix-config` consumes this repo as a flake input and deploys the source and
-built packages through Home Manager. It must deploy the `dense-tools` flake
-package to Pi's extension directory, link `themes/gruvbox-dark-hard.json` to
-Pi's theme directory, and set Pi's theme to `gruvbox-dark-hard`.
+`nix-config` consumes this repo's default package as a flake input and deploys
+that tree recursively at `~/.pi/agent`. The package owns Pi's prompt, extension,
+skill, and theme inventory; machine-specific policy files remain in
+`nix-config`.
 
 ## Dense tool display
 

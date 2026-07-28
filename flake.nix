@@ -31,15 +31,25 @@
           subagents = pkgs.callPackage ./nix/pi-subagents.nix { };
           openaiServerCompaction = pkgs.callPackage ./nix/pi-openai-server-compaction.nix { };
           permissionSystem = pkgs.callPackage ./nix/pi-permission-system.nix { };
+          agent = pkgs.callPackage ./nix/pi-agent.nix {
+            inherit
+              denseTools
+              mcpAdapter
+              openaiServerCompaction
+              permissionSystem
+              sandbox
+              subagents
+              ;
+          };
         in
         {
-          inherit sandbox subagents;
+          inherit agent sandbox subagents;
           mcp-adapter = mcpAdapter;
           permission-system = permissionSystem;
           sandbox-broker = sandboxBroker;
           dense-tools = denseTools;
           openai-server-compaction = openaiServerCompaction;
-          default = sandbox;
+          default = agent;
         }
       );
 
