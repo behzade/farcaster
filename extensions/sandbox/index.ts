@@ -72,6 +72,7 @@ import {
 import {
 	createApprovingNativeSandboxOps,
 	createNativeSandboxOps,
+	modelVisibleNativeOutput,
 	type NativeApprovalChoice,
 	type NativeApprovalRequest,
 	resolveNativeApprovalChoice,
@@ -990,12 +991,21 @@ export default function (pi: ExtensionAPI) {
 					ctx,
 				);
 			}
-			return createBashTool(localCwd, { operations }).execute(
+			const result = await createBashTool(localCwd, { operations }).execute(
 				id,
 				params,
 				signal,
 				onUpdate,
 			);
+			if (sandboxState.config.backend !== "native-preview") return result;
+			return {
+				...result,
+				content: result.content.map((item) =>
+					item.type === "text"
+						? { ...item, text: modelVisibleNativeOutput(item.text) }
+						: item,
+				),
+			};
 		},
 	});
 

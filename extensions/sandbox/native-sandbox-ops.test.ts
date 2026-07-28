@@ -12,6 +12,7 @@ import { DEFAULT_CONFIG } from "./codex-command.ts";
 import { canonicalize } from "./io-permissions.ts";
 import {
 	createApprovingNativeSandboxOps,
+	modelVisibleNativeOutput,
 	type NativeApprovalRequest,
 	type NativeBroker,
 	resolveNativeApprovalChoice,
@@ -94,6 +95,7 @@ test("native structured denial prompts and retries without parsing app output", 
 			onData(Buffer.from("service unavailable\n"));
 			return failed(path);
 		}
+		onData(Buffer.from("created\n"));
 		return { exitCode: 0, denials: [], denialsComplete: false };
 	});
 	const approvals: string[] = [];
@@ -105,6 +107,7 @@ test("native structured denial prompts and retries without parsing app output", 
 		toolCallId: "tool-1",
 		blockedPaths: [],
 		async approve(request) {
+			assert.equal(Buffer.concat(output).toString("utf8"), "service unavailable\n");
 			approvals.push(...request.permissions.map((permission) => permission.path));
 			return request.permissions;
 		},
@@ -130,8 +133,44 @@ test("native structured denial prompts and retries without parsing app output", 
 	]);
 	assert.equal(
 		Buffer.concat(output).toString("utf8"),
-		"service unavailable\n\n[Retrying command with approved IO rights]\n",
+		"service unavailable\n" +
+			"\n[Retrying command with approved IO rights]\n" +
+			"created\n" +
+			"[Command completed successfully after approved IO retry]\n",
 	);
+	assert.equal(
+		modelVisibleNativeOutput(Buffer.concat(output).toString("utf8")),
+		"\n[Retrying command with approved IO rights]\n" +
+			"created\n" +
+			"[Command completed successfully after approved IO retry]\n",
+	);
+});
+
+test("native denied retry keeps the failed attempt output", async () => {
+	const cwd = mkdtempSync(join(tmpdir(), "pi-native-denied-retry-"));
+	const path = join(homedir(), `pi-native-denied-retry-${process.pid}`, "state.db");
+	const broker = new FakeBroker((_request, onData) => {
+		onData(Buffer.from("permission denied\n"));
+		return failed(path);
+	});
+	const output: Buffer[] = [];
+	const operations = createApprovingNativeSandboxOps({
+		client: broker,
+		config: DEFAULT_CONFIG,
+		initialPermissions: [],
+		toolCallId: "tool-denied-retry",
+		blockedPaths: [],
+		async approve() {
+			return undefined;
+		},
+	});
+
+	const result = await operations.exec("issues search", cwd, {
+		onData: (data) => output.push(data),
+	});
+	assert.equal(result.exitCode, 1);
+	assert.equal(Buffer.concat(output).toString("utf8"), "permission denied\n");
+	assert.equal(broker.requests.length, 1);
 });
 
 test("four sibling denials offer one recursive folder approval", async () => {

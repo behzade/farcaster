@@ -13,6 +13,9 @@ import {
 
 const MAX_NATIVE_ATTEMPTS = 8;
 const FOLDER_SIBLING_THRESHOLD = 4;
+const NATIVE_RETRY_STARTED = "\n[Retrying command with approved IO rights]\n";
+const NATIVE_RETRY_SUCCEEDED =
+	"[Command completed successfully after approved IO retry]\n";
 
 export interface NativeBroker {
 	exec(
@@ -37,6 +40,12 @@ export type NativeApprovalChoice =
 export interface NativeApprovalSelection {
 	permissions: readonly NativeFilePermission[];
 	persistent: boolean;
+}
+
+export function modelVisibleNativeOutput(output: string): string {
+	if (!output.includes(NATIVE_RETRY_SUCCEEDED)) return output;
+	const finalAttempt = output.lastIndexOf(NATIVE_RETRY_STARTED);
+	return finalAttempt >= 0 ? output.slice(finalAttempt) : output;
 }
 
 export function resolveNativeApprovalChoice(
@@ -117,7 +126,12 @@ export function createApprovingNativeSandboxOps(options: {
 					execOptions.signal,
 				);
 				if (execOptions.signal?.aborted) throw new Error("aborted");
-				if (lastResult.exitCode === 0) return lastResult;
+				if (lastResult.exitCode === 0) {
+					if (attempt > 0) {
+						execOptions.onData(Buffer.from(NATIVE_RETRY_SUCCEEDED));
+					}
+					return lastResult;
+				}
 
 				const requested = new Map<string, NativeFilePermission>();
 				for (const denial of lastResult.denials) {
@@ -135,6 +149,7 @@ export function createApprovingNativeSandboxOps(options: {
 					}
 				}
 				if (requested.size === 0) return lastResult;
+				if (attempt + 1 >= MAX_NATIVE_ATTEMPTS) return lastResult;
 
 				for (const permission of requested.values()) {
 					if (permission.directory) continue;
@@ -196,7 +211,7 @@ export function createApprovingNativeSandboxOps(options: {
 					}
 				}
 				if (execOptions.signal?.aborted) throw new Error("aborted");
-				execOptions.onData(Buffer.from("\n[Retrying command with approved IO rights]\n"));
+				execOptions.onData(Buffer.from(NATIVE_RETRY_STARTED));
 			}
 			return lastResult;
 		},
