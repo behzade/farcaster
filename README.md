@@ -1,48 +1,74 @@
 # Pi
 
-This repo owns Behzad's reviewed Pi coding-agent setup. It contains local
-extensions, Codex and native sandbox code, background job support, tests, and
-pinned Nix builds.
+This is the Pi setup I use for day-to-day coding. Nix pins the agent,
+extensions, prompts, skills, and theme so I get the same setup on macOS and
+Linux.
 
-Machine policy stays in `nix-config`. That repo sets sandbox paths, network
-hosts, and notification settings. This repo owns code and package pins.
+Most of the work in this repo is around shell execution. Commands run in a
+native OS sandbox, extra file access goes through a user approval, and a broken
+or unavailable backend fails closed.
 
-## Layout
+This is a personal setup, not a turnkey Pi distribution. Machine-specific
+paths, network policy, MCP servers, and notification settings live in my
+separate `nix-config` repo.
 
-- `extensions/sandbox`: fail-closed sandbox adapter, IO permission prompt,
-  native broker client, and background-job tool and helper.
-- `nix/pi-mcp-cli.nix`: pinned stateless MCP CLI available inside sandboxed
-  shell commands.
-- `nix/pi-web-access.nix`: pinned `pi-web-access` package providing web search,
-  content extraction, and video understanding tools.
-- `sandbox-broker`: protocol, threat model, provenance, and the first native
-  macOS Seatbelt backend.
-- `extensions/*.ts`: local notification, input, session, title, and dense tool
-  rendering hooks.
-- `themes/gruvbox-dark-hard.json`: Gruvbox's canonical dark-hard palette for
-  Pi. The palette values come from
-  [morhetz/gruvbox](https://github.com/morhetz/gruvbox/blob/master/colors/gruvbox.vim).
-  Its token roles follow Zenbones' contrast-first hierarchy: neutral lightness
-  carries most structure, while hue marks links, active UI, state, and diffs.
-- `nix`: the complete Pi agent package plus pinned component builds.
-- `tests`: shared policy and notification checks.
+## What is included
 
-## Checks
+- A native sandbox broker using Seatbelt on macOS and Bubblewrap on Linux.
+- Shell write approvals derived from sandbox denials; the model cannot declare
+  filesystem rights.
+- Async subagents with steering, timeouts, review prompts, and parent-visible
+  approval requests.
+- Web search, page extraction, and video tools, with OpenAI used first when the
+  request is supported.
+- Stateless MCP access through a pinned `mcp-cli`.
+- Server-side OpenAI compaction for long sessions.
+- Compact read, edit, and shell output with syntax-highlighted diffs.
+- A Gruvbox dark-hard theme and small hooks for notifications, titles, user
+  input, and session state.
 
-```sh
-npm run check --prefix extensions/sandbox
-cargo test --manifest-path sandbox-broker/Cargo.toml
-node --test tests/governance.test.ts
-nix flake check
-```
+## Repository map
 
-Build the complete deployable agent tree with:
+- [`extensions/sandbox`](extensions/sandbox) contains the Pi adapter,
+  permission UI, native broker client, Codex fallback, and background-job
+  support.
+- [`sandbox-broker`](sandbox-broker) contains the Rust broker and its security
+  documentation.
+- [`extensions/dense-tools`](extensions/dense-tools) renders compact tool output
+  and side-by-side diffs.
+- [`nix`](nix) contains the pinned builds for Pi and every packaged extension.
+- [`patches`](patches) contains the local changes applied to third-party Pi
+  extensions.
+- [`APPEND_SYSTEM.md`](APPEND_SYSTEM.md) is the working contract appended to
+  Pi's system prompt.
+- [`skills`](skills), [`themes`](themes), and [`tests`](tests) contain the local
+  skill, theme, and shared checks.
+
+## Build and test
+
+The flake currently targets Apple Silicon macOS and x86-64 Linux.
+
+Build the complete agent:
 
 ```sh
 nix build
 ```
 
-Individual components remain available for focused development:
+Run the full flake checks:
+
+```sh
+nix flake check
+```
+
+The main checks can also be run directly:
+
+```sh
+npm run check --prefix extensions/sandbox
+cargo test --manifest-path sandbox-broker/Cargo.toml
+node --test tests/governance.test.ts tests/theme-and-rendering.test.ts
+```
+
+Individual packages are available for focused work:
 
 ```sh
 nix build .#sandbox
@@ -51,76 +77,48 @@ nix build .#dense-tools
 nix build .#mcp-cli
 nix build .#subagents
 nix build .#openai-server-compaction
+nix build .#permission-system
 nix build .#web-access
 ```
 
-`nix-config` consumes this repo's default package as a flake input and deploys
-that tree recursively at `~/.pi/agent`. The package owns Pi's prompt, extension,
-skill, and theme inventory; machine-specific policy files remain in
-`nix-config`.
+My Home Manager configuration consumes the default flake package and deploys
+it at `~/.pi/agent`.
 
-## Subagent orchestration
+## Sandbox
 
-Subagent runs have a ten-minute hard default runtime cap, including parallel
-and chain launches. An explicit `timeoutMs`/`maxRuntimeMs` call or agent timeout
-still wins. Timed-out runs retain the latest substantive child output as a
-clearly marked partial result. While `subagent_wait` is active, text/headless
-mode writes throttled progress snapshots to stderr.
+The default backend is named `native-preview` in the config. It starts one
+broker per Pi session and a fresh OS sandbox for each foreground command:
 
-Steering is latched across the small window before the wait listener is
-registered, and wait yielding is deferred until Pi has queued the steer.
-Sandbox approval prompts from a child are mirrored to the parent as immediate
-attention events without creating a second approval authority.
+- macOS uses `/usr/bin/sandbox-exec` with a generated Seatbelt profile.
+- Linux uses a Nix-pinned Bubblewrap binary, a read-only host root, private
+  namespaces and `/proc`, `NoNewPrivs`, and a blocked-network seccomp filter.
 
-The bundled reviewer remains high-thinking. Broad `/parallel-review` runs share
-one cheap, factual parent-built repository index, while every reviewer remains
-responsible for independent source verification. Review-only tasks also block
-Nix and daemon-backed host commands in the child runtime; the reviewer reports
-essential host validation for the supervisor to run instead of stalling on an
-approval prompt.
+The default policy can read most of the host and write the workspace, temporary
+directories, and a sandbox-only development cache. It keeps `.git`, project
+`.pi`, Pi and Codex configuration, common credential directories, auth files,
+and workspace secrets protected. The command environment is filtered, and
+common package-manager caches are redirected under
+`~/.cache/pi-sandbox`.
 
-Web search keeps `auto` routing semantics. OpenAI is the first candidate when
-the request shape is supported and OpenAI search is available; configured
-routing and provider fallbacks remain intact.
+File tools ask before accessing a path outside their current rights. Shell
+commands run once under the OS sandbox; when the backend reports a safe,
+specific denied path, Pi can ask for that right and retry within the same tool
+call. The model sees only the final attempt in its tool history. Saved rights
+are scoped to the real workspace path.
 
-## Dense tool display
+Native execution is deliberately narrow:
 
-`extensions/dense-tools` removes the padded shell from the built-in file tools.
-It combines each run of adjacent `read` calls into one display block; Ctrl+O
-still expands the grouped file contents. Its edit renderer uses a pinned
-`@pierre/diffs` bundle for Shiki syntax highlighting, inline change marks, and
-a responsive before/after view at 120 columns or wider. Added and removed lines
-use low-intensity backgrounds blended from Gruvbox's canonical hard background
-and bright green/red; changed words use stronger blends of the same colors.
-The sandbox remains the only owner of `bash` and applies the same dense shell to
-its bash tool, so the two extensions do not conflict.
+- It supports one foreground command at a time.
+- Network access is blocked.
+- macOS denial hints are best effort; Linux has no structured denial source.
+- Native background jobs and per-command network grants are not implemented.
 
-## Sandbox backend
+The macOS release gate passes. The Linux broker is in use on x86-64, but its
+ignored release test still needs to be run as a dedicated host-level gate
+before treating the backend as portable beyond this setup.
 
-The sandbox extension defaults to its native backends: macOS Seatbelt and Linux
-Bubblewrap. A failed backend check blocks shell commands. The macOS integration
-and denial-collector gate passes. Its cleanup uses a process group plus a
-best-effort kqueue descendant tracker with process start-time checks. Deliberate
-fast `setpgid`, `setsid`, or double-fork escape is out of scope because macOS
-has no unprivileged process-tree owner; a survivor still keeps its command's
-Seatbelt limits.
-
-The Linux broker uses a Nix-pinned Bubblewrap path, a read-only host root, exact
-write mounts, protected child mounts, user/PID/network namespaces, and a
-reviewed blocked-network seccomp filter. It reports ready only after a real
-namespace, private `/proc`, seccomp, and `NoNewPrivs` self-test. Its ignored
-release gate still needs to run on both x86_64 and aarch64 Linux.
-
-The extension package pins the matching broker store path on both systems. A
-custom `brokerPath` must be absolute and can come only from global config;
-project config cannot switch backends or replace the broker. Protocol v1 keeps
-network and Unix sockets blocked and has no native background jobs. On macOS,
-one bounded session collector returns incomplete structured Seatbelt denial
-hints; Linux emits no broker denial hints. When a failed command instead prints
-one exact absolute path on a recognized access-error line, the extension can
-offer a policy-checked write approval and retry. To opt back into the installed
-Codex CLI backend, set this in the global
-`~/.pi/agent/extensions/sandbox.json` file:
+To use the installed Codex CLI backend instead, set this in the global
+`~/.pi/agent/extensions/sandbox.json`:
 
 ```json
 {
@@ -128,147 +126,15 @@ Codex CLI backend, set this in the global
 }
 ```
 
-The Codex backend builds a fresh `codex sandbox` permission profile for each
-shell call from `sandbox.json`. Every interpreter and child process keeps the
-same profile.
+The Codex backend keeps the same filesystem policy and adds sandboxed
+background jobs and exact per-command network-host approvals.
 
-The default rights are:
+Global sandbox configuration lives at
+`~/.pi/agent/extensions/sandbox.json`. A project may add stricter rules in
+`.pi/sandbox.json`, but project config cannot add rights, replace the broker,
+or disable the sandbox.
 
-- read most of the system;
-- deny reads and writes for workspace `.env` and `.key` files and for `.ssh`,
-  `.aws`, and `.gnupg`; deny reads of Pi and Codex `auth.json`; keep workspace
-  PEM certificate bundles readable but read-only;
-- keep `~/.pi` and `~/.codex` read-only so a grant cannot change its own
-  policy;
-- write the workspace, `/tmp`, the system temp folder, and the sandbox-owned
-  `~/.cache/pi-sandbox` development-cache namespace; real user package caches,
-  package-manager configuration, credential files, and global install bins stay
-  outside these implicit write rights;
-- pass only core shell variables such as `PATH`, `HOME`, locale, and temp paths,
-  then force stable cache redirects for XDG-aware tools, Cargo, Go, npm, Bun,
-  Yarn, Corepack, Deno, pip, uv, Gradle, Poetry, ccache, and sccache;
-- remove variables whose names contain `KEY`, `SECRET`, or `TOKEN`;
-- block every network host until the user grants that exact hostname or IP;
-- block local and private network targets.
-
-Before the sandbox starts, Pi creates the configured development-cache root
-(`~/.cache/pi-sandbox` by default) and its tool subdirectories from the trusted
-host. The whole namespace is one directory right and is omitted when it or an
-ancestor below the home folder is a symlink or has the wrong type. It is shared
-by sandboxed commands across workspaces but isolated from caches used by
-unsandboxed host commands. The first sandboxed use may therefore download a
-second copy of an artifact. A hostile project can still poison cache state
-consumed by a later sandboxed build; use separate users or disposable homes when
-that risk matters. Missing dependencies still require an exact network-host
-grant.
-
-When `read`, `write`, `edit`, or `ls` targets a path outside the current IO
-rights, the sandbox pauses that tool call and asks the user to allow it once,
-always for this workspace, or not at all. A denial can include a comment. The
-model does not receive a separate file permission tool and does not need a
-failed permission-request turn. Protected paths and explicit deny rules remain
-blocked without a prompt. Saved rights live in
-`~/.pi/agent/io-permissions.json`, keyed by the real workspace path.
-
-Project `.pi` is also read-only by default because it can load code and prompts
-on reload. A write asks for the whole project `.pi` folder, like repository
-control writes ask for `.git`. Symlinked `.git` and `.pi` control folders cannot
-receive write grants because their targets could be much broader than the path
-shown in the prompt. Global `~/.pi` stays blocked and cannot receive a model
-grant.
-
-A Codex-backed bash or background-job start can declare one exact
-`network_host` right in its `permissions`. The request rejects schemes, ports,
-paths, and wildcards. An allow-once host stays in that command's generated
-profile and cannot move to a parallel call. The separate
-`request_network_permission` tool saves an exact host for the workspace; it no
-longer creates a shared next-command grant. Old blanket `web` and
-`local_network` rights are ignored when saved rights load.
-
-The model cannot declare filesystem permission kinds, paths, or target types.
-Foreground bash commands run first under the OS sandbox; write grants are
-derived only from the denied operation and path reported by the sandbox, then
-shown to the user before a retry. An allow-once choice stays in that one tool
-call's generated profile, so another command cannot use it.
-
-On the native macOS backend, a failed command can return best-effort kernel
-denial hints even when the app hides `EPERM`. Pi prompts and retries only when
-a hint names one exact policy-safe file or folder path. When four distinct file
-hints share one parent folder and access kind, Pi shows one prompt with choices
-to grant the exact files or their parent folder recursively, once or always for
-the workspace. It never widens access without the user's choice and stops after
-eight total attempts. A broad folder choice remains subject to hard protected
-paths and configured denies. Empty,
-late, malformed, protected, denied, or `/dev` device hints grant nothing.
-Unified logging can miss denials, in which case the command fails without a
-permission prompt.
-
-On the Codex backend, and on native attempts that return no broker denial hints,
-undeclared bash rights still use a limited fallback. The sandbox checks failed
-command output for access errors such as `Operation not permitted`, `Permission
-denied`, and `Read-only file system`. If the same error line has one exact
-absolute path and the active policy identifies it as a write denial, the
-sandbox shows the same approval prompt and retries inside the original tool
-call. Directory-creation errors retain folder intent. A retry can repeat work
-completed before the denied operation, so the prompt says that bash will retry.
-Protected paths and explicit deny rules never prompt. Failures without a safe
-exact path return unchanged as regular command failures. Network failures
-remain blocked until the model requests the exact host or IP.
-
-Permission retries stay inside one tool call. Once a retry starts, the final
-model-visible result and stored tool history retain only the last attempt;
-earlier failures may still appear transiently in live UI streaming.
-
-Workspace write access includes creating, changing, and deleting workspace
-files. The sandbox does not inspect command text, so it does not add a second
-prompt for a delete command. Repository control data under the active workspace,
-including nested repositories, starts read-only. If Git fails on a file under
-`.git`, the approval prompt asks for that repository's whole `.git` folder and
-retries the command. `.git` data under the sandbox cache or temp paths is normal
-cache data and does not trigger a repository-control prompt. Use
-version control or backups for other workspace files.
-
-The sandbox package puts the pinned `mcp-cli` binary on the command environment's
-`PATH`. Its wrapper fixes `MCP_NO_DAEMON=1`, so every invocation connects,
-initializes, performs one discovery or tool call, closes, and exits inside that
-command's sandbox. MCP has no Pi extension, dynamically registered tools, approval
-service, background client, or persistent process. Remote MCP access uses the same
-exact `network_host` declaration and approval as any other shell command.
-
-Machine-specific MCP server configuration belongs in `nix-config`/Home Manager,
-alongside the sandbox host allowlist. Set its absolute path as
-`shellEnvironment.set.MCP_CONFIG_PATH` in the global sandbox config; this also
-prevents a repository-local `mcp_servers.json` from taking precedence. The model
-discovers and invokes configured tools with `mcp-cli grep`, `mcp-cli info`, and
-`mcp-cli call`.
-
-Unix socket access grants a right to another service. That service may do work
-outside the caller's file or network limits. The machine config allows the Nix
-daemon for normal Nix, flake, and direnv work. The reserved background-job tmux
-socket is never passed to normal bash even if an older config lists it.
-
-On the Codex backend, use the `background_job` tool for dev servers, watchers,
-builds, and long tests. The tool owns the tmux socket and starts each command in
-a fresh Codex sandbox with the current workspace rights. It can list, inspect,
-send input to, and stop only jobs marked as broker-managed. Native preview
-background starts fail closed until they use the same broker policy.
-
-Pi's built-in recursive `grep` and `find` tools do not run as child processes
-of the sandbox. The extension removes them from the active tool set, and still
-blocks calls if another extension turns them back on. Agents use `rg` or `fd`
-through bash, where Codex enforces the same file policy.
-
-Global sandbox config lives at `~/.pi/agent/extensions/sandbox.json`. A trusted
-project can add tighter rules at `.pi/sandbox.json`; project config cannot add
-rights or turn the sandbox off. Static `network.allowedDomains` entries must
-also be exact hostnames or IPs. Wildcards and broad local-network switches are
-not accepted.
-
-`developmentCache` configures the sandbox-owned cache namespace. `root` must be
-a non-empty path beneath the user's home folder, written either as `~/...` or a
-home-relative path. Each `environment` value must be a relative descendant of
-that root. Global entries extend or override the defaults, so a new tool can be
-added without repeating the built-in mapping:
+The development cache is extensible without changing the extension:
 
 ```json
 {
@@ -281,15 +147,12 @@ added without repeating the built-in mapping:
 }
 ```
 
-Absolute paths, `..` escapes, invalid environment names, and symlinked cache
-roots are rejected or omitted from the implicit rights. Cache configuration is
-global-only; a trusted project's `.pi/sandbox.json` cannot relocate the root or
-change its environment mapping.
+Cache paths must stay beneath the configured root. The cache is shared by
+sandboxed commands across workspaces, so projects that do not trust each other
+should use separate users or disposable homes.
 
-`shellEnvironment` follows Codex's shell policy order. Its `inherit` value is
-`all`, `core`, or `none`; the default is `core`. Unless
-`ignoreDefaultExcludes` is true, variable names containing `KEY`, `SECRET`, or
-`TOKEN` are removed. `exclude` then removes case-insensitive glob matches,
-`set` adds host-configured values, and `includeOnly` applies a final allowlist.
-Only the global file may add values with `set`. A trusted project may choose a
-stricter inheritance mode, add excludes, or add an allowlist.
+The broker details are documented in:
+
+- [`sandbox-broker/PROTOCOL.md`](sandbox-broker/PROTOCOL.md)
+- [`sandbox-broker/THREAT_MODEL.md`](sandbox-broker/THREAT_MODEL.md)
+- [`sandbox-broker/UPSTREAM.md`](sandbox-broker/UPSTREAM.md)

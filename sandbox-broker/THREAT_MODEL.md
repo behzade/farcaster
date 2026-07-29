@@ -79,4 +79,10 @@ Bubblewrap can mask only concrete paths. Linux expands existing secret-name glob
 
 `tests/macos_release.rs` is the unsandboxed macOS gate. It passes with filesystem rules, blocked network and sockets, environment replacement, output limits, structured denial collection for a generic application error, cancellation, timeout, shutdown, process-group cleanup, and cleanup of an observed detached child. Deliberate fast `setsid` or double-fork escape is not a macOS release assertion.
 
-Linux has an ignored release-gate scaffold that still must run and expand on x86_64 and aarch64. It must cover read-only root mounts, exact writable mounts, hidden read denies, protected child mounts, symlink and missing-path cases, blocked network and host Unix sockets, user/PID namespace availability, `no_new_privs`, seccomp, environment, framing, output bounds, cancellation, timeout, shutdown, and strict descendant cleanup. Native is now the default by user decision, but every required item in [LINUX_BACKEND.md](LINUX_BACKEND.md) must still pass before declaring the Linux backend production-ready.
+Linux has an ignored release-gate scaffold that still must run and expand on
+x86_64 and aarch64. It must cover read-only root mounts, exact writable mounts,
+hidden read denies, protected child mounts, symlink and missing-path cases,
+blocked network and host Unix sockets, user/PID namespace availability,
+`no_new_privs`, seccomp, environment, framing, output bounds, cancellation,
+timeout, shutdown, and strict descendant cleanup. Native is the default, but
+that matrix must pass before declaring the Linux backend production-ready.

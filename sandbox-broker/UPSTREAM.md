@@ -31,8 +31,6 @@ The Linux backend is adapted from the same inspected Codex commit, `65ae4c26e088
 | Bundled Bubblewrap | `codex-rs/linux-sandbox/src/bundled_bwrap.rs` | Studied, not imported; Nix supplies a fixed store path and non-Nix builds require `/usr/bin/bwrap` |
 | Network routing | `codex-rs/linux-sandbox/src/proxy_routing.rs` | Studied, not imported; protocol v2 keeps IP networking blocked and has no proxy mode |
 
-The required Linux behavior, packaging, and release tests are tracked in [LINUX_BACKEND.md](LINUX_BACKEND.md).
-
 ## macOS ownership finding
 
 No Codex source inspected here provides atomic ownership of descendants that leave a process group. On 2026-07-27, Pi also checked Apple's public XNU coalition definitions and `bsd/kern/sys_coalition.c` from `apple-oss-distributions/xnu`. The kernel requires the caller to be in a privileged coalition before `coalition_create`; a direct normal-user probe returned `EPERM`. No Apple code was copied. This source check supports the explicit daemon-escape limit in `THREAT_MODEL.md`; it does not add an Apple license to the broker.

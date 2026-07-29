@@ -1,35 +1,52 @@
 # Pi Sandbox Broker
 
-This directory holds Pi's OS sandbox broker. It defines the private protocol, threat model, source record, a macOS Seatbelt backend, and a Linux Bubblewrap backend. Both support one foreground command, command-bound file and tree rights, hard denies, blocked network, a launch barrier, bounded output, timeout, cancellation, and shutdown cleanup. macOS also returns best-effort structured Seatbelt denial hints.
+This is the native shell runner used by Pi's sandbox extension. One broker
+runs for each Pi session and launches every foreground command in a fresh OS
+sandbox. It communicates with the extension over private inherited pipes and
+never falls back to a plain host process.
 
-The sandbox extension uses this broker by default through `backend: "native-preview"` on macOS and Linux; global config can select `backend: "codex"` instead. macOS reports unavailable if `/usr/bin/sandbox-exec`, the hard host policy, or the fixed `/usr/bin/log` denial collector fails. Linux reports unavailable unless its fixed Bubblewrap binary passes a real namespace, private `/proc`, seccomp, and `NoNewPrivs` self-test.
+The extension owns configuration, saved approvals, and user interaction. The
+Rust broker validates paths again, applies hard denies, builds the platform
+policy, and owns command cleanup.
 
-## Approved direction
+## Backends
 
-- One broker process per Pi session.
-- Private inherited stdin/stdout pipes; no public socket.
-- One fresh OS sandbox and process group per command.
-- TypeScript owns config, approval state, and UI.
-- Rust checks paths again, builds the final OS policy, runs commands, and rejects hard protected paths.
-- Optional rights sit on the `bash` call and bind to that tool call's command ID.
-- macOS uses Seatbelt; Linux uses a fixed Bubblewrap binary and fails closed when namespaces or seccomp are unavailable.
-- macOS denial logs are hints. Missing logs grant nothing.
-- Linux first uses a fixed system or Nix-store bubblewrap path, never workspace `PATH`.
+- macOS uses Seatbelt and returns best-effort structured denial hints. Cleanup
+  combines a process group with a bounded descendant tracker.
+- Linux uses a fixed Bubblewrap binary, a read-only host root, user and PID
+  namespaces, a private `/proc`, `NoNewPrivs`, and a blocked-network seccomp
+  filter. PID namespaces provide the command lifetime boundary.
 
-See [PROTOCOL.md](PROTOCOL.md), [THREAT_MODEL.md](THREAT_MODEL.md), [UPSTREAM.md](UPSTREAM.md), and [LINUX_BACKEND.md](LINUX_BACKEND.md).
+Both backends support one foreground command, command-scoped file and tree
+rights, hard denies, filtered environments, bounded output, timeouts,
+cancellation, and shutdown cleanup. Protocol v2 keeps IP networking blocked
+and does not support native background jobs. macOS may receive a small set of
+trusted exact Unix socket paths; Linux rejects them.
 
-## Linux work remaining
+The default extension config calls this backend `native-preview`. Global config
+may select the Codex CLI backend instead.
 
-The broker, client, and Nix path wiring are in place. Linux still needs builds and the ignored release gate on x86_64 and aarch64 hosts before machine config selects `native-preview`. That gate must verify mount policy, blocked host sockets and network, seccomp, timeout/cancellation/shutdown, and PID-namespace cleanup of `setsid` and double-fork descendants. Protocol v2 keeps approved network hosts, background jobs, and Linux denial hints unavailable. Linux rejects the macOS-only trusted Unix socket paths. The full checklist is in [LINUX_BACKEND.md](LINUX_BACKEND.md).
+## Documentation
 
-## Current checks
+- [PROTOCOL.md](PROTOCOL.md) defines the framed protocol.
+- [THREAT_MODEL.md](THREAT_MODEL.md) records trust boundaries, guarantees, and
+  known limits.
+- [UPSTREAM.md](UPSTREAM.md) records the imported Codex source and licenses.
+
+## Checks
 
 ```sh
 cargo test --manifest-path sandbox-broker/Cargo.toml
 cargo clippy --manifest-path sandbox-broker/Cargo.toml --all-targets -- -D warnings
-# Release gate: run outside any existing Seatbelt profile. This covers the
-# full broker flow and cleanup of an observed detached child.
+```
+
+The ignored integration tests are host-level release gates and must run outside
+an existing sandbox:
+
+```sh
 cargo test --manifest-path sandbox-broker/Cargo.toml -- --ignored
 ```
 
-The macOS integration and extension-client gates pass. The release gate checks that a command which hides `EPERM` behind a generic app error still yields an exact structured denial hint. Cleanup combines a process group with a best-effort kqueue descendant tracker and process start-time checks. Deliberate fast `setpgid`, `setsid`, or double-fork escape is out of scope because macOS offers no unprivileged atomic owner for that process tree. A survivor remains under its command's Seatbelt profile. Protocol v2 keeps IP network access blocked, allows only trusted exact-path Unix sockets, and has no native background-job support.
+The macOS gate passes. The Linux gate still needs coverage on each supported
+release architecture before this broker should be treated as a portable
+general-purpose sandbox.

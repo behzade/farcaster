@@ -25,7 +25,11 @@ The first server frame is `ready`:
 
 Pi checks the version, platform, backend, and `can_exec`. It blocks shell calls if startup fails, the frame times out, or `can_exec` is false. It never falls back to a plain host process.
 
-Linux identifies itself with `platform: "linux"` and `backend: "bubblewrap"`. The client accepts that pair only on Linux. The broker reports `can_exec: true` only after the fixed Bubblewrap binary passes a real user/PID/network/IPC/UTS namespace, private `/proc`, seccomp, and `NoNewPrivs` self-test; finding a binary alone is not enough. See [LINUX_BACKEND.md](LINUX_BACKEND.md).
+Linux identifies itself with `platform: "linux"` and `backend: "bubblewrap"`.
+The client accepts that pair only on Linux. The broker reports
+`can_exec: true` only after the fixed Bubblewrap binary passes a real
+user/PID/network/IPC/UTS namespace, private `/proc`, seccomp, and `NoNewPrivs`
+self-test; finding a binary alone is not enough.
 
 ## Requests
 
@@ -118,7 +122,7 @@ A successful start emits zero or more stream events between `started` and `exit`
 }
 ```
 
-Stdout and stderr each have a zero-based sequence number. The broker preserves arbitrary bytes and caps each chunk and total output. The macOS collector keeps a session-long `/usr/bin/log stream`, waits for readiness before `ready`, and attributes records through the command's observed PIDs and sequence window. It caps raw lines, retained records, command items, and command bytes. `complete: false` states that unified logging and PID discovery can miss records, so an empty set proves nothing. Log records also lack process start times, so PID reuse can misattribute a hint. Pi may use an exact safe non-device path as an approval hint. `/dev` hints are ignored, and approved device rights are rejected by the broker. Pi may not infer a broad root or retry with more rights without user approval. Linux v1 emits no denial hints, and the client treats their absence as expected only for the verified Linux/Bubblewrap pair.
+Stdout and stderr each have a zero-based sequence number. The broker preserves arbitrary bytes and caps each chunk and total output. The macOS collector keeps a session-long `/usr/bin/log stream`, waits for readiness before `ready`, and attributes records through the command's observed PIDs and sequence window. It caps raw lines, retained records, command items, and command bytes. `complete: false` states that unified logging and PID discovery can miss records, so an empty set proves nothing. Log records also lack process start times, so PID reuse can misattribute a hint. Pi may use an exact safe non-device path as an approval hint. `/dev` hints are ignored, and approved device rights are rejected by the broker. Pi may not infer a broad root or retry with more rights without user approval. Linux emits no denial hints, and the client treats their absence as expected only for the verified Linux/Bubblewrap pair.
 
 ## Grant isolation
 
