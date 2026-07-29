@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseFilesystemFailurePaths } from "./sandbox-failures.ts";
+import {
+	parseFilesystemFailurePaths,
+	parseFilesystemFailures,
+} from "./sandbox-failures.ts";
 
 test("extracts exact paths from shell access failures", () => {
 	const output = [
@@ -17,6 +20,17 @@ test("extracts quoted runtime paths after a failure keyword", () => {
 	const output = "Error: EACCES: permission denied, open '/Users/behzad/Projects/other/file.txt'";
 	assert.deepEqual(parseFilesystemFailurePaths(output), [
 		"/Users/behzad/Projects/other/file.txt",
+	]);
+});
+
+test("extracts GNU locale-quoted paths before a read-only failure", () => {
+	const output =
+		"mkdir: cannot create directory ‘/home/behzad/test-permission’: Read-only file system";
+	assert.deepEqual(parseFilesystemFailurePaths(output), [
+		"/home/behzad/test-permission",
+	]);
+	assert.deepEqual(parseFilesystemFailures(output), [
+		{ path: "/home/behzad/test-permission", targetType: "folder" },
 	]);
 });
 

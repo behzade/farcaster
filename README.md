@@ -92,8 +92,11 @@ custom `brokerPath` must be absolute and can come only from global config;
 project config cannot switch backends or replace the broker. Protocol v1 keeps
 network and Unix sockets blocked and has no native background jobs. On macOS,
 one bounded session collector returns incomplete structured Seatbelt denial
-hints; Linux emits no denial hints. To opt back into the installed Codex CLI
-backend, set this in the global `~/.pi/agent/extensions/sandbox.json` file:
+hints; Linux emits no broker denial hints. When a failed command instead prints
+one exact absolute path on a recognized access-error line, the extension can
+offer a policy-checked write approval and retry. To opt back into the installed
+Codex CLI backend, set this in the global
+`~/.pi/agent/extensions/sandbox.json` file:
 
 ```json
 {
@@ -175,17 +178,17 @@ paths and configured denies. Empty,
 late, malformed, protected, denied, or `/dev` device hints grant nothing.
 Unified logging can miss denials, so declared rights remain the reliable path.
 
-On the Codex backend, undeclared bash rights still use a limited fallback. The
-sandbox checks failed command output for access errors such as `Operation not
-permitted` and `Permission denied`. If the
-same error line has
-one exact absolute path and the active policy identifies it as a write denial,
-the sandbox shows the same approval prompt and retries inside the original tool
-call. It allows at most three retries. A retry can repeat work completed before
-the denied operation, so the prompt says that bash will retry. Protected paths
-and explicit deny rules never prompt. Failures without a safe exact path return
-unchanged as regular command failures. Network failures remain blocked until
-the model requests the exact host or IP.
+On the Codex backend, and on native attempts that return no broker denial hints,
+undeclared bash rights still use a limited fallback. The sandbox checks failed
+command output for access errors such as `Operation not permitted`, `Permission
+denied`, and `Read-only file system`. If the same error line has one exact
+absolute path and the active policy identifies it as a write denial, the
+sandbox shows the same approval prompt and retries inside the original tool
+call. Directory-creation errors retain folder intent. A retry can repeat work
+completed before the denied operation, so the prompt says that bash will retry.
+Protected paths and explicit deny rules never prompt. Failures without a safe
+exact path return unchanged as regular command failures. Network failures
+remain blocked until the model requests the exact host or IP.
 
 Permission retries stay inside one tool call. Once a retry starts, the final
 model-visible result and stored tool history retain only the last attempt;

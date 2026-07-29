@@ -330,6 +330,16 @@ fn concrete_denies(denies: &[NormalizedDeny], cwd: &Path) -> Result<Vec<Concrete
             DenyScope::Glob => expand_glob(&deny.pattern, cwd)?,
         };
         for path in paths {
+            let path = if path
+                .symlink_metadata()
+                .is_ok_and(|metadata| metadata.file_type().is_symlink())
+            {
+                path.canonicalize().map_err(|error| {
+                    format!("cannot resolve deny symlink {}: {error}", path.display())
+                })?
+            } else {
+                path
+            };
             by_path
                 .entry(path)
                 .and_modify(|access| *access = merge_denied_access(*access, deny.access))
@@ -438,7 +448,10 @@ fn expand_glob(pattern: &str, cwd: &Path) -> Result<Vec<PathBuf>, String> {
             true,
             &mut visited_entries,
             &mut visited_directories,
-            &mut |path, _| {
+            &mut |path, file_type| {
+                if immutable_store_directory_symlink(path, file_type) {
+                    return Walk::Skip;
+                }
                 if regex.is_match(&path.to_string_lossy()) {
                     matches.insert(path.to_path_buf());
                     if let Ok(canonical) = path.canonicalize() {
@@ -455,6 +468,13 @@ fn expand_glob(pattern: &str, cwd: &Path) -> Result<Vec<PathBuf>, String> {
         }
     }
     Ok(matches.into_iter().collect())
+}
+
+fn immutable_store_directory_symlink(path: &Path, file_type: &fs::FileType) -> bool {
+    file_type.is_symlink()
+        && path.canonicalize().is_ok_and(|target| {
+            target.is_dir() && target.starts_with(Path::new("/nix/store"))
+        })
 }
 
 fn glob_scan_roots(pattern: &str, cwd: &Path) -> Result<BTreeSet<PathBuf>, String> {
@@ -821,6 +841,58 @@ mod tests {
         assert_eq!(concrete[0].path, path);
         assert_eq!(concrete[0].access, DeniedAccess::ReadWrite);
         fs::remove_file(&concrete[0].path).expect("cleanup");
+    }
+
+    #[test]
+    fn concrete_deny_mounts_the_target_of_a_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "pi-linux-deny-symlink-test-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).expect("fixture directory");
+        let target = root.join("target");
+        let link = root.join("link");
+        fs::write(&target, "secret").expect("fixture target");
+        symlink(&target, &link).expect("fixture symlink");
+        let denies = vec![concrete_deny_for_test(DeniedAccess::Read, link)];
+        let concrete = concrete_denies(&denies, &root).expect("concrete denies");
+        assert_eq!(concrete.len(), 1);
+        assert_eq!(concrete[0].path, target.canonicalize().expect("canonical target"));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn nix_store_directory_symlinks_are_immutable_scan_boundaries() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "pi-linux-store-symlink-test-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).expect("fixture directory");
+        let store_link = root.join("result");
+        symlink("/nix/store", &store_link).expect("store symlink");
+        let file_type = store_link
+            .symlink_metadata()
+            .expect("symlink metadata")
+            .file_type();
+        assert!(immutable_store_directory_symlink(&store_link, &file_type));
+
+        let ordinary_target = root.join("ordinary-target");
+        fs::create_dir(&ordinary_target).expect("ordinary target");
+        let ordinary_link = root.join("ordinary-link");
+        symlink(&ordinary_target, &ordinary_link).expect("ordinary symlink");
+        let ordinary_type = ordinary_link
+            .symlink_metadata()
+            .expect("ordinary metadata")
+            .file_type();
+        assert!(!immutable_store_directory_symlink(
+            &ordinary_link,
+            &ordinary_type
+        ));
+        fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[test]

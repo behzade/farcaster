@@ -188,6 +188,53 @@ test("native denied retry keeps the failed attempt output", async () => {
 	assert.equal(broker.requests.length, 1);
 });
 
+test("native Linux falls back to an exact stderr path when denial hints are unavailable", async () => {
+	const cwd = mkdtempSync(join(tmpdir(), "pi-native-stderr-retry-"));
+	const path = `/home/sandbox-user/pi-native-stderr-retry-${process.pid}`;
+	const broker = new FakeBroker((request, onData) => {
+		if (request.id.endsWith("attempt-0")) {
+			onData(
+				Buffer.from(
+					`mkdir: cannot create directory ‘${path}’: Read-only file system\n`,
+				),
+			);
+			return { exitCode: 1, denials: [], denialsComplete: false };
+		}
+		onData(Buffer.from("initialized\n"));
+		return { exitCode: 0, denials: [], denialsComplete: false };
+	});
+	const approvals: NativeApprovalRequest[] = [];
+	const output: Buffer[] = [];
+	const operations = createApprovingNativeSandboxOps({
+		client: broker,
+		config: DEFAULT_CONFIG,
+		initialPermissions: [],
+		toolCallId: "tool-stderr",
+		blockedPaths: [],
+		async approve(request) {
+			approvals.push(request);
+			return request.permissions;
+		},
+	});
+
+	const result = await operations.exec("mkdir -p external", cwd, {
+		onData(data) {
+			output.push(data);
+		},
+	});
+
+	assert.equal(result.exitCode, 0);
+	assert.deepEqual(approvals[0]?.permissions, [
+		{ kind: "write", path, directory: true },
+	]);
+	assert.equal(
+		modelVisibleApprovedRetryOutput(Buffer.concat(output).toString("utf8")),
+		"\n[Retrying command with approved IO rights]\n" +
+			"initialized\n" +
+			"[Command completed successfully after approved IO retry]\n",
+	);
+});
+
 test("four sibling denials offer one recursive folder approval", async () => {
 	const cwd = mkdtempSync(join(tmpdir(), "pi-native-group-"));
 	const folder = fileURLToPath(new URL(".", import.meta.url));

@@ -76,9 +76,13 @@ Generate a mount plan first, validate it, then turn it into bubblewrap arguments
 
 #### Glob deny snapshot semantics
 
-Bubblewrap protects concrete mount targets, not future names. Pi follows the reviewed Codex startup-snapshot approach for protocol v2: it expands existing matches with strict traversal, depth, and match caps, then masks those paths after writable mounts. Root-wide patterns scan the active workspace rather than the whole host root; fixed hard denies separately protect SSH, cloud, auth, and control paths in the broker HOME. More specific patterns scan their fixed non-glob prefix. Scan errors or cap overflow reject the command.
+Bubblewrap protects concrete mount targets, not future names. Pi follows the reviewed Codex startup-snapshot approach for protocol v2: it expands existing matches with strict traversal, depth, and match caps, then masks those paths after writable mounts. Root-wide patterns scan the active workspace rather than the whole host root; fixed hard denies separately protect SSH, cloud, auth, and control paths in the broker HOME. More specific patterns scan their fixed non-glob prefix. Ordinary directory symlinks are followed so they cannot bypass a deny, while directory symlinks into the immutable, globally readable Nix store are scan boundaries. Scan errors or cap overflow reject the command.
 
 The host user and Pi process are trusted by the threat model, so a trusted host process creating a new secret after the snapshot is not an attacker in this boundary. A sandboxed command may create a new matching name in a writable tree; that file contains data the command already controls and is not a pre-existing host secret. This is intentionally name-snapshot protection, not a claim that Bubblewrap implements dynamic path-pattern mediation. Tests must cover existing matches, scan bounds, and this documented limit.
+
+#### Denial feedback
+
+Linux Bubblewrap does not report the denied pathname to the broker. Declared rights are therefore the reliable pre-launch path. As a limited fallback, the extension may extract one exact absolute path and directory intent from a recognized access-error line, apply the normal protected-path and active-policy checks, ask the user, and retry within the same tool call. Application output cannot grant access by itself.
 
 ### 4. Add namespaces and kernel controls
 

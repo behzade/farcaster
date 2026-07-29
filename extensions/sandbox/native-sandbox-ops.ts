@@ -10,8 +10,10 @@ import {
 	permissionForNativeDenial,
 	type NativeFilePermission,
 } from "./native-denials.ts";
+import { parseFilesystemFailures } from "./sandbox-failures.ts";
 
 const MAX_NATIVE_ATTEMPTS = 8;
+const MAX_FAILURE_OUTPUT_BYTES = 1024 * 1024;
 const FOLDER_SIBLING_THRESHOLD = 4;
 const NATIVE_RETRY_STARTED = "\n[Retrying command with approved IO rights]\n";
 const NATIVE_RETRY_SUCCEEDED =
@@ -110,6 +112,8 @@ export function createApprovingNativeSandboxOps(options: {
 			};
 
 			for (let attempt = 0; attempt < MAX_NATIVE_ATTEMPTS; attempt += 1) {
+				const output: Buffer[] = [];
+				let retainedBytes = 0;
 				const request = buildBrokerExecRequest(
 					`${options.toolCallId}/attempt-${attempt}`,
 					command,
@@ -121,7 +125,17 @@ export function createApprovingNativeSandboxOps(options: {
 				);
 				lastResult = await options.client.exec(
 					request,
-					execOptions.onData,
+					(data) => {
+						if (retainedBytes < MAX_FAILURE_OUTPUT_BYTES) {
+							const retained = data.subarray(
+								0,
+								MAX_FAILURE_OUTPUT_BYTES - retainedBytes,
+							);
+							output.push(retained);
+							retainedBytes += retained.length;
+						}
+						execOptions.onData(data);
+					},
 					execOptions.signal,
 				);
 				if (execOptions.signal?.aborted) throw new Error("aborted");
@@ -133,7 +147,20 @@ export function createApprovingNativeSandboxOps(options: {
 				}
 
 				const requested = new Map<string, NativeFilePermission>();
-				for (const denial of lastResult.denials) {
+				const denials =
+					lastResult.denials.length > 0
+						? lastResult.denials
+						: parseFilesystemFailures(
+								Buffer.concat(output).toString("utf8"),
+							).map((failure) => ({
+								operation:
+									failure.targetType === "folder"
+										? "file-write-create-directory"
+										: "file-write-create",
+								path: failure.path,
+								process: "stderr-fallback",
+							}));
+				for (const denial of denials) {
 					const decision = permissionForNativeDenial(
 						denial,
 						cwd,

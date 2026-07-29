@@ -69,6 +69,7 @@ export function permissionForNativeDenial(
 		if (access === "read" && !existsSync(permissionPath)) return { kind: "ignore" };
 		const directory =
 			controlRoot !== undefined ||
+			denial.operation === "file-write-create-directory" ||
 			(existsSync(permissionPath) && statSync(permissionPath).isDirectory());
 
 		const baseAllowed =

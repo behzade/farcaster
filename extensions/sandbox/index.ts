@@ -80,7 +80,7 @@ import {
 	resolveNativeApprovalChoice,
 } from "./native-sandbox-ops.ts";
 import { requestUserApproval } from "./permission-system-approval.ts";
-import { parseFilesystemFailurePaths } from "./sandbox-failures.ts";
+import { parseFilesystemFailures } from "./sandbox-failures.ts";
 
 function readConfig(path: string): CodexSandboxConfig | undefined {
 	if (!existsSync(path)) return undefined;
@@ -613,12 +613,13 @@ export default function (pi: ExtensionAPI) {
 				});
 				if (lastResult.exitCode === 0 || options.signal?.aborted) return lastResult;
 
-				const failurePaths = parseFilesystemFailurePaths(
+				const failures = parseFilesystemFailures(
 					Buffer.concat(chunks).toString("utf8"),
 				);
-				if (failurePaths.length === 0) return lastResult;
+				if (failures.length === 0) return lastResult;
 				const permissions = new Map<string, FilePermission>();
-				for (const failurePath of failurePaths) {
+				for (const failure of failures) {
+					const failurePath = failure.path;
 					const lexicalPath = resolveLexicalPermissionPath(failurePath, cwd);
 					const path = canonicalize(lexicalPath);
 					const gitRoot = gitControlRoot(lexicalPath, cwd);
@@ -659,6 +660,7 @@ export default function (pi: ExtensionAPI) {
 						directory:
 							gitRoot !== undefined ||
 							piRoot !== undefined ||
+							failure.targetType === "folder" ||
 							(existsSync(permissionPath) && statSync(permissionPath).isDirectory()),
 					});
 				}
@@ -924,6 +926,7 @@ export default function (pi: ExtensionAPI) {
 		promptSnippet:
 			"Use permissions only for exact rights outside the current workspace, temp folders, and built-in development caches. Do not request a whole tool home such as ~/.cargo or ~/.npm. Treat time blocked on permission approval as permission wait; never report it as no stall if the command did not start.",
 		parameters: BashParams,
+		executionMode: "sequential",
 		renderShell: "self",
 		async execute(id, params, signal, onUpdate, ctx) {
 			if (sandboxState.kind === "disabled") {
