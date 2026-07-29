@@ -34,13 +34,13 @@ export function isBaseWriteAllowed(
 	if (gitControlRoot(path, cwd)) return false;
 	if (projectControlRoot(path, cwd)) return false;
 	const actual = canonicalize(path);
-	if (isDefaultWritePath(actual, cwd)) return true;
+	if (isDefaultWritePath(actual, cwd, config.developmentCache)) return true;
 	return (config.filesystem?.allowWrite ?? []).some((root) => {
 		if (root === "." || root === ":workspace_roots") {
 			return isInside(canonicalize(cwd), actual);
 		}
 		if (root === ":tmpdir" || root === ":slash_tmp") {
-			return isDefaultWritePath(actual, cwd);
+			return isDefaultWritePath(actual, cwd, config.developmentCache);
 		}
 		if (root.startsWith(":")) return false;
 		return isInside(resolvePermissionPath(root, cwd), actual);

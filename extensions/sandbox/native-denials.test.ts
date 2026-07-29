@@ -5,12 +5,13 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "./codex-command.ts";
+import { developmentCacheRoot } from "./development-caches.ts";
 import { canonicalize } from "./io-permissions.ts";
 import { permissionForNativeDenial } from "./native-denials.ts";
 
 test("native write denials yield one exact file permission", () => {
 	const cwd = mkdtempSync(join(tmpdir(), "pi-native-denial-"));
-	const path = join(homedir(), `pi-native-denial-${process.pid}`, "state.db");
+	const path = `/home/sandbox-user/pi-native-denial-${process.pid}/state.db`;
 	assert.deepEqual(
 		permissionForNativeDenial(
 			{ operation: "file-write-create", path, process: "issues" },
@@ -102,9 +103,9 @@ test("native directory denials ask for the exact recursive folder right", () => 
 	);
 });
 
-test("native package-cache git denials do not prompt", () => {
+test("native sandbox-cache git denials do not prompt", () => {
 	const cwd = mkdtempSync(join(tmpdir(), "pi-native-denial-cache-"));
-	const cache = join(homedir(), ".cargo");
+	const cache = join(developmentCacheRoot(), "cargo");
 	assert.deepEqual(
 		permissionForNativeDenial(
 			{

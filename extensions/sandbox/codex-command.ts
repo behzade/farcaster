@@ -4,7 +4,13 @@ import {
 	backgroundJobSocket,
 	isBackgroundJobSocket,
 } from "./background-jobs.ts";
-import { developmentCacheWriteRightsForWorkspace } from "./development-caches.ts";
+import {
+	DEFAULT_DEVELOPMENT_CACHE_CONFIG,
+	developmentCacheEnvironment,
+	developmentCacheWriteRightsForWorkspace,
+	type DevelopmentCacheConfig,
+	normalizeDevelopmentCacheConfig,
+} from "./development-caches.ts";
 import {
 	canonicalize,
 	normalizeNetworkHost,
@@ -49,6 +55,7 @@ export interface CodexSandboxConfig {
 	brokerPath?: string;
 	codexCommand?: string;
 	permissionProfile?: string;
+	developmentCache?: DevelopmentCacheConfig;
 	network?: CodexSandboxNetworkConfig;
 	filesystem?: CodexSandboxFilesystemConfig;
 	shellEnvironment?: CodexSandboxShellEnvironmentConfig;
@@ -62,6 +69,7 @@ export const DEFAULT_CONFIG: Required<
 	backend: "codex",
 	codexCommand: "codex",
 	permissionProfile: "pi-sandbox",
+	developmentCache: DEFAULT_DEVELOPMENT_CACHE_CONFIG,
 	network: {
 		enabled: true,
 		allowedDomains: [],
@@ -194,6 +202,7 @@ export function normalizeConfig(value: unknown): CodexSandboxConfig {
 			"brokerPath",
 			"codexCommand",
 			"permissionProfile",
+			"developmentCache",
 			"network",
 			"filesystem",
 			"shellEnvironment",
@@ -311,6 +320,7 @@ export function normalizeConfig(value: unknown): CodexSandboxConfig {
 		brokerPath: brokerPath as string | undefined,
 		codexCommand: codexCommand as string | undefined,
 		permissionProfile: permissionProfile as string | undefined,
+		developmentCache: normalizeDevelopmentCacheConfig(input.developmentCache),
 		network: networkInput
 			? {
 					enabled: networkInput.enabled as boolean | undefined,
@@ -364,6 +374,14 @@ export function mergeGlobalConfig(
 	return {
 		...defaults,
 		...defined(override),
+		developmentCache: {
+			...defaults.developmentCache,
+			...defined(override.developmentCache),
+			environment: {
+				...(defaults.developmentCache?.environment ?? {}),
+				...(override.developmentCache?.environment ?? {}),
+			},
+		},
 		network: { ...defaults.network, ...defined(override.network) },
 		filesystem: {
 			...defaults.filesystem,
@@ -423,6 +441,9 @@ export function applyProjectRestrictions(
 		// A project file may tighten the active profile, but it may not turn off
 		// the host sandbox or add rights.
 		enabled: base.enabled,
+		// A project cannot relocate the cache, add environment values, or
+		// otherwise expand the implicit write namespace.
+		developmentCache: base.developmentCache,
 		network: {
 			...base.network,
 			enabled:
@@ -512,7 +533,8 @@ export function buildShellEnvironment(
 	source: NodeJS.ProcessEnv = process.env,
 	packagedMcpCli = PACKAGED_MCP_CLI,
 ): Record<string, string> {
-	const policy = mergeGlobalConfig(DEFAULT_CONFIG, config).shellEnvironment ?? {};
+	const effectiveConfig = mergeGlobalConfig(DEFAULT_CONFIG, config);
+	const policy = effectiveConfig.shellEnvironment ?? {};
 	const sourceEntries = Object.entries(source).filter(
 		(entry): entry is [string, string] => entry[1] !== undefined,
 	);
@@ -544,6 +566,10 @@ export function buildShellEnvironment(
 			if (!matchesAny(name, policy.includeOnly ?? [])) delete environment[name];
 		}
 	}
+	Object.assign(
+		environment,
+		developmentCacheEnvironment(effectiveConfig.developmentCache),
+	);
 	if (packagedMcpCli.length > 0 && !packagedMcpCli.startsWith("@")) {
 		environment.PATH = [dirname(packagedMcpCli), environment.PATH]
 			.filter(Boolean)
@@ -646,9 +672,10 @@ export function buildCodexSandboxArgs(
 	for (const path of [...(effectiveConfig.filesystem?.allowRead ?? []), ...(grants.read ?? [])]) {
 		filesystemEntries.set(path, "read");
 	}
-	const cacheWritePaths = developmentCacheWriteRightsForWorkspace(cwd).map(
-		(right) => right.path,
-	);
+	const cacheWritePaths = developmentCacheWriteRightsForWorkspace(
+		cwd,
+		effectiveConfig.developmentCache,
+	).map((right) => right.path);
 	for (const path of [
 		...(effectiveConfig.filesystem?.allowWrite ?? []),
 		...cacheWritePaths,

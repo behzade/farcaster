@@ -4,6 +4,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "./codex-command.ts";
+import { developmentCacheRoot } from "./development-caches.ts";
 import {
 	isBaseReadAllowed,
 	isBaseWriteAllowed,
@@ -16,7 +17,7 @@ test("base rights allow broad reads and only workspace or temp writes", () => {
 	const root = mkdtempSync(join(tmpdir(), "pi-policy-"));
 	const workspace = join(root, "workspace");
 	mkdirSync(workspace);
-	const outside = canonicalize(join(homedir(), "pi-policy-outside", "file.txt"));
+	const outside = canonicalize("/home/sandbox-user/pi-policy-outside/file.txt");
 
 	assert.equal(isBaseReadAllowed(outside, DEFAULT_CONFIG, workspace), true);
 	assert.equal(isBaseWriteAllowed(join(workspace, "out.txt"), DEFAULT_CONFIG, workspace), true);
@@ -29,23 +30,24 @@ test("base rights allow broad reads and only workspace or temp writes", () => {
 	);
 });
 
-test("development caches are writable without granting whole tool homes", () => {
+test("only the sandbox-owned development cache namespace is writable", () => {
 	const workspace = "/work";
+	const cacheRoot = developmentCacheRoot();
 	for (const path of [
-		join(homedir(), ".cargo", "registry", "cache", "package.crate"),
-		join(homedir(), ".cargo", "git", "checkouts", "package", ".git", "index.lock"),
-		join(homedir(), ".npm", "_cacache", "entry"),
-		join(homedir(), ".cache", "nix", "fetcher-cache-v4.sqlite"),
-		join(homedir(), ".bun", "install", "cache", "package"),
-		join(homedir(), "go", "pkg", "mod", "cache", "download", "module"),
+		join(cacheRoot, "cargo", "registry", "cache", "package.crate"),
+		join(cacheRoot, "npm", "_cacache", "entry"),
+		join(cacheRoot, "go", "mod", "cache", "download", "module"),
+		join(cacheRoot, "xdg", "nix", "fetcher-cache-v4.sqlite"),
 	]) {
 		assert.equal(isBaseWriteAllowed(path, DEFAULT_CONFIG, workspace), true, path);
 	}
+	const hostHome = "/home/sandbox-user";
 	for (const path of [
-		join(homedir(), ".cargo", "config.toml"),
-		join(homedir(), ".cargo", "credentials.toml"),
-		join(homedir(), ".cargo", "bin", "cargo-tool"),
-		join(homedir(), ".npm-other", "entry"),
+		join(hostHome, ".cargo", ".package-cache"),
+		join(hostHome, ".cargo", "config.toml"),
+		join(hostHome, ".cargo", "credentials.toml"),
+		join(hostHome, ".cargo", "bin", "cargo-tool"),
+		join(hostHome, ".npm", "_cacache", "entry"),
 	]) {
 		assert.equal(isBaseWriteAllowed(path, DEFAULT_CONFIG, workspace), false, path);
 	}

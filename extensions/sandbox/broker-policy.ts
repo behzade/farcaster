@@ -90,7 +90,10 @@ function baseRights(
 	cwd: string,
 ): BrokerFilesystemRight[] {
 	const rights = new Map<string, BrokerFilesystemRight>();
-	for (const cache of developmentCacheWriteRightsForWorkspace(cwd)) {
+	for (const cache of developmentCacheWriteRightsForWorkspace(
+		cwd,
+		config.developmentCache,
+	)) {
 		const right: BrokerFilesystemRight = {
 			access: "write",
 			path: cache.path,

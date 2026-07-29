@@ -1,105 +1,124 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	realpathSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import test from "node:test";
 import {
+	developmentCacheEnvironment,
 	developmentCacheRightForPath,
+	developmentCacheRoot,
 	developmentCacheWriteRights,
 	developmentCacheWriteRightsForWorkspace,
 	ensureDevelopmentCacheDirectories,
 } from "./development-caches.ts";
 
-test("development cache defaults use narrow typed paths", () => {
+test("development caches use one sandbox-owned writable namespace", () => {
 	const home = mkdtempSync(join(tmpdir(), "pi-development-caches-"));
-	ensureDevelopmentCacheDirectories(home, "darwin");
-	const rights = developmentCacheWriteRights(home, "darwin");
-	const byPath = new Map(rights.map((right) => [right.path, right]));
+	ensureDevelopmentCacheDirectories(undefined, home);
 	const actualHome = realpathSync.native(home);
+	const root = join(actualHome, ".cache", "pi-sandbox");
 
-	assert.equal(byPath.get(join(actualHome, ".cargo", "registry"))?.directory, true);
-	assert.equal(byPath.get(join(actualHome, ".cargo", ".package-cache"))?.directory, false);
-	assert.equal(byPath.get(join(actualHome, ".npm"))?.directory, true);
-	assert.equal(byPath.get(join(actualHome, ".cache", "nix"))?.directory, true);
-	assert.equal(byPath.get(join(actualHome, ".cache", "uv"))?.directory, true);
-	assert.equal(existsSync(join(actualHome, ".bun", "install", "cache")), true);
-	assert.equal(byPath.get(join(actualHome, "Library", "pnpm", "store"))?.directory, true);
-	assert.equal(byPath.has(join(actualHome, ".cargo")), false);
-	assert.equal(byPath.has(join(actualHome, ".bun")), false);
-	assert.equal(byPath.has(join(actualHome, "Library", "Caches")), false);
+	assert.equal(developmentCacheRoot(undefined, home), root);
+	assert.deepEqual(developmentCacheWriteRights(undefined, home), [
+		{ path: root, directory: true },
+	]);
+	const environment = developmentCacheEnvironment(undefined, home);
+	assert(Object.keys(environment).length > 0);
+	for (const [name, path] of Object.entries(environment)) {
+		const rel = relative(root, path);
+		assert(rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`), name);
+		assert.equal(existsSync(path), true, name);
+		assert.deepEqual(
+				developmentCacheRightForPath(path, undefined, home),
+			{ path: root, directory: true },
+			name,
+		);
+	}
 });
 
-test("development cache defaults omit symlinked or type-mismatched roots", () => {
-	const home = mkdtempSync(join(tmpdir(), "pi-development-cache-links-"));
+test("unsafe cache roots are neither writable nor exported", () => {
+	const linkedHome = mkdtempSync(join(tmpdir(), "pi-development-cache-link-"));
 	const outside = mkdtempSync(join(tmpdir(), "pi-development-cache-target-"));
-	mkdirSync(join(home, ".cargo"), { recursive: true });
-	mkdirSync(join(home, ".cargo", ".package-cache"));
-	symlinkSync(outside, join(home, ".npm"));
-	symlinkSync(outside, join(home, ".bun"));
-	ensureDevelopmentCacheDirectories(home, "darwin");
+	mkdirSync(join(linkedHome, ".cache"));
+	symlinkSync(outside, join(linkedHome, ".cache", "pi-sandbox"));
+	ensureDevelopmentCacheDirectories(undefined, linkedHome);
+	assert.deepEqual(developmentCacheWriteRights(undefined, linkedHome), []);
+	assert.deepEqual(developmentCacheEnvironment(undefined, linkedHome), {});
 
-	const rights = developmentCacheWriteRights(home, "darwin");
-	const actualHome = realpathSync.native(home);
-	assert.equal(rights.some((right) => right.path === join(actualHome, ".npm")), false);
-	assert.equal(
-		rights.some((right) => right.path === join(actualHome, ".bun", "install", "cache")),
-		false,
-	);
-	assert.equal(
-		rights.some((right) => right.path === join(actualHome, ".cargo", ".package-cache")),
-		false,
-	);
-	assert.equal(existsSync(join(outside, "install", "cache")), false);
+	const fileHome = mkdtempSync(join(tmpdir(), "pi-development-cache-file-"));
+	mkdirSync(join(fileHome, ".cache"));
+	writeFileSync(join(fileHome, ".cache", "pi-sandbox"), "not a directory");
+	ensureDevelopmentCacheDirectories(undefined, fileHome);
+	assert.deepEqual(developmentCacheWriteRights(undefined, fileHome), []);
+	assert.deepEqual(developmentCacheEnvironment(undefined, fileHome), {});
 });
 
-test("development caches overlapping the workspace are omitted", () => {
+test("the sandbox cache right is omitted when it overlaps the workspace", () => {
 	const home = mkdtempSync(join(tmpdir(), "pi-development-cache-workspace-"));
-	ensureDevelopmentCacheDirectories(home, "darwin");
-	assert.deepEqual(developmentCacheWriteRightsForWorkspace(home, home, "darwin"), []);
-	assert.equal(
+	ensureDevelopmentCacheDirectories(undefined, home);
+	const root = developmentCacheRoot(undefined, home);
+	assert.deepEqual(developmentCacheWriteRightsForWorkspace(home, undefined, home), []);
+	assert.deepEqual(
 		developmentCacheWriteRightsForWorkspace(
-			join(home, ".cargo", "registry", "src", "project"),
+			join(root, "cargo", "project"),
+			undefined,
 			home,
-			"darwin",
-		).some((right) => right.path === join(realpathSync.native(home), ".cargo", "registry")),
-		false,
+		),
+		[],
 	);
 });
 
-test("development cache matching respects file rights and sibling prefixes", () => {
+test("cache matching covers only the sandbox-owned namespace", () => {
 	const home = mkdtempSync(join(tmpdir(), "pi-development-cache-match-"));
-	ensureDevelopmentCacheDirectories(home, "darwin");
-	assert.equal(
+	ensureDevelopmentCacheDirectories(undefined, home);
+	const root = developmentCacheRoot(undefined, home);
+	assert.deepEqual(
 		developmentCacheRightForPath(
-			join(home, ".cargo", "registry", "cache", "package.crate"),
+			join(root, "cargo", "registry", "package.crate"),
+			undefined,
 			home,
-			"darwin",
-		)?.directory,
-		true,
+		),
+		{ path: root, directory: true },
 	);
 	assert.equal(
 		developmentCacheRightForPath(
-			join(home, ".cache", "nix", "fetcher-cache-v4.sqlite"),
+			join(home, ".cargo", ".package-cache"),
+			undefined,
 			home,
-			"darwin",
-		)?.directory,
-		true,
-	);
-	assert.equal(
-		developmentCacheRightForPath(join(home, ".cargo", ".package-cache"), home, "darwin")
-			?.directory,
-		false,
-	);
-	assert.equal(
-		developmentCacheRightForPath(
-			join(home, ".cargo", ".package-cache", "child"),
-			home,
-			"darwin",
 		),
 		undefined,
 	);
 	assert.equal(
-		developmentCacheRightForPath(join(home, ".npm-other", "entry"), home, "darwin"),
+		developmentCacheRightForPath(
+			join(home, ".cache", "pi-sandbox-other", "entry"),
+			undefined,
+			home,
+		),
 		undefined,
 	);
+});
+
+test("custom cache roots and environment adapters stay within one right", () => {
+	const home = mkdtempSync(join(tmpdir(), "pi-development-cache-custom-"));
+	const config = {
+		root: ".cache/custom-sandbox",
+		environment: { CUSTOM_TOOL_CACHE: "custom/tool" },
+	};
+	ensureDevelopmentCacheDirectories(config, home);
+	const root = developmentCacheRoot(config, home);
+	const environment = developmentCacheEnvironment(config, home);
+
+	assert.equal(root, join(realpathSync.native(home), ".cache", "custom-sandbox"));
+	assert.equal(environment.CUSTOM_TOOL_CACHE, join(root, "custom", "tool"));
+	assert.equal(existsSync(environment.CUSTOM_TOOL_CACHE), true);
+	assert.deepEqual(developmentCacheWriteRights(config, home), [
+		{ path: root, directory: true },
+	]);
 });

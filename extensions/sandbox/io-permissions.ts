@@ -12,7 +12,10 @@ import { isIP } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { domainToASCII } from "node:url";
-import { developmentCacheRightForPath } from "./development-caches.ts";
+import {
+	developmentCacheRightForPath,
+	type DevelopmentCacheConfig,
+} from "./development-caches.ts";
 
 export type IoPermission =
 	| {
@@ -264,10 +267,14 @@ export function grantsToRuntime(permissions: readonly IoPermission[]): RuntimeIo
 	};
 }
 
-export function isDefaultWritePath(path: string, cwd: string): boolean {
+export function isDefaultWritePath(
+	path: string,
+	cwd: string,
+	developmentCache?: DevelopmentCacheConfig,
+): boolean {
 	const actual = canonicalize(path);
 	return (
-		developmentCacheRightForPath(actual) !== undefined ||
+		developmentCacheRightForPath(actual, developmentCache) !== undefined ||
 		[canonicalize(cwd), canonicalize("/tmp"), canonicalize(tmpdir())].some((root) =>
 			isInside(root, actual),
 		)

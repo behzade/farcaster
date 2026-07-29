@@ -3,6 +3,12 @@ import { mkdirSync, mkdtempSync, symlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { backgroundJobSocket } from "./background-jobs.ts";
+import {
+	developmentCacheEnvironment,
+	developmentCacheRoot,
+	ensureDevelopmentCacheDirectories,
+} from "./development-caches.ts";
 import { canonicalize } from "./io-permissions.ts";
 import {
 	applyProjectRestrictions,
@@ -180,16 +186,18 @@ test("an omitted global domain list keeps the safe defaults", () => {
 	assert.equal(global.network?.allowAllUnixSockets, true);
 });
 
-test("default Codex profile includes narrow development caches", () => {
+test("default Codex profile includes only the sandbox-owned cache namespace", () => {
 	const profile = overrides(
 		buildCodexSandboxArgs("/repo", DEFAULT_CONFIG, "true"),
 	).find((value) => value.startsWith(`permissions.pi-sandbox-${process.pid}=`));
 	assert(profile);
-	assert(profile.includes(`${JSON.stringify(canonicalize(join(homedir(), ".cargo", "registry")))} = "write"`));
-	assert(profile.includes(`${JSON.stringify(canonicalize(join(homedir(), ".cache", "nix")))} = "write"`));
-	assert(profile.includes(`${JSON.stringify(canonicalize(join(homedir(), ".npm")))} = "write"`));
+	assert(
+		profile.includes(
+			`${JSON.stringify(canonicalize(developmentCacheRoot()))} = "write"`,
+		),
+	);
 	assert.equal(profile.includes(`${JSON.stringify(canonicalize(join(homedir(), ".cargo")))} = "write"`), false);
-	assert.equal(profile.includes(`${JSON.stringify(canonicalize(join(homedir(), ".cargo", "bin")))} = "write"`), false);
+	assert.equal(profile.includes(`${JSON.stringify(canonicalize(join(homedir(), ".npm")))} = "write"`), false);
 });
 
 test("Codex omits cache roots that overlap the workspace", () => {
@@ -199,7 +207,7 @@ test("Codex omits cache roots that overlap the workspace", () => {
 	assert(profile);
 	assert.equal(
 		profile.includes(
-			`${JSON.stringify(canonicalize(join(homedir(), ".cargo", "registry")))} = "write"`,
+			`${JSON.stringify(canonicalize(developmentCacheRoot()))} = "write"`,
 		),
 		false,
 	);
@@ -217,6 +225,8 @@ test("default network policy has no external domains", () => {
 });
 
 test("normal bash cannot reach the background tmux socket but keeps Nix", () => {
+	const controlSocket = backgroundJobSocket();
+	const ordinarySocket = "/tmp/pi-ordinary.sock";
 	const profile = overrides(
 		buildCodexSandboxArgs(
 			"/repo",
@@ -224,8 +234,8 @@ test("normal bash cannot reach the background tmux socket but keeps Nix", () => 
 				network: {
 					allowUnixSockets: [
 						"/nix/var/nix/daemon-socket/socket",
-						"/tmp/pi-agent-tmux.sock",
-						"/private/tmp/pi-agent-tmux.sock",
+						controlSocket,
+						ordinarySocket,
 					],
 				},
 			},
@@ -234,9 +244,9 @@ test("normal bash cannot reach the background tmux socket but keeps Nix", () => 
 	).find((value) => value.startsWith(`permissions.pi-sandbox-${process.pid}=`));
 	assert(profile);
 	assert(profile.includes('"/nix/var/nix/daemon-socket/socket" = "allow"'));
-	assert.equal(profile.includes('"/tmp/pi-agent-tmux.sock" = "allow"'), false);
-	assert.equal(profile.includes('"/private/tmp/pi-agent-tmux.sock" = "allow"'), false);
-	assert(profile.includes('"/tmp/pi-agent-tmux.sock" = "read"'));
+	assert(profile.includes(`${JSON.stringify(ordinarySocket)} = "allow"`));
+	assert.equal(profile.includes(`${JSON.stringify(controlSocket)} = "allow"`), false);
+	assert(profile.includes(`${JSON.stringify(controlSocket)} = "read"`));
 });
 
 test("project Pi control files are read-only until their folder is granted", () => {
@@ -270,6 +280,7 @@ test("shell environment defaults to Codex core variables and removes secret name
 		TMPDIR: "/tmp/test",
 		LANG: "en_US.UTF-8",
 		SHLVL: "2",
+		...developmentCacheEnvironment(),
 	});
 });
 
@@ -295,6 +306,7 @@ test("shell environment applies excludes, set values, then include-only filters"
 		PATH: "/bin",
 		GH_TOKEN: "secret",
 		SAFE_FLAG: "set",
+		...developmentCacheEnvironment(),
 	});
 });
 
@@ -306,6 +318,7 @@ test("the packaged MCP CLI is always available on the sandbox PATH", () => {
 	);
 	assert.deepEqual(environment, {
 		PATH: "/nix/store/pi-mcp-cli/bin",
+		...developmentCacheEnvironment(),
 	});
 });
 
@@ -326,6 +339,24 @@ test("rejects malformed config instead of weakening policy", () => {
 		/valid environment names/,
 	);
 	assert.throws(
+		() => normalizeConfig({ developmentCache: { root: "/tmp/cache" } }),
+		/developmentCache.root/,
+	);
+	assert.throws(
+		() =>
+			normalizeConfig({
+				developmentCache: { environment: { TOOL_CACHE: "../outside" } },
+			}),
+		/developmentCache.environment.TOOL_CACHE/,
+	);
+	assert.throws(
+		() =>
+			normalizeConfig({
+				developmentCache: { environment: { "BAD-NAME": "tool" } },
+			}),
+		/valid environment names/,
+	);
+	assert.throws(
 		() => normalizeConfig({ network: { allowedDomains: ["localhost:8317"] } }),
 		/exact hostnames or IPs/,
 	);
@@ -336,6 +367,40 @@ test("rejects malformed config instead of weakening policy", () => {
 	assert.throws(
 		() => buildCodexSandboxArgs("/repo", { network: { allowedDomains: ["*"] } }, "true"),
 		/exact hostname/,
+	);
+});
+
+test("global config extends and relocates the development cache", () => {
+	const config = mergeGlobalConfig(
+		DEFAULT_CONFIG,
+		normalizeConfig({
+			developmentCache: {
+				root: "~/.cache/pi-sandbox-custom",
+				environment: { CUSTOM_TOOL_CACHE: "custom/tool" },
+			},
+		}),
+	);
+	ensureDevelopmentCacheDirectories(config.developmentCache);
+	const root = developmentCacheRoot(config.developmentCache);
+	const environment = buildShellEnvironment(
+		config,
+		{ HOME: homedir() },
+		"@PI_MCP_CLI@",
+	);
+
+	assert.equal(root, join(homedir(), ".cache", "pi-sandbox-custom"));
+	assert.equal(environment.CUSTOM_TOOL_CACHE, join(root, "custom", "tool"));
+	assert.equal(environment.CARGO_HOME, join(root, "cargo"));
+	const profile = overrides(
+		buildCodexSandboxArgs("/repo", config, "true"),
+	).find((value) => value.startsWith(`permissions.pi-sandbox-${process.pid}=`));
+	assert(profile);
+	assert(profile.includes(`${JSON.stringify(canonicalize(root))} = "write"`));
+	assert.equal(
+		profile.includes(
+			`${JSON.stringify(canonicalize(developmentCacheRoot()))} = "write"`,
+		),
+		false,
 	);
 });
 
@@ -387,4 +452,21 @@ test("a trusted project can only tighten the shell environment", () => {
 	assert.deepEqual(result.shellEnvironment?.exclude, ["AWS_*", "AZURE_*"]);
 	assert.deepEqual(result.shellEnvironment?.set, { HOST_FLAG: "1" });
 	assert.deepEqual(result.shellEnvironment?.includeOnly, ["PATH", "HOME"]);
+});
+
+test("a trusted project cannot change the development cache", () => {
+	const base = mergeGlobalConfig(DEFAULT_CONFIG, {
+		developmentCache: {
+			root: ".cache/host-cache",
+			environment: { HOST_CACHE: "host" },
+		},
+	});
+	const result = applyProjectRestrictions(base, {
+		developmentCache: {
+			root: ".cache/project-cache",
+			environment: { PROJECT_CACHE: "project" },
+		},
+	});
+
+	assert.deepEqual(result.developmentCache, base.developmentCache);
 });

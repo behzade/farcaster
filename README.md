@@ -115,23 +115,27 @@ The default rights are:
   bundles readable but read-only;
 - keep `~/.pi` and `~/.codex` read-only so a grant cannot change its own
   policy;
-- write the workspace, `/tmp`, the system temp folder, and narrow development
-  cache roots used by Cargo, Go, npm, pnpm, Bun, Yarn, Corepack, Deno, pip, and
-  uv; package-manager config, credential files, and global install bins stay
+- write the workspace, `/tmp`, the system temp folder, and the sandbox-owned
+  `~/.cache/pi-sandbox` development-cache namespace; real user package caches,
+  package-manager configuration, credential files, and global install bins stay
   outside these implicit write rights;
-- pass only core shell variables such as `PATH`, `HOME`, locale, and temp paths;
+- pass only core shell variables such as `PATH`, `HOME`, locale, and temp paths,
+  then force stable cache redirects for XDG-aware tools, Cargo, Go, npm, Bun,
+  Yarn, Corepack, Deno, pip, uv, Gradle, Poetry, ccache, and sccache;
 - remove variables whose names contain `KEY`, `SECRET`, or `TOKEN`;
 - block every network host until the user grants that exact hostname or IP;
 - block local and private network targets.
 
-Pi creates missing fixed cache directories from the trusted host before the
-sandbox starts. Cache rights are typed as files or folders and omitted when the
-root or an ancestor below the home folder is a symlink. They are shared
-across workspaces, so a hostile project can still poison mutable cache state for
-a later build; use separate users or disposable homes when that risk matters.
-These rights support local builds and already-cached dependencies. Native
-protocol v1 still cannot fetch missing dependencies because network grants have
-not landed.
+Before the sandbox starts, Pi creates the configured development-cache root
+(`~/.cache/pi-sandbox` by default) and its tool subdirectories from the trusted
+host. The whole namespace is one directory right and is omitted when it or an
+ancestor below the home folder is a symlink or has the wrong type. It is shared
+by sandboxed commands across workspaces but isolated from caches used by
+unsandboxed host commands. The first sandboxed use may therefore download a
+second copy of an artifact. A hostile project can still poison cache state
+consumed by a later sandboxed build; use separate users or disposable homes when
+that risk matters. Missing dependencies still require an exact network-host
+grant.
 
 When `read`, `write`, `edit`, or `ls` targets a path outside the current IO
 rights, the sandbox pauses that tool call and asks the user to allow it once,
@@ -190,8 +194,8 @@ files. The sandbox does not inspect command text, so it does not add a second
 prompt for a delete command. Repository control data under the active workspace,
 including nested repositories, starts read-only. If Git fails on a file under
 `.git`, the approval prompt asks for that repository's whole `.git` folder and
-retries the command. `.git` data under configured package caches or temp paths
-is normal cache data and does not trigger a repository-control prompt. Use
+retries the command. `.git` data under the sandbox cache or temp paths is normal
+cache data and does not trigger a repository-control prompt. Use
 version control or backups for other workspace files.
 
 The sandbox package puts the pinned `mcp-cli` binary on the command environment's
@@ -229,6 +233,28 @@ project can add tighter rules at `.pi/sandbox.json`; project config cannot add
 rights or turn the sandbox off. Static `network.allowedDomains` entries must
 also be exact hostnames or IPs. Wildcards and broad local-network switches are
 not accepted.
+
+`developmentCache` configures the sandbox-owned cache namespace. `root` must be
+a non-empty path beneath the user's home folder, written either as `~/...` or a
+home-relative path. Each `environment` value must be a relative descendant of
+that root. Global entries extend or override the defaults, so a new tool can be
+added without repeating the built-in mapping:
+
+```json
+{
+  "developmentCache": {
+    "root": "~/.cache/pi-sandbox",
+    "environment": {
+      "CUSTOM_TOOL_CACHE": "custom-tool"
+    }
+  }
+}
+```
+
+Absolute paths, `..` escapes, invalid environment names, and symlinked cache
+roots are rejected or omitted from the implicit rights. Cache configuration is
+global-only; a trusted project's `.pi/sandbox.json` cannot relocate the root or
+change its environment mapping.
 
 `shellEnvironment` follows Codex's shell policy order. Its `inherit` value is
 `all`, `core`, or `none`; the default is `core`. Unless

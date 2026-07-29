@@ -34,7 +34,10 @@ import {
 	checkDeclaredFilesystemPermissions,
 	type FilePermission,
 } from "./declared-permissions.ts";
-import { ensureDevelopmentCacheDirectories } from "./development-caches.ts";
+import {
+	developmentCacheRoot,
+	ensureDevelopmentCacheDirectories,
+} from "./development-caches.ts";
 import {
 	DEFAULT_CONFIG,
 	applyProjectRestrictions,
@@ -917,7 +920,7 @@ export default function (pi: ExtensionAPI) {
 		...localBash,
 		label: "bash (OS sandbox)",
 		description:
-			"Execute a bash command in the OS sandbox. The current workspace, temp folders, and fixed Cargo, Nix, npm, pnpm, Bun, Yarn, Python, Go, and Deno caches already have their needed rights. Declare only exact extra read, write, or network_host rights in permissions so the user can approve them before launch.",
+			"Execute a bash command in the OS sandbox. The current workspace, temp folders, and the sandbox-owned development-cache namespace already have their needed rights. Declare only exact extra read, write, or network_host rights in permissions so the user can approve them before launch.",
 		promptSnippet:
 			"Use permissions only for exact rights outside the current workspace, temp folders, and built-in development caches. Do not request a whole tool home such as ~/.cargo or ~/.npm. Treat time blocked on permission approval as permission wait; never report it as no stall if the command did not start.",
 		parameters: BashParams,
@@ -1116,7 +1119,7 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 			sandboxState = { kind: "initializing" };
-			ensureDevelopmentCacheDirectories();
+			ensureDevelopmentCacheDirectories(config.developmentCache);
 			if (config.backend === "native-preview") {
 				if (process.platform !== "darwin" && process.platform !== "linux") {
 					throw new Error("the native sandbox preview supports macOS and Linux only");
@@ -1195,6 +1198,7 @@ export default function (pi: ExtensionAPI) {
 					`  Shell env: ${config.shellEnvironment?.inherit ?? "core"}, secret-name filter ${
 						config.shellEnvironment?.ignoreDefaultExcludes ? "off" : "on"
 					}`,
+					`  Development cache: ${developmentCacheRoot(config.developmentCache)}`,
 					`  Network hosts: ${
 						native
 							? "blocked by native protocol v2"

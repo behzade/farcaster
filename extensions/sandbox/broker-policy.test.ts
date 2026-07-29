@@ -5,6 +5,10 @@ import { join } from "node:path";
 import test from "node:test";
 import { buildBrokerExecRequest } from "./broker-policy.ts";
 import { DEFAULT_CONFIG } from "./codex-command.ts";
+import {
+	developmentCacheRoot,
+	ensureDevelopmentCacheDirectories,
+} from "./development-caches.ts";
 import { canonicalize } from "./io-permissions.ts";
 
 test("maps current base rights and command-local folder grants", () => {
@@ -37,38 +41,19 @@ test("maps current base rights and command-local folder grants", () => {
 				right.scope === "tree",
 		),
 	);
-	const cargoRegistry = canonicalize(join(homedir(), ".cargo", "registry"));
+	const cacheRoot = canonicalize(developmentCacheRoot());
 	assert.deepEqual(
-		request.policy.base_rights.find((right) => right.path === cargoRegistry),
+		request.policy.base_rights.find((right) => right.path === cacheRoot),
 		{
 			access: "write",
-			path: cargoRegistry,
+			path: cacheRoot,
 			scope: "tree",
-			missing_path: existsSync(cargoRegistry) ? "reject" : "create_tree",
-		},
-	);
-	const cargoLock = canonicalize(join(homedir(), ".cargo", ".package-cache"));
-	assert.deepEqual(
-		request.policy.base_rights.find((right) => right.path === cargoLock),
-		{
-			access: "write",
-			path: cargoLock,
-			scope: "file",
-			missing_path: existsSync(cargoLock) ? "reject" : "create_file",
-		},
-	);
-	const nixCache = canonicalize(join(homedir(), ".cache", "nix"));
-	assert.deepEqual(
-		request.policy.base_rights.find((right) => right.path === nixCache),
-		{
-			access: "write",
-			path: nixCache,
-			scope: "tree",
-			missing_path: existsSync(nixCache) ? "reject" : "create_tree",
+			missing_path: existsSync(cacheRoot) ? "reject" : "create_tree",
 		},
 	);
 	const broadCacheRoots = [
 		canonicalize(join(homedir(), ".cargo")),
+		canonicalize(join(homedir(), ".npm")),
 		canonicalize(join(homedir(), "Library", "Caches")),
 	];
 	assert.equal(
@@ -105,7 +90,41 @@ test("native cache rights overlapping the workspace are omitted", () => {
 	);
 	assert.equal(
 		request.policy.base_rights.some(
-			(right) => right.path === canonicalize(join(homedir(), ".cargo", "registry")),
+			(right) => right.path === canonicalize(developmentCacheRoot()),
+		),
+		false,
+	);
+});
+
+test("native policy honors a configured development cache root", () => {
+	const cwd = mkdtempSync(join(tmpdir(), "pi-broker-policy-custom-"));
+	const config = {
+		...DEFAULT_CONFIG,
+		developmentCache: { root: ".cache/pi-broker-custom" },
+	};
+	ensureDevelopmentCacheDirectories(config.developmentCache);
+	const customRoot = canonicalize(developmentCacheRoot(config.developmentCache));
+	const request = buildBrokerExecRequest(
+		"custom-cache",
+		"true",
+		cwd,
+		undefined,
+		config,
+		[],
+		[],
+	);
+
+	assert.equal(
+		request.policy.base_rights.some(
+			(right) => right.access === "write" && right.path === customRoot,
+		),
+		true,
+	);
+	assert.equal(
+		request.policy.base_rights.some(
+			(right) =>
+				right.access === "write" &&
+				right.path === canonicalize(developmentCacheRoot()),
 		),
 		false,
 	);
