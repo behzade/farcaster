@@ -42,8 +42,7 @@ export interface NativeApprovalSelection {
 	persistent: boolean;
 }
 
-export function modelVisibleNativeOutput(output: string): string {
-	if (!output.includes(NATIVE_RETRY_SUCCEEDED)) return output;
+export function modelVisibleApprovedRetryOutput(output: string): string {
 	const finalAttempt = output.lastIndexOf(NATIVE_RETRY_STARTED);
 	return finalAttempt >= 0 ? output.slice(finalAttempt) : output;
 }

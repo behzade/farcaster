@@ -2,7 +2,7 @@
 
 This directory holds Pi's OS sandbox broker. It defines the private protocol, threat model, source record, a macOS Seatbelt backend, and a Linux Bubblewrap backend. Both support one foreground command, command-bound file and tree rights, hard denies, blocked network, a launch barrier, bounded output, timeout, cancellation, and shutdown cleanup. macOS also returns best-effort structured Seatbelt denial hints.
 
-The sandbox extension can use this broker through the opt-in global `backend: "native-preview"` setting on macOS or Linux. macOS reports unavailable if `/usr/bin/sandbox-exec`, the hard host policy, or the fixed `/usr/bin/log` denial collector fails. Linux reports unavailable unless its fixed Bubblewrap binary passes a real namespace, private `/proc`, seccomp, and `NoNewPrivs` self-test. Codex remains the default backend.
+The sandbox extension uses this broker by default through `backend: "native-preview"` on macOS and Linux; global config can select `backend: "codex"` instead. macOS reports unavailable if `/usr/bin/sandbox-exec`, the hard host policy, or the fixed `/usr/bin/log` denial collector fails. Linux reports unavailable unless its fixed Bubblewrap binary passes a real namespace, private `/proc`, seccomp, and `NoNewPrivs` self-test.
 
 ## Approved direction
 

@@ -2,7 +2,7 @@
 
 ## Current status
 
-The Rust broker now has a foreground Bubblewrap backend and reports `linux`/`bubblewrap` only after a real namespace, `/proc`, seccomp, and `NoNewPrivs` self-test. It uses the same protocol-v1 validation, output, timeout, cancellation, and shutdown path as macOS, while Linux PID namespaces own descendant teardown. The client accepts the fixed Linux pair and Nix injects Bubblewrap's exact store path into the broker. No Linux release host has run the ignored integration gate yet, so machine config must stay on the Codex backend until the release work below lands.
+The Rust broker now has a foreground Bubblewrap backend and reports `linux`/`bubblewrap` only after a real namespace, `/proc`, seccomp, and `NoNewPrivs` self-test. It uses the same protocol-v1 validation, output, timeout, cancellation, and shutdown path as macOS, while Linux PID namespaces own descendant teardown. The client accepts the fixed Linux pair and Nix injects Bubblewrap's exact store path into the broker. Native is now the default by user decision, although no Linux release host has run the ignored integration gate yet.
 
 The first Linux release should match the current native protocol v2 execution scope, while leaving macOS-only denial collection and socket paths out:
 
@@ -76,7 +76,7 @@ Generate a mount plan first, validate it, then turn it into bubblewrap arguments
 
 #### Glob deny snapshot semantics
 
-Bubblewrap protects concrete mount targets, not future names. Pi follows the reviewed Codex startup-snapshot approach for protocol v2: it expands existing matches with strict traversal, depth, and match caps, then masks those paths after writable mounts. Root-wide patterns scan the active workspace and the broker HOME rather than the whole host root. More specific patterns scan their fixed non-glob prefix. Scan errors or cap overflow reject the command.
+Bubblewrap protects concrete mount targets, not future names. Pi follows the reviewed Codex startup-snapshot approach for protocol v2: it expands existing matches with strict traversal, depth, and match caps, then masks those paths after writable mounts. Root-wide patterns scan the active workspace rather than the whole host root; fixed hard denies separately protect SSH, cloud, auth, and control paths in the broker HOME. More specific patterns scan their fixed non-glob prefix. Scan errors or cap overflow reject the command.
 
 The host user and Pi process are trusted by the threat model, so a trusted host process creating a new secret after the snapshot is not an attacker in this boundary. A sandboxed command may create a new matching name in a writable tree; that file contains data the command already controls and is not a pre-existing host secret. This is intentionally name-snapshot protection, not a claim that Bubblewrap implements dynamic path-pattern mediation. Tests must cover existing matches, scan bounds, and this documented limit.
 
@@ -117,7 +117,8 @@ Update:
 - client tests for accepted and rejected platform/backend pairs;
 - fail-closed behavior so native selection never falls back to Codex or an unsandboxed process.
 
-Keep Linux on `backend: "codex"` in machine config until the Linux release gate passes.
+Native is now the default by user decision. Keep the Linux release gate as a
+required production-readiness check rather than using it to select the default.
 
 ### 6. Package both Linux architectures (wired; builds pending)
 
@@ -151,7 +152,7 @@ Add a Linux release test, such as `sandbox-broker/tests/linux_release.rs`, that 
 - exact-file rights do not widen to the parent;
 - missing file and tree grants create only the approved target;
 - active-workspace `.git` and project `.pi` stay read-only until explicitly approved, while configured development-cache Git data stays writable;
-- global `~/.pi`, `~/.codex`, auth files, SSH/AWS/GnuPG roots, `.env`, and key files stay protected;
+- global `~/.pi`, `~/.codex`, auth files, SSH/AWS/GnuPG roots, and active-workspace `.env` and key files stay protected;
 - explicit denies override broad reads, writes, and grants;
 - symlink, `..`, rename, and mount-order cases cannot escape a right;
 - denied reads do not reveal file contents.

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, symlinkSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "./codex-command.ts";
@@ -13,7 +13,7 @@ function workspace(): string {
 
 test("an external folder write is command-local and needs approval", () => {
 	const cwd = workspace();
-	const state = join(homedir(), ".local", "share", `pi-issues-state-${process.pid}`);
+	const state = `/home/sandbox-user/.local/share/pi-issues-state-${process.pid}`;
 	const [checked] = checkDeclaredFilesystemPermissions(
 		[{ kind: "write", path: state, targetType: "folder", reason: "write state" }],
 		cwd,

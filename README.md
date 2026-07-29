@@ -73,46 +73,44 @@ its bash tool, so the two extensions do not conflict.
 
 ## Sandbox backend
 
-The sandbox extension defaults to the installed Codex CLI and its `codex
-sandbox` command. It builds a fresh Codex permission profile for each shell
-call from `sandbox.json`. Every interpreter and child process keeps the same
-profile. A failed backend check blocks shell commands.
-
-The tree also contains opt-in native backends for macOS Seatbelt and Linux
-Bubblewrap. The macOS integration and denial-collector gate passes. Its cleanup
-uses a process group plus a best-effort kqueue descendant tracker with process
-start-time checks. Deliberate fast `setpgid`, `setsid`, or double-fork escape is
-out of scope because macOS has no unprivileged process-tree owner; a survivor
-still keeps its command's Seatbelt limits.
+The sandbox extension defaults to its native backends: macOS Seatbelt and Linux
+Bubblewrap. A failed backend check blocks shell commands. The macOS integration
+and denial-collector gate passes. Its cleanup uses a process group plus a
+best-effort kqueue descendant tracker with process start-time checks. Deliberate
+fast `setpgid`, `setsid`, or double-fork escape is out of scope because macOS
+has no unprivileged process-tree owner; a survivor still keeps its command's
+Seatbelt limits.
 
 The Linux broker uses a Nix-pinned Bubblewrap path, a read-only host root, exact
 write mounts, protected child mounts, user/PID/network namespaces, and a
 reviewed blocked-network seccomp filter. It reports ready only after a real
-namespace, private `/proc`, seccomp, and `NoNewPrivs` self-test. Linux remains on
-Codex in machine config until its ignored release gate runs on both x86_64 and
-aarch64 Linux.
+namespace, private `/proc`, seccomp, and `NoNewPrivs` self-test. Its ignored
+release gate still needs to run on both x86_64 and aarch64 Linux.
 
 The extension package pins the matching broker store path on both systems. A
 custom `brokerPath` must be absolute and can come only from global config;
 project config cannot switch backends or replace the broker. Protocol v1 keeps
 network and Unix sockets blocked and has no native background jobs. On macOS,
 one bounded session collector returns incomplete structured Seatbelt denial
-hints; Linux emits no denial hints. `backend: "codex"` remains the default. To
-opt in on a supported host, set this in the global
-`~/.pi/agent/extensions/sandbox.json` file:
+hints; Linux emits no denial hints. To opt back into the installed Codex CLI
+backend, set this in the global `~/.pi/agent/extensions/sandbox.json` file:
 
 ```json
 {
-  "backend": "native-preview"
+  "backend": "codex"
 }
 ```
+
+The Codex backend builds a fresh `codex sandbox` permission profile for each
+shell call from `sandbox.json`. Every interpreter and child process keeps the
+same profile.
 
 The default rights are:
 
 - read most of the system;
-- deny reads and writes for `.env` and `.key` files and for `.ssh`, `.aws`,
-  and `.gnupg`; deny reads of Pi and Codex `auth.json`; keep PEM certificate
-  bundles readable but read-only;
+- deny reads and writes for workspace `.env` and `.key` files and for `.ssh`,
+  `.aws`, and `.gnupg`; deny reads of Pi and Codex `auth.json`; keep workspace
+  PEM certificate bundles readable but read-only;
 - keep `~/.pi` and `~/.codex` read-only so a grant cannot change its own
   policy;
 - write the workspace, `/tmp`, the system temp folder, and the sandbox-owned
@@ -188,6 +186,10 @@ the denied operation, so the prompt says that bash will retry. Protected paths
 and explicit deny rules never prompt. Failures without a safe exact path return
 unchanged as regular command failures. Network failures remain blocked until
 the model requests the exact host or IP.
+
+Permission retries stay inside one tool call. Once a retry starts, the final
+model-visible result and stored tool history retain only the last attempt;
+earlier failures may still appear transiently in live UI streaming.
 
 Workspace write access includes creating, changing, and deleting workspace
 files. The sandbox does not inspect command text, so it does not add a second

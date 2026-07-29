@@ -30,6 +30,10 @@ function overrides(args: string[]): string[] {
 	return values;
 }
 
+test("the native broker is the default backend", () => {
+	assert.equal(DEFAULT_CONFIG.backend, "native-preview");
+});
+
 test("builds a direct codex sandbox command with an explicit profile and cwd", () => {
 	const args = buildCodexSandboxArgs("/repo", DEFAULT_CONFIG, "printf '%s' hello");
 	const profile = `pi-sandbox-${process.pid}`;
@@ -170,9 +174,9 @@ test("a trusted project can only tighten global policy", () => {
 		"~/.gnupg",
 		"~/.pi/agent/auth.json",
 		"~/.codex/auth.json",
-		"/**/.env",
-		"/**/.env.*",
-		"/**/*.key",
+			"**/.env",
+			"**/.env.*",
+			"**/*.key",
 		"/secret",
 	]);
 });

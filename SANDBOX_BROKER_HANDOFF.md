@@ -6,7 +6,7 @@ Work continued from this handoff in the Pi checkout. The current tree now includ
 
 - `sandbox-broker/`: protocol v1, threat model, Apache provenance, a framed Rust broker, and a macOS Seatbelt preview backend;
 - `extensions/sandbox/broker-client.ts` and `broker-policy.ts`: strict client framing and TypeScript-to-Rust policy mapping;
-- an opt-in global `backend: "native-preview"` path on macOS, while `codex` remains the default backend;
+- native `backend: "native-preview"` defaults on macOS and Linux, with `codex` available as a global override;
 - command-bound read, write, and exact network-host declarations for bash and Codex-backed background starts;
 - no shared one-time network grant queue;
 - pinned Nix builds for the broker and extension;
@@ -21,7 +21,7 @@ macOS release gate passes with structured denial collection.
 
 Linux now prepares a read-only-root Bubblewrap sandbox with ordered exact write and deny mounts, user/PID/network/IPC/UTS
 namespaces, private `/proc`, `no_new_privs`, and blocked-network seccomp. Readiness runs that real pipeline. Linux emits no
-denial hints. Machine config must keep Linux on Codex until the broker builds and the full ignored release gate passes on
+denial hints. Native is now the default by user decision, while the full ignored release gate still needs to pass on
 x86_64 and aarch64 Linux. The authoritative remaining-work checklist is
 [`sandbox-broker/LINUX_BACKEND.md`](sandbox-broker/LINUX_BACKEND.md). Do not treat the later stage text below as current
 implementation status without checking the tree.

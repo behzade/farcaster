@@ -23,10 +23,8 @@ test("maps current base rights and command-local folder grants", () => {
 		[{ kind: "write", path: state, directory: true }],
 		[],
 	);
-	assert.deepEqual(request.command, {
-		program: "/bin/bash",
-		args: ["-c", "issues search view=issue number=79"],
-	});
+	assert.match(request.command.program, /\/bash$/);
+	assert.deepEqual(request.command.args, ["-c", "issues search view=issue number=79"]);
 	assert.equal(request.timeout_ms, 30_000);
 	assert.ok(
 		request.policy.base_rights.some(
@@ -72,8 +70,22 @@ test("maps current base rights and command-local folder grants", () => {
 	]);
 	assert.ok(
 		request.policy.denies.some(
-			(rule) => rule.access === "read_write" && rule.pattern === "/**/*.key",
+			(rule) => rule.access === "read_write" && rule.pattern === `${cwd}/**/*.key`,
 		),
+	);
+	assert.ok(
+		request.policy.denies.some(
+			(rule) =>
+				rule.access === "read_write" &&
+				rule.pattern === `${cwd}/**/.env` &&
+				rule.scope === "glob",
+		),
+	);
+	assert.equal(
+		request.policy.denies.some(
+			(rule) => rule.pattern === join(cwd, ".env") && rule.scope !== "glob",
+		),
+		false,
 	);
 });
 

@@ -74,7 +74,7 @@ import {
 import {
 	createApprovingNativeSandboxOps,
 	createNativeSandboxOps,
-	modelVisibleNativeOutput,
+	modelVisibleApprovedRetryOutput,
 	type NativeApprovalChoice,
 	type NativeApprovalRequest,
 	resolveNativeApprovalChoice,
@@ -999,12 +999,11 @@ export default function (pi: ExtensionAPI) {
 				signal,
 				onUpdate,
 			);
-			if (sandboxState.config.backend !== "native-preview") return result;
 			return {
 				...result,
 				content: result.content.map((item) =>
 					item.type === "text"
-						? { ...item, text: modelVisibleNativeOutput(item.text) }
+						? { ...item, text: modelVisibleApprovedRetryOutput(item.text) }
 						: item,
 				),
 			};
@@ -1192,7 +1191,7 @@ export default function (pi: ExtensionAPI) {
 			);
 			ctx.ui.notify(
 				[
-					`OS sandbox (${config.backend ?? "codex"}):`,
+					`OS sandbox (${config.backend ?? "native-preview"}):`,
 					`  Read: ${config.filesystem?.allowRead?.join(", ") || "(minimal only)"}`,
 					`  Write: ${config.filesystem?.allowWrite?.join(", ") || "(workspace only)"}`,
 					`  Shell env: ${config.shellEnvironment?.inherit ?? "core"}, secret-name filter ${

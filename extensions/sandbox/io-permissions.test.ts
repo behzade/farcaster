@@ -150,7 +150,7 @@ test("workspace and system temp paths are writable by default", () => {
 	assert.equal(isDefaultWritePath(join(workspace, "result.txt"), workspace), true);
 	assert.equal(isDefaultWritePath(join(tmpdir(), "result.txt"), workspace), true);
 	assert.equal(
-		isDefaultWritePath(join(homedir(), "pi-io-outside", "result.txt"), workspace),
+		isDefaultWritePath("/home/sandbox-user/pi-io-outside/result.txt", workspace),
 		false,
 	);
 });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -12,7 +12,7 @@ import { DEFAULT_CONFIG } from "./codex-command.ts";
 import { canonicalize } from "./io-permissions.ts";
 import {
 	createApprovingNativeSandboxOps,
-	modelVisibleNativeOutput,
+	modelVisibleApprovedRetryOutput,
 	type NativeApprovalRequest,
 	type NativeBroker,
 	resolveNativeApprovalChoice,
@@ -87,9 +87,24 @@ test("grouped approval choices preserve exact, folder, persistence, and denial i
 	);
 });
 
+test("model history keeps only the final internal permission attempt", () => {
+	assert.equal(
+		modelVisibleApprovedRetryOutput(
+			"first failure\n" +
+				"\n[Retrying command with approved IO rights]\n" +
+				"second failure\n",
+		),
+		"\n[Retrying command with approved IO rights]\nsecond failure\n",
+	);
+	assert.equal(
+		modelVisibleApprovedRetryOutput("failure without an approved retry\n"),
+		"failure without an approved retry\n",
+	);
+});
+
 test("native structured denial prompts and retries without parsing app output", async () => {
 	const cwd = mkdtempSync(join(tmpdir(), "pi-native-retry-"));
-	const path = join(homedir(), `pi-native-retry-${process.pid}`, "state.db");
+	const path = `/home/sandbox-user/pi-native-retry-${process.pid}/state.db`;
 	const broker = new FakeBroker((request, onData) => {
 		if (request.id.endsWith("attempt-0")) {
 			onData(Buffer.from("service unavailable\n"));
@@ -139,7 +154,7 @@ test("native structured denial prompts and retries without parsing app output", 
 			"[Command completed successfully after approved IO retry]\n",
 	);
 	assert.equal(
-		modelVisibleNativeOutput(Buffer.concat(output).toString("utf8")),
+		modelVisibleApprovedRetryOutput(Buffer.concat(output).toString("utf8")),
 		"\n[Retrying command with approved IO rights]\n" +
 			"created\n" +
 			"[Command completed successfully after approved IO retry]\n",
@@ -148,7 +163,7 @@ test("native structured denial prompts and retries without parsing app output", 
 
 test("native denied retry keeps the failed attempt output", async () => {
 	const cwd = mkdtempSync(join(tmpdir(), "pi-native-denied-retry-"));
-	const path = join(homedir(), `pi-native-denied-retry-${process.pid}`, "state.db");
+	const path = `/home/sandbox-user/pi-native-denied-retry-${process.pid}/state.db`;
 	const broker = new FakeBroker((_request, onData) => {
 		onData(Buffer.from("permission denied\n"));
 		return failed(path);
@@ -332,7 +347,7 @@ test("empty incomplete denial results do not prompt or retry", async () => {
 
 test("cancellation during native approval prevents retry", async () => {
 	const cwd = mkdtempSync(join(tmpdir(), "pi-native-abort-"));
-	const path = join(homedir(), `pi-native-abort-${process.pid}`, "state.db");
+	const path = `/home/sandbox-user/pi-native-abort-${process.pid}/state.db`;
 	const broker = new FakeBroker(() => failed(path));
 	const controller = new AbortController();
 	let approvalStarted: (() => void) | undefined;

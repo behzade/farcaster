@@ -1,6 +1,6 @@
-import { existsSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { isAbsolute, resolve } from "node:path";
+import { delimiter, isAbsolute, join, resolve } from "node:path";
 import { isBackgroundJobSocket } from "./background-jobs.ts";
 import type {
 	BrokerExecRequest,
@@ -50,7 +50,7 @@ export function buildBrokerExecRequest(
 	return {
 		type: "exec",
 		id,
-		command: { program: "/bin/bash", args: ["-c", command] },
+		command: { program: hostBash(), args: ["-c", command] },
 		cwd: actualCwd,
 		env: {
 			...buildShellEnvironment(effective),
@@ -70,6 +70,20 @@ export function buildBrokerExecRequest(
 			output_limit_bytes: OUTPUT_LIMIT_BYTES,
 		},
 	};
+}
+
+function hostBash(): string {
+	for (const directory of (process.env.PATH ?? "").split(delimiter)) {
+		if (!directory) continue;
+		const candidate = join(directory, "bash");
+		try {
+			accessSync(candidate, constants.X_OK);
+			return canonicalize(candidate);
+		} catch {
+			// Continue to the fixed fallback.
+		}
+	}
+	return canonicalize("/bin/bash");
 }
 
 function unixSocketRoots(config: CodexSandboxConfig): string[] {
@@ -193,8 +207,7 @@ function normalizeDeny(
 		let pattern: string;
 		if (entry.startsWith("~/")) pattern = `${homedir()}/${entry.slice(2)}`;
 		else if (isAbsolute(entry)) pattern = entry;
-		else if (entry.includes("/")) pattern = `${cwd}/${entry}`;
-		else pattern = `/**/${entry}`;
+		else pattern = `${cwd}/${entry.includes("/") ? entry : `**/${entry}`}`;
 		return { pattern, scope: "glob" };
 	}
 	const pattern = lexicalPath(entry, cwd);

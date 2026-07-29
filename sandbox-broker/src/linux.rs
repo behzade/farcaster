@@ -9,7 +9,7 @@
 
 #![cfg(target_os = "linux")]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
 use std::os::fd::AsRawFd;
@@ -315,32 +315,49 @@ struct ConcreteDeny {
 }
 
 fn concrete_denies(denies: &[NormalizedDeny], cwd: &Path) -> Result<Vec<ConcreteDeny>, String> {
-    let mut result = Vec::new();
+    let mut by_path = BTreeMap::new();
     for deny in denies {
-        match deny.scope {
+        let paths = match deny.scope {
             DenyScope::File | DenyScope::Tree => {
                 if let Some(path) = &deny.path
                     && path.exists()
                 {
-                    result.push(ConcreteDeny {
-                        access: deny.access,
-                        path: path.clone(),
-                    });
+                    vec![path.clone()]
+                } else {
+                    Vec::new()
                 }
             }
-            DenyScope::Glob => {
-                for path in expand_glob(&deny.pattern, cwd)? {
-                    result.push(ConcreteDeny {
-                        access: deny.access,
-                        path,
-                    });
-                }
-            }
+            DenyScope::Glob => expand_glob(&deny.pattern, cwd)?,
+        };
+        for path in paths {
+            by_path
+                .entry(path)
+                .and_modify(|access| *access = merge_denied_access(*access, deny.access))
+                .or_insert(deny.access);
         }
     }
-    result.sort_by(|left, right| left.path.cmp(&right.path));
-    result.dedup_by(|left, right| left.access == right.access && left.path == right.path);
-    Ok(result)
+    Ok(by_path
+        .into_iter()
+        .map(|(path, access)| ConcreteDeny { access, path })
+        .collect())
+}
+
+fn merge_denied_access(left: DeniedAccess, right: DeniedAccess) -> DeniedAccess {
+    if left == right {
+        left
+    } else {
+        DeniedAccess::ReadWrite
+    }
+}
+
+#[cfg(test)]
+fn concrete_deny_for_test(access: DeniedAccess, path: PathBuf) -> NormalizedDeny {
+    NormalizedDeny {
+        access,
+        pattern: path.to_string_lossy().into_owned(),
+        scope: DenyScope::File,
+        path: Some(path),
+    }
 }
 
 fn reject_writable_symlink_crossings(
@@ -461,20 +478,9 @@ fn glob_scan_roots(pattern: &str, cwd: &Path) -> Result<BTreeSet<PathBuf>, Strin
     }
 
     // Root-wide startup scans are both costly and misleading. Protocol v2
-    // protects the two user-controlled areas where agent secrets live. The
-    // trusted host user is outside the threat model, so files created after
-    // this snapshot are not treated as hostile host races.
-    let mut roots = BTreeSet::from([cwd.to_path_buf()]);
-    if let Some(home) = std::env::var_os("HOME") {
-        let home = PathBuf::from(home);
-        if home.is_absolute() && home.is_dir() {
-            roots.insert(
-                home.canonicalize()
-                    .map_err(|error| format!("cannot canonicalize HOME for glob scan: {error}"))?,
-            );
-        }
-    }
-    Ok(roots)
+    // applies filename-pattern denies to the active workspace; fixed hard
+    // denies separately protect SSH, cloud, auth, and control paths in HOME.
+    Ok(BTreeSet::from([cwd.to_path_buf()]))
 }
 
 enum Walk {
@@ -792,11 +798,29 @@ mod tests {
     }
 
     #[test]
-    fn root_globs_scan_workspace_and_home_not_the_host_root() {
+    fn root_globs_scan_only_the_active_workspace() {
         let cwd = Path::new("/work");
         let roots = glob_scan_roots("/**/*.env", cwd).expect("roots");
         assert!(roots.contains(cwd));
         assert!(!roots.contains(Path::new("/")));
+    }
+
+    #[test]
+    fn duplicate_concrete_denies_merge_to_one_strongest_mount() {
+        let path = std::env::temp_dir().join(format!(
+            "pi-linux-duplicate-deny-test-{}",
+            std::process::id()
+        ));
+        fs::write(&path, "secret").expect("fixture");
+        let denies = vec![
+            concrete_deny_for_test(DeniedAccess::Read, path.clone()),
+            concrete_deny_for_test(DeniedAccess::ReadWrite, path.clone()),
+        ];
+        let concrete = concrete_denies(&denies, Path::new("/")).expect("concrete denies");
+        assert_eq!(concrete.len(), 1);
+        assert_eq!(concrete[0].path, path);
+        assert_eq!(concrete[0].access, DeniedAccess::ReadWrite);
+        fs::remove_file(&concrete[0].path).expect("cleanup");
     }
 
     #[test]
