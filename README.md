@@ -13,6 +13,8 @@ hosts, and notification settings. This repo owns code and package pins.
   native broker client, and background-job tool and helper.
 - `nix/pi-mcp-cli.nix`: pinned stateless MCP CLI available inside sandboxed
   shell commands.
+- `nix/pi-web-access.nix`: pinned `pi-web-access` package providing web search,
+  content extraction, and video understanding tools.
 - `sandbox-broker`: protocol, threat model, provenance, and the first native
   macOS Seatbelt backend.
 - `extensions/*.ts`: local notification, input, session, title, and dense tool
@@ -49,6 +51,7 @@ nix build .#dense-tools
 nix build .#mcp-cli
 nix build .#subagents
 nix build .#openai-server-compaction
+nix build .#web-access
 ```
 
 `nix-config` consumes this repo's default package as a flake input and deploys

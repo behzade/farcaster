@@ -28,6 +28,7 @@
           };
           denseTools = pkgs.callPackage ./nix/pi-dense-tools.nix { };
           subagents = pkgs.callPackage ./nix/pi-subagents.nix { };
+          webAccess = pkgs.callPackage ./nix/pi-web-access.nix { };
           openaiServerCompaction = pkgs.callPackage ./nix/pi-openai-server-compaction.nix { };
           permissionSystem = pkgs.callPackage ./nix/pi-permission-system.nix { };
           agent = pkgs.callPackage ./nix/pi-agent.nix {
@@ -37,6 +38,7 @@
               permissionSystem
               sandbox
               subagents
+              webAccess
               ;
           };
         in
@@ -47,6 +49,7 @@
           sandbox-broker = sandboxBroker;
           dense-tools = denseTools;
           openai-server-compaction = openaiServerCompaction;
+          web-access = webAccess;
           default = agent;
         }
       );
@@ -56,6 +59,7 @@
         let
           pkgs = pkgsFor system;
           mcpCli = pkgs.callPackage ./nix/pi-mcp-cli.nix { };
+          webAccess = pkgs.callPackage ./nix/pi-web-access.nix { };
         in
         {
           sandbox-tests = pkgs.runCommand "pi-sandbox-tests" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
@@ -81,6 +85,7 @@
             touch "$out"
           '';
           permission-system = pkgs.callPackage ./nix/pi-permission-system.nix { };
+          web-access = webAccess;
 
           governance = pkgs.runCommand "pi-governance-tests" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
             node --test \

@@ -5,6 +5,7 @@
   sandbox,
   stdenvNoCC,
   subagents,
+  webAccess,
 }:
 
 stdenvNoCC.mkDerivation {
@@ -25,6 +26,7 @@ stdenvNoCC.mkDerivation {
     ln -s ${permissionSystem} "$out/extensions/permission-system"
     ln -s ${sandbox} "$out/extensions/sandbox"
     ln -s ${subagents} "$out/extensions/subagent"
+    ln -s ${webAccess} "$out/extensions/web-access"
     ln -s ${../extensions/lib} "$out/extensions/lib"
     ln -s ${../extensions/notifications.ts} "$out/extensions/notifications.ts"
     ln -s ${../extensions/session-hooks.ts} "$out/extensions/session-hooks.ts"
