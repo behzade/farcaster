@@ -59,6 +59,30 @@ that tree recursively at `~/.pi/agent`. The package owns Pi's prompt, extension,
 skill, and theme inventory; machine-specific policy files remain in
 `nix-config`.
 
+## Subagent orchestration
+
+Subagent runs have a ten-minute hard default runtime cap, including parallel
+and chain launches. An explicit `timeoutMs`/`maxRuntimeMs` call or agent timeout
+still wins. Timed-out runs retain the latest substantive child output as a
+clearly marked partial result. While `subagent_wait` is active, text/headless
+mode writes throttled progress snapshots to stderr.
+
+Steering is latched across the small window before the wait listener is
+registered, and wait yielding is deferred until Pi has queued the steer.
+Sandbox approval prompts from a child are mirrored to the parent as immediate
+attention events without creating a second approval authority.
+
+The bundled reviewer remains high-thinking. Broad `/parallel-review` runs share
+one cheap, factual parent-built repository index, while every reviewer remains
+responsible for independent source verification. Review-only tasks also block
+Nix and daemon-backed host commands in the child runtime; the reviewer reports
+essential host validation for the supervisor to run instead of stalling on an
+approval prompt.
+
+Web search keeps `auto` routing semantics. OpenAI is the first candidate when
+the request shape is supported and OpenAI search is available; configured
+routing and provider fallbacks remain intact.
+
 ## Dense tool display
 
 `extensions/dense-tools` removes the padded shell from the built-in file tools.

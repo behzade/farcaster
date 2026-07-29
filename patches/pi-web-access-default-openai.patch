@@ -1,66 +1,65 @@
+diff --git a/README.md b/README.md
+index 3a63b7d..e653254 100644
+--- a/README.md
++++ b/README.md
+@@ -353,7 +353,7 @@ A command source is not run while the extension loads or registers tools. Each s
+ 
+ `fetchContent.domainPolicy` is an optional hostname allow/deny policy for `fetch_content` target URLs. It is off when omitted. Each bare hostname matches itself and its subdomains; `deny` wins when a hostname matches both lists. The policy is checked before HTTP(S) target handling and before each redirect followed by this extension's own fetch path. Local file paths and non-HTTP sources are not subject to this policy. It is an additional restriction: the existing SSRF guard still blocks private and internal destinations. Remote extraction services can still perform their own DNS, redirects, and egress after this extension preflights the submitted target URL, so keep their deployments separately isolated.
+ 
+-Set `searxngBaseUrl` or `SEARXNG_BASE_URL` to use a self-hosted SearXNG JSON API. A configured endpoint is preferred first in `auto` mode for local/private search. Its base URL and redirects remain subject to the SSRF guard; add only the narrowest self-hosted range to `ssrf.allowRanges` when it resolves to a private or synthetic range. Thanks to Marcos A. Núñez (@marnunez) for PR #107 and Avinash Kanaujiya (@avinashkanaujiya) for issue #105.
++Set `searxngBaseUrl` or `SEARXNG_BASE_URL` to use a self-hosted SearXNG JSON API. In `auto` mode, OpenAI is preferred when the request shape is supported and OpenAI search is available; a configured SearXNG endpoint is the first fallback. Its base URL and redirects remain subject to the SSRF guard; add only the narrowest self-hosted range to `ssrf.allowRanges` when it resolves to a private or synthetic range. Thanks to Marcos A. Núñez (@marnunez) for PR #107 and Avinash Kanaujiya (@avinashkanaujiya) for issue #105.
+ 
+ Set `firecrawlBaseUrl` or `FIRECRAWL_BASE_URL` to use Firecrawl as an extraction-only fallback for `fetch_content`. It calls `/v2/scrape` by default; set `firecrawlApiVersion` or `FIRECRAWL_API_VERSION` to `v1` for older self-hosted images. Firecrawl requests are cache-only by default (`lockdown: true`), so the Firecrawl server does not make fresh outbound target requests unless you explicitly set `firecrawlFreshScrape: true` or `FIRECRAWL_FRESH_SCRAPE=1`. Enable fresh scraping only for a Firecrawl deployment whose own egress, redirects, DNS rebinding behavior, and internal-network access are isolated or allowlisted; this extension can preflight the submitted URL but cannot control network requests made by the Firecrawl server. The configured Firecrawl API base URL and redirects are still validated by the same SSRF guard as other remote requests, and Firecrawl credentials are stripped from cross-origin API redirects.
+ 
 diff --git a/gemini-search.ts b/gemini-search.ts
-index 463f90e..42bf3ef 100644
+index d1e9242..e81ee51 100644
 --- a/gemini-search.ts
 +++ b/gemini-search.ts
-@@ -75,5 +75,6 @@ const CONFIG_PATH = getWebSearchConfigPath();
- const DEFAULT_SEARCH_MODEL = "gemini-2.5-flash";
- const VALID_SEARCH_PROVIDERS: SearchProvider[] = ["auto", "all", "openai", "brave", "parallel", "tinyfish", "tavily", "searxng", "perplexity", "gemini", "exa", "serpdive", "anysearch"];
-+const DEFAULT_SEARCH_PROVIDER: SearchProvider = "openai";
- const ALL_SEARCH_PROVIDERS: ResolvedSearchProvider[] = ["searxng", "openai", "exa", "brave", "parallel", "tinyfish", "tavily", "serpdive", "perplexity", "gemini"];
- const VALID_ROUTING_KINDS = ["transient", "quota", "network"] as const;
+@@ -436,16 +436,6 @@ export async function search(query: string, options: FullSearchOptions = {}): Pr
  
-@@ -90,6 +91,6 @@ function getSearchConfig(): SearchConfig {
- 	if (cachedSearchConfig) return cachedSearchConfig;
- 	if (!existsSync(CONFIG_PATH)) {
--		cachedSearchConfig = { searchProvider: "auto", searchProviderConfigured: false };
-+		cachedSearchConfig = { searchProvider: DEFAULT_SEARCH_PROVIDER, searchProviderConfigured: false };
- 		return cachedSearchConfig;
+ 	const fallbackErrors: string[] = [];
+ 
+-	if (isSearXNGAvailable()) {
+-		try {
+-			const result = await searchWithSearXNG(query, options);
+-			return { ...result, provider: "searxng" };
+-		} catch (err) {
+-			if (isAbortError(err)) throw err;
+-			fallbackErrors.push(`SearXNG: ${errorMessage(err)}`);
+-		}
+-	}
+-
+ 	if (shouldTryOpenAIInAuto(options)) {
+ 		try {
+ 			if (await isOpenAISearchAvailable(options.extensionContext)) {
+@@ -458,6 +448,16 @@ export async function search(query: string, options: FullSearchOptions = {}): Pr
+ 		}
  	}
  
-@@ -109,10 +110,13 @@ function getSearchConfig(): SearchConfig {
- 
- 	const searchModel = normalizeSearchModel(raw.searchModel);
- 	const searchProviderConfigured = Object.hasOwn(raw, "searchProvider") || Object.hasOwn(raw, "provider");
-+	const searchRoutingConfigured = Object.hasOwn(raw, "searchRouting");
- 	cachedSearchConfig = {
--		searchProvider: normalizeSearchProvider(raw.searchProvider ?? raw.provider),
-+		searchProvider: searchProviderConfigured
-+			? normalizeSearchProvider(raw.searchProvider ?? raw.provider)
-+			: searchRoutingConfigured ? "auto" : DEFAULT_SEARCH_PROVIDER,
- 		searchProviderConfigured,
--		...(Object.hasOwn(raw, "searchRouting") ? { searchRouting: normalizeSearchRouting(raw.searchRouting) } : {}),
-+		...(searchRoutingConfigured ? { searchRouting: normalizeSearchRouting(raw.searchRouting) } : {}),
- 		...(searchModel ? { searchModel } : {}),
- 	};
- 	return cachedSearchConfig;
++	if (isSearXNGAvailable()) {
++		try {
++			const result = await searchWithSearXNG(query, options);
++			return { ...result, provider: "searxng" };
++		} catch (err) {
++			if (isAbortError(err)) throw err;
++			fallbackErrors.push(`SearXNG: ${errorMessage(err)}`);
++		}
++	}
++
+ 	if (isExaAvailable()) {
+ 		try {
+ 			const result = await searchWithExa(query, options);
 diff --git a/index.ts b/index.ts
-index eba1116..0f2d963 100644
+index 6fbdd10..97d1090 100644
 --- a/index.ts
 +++ b/index.ts
-@@ -99,5 +99,6 @@ interface WebSearchConfig {
- 	provider?: string;
- 	searchProvider?: string;
-+	searchRouting?: unknown;
- 	workflow?: string;
- 	curatorTimeoutSeconds?: unknown;
- 	summaryModel?: string;
-@@ -242,7 +243,9 @@ function resolveRequestedProvider(requested: unknown): SearchProvider {
- 	const normalizedRequested = normalizeProviderInput(requested);
- 	if (normalizedRequested && normalizedRequested !== "auto") return normalizedRequested;
- 	const config = loadConfig();
--	return normalizeProviderInput(config.searchProvider ?? config.provider) ?? "auto";
-+	const configured = normalizeProviderInput(config.searchProvider ?? config.provider);
-+	if (configured) return configured;
-+	return config.searchRouting === undefined ? "openai" : "auto";
+@@ -326,8 +326,8 @@ async function loadCuratorBootstrap(
  }
  
- function normalizeRecencyFilter(value: unknown): RecencyFilter | undefined {
-@@ -2615,7 +2618,7 @@ export default function webSearchExtension(pi: ExtensionAPI) {
- 			const initialProvider = bootstrap.defaultProvider;
- 			const curatorTimeoutSeconds = bootstrap.timeoutSeconds;
- 			let currentProvider: CuratorProvider = initialProvider;
--			const rawSearchProvider = normalizeProviderInput(loadConfig().provider ?? "auto") ?? "auto";
-+			const rawSearchProvider = resolveRequestedProvider(undefined);
- 			let currentSearchProvider: SearchProvider = rawSearchProvider === "auto" ? "auto" : initialProvider;
- 			const summaryContext: SummaryGenerationContext = {
- 				model: ctx.model,
+ function firstAvailableProvider(available: ProviderAvailability, preferOpenAI: boolean, fallback: ResolvedSearchProvider): ResolvedSearchProvider {
+-	if (available.searxng) return "searxng";
+ 	if (preferOpenAI && available.openai) return "openai";
++	if (available.searxng) return "searxng";
+ 	if (available.exa) return "exa";
+ 	if (available.brave) return "brave";
+ 	if (available.parallel) return "parallel";
