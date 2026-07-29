@@ -587,8 +587,8 @@ See [`sandbox-broker/LINUX_BACKEND.md`](sandbox-broker/LINUX_BACKEND.md) for the
 Test the real failure class with a small fixture CLI that catches `EPERM` and emits only a generic application error. Do
 not rely on the live Issues database in automated tests. Cover both flows:
 
-- no declared right: command stays denied even if no denial hint arrives;
-- declared exact right: user approval lets the command write its fixture state.
+- no denial hint: command stays denied;
+- exact denial hint: user approval lets the retried command write its fixture state.
 
 A manual check may then use:
 
@@ -596,7 +596,7 @@ A manual check may then use:
 issues search view=issue number=79
 ```
 
-with an approved write right for `~/.local/share/issues`.
+and approve the sandbox-derived write right for `~/.local/share/issues`.
 
 ### Linux
 

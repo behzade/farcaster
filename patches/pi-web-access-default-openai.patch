@@ -1,0 +1,66 @@
+diff --git a/gemini-search.ts b/gemini-search.ts
+index 463f90e..42bf3ef 100644
+--- a/gemini-search.ts
++++ b/gemini-search.ts
+@@ -75,5 +75,6 @@ const CONFIG_PATH = getWebSearchConfigPath();
+ const DEFAULT_SEARCH_MODEL = "gemini-2.5-flash";
+ const VALID_SEARCH_PROVIDERS: SearchProvider[] = ["auto", "all", "openai", "brave", "parallel", "tinyfish", "tavily", "searxng", "perplexity", "gemini", "exa", "serpdive", "anysearch"];
++const DEFAULT_SEARCH_PROVIDER: SearchProvider = "openai";
+ const ALL_SEARCH_PROVIDERS: ResolvedSearchProvider[] = ["searxng", "openai", "exa", "brave", "parallel", "tinyfish", "tavily", "serpdive", "perplexity", "gemini"];
+ const VALID_ROUTING_KINDS = ["transient", "quota", "network"] as const;
+ 
+@@ -90,6 +91,6 @@ function getSearchConfig(): SearchConfig {
+ 	if (cachedSearchConfig) return cachedSearchConfig;
+ 	if (!existsSync(CONFIG_PATH)) {
+-		cachedSearchConfig = { searchProvider: "auto", searchProviderConfigured: false };
++		cachedSearchConfig = { searchProvider: DEFAULT_SEARCH_PROVIDER, searchProviderConfigured: false };
+ 		return cachedSearchConfig;
+ 	}
+ 
+@@ -109,10 +110,13 @@ function getSearchConfig(): SearchConfig {
+ 
+ 	const searchModel = normalizeSearchModel(raw.searchModel);
+ 	const searchProviderConfigured = Object.hasOwn(raw, "searchProvider") || Object.hasOwn(raw, "provider");
++	const searchRoutingConfigured = Object.hasOwn(raw, "searchRouting");
+ 	cachedSearchConfig = {
+-		searchProvider: normalizeSearchProvider(raw.searchProvider ?? raw.provider),
++		searchProvider: searchProviderConfigured
++			? normalizeSearchProvider(raw.searchProvider ?? raw.provider)
++			: searchRoutingConfigured ? "auto" : DEFAULT_SEARCH_PROVIDER,
+ 		searchProviderConfigured,
+-		...(Object.hasOwn(raw, "searchRouting") ? { searchRouting: normalizeSearchRouting(raw.searchRouting) } : {}),
++		...(searchRoutingConfigured ? { searchRouting: normalizeSearchRouting(raw.searchRouting) } : {}),
+ 		...(searchModel ? { searchModel } : {}),
+ 	};
+ 	return cachedSearchConfig;
+diff --git a/index.ts b/index.ts
+index eba1116..0f2d963 100644
+--- a/index.ts
++++ b/index.ts
+@@ -99,5 +99,6 @@ interface WebSearchConfig {
+ 	provider?: string;
+ 	searchProvider?: string;
++	searchRouting?: unknown;
+ 	workflow?: string;
+ 	curatorTimeoutSeconds?: unknown;
+ 	summaryModel?: string;
+@@ -242,7 +243,9 @@ function resolveRequestedProvider(requested: unknown): SearchProvider {
+ 	const normalizedRequested = normalizeProviderInput(requested);
+ 	if (normalizedRequested && normalizedRequested !== "auto") return normalizedRequested;
+ 	const config = loadConfig();
+-	return normalizeProviderInput(config.searchProvider ?? config.provider) ?? "auto";
++	const configured = normalizeProviderInput(config.searchProvider ?? config.provider);
++	if (configured) return configured;
++	return config.searchRouting === undefined ? "openai" : "auto";
+ }
+ 
+ function normalizeRecencyFilter(value: unknown): RecencyFilter | undefined {
+@@ -2615,7 +2618,7 @@ export default function webSearchExtension(pi: ExtensionAPI) {
+ 			const initialProvider = bootstrap.defaultProvider;
+ 			const curatorTimeoutSeconds = bootstrap.timeoutSeconds;
+ 			let currentProvider: CuratorProvider = initialProvider;
+-			const rawSearchProvider = normalizeProviderInput(loadConfig().provider ?? "auto") ?? "auto";
++			const rawSearchProvider = resolveRequestedProvider(undefined);
+ 			let currentSearchProvider: SearchProvider = rawSearchProvider === "auto" ? "auto" : initialProvider;
+ 			const summaryContext: SummaryGenerationContext = {
+ 				model: ctx.model,

@@ -15,7 +15,10 @@ buildNpmPackage {
     hash = "sha256-o4x//aNXBweHPiwUhGp08iVZ/LeLjkFSzEm60G8EzxY=";
   };
 
-  patches = [ ../patches/pi-subagents-quiet-optional-result-intercom.patch ];
+  patches = [
+    ../patches/pi-subagents-quiet-optional-result-intercom.patch
+    ../patches/pi-subagents-wait-steering.patch
+  ];
 
   npmDepsHash = "sha256-Si1Fc01ORGdauY+6+Us3eRLuFzmZaAaAicZTQdcUFHY=";
   npmInstallFlags = [ "--omit=dev" ];

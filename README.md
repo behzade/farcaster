@@ -161,11 +161,11 @@ profile and cannot move to a parallel call. The separate
 longer creates a shared next-command grant. Old blanket `web` and
 `local_network` rights are ignored when saved rights load.
 
-A bash or background-job start can declare up to 16 exact read, write, or
-network host rights. The sandbox checks those rights and asks before launch. An allow-once choice is
-kept in that one tool call's generated profile, so another command cannot use
-it. This handles tools that hide the OS access error, such as a stateful CLI
-that reports only that its service is unavailable.
+The model cannot declare filesystem permission kinds, paths, or target types.
+Foreground bash commands run first under the OS sandbox; write grants are
+derived only from the denied operation and path reported by the sandbox, then
+shown to the user before a retry. An allow-once choice stays in that one tool
+call's generated profile, so another command cannot use it.
 
 On the native macOS backend, a failed command can return best-effort kernel
 denial hints even when the app hides `EPERM`. Pi prompts and retries only when
@@ -176,7 +176,8 @@ the workspace. It never widens access without the user's choice and stops after
 eight total attempts. A broad folder choice remains subject to hard protected
 paths and configured denies. Empty,
 late, malformed, protected, denied, or `/dev` device hints grant nothing.
-Unified logging can miss denials, so declared rights remain the reliable path.
+Unified logging can miss denials, in which case the command fails without a
+permission prompt.
 
 On the Codex backend, and on native attempts that return no broker denial hints,
 undeclared bash rights still use a limited fallback. The sandbox checks failed

@@ -6,7 +6,7 @@
 	"scripts": {
 		"clean": "echo 'nothing to clean'",
 		"build": "echo 'nothing to build'",
-		"check": "node --import ./test-setup.ts --test background-jobs.test.ts broker-client.test.ts broker-policy.test.ts codex-command.test.ts declared-permissions.test.ts development-caches.test.ts io-permissions.test.ts io-policy.test.ts native-denials.test.ts native-sandbox-ops.test.ts permission-system-approval.test.ts sandbox-failures.test.ts"
+		"check": "node --import ./test-setup.ts --test background-jobs.test.ts broker-client.test.ts broker-policy.test.ts codex-command.test.ts development-caches.test.ts io-permissions.test.ts io-policy.test.ts native-denials.test.ts native-sandbox-ops.test.ts permission-system-approval.test.ts sandbox-failures.test.ts"
 	},
 	"pi": {
 		"extensions": [

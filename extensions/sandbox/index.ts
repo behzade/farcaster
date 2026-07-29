@@ -1,9 +1,9 @@
 /**
- * Pi sandbox and explicit IO permission broker.
+ * Pi sandbox and IO permission broker.
  *
  * Commands may use any interpreter or child process. Codex applies the same
- * filesystem and network profile to the whole process tree. The model may ask
- * for a concrete IO right, but it may not ask to bypass the sandbox.
+ * filesystem and network profile to the whole process tree. Filesystem rights
+ * are derived from sandbox denials; the model may not declare them.
  */
 
 import { spawn } from "node:child_process";
@@ -30,10 +30,6 @@ import {
 	runBackgroundJobHelper,
 	sandboxedJobCommand,
 } from "./background-jobs.ts";
-import {
-	checkDeclaredFilesystemPermissions,
-	type FilePermission,
-} from "./declared-permissions.ts";
 import {
 	developmentCacheRoot,
 	ensureDevelopmentCacheDirectories,
@@ -185,12 +181,7 @@ type SandboxState =
 	| { kind: "failed"; reason: string };
 
 type NetworkPermission = Extract<IoPermission, { kind: "network_host" }>;
-type DeclaredFilesystemPermission = {
-	kind: "read" | "write";
-	path: string;
-	targetType?: "file" | "folder";
-	reason: string;
-};
+type FilePermission = Extract<IoPermission, { kind: "read" | "write" }>;
 type DeclaredNetworkPermission = {
 	kind: "network_host";
 	host: string;
@@ -213,31 +204,15 @@ const NetworkPermissionParams = Type.Object({
 	reason: Type.String({ description: "Why this host is needed" }),
 });
 
-const DeclaredFilesystemPermissionParams = Type.Object({
-	kind: Type.Union([Type.Literal("read"), Type.Literal("write")]),
-	path: Type.String({ description: "Exact file or folder path" }),
-	targetType: Type.Optional(
-		Type.Union([Type.Literal("file"), Type.Literal("folder")]),
-	),
-	reason: Type.String({ description: "Why this command needs the right" }),
-});
-
-const DeclaredNetworkPermissionParams = Type.Object({
-	kind: Type.Literal("network_host"),
-	host: Type.String({
-		description: "One exact hostname or IP, with no scheme, port, path, or wildcard",
-	}),
-	reason: Type.String({ description: "Why this command needs the host" }),
-});
-
-const DeclaredPermissionsParams = Type.Optional(
-	Type.Array(
-		Type.Union([
-			DeclaredFilesystemPermissionParams,
-			DeclaredNetworkPermissionParams,
-		]),
-		{ maxItems: 16 },
-	),
+const DeclaredNetworkPermissionParams = Type.Object(
+	{
+		kind: Type.Literal("network_host"),
+		host: Type.String({
+			description: "One exact hostname or IP, with no scheme, port, path, or wildcard",
+		}),
+		reason: Type.String({ description: "Why this command needs the host" }),
+	},
+	{ additionalProperties: false },
 );
 
 const BashParams = Type.Object({
@@ -245,7 +220,9 @@ const BashParams = Type.Object({
 	timeout: Type.Optional(
 		Type.Number({ description: "Timeout in seconds (optional, no default timeout)" }),
 	),
-	permissions: DeclaredPermissionsParams,
+	permissions: Type.Optional(
+		Type.Array(DeclaredNetworkPermissionParams, { maxItems: 16 }),
+	),
 });
 
 const BackgroundJobParams = Type.Union([
@@ -254,7 +231,9 @@ const BackgroundJobParams = Type.Union([
 		name: Type.String({ description: "Unique job name starting with pi-" }),
 		command: Type.String({ description: "Shell command to run in the background" }),
 		cwd: Type.Optional(Type.String({ description: "Working directory inside this workspace" })),
-		permissions: DeclaredPermissionsParams,
+		permissions: Type.Optional(
+			Type.Array(DeclaredNetworkPermissionParams, { maxItems: 16 }),
+		),
 	}),
 	Type.Object({ action: Type.Literal("list") }),
 	Type.Object({
@@ -293,22 +272,10 @@ interface ApprovalDecision {
 	reason?: string;
 }
 
-function fileDeclarations(
-	permissions: readonly (DeclaredFilesystemPermission | DeclaredNetworkPermission)[] | undefined,
-): DeclaredFilesystemPermission[] {
-	return (permissions ?? []).filter(
-		(permission): permission is DeclaredFilesystemPermission =>
-			permission.kind === "read" || permission.kind === "write",
-	);
-}
-
 function networkDeclarations(
-	permissions: readonly (DeclaredFilesystemPermission | DeclaredNetworkPermission)[] | undefined,
+	permissions: readonly DeclaredNetworkPermission[] | undefined,
 ): DeclaredNetworkPermission[] {
-	return (permissions ?? []).filter(
-		(permission): permission is DeclaredNetworkPermission =>
-			permission.kind === "network_host",
-	);
+	return [...(permissions ?? [])];
 }
 
 function networkRuleMatches(rule: string, host: string): boolean {
@@ -507,32 +474,6 @@ export default function (pi: ExtensionAPI) {
 			decision: resolved ? "allowed" : "denied",
 		});
 		return resolved?.permissions;
-	};
-
-	const approveDeclaredFilesystemPermissions = async (
-		declarations: readonly DeclaredFilesystemPermission[] | undefined,
-		tool: { toolName: string; toolCallId: string },
-		ctx: ExtensionContext,
-		config: CodexSandboxConfig,
-	): Promise<FilePermission[]> => {
-		const checked = checkDeclaredFilesystemPermissions(
-			declarations,
-			ctx.cwd,
-			config,
-			persistentPermissions,
-		);
-		for (const entry of checked) {
-			if (entry.alreadyAllowed) continue;
-			const decision = await promptForToolPermission(
-				entry.permission,
-				{ ...tool, reason: entry.reason, retry: false },
-				ctx,
-			);
-			if (!decision.allowed) {
-				throw new Error(decision.reason ?? "Permission denied by user");
-			}
-		}
-		return checked.map((entry) => entry.permission);
 	};
 
 	const approveDeclaredNetworkPermissions = async (
@@ -789,7 +730,7 @@ export default function (pi: ExtensionAPI) {
 		name: "background_job",
 		label: "Background job",
 		description:
-			"Start, list, inspect, interact with, or stop a long-running command. Use only for long-running commands; never run sudo, password prompts, or destructive commands. Jobs run in a fresh Codex sandbox inside the workspace. A start may declare exact read, write, or network_host rights so the user can approve them before launch. Names must start with pi- and use only letters, digits, dots, underscores, or hyphens. After starting, do other work instead of tight polling. Stop only jobs created for the current task and report any left running when the task ends.",
+			"Start, list, inspect, interact with, or stop a long-running command. Use only for long-running commands; never run sudo, password prompts, or destructive commands. Jobs run in a fresh Codex sandbox inside the workspace. A start may declare exact network_host rights so the user can approve them before launch. Filesystem rights are enforced by the sandbox and cannot be declared. Names must start with pi- and use only letters, digits, dots, underscores, or hyphens. After starting, do other work instead of tight polling. Stop only jobs created for the current task and report any left running when the task ends.",
 		promptSnippet:
 			"Use background_job for long-running servers, watchers, builds, and tests instead of tmux through bash.",
 		parameters: BackgroundJobParams,
@@ -862,19 +803,8 @@ export default function (pi: ExtensionAPI) {
 					ctx,
 					config,
 				);
-				const declaredPermissions = await approveDeclaredFilesystemPermissions(
-					fileDeclarations(params.permissions),
-					{ toolName: "background_job", toolCallId },
-					ctx,
-					config,
-				);
 				const grants = runtimeGrants();
-				const declaredGrants = grantsToRuntime([
-					...declaredPermissions,
-					...declaredNetworkPermissions,
-				]);
-				grants.read = [...(grants.read ?? []), ...declaredGrants.read];
-				grants.write = [...(grants.write ?? []), ...declaredGrants.write];
+				const declaredGrants = grantsToRuntime(declaredNetworkPermissions);
 				grants.networkHosts = [
 					...(grants.networkHosts ?? []),
 					...declaredGrants.networkHosts,
@@ -922,9 +852,9 @@ export default function (pi: ExtensionAPI) {
 		...localBash,
 		label: "bash (OS sandbox)",
 		description:
-			"Execute a bash command in the OS sandbox. The current workspace, temp folders, and the sandbox-owned development-cache namespace already have their needed rights. Declare only exact extra read, write, or network_host rights in permissions so the user can approve them before launch.",
+			"Execute a bash command in the OS sandbox. Filesystem access is inferred from sandbox denials; do not predict or declare filesystem rights. The current workspace, temp folders, and the sandbox-owned development-cache namespace already have their needed rights. Only exact network_host rights may be declared in permissions.",
 		promptSnippet:
-			"Use permissions only for exact rights outside the current workspace, temp folders, and built-in development caches. Do not request a whole tool home such as ~/.cargo or ~/.npm. Treat time blocked on permission approval as permission wait; never report it as no stall if the command did not start.",
+			"Do not declare filesystem permissions. Run the command and let the sandbox identify any denied write. Use permissions only for exact network hosts. Treat time blocked on permission approval as permission wait; never report it as no stall if the command did not start.",
 		parameters: BashParams,
 		executionMode: "sequential",
 		renderShell: "self",
@@ -945,19 +875,8 @@ export default function (pi: ExtensionAPI) {
 				ctx,
 				sandboxState.config,
 			);
-			const declaredPermissions = await approveDeclaredFilesystemPermissions(
-				fileDeclarations(params.permissions),
-				{ toolName: "bash", toolCallId: id },
-				ctx,
-				sandboxState.config,
-			);
 			const grants = runtimeGrants();
-			const declaredGrants = grantsToRuntime([
-				...declaredPermissions,
-				...declaredNetworkPermissions,
-			]);
-			grants.read = [...(grants.read ?? []), ...declaredGrants.read];
-			grants.write = [...(grants.write ?? []), ...declaredGrants.write];
+			const declaredGrants = grantsToRuntime(declaredNetworkPermissions);
 			grants.networkHosts = [
 				...(grants.networkHosts ?? []),
 				...declaredGrants.networkHosts,
@@ -965,10 +884,7 @@ export default function (pi: ExtensionAPI) {
 			let operations: BashOperations;
 			if (sandboxState.config.backend === "native-preview") {
 				if (!brokerClient) throw new Error("Native sandbox broker is not ready");
-				const filePermissions = [
-					...persistentPermissions.filter(isSafeSavedFilePermission),
-					...declaredPermissions,
-				];
+				const filePermissions = persistentPermissions.filter(isSafeSavedFilePermission);
 				operations = createApprovingNativeSandboxOps({
 					client: brokerClient,
 					config: sandboxState.config,

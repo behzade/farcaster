@@ -1,0 +1,129 @@
+diff --git a/src/runs/background/subagent-wait.ts b/src/runs/background/subagent-wait.ts
+index 18516df..cd84648 100644
+--- a/src/runs/background/subagent-wait.ts
++++ b/src/runs/background/subagent-wait.ts
+@@ -122,0 +123,3 @@ export interface SubagentWaitDeps {
++/** Emitted when Pi accepts user input that will steer the active agent turn. */
++export const SUBAGENT_WAIT_STEER_EVENT = "pi-subagents:wait-steer";
++
+@@ -130,0 +134 @@ const WAKE_CHANNELS = [
++	SUBAGENT_WAIT_STEER_EVENT,
+@@ -132,0 +137,2 @@ const WAKE_CHANNELS = [
++type WaitWakeReason = "poll" | "event" | "steer" | "abort";
++
+@@ -156 +162 @@ function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
+-function waitForWake(ms: number, signal: AbortSignal | undefined, deps: SubagentWaitDeps): Promise<void> {
++function waitForWake(ms: number, signal: AbortSignal | undefined, deps: SubagentWaitDeps): Promise<WaitWakeReason> {
+@@ -159 +165,3 @@ function waitForWake(ms: number, signal: AbortSignal | undefined, deps: Subagent
+-	if (!events) return sleep(ms, signal);
++	if (!events) {
++		return sleep(ms, signal).then(() => signal?.aborted ? "abort" : "poll");
++	}
+@@ -165 +173 @@ function waitForWake(ms: number, signal: AbortSignal | undefined, deps: Subagent
+-		const done = () => {
++		const done = (reason: WaitWakeReason) => {
+@@ -169 +177 @@ function waitForWake(ms: number, signal: AbortSignal | undefined, deps: Subagent
+-			signal?.removeEventListener("abort", done);
++			signal?.removeEventListener("abort", onAbort);
+@@ -173 +181 @@ function waitForWake(ms: number, signal: AbortSignal | undefined, deps: Subagent
+-			resolve();
++			resolve(reason);
+@@ -174,0 +183 @@ function waitForWake(ms: number, signal: AbortSignal | undefined, deps: Subagent
++		const onAbort = () => done("abort");
+@@ -176 +185 @@ function waitForWake(ms: number, signal: AbortSignal | undefined, deps: Subagent
+-			done();
++			done("abort");
+@@ -179 +188 @@ function waitForWake(ms: number, signal: AbortSignal | undefined, deps: Subagent
+-		signal?.addEventListener("abort", done, { once: true });
++		signal?.addEventListener("abort", onAbort, { once: true });
+@@ -182 +191,2 @@ function waitForWake(ms: number, signal: AbortSignal | undefined, deps: Subagent
+-				unsubs.push(events.on(channel, done));
++				const reason = channel === SUBAGENT_WAIT_STEER_EVENT ? "steer" : "event";
++				unsubs.push(events.on(channel, () => done(reason)));
+@@ -185 +195 @@ function waitForWake(ms: number, signal: AbortSignal | undefined, deps: Subagent
+-			signal?.removeEventListener("abort", done);
++			signal?.removeEventListener("abort", onAbort);
+@@ -194 +204 @@ function waitForWake(ms: number, signal: AbortSignal | undefined, deps: Subagent
+-		void sleep(ms, wakeController.signal).then(done);
++		void sleep(ms, wakeController.signal).then(() => done("poll"));
+@@ -443 +453,6 @@ async function waitForDetachedForegroundRun(
+-		await waitForWake(pollIntervalMs, signal, deps);
++		const wakeReason = await waitForWake(pollIntervalMs, signal, deps);
++		if (wakeReason === "steer") {
++			return result(
++				`Wait yielded after ${formatDuration(now() - startedAt)} because a steering message arrived. Remembered foreground run "${run.runId}" remains detached and keeps running. Respond to the steering message now; call subagent_wait again if you still need to wait.`,
++			);
++		}
+@@ -541 +556,6 @@ export async function waitForSubagents(
+-			await waitForWake(pollIntervalMs, signal, deps);
++			const wakeReason = await waitForWake(pollIntervalMs, signal, deps);
++			if (wakeReason === "steer") {
++				return result(
++					`Wait yielded after ${formatDuration(now() - startedAt)} because a steering message arrived. Still active: ${stillActive}. Background work keeps running; respond to the steering message now and call subagent_wait again if needed.`,
++				);
++			}
+diff --git a/src/runs/background/wait-tool.ts b/src/runs/background/wait-tool.ts
+index 90539d9..084f3f2 100644
+--- a/src/runs/background/wait-tool.ts
++++ b/src/runs/background/wait-tool.ts
+@@ -4 +4 @@ import type { Details, SubagentState } from "../../shared/types.ts";
+-import { resolveWaitToolConfig, waitForSubagents } from "./subagent-wait.ts";
++import { resolveWaitToolConfig, SUBAGENT_WAIT_STEER_EVENT, waitForSubagents } from "./subagent-wait.ts";
+@@ -13,0 +14,2 @@ In an interactive chat, do not call this merely to wait: return control to the u
++An incoming steering message yields this wait immediately without cancelling background work, so the main agent can respond.
++
+@@ -24,0 +27,5 @@ Provider jobs are session-scoped and identified exactly, so replacing one job wi
++
++	pi.on("input", (event) => {
++		if (event.streamingBehavior === "steer") pi.events.emit(SUBAGENT_WAIT_STEER_EVENT, undefined);
++	});
++
+diff --git a/test/unit/subagent-wait.test.ts b/test/unit/subagent-wait.test.ts
+index e42a778..e7ade70 100644
+--- a/test/unit/subagent-wait.test.ts
++++ b/test/unit/subagent-wait.test.ts
+@@ -6 +6 @@ import { describe, it } from "node:test";
+-import { WAIT_TOOL_ENABLED_ENV, resolveWaitToolConfig, waitForSubagents, type SubagentWaitDeps } from "../../src/runs/background/subagent-wait.ts";
++import { SUBAGENT_WAIT_STEER_EVENT, WAIT_TOOL_ENABLED_ENV, resolveWaitToolConfig, waitForSubagents, type SubagentWaitDeps } from "../../src/runs/background/subagent-wait.ts";
+@@ -430,0 +431,41 @@ describe("subagent_wait tool", () => {
++	it("yields immediately to a steering message while background work keeps running", async () => {
++		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-steer-"));
++		try {
++			const asyncRoot = path.join(root, "runs");
++			const state = makeState("sess-1");
++			writeStatus(asyncRoot, "run-a", "running", { sessionId: "sess-1", pid: 999999 });
++			const handlers = new Map<string, Array<(data: unknown) => void>>();
++			const events = {
++				on(channel: string, handler: (data: unknown) => void) {
++					const list = handlers.get(channel) ?? [];
++					list.push(handler);
++					handlers.set(channel, list);
++					return () => handlers.set(channel, (handlers.get(channel) ?? []).filter((candidate) => candidate !== handler));
++				},
++				emit(channel: string, data: unknown) {
++					for (const handler of handlers.get(channel) ?? []) handler(data);
++				},
++			};
++			const startedAt = Date.now();
++			const waiting = waitForSubagents({ all: true, timeoutMs: 30_000 }, undefined, baseDeps(root, state, {
++				events,
++				pollIntervalMs: 10_000,
++			}));
++
++			setTimeout(() => events.emit(SUBAGENT_WAIT_STEER_EVENT, undefined), 15);
++
++			const result = await waiting;
++			assert.equal(result.isError, undefined);
++			assert.match(textOf(result), /steering message arrived/i);
++			assert.match(textOf(result), /run-a \(running\)/);
++			assert.ok(Date.now() - startedAt < 5_000, "steering should yield before the poll interval");
++			assert.equal(
++				JSON.parse(fs.readFileSync(path.join(asyncRoot, "run-a", "status.json"), "utf-8")).state,
++				"running",
++				"yielding the wait must not stop the child",
++			);
++		} finally {
++			fs.rmSync(root, { recursive: true, force: true });
++		}
++	});
++

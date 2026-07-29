@@ -14,6 +14,7 @@ buildNpmPackage {
   };
 
   postPatch = ''
+    patch -p1 < ${../patches/pi-web-access-default-openai.patch}
     cp ${./pi-web-access-package-lock.json} package-lock.json
   '';
 
