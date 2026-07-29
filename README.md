@@ -11,8 +11,8 @@ hosts, and notification settings. This repo owns code and package pins.
 
 - `extensions/sandbox`: fail-closed sandbox adapter, IO permission prompt,
   native broker client, and background-job tool and helper.
-- `extensions/mcp-adapter`: one lazy MCP control tool that connects approved
-  Streamable HTTP endpoints and activates their discovered tools for the session.
+- `nix/pi-mcp-cli.nix`: pinned stateless MCP CLI available inside sandboxed
+  shell commands.
 - `sandbox-broker`: protocol, threat model, provenance, and the first native
   macOS Seatbelt backend.
 - `extensions/*.ts`: local notification, input, session, title, and dense tool
@@ -29,8 +29,6 @@ hosts, and notification settings. This repo owns code and package pins.
 
 ```sh
 npm run check --prefix extensions/sandbox
-npm ci --prefix extensions/mcp-adapter --ignore-scripts
-npm run check --prefix extensions/mcp-adapter
 cargo test --manifest-path sandbox-broker/Cargo.toml
 node --test tests/governance.test.ts
 nix flake check
@@ -48,7 +46,7 @@ Individual components remain available for focused development:
 nix build .#sandbox
 nix build .#sandbox-broker
 nix build .#dense-tools
-nix build .#mcp-adapter
+nix build .#mcp-cli
 nix build .#subagents
 nix build .#openai-server-compaction
 ```
@@ -193,19 +191,19 @@ retries the command. `.git` data under configured package caches or temp paths
 is normal cache data and does not trigger a repository-control prompt. Use
 version control or backups for other workspace files.
 
-The MCP adapter initially exposes one `mcp` control tool. An enable call supplies
-an exact `http` or `https` host, port, and absolute path, then the adapter uses
-Streamable HTTP discovery to activate namespaced upstream tools for that session.
-A disable call deactivates those tools and closes the client. Redirects, embedded
-credentials, queries, and fragments are rejected; authentication, stdio, legacy
-SSE, MCP resources, and MCP prompts are intentionally unsupported.
+The sandbox package puts the pinned `mcp-cli` binary on the command environment's
+`PATH`. Its wrapper fixes `MCP_NO_DAEMON=1`, so every invocation connects,
+initializes, performs one discovery or tool call, closes, and exits inside that
+command's sandbox. MCP has no Pi extension, dynamically registered tools, approval
+service, background client, or persistent process. Remote MCP access uses the same
+exact `network_host` declaration and approval as any other shell command.
 
-Enabling an MCP endpoint needs user approval because its server can read private
-data or act outside the shell sandbox. The adapter requires this repository's
-sandbox extension to publish the approval service and fails before connecting when
-that service is absent. Approval is keyed by the canonical endpoint, not its
-friendly namespace. Session approval lasts until shutdown; saved approval is scoped
-to the current workspace. MCP approval does not grant shell network access.
+Machine-specific MCP server configuration belongs in `nix-config`/Home Manager,
+alongside the sandbox host allowlist. Set its absolute path as
+`shellEnvironment.set.MCP_CONFIG_PATH` in the global sandbox config; this also
+prevents a repository-local `mcp_servers.json` from taking precedence. The model
+discovers and invokes configured tools with `mcp-cli grep`, `mcp-cli info`, and
+`mcp-cli call`.
 
 Unix socket access grants a right to another service. That service may do work
 outside the caller's file or network limits. The machine config allows the Nix

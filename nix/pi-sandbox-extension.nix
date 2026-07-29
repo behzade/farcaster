@@ -1,5 +1,6 @@
 {
   lib,
+  mcpCli,
   sandboxBroker ? null,
   stdenvNoCC,
 }:
@@ -16,9 +17,11 @@ stdenvNoCC.mkDerivation {
   installPhase = ''
     runHook preInstall
     mkdir -p $out
-    cp background-jobs.ts broker-client.ts broker-policy.ts index.ts codex-command.ts declared-permissions.ts development-caches.ts io-permissions.ts io-policy.ts mcp-approval-service.ts native-denials.ts native-sandbox-ops.ts permission-system-approval.ts sandbox-failures.ts package.json $out/
+    cp background-jobs.ts broker-client.ts broker-policy.ts index.ts codex-command.ts declared-permissions.ts development-caches.ts io-permissions.ts io-policy.ts native-denials.ts native-sandbox-ops.ts permission-system-approval.ts sandbox-failures.ts package.json $out/
     substituteInPlace $out/index.ts \
       --replace-fail '@PI_SANDBOX_BROKER@' '${brokerRoot}'
+    substituteInPlace $out/codex-command.ts \
+      --replace-fail '@PI_MCP_CLI@' '${mcpCli}/bin/mcp-cli'
     install -Dm755 background-job.sh $out/background-job.sh
     runHook postInstall
   '';

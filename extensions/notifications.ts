@@ -8,7 +8,6 @@ type NotificationType =
   | "agent-turn-complete"
   | "approval-command"
   | "approval-file-write"
-  | "approval-mcp"
   | "user-input";
 
 interface NotificationConfig {
@@ -26,7 +25,7 @@ interface PendingNotification {
 
 const defaults: NotificationConfig = {
   condition: "unfocused",
-  types: ["agent-turn-complete", "approval-command", "approval-file-write", "approval-mcp", "user-input"],
+  types: ["agent-turn-complete", "approval-command", "approval-file-write", "user-input"],
   method: "auto",
 };
 
@@ -97,7 +96,7 @@ export default function (pi: ExtensionAPI) {
     const request = data as { kind?: string; title?: string; summary?: string };
     const type = request.kind === "command" ? "approval-command"
       : request.kind === "file-write" ? "approval-file-write"
-      : request.kind === "mcp" ? "approval-mcp" : "user-input";
+      : "user-input";
     enqueue({ type, title: request.title ?? "Pi needs approval", message: request.summary ?? "Input needed", priority: type === "user-input" ? 3 : 2 });
   });
 

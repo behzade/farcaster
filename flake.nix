@@ -11,7 +11,6 @@
     let
       systems = [
         "aarch64-darwin"
-        "aarch64-linux"
         "x86_64-linux"
       ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
@@ -22,19 +21,18 @@
         system:
         let
           pkgs = pkgsFor system;
+          mcpCli = pkgs.callPackage ./nix/pi-mcp-cli.nix { };
           sandboxBroker = pkgs.callPackage ./nix/pi-sandbox-broker.nix { };
           sandbox = pkgs.callPackage ./nix/pi-sandbox-extension.nix {
-            inherit sandboxBroker;
+            inherit mcpCli sandboxBroker;
           };
           denseTools = pkgs.callPackage ./nix/pi-dense-tools.nix { };
-          mcpAdapter = pkgs.callPackage ./nix/pi-mcp-adapter.nix { };
           subagents = pkgs.callPackage ./nix/pi-subagents.nix { };
           openaiServerCompaction = pkgs.callPackage ./nix/pi-openai-server-compaction.nix { };
           permissionSystem = pkgs.callPackage ./nix/pi-permission-system.nix { };
           agent = pkgs.callPackage ./nix/pi-agent.nix {
             inherit
               denseTools
-              mcpAdapter
               openaiServerCompaction
               permissionSystem
               sandbox
@@ -44,7 +42,7 @@
         in
         {
           inherit agent sandbox subagents;
-          mcp-adapter = mcpAdapter;
+          mcp-cli = mcpCli;
           permission-system = permissionSystem;
           sandbox-broker = sandboxBroker;
           dense-tools = denseTools;
@@ -57,6 +55,7 @@
         system:
         let
           pkgs = pkgsFor system;
+          mcpCli = pkgs.callPackage ./nix/pi-mcp-cli.nix { };
         in
         {
           sandbox-tests = pkgs.runCommand "pi-sandbox-tests" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
@@ -69,7 +68,6 @@
               ${self}/extensions/sandbox/development-caches.test.ts \
               ${self}/extensions/sandbox/io-permissions.test.ts \
               ${self}/extensions/sandbox/io-policy.test.ts \
-              ${self}/extensions/sandbox/mcp-approval-service.test.ts \
               ${self}/extensions/sandbox/native-denials.test.ts \
               ${self}/extensions/sandbox/native-sandbox-ops.test.ts \
               ${self}/extensions/sandbox/permission-system-approval.test.ts \
@@ -78,7 +76,10 @@
           '';
 
           sandbox-broker = pkgs.callPackage ./nix/pi-sandbox-broker.nix { };
-          mcp-adapter = pkgs.callPackage ./nix/pi-mcp-adapter.nix { };
+          mcp-cli = pkgs.runCommand "pi-mcp-cli-test" { nativeBuildInputs = [ mcpCli ]; } ''
+            test "$(mcp-cli --version)" = "mcp-cli v0.3.0"
+            touch "$out"
+          '';
           permission-system = pkgs.callPackage ./nix/pi-permission-system.nix { };
 
           governance = pkgs.runCommand "pi-governance-tests" { nativeBuildInputs = [ pkgs.nodejs ]; } ''

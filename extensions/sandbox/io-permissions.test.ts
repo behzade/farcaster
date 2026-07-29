@@ -15,12 +15,9 @@ import {
 	gitControlRoot,
 	isDefaultWritePath,
 	isControlRootSymlink,
-	isMcpPermissionApproved,
 	isProtectedPath,
 	isProtectedWritePath,
 	loadWorkspacePermissions,
-	mcpEndpointPermissionFromInput,
-	mcpPermissionFromInput,
 	normalizeNetworkHost,
 	normalizePermission,
 	permissionCoversPath,
@@ -208,7 +205,7 @@ test("network rights require one exact normalized host or IP", () => {
 	}
 });
 
-test("legacy blanket network rights are dropped while narrow rights survive", () => {
+test("legacy blanket network and MCP rights are dropped while narrow rights survive", () => {
 	const root = mkdtempSync(join(tmpdir(), "pi-io-"));
 	const workspace = join(root, "workspace");
 	const state = join(root, "io-permissions.json");
@@ -221,6 +218,7 @@ test("legacy blanket network rights are dropped while narrow rights survive", ()
 				[canonicalize(workspace)]: [
 					{ kind: "web" },
 					{ kind: "local_network" },
+					{ kind: "mcp", server: "github" },
 					{ kind: "network_host", host: "registry.npmjs.org" },
 				],
 			},
@@ -229,66 +227,4 @@ test("legacy blanket network rights are dropped while narrow rights survive", ()
 	assert.deepEqual(loadWorkspacePermissions(state, workspace), [
 		{ kind: "network_host", host: "registry.npmjs.org" },
 	]);
-});
-
-test("MCP rights use the exact service name and do not change shell grants", () => {
-	const permission = mcpPermissionFromInput({ name: "github" });
-	assert.deepEqual(permission, { kind: "mcp", server: "github" });
-	assert.deepEqual(mcpPermissionFromInput({ serverId: "issues" }), {
-		kind: "mcp",
-		server: "issues",
-	});
-	assert.equal(mcpPermissionFromInput({ enabled: true }), undefined);
-	assert.deepEqual(grantsToRuntime(permission ? [permission] : []), {
-		read: [],
-		write: [],
-		networkHosts: [],
-	});
-});
-
-test("generic MCP rights use the exact canonical endpoint", () => {
-	assert.deepEqual(
-		mcpEndpointPermissionFromInput({
-			action: "enable",
-			name: "figma",
-			protocol: "http",
-			host: "LOCALHOST.",
-			port: 3845,
-			path: "/mcp",
-		}),
-		{ kind: "mcp", server: "http://localhost:3845/mcp" },
-	);
-	assert.deepEqual(
-		mcpEndpointPermissionFromInput({
-			action: "enable",
-			host: "::1",
-			port: 3845,
-			path: "/mcp",
-		}),
-		{ kind: "mcp", server: "http://[::1]:3845/mcp" },
-	);
-	assert.equal(mcpEndpointPermissionFromInput({ action: "disable", name: "figma" }), undefined);
-	assert.equal(
-		mcpEndpointPermissionFromInput({
-			action: "enable",
-			host: "example.com",
-			port: 443,
-			path: "/mcp?token=x",
-		}),
-		undefined,
-	);
-});
-
-test("session MCP approval is exact and separate from persistent rights", () => {
-	const permission = { kind: "mcp", server: "https://mcp.example:443/mcp" } as const;
-	assert.equal(isMcpPermissionApproved(permission, [], new Set()), false);
-	assert.equal(
-		isMcpPermissionApproved(permission, [], new Set(["https://mcp.example:443/mcp"])),
-		true,
-	);
-	assert.equal(
-		isMcpPermissionApproved(permission, [], new Set(["https://other.example:443/mcp"])),
-		false,
-	);
-	assert.equal(isMcpPermissionApproved(permission, [permission], new Set()), true);
 });

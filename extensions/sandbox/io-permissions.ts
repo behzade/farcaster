@@ -23,13 +23,7 @@ export type IoPermission =
 	| {
 			kind: "network_host";
 			host: string;
-	  }
-	| {
-			kind: "mcp";
-			server: string;
 	  };
-
-export type McpPermission = Extract<IoPermission, { kind: "mcp" }>;
 
 export interface RuntimeIoGrants {
 	read: string[];
@@ -240,75 +234,9 @@ export function normalizePermission(
 
 export function permissionCoversPath(permission: IoPermission, path: string): boolean {
 	if (permission.kind === "network_host") return false;
-	if (permission.kind === "mcp") return false;
 	const root = canonicalize(permission.path);
 	const target = canonicalize(path);
 	return permission.directory ? isInside(root, target) : root === target;
-}
-
-export function mcpPermissionFromInput(input: unknown): McpPermission | undefined {
-	if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
-	const record = input as Record<string, unknown>;
-	for (const key of [
-		"name",
-		"server",
-		"serverName",
-		"serverId",
-		"server_name",
-		"server_id",
-		"id",
-	]) {
-		const value = record[key];
-		if (typeof value === "string" && value.trim().length > 0) {
-			return { kind: "mcp", server: value.trim() };
-		}
-	}
-	return undefined;
-}
-
-export function mcpEndpointPermissionFromInput(input: unknown): McpPermission | undefined {
-	if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
-	const record = input as Record<string, unknown>;
-	if (record.action !== "enable") return undefined;
-	const protocol = record.protocol ?? "http";
-	if (protocol !== "http" && protocol !== "https") return undefined;
-	if (typeof record.host !== "string" || typeof record.path !== "string") return undefined;
-	if (
-		typeof record.port !== "number" ||
-		!Number.isInteger(record.port) ||
-		record.port < 1 ||
-		record.port > 65_535 ||
-		!record.path.startsWith("/") ||
-		record.path.startsWith("//") ||
-		/[?#\\\s\x00-\x1f\x7f]/.test(record.path)
-	) {
-		return undefined;
-	}
-	try {
-		const host = normalizeNetworkHost(record.host);
-		const authority = isIP(host) === 6 ? `[${host}]` : host;
-		const parsed = new URL(`${protocol}://${authority}:${record.port}${record.path}`);
-		if (parsed.username || parsed.password || parsed.search || parsed.hash) return undefined;
-		return {
-			kind: "mcp",
-			server: `${protocol}://${authority}:${record.port}${parsed.pathname}`,
-		};
-	} catch {
-		return undefined;
-	}
-}
-
-export function isMcpPermissionApproved(
-	permission: McpPermission,
-	persistentPermissions: readonly IoPermission[],
-	sessionPermissions: ReadonlySet<string>,
-): boolean {
-	return (
-		sessionPermissions.has(permission.server) ||
-		persistentPermissions.some(
-			(entry) => entry.kind === "mcp" && entry.server === permission.server,
-		)
-	);
 }
 
 export function grantsToRuntime(permissions: readonly IoPermission[]): RuntimeIoGrants {
@@ -348,7 +276,6 @@ export function isDefaultWritePath(path: string, cwd: string): boolean {
 
 export function permissionLabel(permission: IoPermission): string {
 	if (permission.kind === "network_host") return `network host ${permission.host}`;
-	if (permission.kind === "mcp") return `MCP service ${permission.server}`;
 	if (permission.kind === "write" && permission.directory && basename(permission.path) === ".pi") {
 		return `write Pi project control folder ${permission.path} (code there can run on reload)`;
 	}
@@ -418,13 +345,6 @@ function isIoPermission(value: unknown): value is IoPermission {
 		} catch {
 			return false;
 		}
-	}
-	if (record.kind === "mcp") {
-		return (
-			Object.keys(record).every((key) => key === "kind" || key === "server") &&
-			typeof record.server === "string" &&
-			record.server.length > 0
-		);
 	}
 	return (
 		(record.kind === "read" || record.kind === "write") &&

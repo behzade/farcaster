@@ -298,6 +298,17 @@ test("shell environment applies excludes, set values, then include-only filters"
 	});
 });
 
+test("the packaged MCP CLI is always available on the sandbox PATH", () => {
+	const environment = buildShellEnvironment(
+		{ shellEnvironment: { inherit: "none", includeOnly: ["HOME"] } },
+		{},
+		"/nix/store/pi-mcp-cli/bin/mcp-cli",
+	);
+	assert.deepEqual(environment, {
+		PATH: "/nix/store/pi-mcp-cli/bin",
+	});
+});
+
 test("rejects malformed config instead of weakening policy", () => {
 	assert.throws(() => normalizeConfig({ network: { enabled: "yes" } }), /network.enabled/);
 	assert.throws(() => normalizeConfig({ backend: "native" }), /backend/);

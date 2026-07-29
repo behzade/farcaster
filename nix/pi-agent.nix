@@ -1,6 +1,5 @@
 {
   denseTools,
-  mcpAdapter,
   openaiServerCompaction,
   permissionSystem,
   sandbox,
@@ -22,7 +21,6 @@ stdenvNoCC.mkDerivation {
     ln -s ${../APPEND_SYSTEM.md} "$out/APPEND_SYSTEM.md"
 
     ln -s ${denseTools} "$out/extensions/dense-tools"
-    ln -s ${mcpAdapter} "$out/extensions/mcp-adapter"
     ln -s ${openaiServerCompaction} "$out/extensions/openai-server-compaction"
     ln -s ${permissionSystem} "$out/extensions/permission-system"
     ln -s ${sandbox} "$out/extensions/sandbox"

@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import {
 	backgroundJobSocket,
 	isBackgroundJobSocket,
@@ -9,6 +9,8 @@ import {
 	canonicalize,
 	normalizeNetworkHost,
 } from "./io-permissions.ts";
+
+const PACKAGED_MCP_CLI = "@PI_MCP_CLI@";
 
 export interface CodexSandboxNetworkConfig {
 	enabled?: boolean;
@@ -508,6 +510,7 @@ function matchesAny(name: string, patterns: readonly string[]): boolean {
 export function buildShellEnvironment(
 	config: CodexSandboxConfig,
 	source: NodeJS.ProcessEnv = process.env,
+	packagedMcpCli = PACKAGED_MCP_CLI,
 ): Record<string, string> {
 	const policy = mergeGlobalConfig(DEFAULT_CONFIG, config).shellEnvironment ?? {};
 	const sourceEntries = Object.entries(source).filter(
@@ -540,6 +543,11 @@ export function buildShellEnvironment(
 		for (const name of Object.keys(environment)) {
 			if (!matchesAny(name, policy.includeOnly ?? [])) delete environment[name];
 		}
+	}
+	if (packagedMcpCli.length > 0 && !packagedMcpCli.startsWith("@")) {
+		environment.PATH = [dirname(packagedMcpCli), environment.PATH]
+			.filter(Boolean)
+			.join(":");
 	}
 
 	return environment;
