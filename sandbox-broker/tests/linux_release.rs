@@ -57,6 +57,7 @@ fn linux_bubblewrap_release_gate() {
             scope: DenyScope::File,
             path: Some(secret.clone()),
         }],
+        unix_socket_roots: vec![],
     };
     let script = format!(
         "grep -Eq '^NoNewPrivs:[[:space:]]+1$' /proc/self/status || exit 41; cat '{}' >/dev/null 2>&1 && exit 42; touch '{}'; touch '{}'",

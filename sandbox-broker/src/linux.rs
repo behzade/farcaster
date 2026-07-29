@@ -863,13 +863,14 @@ mod tests {
 
     #[test]
     fn deny_mounts_follow_write_mounts() {
+        let path = std::env::temp_dir();
         let mut args = base_args();
-        push_mount(&mut args, "--bind", Path::new("/work"), Path::new("/work"));
+        push_mount(&mut args, "--bind", &path, &path);
         append_deny(
             &mut args,
             &ConcreteDeny {
                 access: DeniedAccess::Write,
-                path: PathBuf::from("/work"),
+                path,
             },
             None,
         )
