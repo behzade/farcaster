@@ -4,6 +4,8 @@ import {
   type AgentSessionEvent,
   type ExtensionError,
   type ExtensionUIContext,
+  type SessionStats,
+  type SlashCommandInfo,
 } from "@earendil-works/pi-coding-agent"
 import { Context, Data, Effect, Layer, Stream } from "effect"
 import { AppConfig } from "./app-config.ts"
@@ -19,11 +21,16 @@ export interface PiSessionShape {
   readonly extensionPaths: ReadonlyArray<string>
   readonly extensionErrors: ReadonlyArray<ExtensionLoadError>
   readonly events: Stream.Stream<AgentSessionEvent>
+  readonly commands: Effect.Effect<ReadonlyArray<SlashCommandInfo>>
+  readonly sessionStats: Effect.Effect<SessionStats>
   readonly bindExtensions: (
     uiContext: ExtensionUIContext,
     onError: (error: ExtensionError) => void,
   ) => Effect.Effect<void, PiSessionError>
   readonly prompt: (text: string) => Effect.Effect<void, PiSessionError>
+  readonly compact: (
+    instructions?: string,
+  ) => Effect.Effect<void, PiSessionError>
   readonly abort: Effect.Effect<void, PiSessionError>
 }
 
@@ -33,19 +40,28 @@ export class PiSession extends Context.Tag("pi-opentui/PiSession")<
 >() {}
 
 export class PiSessionError extends Data.TaggedError("PiSessionError")<{
-  readonly operation: "open" | "bind" | "prompt" | "abort" | "shutdown"
+  readonly operation:
+    | "open"
+    | "bind"
+    | "prompt"
+    | "compact"
+    | "abort"
+    | "shutdown"
   readonly cause: unknown
 }> {}
 
 export interface OpenedPiSession {
   readonly shutdown: () => Promise<void>
+  readonly getCommands: () => Array<SlashCommandInfo>
   readonly session: {
     readonly subscribe: (
       listener: (event: AgentSessionEvent) => void,
     ) => () => void
     readonly dispose: () => void
     readonly getActiveToolNames: () => Array<string>
+    readonly getSessionStats: () => SessionStats
     readonly prompt: (text: string) => Promise<void>
+    readonly compact: (instructions?: string) => Promise<unknown>
     readonly abort: () => Promise<void>
     readonly bindExtensions: (bindings: {
       readonly uiContext: ExtensionUIContext
@@ -68,6 +84,7 @@ const openPiSession: OpenPiSession = (cwd) => {
   return createAgentSession({ cwd, sessionManager }).then((result) => ({
     session: result.session,
     extensionsResult: result.extensionsResult,
+    getCommands: () => result.extensionsResult.runtime.getCommands(),
     shutdown: () =>
       result.session.extensionRunner
         .emit({ type: "session_shutdown", reason: "quit" })
@@ -76,13 +93,13 @@ const openPiSession: OpenPiSession = (cwd) => {
 }
 
 const sdkCall = (
-  operation: "prompt" | "abort",
-  call: () => Promise<void>,
+  operation: "prompt" | "compact" | "abort",
+  call: () => Promise<unknown>,
 ): Effect.Effect<void, PiSessionError> =>
   Effect.tryPromise({
     try: call,
     catch: (cause) => new PiSessionError({ operation, cause }),
-  })
+  }).pipe(Effect.asVoid)
 
 const sessionEvents = (
   session: OpenedPiSession["session"],
@@ -136,6 +153,8 @@ export const makePiSessionLayer = (
           .toSorted(),
         extensionErrors: result.extensionsResult.errors,
         events: sessionEvents(result.session),
+        commands: Effect.sync(result.getCommands),
+        sessionStats: Effect.sync(() => result.session.getSessionStats()),
         bindExtensions: (uiContext, onError) =>
           Effect.tryPromise({
             try: () =>
@@ -149,6 +168,10 @@ export const makePiSessionLayer = (
           }),
         prompt: (text) =>
           sdkCall("prompt", () => result.session.prompt(text)),
+        compact: (instructions) =>
+          sdkCall("compact", () =>
+            result.session.compact(instructions),
+          ),
         abort: sdkCall("abort", () => result.session.abort()),
       }
     }),

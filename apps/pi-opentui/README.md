@@ -10,6 +10,8 @@ normal Pi extension set, and provides:
 - streamed assistant and tool rows;
 - `Escape` to stop a turn;
 - select and text dialogs for extension tools and sandbox approvals;
+- a slash menu for built-in, extension, prompt, and skill commands;
+- local `/help`, `/session`, and `/compact` commands;
 - extension notices, status, retry, and compaction updates;
 - scoped extension, session, task, and terminal cleanup.
 
@@ -28,6 +30,7 @@ bun start
 
 Press `Ctrl+C` or `Ctrl+Q` to quit. Press `Escape` to stop a running turn.
 Press `Enter` to send and `Shift+Enter` for a new line.
+Enter `/` by itself to open the command menu.
 
 See [`../../PI_OPENTUI_PLAN.md`](../../PI_OPENTUI_PLAN.md) for the build stages,
 limits, and checks.

@@ -5,6 +5,7 @@ import type {
   AppCommand,
   AppDialog,
   AppSnapshot,
+  CommandInfo,
 } from "./services/app-state.ts"
 import type {
   TranscriptRow,
@@ -169,10 +170,37 @@ function ExtensionDialog(props: {
   )
 }
 
+export function CommandMenu(props: {
+  readonly commands: ReadonlyArray<CommandInfo>
+  readonly resolve: (name: string | undefined) => void
+}) {
+  const options = props.commands.map(
+    (command) =>
+      `/${command.name}${command.description.length > 0 ? ` — ${command.description}` : ""}`,
+  )
+
+  return (
+    <ExtensionDialog
+      dialog={{
+        id: -1,
+        kind: "select",
+        title: "Commands",
+        message: "Choose a command to run.",
+        options,
+        placeholder: undefined,
+      }}
+      resolve={(selected) =>
+        props.resolve(selected?.slice(1).split(/\s/, 1)[0])
+      }
+    />
+  )
+}
+
 export function App(props: AppProps) {
   let input: TextareaRenderable | undefined
   const [snapshot, setSnapshot] = createSignal(props.bridge.initial)
   const [draft, setDraft] = createSignal("")
+  const [paletteOpen, setPaletteOpen] = createSignal(false)
   const dialogs = (): ReadonlyArray<AppDialog> => {
     const dialog = snapshot().dialog
     return dialog === undefined ? [] : [dialog]
@@ -180,8 +208,21 @@ export function App(props: AppProps) {
 
   onCleanup(props.bridge.subscribe(setSnapshot))
 
+  const closePalette = (name: string | undefined) => {
+    setPaletteOpen(false)
+    if (name === undefined || name.length === 0) return
+    const command = `/${name} `
+    input?.editBuffer.setText(command)
+    input?.focus()
+    setDraft(command)
+  }
+
   const submit = () => {
     const prompt = input?.plainText.trim() ?? ""
+    if (prompt === "/" && snapshot().phase === "ready") {
+      setPaletteOpen(true)
+      return
+    }
     if (
       prompt.length === 0 ||
       snapshot().phase === "running" ||
@@ -280,7 +321,9 @@ export function App(props: AppProps) {
           ref={(renderable) => {
             input = renderable
           }}
-          focused={snapshot().dialog === undefined}
+          focused={
+            snapshot().dialog === undefined && !paletteOpen()
+          }
           height={2}
           placeholder={
             snapshot().phase === "running"
@@ -306,7 +349,7 @@ export function App(props: AppProps) {
         />
         <box height={1} flexDirection="row" justifyContent="space-between">
           <text fg="#928374">
-            enter send · shift+enter newline · esc stop
+            enter send · shift+enter newline · / enter commands
           </text>
           <text fg={draft().trim().length > 0 ? "#fabd2f" : "#928374"}>
             ctrl+c quit
@@ -327,6 +370,15 @@ export function App(props: AppProps) {
                 value,
               })
             }
+          />
+        )}
+      </For>
+
+      <For each={paletteOpen() ? [true] : []}>
+        {() => (
+          <CommandMenu
+            commands={snapshot().commands}
+            resolve={closePalette}
           />
         )}
       </For>

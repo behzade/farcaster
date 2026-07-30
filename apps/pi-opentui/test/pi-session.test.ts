@@ -25,6 +25,7 @@ describe("PiSession", () => {
 
     const open = (): Promise<OpenedPiSession> =>
       Promise.resolve({
+        getCommands: () => [],
         shutdown: () => {
           shutDown = true
           return Promise.resolve()
@@ -40,7 +41,25 @@ describe("PiSession", () => {
             disposed = true
           },
           getActiveToolNames: () => ["read", "sandbox"],
+          getSessionStats: () => ({
+            sessionFile: undefined,
+            sessionId: "session-1",
+            userMessages: 0,
+            assistantMessages: 0,
+            toolCalls: 0,
+            toolResults: 0,
+            totalMessages: 0,
+            tokens: {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              total: 0,
+            },
+            cost: 0,
+          }),
           prompt: () => Promise.resolve(),
+          compact: () => Promise.resolve(),
           abort: () => Promise.resolve(),
           bindExtensions: () => Promise.resolve(),
         },

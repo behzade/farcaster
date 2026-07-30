@@ -8,6 +8,14 @@ import {
   SubscriptionRef,
 } from "effect"
 import {
+  builtinCommands,
+  commandCatalog,
+  commandHelp,
+  commandName,
+  sessionStatsText,
+  type CommandInfo,
+} from "./commands.ts"
+import {
   makeExtensionUi,
   type AppDialog,
 } from "./extension-ui.ts"
@@ -28,6 +36,7 @@ import {
 export type AppPhase = "ready" | "running" | "stopping" | "error"
 
 export type { AppDialog } from "./extension-ui.ts"
+export type { CommandInfo } from "./commands.ts"
 
 export interface AppSnapshot {
   readonly cwd: string
@@ -41,6 +50,7 @@ export interface AppSnapshot {
   readonly transcript: TranscriptModel
   readonly dialog: AppDialog | undefined
   readonly statuses: Readonly<Record<string, string>>
+  readonly commands: ReadonlyArray<CommandInfo>
 }
 
 export type AppCommand =
@@ -95,6 +105,7 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
         transcript: initialTranscript,
         dialog: undefined,
         statuses: {},
+        commands: builtinCommands,
       })
       const commands = yield* Queue.unbounded<AppCommand>()
       const scope = yield* Effect.scope
@@ -148,6 +159,11 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
           })),
         ),
       )
+      const sdkCommands = yield* pi.commands
+      yield* updateState((snapshot) => ({
+        ...snapshot,
+        commands: commandCatalog(sdkCommands),
+      }))
 
       yield* Stream.runForEach(pi.events, (event) =>
         SubscriptionRef.update(state, (snapshot) => ({
@@ -189,6 +205,86 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
             }),
           ),
         )
+
+      const runCompact = (
+        instructions: string | undefined,
+      ): Effect.Effect<void> =>
+        pi.compact(instructions).pipe(
+          Effect.zipRight(
+            SubscriptionRef.update(state, (snapshot) => ({
+              ...snapshot,
+              phase: "ready" as const,
+            })),
+          ),
+          Effect.catchAll((error) =>
+            Effect.gen(function* () {
+              const wasAborted = yield* Ref.get(promptWasAborted)
+              yield* SubscriptionRef.update(state, (snapshot) =>
+                wasAborted
+                  ? {
+                      ...snapshot,
+                      phase: "ready" as const,
+                      error: undefined,
+                    }
+                  : {
+                      ...snapshot,
+                      phase: "error" as const,
+                      error: errorText(error),
+                      transcript: appendTranscriptError(
+                        snapshot.transcript,
+                        errorText(error),
+                      ),
+                    },
+              )
+            }),
+          ),
+        )
+
+      const runBuiltin = (
+        name: string,
+        prompt: string,
+      ): Effect.Effect<boolean> => {
+        switch (name) {
+          case "help":
+            return SubscriptionRef.get(state).pipe(
+              Effect.flatMap((snapshot) =>
+                pushNotice(commandHelp(snapshot.commands)),
+              ),
+              Effect.as(true),
+            )
+          case "session":
+            return pi.sessionStats.pipe(
+              Effect.flatMap((stats) =>
+                pushNotice(sessionStatsText(stats)),
+              ),
+              Effect.as(true),
+            )
+          case "compact": {
+            const instructions = prompt.slice("/compact".length).trim()
+            return Effect.gen(function* () {
+              yield* Ref.set(promptWasAborted, false)
+              yield* SubscriptionRef.update(state, (snapshot) => ({
+                ...snapshot,
+                phase: "running" as const,
+                error: undefined,
+                transcript: appendUserPrompt(
+                  snapshot.transcript,
+                  prompt,
+                ),
+              }))
+              yield* Effect.forkIn(
+                runCompact(
+                  instructions.length > 0 ? instructions : undefined,
+                ),
+                scope,
+              )
+              return true
+            })
+          }
+          default:
+            return Effect.succeed(false)
+        }
+      }
 
       const abort = Effect.gen(function* () {
         yield* extensionUi.cancelDialog
@@ -233,6 +329,20 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
                 snapshot.phase === "stopping"
               ) {
                 return
+              }
+              const name = commandName(prompt)
+              if (name !== undefined) {
+                if (yield* runBuiltin(name, prompt)) return
+                if (
+                  !snapshot.commands.some(
+                    (candidate) =>
+                      candidate.name === name &&
+                      candidate.source !== "builtin",
+                  )
+                ) {
+                  yield* pushNotice(`Unknown command: /${name}`, true)
+                  return
+                }
               }
               yield* Ref.set(promptWasAborted, false)
               yield* SubscriptionRef.update(state, (current) => ({

@@ -75,6 +75,7 @@ apps/pi-opentui/
     services/
       app-config.ts
       app-state.ts
+      commands.ts
       extension-ui.ts
       pi-session.ts
       transcript.ts
@@ -97,6 +98,8 @@ Current progress:
 - Stage 2 is complete with a prompt, streamed text and tool rows, stop support,
   extension status, retry and compaction notices, and Effect-backed approval
   dialogs.
+- Stage 3 has started with command discovery, a slash menu, built-in command
+  routing, and safe rejection of unknown commands.
 
 ### 1. Prove the base
 

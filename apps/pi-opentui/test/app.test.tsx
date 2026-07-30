@@ -1,7 +1,11 @@
 import { testRender } from "@opentui/solid"
 import { expect, test } from "bun:test"
 import { Effect } from "effect"
-import { App, type AppBridge } from "../src/app.tsx"
+import {
+  App,
+  CommandMenu,
+  type AppBridge,
+} from "../src/app.tsx"
 import type { AppCommand } from "../src/services/app-state.ts"
 
 const commands: Array<AppCommand> = []
@@ -31,6 +35,13 @@ const bridge: AppBridge = {
     },
     dialog: undefined,
     statuses: {},
+    commands: [
+      {
+        name: "session",
+        description: "Show session info and stats",
+        source: "builtin",
+      },
+    ],
   },
   subscribe: () => () => undefined,
   dispatch: (command) => {
@@ -114,6 +125,37 @@ test("resolves an extension selection dialog", () => {
             id: 7,
             value: "Deny",
           })
+        }),
+      (setup) => Effect.sync(() => setup.renderer.destroy()),
+    ),
+  )
+})
+
+test("chooses a command from the slash menu", () => {
+  let selected: string | undefined
+  return Effect.runPromise(
+    Effect.acquireUseRelease(
+      Effect.tryPromise(() =>
+        testRender(() => (
+          <CommandMenu
+            commands={bridge.initial.commands}
+            resolve={(name) => {
+              selected = name
+            }}
+          />
+        ), {
+          width: 80,
+          height: 24,
+        }),
+      ),
+      (setup) =>
+        Effect.gen(function* () {
+          yield* Effect.tryPromise(() => setup.renderOnce())
+          expect(setup.captureCharFrame()).toContain("Commands")
+
+          setup.mockInput.pressEnter()
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(selected).toBe("session")
         }),
       (setup) => Effect.sync(() => setup.renderer.destroy()),
     ),

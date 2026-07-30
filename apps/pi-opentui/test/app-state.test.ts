@@ -20,6 +20,7 @@ test("folds session events and commands into app state", () => {
   let promptCalls = 0
   let finishPrompt: (() => void) | undefined
   let failPrompt: (() => void) | undefined
+  let compactInstructions: string | undefined
 
   const events = Stream.asyncPush<AgentSessionEvent>((push) =>
     Effect.sync(() => {
@@ -35,6 +36,47 @@ test("folds session events and commands into app state", () => {
     extensionPaths: ["/agent/extensions/sandbox"],
     extensionErrors: [],
     events,
+    commands: Effect.succeed([
+      {
+        name: "review",
+        description: "Review changes",
+        source: "extension" as const,
+        sourceInfo: {
+          path: "/agent/extensions/review.ts",
+          source: "review",
+          scope: "user" as const,
+          origin: "top-level" as const,
+        },
+      },
+      {
+        name: "session",
+        description: "Extension conflict",
+        source: "extension" as const,
+        sourceInfo: {
+          path: "/agent/extensions/session.ts",
+          source: "session",
+          scope: "user" as const,
+          origin: "top-level" as const,
+        },
+      },
+    ]),
+    sessionStats: Effect.succeed({
+      sessionFile: undefined,
+      sessionId: "session-1",
+      userMessages: 1,
+      assistantMessages: 1,
+      toolCalls: 0,
+      toolResults: 0,
+      totalMessages: 2,
+      tokens: {
+        input: 10,
+        output: 20,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 30,
+      },
+      cost: 0.01,
+    }),
     prompt: (text) =>
       Effect.async<void, PiSessionError>((resume) => {
         prompt = text
@@ -49,6 +91,10 @@ test("folds session events and commands into app state", () => {
               }),
             ),
           )
+      }),
+    compact: (instructions) =>
+      Effect.sync(() => {
+        compactInstructions = instructions
       }),
     abort: Effect.sync(() => {
       failPrompt?.()
@@ -76,6 +122,18 @@ test("folds session events and commands into app state", () => {
       }
 
       expect(snapshot.lastEvent).toBe("agent_settled")
+      expect(snapshot.commands.map((command) => command.name)).toContain(
+        "review",
+      )
+      expect(
+        snapshot.commands.filter((command) => command.name === "session"),
+      ).toEqual([
+        {
+          name: "session",
+          description: "Show session info and stats",
+          source: "builtin",
+        },
+      ])
       extensionUi?.notify("sandbox ready")
       while (
         !(yield* app.get).transcript.rows.some(
@@ -134,6 +192,36 @@ test("folds session events and commands into app state", () => {
           row.content.includes("Request was aborted"),
         ),
       ).toBe(false)
+
+      const callsBeforeCommands = promptCalls
+      yield* app.dispatch({ _tag: "Prompt", text: "/session" })
+      while (
+        !(yield* app.get).transcript.rows.some((row) =>
+          row.content.includes("Session session-1"),
+        )
+      ) {
+        yield* Effect.yieldNow()
+      }
+      expect(promptCalls).toBe(callsBeforeCommands)
+
+      yield* app.dispatch({ _tag: "Prompt", text: "/missing" })
+      while (
+        !(yield* app.get).transcript.rows.some(
+          (row) => row.content === "Unknown command: /missing",
+        )
+      ) {
+        yield* Effect.yieldNow()
+      }
+      expect(promptCalls).toBe(callsBeforeCommands)
+
+      yield* app.dispatch({
+        _tag: "Prompt",
+        text: "/compact keep decisions",
+      })
+      while (compactInstructions === undefined) {
+        yield* Effect.yieldNow()
+      }
+      expect(compactInstructions).toBe("keep decisions")
     }),
   ).pipe(Effect.provide(appLayer))
 
