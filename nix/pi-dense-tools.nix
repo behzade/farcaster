@@ -15,7 +15,7 @@ let
 in
 stdenvNoCC.mkDerivation {
   pname = "pi-dense-tools-extension";
-  version = "0.3.0";
+  version = "0.4.0";
 
   src = ../extensions/dense-tools;
 

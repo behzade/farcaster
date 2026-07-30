@@ -89,12 +89,17 @@
             printf '%s\n' '{ lib, ... }:' 'let' '  oldValue = "before";' 'in' '{ inherit oldValue; }' > before/sample.nix
             printf '%s\n' '{ lib, ... }:' 'let' '  newValue = "after";' 'in' '{ inherit newValue; }' > after/sample.nix
 
-            pi-diff --width=140 before after > split
+            PI_DIFF_CACHE_DIR="$PWD/cache" PI_DIFF_CACHE_TRACE=1 pi-diff --width=140 before after > split 2> first-cache
+            grep -F 'pi-diff cache miss' first-cache
             grep -F 'sample.nix' split
             grep -F '│' split
             grep -F $'\033[38;2;251;73;52' split
 
-            pi-diff --width=80 before after > unified
+            PI_DIFF_CACHE_DIR="$PWD/cache" PI_DIFF_CACHE_TRACE=1 pi-diff --width=140 before after > split-cached 2> second-cache
+            grep -F 'pi-diff cache hit' second-cache
+            cmp split split-cached
+
+            PI_DIFF_CACHE_DIR="$PWD/cache" pi-diff --width=80 before after > unified
             grep -F 'sample.nix' unified
             if grep -F '│' unified; then
               echo "narrow diffs must use the unified layout" >&2

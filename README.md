@@ -36,7 +36,8 @@ separate `nix-config` repo.
   documentation.
 - [`extensions/dense-tools`](extensions/dense-tools) renders compact tool output
   and provides `pi-diff`, the same syntax-highlighted diff view as a terminal
-  command.
+  command. It keeps a bounded output cache in the system temporary directory so
+  reopening the same diff at the same width skips syntax highlighting work.
 - [`nix`](nix) contains the pinned builds for Pi and every packaged extension.
 - [`patches`](patches) contains the local changes applied to third-party Pi
   extensions.
