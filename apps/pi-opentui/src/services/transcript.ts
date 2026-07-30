@@ -152,6 +152,121 @@ export const appendTranscriptNotice = (
     isError,
   })
 
+export const transcriptFromMessages = (
+  messages: ReadonlyArray<unknown>,
+): TranscriptModel =>
+  messages.reduce<TranscriptModel>((model, message) => {
+    const record = asRecord(message)
+    const role = messageRole(message)
+
+    if (role === "user") {
+      const text = textParts(record?.content).join("\n")
+      return text.length > 0 ? appendUserPrompt(model, text) : model
+    }
+
+    if (role === "assistant") {
+      if (assistantText(message).length === 0) return model
+      const started = reduceTranscriptEvent(
+        model,
+        {
+          type: "message_start",
+          message,
+        } as AgentSessionEvent,
+      )
+      return reduceTranscriptEvent(
+        started,
+        {
+          type: "message_end",
+          message,
+        } as AgentSessionEvent,
+      )
+    }
+
+    if (
+      role === "toolResult" &&
+      typeof record?.toolCallId === "string"
+    ) {
+      const toolName =
+        typeof record.toolName === "string"
+          ? record.toolName
+          : "tool"
+      const started = reduceTranscriptEvent(
+        model,
+        {
+          type: "tool_execution_start",
+          toolCallId: record.toolCallId,
+          toolName,
+          args: {},
+        } as AgentSessionEvent,
+      )
+      return reduceTranscriptEvent(
+        started,
+        {
+          type: "tool_execution_end",
+          toolCallId: record.toolCallId,
+          toolName,
+          result: message,
+          isError: record.isError === true,
+        } as AgentSessionEvent,
+      )
+    }
+
+    if (
+      (role === "compactionSummary" || role === "branchSummary") &&
+      typeof record?.summary === "string"
+    ) {
+      return appendRow(model, {
+        id: `row-${model.nextRowId}`,
+        kind: "notice",
+        title:
+          role === "compactionSummary"
+            ? "compaction summary"
+            : "branch summary",
+        content: limitContent(record.summary),
+        pending: false,
+        isError: false,
+      })
+    }
+
+    if (
+      role === "bashExecution" &&
+      typeof record?.command === "string"
+    ) {
+      const output =
+        typeof record.output === "string" ? record.output : ""
+      const failed =
+        typeof record.exitCode === "number" && record.exitCode !== 0
+      return appendRow(model, {
+        id: `row-${model.nextRowId}`,
+        kind: "tool",
+        title: "shell",
+        content: limitContent(
+          [`$ ${record.command}`, output].filter(Boolean).join("\n"),
+        ),
+        pending: false,
+        isError: failed,
+      })
+    }
+
+    if (role === "custom" && record?.display === true) {
+      const content = textParts(record.content).join("\n")
+      if (content.length === 0) return model
+      return appendRow(model, {
+        id: `row-${model.nextRowId}`,
+        kind: "notice",
+        title:
+          typeof record.customType === "string"
+            ? record.customType
+            : "extension",
+        content: limitContent(content),
+        pending: false,
+        isError: false,
+      })
+    }
+
+    return model
+  }, emptyTranscript)
+
 export const reduceTranscriptEvent = (
   model: TranscriptModel,
   event: AgentSessionEvent,

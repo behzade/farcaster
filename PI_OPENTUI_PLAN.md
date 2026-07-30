@@ -99,7 +99,8 @@ Current progress:
   extension status, retry and compaction notices, and Effect-backed approval
   dialogs.
 - Stage 3 has started with command discovery, a slash menu, built-in command
-  routing, safe rejection of unknown commands, and saved new sessions.
+  routing, safe rejection of unknown commands, saved sessions, and `/new` and
+  `/resume` session replacement.
 
 ### 1. Prove the base
 

@@ -30,6 +30,7 @@ import {
   appendUserPrompt,
   emptyTranscript,
   reduceTranscriptEvent,
+  transcriptFromMessages,
   type TranscriptModel,
 } from "./transcript.ts"
 
@@ -240,6 +241,84 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
           ),
         )
 
+      const replaceSession = (
+        replacement: Effect.Effect<
+          ReadonlyArray<unknown>,
+          PiSessionError
+        >,
+        notice: string,
+      ): Effect.Effect<void> =>
+        Effect.gen(function* () {
+          yield* updateState((snapshot) => ({
+            ...snapshot,
+            phase: "running" as const,
+            error: undefined,
+          }))
+          const messages = yield* replacement
+          const sdkCommands = yield* pi.commands
+          yield* updateState((snapshot) => ({
+            ...snapshot,
+            phase: "ready" as const,
+            error: undefined,
+            transcript: appendTranscriptNotice(
+              transcriptFromMessages(messages),
+              notice,
+            ),
+            commands: commandCatalog(sdkCommands),
+          }))
+        }).pipe(
+          Effect.catchAll((error) =>
+            updateState((snapshot) => ({
+              ...snapshot,
+              phase: "error" as const,
+              error: errorText(error),
+              transcript: appendTranscriptError(
+                snapshot.transcript,
+                errorText(error),
+              ),
+            })),
+          ),
+        )
+
+      const resumeSession = Effect.gen(function* () {
+        const sessions = yield* pi.sessions
+        if (sessions.length === 0) {
+          yield* pushNotice("No saved sessions found")
+          return
+        }
+
+        const choices = sessions.map((session) => {
+          const firstMessage = session.firstMessage.trim()
+          const title =
+            session.name ??
+            (firstMessage.length > 0 ? firstMessage : session.id)
+          return `${title} · ${session.id.slice(0, 8)}`
+        })
+        const selected = yield* Effect.promise(() =>
+          extensionUi.context.select("Resume session", choices),
+        )
+        if (selected === undefined) return
+        const index = choices.indexOf(selected)
+        const session = sessions[index]
+        if (session === undefined) return
+        yield* replaceSession(
+          pi.resume(session.path),
+          `Resumed ${session.name ?? session.id}`,
+        )
+      }).pipe(
+        Effect.catchAll((error) =>
+          updateState((snapshot) => ({
+            ...snapshot,
+            phase: "error" as const,
+            error: errorText(error),
+            transcript: appendTranscriptError(
+              snapshot.transcript,
+              errorText(error),
+            ),
+          })),
+        ),
+      )
+
       const runBuiltin = (
         name: string,
         prompt: string,
@@ -281,6 +360,27 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
               return true
             })
           }
+          case "new":
+            return updateState((snapshot) => ({
+              ...snapshot,
+              phase: "running" as const,
+              error: undefined,
+            })).pipe(
+              Effect.zipRight(
+                Effect.forkIn(
+                  replaceSession(
+                    pi.newSession,
+                    "Started a new session",
+                  ),
+                  scope,
+                ),
+              ),
+              Effect.as(true),
+            )
+          case "resume":
+            return Effect.forkIn(resumeSession, scope).pipe(
+              Effect.as(true),
+            )
           default:
             return Effect.succeed(false)
         }

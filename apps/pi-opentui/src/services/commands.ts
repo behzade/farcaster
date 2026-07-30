@@ -25,6 +25,16 @@ export const builtinCommands: ReadonlyArray<CommandInfo> = [
     description: "Compact the current context",
     source: "builtin",
   },
+  {
+    name: "new",
+    description: "Start a new saved session",
+    source: "builtin",
+  },
+  {
+    name: "resume",
+    description: "Resume a saved session",
+    source: "builtin",
+  },
 ]
 
 export const commandName = (text: string): string | undefined => {

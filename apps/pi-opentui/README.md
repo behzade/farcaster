@@ -11,12 +11,13 @@ Pi extension set, and provides:
 - `Escape` to stop a turn;
 - select and text dialogs for extension tools and sandbox approvals;
 - a slash menu for built-in, extension, prompt, and skill commands;
-- local `/help`, `/session`, and `/compact` commands;
+- local `/help`, `/session`, `/compact`, `/new`, and `/resume` commands;
+- saved transcript restore when a session changes;
 - extension notices, status, retry, and compaction updates;
 - scoped extension, session, task, and terminal cleanup.
 
-It does not yet resume an older saved session, render images or rich custom
-extension views, or replace the current `pi` command.
+It does not yet render images or rich custom extension views, import sessions
+from other projects, or replace the current `pi` command.
 
 Run the checks and app:
 

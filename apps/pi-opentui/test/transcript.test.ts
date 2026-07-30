@@ -5,6 +5,7 @@ import { expect, test } from "bun:test"
 import {
   emptyTranscript,
   reduceTranscriptEvent,
+  transcriptFromMessages,
 } from "../src/services/transcript.ts"
 
 const event = (value: unknown): AgentSessionEvent =>
@@ -108,5 +109,66 @@ test("shows retry and compaction state", () => {
     "Retry 2/3 in 500ms: fetch failed",
     "Compaction started (threshold)",
     "Compaction finished",
+  ])
+})
+
+test("rebuilds transcript rows from saved messages", () => {
+  const transcript = transcriptFromMessages([
+    { role: "user", content: "saved question" },
+    {
+      role: "compactionSummary",
+      summary: "Earlier work",
+      tokensBefore: 10,
+    },
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "saved answer" }],
+    },
+    {
+      role: "assistant",
+      content: [{ type: "toolCall", name: "read" }],
+    },
+    {
+      role: "toolResult",
+      toolCallId: "saved-call",
+      toolName: "read",
+      content: [{ type: "text", text: "saved file" }],
+      isError: false,
+    },
+    {
+      role: "bashExecution",
+      command: "pwd",
+      output: "/work",
+      exitCode: 0,
+    },
+    {
+      role: "custom",
+      customType: "note",
+      content: "shown",
+      display: true,
+    },
+    {
+      role: "custom",
+      customType: "state",
+      content: "hidden",
+      display: false,
+    },
+  ])
+
+  expect(transcript.rows.map((row) => row.content)).toEqual([
+    "saved question",
+    "Earlier work",
+    "saved answer",
+    "saved file",
+    "$ pwd\n/work",
+    "shown",
+  ])
+  expect(transcript.rows.map((row) => row.title)).toEqual([
+    "you",
+    "compaction summary",
+    "pi",
+    "read",
+    "shell",
+    "note",
   ])
 })

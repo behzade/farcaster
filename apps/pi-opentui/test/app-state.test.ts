@@ -21,6 +21,8 @@ test("folds session events and commands into app state", () => {
   let finishPrompt: (() => void) | undefined
   let failPrompt: (() => void) | undefined
   let compactInstructions: string | undefined
+  let newSessionCalls = 0
+  let resumedPath: string | undefined
 
   const events = Stream.asyncPush<AgentSessionEvent>((push) =>
     Effect.sync(() => {
@@ -77,6 +79,19 @@ test("folds session events and commands into app state", () => {
       },
       cost: 0.01,
     }),
+    sessions: Effect.succeed([
+      {
+        path: "/sessions/old.jsonl",
+        id: "old-session",
+        cwd: "/work",
+        created: new Date("2026-01-01T00:00:00Z"),
+        modified: new Date("2026-01-02T00:00:00Z"),
+        messageCount: 2,
+        firstMessage: "old question",
+        allMessagesText: "old question old answer",
+      },
+    ]),
+    messages: Effect.succeed([]),
     prompt: (text) =>
       Effect.async<void, PiSessionError>((resume) => {
         prompt = text
@@ -95,6 +110,21 @@ test("folds session events and commands into app state", () => {
     compact: (instructions) =>
       Effect.sync(() => {
         compactInstructions = instructions
+      }),
+    newSession: Effect.sync(() => {
+      newSessionCalls += 1
+      return []
+    }),
+    resume: (path) =>
+      Effect.sync(() => {
+        resumedPath = path
+        return [
+          { role: "user", content: "old question" },
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "old answer" }],
+          },
+        ]
       }),
     abort: Effect.sync(() => {
       failPrompt?.()
@@ -222,6 +252,40 @@ test("folds session events and commands into app state", () => {
         yield* Effect.yieldNow()
       }
       expect(compactInstructions).toBe("keep decisions")
+
+      yield* app.dispatch({ _tag: "Prompt", text: "/new" })
+      while (
+        !(yield* app.get).transcript.rows.some(
+          (row) => row.content === "Started a new session",
+        )
+      ) {
+        yield* Effect.yieldNow()
+      }
+      expect(newSessionCalls).toBe(1)
+
+      yield* app.dispatch({ _tag: "Prompt", text: "/resume" })
+      let resumeDialog = (yield* app.get).dialog
+      while (resumeDialog === undefined) {
+        yield* Effect.yieldNow()
+        resumeDialog = (yield* app.get).dialog
+      }
+      expect(resumeDialog.title).toBe("Resume session")
+      yield* app.dispatch({
+        _tag: "ResolveDialog",
+        id: resumeDialog.id,
+        value: resumeDialog.options[0],
+      })
+      while (
+        !(yield* app.get).transcript.rows.some((row) =>
+          row.content.includes("Resumed old-session"),
+        )
+      ) {
+        yield* Effect.yieldNow()
+      }
+      expect(resumedPath).toBe("/sessions/old.jsonl")
+      expect(
+        (yield* app.get).transcript.rows.map((row) => row.content),
+      ).toContain("old answer")
     }),
   ).pipe(Effect.provide(appLayer))
 

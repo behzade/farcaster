@@ -23,6 +23,9 @@ describe("PiSession", () => {
     let shutDown = false
     let unsubscribed = false
     let openedWithSavedSessions: boolean | undefined
+    let listedSessions = 0
+    let newSessions = 0
+    let resumedPath: string | undefined
 
     const open = (
       _cwd: string,
@@ -31,6 +34,21 @@ describe("PiSession", () => {
       openedWithSavedSessions = saveSessions
       return Promise.resolve({
         getCommands: () => [],
+        listSessions: () => {
+          listedSessions += 1
+          return Promise.resolve([])
+        },
+        getMessages: () => [{ role: "user", content: "current" }],
+        newSession: () => {
+          newSessions += 1
+          return Promise.resolve([])
+        },
+        resume: (path) => {
+          resumedPath = path
+          return Promise.resolve([
+            { role: "user", content: "restored" },
+          ])
+        },
         shutdown: () => {
           shutDown = true
           return Promise.resolve()
@@ -103,7 +121,18 @@ describe("PiSession", () => {
         expect(pi.extensionPaths).toEqual([
           "/agent/extensions/sandbox",
         ])
+        expect(yield* pi.sessions).toEqual([])
+        expect(yield* pi.messages).toEqual([
+          { role: "user", content: "current" },
+        ])
+        expect(yield* pi.newSession).toEqual([])
+        expect(yield* pi.resume("/sessions/old.jsonl")).toEqual([
+          { role: "user", content: "restored" },
+        ])
         expect(openedWithSavedSessions).toBe(false)
+        expect(listedSessions).toBe(1)
+        expect(newSessions).toBe(1)
+        expect(resumedPath).toBe("/sessions/old.jsonl")
       }),
     ).pipe(Effect.provide(session))
 
