@@ -3,6 +3,7 @@ import { Context, Effect, Layer } from "effect"
 
 export interface AppConfigShape {
   readonly cwd: string
+  readonly saveSessions: boolean
 }
 
 export class AppConfig extends Context.Tag("pi-opentui/AppConfig")<
@@ -17,6 +18,7 @@ export const AppConfigLive = Layer.effect(
 
     return {
       cwd: path.resolve(process.cwd()),
+      saveSessions: true,
     }
   }),
 )

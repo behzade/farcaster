@@ -1,7 +1,19 @@
 import { BunContext, BunRuntime } from "@effect/platform-bun"
-import { Console, Effect } from "effect"
-import { PiSessionLive } from "./runtime.ts"
-import { PiSession } from "./services/pi-session.ts"
+import { Console, Effect, Layer } from "effect"
+import { AppConfig } from "./services/app-config.ts"
+import {
+  PiSession,
+  makePiSessionLayer,
+} from "./services/pi-session.ts"
+
+const SmokeSessionLive = makePiSessionLayer().pipe(
+  Layer.provide(
+    Layer.succeed(AppConfig, {
+      cwd: process.cwd(),
+      saveSessions: false,
+    }),
+  ),
+)
 
 const smoke = Effect.scoped(
   Effect.gen(function* () {
@@ -20,7 +32,7 @@ const smoke = Effect.scoped(
     )
   }),
 ).pipe(
-  Effect.provide(PiSessionLive),
+  Effect.provide(SmokeSessionLive),
   Effect.provide(BunContext.layer),
 )
 

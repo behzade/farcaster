@@ -77,10 +77,13 @@ export interface OpenedPiSession {
 
 export type OpenPiSession = (
   cwd: string,
+  saveSessions: boolean,
 ) => Promise<OpenedPiSession>
 
-const openPiSession: OpenPiSession = (cwd) => {
-  const sessionManager = SessionManager.inMemory(cwd)
+const openPiSession: OpenPiSession = (cwd, saveSessions) => {
+  const sessionManager = saveSessions
+    ? SessionManager.create(cwd)
+    : SessionManager.inMemory(cwd)
   return createAgentSession({ cwd, sessionManager }).then((result) => ({
     session: result.session,
     extensionsResult: result.extensionsResult,
@@ -126,7 +129,7 @@ export const makePiSessionLayer = (
       const config = yield* AppConfig
       const result = yield* Effect.acquireRelease(
         Effect.tryPromise({
-          try: () => open(config.cwd),
+          try: () => open(config.cwd, config.saveSessions),
           catch: (cause) =>
             new PiSessionError({ operation: "open", cause }),
         }),

@@ -22,9 +22,14 @@ describe("PiSession", () => {
     let disposed = false
     let shutDown = false
     let unsubscribed = false
+    let openedWithSavedSessions: boolean | undefined
 
-    const open = (): Promise<OpenedPiSession> =>
-      Promise.resolve({
+    const open = (
+      _cwd: string,
+      saveSessions: boolean,
+    ): Promise<OpenedPiSession> => {
+      openedWithSavedSessions = saveSessions
+      return Promise.resolve({
         getCommands: () => [],
         shutdown: () => {
           shutDown = true
@@ -70,8 +75,12 @@ describe("PiSession", () => {
           errors: [],
         },
       })
+    }
 
-    const config = Layer.succeed(AppConfig, { cwd: "/work" })
+    const config = Layer.succeed(AppConfig, {
+      cwd: "/work",
+      saveSessions: false,
+    })
     const session = makePiSessionLayer(open).pipe(
       Layer.provide(config),
     )
@@ -94,6 +103,7 @@ describe("PiSession", () => {
         expect(pi.extensionPaths).toEqual([
           "/agent/extensions/sandbox",
         ])
+        expect(openedWithSavedSessions).toBe(false)
       }),
     ).pipe(Effect.provide(session))
 
