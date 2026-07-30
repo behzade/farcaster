@@ -26,6 +26,16 @@ export const builtinCommands: ReadonlyArray<CommandInfo> = [
     source: "builtin",
   },
   {
+    name: "model",
+    description: "Choose the model",
+    source: "builtin",
+  },
+  {
+    name: "thinking",
+    description: "Choose the thinking level",
+    source: "builtin",
+  },
+  {
     name: "new",
     description: "Start a new saved session",
     source: "builtin",

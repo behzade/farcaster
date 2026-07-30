@@ -28,6 +28,8 @@ const smoke = Effect.scoped(
     const sessionBefore = yield* pi.sessionStats
     const replacementMessages = yield* pi.newSession
     const sessionAfter = yield* pi.sessionStats
+    const modelState = yield* pi.modelState
+    const models = yield* pi.models
     if (sessionAfter.sessionId === sessionBefore.sessionId) {
       return yield* Effect.fail(
         new Error("Pi kept the old session after replacement"),
@@ -41,6 +43,9 @@ const smoke = Effect.scoped(
           activeTools: pi.activeTools,
           extensionPaths: pi.extensionPaths,
           extensionErrors: pi.extensionErrors,
+          model: modelState.selected,
+          thinkingLevel: modelState.thinkingLevel,
+          availableModels: models.length,
           sessionReplacement: {
             before: sessionBefore.sessionId,
             after: sessionAfter.sessionId,

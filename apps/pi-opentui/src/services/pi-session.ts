@@ -19,6 +19,28 @@ export interface ExtensionLoadError {
   readonly error: string
 }
 
+export type PiThinkingLevel =
+  | "off"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max"
+
+export interface PiModelInfo {
+  readonly provider: string
+  readonly id: string
+  readonly name: string
+  readonly reasoning: boolean
+}
+
+export interface PiModelState {
+  readonly selected: PiModelInfo | undefined
+  readonly thinkingLevel: PiThinkingLevel
+  readonly thinkingLevels: ReadonlyArray<PiThinkingLevel>
+}
+
 export interface PiSessionShape {
   readonly cwd: string
   readonly activeTools: ReadonlyArray<string>
@@ -27,6 +49,8 @@ export interface PiSessionShape {
   readonly events: Stream.Stream<AgentSessionEvent>
   readonly commands: Effect.Effect<ReadonlyArray<SlashCommandInfo>>
   readonly sessionStats: Effect.Effect<SessionStats>
+  readonly modelState: Effect.Effect<PiModelState>
+  readonly models: Effect.Effect<ReadonlyArray<PiModelInfo>, PiSessionError>
   readonly sessions: Effect.Effect<ReadonlyArray<SessionInfo>, PiSessionError>
   readonly messages: Effect.Effect<ReadonlyArray<unknown>>
   readonly bindExtensions: (
@@ -41,6 +65,13 @@ export interface PiSessionShape {
   readonly resume: (
     path: string,
   ) => Effect.Effect<ReadonlyArray<unknown>, PiSessionError>
+  readonly selectModel: (
+    provider: string,
+    id: string,
+  ) => Effect.Effect<PiModelState, PiSessionError>
+  readonly selectThinking: (
+    level: PiThinkingLevel,
+  ) => Effect.Effect<PiModelState, PiSessionError>
   readonly abort: Effect.Effect<void, PiSessionError>
 }
 
@@ -55,6 +86,9 @@ export class PiSessionError extends Data.TaggedError("PiSessionError")<{
     | "bind"
     | "prompt"
     | "compact"
+    | "models"
+    | "model"
+    | "thinking"
     | "list"
     | "new"
     | "resume"
@@ -66,10 +100,19 @@ export class PiSessionError extends Data.TaggedError("PiSessionError")<{
 export interface OpenedPiSession {
   readonly shutdown: () => Promise<void>
   readonly getCommands: () => Array<SlashCommandInfo>
+  readonly getModelState: () => PiModelState
+  readonly listModels: () => Promise<Array<PiModelInfo>>
   readonly listSessions: () => Promise<Array<SessionInfo>>
   readonly getMessages: () => ReadonlyArray<unknown>
   readonly newSession: () => Promise<ReadonlyArray<unknown>>
   readonly resume: (path: string) => Promise<ReadonlyArray<unknown>>
+  readonly selectModel: (
+    provider: string,
+    id: string,
+  ) => Promise<PiModelState>
+  readonly selectThinking: (
+    level: PiThinkingLevel,
+  ) => Promise<PiModelState>
   readonly session: {
     readonly subscribe: (
       listener: (event: AgentSessionEvent) => void,
@@ -184,6 +227,53 @@ const openPiSession: OpenPiSession = (cwd, saveSessions) => {
       runtime.setRebindSession(() => Effect.runPromise(bindCurrent))
       yield* bindCurrent
 
+      const toModelInfo = (model: {
+        readonly provider: string
+        readonly id: string
+        readonly name: string
+        readonly reasoning: boolean
+      }): PiModelInfo => ({
+        provider: model.provider,
+        id: model.id,
+        name: model.name,
+        reasoning: model.reasoning,
+      })
+
+      const getModelState = (): PiModelState => ({
+        selected:
+          runtime.session.model === undefined
+            ? undefined
+            : toModelInfo(runtime.session.model),
+        thinkingLevel: runtime.session.thinkingLevel,
+        thinkingLevels:
+          runtime.session.getAvailableThinkingLevels(),
+      })
+
+      const modelInfos = (
+        models: ReadonlyArray<{
+          readonly provider: string
+          readonly id: string
+          readonly name: string
+          readonly reasoning: boolean
+        }>,
+      ): Array<PiModelInfo> => {
+        const current = runtime.session.model
+        return models.map(toModelInfo).toSorted((left, right) => {
+          const leftIsCurrent =
+            left.provider === current?.provider &&
+            left.id === current?.id
+          const rightIsCurrent =
+            right.provider === current?.provider &&
+            right.id === current?.id
+          if (leftIsCurrent !== rightIsCurrent) {
+            return leftIsCurrent ? -1 : 1
+          }
+          return `${left.provider}/${left.id}`.localeCompare(
+            `${right.provider}/${right.id}`,
+          )
+        })
+      }
+
       return {
         session: {
           subscribe: (listener: (event: AgentSessionEvent) => void) => {
@@ -210,6 +300,19 @@ const openPiSession: OpenPiSession = (cwd, saveSessions) => {
           runtime.session.resourceLoader
             .getExtensions()
             .runtime.getCommands(),
+        getModelState,
+        listModels: () =>
+          Effect.runPromise(
+            Effect.sync(() =>
+              modelInfos(
+                runtime.session.scopedModels.length > 0
+                  ? runtime.session.scopedModels.map(
+                      ({ model }) => model,
+                    )
+                  : runtime.session.modelRuntime.getAvailableSnapshot(),
+              ),
+            ),
+          ),
         getMessages: () => runtime.session.messages,
         listSessions: () =>
           Effect.runPromise(
@@ -253,6 +356,31 @@ const openPiSession: OpenPiSession = (cwd, saveSessions) => {
                   : Effect.sync(() => runtime.session.messages),
               ),
             ),
+          ),
+        selectModel: (provider: string, id: string) =>
+          Effect.runPromise(
+            Effect.gen(function* () {
+              const model = runtime.session.modelRuntime.getModel(
+                provider,
+                id,
+              )
+              if (model === undefined) {
+                return yield* Effect.fail(
+                  new Error(`Unknown model: ${provider}/${id}`),
+                )
+              }
+              yield* Effect.tryPromise(() =>
+                runtime.session.setModel(model),
+              )
+              return getModelState()
+            }),
+          ),
+        selectThinking: (level: PiThinkingLevel) =>
+          Effect.runPromise(
+            Effect.sync(() => {
+              runtime.session.setThinkingLevel(level)
+              return getModelState()
+            }),
           ),
         shutdown: () =>
           Effect.runPromise(
@@ -330,6 +458,12 @@ export const makePiSessionLayer = (
         events: sessionEvents(result.session),
         commands: Effect.sync(result.getCommands),
         sessionStats: Effect.sync(() => result.session.getSessionStats()),
+        modelState: Effect.sync(result.getModelState),
+        models: Effect.tryPromise({
+          try: result.listModels,
+          catch: (cause) =>
+            new PiSessionError({ operation: "models", cause }),
+        }),
         sessions: Effect.tryPromise({
           try: result.listSessions,
           catch: (cause) =>
@@ -363,6 +497,18 @@ export const makePiSessionLayer = (
             try: () => result.resume(path),
             catch: (cause) =>
               new PiSessionError({ operation: "resume", cause }),
+          }),
+        selectModel: (provider, id) =>
+          Effect.tryPromise({
+            try: () => result.selectModel(provider, id),
+            catch: (cause) =>
+              new PiSessionError({ operation: "model", cause }),
+          }),
+        selectThinking: (level) =>
+          Effect.tryPromise({
+            try: () => result.selectThinking(level),
+            catch: (cause) =>
+              new PiSessionError({ operation: "thinking", cause }),
           }),
         abort: sdkCall("abort", () => result.session.abort()),
       }

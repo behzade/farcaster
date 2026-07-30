@@ -11,6 +11,7 @@ import {
 import {
   PiSession,
   PiSessionError,
+  type PiModelState,
 } from "../src/services/pi-session.ts"
 
 test("folds session events and commands into app state", () => {
@@ -23,6 +24,18 @@ test("folds session events and commands into app state", () => {
   let compactInstructions: string | undefined
   let newSessionCalls = 0
   let resumedPath: string | undefined
+  let selectedModel: string | undefined
+  let selectedThinking: string | undefined
+  let modelState: PiModelState = {
+    selected: {
+      provider: "openai",
+      id: "gpt-5",
+      name: "GPT-5",
+      reasoning: true,
+    },
+    thinkingLevel: "medium",
+    thinkingLevels: ["off", "low", "medium", "high"],
+  }
 
   const events = Stream.asyncPush<AgentSessionEvent>((push) =>
     Effect.sync(() => {
@@ -79,6 +92,21 @@ test("folds session events and commands into app state", () => {
       },
       cost: 0.01,
     }),
+    modelState: Effect.sync(() => modelState),
+    models: Effect.succeed([
+      {
+        provider: "anthropic",
+        id: "claude-sonnet",
+        name: "Claude Sonnet",
+        reasoning: true,
+      },
+      {
+        provider: "openai",
+        id: "gpt-5",
+        name: "GPT-5",
+        reasoning: true,
+      },
+    ]),
     sessions: Effect.succeed([
       {
         path: "/sessions/old.jsonl",
@@ -125,6 +153,29 @@ test("folds session events and commands into app state", () => {
             content: [{ type: "text", text: "old answer" }],
           },
         ]
+      }),
+    selectModel: (provider, id) =>
+      Effect.sync(() => {
+        selectedModel = `${provider}/${id}`
+        modelState = {
+          ...modelState,
+          selected: {
+            provider,
+            id,
+            name: id,
+            reasoning: true,
+          },
+        }
+        return modelState
+      }),
+    selectThinking: (level) =>
+      Effect.sync(() => {
+        selectedThinking = level
+        modelState = {
+          ...modelState,
+          thinkingLevel: level,
+        }
+        return modelState
       }),
     abort: Effect.sync(() => {
       failPrompt?.()
@@ -252,6 +303,46 @@ test("folds session events and commands into app state", () => {
         yield* Effect.yieldNow()
       }
       expect(compactInstructions).toBe("keep decisions")
+
+      yield* app.dispatch({ _tag: "Prompt", text: "/model" })
+      let modelDialog = (yield* app.get).dialog
+      while (modelDialog === undefined) {
+        yield* Effect.yieldNow()
+        modelDialog = (yield* app.get).dialog
+      }
+      expect(modelDialog.title).toBe("Choose model")
+      yield* app.dispatch({
+        _tag: "ResolveDialog",
+        id: modelDialog.id,
+        value: modelDialog.options[0],
+      })
+      while (selectedModel === undefined) {
+        yield* Effect.yieldNow()
+      }
+      expect(selectedModel).toBe("anthropic/claude-sonnet")
+      expect((yield* app.get).model?.id).toBe("claude-sonnet")
+
+      yield* app.dispatch({ _tag: "Prompt", text: "/thinking" })
+      let thinkingDialog = (yield* app.get).dialog
+      while (thinkingDialog === undefined) {
+        yield* Effect.yieldNow()
+        thinkingDialog = (yield* app.get).dialog
+      }
+      expect(thinkingDialog.title).toBe("Choose thinking level")
+      const highThinking = thinkingDialog.options.find((option) =>
+        option.startsWith("high "),
+      )
+      expect(highThinking).toBeDefined()
+      yield* app.dispatch({
+        _tag: "ResolveDialog",
+        id: thinkingDialog.id,
+        value: highThinking,
+      })
+      while (selectedThinking === undefined) {
+        yield* Effect.yieldNow()
+      }
+      expect(selectedThinking).toBe("high")
+      expect((yield* app.get).thinkingLevel).toBe("high")
 
       yield* app.dispatch({ _tag: "Prompt", text: "/new" })
       while (

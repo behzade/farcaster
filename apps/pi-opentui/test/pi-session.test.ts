@@ -26,6 +26,8 @@ describe("PiSession", () => {
     let listedSessions = 0
     let newSessions = 0
     let resumedPath: string | undefined
+    let selectedModel: string | undefined
+    let selectedThinking: string | undefined
 
     const open = (
       _cwd: string,
@@ -34,6 +36,25 @@ describe("PiSession", () => {
       openedWithSavedSessions = saveSessions
       return Promise.resolve({
         getCommands: () => [],
+        getModelState: () => ({
+          selected: {
+            provider: "openai",
+            id: "gpt-5",
+            name: "GPT-5",
+            reasoning: true,
+          },
+          thinkingLevel: "medium",
+          thinkingLevels: ["off", "medium", "high"],
+        }),
+        listModels: () =>
+          Promise.resolve([
+            {
+              provider: "openai",
+              id: "gpt-5",
+              name: "GPT-5",
+              reasoning: true,
+            },
+          ]),
         listSessions: () => {
           listedSessions += 1
           return Promise.resolve([])
@@ -48,6 +69,27 @@ describe("PiSession", () => {
           return Promise.resolve([
             { role: "user", content: "restored" },
           ])
+        },
+        selectModel: (provider, id) => {
+          selectedModel = `${provider}/${id}`
+          return Promise.resolve({
+            selected: { provider, id, name: id, reasoning: true },
+            thinkingLevel: "medium",
+            thinkingLevels: ["off", "medium", "high"],
+          })
+        },
+        selectThinking: (level) => {
+          selectedThinking = level
+          return Promise.resolve({
+            selected: {
+              provider: "openai",
+              id: "gpt-5",
+              name: "GPT-5",
+              reasoning: true,
+            },
+            thinkingLevel: level,
+            thinkingLevels: ["off", "medium", "high"],
+          })
         },
         shutdown: () => {
           shutDown = true
@@ -121,6 +163,8 @@ describe("PiSession", () => {
         expect(pi.extensionPaths).toEqual([
           "/agent/extensions/sandbox",
         ])
+        expect((yield* pi.modelState).thinkingLevel).toBe("medium")
+        expect(yield* pi.models).toHaveLength(1)
         expect(yield* pi.sessions).toEqual([])
         expect(yield* pi.messages).toEqual([
           { role: "user", content: "current" },
@@ -129,10 +173,18 @@ describe("PiSession", () => {
         expect(yield* pi.resume("/sessions/old.jsonl")).toEqual([
           { role: "user", content: "restored" },
         ])
+        expect(
+          (yield* pi.selectModel("openai", "gpt-5")).selected?.id,
+        ).toBe("gpt-5")
+        expect((yield* pi.selectThinking("high")).thinkingLevel).toBe(
+          "high",
+        )
         expect(openedWithSavedSessions).toBe(false)
         expect(listedSessions).toBe(1)
         expect(newSessions).toBe(1)
         expect(resumedPath).toBe("/sessions/old.jsonl")
+        expect(selectedModel).toBe("openai/gpt-5")
+        expect(selectedThinking).toBe("high")
       }),
     ).pipe(Effect.provide(session))
 

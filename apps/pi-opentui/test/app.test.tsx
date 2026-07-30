@@ -14,6 +14,13 @@ const bridge: AppBridge = {
     cwd: "/work/pi",
     phase: "ready",
     activeTools: ["read", "sandbox"],
+    model: {
+      provider: "openai",
+      id: "gpt-5",
+      name: "GPT-5",
+      reasoning: true,
+    },
+    thinkingLevel: "high",
     extensionPaths: ["/agent/extensions/sandbox"],
     extensionErrors: [],
     eventCount: 3,
@@ -67,6 +74,8 @@ test("renders chat and sends input", () => {
 
           expect(frame).toContain("pi-next")
           expect(frame).toContain("/work/pi")
+          expect(frame).toContain("openai/gpt-5")
+          expect(frame).toContain("thinking high")
           expect(frame).toContain("hello from user")
 
           yield* Effect.tryPromise(() =>

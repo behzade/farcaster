@@ -100,7 +100,8 @@ Current progress:
   dialogs.
 - Stage 3 has started with command discovery, a slash menu, built-in command
   routing, safe rejection of unknown commands, saved sessions, and `/new` and
-  `/resume` session replacement.
+  `/resume` session replacement. Model and thinking-level choice also use the
+  Pi SDK state.
 
 ### 1. Prove the base
 

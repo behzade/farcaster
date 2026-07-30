@@ -205,6 +205,14 @@ export function App(props: AppProps) {
     const dialog = snapshot().dialog
     return dialog === undefined ? [] : [dialog]
   }
+  const modelText = (): string => {
+    const model = snapshot().model
+    if (model === undefined) return "no model"
+    const thinking = model.reasoning
+      ? ` · thinking ${snapshot().thinkingLevel}`
+      : ""
+    return `${model.provider}/${model.id}${thinking}`
+  }
 
   onCleanup(props.bridge.subscribe(setSnapshot))
 
@@ -284,7 +292,7 @@ export function App(props: AppProps) {
       </box>
 
       <text fg="#928374" wrapMode="none">
-        {snapshot().cwd}
+        {snapshot().cwd} · {modelText()}
         {Object.values(snapshot().statuses).length > 0
           ? ` · ${Object.values(snapshot().statuses).join(" · ")}`
           : ""}

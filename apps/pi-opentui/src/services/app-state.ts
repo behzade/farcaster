@@ -22,7 +22,10 @@ import {
 import {
   PiSession,
   type ExtensionLoadError,
+  type PiModelInfo,
+  type PiModelState,
   type PiSessionError,
+  type PiThinkingLevel,
 } from "./pi-session.ts"
 import {
   appendTranscriptError,
@@ -43,6 +46,8 @@ export interface AppSnapshot {
   readonly cwd: string
   readonly phase: AppPhase
   readonly activeTools: ReadonlyArray<string>
+  readonly model: PiModelInfo | undefined
+  readonly thinkingLevel: PiThinkingLevel
   readonly extensionPaths: ReadonlyArray<string>
   readonly extensionErrors: ReadonlyArray<ExtensionLoadError>
   readonly eventCount: number
@@ -85,6 +90,7 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
     AppState,
     Effect.gen(function* () {
       const pi = yield* PiSession
+      const initialModelState = yield* pi.modelState
       const initialTranscript = pi.extensionErrors.reduce(
         (transcript, fault) =>
           appendTranscriptNotice(
@@ -98,6 +104,8 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
         cwd: pi.cwd,
         phase: "ready",
         activeTools: pi.activeTools,
+        model: initialModelState.selected,
+        thinkingLevel: initialModelState.thinkingLevel,
         extensionPaths: pi.extensionPaths,
         extensionErrors: pi.extensionErrors,
         eventCount: 0,
@@ -256,10 +264,13 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
           }))
           const messages = yield* replacement
           const sdkCommands = yield* pi.commands
+          const modelState = yield* pi.modelState
           yield* updateState((snapshot) => ({
             ...snapshot,
             phase: "ready" as const,
             error: undefined,
+            model: modelState.selected,
+            thinkingLevel: modelState.thinkingLevel,
             transcript: appendTranscriptNotice(
               transcriptFromMessages(messages),
               notice,
@@ -319,6 +330,196 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
         ),
       )
 
+      const applyModelState = (
+        modelState: PiModelState,
+        notice: string,
+      ): Effect.Effect<void> =>
+        updateState((snapshot) => ({
+          ...snapshot,
+          phase: "ready" as const,
+          error: undefined,
+          model: modelState.selected,
+          thinkingLevel: modelState.thinkingLevel,
+          transcript: appendTranscriptNotice(
+            snapshot.transcript,
+            notice,
+          ),
+        }))
+
+      const modelLabel = (model: PiModelInfo): string => {
+        const name = model.name === model.id ? "" : ` — ${model.name}`
+        return `${model.provider}/${model.id}${name}`
+      }
+
+      const chooseModel = (prompt: string): Effect.Effect<void> =>
+        Effect.gen(function* () {
+          const models = yield* pi.models
+          const query = prompt.slice("/model".length).trim()
+          const normalizedQuery = query.toLowerCase()
+          const exactMatches =
+            normalizedQuery.length === 0
+              ? []
+              : models.filter(
+                  (model) =>
+                    `${model.provider}/${model.id}`.toLowerCase() ===
+                      normalizedQuery ||
+                    model.id.toLowerCase() === normalizedQuery,
+                )
+
+          let chosen =
+            exactMatches.length === 1 ? exactMatches[0] : undefined
+          if (chosen === undefined) {
+            const candidates =
+              normalizedQuery.length === 0
+                ? models
+                : models.filter((model) =>
+                    `${model.provider}/${model.id} ${model.name}`
+                      .toLowerCase()
+                      .includes(normalizedQuery),
+                  )
+            yield* updateState((snapshot) => ({
+              ...snapshot,
+              phase: "ready" as const,
+            }))
+            if (candidates.length === 0) {
+              yield* pushNotice(
+                query.length === 0
+                  ? "No models available"
+                  : `No model matches: ${query}`,
+                true,
+              )
+              return
+            }
+
+            const choices = candidates.map(modelLabel)
+            const selected = yield* Effect.promise(() =>
+              extensionUi.context.select("Choose model", choices),
+            )
+            if (selected === undefined) return
+            chosen = candidates[choices.indexOf(selected)]
+            if (chosen === undefined) return
+            yield* updateState((snapshot) => ({
+              ...snapshot,
+              phase: "running" as const,
+            }))
+          }
+
+          const modelState = yield* pi.selectModel(
+            chosen.provider,
+            chosen.id,
+          )
+          yield* applyModelState(
+            modelState,
+            `Model: ${chosen.provider}/${chosen.id}`,
+          )
+        }).pipe(
+          Effect.catchAll((error) =>
+            updateState((snapshot) => ({
+              ...snapshot,
+              phase: "error" as const,
+              error: errorText(error),
+              transcript: appendTranscriptError(
+                snapshot.transcript,
+                errorText(error),
+              ),
+            })),
+          ),
+        )
+
+      const thinkingDescriptions: Readonly<
+        Record<PiThinkingLevel, string>
+      > = {
+        off: "No reasoning",
+        minimal: "Very brief reasoning",
+        low: "Light reasoning",
+        medium: "Moderate reasoning",
+        high: "Deep reasoning",
+        xhigh: "Extra-high reasoning",
+        max: "Maximum reasoning",
+      }
+
+      const chooseThinking = (prompt: string): Effect.Effect<void> =>
+        Effect.gen(function* () {
+          const current = yield* pi.modelState
+          if (current.selected === undefined) {
+            yield* updateState((snapshot) => ({
+              ...snapshot,
+              phase: "ready" as const,
+            }))
+            yield* pushNotice("No model selected", true)
+            return
+          }
+          if (!current.selected.reasoning) {
+            yield* updateState((snapshot) => ({
+              ...snapshot,
+              phase: "ready" as const,
+            }))
+            yield* pushNotice(
+              "Current model does not support thinking",
+              true,
+            )
+            return
+          }
+
+          const requested = prompt.slice("/thinking".length).trim()
+          let level = current.thinkingLevels.find(
+            (candidate) => candidate === requested,
+          )
+          if (requested.length > 0 && level === undefined) {
+            yield* updateState((snapshot) => ({
+              ...snapshot,
+              phase: "ready" as const,
+            }))
+            yield* pushNotice(
+              `Unknown thinking level: ${requested}`,
+              true,
+            )
+            return
+          }
+          if (level === undefined) {
+            const choices = current.thinkingLevels.map(
+              (candidate) =>
+                `${candidate} — ${thinkingDescriptions[candidate]}`,
+            )
+            yield* updateState((snapshot) => ({
+              ...snapshot,
+              phase: "ready" as const,
+            }))
+            const selected = yield* Effect.promise(() =>
+              extensionUi.context.select(
+                "Choose thinking level",
+                choices,
+              ),
+            )
+            if (selected === undefined) return
+            level =
+              current.thinkingLevels[choices.indexOf(selected)]
+            if (level === undefined) return
+            yield* updateState((snapshot) => ({
+              ...snapshot,
+              phase: "running" as const,
+            }))
+          }
+
+          const modelState = yield* pi.selectThinking(level)
+          yield* applyModelState(
+            modelState,
+            `Thinking level: ${modelState.thinkingLevel}`,
+          )
+        }).pipe(
+          Effect.catchAll((error) =>
+            updateState((snapshot) => ({
+              ...snapshot,
+              phase: "error" as const,
+              error: errorText(error),
+              transcript: appendTranscriptError(
+                snapshot.transcript,
+                errorText(error),
+              ),
+            })),
+          ),
+        )
+
       const runBuiltin = (
         name: string,
         prompt: string,
@@ -360,6 +561,28 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
               return true
             })
           }
+          case "model":
+            return updateState((snapshot) => ({
+              ...snapshot,
+              phase: "running" as const,
+              error: undefined,
+            })).pipe(
+              Effect.zipRight(
+                Effect.forkIn(chooseModel(prompt), scope),
+              ),
+              Effect.as(true),
+            )
+          case "thinking":
+            return updateState((snapshot) => ({
+              ...snapshot,
+              phase: "running" as const,
+              error: undefined,
+            })).pipe(
+              Effect.zipRight(
+                Effect.forkIn(chooseThinking(prompt), scope),
+              ),
+              Effect.as(true),
+            )
           case "new":
             return updateState((snapshot) => ({
               ...snapshot,
