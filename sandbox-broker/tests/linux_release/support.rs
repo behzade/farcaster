@@ -341,6 +341,18 @@ fn shell_program() -> String {
     find_program("bash").to_string_lossy().into_owned()
 }
 
+pub fn wait_for_path_absence(path: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while path.exists() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        !path.exists(),
+        "temporary sandbox path was not removed: {}",
+        path.display()
+    );
+}
+
 pub fn assert_no_survivor(trigger: &Path, marker: &Path) {
     fs::write(trigger, "release").expect("release detached-process fixture");
     let deadline = Instant::now() + Duration::from_secs(2);

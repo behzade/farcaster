@@ -548,6 +548,7 @@ fn seatbelt_regex_for_glob(pattern: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    #[cfg(target_os = "macos")]
     use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
 

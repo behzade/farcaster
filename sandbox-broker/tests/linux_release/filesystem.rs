@@ -3,7 +3,10 @@ use std::os::unix::fs::symlink;
 
 use pi_sandbox_broker::protocol::DeniedAccess;
 
-use super::support::{Broker, TempRoot, file_deny, file_grant, request, shell_quote, tree_grant};
+use super::support::{
+    Broker, TempRoot, file_deny, file_grant, request, shell_quote, tree_grant,
+    wait_for_path_absence,
+};
 
 const OUTPUT_LIMIT: u64 = 4 * 1024;
 
@@ -118,7 +121,7 @@ fn linux_read_denies_release_gate() {
         "explicit-read-deny",
         &workspace,
         format!(
-            "if IFS= read -r value < {}; then exit 41; else printf hidden-ok; fi",
+            "if IFS= read -r value < {} 2>/dev/null; then exit 41; else printf hidden-ok; fi",
             shell_quote(&secret.to_string_lossy())
         ),
         vec![],
@@ -139,7 +142,7 @@ fn linux_read_denies_release_gate() {
         "hard-glob-read-deny",
         &workspace,
         format!(
-            "if IFS= read -r value < {}; then exit 42; else printf hard-hidden-ok; fi",
+            "if IFS= read -r value < {} 2>/dev/null; then exit 42; else printf hard-hidden-ok; fi",
             shell_quote(&env_file.to_string_lossy())
         ),
         vec![],
@@ -206,7 +209,7 @@ fn linux_control_and_symlink_release_gate() {
         OUTPUT_LIMIT,
     ));
     assert_ne!(protected_pi.code, Some(0));
-    assert!(!pi_control.exists());
+    wait_for_path_absence(&pi_control);
 
     let outside_secret = root.0.join("outside-secret.txt");
     fs::write(&outside_secret, "alias-hidden\n").expect("outside secret fixture");
@@ -216,7 +219,7 @@ fn linux_control_and_symlink_release_gate() {
         "symlink-deny",
         &workspace,
         format!(
-            "if IFS= read -r value < {}; then exit 43; else printf alias-hidden-ok; fi",
+            "if IFS= read -r value < {} 2>/dev/null; then exit 43; else printf alias-hidden-ok; fi",
             shell_quote(&alias.to_string_lossy())
         ),
         vec![],

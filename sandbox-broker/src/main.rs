@@ -2,6 +2,7 @@ use std::io;
 #[cfg(target_os = "macos")]
 use std::path::Path;
 
+#[cfg(target_os = "macos")]
 use pi_sandbox_broker::denial_collector::DenialCollector;
 use pi_sandbox_broker::executor::Runtime;
 use pi_sandbox_broker::framing::read_frame;
