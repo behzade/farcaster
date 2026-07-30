@@ -2,16 +2,32 @@ import {
   Context,
   Effect,
   Layer,
+  Queue,
+  Ref,
   Stream,
   SubscriptionRef,
 } from "effect"
+import {
+  makeExtensionUi,
+  type AppDialog,
+} from "./extension-ui.ts"
 import {
   PiSession,
   type ExtensionLoadError,
   type PiSessionError,
 } from "./pi-session.ts"
+import {
+  appendTranscriptError,
+  appendTranscriptNotice,
+  appendUserPrompt,
+  emptyTranscript,
+  reduceTranscriptEvent,
+  type TranscriptModel,
+} from "./transcript.ts"
 
 export type AppPhase = "ready" | "running" | "stopping" | "error"
+
+export type { AppDialog } from "./extension-ui.ts"
 
 export interface AppSnapshot {
   readonly cwd: string
@@ -22,11 +38,19 @@ export interface AppSnapshot {
   readonly eventCount: number
   readonly lastEvent: string | undefined
   readonly error: string | undefined
+  readonly transcript: TranscriptModel
+  readonly dialog: AppDialog | undefined
+  readonly statuses: Readonly<Record<string, string>>
 }
 
 export type AppCommand =
   | { readonly _tag: "Prompt"; readonly text: string }
   | { readonly _tag: "Abort" }
+  | {
+      readonly _tag: "ResolveDialog"
+      readonly id: number
+      readonly value: string | undefined
+    }
 
 export interface AppStateShape {
   readonly get: Effect.Effect<AppSnapshot>
@@ -50,6 +74,15 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
     AppState,
     Effect.gen(function* () {
       const pi = yield* PiSession
+      const initialTranscript = pi.extensionErrors.reduce(
+        (transcript, fault) =>
+          appendTranscriptNotice(
+            transcript,
+            `${fault.path}: ${fault.error}`,
+            true,
+          ),
+        emptyTranscript,
+      )
       const state = yield* SubscriptionRef.make<AppSnapshot>({
         cwd: pi.cwd,
         phase: "ready",
@@ -59,26 +92,74 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
         eventCount: 0,
         lastEvent: undefined,
         error: undefined,
+        transcript: initialTranscript,
+        dialog: undefined,
+        statuses: {},
       })
+      const commands = yield* Queue.unbounded<AppCommand>()
+      const scope = yield* Effect.scope
+      const promptWasAborted = yield* Ref.make(false)
+
+      const updateState = (
+        update: (snapshot: AppSnapshot) => AppSnapshot,
+      ): Effect.Effect<void> => SubscriptionRef.update(state, update)
+
+      const pushNotice = (
+        message: string,
+        isError = false,
+      ): Effect.Effect<void> =>
+        updateState((snapshot) => ({
+          ...snapshot,
+          transcript: appendTranscriptNotice(
+            snapshot.transcript,
+            message,
+            isError,
+          ),
+        }))
+
+      const extensionUi = yield* makeExtensionUi({
+        setDialog: (dialog) =>
+          updateState((snapshot) => ({ ...snapshot, dialog })),
+        notify: pushNotice,
+        setStatus: (key, text) =>
+          updateState((snapshot) => {
+            const statuses = { ...snapshot.statuses }
+            if (text === undefined) delete statuses[key]
+            else statuses[key] = text
+            return { ...snapshot, statuses }
+          }),
+      })
+
+      yield* pi.bindExtensions(extensionUi.context, (extensionError) => {
+        extensionUi.notify(
+          `${extensionError.extensionPath}: ${extensionError.error}`,
+          true,
+        )
+      }).pipe(
+        Effect.catchAll((error) =>
+          updateState((snapshot) => ({
+            ...snapshot,
+            phase: "error" as const,
+            error: errorText(error),
+            transcript: appendTranscriptError(
+              snapshot.transcript,
+              errorText(error),
+            ),
+          })),
+        ),
+      )
 
       yield* Stream.runForEach(pi.events, (event) =>
         SubscriptionRef.update(state, (snapshot) => ({
           ...snapshot,
           eventCount: snapshot.eventCount + 1,
           lastEvent: event.type,
+          transcript: reduceTranscriptEvent(snapshot.transcript, event),
         })),
       ).pipe(Effect.forkScoped)
 
-      const runPrompt = (text: string): Effect.Effect<void> =>
+      const runPrompt = (prompt: string): Effect.Effect<void> =>
         Effect.gen(function* () {
-          const prompt = text.trim()
-          if (prompt.length === 0) return
-
-          yield* SubscriptionRef.update(state, (snapshot) => ({
-            ...snapshot,
-            phase: "running" as const,
-            error: undefined,
-          }))
           yield* pi.prompt(prompt)
           yield* SubscriptionRef.update(state, (snapshot) => ({
             ...snapshot,
@@ -86,45 +167,102 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
           }))
         }).pipe(
           Effect.catchAll((error) =>
-            SubscriptionRef.update(state, (snapshot) => ({
-              ...snapshot,
-              phase: "error" as const,
-              error: errorText(error),
-            })),
+            Effect.gen(function* () {
+              const wasAborted = yield* Ref.get(promptWasAborted)
+              yield* SubscriptionRef.update(state, (snapshot) =>
+                wasAborted
+                  ? {
+                      ...snapshot,
+                      phase: "ready" as const,
+                      error: undefined,
+                    }
+                  : {
+                      ...snapshot,
+                      phase: "error" as const,
+                      error: errorText(error),
+                      transcript: appendTranscriptError(
+                        snapshot.transcript,
+                        errorText(error),
+                      ),
+                    },
+              )
+            }),
           ),
         )
 
-      const abort = pi.abort.pipe(
-        Effect.zipLeft(
-          SubscriptionRef.update(state, (snapshot) => ({
-            ...snapshot,
-            phase: "ready" as const,
-          })),
-        ),
+      const abort = Effect.gen(function* () {
+        yield* extensionUi.cancelDialog
+        const snapshot = yield* SubscriptionRef.get(state)
+        if (snapshot.phase !== "running") return
+
+        yield* Ref.set(promptWasAborted, true)
+        yield* SubscriptionRef.update(state, (current) => ({
+          ...current,
+          phase: "stopping" as const,
+          error: undefined,
+        }))
+        yield* pi.abort
+        yield* SubscriptionRef.update(state, (current) => ({
+          ...current,
+          phase: "ready" as const,
+        }))
+      }).pipe(
         Effect.catchAll((error) =>
           SubscriptionRef.update(state, (snapshot) => ({
             ...snapshot,
             phase: "error" as const,
             error: errorText(error),
+            transcript: appendTranscriptError(
+              snapshot.transcript,
+              errorText(error),
+            ),
           })),
         ),
+      )
+
+      const handleCommand = (command: AppCommand): Effect.Effect<void> => {
+        switch (command._tag) {
+          case "Prompt":
+            return Effect.gen(function* () {
+              const prompt = command.text.trim()
+              if (prompt.length === 0) return
+
+              const snapshot = yield* SubscriptionRef.get(state)
+              if (
+                snapshot.phase === "running" ||
+                snapshot.phase === "stopping"
+              ) {
+                return
+              }
+              yield* Ref.set(promptWasAborted, false)
+              yield* SubscriptionRef.update(state, (current) => ({
+                ...current,
+                phase: "running" as const,
+                error: undefined,
+                transcript: appendUserPrompt(
+                  current.transcript,
+                  prompt,
+                ),
+              }))
+              yield* Effect.forkIn(runPrompt(prompt), scope)
+            })
+          case "Abort":
+            return abort
+          case "ResolveDialog":
+            return extensionUi.resolveDialog(command.id, command.value)
+        }
+      }
+
+      yield* Stream.fromQueue(commands).pipe(
+        Stream.runForEach(handleCommand),
+        Effect.forkScoped,
       )
 
       return {
         get: SubscriptionRef.get(state),
         changes: state.changes,
-        dispatch: (command) => {
-          switch (command._tag) {
-            case "Prompt":
-              return runPrompt(command.text)
-            case "Abort":
-              return SubscriptionRef.update(state, (snapshot) => ({
-                ...snapshot,
-                phase: "stopping" as const,
-                error: undefined,
-              })).pipe(Effect.zipRight(abort))
-          }
-        },
+        dispatch: (command) =>
+          Queue.offer(commands, command).pipe(Effect.asVoid),
       }
     }),
   )

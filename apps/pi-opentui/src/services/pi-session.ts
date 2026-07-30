@@ -2,6 +2,8 @@ import {
   SessionManager,
   createAgentSession,
   type AgentSessionEvent,
+  type ExtensionError,
+  type ExtensionUIContext,
 } from "@earendil-works/pi-coding-agent"
 import { Context, Data, Effect, Layer, Stream } from "effect"
 import { AppConfig } from "./app-config.ts"
@@ -17,6 +19,10 @@ export interface PiSessionShape {
   readonly extensionPaths: ReadonlyArray<string>
   readonly extensionErrors: ReadonlyArray<ExtensionLoadError>
   readonly events: Stream.Stream<AgentSessionEvent>
+  readonly bindExtensions: (
+    uiContext: ExtensionUIContext,
+    onError: (error: ExtensionError) => void,
+  ) => Effect.Effect<void, PiSessionError>
   readonly prompt: (text: string) => Effect.Effect<void, PiSessionError>
   readonly abort: Effect.Effect<void, PiSessionError>
 }
@@ -27,7 +33,7 @@ export class PiSession extends Context.Tag("pi-opentui/PiSession")<
 >() {}
 
 export class PiSessionError extends Data.TaggedError("PiSessionError")<{
-  readonly operation: "open" | "prompt" | "abort" | "shutdown"
+  readonly operation: "open" | "bind" | "prompt" | "abort" | "shutdown"
   readonly cause: unknown
 }> {}
 
@@ -41,6 +47,11 @@ export interface OpenedPiSession {
     readonly getActiveToolNames: () => Array<string>
     readonly prompt: (text: string) => Promise<void>
     readonly abort: () => Promise<void>
+    readonly bindExtensions: (bindings: {
+      readonly uiContext: ExtensionUIContext
+      readonly mode: "tui"
+      readonly onError: (error: ExtensionError) => void
+    }) => Promise<void>
   }
   readonly extensionsResult: {
     readonly extensions: ReadonlyArray<{ readonly path: string }>
@@ -125,6 +136,17 @@ export const makePiSessionLayer = (
           .toSorted(),
         extensionErrors: result.extensionsResult.errors,
         events: sessionEvents(result.session),
+        bindExtensions: (uiContext, onError) =>
+          Effect.tryPromise({
+            try: () =>
+              result.session.bindExtensions({
+                uiContext,
+                mode: "tui",
+                onError,
+              }),
+            catch: (cause) =>
+              new PiSessionError({ operation: "bind", cause }),
+          }),
         prompt: (text) =>
           sdkCall("prompt", () => result.session.prompt(text)),
         abort: sdkCall("abort", () => result.session.abort()),

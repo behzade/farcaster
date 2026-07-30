@@ -75,18 +75,28 @@ apps/pi-opentui/
     services/
       app-config.ts
       app-state.ts
+      extension-ui.ts
       pi-session.ts
+      transcript.ts
       ui-renderer.ts
   test/
     app.test.tsx
     app-state.test.ts
     pi-session.test.ts
+    transcript.test.ts
 ```
 
 Keep files split by ownership, not by type. Do not add a wrapper when a direct
 call has the right life span and error type.
 
 ## Work stages
+
+Current progress:
+
+- Stage 1 is complete in commit `8b3a2e89`.
+- Stage 2 is complete with a prompt, streamed text and tool rows, stop support,
+  extension status, retry and compaction notices, and Effect-backed approval
+  dialogs.
 
 ### 1. Prove the base
 
@@ -173,9 +183,9 @@ Pi extensions do three different jobs:
 3. UI calls and custom renderers. These use `pi-tui` types today and need an
    OpenTUI adapter.
 
-The first stage proves group 1. It reports group 2 and 3 gaps instead of hiding
-them. Later work will bind an `ExtensionUIContext` adapter and map custom
-messages to OpenTUI rows.
+The first stage proves group 1. Stage 2 binds an `ExtensionUIContext` adapter
+for dialogs, notices, and status text. Stage 3 must add commands, key bindings,
+widgets, and custom views.
 
 The sandbox remains below the view layer. The new UI must not run tool calls
 on its own or skip Pi's hook chain. The remote compaction extension also stays
@@ -196,8 +206,8 @@ in Pi's event and session path.
 ## Risks
 
 - Pi's extension UI types import `pi-tui`. The core SDK does not remove this
-  link. We need an adapter before all current extensions can use dialogs,
-  notices, widgets, and custom views.
+  link. The first adapter covers plain dialogs, notices, and status text, but
+  widgets and custom views still need OpenTUI forms.
 - A package update can break OpenTUI's JSX bridge or native binary. Exact pins
   and a render test limit this risk.
 - The Pi fork may not exist in the public package source used by Bun. The Nix

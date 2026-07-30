@@ -42,6 +42,7 @@ describe("PiSession", () => {
           getActiveToolNames: () => ["read", "sandbox"],
           prompt: () => Promise.resolve(),
           abort: () => Promise.resolve(),
+          bindExtensions: () => Promise.resolve(),
         },
         extensionsResult: {
           extensions: [
