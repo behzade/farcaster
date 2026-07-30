@@ -42,7 +42,7 @@ separate `nix-config` repo.
 - [`APPEND_SYSTEM.md`](APPEND_SYSTEM.md) is the working contract appended to
   Pi's system prompt.
 - [`skills`](skills), [`themes`](themes), and [`tests`](tests) contain the local
-  skill, theme, and shared checks.
+  skills, theme, and shared checks.
 
 ## Build and test
 
