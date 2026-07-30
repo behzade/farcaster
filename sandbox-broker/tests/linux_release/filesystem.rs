@@ -121,7 +121,7 @@ fn linux_read_denies_release_gate() {
         "explicit-read-deny",
         &workspace,
         format!(
-            "if IFS= read -r value < {} 2>/dev/null; then exit 41; else printf hidden-ok; fi",
+            "if IFS= read -r value 2>/dev/null < {}; then exit 41; else printf hidden-ok; fi",
             shell_quote(&secret.to_string_lossy())
         ),
         vec![],
@@ -142,7 +142,7 @@ fn linux_read_denies_release_gate() {
         "hard-glob-read-deny",
         &workspace,
         format!(
-            "if IFS= read -r value < {} 2>/dev/null; then exit 42; else printf hard-hidden-ok; fi",
+            "if IFS= read -r value 2>/dev/null < {}; then exit 42; else printf hard-hidden-ok; fi",
             shell_quote(&env_file.to_string_lossy())
         ),
         vec![],
@@ -219,7 +219,7 @@ fn linux_control_and_symlink_release_gate() {
         "symlink-deny",
         &workspace,
         format!(
-            "if IFS= read -r value < {} 2>/dev/null; then exit 43; else printf alias-hidden-ok; fi",
+            "if IFS= read -r value 2>/dev/null < {}; then exit 43; else printf alias-hidden-ok; fi",
             shell_quote(&alias.to_string_lossy())
         ),
         vec![],
