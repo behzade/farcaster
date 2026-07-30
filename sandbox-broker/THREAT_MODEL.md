@@ -30,7 +30,7 @@ Unified denial records carry a PID but no process start time. A fast PID reuse o
 
 A child can still win the non-atomic fork-and-enumeration race, then leave the process group with `setpgid`, `setsid`, or a double fork. Public unprivileged macOS APIs do not provide a kill-and-reap container for such children; creating a new kernel coalition fails with `EPERM` for a normal user process. Pi explicitly places deliberate daemon escape outside the native backend's threat model. Any survivor keeps its Seatbelt limits, but it may continue using CPU and rights that the command received until it exits or the user kills it.
 
-The Rust broker now has the default Linux Bubblewrap backend with a fixed binary path, read-only root, ordered exact write and deny mounts, user/PID/network/IPC/UTS namespaces, private `/proc`, `no_new_privs`, a reviewed blocked-network seccomp filter, and PID-namespace teardown. Its ignored release gate still needs to pass on x86_64 and aarch64 Linux. Missing Bubblewrap or unavailable unprivileged namespaces fail readiness rather than falling back.
+The Rust broker now has the default Linux Bubblewrap backend with a fixed binary path, read-only root, ordered exact write and deny mounts, user/PID/network/IPC/UTS namespaces, private `/proc`, `no_new_privs`, a reviewed blocked-network seccomp filter, and PID-namespace teardown. Its automated, ignored host release gate still needs to pass on x86_64 and aarch64 Linux. Missing Bubblewrap or unavailable unprivileged namespaces fail readiness rather than falling back.
 
 Bubblewrap can mask only concrete paths. Linux expands existing secret-name glob matches under the active workspace before launch, with strict scan bounds, then mounts those matches after writable roots. Fixed hard denies separately protect SSH, cloud, auth, and control paths in the broker HOME. Directory symlinks into the immutable, globally readable Nix store are scan boundaries; ordinary user-directory symlinks are followed. The host user and Pi process are trusted, so a host-created post-snapshot secret is outside this boundary. A sandboxed command can create a new matching name in a writable tree, but that file contains data the command already controls. Linux v1 does not claim dynamic path-pattern mediation.
 
@@ -79,10 +79,11 @@ Bubblewrap can mask only concrete paths. Linux expands existing secret-name glob
 
 `tests/macos_release.rs` is the unsandboxed macOS gate. It passes with filesystem rules, blocked network and sockets, environment replacement, output limits, structured denial collection for a generic application error, cancellation, timeout, shutdown, process-group cleanup, and cleanup of an observed detached child. Deliberate fast `setsid` or double-fork escape is not a macOS release assertion.
 
-Linux has an ignored release-gate scaffold that still must run and expand on
-x86_64 and aarch64. It must cover read-only root mounts, exact writable mounts,
-hidden read denies, protected child mounts, symlink and missing-path cases,
-blocked network and host Unix sockets, user/PID namespace availability,
-`no_new_privs`, seccomp, environment, framing, output bounds, cancellation,
-timeout, shutdown, and strict descendant cleanup. Native is the default, but
-that matrix must pass before declaring the Linux backend production-ready.
+Linux has an automated ignored host release gate for read-only root mounts,
+exact and fresh writable grants, hidden read denies, protected control mounts,
+symlink and missing-path cases, blocked IP and host Unix sockets, user/PID
+namespace behavior, `no_new_privs`, seccomp, environment replacement, malformed
+framing, output bounds, cancellation, timeout, shutdown, and strict `setsid -f`
+and double-fork descendant cleanup. The gate must pass outside an existing
+sandbox on both x86_64 and aarch64 before declaring the Linux backend
+production-ready.

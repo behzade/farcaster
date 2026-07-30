@@ -44,9 +44,13 @@ The ignored integration tests are host-level release gates and must run outside
 an existing sandbox:
 
 ```sh
-cargo test --manifest-path sandbox-broker/Cargo.toml -- --ignored
+# Run the gate matching the unsandboxed host platform.
+cargo test --manifest-path sandbox-broker/Cargo.toml --test macos_release -- --ignored --test-threads=1
+cargo test --manifest-path sandbox-broker/Cargo.toml --test linux_release -- --ignored --test-threads=1
 ```
 
-The macOS gate passes. The Linux gate still needs coverage on each supported
-release architecture before this broker should be treated as a portable
-general-purpose sandbox.
+The macOS gate passes. The Linux gate automates filesystem, namespace,
+seccomp, environment, framing, output, cancellation, timeout, shutdown, and
+detached-descendant checks, but it must still pass on each supported release
+architecture before this broker should be treated as a portable general-purpose
+sandbox.
