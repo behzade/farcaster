@@ -110,6 +110,12 @@ test("folds session events and commands into app state", () => {
         name: "GPT-5",
         reasoning: true,
       },
+      {
+        provider: "opencode-go",
+        id: "glm-5.2",
+        name: "GLM 5.2",
+        reasoning: true,
+      },
     ]),
     sessions: Effect.succeed([
       {
@@ -310,23 +316,29 @@ test("folds session events and commands into app state", () => {
       }
       expect(compactInstructions).toBe("keep decisions")
 
-      yield* app.dispatch({ _tag: "Prompt", text: "/model" })
+      yield* app.dispatch({ _tag: "Prompt", text: "/model glm" })
       let modelDialog = (yield* app.get).dialog
       while (modelDialog === undefined) {
         yield* Effect.yieldNow()
         modelDialog = (yield* app.get).dialog
       }
       expect(modelDialog.title).toBe("Choose model")
+      expect(modelDialog.kind).toBe("search")
+      expect(modelDialog.initialQuery).toBe("glm")
+      const opencodeModel = modelDialog.options.find((option) =>
+        option.startsWith("opencode-go/glm-5.2 "),
+      )
+      expect(opencodeModel).toBeDefined()
       yield* app.dispatch({
         _tag: "ResolveDialog",
         id: modelDialog.id,
-        value: modelDialog.options[0],
+        value: opencodeModel,
       })
       while (selectedModel === undefined) {
         yield* Effect.yieldNow()
       }
-      expect(selectedModel).toBe("anthropic/claude-sonnet")
-      expect((yield* app.get).model?.id).toBe("claude-sonnet")
+      expect(selectedModel).toBe("opencode-go/glm-5.2")
+      expect((yield* app.get).model?.id).toBe("glm-5.2")
 
       yield* app.dispatch({ _tag: "Prompt", text: "/thinking" })
       let thinkingDialog = (yield* app.get).dialog

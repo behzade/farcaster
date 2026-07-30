@@ -15,11 +15,12 @@ import {
 
 export interface AppDialog {
   readonly id: number
-  readonly kind: "select" | "input"
+  readonly kind: "select" | "input" | "search"
   readonly title: string
   readonly message: string | undefined
   readonly options: ReadonlyArray<string>
   readonly placeholder: string | undefined
+  readonly initialQuery?: string
 }
 
 export interface ExtensionUiHost {
@@ -39,6 +40,11 @@ export interface ExtensionUiHost {
 export interface ExtensionUiBridge {
   readonly context: ExtensionUIContext
   readonly notify: (message: string, isError: boolean) => void
+  readonly search: (
+    title: string,
+    options: ReadonlyArray<string>,
+    initialQuery?: string,
+  ) => Promise<string | undefined>
   readonly resolveDialog: (
     id: number,
     value: string | undefined,
@@ -259,6 +265,15 @@ export const makeExtensionUi = (
       notify: (message, isError) => {
         runFork(host.notify(message, isError), { scope })
       },
+      search: (title, options, initialQuery) =>
+        openDialog({
+          kind: "search",
+          title,
+          message: undefined,
+          options,
+          placeholder: "Search",
+          ...(initialQuery === undefined ? {} : { initialQuery }),
+        }),
       resolveDialog,
       cancelDialog,
     }

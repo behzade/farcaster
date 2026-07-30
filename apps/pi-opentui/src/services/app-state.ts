@@ -384,34 +384,21 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
           let chosen =
             exactMatches.length === 1 ? exactMatches[0] : undefined
           if (chosen === undefined) {
-            const candidates =
-              normalizedQuery.length === 0
-                ? models
-                : models.filter((model) =>
-                    `${model.provider}/${model.id} ${model.name}`
-                      .toLowerCase()
-                      .includes(normalizedQuery),
-                  )
             yield* updateState((snapshot) => ({
               ...snapshot,
               phase: "ready" as const,
             }))
-            if (candidates.length === 0) {
-              yield* pushNotice(
-                query.length === 0
-                  ? "No models available"
-                  : `No model matches: ${query}`,
-                true,
-              )
+            if (models.length === 0) {
+              yield* pushNotice("No models available", true)
               return
             }
 
-            const choices = candidates.map(modelLabel)
+            const choices = models.map(modelLabel)
             const selected = yield* Effect.promise(() =>
-              extensionUi.context.select("Choose model", choices),
+              extensionUi.search("Choose model", choices, query),
             )
             if (selected === undefined) return
-            chosen = candidates[choices.indexOf(selected)]
+            chosen = models[choices.indexOf(selected)]
             if (chosen === undefined) return
             yield* updateState((snapshot) => ({
               ...snapshot,

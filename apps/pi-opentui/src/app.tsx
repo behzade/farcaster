@@ -1,4 +1,7 @@
-import type { TextareaRenderable } from "@opentui/core"
+import type {
+  TextareaRenderable,
+  TextRenderable,
+} from "@opentui/core"
 import { useKeyboard } from "@opentui/solid"
 import { For, createSignal, onCleanup } from "solid-js"
 import type {
@@ -7,6 +10,11 @@ import type {
   AppSnapshot,
   CommandInfo,
 } from "./services/app-state.ts"
+import {
+  exactSlashCommand,
+  slashCommandMatches,
+} from "./services/commands.ts"
+import { SearchMenu } from "./search-menu.tsx"
 import type {
   TranscriptRow,
   TranscriptRowKind,
@@ -58,6 +66,22 @@ function ExtensionDialog(props: {
   readonly dialog: AppDialog
   readonly resolve: (value: string | undefined) => void
 }) {
+  if (props.dialog.kind === "search") {
+    return (
+      <SearchMenu
+        title={props.dialog.title}
+        options={props.dialog.options}
+        resolve={props.resolve}
+        {...(props.dialog.message === undefined
+          ? {}
+          : { message: props.dialog.message })}
+        {...(props.dialog.initialQuery === undefined
+          ? {}
+          : { initialQuery: props.dialog.initialQuery })}
+      />
+    )
+  }
+
   let input: TextareaRenderable | undefined
 
   const submitInput = () => {
@@ -180,15 +204,10 @@ export function CommandMenu(props: {
   )
 
   return (
-    <ExtensionDialog
-      dialog={{
-        id: -1,
-        kind: "select",
-        title: "Commands",
-        message: "Choose a command to run.",
-        options,
-        placeholder: undefined,
-      }}
+    <SearchMenu
+      title="Commands"
+      message="Choose a command to run."
+      options={options}
       resolve={(selected) =>
         props.resolve(selected?.slice(1).split(/\s/, 1)[0])
       }
@@ -198,8 +217,9 @@ export function CommandMenu(props: {
 
 export function App(props: AppProps) {
   let input: TextareaRenderable | undefined
+  let commandHint: TextRenderable | undefined
+  let commandIndex = 0
   const [snapshot, setSnapshot] = createSignal(props.bridge.initial)
-  const [draft, setDraft] = createSignal("")
   const [paletteOpen, setPaletteOpen] = createSignal(false)
   const dialogs = (): ReadonlyArray<AppDialog> => {
     const dialog = snapshot().dialog
@@ -221,6 +241,29 @@ export function App(props: AppProps) {
         : ` · ctx ${Math.round(stats.contextUsage.percent)}%`
     return `${snapshot().phase} · ${stats.tokens.total.toLocaleString()} tokens${context} · $${stats.cost.toFixed(4)}`
   }
+  const commandSuggestions = (): ReadonlyArray<CommandInfo> =>
+    slashCommandMatches(
+      snapshot().commands,
+      input?.plainText ?? "",
+    )
+  const commandSuggestionsVisible = (): boolean =>
+    snapshot().dialog === undefined &&
+    !paletteOpen() &&
+    snapshot().phase !== "running" &&
+    snapshot().phase !== "stopping" &&
+    commandSuggestions().length > 0
+  const updateCommandHint = () => {
+    if (commandHint === undefined) return
+    const suggestions = commandSuggestions()
+    const suggestion =
+      suggestions[
+        Math.min(commandIndex, suggestions.length - 1)
+      ]
+    commandHint.content =
+      commandSuggestionsVisible() && suggestion !== undefined
+        ? `/${suggestion.name}${suggestion.description.length > 0 ? ` — ${suggestion.description}` : ""} · ↑/↓ choose · tab or enter complete`
+        : "enter send · shift+enter newline · / enter commands"
+  }
 
   onCleanup(props.bridge.subscribe(setSnapshot))
 
@@ -230,7 +273,16 @@ export function App(props: AppProps) {
     const command = `/${name} `
     input?.editBuffer.setText(command)
     input?.focus()
-    setDraft(command)
+    commandIndex = 0
+    updateCommandHint()
+  }
+
+  const completeCommand = (command: CommandInfo) => {
+    const value = `/${command.name} `
+    input?.editBuffer.setText(value)
+    input?.focus()
+    commandIndex = 0
+    updateCommandHint()
   }
 
   const submit = () => {
@@ -238,6 +290,19 @@ export function App(props: AppProps) {
     if (prompt === "/" && snapshot().phase === "ready") {
       setPaletteOpen(true)
       return
+    }
+    if (
+      prompt.startsWith("/") &&
+      exactSlashCommand(snapshot().commands, prompt) === undefined
+    ) {
+      const suggestion =
+        commandSuggestions()[
+          Math.min(commandIndex, commandSuggestions().length - 1)
+        ]
+      if (suggestion !== undefined) {
+        completeCommand(suggestion)
+        return
+      }
     }
     if (
       prompt.length === 0 ||
@@ -249,11 +314,94 @@ export function App(props: AppProps) {
 
     props.bridge.dispatch({ _tag: "Prompt", text: prompt })
     input?.editBuffer.setText("")
-    setDraft("")
+    commandIndex = 0
+    updateCommandHint()
+  }
+
+  const handleComposerKey = (
+    event: Parameters<TextareaRenderable["handleKeyPress"]>[0],
+  ) => {
+    const suggestions = commandSuggestions()
+    if (
+      commandSuggestionsVisible() &&
+      (event.name === "tab" ||
+        event.name === "up" ||
+        event.name === "down")
+    ) {
+      event.preventDefault()
+      if (event.name === "tab") {
+        const suggestion =
+          suggestions[
+            Math.min(commandIndex, suggestions.length - 1)
+          ]
+        if (suggestion !== undefined) completeCommand(suggestion)
+      } else {
+        const offset = event.name === "up" ? -1 : 1
+        commandIndex =
+          (commandIndex + offset + suggestions.length) %
+          suggestions.length
+        updateCommandHint()
+      }
+      return
+    }
+    if (
+      (event.name === "c" || event.name === "q") &&
+      event.ctrl
+    ) {
+      event.preventDefault()
+      props.bridge.quit()
+      return
+    }
+    if (
+      event.name === "escape" &&
+      (snapshot().phase === "running" ||
+        snapshot().phase === "stopping")
+    ) {
+      event.preventDefault()
+      props.bridge.dispatch({ _tag: "Abort" })
+      return
+    }
+    if (input === undefined) return
+    event.preventDefault()
+    input.handleKeyPress(event)
+    commandIndex = 0
+    updateCommandHint()
+  }
+
+  const handleComposerPaste = (
+    event: Parameters<TextareaRenderable["handlePaste"]>[0],
+  ) => {
+    if (input === undefined) return
+    event.preventDefault()
+    input.handlePaste(event)
+    commandIndex = 0
+    updateCommandHint()
   }
 
   useKeyboard((event) => {
+    const suggestions = commandSuggestions()
     if (
+      commandSuggestionsVisible() &&
+      (event.name === "tab" ||
+        event.name === "up" ||
+        event.name === "down")
+    ) {
+      event.preventDefault()
+      event.stopPropagation()
+      if (event.name === "tab") {
+        const suggestion =
+          suggestions[
+            Math.min(commandIndex, suggestions.length - 1)
+          ]
+        if (suggestion !== undefined) completeCommand(suggestion)
+      } else {
+        const offset = event.name === "up" ? -1 : 1
+        commandIndex =
+          (commandIndex + offset + suggestions.length) %
+          suggestions.length
+        updateCommandHint()
+      }
+    } else if (
       (event.name === "c" || event.name === "q") &&
       event.ctrl
     ) {
@@ -360,16 +508,20 @@ export function App(props: AppProps) {
             { name: "return", shift: true, action: "newline" },
             { name: "kpenter", shift: true, action: "newline" },
           ]}
-          onContentChange={() => setDraft(input?.plainText ?? "")}
+          onKeyDown={handleComposerKey}
+          onPaste={handleComposerPaste}
           onSubmit={submit}
         />
         <box height={1} flexDirection="row" justifyContent="space-between">
-          <text fg="#928374">
+          <text
+            ref={(renderable) => {
+              commandHint = renderable
+            }}
+            fg="#928374"
+          >
             enter send · shift+enter newline · / enter commands
           </text>
-          <text fg={draft().trim().length > 0 ? "#fabd2f" : "#928374"}>
-            ctrl+c quit
-          </text>
+          <text fg="#928374">ctrl+c quit</text>
         </box>
       </box>
 

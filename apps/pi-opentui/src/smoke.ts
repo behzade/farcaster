@@ -30,6 +30,14 @@ const smoke = Effect.scoped(
     const sessionAfter = yield* pi.sessionStats
     const modelState = yield* pi.modelState
     const models = yield* pi.models
+    const modelsByProvider = Object.fromEntries(
+      Object.entries(
+        models.reduce<Record<string, number>>((counts, model) => {
+          counts[model.provider] = (counts[model.provider] ?? 0) + 1
+          return counts
+        }, {}),
+      ).toSorted(([left], [right]) => left.localeCompare(right)),
+    )
     if (sessionAfter.sessionId === sessionBefore.sessionId) {
       return yield* Effect.fail(
         new Error("Pi kept the old session after replacement"),
@@ -46,6 +54,7 @@ const smoke = Effect.scoped(
           model: modelState.selected,
           thinkingLevel: modelState.thinkingLevel,
           availableModels: models.length,
+          modelsByProvider,
           sessionReplacement: {
             before: sessionBefore.sessionId,
             after: sessionAfter.sessionId,

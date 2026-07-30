@@ -53,6 +53,60 @@ export const commandName = (text: string): string | undefined => {
   return name === undefined || name.length === 0 ? undefined : name
 }
 
+const defaultCommandMatchLimit = 8
+
+export const exactSlashCommand = (
+  commands: ReadonlyArray<CommandInfo>,
+  draft: string,
+): CommandInfo | undefined => {
+  if (!draft.startsWith("/") || /\s/.test(draft.slice(1))) {
+    return undefined
+  }
+  const name = draft.slice(1).toLowerCase()
+  if (name.length === 0) return undefined
+  return commands.find(
+    (command) => command.name.toLowerCase() === name,
+  )
+}
+
+export const slashCommandMatches = (
+  commands: ReadonlyArray<CommandInfo>,
+  draft: string,
+  limit = defaultCommandMatchLimit,
+): ReadonlyArray<CommandInfo> => {
+  if (!draft.startsWith("/") || /\s/.test(draft.slice(1))) {
+    return []
+  }
+
+  const query = draft.slice(1).toLowerCase()
+  const maximum = Math.max(0, Math.floor(limit))
+  if (maximum === 0) return []
+
+  return commands
+    .map((command, index) => {
+      const name = command.name.toLowerCase()
+      const description = command.description.toLowerCase()
+      const rank =
+        name === query
+          ? 0
+          : name.startsWith(query)
+            ? 1
+            : description.includes(query)
+              ? 2
+              : 3
+      return { command, index, rank }
+    })
+    .filter((match) => match.rank < 3)
+    .toSorted(
+      (left, right) =>
+        left.rank - right.rank ||
+        left.command.name.localeCompare(right.command.name) ||
+        left.index - right.index,
+    )
+    .slice(0, maximum)
+    .map((match) => match.command)
+}
+
 export const commandCatalog = (
   sdkCommands: ReadonlyArray<SlashCommandInfo>,
 ): ReadonlyArray<CommandInfo> => {

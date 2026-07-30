@@ -165,6 +165,57 @@ test("resolves an extension selection dialog", () => {
   )
 })
 
+test("completes slash commands while typing", () => {
+  commands.length = 0
+  const autocompleteBridge: AppBridge = {
+    ...bridge,
+    initial: {
+      ...bridge.initial,
+      commands: [
+        ...bridge.initial.commands,
+        {
+          name: "resume",
+          description: "Resume a saved session",
+          source: "builtin",
+        },
+      ],
+    },
+  }
+
+  return Effect.runPromise(
+    Effect.acquireUseRelease(
+      Effect.tryPromise(() =>
+        testRender(() => <App bridge={autocompleteBridge} />, {
+          width: 100,
+          height: 30,
+        }),
+      ),
+      (setup) =>
+        Effect.gen(function* () {
+          yield* Effect.tryPromise(() =>
+            setup.mockInput.typeText("/res"),
+          )
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(setup.captureCharFrame()).toContain(
+            "/resume — Resume a saved session",
+          )
+
+          setup.mockInput.pressTab()
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(setup.captureCharFrame()).toContain("/resume")
+
+          setup.mockInput.pressEnter()
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(commands).toContainEqual({
+            _tag: "Prompt",
+            text: "/resume",
+          })
+        }),
+      (setup) => Effect.sync(() => setup.renderer.destroy()),
+    ),
+  )
+})
+
 test("chooses a command from the slash menu", () => {
   let selected: string | undefined
   return Effect.runPromise(

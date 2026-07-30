@@ -35,7 +35,10 @@ bun start
 Press `Ctrl+C` or `Ctrl+Q` to quit. Press `Escape` to stop a running turn.
 Press `Enter` to send and `Shift+Enter` for a new line.
 Enter `/` by itself to open the command menu.
-Use `/model text` to limit a long model list.
+Type after `/` to see a command match, then press `Tab` or `Enter` to
+complete it. Use `Up` and `Down` to move through matches.
+The command and model menus filter as you type. `/model text` opens the model
+menu with that search filled in.
 
 See [`../../PI_OPENTUI_PLAN.md`](../../PI_OPENTUI_PLAN.md) for the build stages,
 limits, and checks.
