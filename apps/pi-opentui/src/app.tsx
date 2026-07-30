@@ -213,6 +213,14 @@ export function App(props: AppProps) {
       : ""
     return `${model.provider}/${model.id}${thinking}`
   }
+  const usageText = (): string => {
+    const stats = snapshot().sessionStats
+    const context =
+      stats.contextUsage?.percent == null
+        ? ""
+        : ` · ctx ${Math.round(stats.contextUsage.percent)}%`
+    return `${snapshot().phase} · ${stats.tokens.total.toLocaleString()} tokens${context} · $${stats.cost.toFixed(4)}`
+  }
 
   onCleanup(props.bridge.subscribe(setSnapshot))
 
@@ -288,7 +296,7 @@ export function App(props: AppProps) {
             {snapshot().extensionPaths.length} extensions
           </text>
         </box>
-        <text fg="#a89984">{snapshot().phase}</text>
+        <text fg="#a89984">{usageText()}</text>
       </box>
 
       <text fg="#928374" wrapMode="none">

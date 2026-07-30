@@ -1,3 +1,4 @@
+import type { SessionStats } from "@earendil-works/pi-coding-agent"
 import {
   Context,
   Effect,
@@ -48,6 +49,7 @@ export interface AppSnapshot {
   readonly activeTools: ReadonlyArray<string>
   readonly model: PiModelInfo | undefined
   readonly thinkingLevel: PiThinkingLevel
+  readonly sessionStats: SessionStats
   readonly extensionPaths: ReadonlyArray<string>
   readonly extensionErrors: ReadonlyArray<ExtensionLoadError>
   readonly eventCount: number
@@ -91,6 +93,7 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
     Effect.gen(function* () {
       const pi = yield* PiSession
       const initialModelState = yield* pi.modelState
+      const initialSessionStats = yield* pi.sessionStats
       const initialTranscript = pi.extensionErrors.reduce(
         (transcript, fault) =>
           appendTranscriptNotice(
@@ -106,6 +109,7 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
         activeTools: pi.activeTools,
         model: initialModelState.selected,
         thinkingLevel: initialModelState.thinkingLevel,
+        sessionStats: initialSessionStats,
         extensionPaths: pi.extensionPaths,
         extensionErrors: pi.extensionErrors,
         eventCount: 0,
@@ -175,12 +179,19 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
       }))
 
       yield* Stream.runForEach(pi.events, (event) =>
-        SubscriptionRef.update(state, (snapshot) => ({
-          ...snapshot,
-          eventCount: snapshot.eventCount + 1,
-          lastEvent: event.type,
-          transcript: reduceTranscriptEvent(snapshot.transcript, event),
-        })),
+        Effect.gen(function* () {
+          const latestStats =
+            event.type === "agent_settled"
+              ? yield* pi.sessionStats
+              : undefined
+          yield* SubscriptionRef.update(state, (snapshot) => ({
+            ...snapshot,
+            eventCount: snapshot.eventCount + 1,
+            lastEvent: event.type,
+            sessionStats: latestStats ?? snapshot.sessionStats,
+            transcript: reduceTranscriptEvent(snapshot.transcript, event),
+          }))
+        }),
       ).pipe(Effect.forkScoped)
 
       const runPrompt = (prompt: string): Effect.Effect<void> =>
@@ -218,13 +229,15 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
       const runCompact = (
         instructions: string | undefined,
       ): Effect.Effect<void> =>
-        pi.compact(instructions).pipe(
-          Effect.zipRight(
-            SubscriptionRef.update(state, (snapshot) => ({
-              ...snapshot,
-              phase: "ready" as const,
-            })),
-          ),
+        Effect.gen(function* () {
+          yield* pi.compact(instructions)
+          const sessionStats = yield* pi.sessionStats
+          yield* SubscriptionRef.update(state, (snapshot) => ({
+            ...snapshot,
+            phase: "ready" as const,
+            sessionStats,
+          }))
+        }).pipe(
           Effect.catchAll((error) =>
             Effect.gen(function* () {
               const wasAborted = yield* Ref.get(promptWasAborted)
@@ -265,12 +278,14 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
           const messages = yield* replacement
           const sdkCommands = yield* pi.commands
           const modelState = yield* pi.modelState
+          const sessionStats = yield* pi.sessionStats
           yield* updateState((snapshot) => ({
             ...snapshot,
             phase: "ready" as const,
             error: undefined,
             model: modelState.selected,
             thinkingLevel: modelState.thinkingLevel,
+            sessionStats,
             transcript: appendTranscriptNotice(
               transcriptFromMessages(messages),
               notice,

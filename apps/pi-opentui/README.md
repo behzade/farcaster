@@ -14,7 +14,8 @@ Pi extension set, and provides:
 - local `/help`, `/session`, `/compact`, `/model`, `/thinking`, `/new`, and
   `/resume` commands;
 - saved transcript restore when a session changes;
-- current model and thinking level in the top status line;
+- current model, thinking level, token use, context use, and cost in the top
+  status lines;
 - extension notices, status, retry, and compaction updates;
 - scoped extension, session, task, and terminal cleanup.
 

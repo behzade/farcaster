@@ -101,7 +101,7 @@ Current progress:
 - Stage 3 has started with command discovery, a slash menu, built-in command
   routing, safe rejection of unknown commands, saved sessions, and `/new` and
   `/resume` session replacement. Model and thinking-level choice also use the
-  Pi SDK state.
+  Pi SDK state, and the status line shows Pi's token, context, and cost data.
 
 ### 1. Prove the base
 

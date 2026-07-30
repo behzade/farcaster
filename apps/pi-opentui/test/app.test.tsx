@@ -21,6 +21,28 @@ const bridge: AppBridge = {
       reasoning: true,
     },
     thinkingLevel: "high",
+    sessionStats: {
+      sessionFile: undefined,
+      sessionId: "session-1",
+      userMessages: 1,
+      assistantMessages: 1,
+      toolCalls: 0,
+      toolResults: 0,
+      totalMessages: 2,
+      tokens: {
+        input: 1000,
+        output: 200,
+        cacheRead: 300,
+        cacheWrite: 0,
+        total: 1500,
+      },
+      cost: 0.0123,
+      contextUsage: {
+        tokens: 32000,
+        contextWindow: 128000,
+        percent: 25,
+      },
+    },
     extensionPaths: ["/agent/extensions/sandbox"],
     extensionErrors: [],
     eventCount: 3,
@@ -76,6 +98,9 @@ test("renders chat and sends input", () => {
           expect(frame).toContain("/work/pi")
           expect(frame).toContain("openai/gpt-5")
           expect(frame).toContain("thinking high")
+          expect(frame).toContain("1,500 tokens")
+          expect(frame).toContain("ctx 25%")
+          expect(frame).toContain("$0.0123")
           expect(frame).toContain("hello from user")
 
           yield* Effect.tryPromise(() =>

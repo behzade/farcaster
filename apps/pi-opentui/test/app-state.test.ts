@@ -26,6 +26,7 @@ test("folds session events and commands into app state", () => {
   let resumedPath: string | undefined
   let selectedModel: string | undefined
   let selectedThinking: string | undefined
+  let sessionStatsReads = 0
   let modelState: PiModelState = {
     selected: {
       provider: "openai",
@@ -75,22 +76,25 @@ test("folds session events and commands into app state", () => {
         },
       },
     ]),
-    sessionStats: Effect.succeed({
-      sessionFile: undefined,
-      sessionId: "session-1",
-      userMessages: 1,
-      assistantMessages: 1,
-      toolCalls: 0,
-      toolResults: 0,
-      totalMessages: 2,
-      tokens: {
-        input: 10,
-        output: 20,
-        cacheRead: 0,
-        cacheWrite: 0,
-        total: 30,
-      },
-      cost: 0.01,
+    sessionStats: Effect.sync(() => {
+      sessionStatsReads += 1
+      return {
+        sessionFile: undefined,
+        sessionId: "session-1",
+        userMessages: 1,
+        assistantMessages: 1,
+        toolCalls: 0,
+        toolResults: 0,
+        totalMessages: 2,
+        tokens: {
+          input: 10,
+          output: 20,
+          cacheRead: 0,
+          cacheWrite: 0,
+          total: 30,
+        },
+        cost: 0.01,
+      }
     }),
     modelState: Effect.sync(() => modelState),
     models: Effect.succeed([
@@ -203,6 +207,8 @@ test("folds session events and commands into app state", () => {
       }
 
       expect(snapshot.lastEvent).toBe("agent_settled")
+      expect(snapshot.sessionStats.tokens.total).toBe(30)
+      expect(sessionStatsReads).toBeGreaterThanOrEqual(2)
       expect(snapshot.commands.map((command) => command.name)).toContain(
         "review",
       )
