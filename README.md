@@ -39,6 +39,9 @@ separate `nix-config` repo.
   command. It keeps a bounded output cache in the system temporary directory so
   reopening the same diff at the same width skips syntax highlighting work.
 - [`nix`](nix) contains the pinned builds for Pi and every packaged extension.
+- [`apps/pi-opentui`](apps/pi-opentui) is the first runnable proof for the new
+  OpenTUI, Solid, and Effect front end. Its staged design is in
+  [`PI_OPENTUI_PLAN.md`](PI_OPENTUI_PLAN.md).
 - [`patches`](patches) contains the local changes applied to third-party Pi
   extensions.
 - [`APPEND_SYSTEM.md`](APPEND_SYSTEM.md) is the working contract appended to
