@@ -28,6 +28,7 @@ describe("PiSession", () => {
     let resumedPath: string | undefined
     let selectedModel: string | undefined
     let selectedThinking: string | undefined
+    let loginCall: string | undefined
 
     const open = (
       _cwd: string,
@@ -53,6 +54,19 @@ describe("PiSession", () => {
               id: "gpt-5",
               name: "GPT-5",
               reasoning: true,
+            },
+          ]),
+        listAuthProviders: () =>
+          Promise.resolve([
+            {
+              id: "opencode-go",
+              name: "OpenCode Go",
+              type: "api_key" as const,
+              methodName: "OpenCode Go API key",
+              loginLabel: undefined,
+              interactive: true,
+              configured: false,
+              source: undefined,
             },
           ]),
         listSessions: () => {
@@ -90,6 +104,10 @@ describe("PiSession", () => {
             thinkingLevel: level,
             thinkingLevels: ["off", "medium", "high"],
           })
+        },
+        login: (provider, type) => {
+          loginCall = `${provider}/${type}`
+          return Promise.resolve()
         },
         shutdown: () => {
           shutDown = true
@@ -165,6 +183,7 @@ describe("PiSession", () => {
         ])
         expect((yield* pi.modelState).thinkingLevel).toBe("medium")
         expect(yield* pi.models).toHaveLength(1)
+        expect(yield* pi.authProviders).toHaveLength(1)
         expect(yield* pi.sessions).toEqual([])
         expect(yield* pi.messages).toEqual([
           { role: "user", content: "current" },
@@ -179,12 +198,17 @@ describe("PiSession", () => {
         expect((yield* pi.selectThinking("high")).thinkingLevel).toBe(
           "high",
         )
+        yield* pi.login("opencode-go", "api_key", {
+          prompt: () => Promise.resolve("key"),
+          notify: () => undefined,
+        })
         expect(openedWithSavedSessions).toBe(false)
         expect(listedSessions).toBe(1)
         expect(newSessions).toBe(1)
         expect(resumedPath).toBe("/sessions/old.jsonl")
         expect(selectedModel).toBe("openai/gpt-5")
         expect(selectedThinking).toBe("high")
+        expect(loginCall).toBe("opencode-go/api_key")
       }),
     ).pipe(Effect.provide(session))
 

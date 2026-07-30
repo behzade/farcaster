@@ -31,6 +31,11 @@ export const builtinCommands: ReadonlyArray<CommandInfo> = [
     source: "builtin",
   },
   {
+    name: "login",
+    description: "Save provider login or API key",
+    source: "builtin",
+  },
+  {
     name: "thinking",
     description: "Choose the thinking level",
     source: "builtin",

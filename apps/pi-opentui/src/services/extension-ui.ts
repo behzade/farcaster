@@ -3,6 +3,7 @@ import type {
   ExtensionUIContext,
   Theme,
 } from "@earendil-works/pi-coding-agent"
+import type { PiAuthPrompt } from "./pi-auth.ts"
 import {
   Deferred,
   Duration,
@@ -15,7 +16,7 @@ import {
 
 export interface AppDialog {
   readonly id: number
-  readonly kind: "select" | "input" | "search"
+  readonly kind: "select" | "input" | "search" | "secret"
   readonly title: string
   readonly message: string | undefined
   readonly options: ReadonlyArray<string>
@@ -35,6 +36,9 @@ export interface ExtensionUiHost {
     key: string,
     text: string | undefined,
   ) => Effect.Effect<void>
+  readonly setAuthNotice: (
+    message: string | undefined,
+  ) => Effect.Effect<void>
 }
 
 export interface ExtensionUiBridge {
@@ -45,6 +49,11 @@ export interface ExtensionUiBridge {
     options: ReadonlyArray<string>,
     initialQuery?: string,
   ) => Promise<string | undefined>
+  readonly authPrompt: (
+    prompt: PiAuthPrompt,
+    details?: string,
+  ) => Promise<string>
+  readonly setAuthNotice: (message: string | undefined) => void
   readonly resolveDialog: (
     id: number,
     value: string | undefined,
@@ -147,6 +156,13 @@ export const makeExtensionUi = (
       options?: ExtensionUIDialogOptions,
     ): Promise<string | undefined> =>
       runPromise(openDialogEffect(dialog, options))
+
+    const requireDialogValue = (
+      value: string | undefined,
+    ): Effect.Effect<string, Error> =>
+      value === undefined
+        ? Effect.fail(new Error("Login cancelled"))
+        : Effect.succeed(value)
 
     let editorText = ""
     let editorFactory: Parameters<
@@ -274,6 +290,55 @@ export const makeExtensionUi = (
           placeholder: "Search",
           ...(initialQuery === undefined ? {} : { initialQuery }),
         }),
+      authPrompt: (prompt, details) => {
+        if (prompt.type === "select") {
+          return runPromise(
+            openDialogEffect(
+              {
+                kind: "select",
+                title: prompt.message,
+                message: details,
+                options: prompt.options.map(
+                  (option) => option.label,
+                ),
+                placeholder: undefined,
+              },
+              prompt.signal === undefined
+                ? undefined
+                : { signal: prompt.signal },
+            ).pipe(
+              Effect.flatMap(requireDialogValue),
+              Effect.flatMap((label) => {
+                const selected = prompt.options.find(
+                  (option) => option.label === label,
+                )
+                return selected === undefined
+                  ? Effect.fail(new Error("Login cancelled"))
+                  : Effect.succeed(selected.id)
+              }),
+            ),
+          )
+        }
+
+        return runPromise(
+          openDialogEffect(
+            {
+              kind:
+                prompt.type === "secret" ? "secret" : "input",
+              title: prompt.message,
+              message: details,
+              options: [],
+              placeholder: prompt.placeholder,
+            },
+            prompt.signal === undefined
+              ? undefined
+              : { signal: prompt.signal },
+          ).pipe(Effect.flatMap(requireDialogValue)),
+        )
+      },
+      setAuthNotice: (message) => {
+        runFork(host.setAuthNotice(message), { scope })
+      },
       resolveDialog,
       cancelDialog,
     }

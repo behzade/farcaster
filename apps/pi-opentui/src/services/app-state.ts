@@ -22,12 +22,13 @@ import {
 } from "./extension-ui.ts"
 import {
   PiSession,
+  PiSessionError,
   type ExtensionLoadError,
   type PiModelInfo,
   type PiModelState,
-  type PiSessionError,
   type PiThinkingLevel,
 } from "./pi-session.ts"
+import { runLoginFlow } from "./login-flow.ts"
 import {
   appendTranscriptError,
   appendTranscriptNotice,
@@ -57,6 +58,7 @@ export interface AppSnapshot {
   readonly error: string | undefined
   readonly transcript: TranscriptModel
   readonly dialog: AppDialog | undefined
+  readonly authNotice: string | undefined
   readonly statuses: Readonly<Record<string, string>>
   readonly commands: ReadonlyArray<CommandInfo>
 }
@@ -117,12 +119,16 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
         error: undefined,
         transcript: initialTranscript,
         dialog: undefined,
+        authNotice: undefined,
         statuses: {},
         commands: builtinCommands,
       })
       const commands = yield* Queue.unbounded<AppCommand>()
       const scope = yield* Effect.scope
       const promptWasAborted = yield* Ref.make(false)
+      const loginController = yield* Ref.make<
+        AbortController | undefined
+      >(undefined)
 
       const updateState = (
         update: (snapshot: AppSnapshot) => AppSnapshot,
@@ -152,6 +158,8 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
             else statuses[key] = text
             return { ...snapshot, statuses }
           }),
+        setAuthNotice: (authNotice) =>
+          updateState((snapshot) => ({ ...snapshot, authNotice })),
       })
 
       yield* pi.bindExtensions(extensionUi.context, (extensionError) => {
@@ -522,6 +530,67 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
           ),
         )
 
+      const login = (prompt: string): Effect.Effect<void> =>
+        Effect.gen(function* () {
+          const controller = new AbortController()
+          yield* Ref.set(loginController, controller)
+          const providerRef = prompt.slice("/login".length).trim()
+          const result = yield* runLoginFlow(
+            pi,
+            extensionUi,
+            providerRef,
+            controller.signal,
+          )
+          const modelState = yield* pi.modelState
+          yield* updateState((snapshot) => ({
+            ...snapshot,
+            phase: "ready" as const,
+            error: undefined,
+            model: modelState.selected,
+            thinkingLevel: modelState.thinkingLevel,
+          }))
+          if (result !== undefined) {
+            yield* pushNotice(
+              result.loggedIn && modelState.selected === undefined
+                ? `${result.message}. Use /model to select a model.`
+                : result.message,
+            )
+          }
+        }).pipe(
+          Effect.catchAll((error) =>
+            Effect.gen(function* () {
+              const controller = yield* Ref.get(loginController)
+              const message =
+                error instanceof PiSessionError
+                  ? errorText(error)
+                  : error instanceof Error
+                    ? error.message
+                    : String(error)
+              if (
+                controller?.signal.aborted ||
+                message.toLowerCase().includes("login cancelled")
+              ) {
+                yield* updateState((snapshot) => ({
+                  ...snapshot,
+                  phase: "ready" as const,
+                  error: undefined,
+                }))
+                return
+              }
+              yield* updateState((snapshot) => ({
+                ...snapshot,
+                phase: "error" as const,
+                error: message,
+                transcript: appendTranscriptError(
+                  snapshot.transcript,
+                  message,
+                ),
+              }))
+            }),
+          ),
+          Effect.ensuring(Ref.set(loginController, undefined)),
+        )
+
       const runBuiltin = (
         name: string,
         prompt: string,
@@ -574,6 +643,15 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
               ),
               Effect.as(true),
             )
+          case "login":
+            return updateState((snapshot) => ({
+              ...snapshot,
+              phase: "running" as const,
+              error: undefined,
+            })).pipe(
+              Effect.zipRight(Effect.forkIn(login(prompt), scope)),
+              Effect.as(true),
+            )
           case "thinking":
             return updateState((snapshot) => ({
               ...snapshot,
@@ -613,6 +691,11 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
 
       const abort = Effect.gen(function* () {
         yield* extensionUi.cancelDialog
+        const activeLogin = yield* Ref.get(loginController)
+        if (activeLogin !== undefined) {
+          yield* Effect.sync(() => activeLogin.abort())
+          return
+        }
         const snapshot = yield* SubscriptionRef.get(state)
         if (snapshot.phase !== "running") return
 

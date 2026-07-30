@@ -70,6 +70,8 @@ apps/pi-opentui/
   src/
     main.tsx
     app.tsx
+    composer.tsx
+    dialog.tsx
     runtime.ts
     smoke.ts
     services/
@@ -77,7 +79,11 @@ apps/pi-opentui/
       app-state.ts
       commands.ts
       extension-ui.ts
+      file-completion.ts
+      login-flow.ts
+      pi-auth.ts
       pi-session.ts
+      project-paths.ts
       transcript.ts
       ui-renderer.ts
   test/
@@ -102,6 +108,26 @@ Current progress:
   routing, safe rejection of unknown commands, saved sessions, and `/new` and
   `/resume` session replacement. Model and thinking-level choice also use the
   Pi SDK state, and the status line shows Pi's token, context, and cost data.
+  Slash commands and `@` project paths complete in the composer. `/login` uses
+  Pi's `ModelRuntime` auth flow, saves through Pi's normal credential store,
+  and supports API-key and OAuth prompts.
+
+Current file bounds:
+
+- `app.tsx` owns the screen layout and root keys.
+- `composer.tsx` alone owns draft text, slash and file completion, and the
+  command menu.
+- `dialog.tsx` renders extension and auth dialogs. Secret input keeps the real
+  value in a local buffer and only draws bullets.
+- `pi-auth.ts` maps Pi provider auth data. `login-flow.ts` drives provider
+  choice and auth prompts. Neither app state nor the view writes `auth.json`.
+- `project-paths.ts` owns the bounded file index. It skips source control,
+  dependency, cache, and build trees.
+
+`app-state.ts` remains too broad. Before adding more built-in command flows,
+split session replacement, model choice, and thought-level choice from its
+queue and snapshot core. Do not add provider, file-system, or OpenTUI details
+to that file.
 
 ### 1. Prove the base
 

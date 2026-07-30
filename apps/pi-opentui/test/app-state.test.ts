@@ -26,6 +26,7 @@ test("folds session events and commands into app state", () => {
   let resumedPath: string | undefined
   let selectedModel: string | undefined
   let selectedThinking: string | undefined
+  let savedLogin: string | undefined
   let sessionStatsReads = 0
   let modelState: PiModelState = {
     selected: {
@@ -117,6 +118,18 @@ test("folds session events and commands into app state", () => {
         reasoning: true,
       },
     ]),
+    authProviders: Effect.succeed([
+      {
+        id: "opencode-go",
+        name: "OpenCode Go",
+        type: "api_key" as const,
+        methodName: "OpenCode Go API key",
+        loginLabel: undefined,
+        interactive: true,
+        configured: false,
+        source: undefined,
+      },
+    ]),
     sessions: Effect.succeed([
       {
         path: "/sessions/old.jsonl",
@@ -187,6 +200,30 @@ test("folds session events and commands into app state", () => {
         }
         return modelState
       }),
+    login: (provider, type, interaction) =>
+      Effect.tryPromise({
+        try: () => {
+          interaction.notify({
+            type: "auth_url",
+            url: "https://login.example.test/device",
+            instructions: "Open the login page",
+          })
+          return interaction.prompt({
+            type: "secret",
+            message: "Enter API key",
+            placeholder: "key",
+          })
+        },
+        catch: (cause) =>
+          new PiSessionError({ operation: "login", cause }),
+      }).pipe(
+        Effect.tap((key) =>
+          Effect.sync(() => {
+            savedLogin = `${provider}/${type}/${key}`
+          }),
+        ),
+        Effect.asVoid,
+      ),
     abort: Effect.sync(() => {
       failPrompt?.()
     }),
@@ -361,6 +398,84 @@ test("folds session events and commands into app state", () => {
       }
       expect(selectedThinking).toBe("high")
       expect((yield* app.get).thinkingLevel).toBe("high")
+
+      yield* app.dispatch({
+        _tag: "Prompt",
+        text: "/login opencode-go",
+      })
+      let loginDialog = (yield* app.get).dialog
+      while (loginDialog === undefined) {
+        yield* Effect.yieldNow()
+        loginDialog = (yield* app.get).dialog
+      }
+      expect(loginDialog.kind).toBe("secret")
+      expect(loginDialog.title).toBe("Enter API key")
+      expect(loginDialog.message).toContain(
+        "https://login.example.test/device",
+      )
+      yield* app.dispatch({
+        _tag: "ResolveDialog",
+        id: loginDialog.id,
+        value: "private-key",
+      })
+      while (savedLogin === undefined) {
+        yield* Effect.yieldNow()
+      }
+      expect(savedLogin).toBe(
+        "opencode-go/api_key/private-key",
+      )
+      while (
+        !(yield* app.get).transcript.rows.some(
+          (row) => row.content === "Saved API key for OpenCode Go",
+        )
+      ) {
+        yield* Effect.yieldNow()
+      }
+      expect(
+        (yield* app.get).transcript.rows.some((row) =>
+          row.content.includes("private-key"),
+        ),
+      ).toBe(false)
+      expect(
+        (yield* app.get).transcript.rows.some((row) =>
+          row.content.includes("login.example.test"),
+        ),
+      ).toBe(false)
+
+      savedLogin = undefined
+      yield* app.dispatch({
+        _tag: "Prompt",
+        text: "/login opencode-go",
+      })
+      let cancelledDialog = (yield* app.get).dialog
+      while (cancelledDialog === undefined) {
+        yield* Effect.yieldNow()
+        cancelledDialog = (yield* app.get).dialog
+      }
+      yield* app.dispatch({
+        _tag: "ResolveDialog",
+        id: cancelledDialog.id,
+        value: undefined,
+      })
+      while ((yield* app.get).phase !== "ready") {
+        yield* Effect.yieldNow()
+      }
+      expect((yield* app.get).error).toBeUndefined()
+      expect(savedLogin).toBeUndefined()
+
+      yield* app.dispatch({
+        _tag: "Prompt",
+        text: "/login opencode-go",
+      })
+      while ((yield* app.get).dialog === undefined) {
+        yield* Effect.yieldNow()
+      }
+      yield* app.dispatch({ _tag: "Abort" })
+      while ((yield* app.get).phase !== "ready") {
+        yield* Effect.yieldNow()
+      }
+      expect((yield* app.get).error).toBeUndefined()
+      expect(savedLogin).toBeUndefined()
 
       yield* app.dispatch({ _tag: "Prompt", text: "/new" })
       while (

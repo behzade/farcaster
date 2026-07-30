@@ -10,6 +10,10 @@ import type { AppCommand } from "../src/services/app-state.ts"
 
 const commands: Array<AppCommand> = []
 const bridge: AppBridge = {
+  projectPaths: () => [
+    { path: "src/", isDirectory: true },
+    { path: "src/app.tsx", isDirectory: false },
+  ],
   initial: {
     cwd: "/work/pi",
     phase: "ready",
@@ -63,6 +67,7 @@ const bridge: AppBridge = {
       nextRowId: 2,
     },
     dialog: undefined,
+    authNotice: undefined,
     statuses: {},
     commands: [
       {
@@ -209,6 +214,91 @@ test("completes slash commands while typing", () => {
           expect(commands).toContainEqual({
             _tag: "Prompt",
             text: "/resume",
+          })
+        }),
+      (setup) => Effect.sync(() => setup.renderer.destroy()),
+    ),
+  )
+})
+
+test("completes file mentions while typing", () => {
+  commands.length = 0
+  return Effect.runPromise(
+    Effect.acquireUseRelease(
+      Effect.tryPromise(() =>
+        testRender(() => <App bridge={bridge} />, {
+          width: 100,
+          height: 30,
+        }),
+      ),
+      (setup) =>
+        Effect.gen(function* () {
+          yield* Effect.tryPromise(() =>
+            setup.mockInput.typeText("check @app"),
+          )
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(setup.captureCharFrame()).toContain("src/app.tsx")
+
+          setup.mockInput.pressTab()
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(setup.captureCharFrame()).toContain(
+            "check @src/app.tsx",
+          )
+
+          setup.mockInput.pressEnter()
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(commands).toContainEqual({
+            _tag: "Prompt",
+            text: "check @src/app.tsx",
+          })
+        }),
+      (setup) => Effect.sync(() => setup.renderer.destroy()),
+    ),
+  )
+})
+
+test("hides login secrets while resolving them", () => {
+  commands.length = 0
+  const secretBridge: AppBridge = {
+    ...bridge,
+    initial: {
+      ...bridge.initial,
+      phase: "running",
+      dialog: {
+        id: 9,
+        kind: "secret",
+        title: "Enter API key",
+        message: undefined,
+        options: [],
+        placeholder: "key",
+      },
+    },
+  }
+
+  return Effect.runPromise(
+    Effect.acquireUseRelease(
+      Effect.tryPromise(() =>
+        testRender(() => <App bridge={secretBridge} />, {
+          width: 80,
+          height: 24,
+        }),
+      ),
+      (setup) =>
+        Effect.gen(function* () {
+          yield* Effect.tryPromise(() =>
+            setup.mockInput.typeText("private-key"),
+          )
+          yield* Effect.tryPromise(() => setup.flush())
+          const frame = setup.captureCharFrame()
+          expect(frame).toContain("input hidden")
+          expect(frame).not.toContain("private-key")
+
+          setup.mockInput.pressEnter()
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(commands).toContainEqual({
+            _tag: "ResolveDialog",
+            id: 9,
+            value: "private-key",
           })
         }),
       (setup) => Effect.sync(() => setup.renderer.destroy()),

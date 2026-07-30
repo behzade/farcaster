@@ -13,6 +13,12 @@ import {
 } from "@earendil-works/pi-coding-agent"
 import { Context, Data, Effect, Layer, Stream } from "effect"
 import { AppConfig } from "./app-config.ts"
+import {
+  piAuthProviders,
+  type PiAuthInteraction,
+  type PiAuthProvider,
+  type PiAuthType,
+} from "./pi-auth.ts"
 
 export interface ExtensionLoadError {
   readonly path: string
@@ -51,6 +57,10 @@ export interface PiSessionShape {
   readonly sessionStats: Effect.Effect<SessionStats>
   readonly modelState: Effect.Effect<PiModelState>
   readonly models: Effect.Effect<ReadonlyArray<PiModelInfo>, PiSessionError>
+  readonly authProviders: Effect.Effect<
+    ReadonlyArray<PiAuthProvider>,
+    PiSessionError
+  >
   readonly sessions: Effect.Effect<ReadonlyArray<SessionInfo>, PiSessionError>
   readonly messages: Effect.Effect<ReadonlyArray<unknown>>
   readonly bindExtensions: (
@@ -72,6 +82,11 @@ export interface PiSessionShape {
   readonly selectThinking: (
     level: PiThinkingLevel,
   ) => Effect.Effect<PiModelState, PiSessionError>
+  readonly login: (
+    provider: string,
+    type: PiAuthType,
+    interaction: PiAuthInteraction,
+  ) => Effect.Effect<void, PiSessionError>
   readonly abort: Effect.Effect<void, PiSessionError>
 }
 
@@ -87,6 +102,8 @@ export class PiSessionError extends Data.TaggedError("PiSessionError")<{
     | "prompt"
     | "compact"
     | "models"
+    | "auth"
+    | "login"
     | "model"
     | "thinking"
     | "list"
@@ -102,6 +119,7 @@ export interface OpenedPiSession {
   readonly getCommands: () => Array<SlashCommandInfo>
   readonly getModelState: () => PiModelState
   readonly listModels: () => Promise<Array<PiModelInfo>>
+  readonly listAuthProviders: () => Promise<Array<PiAuthProvider>>
   readonly listSessions: () => Promise<Array<SessionInfo>>
   readonly getMessages: () => ReadonlyArray<unknown>
   readonly newSession: () => Promise<ReadonlyArray<unknown>>
@@ -113,6 +131,11 @@ export interface OpenedPiSession {
   readonly selectThinking: (
     level: PiThinkingLevel,
   ) => Promise<PiModelState>
+  readonly login: (
+    provider: string,
+    type: PiAuthType,
+    interaction: PiAuthInteraction,
+  ) => Promise<void>
   readonly session: {
     readonly subscribe: (
       listener: (event: AgentSessionEvent) => void,
@@ -274,6 +297,13 @@ const openPiSession: OpenPiSession = (cwd, saveSessions) => {
         })
       }
 
+      const listAuthProviders = (): Promise<Array<PiAuthProvider>> =>
+        Effect.runPromise(
+          Effect.sync(() =>
+            piAuthProviders(runtime.session.modelRuntime),
+          ).pipe(Effect.map((providers) => [...providers])),
+        )
+
       return {
         session: {
           subscribe: (listener: (event: AgentSessionEvent) => void) => {
@@ -313,6 +343,7 @@ const openPiSession: OpenPiSession = (cwd, saveSessions) => {
               ),
             ),
           ),
+        listAuthProviders,
         getMessages: () => runtime.session.messages,
         listSessions: () =>
           Effect.runPromise(
@@ -381,6 +412,16 @@ const openPiSession: OpenPiSession = (cwd, saveSessions) => {
               runtime.session.setThinkingLevel(level)
               return getModelState()
             }),
+          ),
+        login: (provider, type, interaction) =>
+          Effect.runPromise(
+            Effect.tryPromise(() =>
+              runtime.session.modelRuntime.login(
+                provider,
+                type,
+                interaction,
+              ),
+            ).pipe(Effect.asVoid),
           ),
         shutdown: () =>
           Effect.runPromise(
@@ -464,6 +505,11 @@ export const makePiSessionLayer = (
           catch: (cause) =>
             new PiSessionError({ operation: "models", cause }),
         }),
+        authProviders: Effect.tryPromise({
+          try: result.listAuthProviders,
+          catch: (cause) =>
+            new PiSessionError({ operation: "auth", cause }),
+        }),
         sessions: Effect.tryPromise({
           try: result.listSessions,
           catch: (cause) =>
@@ -509,6 +555,12 @@ export const makePiSessionLayer = (
             try: () => result.selectThinking(level),
             catch: (cause) =>
               new PiSessionError({ operation: "thinking", cause }),
+          }),
+        login: (provider, type, interaction) =>
+          Effect.tryPromise({
+            try: () => result.login(provider, type, interaction),
+            catch: (cause) =>
+              new PiSessionError({ operation: "login", cause }),
           }),
         abort: sdkCall("abort", () => result.session.abort()),
       }

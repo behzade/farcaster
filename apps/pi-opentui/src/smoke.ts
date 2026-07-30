@@ -23,6 +23,7 @@ const smoke = Effect.scoped(
       setDialog: () => Effect.void,
       notify: () => Effect.void,
       setStatus: () => Effect.void,
+      setAuthNotice: () => Effect.void,
     })
     yield* pi.bindExtensions(extensionUi.context, () => undefined)
     const sessionBefore = yield* pi.sessionStats
@@ -30,6 +31,7 @@ const smoke = Effect.scoped(
     const sessionAfter = yield* pi.sessionStats
     const modelState = yield* pi.modelState
     const models = yield* pi.models
+    const authProviders = yield* pi.authProviders
     const modelsByProvider = Object.fromEntries(
       Object.entries(
         models.reduce<Record<string, number>>((counts, model) => {
@@ -55,6 +57,13 @@ const smoke = Effect.scoped(
           thinkingLevel: modelState.thinkingLevel,
           availableModels: models.length,
           modelsByProvider,
+          loginMethods: authProviders.length,
+          hasOpenCodeGoLogin: authProviders.some(
+            (provider) =>
+              provider.id === "opencode-go" &&
+              provider.type === "api_key" &&
+              provider.interactive,
+          ),
           sessionReplacement: {
             before: sessionBefore.sessionId,
             after: sessionAfter.sessionId,
