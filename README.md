@@ -35,7 +35,8 @@ separate `nix-config` repo.
 - [`sandbox-broker`](sandbox-broker) contains the Rust broker and its security
   documentation.
 - [`extensions/dense-tools`](extensions/dense-tools) renders compact tool output
-  and side-by-side diffs.
+  and provides `pi-diff`, the same syntax-highlighted diff view as a terminal
+  command.
 - [`nix`](nix) contains the pinned builds for Pi and every packaged extension.
 - [`patches`](patches) contains the local changes applied to third-party Pi
   extensions.
@@ -65,7 +66,7 @@ The main checks can also be run directly:
 ```sh
 npm run check --prefix extensions/sandbox
 cargo test --manifest-path sandbox-broker/Cargo.toml
-node --test tests/governance.test.ts tests/theme-and-rendering.test.ts
+node --test tests/governance.test.ts tests/theme-and-rendering.test.ts tests/terminal-text.test.ts
 ```
 
 Individual packages are available for focused work:

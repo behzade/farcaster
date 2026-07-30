@@ -5,6 +5,8 @@ import test from "node:test";
 const themePath = new URL("../themes/gruvbox-dark-hard.json", import.meta.url);
 const denseToolsPath = new URL("../extensions/dense-tools/index.ts", import.meta.url);
 const pierreEditPath = new URL("../extensions/dense-tools/pierre-edit.ts", import.meta.url);
+const pierreRendererPath = new URL("../extensions/dense-tools/pierre-renderer.ts", import.meta.url);
+const piDiffPath = new URL("../extensions/dense-tools/pi-diff.ts", import.meta.url);
 const chatLayoutPath = new URL("../extensions/dense-tools/chat-layout.ts", import.meta.url);
 const sandboxPath = new URL("../extensions/sandbox/index.ts", import.meta.url);
 
@@ -100,29 +102,43 @@ test("dense reads keep group state and hide follower rows", async () => {
 
 test("Pierre edit renderer wraps responsive split diffs and keeps change backgrounds", async () => {
   const source = await readFile(pierreEditPath, "utf8");
+  const renderer = await readFile(pierreRendererPath, "utf8");
   assert.match(source, /width >= 120/);
   assert.match(source, /renderSplit/);
-  assert.match(source, /COLLAPSED_DIFF_ROWS = 30/);
-  assert.match(source, /capRows\(indexes, expanded\)/);
+  assert.match(source, /from "\.\/pierre-renderer\.ts"/);
+  assert.match(renderer, /COLLAPSED_DIFF_ROWS = 30/);
+  assert.match(renderer, /capRows\(indexes, expanded\)/);
   assert.match(source, /cachedWidth/);
   assert.match(source, /cachedLines/);
   assert.match(source, /if \(patchChanged\) this\.rebuild\(\)/);
   assert.match(source, /if \(this\.cachedLines && this\.cachedWidth === width\) return this\.cachedLines/);
-  assert.match(source, /sliceByColumn/);
-  assert.match(source, /function wrapByColumns/);
-  assert.match(source, /function wrapCell/);
-  assert.match(source, /capped\.visible\.flatMap/);
-  assert.match(source, /Math\.max\(oldCell\.lines\.length, newCell\.lines\.length\)/);
-  assert.match(source, /oldCell\.lines\[lineIndex\] \?\? fitCell/);
-  assert.match(source, /newCell\.lines\[lineIndex\] \?\? fitCell/);
-  assert.match(source, /inlineBackground/);
-  assert.match(source, /frameDiff/);
-  assert.match(source, /DIFF_BACKGROUND = "#191b1c"/);
-  assert.match(source, /theme\.fg\("borderMuted", "│"\)/);
-  assert.doesNotMatch(source, /" │ "/);
-  assert.doesNotMatch(source, /theme\.fg\("muted", "before"\)/);
-  assert.match(source, /#412724/);
-  assert.match(source, /#363922/);
+  assert.match(source, /useTerminalText\(\{ sliceByColumn, truncateToWidth, visibleWidth \}\)/);
+  assert.match(renderer, /terminalText\.sliceByColumn/);
+  assert.match(renderer, /function wrapByColumns/);
+  assert.match(renderer, /function wrapCell/);
+  assert.match(renderer, /capped\.visible\.flatMap/);
+  assert.match(renderer, /Math\.max\(oldCell\.lines\.length, newCell\.lines\.length\)/);
+  assert.match(renderer, /oldCell\.lines\[lineIndex\] \?\? fitCell/);
+  assert.match(renderer, /newCell\.lines\[lineIndex\] \?\? fitCell/);
+  assert.match(renderer, /inlineBackground/);
+  assert.match(renderer, /frameDiff/);
+  assert.match(renderer, /DIFF_BACKGROUND = "#191b1c"/);
+  assert.match(renderer, /theme\.fg\("borderMuted", "│"\)/);
+  assert.doesNotMatch(renderer, /" │ "/);
+  assert.doesNotMatch(renderer, /theme\.fg\("muted", "before"\)/);
+  assert.match(renderer, /#412724/);
+  assert.match(renderer, /#363922/);
+});
+
+test("pi-diff renders a whole snapshot in one process", async () => {
+  const source = await readFile(piDiffPath, "utf8");
+  const renderer = await readFile(pierreRendererPath, "utf8");
+  assert.match(source, /spawnSync/);
+  assert.match(source, /"--no-index"/);
+  assert.match(source, /renderPatch\(result\.stdout/);
+  assert.match(renderer, /flatMap\(\(parsed: any\) => parsed\.files/);
+  assert.match(renderer, /width >= 120/);
+  assert.match(renderer, /renderSplit\(rows, width, true, theme\)/);
 });
 
 test("chat layout leaves messages unframed and gives chat rows a margin", async () => {

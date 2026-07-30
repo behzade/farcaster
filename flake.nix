@@ -58,6 +58,7 @@
         system:
         let
           pkgs = pkgsFor system;
+          denseTools = pkgs.callPackage ./nix/pi-dense-tools.nix { };
           mcpCli = pkgs.callPackage ./nix/pi-mcp-cli.nix { };
           webAccess = pkgs.callPackage ./nix/pi-web-access.nix { };
         in
@@ -83,13 +84,35 @@
             test "$(mcp-cli --version)" = "mcp-cli v0.3.0"
             touch "$out"
           '';
+          dense-tools = pkgs.runCommand "pi-dense-tools-test" { nativeBuildInputs = [ denseTools ]; } ''
+            mkdir before after empty-before empty-after
+            printf '%s\n' '{ lib, ... }:' 'let' '  oldValue = "before";' 'in' '{ inherit oldValue; }' > before/sample.nix
+            printf '%s\n' '{ lib, ... }:' 'let' '  newValue = "after";' 'in' '{ inherit newValue; }' > after/sample.nix
+
+            pi-diff --width=140 before after > split
+            grep -F 'sample.nix' split
+            grep -F '│' split
+            grep -F $'\033[38;2;251;73;52' split
+
+            pi-diff --width=80 before after > unified
+            grep -F 'sample.nix' unified
+            if grep -F '│' unified; then
+              echo "narrow diffs must use the unified layout" >&2
+              exit 1
+            fi
+
+            pi-diff empty-before empty-after > empty
+            test ! -s empty
+            touch "$out"
+          '';
           permission-system = pkgs.callPackage ./nix/pi-permission-system.nix { };
           web-access = webAccess;
 
           governance = pkgs.runCommand "pi-governance-tests" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
             node --test \
               ${self}/tests/governance.test.ts \
-              ${self}/tests/theme-and-rendering.test.ts
+              ${self}/tests/theme-and-rendering.test.ts \
+              ${self}/tests/terminal-text.test.ts
             touch "$out"
           '';
         }
