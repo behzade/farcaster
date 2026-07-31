@@ -1,25 +1,23 @@
 import { BunContext, BunRuntime } from "@effect/platform-bun"
-import { render } from "@opentui/solid"
+import { Data, Deferred, Effect, Fiber, Layer, Runtime, Stream } from "effect"
+import { mountApp } from "./opentui/app-view.ts"
 import {
-  Data,
-  Deferred,
-  Effect,
-  Fiber,
-  Runtime,
-  Stream,
-} from "effect"
-import { App, type AppBridge } from "./app.tsx"
+  UiRenderer,
+  UiRendererLive,
+} from "./opentui/ui-renderer.ts"
 import { AppLive } from "./runtime.ts"
 import { AppState } from "./services/app-state.ts"
-import { UiRenderer } from "./services/ui-renderer.ts"
 import {
   listProjectPaths,
   type ProjectPath,
 } from "./services/project-paths.ts"
+import type { AppClient } from "./ui/app-client.ts"
 
 class RenderError extends Data.TaggedError("RenderError")<{
   readonly cause: unknown
 }> {}
+
+const MainLive = Layer.merge(AppLive, UiRendererLive)
 
 const program = Effect.scoped(
   Effect.gen(function* () {
@@ -32,7 +30,7 @@ const program = Effect.scoped(
     const runFork = Runtime.runFork(runtime)
     let projectPaths: ReadonlyArray<ProjectPath> = []
 
-    const bridge: AppBridge = {
+    const client: AppClient = {
       initial,
       projectPaths: () => projectPaths,
       subscribe: (listener) => {
@@ -55,10 +53,13 @@ const program = Effect.scoped(
       },
     }
 
-    yield* Effect.tryPromise({
-      try: () => render(() => <App bridge={bridge} />, ui.renderer),
-      catch: (cause) => new RenderError({ cause }),
-    })
+    yield* Effect.acquireRelease(
+      Effect.try({
+        try: () => mountApp(ui.renderer, client),
+        catch: (cause) => new RenderError({ cause }),
+      }),
+      (view) => Effect.sync(() => view.destroy()),
+    )
     yield* listProjectPaths(initial.cwd).pipe(
       Effect.catchAll(() => Effect.succeed([])),
       Effect.tap((entries) =>
@@ -71,7 +72,7 @@ const program = Effect.scoped(
     yield* Deferred.await(stopped)
   }),
 ).pipe(
-  Effect.provide(AppLive),
+  Effect.provide(MainLive),
   Effect.provide(BunContext.layer),
 )
 

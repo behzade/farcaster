@@ -2,8 +2,6 @@
   "compilerOptions": {
     "allowImportingTsExtensions": true,
     "exactOptionalPropertyTypes": true,
-    "jsx": "preserve",
-    "jsxImportSource": "@opentui/solid",
     "lib": ["ES2024"],
     "module": "Preserve",
     "moduleResolution": "Bundler",

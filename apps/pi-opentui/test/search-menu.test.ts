@@ -1,11 +1,11 @@
-import { testRender } from "@opentui/solid"
+import { createTestRenderer } from "@opentui/core/testing"
 import { expect, test } from "bun:test"
 import { Effect } from "effect"
+import { SearchMenuView } from "../src/opentui/search-menu-view.ts"
 import {
-  SearchMenu,
   filterOptions,
   nearbyOptions,
-} from "../src/search-menu.tsx"
+} from "../src/ui/search.ts"
 
 test("filters without regard to case and keeps eight nearby options", () => {
   expect(
@@ -29,31 +29,30 @@ test("searches while its input stays active and selects a result", () => {
 
   return Effect.runPromise(
     Effect.acquireUseRelease(
-      Effect.tryPromise(() =>
-        testRender(() => (
-          <SearchMenu
-            title="Models"
-            message="Choose a model."
-            options={[
-              "openai/gpt-5",
-              "opencode-go/minimax-m2.1",
-              "opencode-go/glm-4.7",
-            ]}
-            resolve={(value) => {
-              selected = value
-            }}
-          />
-        ), {
-          width: 90,
-          height: 24,
-        }),
-      ),
-      (setup) =>
+      Effect.gen(function* () {
+        const setup = yield* Effect.tryPromise(() =>
+          createTestRenderer({ width: 90, height: 24 })
+        )
+        const view = new SearchMenuView(setup.renderer, {
+          title: "Models",
+          message: "Choose a model.",
+          options: [
+            "openai/gpt-5",
+            "opencode-go/minimax-m2.1",
+            "opencode-go/glm-4.7",
+          ],
+          resolve: (value) => {
+            selected = value
+          },
+        })
+        setup.renderer.root.add(view.root)
+        view.focus()
+        return { setup, view }
+      }),
+      ({ setup }) =>
         Effect.gen(function* () {
           yield* Effect.tryPromise(() => setup.renderOnce())
-          yield* Effect.tryPromise(() =>
-            setup.mockInput.typeText("GLM"),
-          )
+          yield* Effect.tryPromise(() => setup.mockInput.typeText("GLM"))
           yield* Effect.tryPromise(() => setup.flush())
           yield* Effect.tryPromise(() => setup.renderOnce())
 
@@ -66,7 +65,11 @@ test("searches while its input stays active and selects a result", () => {
           yield* Effect.tryPromise(() => setup.flush())
           expect(selected).toBe("opencode-go/glm-4.7")
         }),
-      (setup) => Effect.sync(() => setup.renderer.destroy()),
+      ({ setup, view }) =>
+        Effect.sync(() => {
+          view.destroy()
+          setup.renderer.destroy()
+        }),
     ),
   )
 })
@@ -76,22 +79,23 @@ test("moves through results and cancels when there are no matches", () => {
 
   return Effect.runPromise(
     Effect.acquireUseRelease(
-      Effect.tryPromise(() =>
-        testRender(() => (
-          <SearchMenu
-            title="Commands"
-            initialQuery="zz"
-            options={["/help", "/model", "/resume"]}
-            resolve={(value) => {
-              resolutions.push(value)
-            }}
-          />
-        ), {
-          width: 80,
-          height: 22,
-        }),
-      ),
-      (setup) =>
+      Effect.gen(function* () {
+        const setup = yield* Effect.tryPromise(() =>
+          createTestRenderer({ width: 80, height: 22 })
+        )
+        const view = new SearchMenuView(setup.renderer, {
+          title: "Commands",
+          initialQuery: "zz",
+          options: ["/help", "/model", "/resume"],
+          resolve: (value) => {
+            resolutions.push(value)
+          },
+        })
+        setup.renderer.root.add(view.root)
+        view.focus()
+        return { setup, view }
+      }),
+      ({ setup }) =>
         Effect.gen(function* () {
           yield* Effect.tryPromise(() => setup.renderOnce())
           expect(setup.captureCharFrame()).toContain("No matches")
@@ -101,10 +105,15 @@ test("moves through results and cancels when there are no matches", () => {
           expect(resolutions).toEqual([])
 
           setup.mockInput.pressEscape()
+          yield* Effect.sleep("30 millis")
           yield* Effect.tryPromise(() => setup.flush())
           expect(resolutions).toEqual([undefined])
         }),
-      (setup) => Effect.sync(() => setup.renderer.destroy()),
+      ({ setup, view }) =>
+        Effect.sync(() => {
+          view.destroy()
+          setup.renderer.destroy()
+        }),
     ),
   )
 })

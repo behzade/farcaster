@@ -1,0 +1,489 @@
+import {
+  createTestRenderer,
+  type TestRendererSetup,
+} from "@opentui/core/testing"
+import { expect, test } from "bun:test"
+import { Effect } from "effect"
+import {
+  AppView,
+  mountApp,
+} from "../src/opentui/app-view.ts"
+import { createCommandMenu } from "../src/opentui/dialog-view.ts"
+import type {
+  AppCommand,
+  AppSnapshot,
+} from "../src/services/app-state.ts"
+import type { AppClient } from "../src/ui/app-client.ts"
+
+const baseSnapshot: AppSnapshot = {
+  cwd: "/work/pi",
+  phase: "ready",
+  activeTools: ["read", "sandbox"],
+  model: {
+    provider: "openai",
+    id: "gpt-5",
+    name: "GPT-5",
+    reasoning: true,
+  },
+  thinkingLevel: "high",
+  sessionStats: {
+    sessionFile: undefined,
+    sessionId: "session-1",
+    userMessages: 1,
+    assistantMessages: 1,
+    toolCalls: 0,
+    toolResults: 0,
+    totalMessages: 2,
+    tokens: {
+      input: 1000,
+      output: 200,
+      cacheRead: 300,
+      cacheWrite: 0,
+      total: 1500,
+    },
+    cost: 0.0123,
+    contextUsage: {
+      tokens: 32000,
+      contextWindow: 128000,
+      percent: 25,
+    },
+  },
+  extensionPaths: ["/agent/extensions/sandbox"],
+  extensionErrors: [],
+  eventCount: 3,
+  lastEvent: "agent_settled",
+  error: undefined,
+  transcript: {
+    rows: [
+      {
+        id: "row-1",
+        kind: "user",
+        title: "you",
+        content: "hello from user",
+        pending: false,
+        isError: false,
+      },
+    ],
+    activeAssistantId: undefined,
+    nextRowId: 2,
+  },
+  dialog: undefined,
+  authNotice: undefined,
+  statuses: {},
+  commands: [
+    {
+      name: "session",
+      description: "Show session info and stats",
+      source: "builtin",
+    },
+  ],
+}
+
+const makeClient = (initial: AppSnapshot = baseSnapshot) => {
+  const commands: Array<AppCommand> = []
+  const listeners = new Set<(snapshot: AppSnapshot) => void>()
+  const client: AppClient = {
+    initial,
+    projectPaths: () => [
+      { path: "src/", isDirectory: true },
+      { path: "src/opentui/app-view.ts", isDirectory: false },
+    ],
+    subscribe: (listener) => {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
+    },
+    dispatch: (command) => {
+      commands.push(command)
+    },
+    quit: () => undefined,
+  }
+  return {
+    client,
+    commands,
+    emit: (snapshot: AppSnapshot) => {
+      for (const listener of listeners) listener(snapshot)
+    },
+    listenerCount: () => listeners.size,
+  }
+}
+
+interface MountedApp {
+  readonly setup: TestRendererSetup
+  readonly view: AppView
+}
+
+const acquireApp = (
+  client: AppClient,
+  width = 100,
+  height = 30,
+): Effect.Effect<MountedApp, unknown> =>
+  Effect.gen(function* () {
+    const setup = yield* Effect.tryPromise(() =>
+      createTestRenderer({ width, height })
+    )
+    const view = yield* Effect.sync(() => mountApp(setup.renderer, client))
+    return { setup, view }
+  })
+
+const releaseApp = ({ setup, view }: MountedApp): Effect.Effect<void> =>
+  Effect.sync(() => {
+    view.destroy()
+    setup.renderer.destroy()
+  })
+
+test("renders chat and sends input", () => {
+  const state = makeClient()
+  return Effect.runPromise(
+    Effect.acquireUseRelease(
+      acquireApp(state.client),
+      ({ setup }) =>
+        Effect.gen(function* () {
+          yield* Effect.tryPromise(() => setup.renderOnce())
+          const frame = setup.captureCharFrame()
+
+          expect(frame).toContain("pi-next")
+          expect(frame).toContain("/work/pi")
+          expect(frame).toContain("openai/gpt-5")
+          expect(frame).toContain("thinking high")
+          expect(frame).toContain("1,500 tokens")
+          expect(frame).toContain("ctx 25%")
+          expect(frame).toContain("$0.0123")
+          expect(frame).toContain("hello from user")
+
+          yield* Effect.tryPromise(() =>
+            setup.mockInput.typeText("run tests")
+          )
+          setup.mockInput.pressEnter()
+          yield* Effect.tryPromise(() => setup.flush())
+
+          expect(state.commands).toEqual([
+            { _tag: "Prompt", text: "run tests" },
+          ])
+        }),
+      releaseApp,
+    ),
+  )
+})
+
+test("resolves an extension selection dialog", () => {
+  const state = makeClient({
+    ...baseSnapshot,
+    phase: "running",
+    dialog: {
+      id: 7,
+      kind: "select",
+      title: "Allow write?",
+      message: "/tmp/output",
+      options: ["Allow once", "Deny"],
+      placeholder: undefined,
+    },
+  })
+
+  return Effect.runPromise(
+    Effect.acquireUseRelease(
+      acquireApp(state.client, 80, 24),
+      ({ setup }) =>
+        Effect.gen(function* () {
+          yield* Effect.tryPromise(() => setup.renderOnce())
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(setup.captureCharFrame()).toContain("Allow write?")
+
+          setup.mockInput.pressArrow("down")
+          setup.mockInput.pressEnter()
+          yield* Effect.tryPromise(() => setup.flush())
+
+          expect(state.commands).toContainEqual({
+            _tag: "ResolveDialog",
+            id: 7,
+            value: "Deny",
+          })
+        }),
+      releaseApp,
+    ),
+  )
+})
+
+test("completes slash commands while typing", () => {
+  const state = makeClient({
+    ...baseSnapshot,
+    commands: [
+      ...baseSnapshot.commands,
+      {
+        name: "resume",
+        description: "Resume a saved session",
+        source: "builtin",
+      },
+    ],
+  })
+
+  return Effect.runPromise(
+    Effect.acquireUseRelease(
+      acquireApp(state.client),
+      ({ setup }) =>
+        Effect.gen(function* () {
+          yield* Effect.tryPromise(() => setup.mockInput.typeText("/res"))
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(setup.captureCharFrame()).toContain(
+            "/resume — Resume a saved session",
+          )
+
+          setup.mockInput.pressTab()
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(setup.captureCharFrame()).toContain("/resume")
+
+          setup.mockInput.pressEnter()
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(state.commands).toContainEqual({
+            _tag: "Prompt",
+            text: "/resume",
+          })
+        }),
+      releaseApp,
+    ),
+  )
+})
+
+test("completes file mentions while typing", () => {
+  const state = makeClient()
+  return Effect.runPromise(
+    Effect.acquireUseRelease(
+      acquireApp(state.client),
+      ({ setup }) =>
+        Effect.gen(function* () {
+          yield* Effect.tryPromise(() =>
+            setup.mockInput.typeText("check @app")
+          )
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(setup.captureCharFrame()).toContain(
+            "src/opentui/app-view.ts",
+          )
+
+          setup.mockInput.pressTab()
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(setup.captureCharFrame()).toContain(
+            "check @src/opentui/app-view.ts",
+          )
+
+          setup.mockInput.pressEnter()
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(state.commands).toContainEqual({
+            _tag: "Prompt",
+            text: "check @src/opentui/app-view.ts",
+          })
+        }),
+      releaseApp,
+    ),
+  )
+})
+
+test("hides login secrets while resolving them", () => {
+  const state = makeClient({
+    ...baseSnapshot,
+    phase: "running",
+    dialog: {
+      id: 9,
+      kind: "secret",
+      title: "Enter API key",
+      message: undefined,
+      options: [],
+      placeholder: "key",
+    },
+  })
+
+  return Effect.runPromise(
+    Effect.acquireUseRelease(
+      acquireApp(state.client, 80, 24),
+      ({ setup }) =>
+        Effect.gen(function* () {
+          yield* Effect.tryPromise(() =>
+            setup.mockInput.typeText("private-key")
+          )
+          yield* Effect.tryPromise(() => setup.flush())
+          const frame = setup.captureCharFrame()
+          expect(frame).toContain("input hidden")
+          expect(frame).not.toContain("private-key")
+
+          setup.mockInput.pressEnter()
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(state.commands).toContainEqual({
+            _tag: "ResolveDialog",
+            id: 9,
+            value: "private-key",
+          })
+        }),
+      releaseApp,
+    ),
+  )
+})
+
+test("chooses a command from the slash menu", () => {
+  let selected: string | undefined
+  return Effect.runPromise(
+    Effect.acquireUseRelease(
+      Effect.gen(function* () {
+        const setup = yield* Effect.tryPromise(() =>
+          createTestRenderer({ width: 80, height: 24 })
+        )
+        const view = createCommandMenu(
+          setup.renderer,
+          baseSnapshot.commands,
+          (name) => {
+            selected = name
+          },
+        )
+        setup.renderer.root.add(view.root)
+        view.focus()
+        return { setup, view }
+      }),
+      ({ setup }) =>
+        Effect.gen(function* () {
+          yield* Effect.tryPromise(() => setup.renderOnce())
+          expect(setup.captureCharFrame()).toContain("Commands")
+
+          setup.mockInput.pressEnter()
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(selected).toBe("session")
+        }),
+      ({ setup, view }) =>
+        Effect.sync(() => {
+          view.destroy()
+          setup.renderer.destroy()
+        }),
+    ),
+  )
+})
+
+test("updates a streaming row without duplicating it and unsubscribes", () => {
+  const state = makeClient()
+  return Effect.runPromise(
+    Effect.acquireUseRelease(
+      acquireApp(state.client),
+      ({ setup, view }) =>
+        Effect.gen(function* () {
+          expect(state.listenerCount()).toBe(1)
+          state.emit({
+            ...baseSnapshot,
+            transcript: {
+              ...baseSnapshot.transcript,
+              rows: [
+                {
+                  ...baseSnapshot.transcript.rows[0]!,
+                  content: "streaming update",
+                  pending: true,
+                },
+              ],
+            },
+          })
+          yield* Effect.tryPromise(() => setup.flush())
+          const frame = setup.captureCharFrame()
+          expect(frame).toContain("streaming update")
+          expect(frame.match(/streaming update/g)).toHaveLength(1)
+
+          view.destroy()
+          expect(state.listenerCount()).toBe(0)
+        }),
+      releaseApp,
+    ),
+  )
+})
+
+test("replaces dialogs and restores composer focus", () => {
+  const state = makeClient()
+  const firstDialog: AppSnapshot = {
+    ...baseSnapshot,
+    phase: "running",
+    dialog: {
+      id: 11,
+      kind: "select",
+      title: "First dialog",
+      message: undefined,
+      options: ["One"],
+      placeholder: undefined,
+    },
+  }
+  const secondDialog: AppSnapshot = {
+    ...firstDialog,
+    dialog: {
+      id: 12,
+      kind: "input",
+      title: "Second dialog",
+      message: undefined,
+      options: [],
+      placeholder: "value",
+    },
+  }
+
+  return Effect.runPromise(
+    Effect.acquireUseRelease(
+      acquireApp(state.client),
+      ({ setup }) =>
+        Effect.gen(function* () {
+          state.emit(firstDialog)
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(setup.captureCharFrame()).toContain("First dialog")
+
+          state.emit(secondDialog)
+          yield* Effect.tryPromise(() => setup.flush())
+          const replaced = setup.captureCharFrame()
+          expect(replaced).toContain("Second dialog")
+          expect(replaced).not.toContain("First dialog")
+
+          setup.mockInput.pressEscape()
+          yield* Effect.sleep("30 millis")
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(state.commands).toContainEqual({
+            _tag: "ResolveDialog",
+            id: 12,
+            value: undefined,
+          })
+
+          state.emit({
+            ...baseSnapshot,
+            dialog: undefined,
+          })
+          yield* Effect.tryPromise(() => setup.flush())
+          yield* Effect.tryPromise(() => setup.mockInput.typeText("focused"))
+          setup.mockInput.pressEnter()
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(state.commands).toContainEqual({
+            _tag: "Prompt",
+            text: "focused",
+          })
+        }),
+      releaseApp,
+    ),
+  )
+})
+
+test("closes the command palette and restores composer focus", () => {
+  const state = makeClient()
+  return Effect.runPromise(
+    Effect.acquireUseRelease(
+      acquireApp(state.client),
+      ({ setup }) =>
+        Effect.gen(function* () {
+          yield* Effect.tryPromise(() => setup.mockInput.typeText("/"))
+          setup.mockInput.pressEnter()
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(setup.captureCharFrame()).toContain("Commands")
+          setup.mockInput.pressEscape()
+          yield* Effect.sleep("30 millis")
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(setup.captureCharFrame()).not.toContain("Commands")
+          setup.mockInput.pressBackspace()
+          yield* Effect.tryPromise(() => setup.mockInput.typeText("hello"))
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(setup.captureCharFrame()).toContain("hello")
+          setup.mockInput.pressEnter()
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(state.commands).toContainEqual({
+            _tag: "Prompt",
+            text: "hello",
+          })
+        }),
+      releaseApp,
+    ),
+  )
+})

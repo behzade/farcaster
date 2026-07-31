@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build a new Pi terminal front end with OpenTUI and Solid while keeping Pi's
+Build a new Pi terminal front end with OpenTUI core while keeping Pi's
 agent SDK as the source of truth for sessions, tools, models, extensions, and
 compaction.
 
@@ -11,7 +11,7 @@ The first app will live in `apps/pi-opentui`. It will not replace the current
 
 ## Main choices
 
-- Use Bun, TypeScript, OpenTUI, and Solid for the terminal app.
+- Use Bun, TypeScript, and OpenTUI core for the terminal app.
 - Use the installed `@earendil-works/pi-coding-agent` SDK. Do not copy its
   agent loop or session code.
 - Use Effect for all app work that can fail, wait, run at once, or needs clean
@@ -20,14 +20,17 @@ The first app will live in `apps/pi-opentui`. It will not replace the current
   Layers.
 - Use `@effect/platform` and `@effect/platform-bun` for host access when the
   app needs files, paths, the terminal, or child tasks.
-- Keep Solid signals local to short-lived view state such as focus, open
-  panels, selection, and text input.
-- Keep long-lived state in Effect services. Give Solid a small read and
-  subscribe bridge.
+- Keep long-lived state in Effect services. Give each client a small read,
+  subscribe, dispatch, and quit port with no renderer types.
+- Build OpenTUI renderables once. Update owned renderables through explicit
+  component methods and destroy each component with its scope.
+- Keep view models and input rules free of OpenTUI types when another client
+  could use them. Keep layout, focus, terminal keys, and renderable life spans
+  in `src/opentui`.
 - Do not add `effect-cli` yet. Pi already has argument parsing and this first
   cut has no command tree. Add it only when the new app owns enough commands
   to gain from it.
-- Pin all package versions. OpenTUI and its Solid bridge change fast.
+- Pin all package versions. OpenTUI changes fast.
 
 ## Layer graph
 
@@ -46,11 +49,12 @@ Bun host layer
           +-- commands: prompt, stop, quit
           +-- read and subscribe view
     |
-    +-- OpenTUI renderer
-          +-- scoped terminal setup and restore
+    +-- Client port
+          +-- app state read, subscribe, and dispatch
           |
-          +-- Solid root
-                +-- app state read and subscribe view
+          +-- OpenTUI client
+                +-- scoped terminal setup and restore
+                +-- explicit component updates
                 +-- local focus and input state
 ```
 
@@ -65,15 +69,24 @@ terminal back.
 apps/pi-opentui/
   package.json
   bun.lock
-  bunfig.toml
   tsconfig.json
   src/
-    main.tsx
-    app.tsx
-    composer.tsx
-    dialog.tsx
+    main.ts
     runtime.ts
     smoke.ts
+    ui/
+      app-client.ts
+      app-view-model.ts
+      search.ts
+    opentui/
+      app-view.ts
+      component.ts
+      composer-view.ts
+      dialog-view.ts
+      search-menu-view.ts
+      theme.ts
+      transcript-view.ts
+      ui-renderer.ts
     services/
       app-config.ts
       app-state.ts
@@ -85,12 +98,13 @@ apps/pi-opentui/
       pi-session.ts
       project-paths.ts
       transcript.ts
-      ui-renderer.ts
   test/
-    app.test.tsx
+    app.test.ts
     app-state.test.ts
     pi-session.test.ts
+    search-menu.test.ts
     transcript.test.ts
+    transcript-view.test.ts
 ```
 
 Keep files split by ownership, not by type. Do not add a wrapper when a direct
@@ -114,11 +128,15 @@ Current progress:
 
 Current file bounds:
 
-- `app.tsx` owns the screen layout and root keys.
-- `composer.tsx` alone owns draft text, slash and file completion, and the
-  command menu.
-- `dialog.tsx` renders extension and auth dialogs. Secret input keeps the real
-  value in a local buffer and only draws bullets.
+- `ui/app-client.ts` owns the renderer-free client port. Web or desktop
+  clients can consume the same snapshots and commands.
+- `opentui/app-view.ts` owns the terminal screen layout and root keys.
+- `opentui/composer-view.ts` alone owns draft text, slash and file completion,
+  and the command menu.
+- `opentui/dialog-view.ts` renders extension and auth dialogs. Secret input
+  keeps the real value in a local buffer and only draws bullets.
+- `ui/app-view-model.ts` and `ui/search.ts` contain pure display and search
+  rules. They import no OpenTUI code.
 - `pi-auth.ts` maps Pi provider auth data. `login-flow.ts` drives provider
   choice and auth prompts. Neither app state nor the view writes `auth.json`.
 - `project-paths.ts` owns the bounded file index. It skips source control,
@@ -153,7 +171,7 @@ Add the prompt box and a small message list. Send prompts through the Pi
 session service. Show text, tool starts, tool results, errors, and stop state.
 
 Use an Effect queue for UI commands and one scoped fiber for the Pi event feed.
-Do not call Pi with loose `async` handlers from Solid.
+Do not call Pi with loose `async` handlers from OpenTUI views.
 
 Exit checks:
 
@@ -181,7 +199,7 @@ Exit checks:
 ### 4. Make long sessions fast
 
 - Keep only visible transcript rows mounted.
-- Store raw Pi messages outside Solid.
+- Store raw Pi messages outside the OpenTUI view.
 - Derive view rows once and key them by stable message and tool call IDs.
 - Parse and color large code and diff blocks off the input path.
 - Cancel work for rows that leave the view.
@@ -229,7 +247,7 @@ in Pi's event and session path.
 - Use Effect fibers, queues, streams, schedules, and scopes for wait and
   parallel work.
 - Do not use bare `async` or `Promise.all` in app services.
-- A Solid event handler may only update local view state or submit a command
+- An OpenTUI event handler may only update owned view state or submit a command
   to the Effect app state service.
 - Report extension load faults in the UI and logs.
 - A failed background task must end in app state; do not leave a lost promise.
@@ -239,7 +257,7 @@ in Pi's event and session path.
 - Pi's extension UI types import `pi-tui`. The core SDK does not remove this
   link. The first adapter covers plain dialogs, notices, and status text, but
   widgets and custom views still need OpenTUI forms.
-- A package update can break OpenTUI's JSX bridge or native binary. Exact pins
+- A package update can break OpenTUI's core API or native binary. Exact pins
   and a render test limit this risk.
 - The Pi fork may not exist in the public package source used by Bun. The Nix
   package must give the app the exact SDK build that provides the current

@@ -1,7 +1,12 @@
 # pi-opentui
 
-This is the first proof for a new Pi front end built with OpenTUI, Solid, Bun,
-and Effect. It runs beside the current `pi` command.
+This is the first proof for a new Pi front end built with OpenTUI core, Bun,
+TypeScript, and Effect. It runs beside the current `pi` command.
+
+The OpenTUI client uses explicit component updates rather than a React or
+Solid renderer. Shared snapshots, commands, search rules, and display data
+have no OpenTUI types, so a later web or desktop client can reuse them. Layout,
+focus, terminal input, and renderable life spans remain client-owned.
 
 The current screen starts a saved Pi SDK session, loads and binds the normal
 Pi extension set, and provides:
