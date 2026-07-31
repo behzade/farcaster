@@ -2,6 +2,7 @@ import type {
   AppSnapshot,
   CommandInfo,
 } from "../services/app-state.ts"
+import { sessionStatsWithLiveUsage } from "../services/live-usage.ts"
 
 export interface HeaderViewModel {
   readonly activity: string
@@ -19,10 +20,14 @@ const modelText = (snapshot: AppSnapshot): string => {
 }
 
 const usageText = (snapshot: AppSnapshot): string => {
-  const stats = snapshot.sessionStats
-  const context =
-    stats.contextUsage?.percent == null
-      ? ""
+  const stats = sessionStatsWithLiveUsage(
+    snapshot.sessionStats,
+    snapshot.liveUsage,
+  )
+  const context = stats.contextUsage === undefined
+    ? ""
+    : stats.contextUsage.percent == null
+      ? " · ctx ?"
       : ` · ctx ${Math.round(stats.contextUsage.percent)}%`
   return `${snapshot.phase} · ${stats.tokens.total.toLocaleString()} tokens${context} · $${stats.cost.toFixed(4)}`
 }

@@ -116,7 +116,9 @@ export class AppView implements OpenTuiComponent<AppSnapshot> {
       viewportCulling: true,
       scrollY: true,
     })
-    this.transcript = new TranscriptView(ctx)
+    this.transcript = new TranscriptView(ctx, {
+      hideThinkingBlock: client.initial.hideThinkingBlock,
+    })
     scroll.add(this.transcript.root)
     this.root.add(scroll)
 
@@ -156,6 +158,12 @@ export class AppView implements OpenTuiComponent<AppSnapshot> {
       this.location.content = nextHeader.location
     }
 
+    if (
+      previous === undefined ||
+      previous.hideThinkingBlock !== current.hideThinkingBlock
+    ) {
+      this.transcript.setHideThinkingBlock(current.hideThinkingBlock)
+    }
     this.transcript.update(previous?.transcript, current.transcript)
     this.updateDialog(previous, current)
     this.updateAuthNotice(previous, current)

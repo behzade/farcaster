@@ -36,6 +36,7 @@ describe("PiSession", () => {
     ): Promise<OpenedPiSession> => {
       openedWithSavedSessions = saveSessions
       return Promise.resolve({
+        getHideThinkingBlock: () => true,
         getCommands: () => [],
         getModelState: () => ({
           selected: {
@@ -178,6 +179,7 @@ describe("PiSession", () => {
         const event = yield* Fiber.join(waitForEvent)
         expect(Option.getOrThrow(event).type).toBe("agent_settled")
         expect(pi.activeTools).toEqual(["read", "sandbox"])
+        expect(pi.hideThinkingBlock).toBe(true)
         expect(pi.extensionPaths).toEqual([
           "/agent/extensions/sandbox",
         ])

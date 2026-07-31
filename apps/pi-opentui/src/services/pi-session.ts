@@ -49,6 +49,7 @@ export interface PiModelState {
 
 export interface PiSessionShape {
   readonly cwd: string
+  readonly hideThinkingBlock: boolean
   readonly activeTools: ReadonlyArray<string>
   readonly extensionPaths: ReadonlyArray<string>
   readonly extensionErrors: ReadonlyArray<ExtensionLoadError>
@@ -116,6 +117,7 @@ export class PiSessionError extends Data.TaggedError("PiSessionError")<{
 
 export interface OpenedPiSession {
   readonly shutdown: () => Promise<void>
+  readonly getHideThinkingBlock: () => boolean
   readonly getCommands: () => Array<SlashCommandInfo>
   readonly getModelState: () => PiModelState
   readonly listModels: () => Promise<Array<PiModelInfo>>
@@ -305,6 +307,8 @@ const openPiSession: OpenPiSession = (cwd, saveSessions) => {
         )
 
       return {
+        getHideThinkingBlock: () =>
+          runtime.session.settingsManager.getHideThinkingBlock(),
         session: {
           subscribe: (listener: (event: AgentSessionEvent) => void) => {
             listeners.add(listener)
@@ -491,6 +495,7 @@ export const makePiSessionLayer = (
 
       return {
         cwd: config.cwd,
+        hideThinkingBlock: result.getHideThinkingBlock(),
         activeTools: result.session.getActiveToolNames().toSorted(),
         extensionPaths: result.extensionsResult.extensions
           .map((extension) => extension.path)

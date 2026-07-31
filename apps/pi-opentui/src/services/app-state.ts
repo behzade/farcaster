@@ -29,6 +29,12 @@ import {
   type PiThinkingLevel,
 } from "./pi-session.ts"
 import { runLoginFlow } from "./login-flow.ts"
+import { assertAgentSessionEventContract } from "./event-contract.ts"
+import {
+  emptyLiveUsage,
+  reduceLiveUsage,
+  type LiveUsage,
+} from "./live-usage.ts"
 import {
   appendTranscriptError,
   appendTranscriptNotice,
@@ -39,18 +45,23 @@ import {
   type TranscriptModel,
 } from "./transcript.ts"
 
-export type AppPhase = "ready" | "running" | "stopping" | "error"
+export type AppPhase = "ready" | "running" | "stopping" | "error" | "fatal"
+
+const unlessFatal = (current: AppPhase, next: AppPhase): AppPhase =>
+  current === "fatal" ? "fatal" : next
 
 export type { AppDialog } from "./extension-ui.ts"
 export type { CommandInfo } from "./commands.ts"
 
 export interface AppSnapshot {
   readonly cwd: string
+  readonly hideThinkingBlock: boolean
   readonly phase: AppPhase
   readonly activeTools: ReadonlyArray<string>
   readonly model: PiModelInfo | undefined
   readonly thinkingLevel: PiThinkingLevel
   readonly sessionStats: SessionStats
+  readonly liveUsage: LiveUsage
   readonly extensionPaths: ReadonlyArray<string>
   readonly extensionErrors: ReadonlyArray<ExtensionLoadError>
   readonly eventCount: number
@@ -107,11 +118,13 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
       )
       const state = yield* SubscriptionRef.make<AppSnapshot>({
         cwd: pi.cwd,
+        hideThinkingBlock: pi.hideThinkingBlock,
         phase: "ready",
         activeTools: pi.activeTools,
         model: initialModelState.selected,
         thinkingLevel: initialModelState.thinkingLevel,
         sessionStats: initialSessionStats,
+        liveUsage: emptyLiveUsage,
         extensionPaths: pi.extensionPaths,
         extensionErrors: pi.extensionErrors,
         eventCount: 0,
@@ -132,7 +145,13 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
 
       const updateState = (
         update: (snapshot: AppSnapshot) => AppSnapshot,
-      ): Effect.Effect<void> => SubscriptionRef.update(state, update)
+      ): Effect.Effect<void> =>
+        SubscriptionRef.update(state, (snapshot) => {
+          const next = update(snapshot)
+          return snapshot.phase === "fatal"
+            ? { ...next, phase: "fatal" as const, error: snapshot.error }
+            : next
+        })
 
       const pushNotice = (
         message: string,
@@ -188,41 +207,73 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
 
       yield* Stream.runForEach(pi.events, (event) =>
         Effect.gen(function* () {
+          yield* Effect.try({
+            try: () => assertAgentSessionEventContract(event),
+            catch: (cause) =>
+              cause instanceof Error ? cause : new Error(String(cause)),
+          })
           const latestStats =
             event.type === "agent_settled"
               ? yield* pi.sessionStats
               : undefined
-          yield* SubscriptionRef.update(state, (snapshot) => ({
+          yield* updateState((snapshot) => ({
             ...snapshot,
+            phase:
+              event.type === "agent_start"
+                ? "running"
+                : event.type === "agent_settled"
+                  ? "ready"
+                  : snapshot.phase,
             eventCount: snapshot.eventCount + 1,
             lastEvent: event.type,
             sessionStats: latestStats ?? snapshot.sessionStats,
+            liveUsage:
+              event.type === "agent_settled"
+                ? emptyLiveUsage
+                : reduceLiveUsage(snapshot.liveUsage, event),
+            thinkingLevel:
+              event.type === "thinking_level_changed"
+                ? event.level
+                : snapshot.thinkingLevel,
             transcript: reduceTranscriptEvent(snapshot.transcript, event),
           }))
         }),
-      ).pipe(Effect.forkScoped)
+      ).pipe(
+        Effect.catchAll((error) =>
+          updateState((snapshot) => ({
+            ...snapshot,
+            phase: "fatal" as const,
+            error: error.message,
+            transcript: appendTranscriptError(
+              snapshot.transcript,
+              error.message,
+            ),
+          })),
+        ),
+        Effect.forkScoped,
+      )
 
       const runPrompt = (prompt: string): Effect.Effect<void> =>
         Effect.gen(function* () {
           yield* pi.prompt(prompt)
-          yield* SubscriptionRef.update(state, (snapshot) => ({
+          yield* updateState((snapshot) => ({
             ...snapshot,
-            phase: "ready" as const,
+            phase: unlessFatal(snapshot.phase, "ready"),
           }))
         }).pipe(
           Effect.catchAll((error) =>
             Effect.gen(function* () {
               const wasAborted = yield* Ref.get(promptWasAborted)
-              yield* SubscriptionRef.update(state, (snapshot) =>
+              yield* updateState((snapshot) =>
                 wasAborted
                   ? {
                       ...snapshot,
-                      phase: "ready" as const,
+                      phase: unlessFatal(snapshot.phase, "ready"),
                       error: undefined,
                     }
                   : {
                       ...snapshot,
-                      phase: "error" as const,
+                      phase: unlessFatal(snapshot.phase, "error"),
                       error: errorText(error),
                       transcript: appendTranscriptError(
                         snapshot.transcript,
@@ -240,16 +291,17 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
         Effect.gen(function* () {
           yield* pi.compact(instructions)
           const sessionStats = yield* pi.sessionStats
-          yield* SubscriptionRef.update(state, (snapshot) => ({
+          yield* updateState((snapshot) => ({
             ...snapshot,
             phase: "ready" as const,
             sessionStats,
+            liveUsage: emptyLiveUsage,
           }))
         }).pipe(
           Effect.catchAll((error) =>
             Effect.gen(function* () {
               const wasAborted = yield* Ref.get(promptWasAborted)
-              yield* SubscriptionRef.update(state, (snapshot) =>
+              yield* updateState((snapshot) =>
                 wasAborted
                   ? {
                       ...snapshot,
@@ -294,6 +346,7 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
             model: modelState.selected,
             thinkingLevel: modelState.thinkingLevel,
             sessionStats,
+            liveUsage: emptyLiveUsage,
             transcript: appendTranscriptNotice(
               transcriptFromMessages(messages),
               notice,
@@ -614,7 +667,7 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
             const instructions = prompt.slice("/compact".length).trim()
             return Effect.gen(function* () {
               yield* Ref.set(promptWasAborted, false)
-              yield* SubscriptionRef.update(state, (snapshot) => ({
+              yield* updateState((snapshot) => ({
                 ...snapshot,
                 phase: "running" as const,
                 error: undefined,
@@ -700,19 +753,19 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
         if (snapshot.phase !== "running") return
 
         yield* Ref.set(promptWasAborted, true)
-        yield* SubscriptionRef.update(state, (current) => ({
+        yield* updateState((current) => ({
           ...current,
           phase: "stopping" as const,
           error: undefined,
         }))
         yield* pi.abort
-        yield* SubscriptionRef.update(state, (current) => ({
+        yield* updateState((current) => ({
           ...current,
           phase: "ready" as const,
         }))
       }).pipe(
         Effect.catchAll((error) =>
-          SubscriptionRef.update(state, (snapshot) => ({
+          updateState((snapshot) => ({
             ...snapshot,
             phase: "error" as const,
             error: errorText(error),
@@ -734,7 +787,8 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
               const snapshot = yield* SubscriptionRef.get(state)
               if (
                 snapshot.phase === "running" ||
-                snapshot.phase === "stopping"
+                snapshot.phase === "stopping" ||
+                snapshot.phase === "fatal"
               ) {
                 return
               }
@@ -753,7 +807,7 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
                 }
               }
               yield* Ref.set(promptWasAborted, false)
-              yield* SubscriptionRef.update(state, (current) => ({
+              yield* updateState((current) => ({
                 ...current,
                 phase: "running" as const,
                 error: undefined,

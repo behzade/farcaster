@@ -13,10 +13,12 @@ import type {
   AppCommand,
   AppSnapshot,
 } from "../src/services/app-state.ts"
+import { emptyLiveUsage } from "../src/services/live-usage.ts"
 import type { AppClient } from "../src/ui/app-client.ts"
 
 const baseSnapshot: AppSnapshot = {
   cwd: "/work/pi",
+  hideThinkingBlock: false,
   phase: "ready",
   activeTools: ["read", "sandbox"],
   model: {
@@ -48,6 +50,7 @@ const baseSnapshot: AppSnapshot = {
       percent: 25,
     },
   },
+  liveUsage: emptyLiveUsage,
   extensionPaths: ["/agent/extensions/sandbox"],
   extensionErrors: [],
   eventCount: 3,

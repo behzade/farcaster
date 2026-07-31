@@ -13,6 +13,7 @@ import {
   PiSessionError,
   type PiModelState,
 } from "../src/services/pi-session.ts"
+import { headerViewModel } from "../src/ui/app-view-model.ts"
 
 test("folds session events and commands into app state", () => {
   let emit: ((event: AgentSessionEvent) => void) | undefined
@@ -28,6 +29,8 @@ test("folds session events and commands into app state", () => {
   let selectedThinking: string | undefined
   let savedLogin: string | undefined
   let sessionStatsReads = 0
+  let authoritativeTokens = 30
+  let authoritativeCost = 0.01
   let modelState: PiModelState = {
     selected: {
       provider: "openai",
@@ -49,6 +52,7 @@ test("folds session events and commands into app state", () => {
 
   const pi = Layer.succeed(PiSession, {
     cwd: "/work",
+    hideThinkingBlock: false,
     activeTools: ["sandbox"],
     extensionPaths: ["/agent/extensions/sandbox"],
     extensionErrors: [],
@@ -89,12 +93,12 @@ test("folds session events and commands into app state", () => {
         totalMessages: 2,
         tokens: {
           input: 10,
-          output: 20,
+          output: authoritativeTokens - 10,
           cacheRead: 0,
           cacheWrite: 0,
-          total: 30,
+          total: authoritativeTokens,
         },
-        cost: 0.01,
+        cost: authoritativeCost,
       }
     }),
     modelState: Effect.sync(() => modelState),
@@ -252,6 +256,75 @@ test("folds session events and commands into app state", () => {
       expect(snapshot.lastEvent).toBe("agent_settled")
       expect(snapshot.sessionStats.tokens.total).toBe(30)
       expect(sessionStatsReads).toBeGreaterThanOrEqual(2)
+
+      emit({
+        type: "agent_start",
+      })
+      emit({
+        type: "message_update",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "working" }],
+          usage: {
+            input: 5,
+            output: 2,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 7,
+            cost: { total: 0.005 },
+          },
+        },
+        assistantMessageEvent: {
+          type: "text_delta",
+          delta: "working",
+        },
+      } as AgentSessionEvent)
+      while ((yield* app.get).lastEvent !== "message_update") {
+        yield* Effect.yieldNow()
+      }
+      snapshot = yield* app.get
+      expect(snapshot.liveUsage.current.total).toBe(7)
+      expect(headerViewModel(snapshot).usage).toContain("37 tokens")
+      expect(headerViewModel(snapshot).usage).toContain("$0.0150")
+
+      emit({ type: "thinking_level_changed", level: "high" })
+      while ((yield* app.get).lastEvent !== "thinking_level_changed") {
+        yield* Effect.yieldNow()
+      }
+      expect((yield* app.get).thinkingLevel).toBe("high")
+
+      emit({
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "done" }],
+          usage: {
+            input: 7,
+            output: 3,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 10,
+            cost: { total: 0.006 },
+          },
+        },
+      } as AgentSessionEvent)
+      while ((yield* app.get).lastEvent !== "message_end") {
+        yield* Effect.yieldNow()
+      }
+      snapshot = yield* app.get
+      expect(snapshot.liveUsage.completed.total).toBe(10)
+      expect(headerViewModel(snapshot).usage).toContain("40 tokens")
+
+      authoritativeTokens = 40
+      authoritativeCost = 0.016
+      emit({ type: "agent_settled" })
+      while (
+        (yield* app.get).lastEvent !== "agent_settled" ||
+        (yield* app.get).liveUsage.completed.total !== 0
+      ) {
+        yield* Effect.yieldNow()
+      }
+      expect(headerViewModel(yield* app.get).usage).toContain("40 tokens")
       expect(snapshot.commands.map((command) => command.name)).toContain(
         "review",
       )
@@ -510,6 +583,29 @@ test("folds session events and commands into app state", () => {
       expect(
         (yield* app.get).transcript.rows.map((row) => row.content),
       ).toContain("old answer")
+
+      prompt = ""
+      yield* app.dispatch({ _tag: "Prompt", text: "fatal race" })
+      while (prompt !== "fatal race") {
+        yield* Effect.yieldNow()
+      }
+      emit({ type: "future_event" } as unknown as AgentSessionEvent)
+      while ((yield* app.get).phase !== "fatal") {
+        yield* Effect.yieldNow()
+      }
+      expect((yield* app.get).error).toBe(
+        "Unhandled AgentSessionEvent type: future_event",
+      )
+      finishPrompt?.()
+      for (let index = 0; index < 5; index += 1) {
+        yield* Effect.yieldNow()
+      }
+      expect((yield* app.get).phase).toBe("fatal")
+      const callsBeforeFatalPrompt = promptCalls
+      yield* app.dispatch({ _tag: "Prompt", text: "must not run" })
+      yield* Effect.yieldNow()
+      expect(promptCalls).toBe(callsBeforeFatalPrompt)
+      expect((yield* app.get).phase).toBe("fatal")
     }),
   ).pipe(Effect.provide(appLayer))
 

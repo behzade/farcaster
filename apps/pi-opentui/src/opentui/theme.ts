@@ -1,6 +1,10 @@
 export const theme = {
   background: "#1d2021",
   panel: "#282828",
+  userMessageBg: "#343541",
+  toolPendingBg: "#282832",
+  toolSuccessBg: "#283228",
+  toolErrorBg: "#3c2828",
   border: "#504945",
   muted: "#928374",
   text: "#ebdbb2",

@@ -125,7 +125,8 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
   focusIfReady(): void {
     if (
       this.snapshot.dialog === undefined &&
-      this.palette === undefined
+      this.palette === undefined &&
+      this.snapshot.phase !== "fatal"
     ) {
       this.input.focus()
     } else {
@@ -147,7 +148,11 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
   }
 
   private placeholder(): string {
-    return this.snapshot.phase === "running" ? "Pi is working…" : "Ask Pi"
+    return this.snapshot.phase === "fatal"
+      ? "Pi event stream failed"
+      : this.snapshot.phase === "running"
+        ? "Pi is working…"
+        : "Ask Pi"
   }
 
   private canComplete(): boolean {
@@ -155,7 +160,8 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
       this.snapshot.dialog === undefined &&
       this.palette === undefined &&
       this.snapshot.phase !== "running" &&
-      this.snapshot.phase !== "stopping"
+      this.snapshot.phase !== "stopping" &&
+      this.snapshot.phase !== "fatal"
     )
   }
 
@@ -201,7 +207,9 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
     const commands = this.commandSuggestions()
     const command = commands[this.selectedIndex(commands.length)]
     this.hint.content =
-      this.canComplete() && command !== undefined
+      this.snapshot.phase === "fatal"
+        ? "restart pi-next after updating the Pi event handler"
+        : this.canComplete() && command !== undefined
         ? `/${command.name}${command.description.length > 0 ? ` — ${command.description}` : ""} · ↑/↓ choose · tab or enter complete`
         : "enter send · shift+enter newline · / commands · @ files"
   }
@@ -289,7 +297,8 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
     if (
       prompt.length === 0 ||
       this.snapshot.phase === "running" ||
-      this.snapshot.phase === "stopping"
+      this.snapshot.phase === "stopping" ||
+      this.snapshot.phase === "fatal"
     ) {
       return
     }
@@ -332,6 +341,7 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
 
   private handlePaste(event: PasteEvent): void {
     event.preventDefault()
+    if (this.snapshot.phase === "fatal") return
     this.input.handlePaste(event)
     this.suggestionIndex = 0
     this.updateHint()

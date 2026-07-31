@@ -1,6 +1,16 @@
-import type {
-  AgentSessionEvent,
-} from "@earendil-works/pi-coding-agent"
+import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent"
+import { assertAgentSessionEventContract } from "./event-contract.ts"
+import {
+  asTranscriptRecord as asRecord,
+  assistantContentParts as assistantParts,
+  assistantErrorMessage as errorMessage,
+  boundedTranscriptValue as boundedUnknown,
+  formatToolTranscriptSummary as formatToolSummary,
+  limitTranscriptContent as limitContent,
+  transcriptMessageRole as messageRole,
+  transcriptTextParts as textParts,
+} from "./transcript-values.ts"
+import { isReadToolName } from "./tool-names.ts"
 
 export type TranscriptRowKind =
   | "user"
@@ -9,7 +19,7 @@ export type TranscriptRowKind =
   | "notice"
   | "error"
 
-export interface TranscriptRow {
+interface TranscriptRowBase {
   readonly id: string
   readonly kind: TranscriptRowKind
   readonly title: string
@@ -17,6 +27,31 @@ export interface TranscriptRow {
   readonly pending: boolean
   readonly isError: boolean
 }
+
+export interface AssistantTranscriptRow extends TranscriptRowBase {
+  readonly kind: "assistant"
+  readonly thinking: string
+  readonly thinkingRedacted: boolean
+}
+
+export interface ToolTranscriptRow extends TranscriptRowBase {
+  readonly kind: "tool"
+  readonly toolCallId: string
+  readonly toolName: string
+  readonly args: unknown
+  readonly partialResult: unknown
+  readonly result: unknown
+  readonly readGroupId?: string
+}
+
+export interface TextTranscriptRow extends TranscriptRowBase {
+  readonly kind: "user" | "notice" | "error"
+}
+
+export type TranscriptRow =
+  | AssistantTranscriptRow
+  | ToolTranscriptRow
+  | TextTranscriptRow
 
 export interface TranscriptModel {
   readonly rows: ReadonlyArray<TranscriptRow>
@@ -31,12 +66,6 @@ export const emptyTranscript: TranscriptModel = {
 }
 
 const maxRows = 200
-const maxContentLength = 8_000
-
-const limitContent = (content: string): string =>
-  content.length <= maxContentLength
-    ? content
-    : `${content.slice(0, maxContentLength)}\n…`
 
 const appendRow = (
   model: TranscriptModel,
@@ -56,61 +85,115 @@ const updateRow = (
   rows: model.rows.map((row) => (row.id === id ? update(row) : row)),
 })
 
-const asRecord = (value: unknown): Record<string, unknown> | undefined =>
-  typeof value === "object" && value !== null
-    ? (value as Record<string, unknown>)
-    : undefined
 
-const messageRole = (message: unknown): string | undefined => {
-  const record = asRecord(message)
-  return typeof record?.role === "string" ? record.role : undefined
-}
-
-const textParts = (content: unknown): ReadonlyArray<string> => {
-  if (typeof content === "string") return [content]
-  if (!Array.isArray(content)) return []
-
-  return content.flatMap((part) => {
-    const record = asRecord(part)
-    if (record?.type === "text" && typeof record.text === "string") {
-      return [record.text]
-    }
-    return []
-  })
-}
-
-const assistantText = (message: unknown): string => {
-  const record = asRecord(message)
-  const text = textParts(record?.content).join("")
-  if (text.length > 0) return limitContent(text)
-
-  const content = Array.isArray(record?.content) ? record.content : []
-  const isThinking = content.some(
-    (part) => asRecord(part)?.type === "thinking",
-  )
-  return isThinking ? "Thinking…" : ""
-}
-
-const errorMessage = (message: unknown): string | undefined => {
-  const record = asRecord(message)
-  return typeof record?.errorMessage === "string"
-    ? record.errorMessage
-    : undefined
-}
-
-const formatUnknown = (value: unknown): string => {
-  if (typeof value === "string") return limitContent(value)
-
-  const record = asRecord(value)
-  const content = textParts(record?.content).join("\n")
-  if (content.length > 0) return limitContent(content)
-
-  try {
-    return limitContent(JSON.stringify(value, null, 2) ?? String(value))
-  } catch {
-    return limitContent(String(value))
+const assistantRow = (
+  id: string,
+  message: unknown,
+  pending: boolean,
+): AssistantTranscriptRow => {
+  const parts = assistantParts(message)
+  const fault = errorMessage(message)
+  return {
+    id,
+    kind: "assistant",
+    title: "pi",
+    content: [parts.text, fault]
+      .filter((part): part is string => part !== undefined && part.length > 0)
+      .join("\n"),
+    thinking: parts.thinking,
+    thinkingRedacted: parts.thinkingRedacted,
+    pending,
+    isError: fault !== undefined,
   }
 }
+
+const hasAssistantDisplay = (row: AssistantTranscriptRow): boolean =>
+  row.content.length > 0 ||
+  row.thinking.length > 0 ||
+  row.thinkingRedacted
+
+const toolRow = (
+  toolCallId: string,
+  toolName: string,
+  args: unknown,
+  pending: boolean,
+  readGroupId?: string,
+): ToolTranscriptRow => {
+  const boundedArgs = boundedUnknown(args)
+  return {
+    id: `tool-${toolCallId}`,
+    kind: "tool",
+    title: toolName,
+    content: formatToolSummary(boundedArgs),
+    pending,
+    isError: false,
+    toolCallId,
+    toolName,
+    args: boundedArgs,
+    partialResult: undefined,
+    result: undefined,
+    ...(readGroupId === undefined ? {} : { readGroupId }),
+  }
+}
+
+interface GroupedAssistantToolCall {
+  readonly id: string
+  readonly name: string
+  readonly arguments: unknown
+  readonly readGroupId?: string
+}
+
+const groupedAssistantToolCalls = (
+  message: unknown,
+): ReadonlyArray<GroupedAssistantToolCall> => {
+  const content = asRecord(message)?.content
+  if (!Array.isArray(content)) return []
+
+  const calls: Array<GroupedAssistantToolCall> = []
+  let readGroupId: string | undefined
+  for (const part of content) {
+    const value = asRecord(part)
+    if (
+      value?.type !== "toolCall" ||
+      typeof value.id !== "string" ||
+      typeof value.name !== "string"
+    ) {
+      readGroupId = undefined
+      continue
+    }
+    if (isReadToolName(value.name)) {
+      readGroupId ??= value.id
+    } else {
+      readGroupId = undefined
+    }
+    calls.push({
+      id: value.id,
+      name: value.name,
+      arguments: value.arguments,
+      ...(isReadToolName(value.name) && readGroupId !== undefined
+        ? { readGroupId }
+        : {}),
+    })
+  }
+  return calls
+}
+
+const appendAssistantToolCalls = (
+  model: TranscriptModel,
+  message: unknown,
+): TranscriptModel =>
+  groupedAssistantToolCalls(message).reduce((current, call) => {
+    const next = toolRow(
+      call.id,
+      call.name,
+      call.arguments,
+      true,
+      call.readGroupId,
+    )
+    return current.rows.some((row) => row.id === next.id)
+      ? updateRow(current, next.id, () => next)
+      : appendRow(current, next)
+  }, model)
 
 export const appendUserPrompt = (
   model: TranscriptModel,
@@ -152,10 +235,55 @@ export const appendTranscriptNotice = (
     isError,
   })
 
+const appendSavedAssistant = (
+  model: TranscriptModel,
+  message: unknown,
+): TranscriptModel => {
+  const row = assistantRow(`row-${model.nextRowId}`, message, false)
+  const withAssistant = hasAssistantDisplay(row)
+    ? appendRow(model, row)
+    : model
+
+  return appendAssistantToolCalls(withAssistant, message)
+}
+
+const finishToolRow = (
+  model: TranscriptModel,
+  toolCallId: string,
+  toolName: string,
+  result: unknown,
+  isError: boolean,
+): TranscriptModel => {
+  const id = `tool-${toolCallId}`
+  const boundedResult = boundedUnknown(result)
+  if (!model.rows.some((row) => row.id === id)) {
+    return appendRow(
+      model,
+      {
+        ...toolRow(toolCallId, toolName, {}, false),
+        content: formatToolSummary(boundedResult),
+        result: boundedResult,
+        isError,
+      },
+    )
+  }
+  return updateRow(model, id, (row) =>
+    row.kind === "tool"
+      ? {
+          ...row,
+          content: formatToolSummary(boundedResult),
+          result: boundedResult,
+          pending: false,
+          isError,
+        }
+      : row,
+  )
+}
+
 export const transcriptFromMessages = (
   messages: ReadonlyArray<unknown>,
-): TranscriptModel =>
-  messages.reduce<TranscriptModel>((model, message) => {
+): TranscriptModel => {
+  const replayed = messages.reduce<TranscriptModel>((model, message) => {
     const record = asRecord(message)
     const role = messageRole(message)
 
@@ -164,50 +292,18 @@ export const transcriptFromMessages = (
       return text.length > 0 ? appendUserPrompt(model, text) : model
     }
 
-    if (role === "assistant") {
-      if (assistantText(message).length === 0) return model
-      const started = reduceTranscriptEvent(
-        model,
-        {
-          type: "message_start",
-          message,
-        } as AgentSessionEvent,
-      )
-      return reduceTranscriptEvent(
-        started,
-        {
-          type: "message_end",
-          message,
-        } as AgentSessionEvent,
-      )
-    }
+    if (role === "assistant") return appendSavedAssistant(model, message)
 
     if (
       role === "toolResult" &&
       typeof record?.toolCallId === "string"
     ) {
-      const toolName =
-        typeof record.toolName === "string"
-          ? record.toolName
-          : "tool"
-      const started = reduceTranscriptEvent(
+      return finishToolRow(
         model,
-        {
-          type: "tool_execution_start",
-          toolCallId: record.toolCallId,
-          toolName,
-          args: {},
-        } as AgentSessionEvent,
-      )
-      return reduceTranscriptEvent(
-        started,
-        {
-          type: "tool_execution_end",
-          toolCallId: record.toolCallId,
-          toolName,
-          result: message,
-          isError: record.isError === true,
-        } as AgentSessionEvent,
+        record.toolCallId,
+        typeof record.toolName === "string" ? record.toolName : "tool",
+        message,
+        record.isError === true,
       )
     }
 
@@ -232,18 +328,16 @@ export const transcriptFromMessages = (
       role === "bashExecution" &&
       typeof record?.command === "string"
     ) {
-      const output =
-        typeof record.output === "string" ? record.output : ""
+      const output = typeof record.output === "string" ? record.output : ""
       const failed =
         typeof record.exitCode === "number" && record.exitCode !== 0
+      const callId = `bash-${model.nextRowId}`
       return appendRow(model, {
-        id: `row-${model.nextRowId}`,
-        kind: "tool",
-        title: "shell",
-        content: limitContent(
-          [`$ ${record.command}`, output].filter(Boolean).join("\n"),
-        ),
-        pending: false,
+        ...toolRow(callId, "bash", { command: record.command }, false),
+        content: formatToolSummary(output),
+        result: boundedUnknown({
+          content: [{ type: "text", text: output }],
+        }),
         isError: failed,
       })
     }
@@ -266,25 +360,39 @@ export const transcriptFromMessages = (
 
     return model
   }, emptyTranscript)
+  return {
+    ...replayed,
+    rows: replayed.rows.map((row) =>
+      row.kind === "tool" && row.pending
+        ? {
+            ...row,
+            content: "Tool did not finish",
+            pending: false,
+            isError: true,
+            result: {
+              content: [{ type: "text", text: "Tool did not finish" }],
+            },
+          }
+        : row,
+    ),
+  }
+}
 
 export const reduceTranscriptEvent = (
   model: TranscriptModel,
   event: AgentSessionEvent,
 ): TranscriptModel => {
+  assertAgentSessionEventContract(event)
+
   switch (event.type) {
     case "message_start": {
       if (messageRole(event.message) !== "assistant") return model
 
       const id = `row-${model.nextRowId}`
+      const row = assistantRow(id, event.message, true)
+      if (!hasAssistantDisplay(row)) return model
       return {
-        ...appendRow(model, {
-          id,
-          kind: "assistant",
-          title: "pi",
-          content: assistantText(event.message),
-          pending: true,
-          isError: false,
-        }),
+        ...appendRow(model, row),
         activeAssistantId: id,
       }
     }
@@ -298,58 +406,90 @@ export const reduceTranscriptEvent = (
           message: event.message,
         })
       }
-      return updateRow(model, model.activeAssistantId, (row) => ({
-        ...row,
-        content: assistantText(event.message),
-      }))
+      return updateRow(model, model.activeAssistantId, (row) =>
+        row.kind === "assistant"
+          ? assistantRow(row.id, event.message, true)
+          : row,
+      )
     }
 
     case "message_end": {
-      if (
-        messageRole(event.message) !== "assistant" ||
-        model.activeAssistantId === undefined
-      ) {
-        return model
-      }
+      if (messageRole(event.message) !== "assistant") return model
 
-      const fault = errorMessage(event.message)
-      const content = [assistantText(event.message), fault]
-        .filter((part): part is string => part !== undefined && part.length > 0)
-        .join("\n")
-      return {
-        ...updateRow(model, model.activeAssistantId, (row) => ({
-          ...row,
-          content,
-          pending: false,
-          isError: fault !== undefined,
-        })),
+      const activeId = model.activeAssistantId
+      if (activeId === undefined) {
+        const row = assistantRow(
+          `row-${model.nextRowId}`,
+          event.message,
+          false,
+        )
+        const withAssistant = hasAssistantDisplay(row)
+          ? appendRow(model, row)
+          : model
+        return appendAssistantToolCalls(withAssistant, event.message)
+      }
+      const ended = {
+        ...updateRow(model, activeId, (row) =>
+          row.kind === "assistant"
+            ? assistantRow(row.id, event.message, false)
+            : row,
+        ),
         activeAssistantId: undefined,
       }
+      return appendAssistantToolCalls(ended, event.message)
     }
 
-    case "tool_execution_start":
-      return appendRow(model, {
-        id: `tool-${event.toolCallId}`,
-        kind: "tool",
-        title: event.toolName,
-        content: formatUnknown(event.args),
-        pending: true,
-        isError: false,
-      })
+    case "tool_execution_start": {
+      const row = toolRow(
+        event.toolCallId,
+        event.toolName,
+        event.args,
+        true,
+      )
+      return model.rows.some((current) => current.id === row.id)
+        ? updateRow(model, row.id, (current) =>
+            current.kind === "tool" && current.readGroupId !== undefined
+              ? { ...row, readGroupId: current.readGroupId }
+              : row
+          )
+        : appendRow(model, row)
+    }
 
-    case "tool_execution_update":
-      return updateRow(model, `tool-${event.toolCallId}`, (row) => ({
-        ...row,
-        content: formatUnknown(event.partialResult),
-      }))
+    case "tool_execution_update": {
+      const id = `tool-${event.toolCallId}`
+      const partialResult = boundedUnknown(event.partialResult)
+      const args = boundedUnknown(event.args)
+      if (!model.rows.some((row) => row.id === id)) {
+        return appendRow(
+          model,
+          {
+            ...toolRow(event.toolCallId, event.toolName, event.args, true),
+            content: formatToolSummary(partialResult),
+            args,
+            partialResult,
+          },
+        )
+      }
+      return updateRow(model, id, (row) =>
+        row.kind === "tool"
+          ? {
+              ...row,
+              content: formatToolSummary(partialResult),
+              args,
+              partialResult,
+            }
+          : row,
+      )
+    }
 
     case "tool_execution_end":
-      return updateRow(model, `tool-${event.toolCallId}`, (row) => ({
-        ...row,
-        content: formatUnknown(event.result),
-        pending: false,
-        isError: event.isError,
-      }))
+      return finishToolRow(
+        model,
+        event.toolCallId,
+        event.toolName,
+        event.result,
+        event.isError,
+      )
 
     case "compaction_start":
       return appendTranscriptNotice(
@@ -361,9 +501,7 @@ export const reduceTranscriptEvent = (
       return appendTranscriptNotice(
         model,
         event.errorMessage ??
-          (event.aborted
-            ? "Compaction stopped"
-            : "Compaction finished"),
+          (event.aborted ? "Compaction stopped" : "Compaction finished"),
         event.errorMessage !== undefined,
       )
 
@@ -382,7 +520,15 @@ export const reduceTranscriptEvent = (
         !event.success,
       )
 
-    default:
+    case "agent_start":
+    case "agent_end":
+    case "agent_settled":
+    case "turn_start":
+    case "turn_end":
+    case "queue_update":
+    case "entry_appended":
+    case "session_info_changed":
+    case "thinking_level_changed":
       return model
   }
 }
