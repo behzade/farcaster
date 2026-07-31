@@ -1,4 +1,3 @@
-import type { SessionStats } from "@earendil-works/pi-coding-agent"
 import {
   Context,
   Effect,
@@ -8,32 +7,28 @@ import {
   Stream,
   SubscriptionRef,
 } from "effect"
+import type {
+  AppCommand,
+  AppPhase,
+  AppSnapshot,
+} from "./app-state-model.ts"
+import { applyAppStateUpdate } from "./app-state-model.ts"
 import {
   builtinCommands,
   commandCatalog,
   commandHelp,
   commandName,
   sessionStatsText,
-  type CommandInfo,
 } from "./commands.ts"
-import {
-  makeExtensionUi,
-  type AppDialog,
-} from "./extension-ui.ts"
-import {
-  PiSession,
-  PiSessionError,
-  type ExtensionLoadError,
-  type PiModelInfo,
-  type PiModelState,
-  type PiThinkingLevel,
-} from "./pi-session.ts"
+import { makeExtensionUi } from "./extension-ui.ts"
+import { PiSession, PiSessionError } from "./pi-session.ts"
 import { runLoginFlow } from "./login-flow.ts"
 import { assertAgentSessionEventContract } from "./event-contract.ts"
+import { makeModelActions } from "./model-actions.ts"
+import { makeSessionActions } from "./session-actions.ts"
 import {
   emptyLiveUsage,
   reduceLiveUsage,
-  type LiveUsage,
 } from "./live-usage.ts"
 import {
   appendTranscriptError,
@@ -41,47 +36,18 @@ import {
   appendUserPrompt,
   emptyTranscript,
   reduceTranscriptEvent,
-  transcriptFromMessages,
-  type TranscriptModel,
 } from "./transcript.ts"
-
-export type AppPhase = "ready" | "running" | "stopping" | "error" | "fatal"
 
 const unlessFatal = (current: AppPhase, next: AppPhase): AppPhase =>
   current === "fatal" ? "fatal" : next
 
 export type { AppDialog } from "./extension-ui.ts"
 export type { CommandInfo } from "./commands.ts"
-
-export interface AppSnapshot {
-  readonly cwd: string
-  readonly hideThinkingBlock: boolean
-  readonly phase: AppPhase
-  readonly activeTools: ReadonlyArray<string>
-  readonly model: PiModelInfo | undefined
-  readonly thinkingLevel: PiThinkingLevel
-  readonly sessionStats: SessionStats
-  readonly liveUsage: LiveUsage
-  readonly extensionPaths: ReadonlyArray<string>
-  readonly extensionErrors: ReadonlyArray<ExtensionLoadError>
-  readonly eventCount: number
-  readonly lastEvent: string | undefined
-  readonly error: string | undefined
-  readonly transcript: TranscriptModel
-  readonly dialog: AppDialog | undefined
-  readonly authNotice: string | undefined
-  readonly statuses: Readonly<Record<string, string>>
-  readonly commands: ReadonlyArray<CommandInfo>
-}
-
-export type AppCommand =
-  | { readonly _tag: "Prompt"; readonly text: string }
-  | { readonly _tag: "Abort" }
-  | {
-      readonly _tag: "ResolveDialog"
-      readonly id: number
-      readonly value: string | undefined
-    }
+export type {
+  AppCommand,
+  AppPhase,
+  AppSnapshot,
+} from "./app-state-model.ts"
 
 export interface AppStateShape {
   readonly get: Effect.Effect<AppSnapshot>
@@ -146,12 +112,9 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
       const updateState = (
         update: (snapshot: AppSnapshot) => AppSnapshot,
       ): Effect.Effect<void> =>
-        SubscriptionRef.update(state, (snapshot) => {
-          const next = update(snapshot)
-          return snapshot.phase === "fatal"
-            ? { ...next, phase: "fatal" as const, error: snapshot.error }
-            : next
-        })
+        SubscriptionRef.update(state, (snapshot) =>
+          applyAppStateUpdate(snapshot, update),
+        )
 
       const pushNotice = (
         message: string,
@@ -163,6 +126,17 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
             snapshot.transcript,
             message,
             isError,
+          ),
+        }))
+
+      const reportError = (error: PiSessionError): Effect.Effect<void> =>
+        updateState((snapshot) => ({
+          ...snapshot,
+          phase: "error" as const,
+          error: errorText(error),
+          transcript: appendTranscriptError(
+            snapshot.transcript,
+            errorText(error),
           ),
         }))
 
@@ -179,6 +153,20 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
           }),
         setAuthNotice: (authNotice) =>
           updateState((snapshot) => ({ ...snapshot, authNotice })),
+      })
+      const sessionActions = makeSessionActions({
+        pi,
+        extensionUi,
+        updateState,
+        pushNotice,
+        reportError,
+      })
+      const modelActions = makeModelActions({
+        pi,
+        extensionUi,
+        updateState,
+        pushNotice,
+        reportError,
       })
 
       yield* pi.bindExtensions(extensionUi.context, (extensionError) => {
@@ -322,267 +310,6 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
           ),
         )
 
-      const replaceSession = (
-        replacement: Effect.Effect<
-          ReadonlyArray<unknown>,
-          PiSessionError
-        >,
-        notice: string,
-      ): Effect.Effect<void> =>
-        Effect.gen(function* () {
-          yield* updateState((snapshot) => ({
-            ...snapshot,
-            phase: "running" as const,
-            error: undefined,
-          }))
-          const messages = yield* replacement
-          const sdkCommands = yield* pi.commands
-          const modelState = yield* pi.modelState
-          const sessionStats = yield* pi.sessionStats
-          yield* updateState((snapshot) => ({
-            ...snapshot,
-            phase: "ready" as const,
-            error: undefined,
-            model: modelState.selected,
-            thinkingLevel: modelState.thinkingLevel,
-            sessionStats,
-            liveUsage: emptyLiveUsage,
-            transcript: appendTranscriptNotice(
-              transcriptFromMessages(messages),
-              notice,
-            ),
-            commands: commandCatalog(sdkCommands),
-          }))
-        }).pipe(
-          Effect.catchAll((error) =>
-            updateState((snapshot) => ({
-              ...snapshot,
-              phase: "error" as const,
-              error: errorText(error),
-              transcript: appendTranscriptError(
-                snapshot.transcript,
-                errorText(error),
-              ),
-            })),
-          ),
-        )
-
-      const resumeSession = Effect.gen(function* () {
-        const sessions = yield* pi.sessions
-        if (sessions.length === 0) {
-          yield* pushNotice("No saved sessions found")
-          return
-        }
-
-        const choices = sessions.map((session) => {
-          const firstMessage = session.firstMessage.trim()
-          const title =
-            session.name ??
-            (firstMessage.length > 0 ? firstMessage : session.id)
-          return `${title} · ${session.id.slice(0, 8)}`
-        })
-        const selected = yield* Effect.promise(() =>
-          extensionUi.context.select("Resume session", choices),
-        )
-        if (selected === undefined) return
-        const index = choices.indexOf(selected)
-        const session = sessions[index]
-        if (session === undefined) return
-        yield* replaceSession(
-          pi.resume(session.path),
-          `Resumed ${session.name ?? session.id}`,
-        )
-      }).pipe(
-        Effect.catchAll((error) =>
-          updateState((snapshot) => ({
-            ...snapshot,
-            phase: "error" as const,
-            error: errorText(error),
-            transcript: appendTranscriptError(
-              snapshot.transcript,
-              errorText(error),
-            ),
-          })),
-        ),
-      )
-
-      const applyModelState = (
-        modelState: PiModelState,
-        notice: string,
-      ): Effect.Effect<void> =>
-        updateState((snapshot) => ({
-          ...snapshot,
-          phase: "ready" as const,
-          error: undefined,
-          model: modelState.selected,
-          thinkingLevel: modelState.thinkingLevel,
-          transcript: appendTranscriptNotice(
-            snapshot.transcript,
-            notice,
-          ),
-        }))
-
-      const modelLabel = (model: PiModelInfo): string => {
-        const name = model.name === model.id ? "" : ` — ${model.name}`
-        return `${model.provider}/${model.id}${name}`
-      }
-
-      const chooseModel = (prompt: string): Effect.Effect<void> =>
-        Effect.gen(function* () {
-          const models = yield* pi.models
-          const query = prompt.slice("/model".length).trim()
-          const normalizedQuery = query.toLowerCase()
-          const exactMatches =
-            normalizedQuery.length === 0
-              ? []
-              : models.filter(
-                  (model) =>
-                    `${model.provider}/${model.id}`.toLowerCase() ===
-                      normalizedQuery ||
-                    model.id.toLowerCase() === normalizedQuery,
-                )
-
-          let chosen =
-            exactMatches.length === 1 ? exactMatches[0] : undefined
-          if (chosen === undefined) {
-            yield* updateState((snapshot) => ({
-              ...snapshot,
-              phase: "ready" as const,
-            }))
-            if (models.length === 0) {
-              yield* pushNotice("No models available", true)
-              return
-            }
-
-            const choices = models.map(modelLabel)
-            const selected = yield* Effect.promise(() =>
-              extensionUi.search("Choose model", choices, query),
-            )
-            if (selected === undefined) return
-            chosen = models[choices.indexOf(selected)]
-            if (chosen === undefined) return
-            yield* updateState((snapshot) => ({
-              ...snapshot,
-              phase: "running" as const,
-            }))
-          }
-
-          const modelState = yield* pi.selectModel(
-            chosen.provider,
-            chosen.id,
-          )
-          yield* applyModelState(
-            modelState,
-            `Model: ${chosen.provider}/${chosen.id}`,
-          )
-        }).pipe(
-          Effect.catchAll((error) =>
-            updateState((snapshot) => ({
-              ...snapshot,
-              phase: "error" as const,
-              error: errorText(error),
-              transcript: appendTranscriptError(
-                snapshot.transcript,
-                errorText(error),
-              ),
-            })),
-          ),
-        )
-
-      const thinkingDescriptions: Readonly<
-        Record<PiThinkingLevel, string>
-      > = {
-        off: "No reasoning",
-        minimal: "Very brief reasoning",
-        low: "Light reasoning",
-        medium: "Moderate reasoning",
-        high: "Deep reasoning",
-        xhigh: "Extra-high reasoning",
-        max: "Maximum reasoning",
-      }
-
-      const chooseThinking = (prompt: string): Effect.Effect<void> =>
-        Effect.gen(function* () {
-          const current = yield* pi.modelState
-          if (current.selected === undefined) {
-            yield* updateState((snapshot) => ({
-              ...snapshot,
-              phase: "ready" as const,
-            }))
-            yield* pushNotice("No model selected", true)
-            return
-          }
-          if (!current.selected.reasoning) {
-            yield* updateState((snapshot) => ({
-              ...snapshot,
-              phase: "ready" as const,
-            }))
-            yield* pushNotice(
-              "Current model does not support thinking",
-              true,
-            )
-            return
-          }
-
-          const requested = prompt.slice("/thinking".length).trim()
-          let level = current.thinkingLevels.find(
-            (candidate) => candidate === requested,
-          )
-          if (requested.length > 0 && level === undefined) {
-            yield* updateState((snapshot) => ({
-              ...snapshot,
-              phase: "ready" as const,
-            }))
-            yield* pushNotice(
-              `Unknown thinking level: ${requested}`,
-              true,
-            )
-            return
-          }
-          if (level === undefined) {
-            const choices = current.thinkingLevels.map(
-              (candidate) =>
-                `${candidate} — ${thinkingDescriptions[candidate]}`,
-            )
-            yield* updateState((snapshot) => ({
-              ...snapshot,
-              phase: "ready" as const,
-            }))
-            const selected = yield* Effect.promise(() =>
-              extensionUi.context.select(
-                "Choose thinking level",
-                choices,
-              ),
-            )
-            if (selected === undefined) return
-            level =
-              current.thinkingLevels[choices.indexOf(selected)]
-            if (level === undefined) return
-            yield* updateState((snapshot) => ({
-              ...snapshot,
-              phase: "running" as const,
-            }))
-          }
-
-          const modelState = yield* pi.selectThinking(level)
-          yield* applyModelState(
-            modelState,
-            `Thinking level: ${modelState.thinkingLevel}`,
-          )
-        }).pipe(
-          Effect.catchAll((error) =>
-            updateState((snapshot) => ({
-              ...snapshot,
-              phase: "error" as const,
-              error: errorText(error),
-              transcript: appendTranscriptError(
-                snapshot.transcript,
-                errorText(error),
-              ),
-            })),
-          ),
-        )
-
       const login = (prompt: string): Effect.Effect<void> =>
         Effect.gen(function* () {
           const controller = new AbortController()
@@ -686,14 +413,10 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
             })
           }
           case "model":
-            return updateState((snapshot) => ({
-              ...snapshot,
-              phase: "running" as const,
-              error: undefined,
-            })).pipe(
-              Effect.zipRight(
-                Effect.forkIn(chooseModel(prompt), scope),
-              ),
+            return Effect.forkIn(
+              modelActions.chooseModel(prompt),
+              scope,
+            ).pipe(
               Effect.as(true),
             )
           case "login":
@@ -706,35 +429,24 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
               Effect.as(true),
             )
           case "thinking":
-            return updateState((snapshot) => ({
-              ...snapshot,
-              phase: "running" as const,
-              error: undefined,
-            })).pipe(
-              Effect.zipRight(
-                Effect.forkIn(chooseThinking(prompt), scope),
-              ),
+            return Effect.forkIn(
+              modelActions.chooseThinking(prompt),
+              scope,
+            ).pipe(
               Effect.as(true),
             )
           case "new":
-            return updateState((snapshot) => ({
-              ...snapshot,
-              phase: "running" as const,
-              error: undefined,
-            })).pipe(
-              Effect.zipRight(
-                Effect.forkIn(
-                  replaceSession(
-                    pi.newSession,
-                    "Started a new session",
-                  ),
-                  scope,
-                ),
+            return Effect.forkIn(
+              sessionActions.replace(
+                pi.newSession,
+                "Started a new session",
               ),
+              scope,
+            ).pipe(
               Effect.as(true),
             )
           case "resume":
-            return Effect.forkIn(resumeSession, scope).pipe(
+            return Effect.forkIn(sessionActions.resume, scope).pipe(
               Effect.as(true),
             )
           default:

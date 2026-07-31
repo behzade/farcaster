@@ -10,10 +10,8 @@ import {
   type RenderContext,
   type SelectOption,
 } from "@opentui/core"
-import type {
-  AppDialog,
-  CommandInfo,
-} from "../services/app-state.ts"
+import type { CommandInfo } from "../services/commands.ts"
+import type { AppDialog } from "../services/extension-ui.ts"
 import {
   commandMenuOptions,
   commandNameFromMenuOption,

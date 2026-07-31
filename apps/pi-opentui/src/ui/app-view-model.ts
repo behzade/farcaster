@@ -1,7 +1,5 @@
-import type {
-  AppSnapshot,
-  CommandInfo,
-} from "../services/app-state.ts"
+import type { AppSnapshot } from "../services/app-state-model.ts"
+import type { CommandInfo } from "../services/commands.ts"
 import { sessionStatsWithLiveUsage } from "../services/live-usage.ts"
 
 export interface HeaderViewModel {

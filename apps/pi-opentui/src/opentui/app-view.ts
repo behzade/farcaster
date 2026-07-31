@@ -7,7 +7,7 @@ import {
   type KeyEvent,
   type RenderContext,
 } from "@opentui/core"
-import type { AppSnapshot } from "../services/app-state.ts"
+import type { AppSnapshot } from "../services/app-state-model.ts"
 import type { AppClient } from "../ui/app-client.ts"
 import { headerViewModel } from "../ui/app-view-model.ts"
 import { ComposerView } from "./composer-view.ts"

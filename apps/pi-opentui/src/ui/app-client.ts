@@ -1,7 +1,7 @@
 import type {
   AppCommand,
   AppSnapshot,
-} from "../services/app-state.ts"
+} from "../services/app-state-model.ts"
 import type { ProjectPath } from "../services/project-paths.ts"
 
 /**

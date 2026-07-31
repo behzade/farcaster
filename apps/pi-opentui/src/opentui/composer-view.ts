@@ -9,9 +9,9 @@ import {
 import type {
   AppCommand,
   AppSnapshot,
-  CommandInfo,
-} from "../services/app-state.ts"
+} from "../services/app-state-model.ts"
 import {
+  type CommandInfo,
   exactSlashCommand,
   slashCommandMatches,
 } from "../services/commands.ts"
