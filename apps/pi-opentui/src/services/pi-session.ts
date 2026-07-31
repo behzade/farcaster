@@ -13,6 +13,11 @@ import {
 } from "@earendil-works/pi-coding-agent"
 import { Context, Data, Effect, Layer, Stream } from "effect"
 import { AppConfig } from "./app-config.ts"
+import { sessionStatsWithCompactionUsage } from "./compaction-usage.ts"
+import {
+  createExtensionToolPresenter,
+  type PresentExtensionTool,
+} from "./extension-tool-presentation.ts"
 import {
   piAuthProviders,
   type PiAuthInteraction,
@@ -80,6 +85,7 @@ export interface PiSessionShape {
   >
   readonly sessions: Effect.Effect<ReadonlyArray<SessionInfo>, PiSessionError>
   readonly messages: Effect.Effect<ReadonlyArray<unknown>>
+  readonly presentExtensionTool: PresentExtensionTool
   readonly bindExtensions: (
     uiContext: ExtensionUIContext,
     onError: (error: ExtensionError) => void,
@@ -87,6 +93,10 @@ export interface PiSessionShape {
   readonly prompt: (
     text: string,
     delivery?: PromptDelivery,
+  ) => Effect.Effect<void, PiSessionError>
+  readonly queuePrompt: (
+    text: string,
+    delivery: PromptDelivery,
   ) => Effect.Effect<void, PiSessionError>
   readonly clearQueue: Effect.Effect<PromptQueue, PiSessionError>
   readonly compact: (
@@ -110,6 +120,7 @@ export interface PiSessionShape {
     interaction: PiAuthInteraction,
   ) => Effect.Effect<void, PiSessionError>
   readonly abort: Effect.Effect<void, PiSessionError>
+  readonly abortCompaction: Effect.Effect<void>
 }
 
 export class PiSession extends Context.Tag("pi-opentui/PiSession")<
@@ -147,6 +158,7 @@ export interface OpenedPiSession {
   readonly listAuthProviders: () => Promise<Array<PiAuthProvider>>
   readonly listSessions: () => Promise<Array<SessionInfo>>
   readonly getMessages: () => ReadonlyArray<unknown>
+  readonly presentExtensionTool: PresentExtensionTool
   readonly newSession: () => Promise<ReadonlyArray<unknown>>
   readonly resume: (path: string) => Promise<ReadonlyArray<unknown>>
   readonly selectModel: (
@@ -173,9 +185,14 @@ export interface OpenedPiSession {
       text: string,
       delivery?: PromptDelivery,
     ) => Promise<void>
+    readonly queuePrompt: (
+      text: string,
+      delivery: PromptDelivery,
+    ) => Promise<void>
     readonly clearQueue: () => PromptQueue
     readonly compact: (instructions?: string) => Promise<unknown>
     readonly abort: () => Promise<void>
+    readonly abortCompaction: () => void
     readonly bindExtensions: (bindings: {
       readonly uiContext: ExtensionUIContext
       readonly mode: "tui"
@@ -349,6 +366,10 @@ const openPiSession: OpenPiSession = (cwd, saveSessions) => {
           modelState: getModelState(),
         }
       }
+      const presentExtensionTool = createExtensionToolPresenter({
+        getDefinition: (name) => runtime.session.getToolDefinition(name),
+        cwd: runtime.cwd,
+      })
 
       return {
         getHideThinkingBlock: () =>
@@ -361,7 +382,11 @@ const openPiSession: OpenPiSession = (cwd, saveSessions) => {
           dispose: () => undefined,
           getActiveToolNames: () =>
             runtime.session.getActiveToolNames(),
-          getSessionStats: () => runtime.session.getSessionStats(),
+          getSessionStats: () =>
+            sessionStatsWithCompactionUsage(
+              runtime.session.getSessionStats(),
+              runtime.session.sessionManager.getEntries(),
+            ),
           prompt: (text, delivery) =>
             runtime.session.prompt(
               text,
@@ -369,10 +394,15 @@ const openPiSession: OpenPiSession = (cwd, saveSessions) => {
                 ? undefined
                 : { streamingBehavior: delivery },
             ),
+          queuePrompt: (text, delivery) =>
+            delivery === "followUp"
+              ? runtime.session.followUp(text)
+              : runtime.session.steer(text),
           clearQueue: () => runtime.session.clearQueue(),
           compact: (instructions?: string) =>
             runtime.session.compact(instructions),
           abort: () => runtime.session.abort(),
+          abortCompaction: () => runtime.session.abortCompaction(),
           bindExtensions: ({ uiContext, onError }) =>
             Effect.runPromise(
               Effect.sync(() => {
@@ -400,6 +430,7 @@ const openPiSession: OpenPiSession = (cwd, saveSessions) => {
           ),
         listAuthProviders,
         getMessages: () => runtime.session.messages,
+        presentExtensionTool,
         listSessions: () =>
           Effect.runPromise(
             Effect.tryPromise(() =>
@@ -498,7 +529,7 @@ const openPiSession: OpenPiSession = (cwd, saveSessions) => {
 }
 
 const sdkCall = (
-  operation: "prompt" | "compact" | "abort",
+  operation: "prompt" | "queue" | "compact" | "abort",
   call: () => Promise<unknown>,
 ): Effect.Effect<void, PiSessionError> =>
   Effect.tryPromise({
@@ -578,6 +609,7 @@ export const makePiSessionLayer = (
             new PiSessionError({ operation: "list", cause }),
         }),
         messages: Effect.sync(result.getMessages),
+        presentExtensionTool: result.presentExtensionTool,
         bindExtensions: (uiContext, onError) =>
           Effect.tryPromise({
             try: () =>
@@ -591,6 +623,10 @@ export const makePiSessionLayer = (
           }),
         prompt: (text, delivery) =>
           sdkCall("prompt", () => result.session.prompt(text, delivery)),
+        queuePrompt: (text, delivery) =>
+          sdkCall("queue", () =>
+            result.session.queuePrompt(text, delivery),
+          ),
         clearQueue: Effect.try({
           try: result.session.clearQueue,
           catch: (cause) =>
@@ -635,6 +671,7 @@ export const makePiSessionLayer = (
               new PiSessionError({ operation: "login", cause }),
           }),
         abort: sdkCall("abort", () => result.session.abort()),
+        abortCompaction: Effect.sync(result.session.abortCompaction),
       }
     }),
   )

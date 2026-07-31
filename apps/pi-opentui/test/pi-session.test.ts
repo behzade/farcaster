@@ -31,6 +31,8 @@ describe("PiSession", () => {
     let loginCall: string | undefined
     let reloads = 0
     let promptDelivery: string | undefined
+    let queuedDelivery: string | undefined
+    let abortCompactionCalls = 0
 
     const open = (
       _cwd: string,
@@ -77,6 +79,7 @@ describe("PiSession", () => {
           return Promise.resolve([])
         },
         getMessages: () => [{ role: "user", content: "current" }],
+        presentExtensionTool: () => undefined,
         newSession: () => {
           newSessions += 1
           return Promise.resolve([])
@@ -168,9 +171,16 @@ describe("PiSession", () => {
             promptDelivery = delivery
             return Promise.resolve()
           },
+          queuePrompt: (_text, delivery) => {
+            queuedDelivery = delivery
+            return Promise.resolve()
+          },
           clearQueue: () => ({ steering: ["adjust"], followUp: [] }),
           compact: () => Promise.resolve(),
           abort: () => Promise.resolve(),
+          abortCompaction: () => {
+            abortCompactionCalls += 1
+          },
           bindExtensions: () => Promise.resolve(),
         },
         extensionsResult: {
@@ -235,6 +245,8 @@ describe("PiSession", () => {
           followUp: [],
         })
         yield* pi.prompt("adjust course", "steer")
+        yield* pi.queuePrompt("after this", "followUp")
+        yield* pi.abortCompaction
         expect((yield* pi.reload).hideThinkingBlock).toBe(true)
         expect(openedWithSavedSessions).toBe(false)
         expect(listedSessions).toBe(1)
@@ -245,6 +257,8 @@ describe("PiSession", () => {
         expect(loginCall).toBe("opencode-go/api_key")
         expect(reloads).toBe(1)
         expect(promptDelivery).toBe("steer")
+        expect(queuedDelivery).toBe("followUp")
+        expect(abortCompactionCalls).toBe(1)
       }),
     ).pipe(Effect.provide(session))
 

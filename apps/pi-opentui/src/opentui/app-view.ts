@@ -106,7 +106,7 @@ export class AppView implements OpenTuiComponent<AppSnapshot> {
     const title = new BoxRenderable(ctx, { flexDirection: "row" })
     title.add(
       new TextRenderable(ctx, {
-        content: "pi-next",
+        content: "pi",
         fg: theme.accent,
         attributes: TextAttributes.BOLD,
       }),

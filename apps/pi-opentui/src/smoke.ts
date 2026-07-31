@@ -32,6 +32,14 @@ const smoke = Effect.scoped(
     const modelState = yield* pi.modelState
     const models = yield* pi.models
     const authProviders = yield* pi.authProviders
+    const webSearchPresentation = pi.presentExtensionTool({
+      toolCallId: "smoke-web-search",
+      toolName: "web_search",
+      args: { query: "OpenTUI smoke" },
+      result: undefined,
+      pending: false,
+      isError: false,
+    })
     const modelsByProvider = Object.fromEntries(
       Object.entries(
         models.reduce<Record<string, number>>((counts, model) => {
@@ -43,6 +51,14 @@ const smoke = Effect.scoped(
     if (sessionAfter.sessionId === sessionBefore.sessionId) {
       return yield* Effect.fail(
         new Error("Pi kept the old session after replacement"),
+      )
+    }
+    if (
+      pi.activeTools.includes("web_search") &&
+      !webSearchPresentation?.call?.includes("OpenTUI smoke")
+    ) {
+      return yield* Effect.fail(
+        new Error("The web search extension renderer was not available"),
       )
     }
 
@@ -64,6 +80,8 @@ const smoke = Effect.scoped(
               provider.type === "api_key" &&
               provider.interactive,
           ),
+          hasWebSearchPresentation:
+            webSearchPresentation?.call?.includes("OpenTUI smoke") ?? false,
           sessionReplacement: {
             before: sessionBefore.sessionId,
             after: sessionAfter.sessionId,

@@ -60,7 +60,7 @@ export const makeSessionActions = ({
         promptQueue: { steering: [], followUp: [] },
         draftRestore: undefined,
         transcript: appendTranscriptNotice(
-          transcriptFromMessages(messages),
+          transcriptFromMessages(messages, pi.presentExtensionTool),
           notice,
         ),
         commands: commandCatalog(sdkCommands),

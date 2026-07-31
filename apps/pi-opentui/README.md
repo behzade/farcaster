@@ -1,7 +1,9 @@
 # pi-opentui
 
-This is the first proof for a new Pi front end built with OpenTUI core, Bun,
-TypeScript, and Effect. It runs beside the current `pi` command.
+This app provides the canonical `pi` command. The upstream Pi package remains
+an SDK dependency, not a second installed UI.
+
+The front end uses OpenTUI core, Bun, TypeScript, and Effect.
 
 The OpenTUI client uses explicit component updates rather than a React or
 Solid renderer. Shared snapshots, commands, search rules, and display data
@@ -26,8 +28,8 @@ Pi extension set, and provides:
 - extension notices, status, retry, and compaction updates;
 - scoped extension, session, task, and terminal cleanup.
 
-It does not yet render images or rich custom extension views, import sessions
-from other projects, or replace the current `pi` command.
+It does not yet render images or rich custom extension views, or import
+sessions from other projects.
 
 Run the checks and app:
 
@@ -40,12 +42,16 @@ bun start
 ```
 
 The app reads Pi's `~/.pi/agent/keybindings.json` and reloads it with `/reload`.
+Its Pi AI patch also exposes native Responses output items. The compaction
+extension uses that hook to send only a compaction trigger on a matching Codex
+WebSocket chain, and the status totals include the saved compaction usage.
 By default, `Ctrl+C` clears the input, a second `Ctrl+C` quits, `Ctrl+D` quits
 when the input is empty, and `Escape` stops a running turn.
 Press `Enter` to send and `Shift+Enter` for a new line.
 While Pi works, `Enter` steers the turn, `Alt+Enter` queues a follow-up, and
 `Alt+Up` returns queued prompts to the editor. Stopping a turn also restores
-its queued prompts. These keys follow Pi's keybinding file.
+its queued prompts. Prompts entered during compaction wait until compaction
+ends. These keys follow Pi's keybinding file.
 Press `Ctrl+V` to paste an image from the system clipboard, with text fallback.
 Text pastes over 10 lines or 1,000 characters use a scoped temporary file.
 The app creates these files in a private OS temp directory and removes the

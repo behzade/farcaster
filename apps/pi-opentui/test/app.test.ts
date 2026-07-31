@@ -180,7 +180,7 @@ test("renders chat and sends input", () => {
           yield* Effect.tryPromise(() => setup.renderOnce())
           const frame = setup.captureCharFrame()
 
-          expect(frame).toContain("pi-next")
+          expect(frame).toContain("pi")
           expect(frame).toContain("/work/pi")
           expect(frame).toContain("openai/gpt-5")
           expect(frame).toContain("thinking high")

@@ -6,8 +6,8 @@ Build a new Pi terminal front end with OpenTUI core while keeping Pi's
 agent SDK as the source of truth for sessions, tools, models, extensions, and
 compaction.
 
-The first app will live in `apps/pi-opentui`. It will not replace the current
-`pi` command until it can run real work with the same safety checks.
+The app lives in `apps/pi-opentui`. It replaced the upstream TUI after it could
+run real work with the same safety checks.
 
 ## Main choices
 
@@ -128,7 +128,8 @@ Current progress:
   pastes use scoped temporary files and insert their paths into the composer.
   Pi's steering and follow-up queues now remain active while a turn runs. The
   composer shows queued prompts and can return them to the draft on dequeue or
-  stop.
+  stop. A local queue covers compaction, then hands prompts back to the Pi SDK
+  when compaction ends.
 
 Current file bounds:
 
@@ -153,6 +154,8 @@ Current file bounds:
   process boundary only forwards typed app commands.
 - `prompt-queue-actions.ts` owns queue clearing and draft restore. App state
   routes typed prompt delivery commands and folds Pi's queue events.
+- `compaction-actions.ts` owns the local queue used only while Pi compacts and
+  hands those prompts back to the SDK when compaction ends.
 
 `app-state.ts` still owns the event fold and built-in command map. Keep new
 provider, file-system, queue policy, and OpenTUI details in their own files.
@@ -224,9 +227,10 @@ Exit checks:
 - idle work stops when its row or session scope ends;
 - the cache lowers parse work and has a fixed size.
 
-### 5. Ship beside current Pi
+### 5. Ship as Pi
 
-Add a Nix package and a separate `pi-next` command. Keep `pi` as the default.
+Package the OpenTUI app as the canonical `pi` command. Keep the shared agent
+assets as a separate Nix output; do not install the upstream Pi TUI command.
 Run both against the same extension bundle and saved sessions.
 
 Change the default only after the new app passes a written feature list and

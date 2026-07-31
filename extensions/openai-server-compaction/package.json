@@ -1,6 +1,6 @@
 {
   "name": "pi-openai-server-compaction",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Pi extension for OpenAI server-side compaction with Codex-quality continuity.",
@@ -9,6 +9,7 @@
     "extensions": ["./src/index.ts"]
   },
   "dependencies": {
+    "effect": "3.21.4",
     "ws": "^8.18.0"
   }
 }

@@ -286,6 +286,9 @@ class ToolRowView implements TranscriptRowView {
       result: row.pending ? row.partialResult : row.result,
       pending: row.pending,
       isError: row.isError,
+      ...(row.extensionPresentation === undefined
+        ? {}
+        : { extension: row.extensionPresentation }),
     })
   }
 }

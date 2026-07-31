@@ -1,0 +1,90 @@
+diff --git a/dist/api/openai-codex-responses.js b/dist/api/openai-codex-responses.js
+index dadadbe..62dba21 100644
+--- a/dist/api/openai-codex-responses.js
++++ b/dist/api/openai-codex-responses.js
+@@ -428,6 +428,7 @@ async function processStream(response, output, stream, model, options) {
+         serviceTier: options?.serviceTier,
+         resolveServiceTier: resolveCodexServiceTier,
+         applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
++        onOutputItemDone: options?.onOutputItemDone,
+     });
+ }
+ class CodexApiError extends Error {
+@@ -1109,6 +1110,7 @@ async function processWebSocketStream(url, body, headers, output, stream, model,
+             serviceTier: options?.serviceTier,
+             resolveServiceTier: resolveCodexServiceTier,
+             applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
++            onOutputItemDone: options?.onOutputItemDone,
+         });
+         if (options?.signal?.aborted) {
+             keepConnection = false;
+diff --git a/dist/api/openai-responses-shared.d.ts b/dist/api/openai-responses-shared.d.ts
+index 53934ec..b5f415e 100644
+--- a/dist/api/openai-responses-shared.d.ts
++++ b/dist/api/openai-responses-shared.d.ts
+@@ -5,6 +5,7 @@ export interface OpenAIResponsesStreamOptions {
+     serviceTier?: ResponseCreateParamsStreaming["service_tier"];
+     resolveServiceTier?: (responseServiceTier: ResponseCreateParamsStreaming["service_tier"] | undefined, requestServiceTier: ResponseCreateParamsStreaming["service_tier"] | undefined) => ResponseCreateParamsStreaming["service_tier"] | undefined;
+     applyServiceTierPricing?: (usage: Usage, serviceTier: ResponseCreateParamsStreaming["service_tier"] | undefined) => void;
++    onOutputItemDone?: (item: unknown, model: Model<Api>) => void | Promise<void>;
+ }
+ export interface ConvertResponsesMessagesOptions {
+     includeSystemPrompt?: boolean;
+diff --git a/dist/api/openai-responses-shared.js b/dist/api/openai-responses-shared.js
+index 0216ce2..ca2ef44 100644
+--- a/dist/api/openai-responses-shared.js
++++ b/dist/api/openai-responses-shared.js
+@@ -449,6 +449,7 @@ export async function processResponsesStream(openaiStream, output, stream, model
+         }
+         else if (event.type === "response.output_item.done") {
+             const item = event.item;
++            await options?.onOutputItemDone?.(item, model);
+             const slot = getOrCreateSlot(event.output_index, item);
+             if (item.type === "reasoning" && slot?.type === "thinking") {
+                 const summaryText = item.summary?.map((s) => s.text).join("\n\n") || "";
+diff --git a/dist/api/openai-responses.js b/dist/api/openai-responses.js
+index 1c1f91c..46c4813 100644
+--- a/dist/api/openai-responses.js
++++ b/dist/api/openai-responses.js
+@@ -105,6 +105,7 @@ export const stream = (model, context, options) => {
+             await processResponsesStream(openaiStream, output, stream, model, {
+                 serviceTier: options?.serviceTier,
+                 applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
++                onOutputItemDone: options?.onOutputItemDone,
+             });
+             if (options?.signal?.aborted) {
+                 throw new Error("Request was aborted");
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+index be06af4..4737675 100644
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -1,5 +1,6 @@
+ export type { Static, TSchema } from "typebox";
+ export { Type } from "typebox";
++export declare const responseOutputItemHookVersion = 1;
+ export type { AnthropicEffort, AnthropicOptions, AnthropicThinkingDisplay } from "./api/anthropic-messages.ts";
+ export type { AzureOpenAIResponsesOptions } from "./api/azure-openai-responses.ts";
+ export type { BedrockOptions, BedrockThinkingDisplay } from "./api/bedrock-converse-stream.ts";
+diff --git a/dist/index.js b/dist/index.js
+index 8a4e7f0..58cf226 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -1,4 +1,5 @@
+ export { Type } from "typebox";
++export const responseOutputItemHookVersion = 1;
+ export * from "./api/lazy.js";
+ export * from "./auth/context.js";
+ export * from "./auth/credential-store.js";
+diff --git a/dist/types.d.ts b/dist/types.d.ts
+index 371dc9f..339d133 100644
+--- a/dist/types.d.ts
++++ b/dist/types.d.ts
+@@ -69,6 +69,8 @@ export interface StreamOptions {
+      * Return undefined to keep the payload unchanged.
+      */
+     onPayload?: (payload: unknown, model: Model<Api>) => unknown | undefined | Promise<unknown | undefined>;
++    /** Optional callback for completed provider-native Responses output items. */
++    onOutputItemDone?: (item: unknown, model: Model<Api>) => void | Promise<void>;
+     /**
+      * Optional callback invoked after an HTTP response is received and before
+      * its body stream is consumed.

@@ -38,9 +38,12 @@ separate `nix-config` repo.
   and provides `pi-diff`, the same syntax-highlighted diff view as a terminal
   command. It keeps a bounded output cache in the system temporary directory so
   reopening the same diff at the same width skips syntax highlighting work.
+- [`extensions/openai-server-compaction`](extensions/openai-server-compaction)
+  owns the OpenAI compaction code. Codex compaction reuses Pi AI's cached
+  WebSocket response chain when the host exposes native output items.
 - [`nix`](nix) contains the pinned builds for Pi and every packaged extension.
-- [`apps/pi-opentui`](apps/pi-opentui) is the first runnable proof for the new
-  OpenTUI, Solid, and Effect front end. Its staged design is in
+- [`apps/pi-opentui`](apps/pi-opentui) provides the canonical `pi` command with
+  OpenTUI core, TypeScript, Bun, and Effect. Its staged design is in
   [`PI_OPENTUI_PLAN.md`](PI_OPENTUI_PLAN.md).
 - [`patches`](patches) contains the local changes applied to third-party Pi
   extensions.

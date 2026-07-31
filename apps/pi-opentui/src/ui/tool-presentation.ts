@@ -59,6 +59,11 @@ export interface ToolPresentationInput {
   readonly result?: unknown
   readonly pending?: boolean
   readonly isError?: boolean
+  readonly extension?: {
+    readonly label: string
+    readonly call?: string
+    readonly result?: string
+  }
 }
 
 type UnknownRecord = Record<string, unknown>
@@ -353,6 +358,25 @@ const presentGeneric = (
   input: ToolPresentationInput,
   state: ToolRunState,
 ): ToolPresentation => {
+  const renderedCall = input.extension?.call?.trim() ?? ""
+  const renderedResult = input.extension?.result?.trim() ?? ""
+  const callLines = previewLines(renderedCall)
+  const customBody = renderedResult.length > 0
+    ? renderedResult
+    : callLines.slice(1).join("\n")
+  if (input.extension !== undefined) {
+    return {
+      toolName: input.toolName,
+      canonicalTool: "generic",
+      title:
+        callLines[0] ??
+        (input.extension.label.trim() || input.toolName || "tool"),
+      state,
+      body: customBody.length > 0
+        ? { kind: "text", content: customBody }
+        : { kind: "none" },
+    }
+  }
   const args = safeJson(input.args)
   const output = textContent(input.result) ?? safeJson(input.result)
   const content = output.length === 0

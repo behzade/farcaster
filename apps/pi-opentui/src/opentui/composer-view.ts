@@ -269,7 +269,7 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
     const command = commands[this.selectedIndex(commands.length)]
     this.hint.content =
       this.snapshot.phase === "fatal"
-        ? "restart pi-next after updating the Pi event handler"
+        ? "restart pi after updating the Pi event handler"
         : this.canComplete() && command !== undefined
         ? `/${command.name}${command.description.length > 0 ? ` — ${command.description}` : ""} · ↑/↓ choose · tab or enter complete`
         : this.defaultHint()

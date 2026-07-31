@@ -237,6 +237,24 @@ test("maps bash output and keeps unknown extension tools visible", () => {
     content:
       'input\n{\n  "query": "OpenTUI"\n}\n\noutput\none result',
   })
+
+  const renderedByExtension = toolPresentation({
+    toolName: "web_search",
+    args: { query: "OpenTUI" },
+    result: { content: [{ type: "text", text: "raw result" }] },
+    extension: {
+      label: "Web search",
+      call: "search OpenTUI\nchecking 3 sources",
+      result: "2 results\n1. OpenTUI docs",
+    },
+  })
+  expect(renderedByExtension).toEqual({
+    toolName: "web_search",
+    canonicalTool: "generic",
+    title: "search OpenTUI",
+    state: "complete",
+    body: { kind: "text", content: "2 results\n1. OpenTUI docs" },
+  })
 })
 
 test("renders a write preview and can replace it with an OpenTUI diff", async () => {

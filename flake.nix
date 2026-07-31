@@ -30,6 +30,7 @@
           subagents = pkgs.callPackage ./nix/pi-subagents.nix { };
           webAccess = pkgs.callPackage ./nix/pi-web-access.nix { };
           openaiServerCompaction = pkgs.callPackage ./nix/pi-openai-server-compaction.nix { };
+          piOpenTui = pkgs.callPackage ./nix/pi-opentui.nix { };
           permissionSystem = pkgs.callPackage ./nix/pi-permission-system.nix { };
           agent = pkgs.callPackage ./nix/pi-agent.nix {
             inherit
@@ -44,6 +45,8 @@
         in
         {
           inherit agent sandbox subagents;
+          pi = piOpenTui;
+          pi-opentui = piOpenTui;
           mcp-cli = mcpCli;
           permission-system = permissionSystem;
           sandbox-broker = sandboxBroker;
@@ -60,6 +63,7 @@
           pkgs = pkgsFor system;
           denseTools = pkgs.callPackage ./nix/pi-dense-tools.nix { };
           mcpCli = pkgs.callPackage ./nix/pi-mcp-cli.nix { };
+          openaiServerCompaction = pkgs.callPackage ./nix/pi-openai-server-compaction.nix { };
           webAccess = pkgs.callPackage ./nix/pi-web-access.nix { };
         in
         {
@@ -111,6 +115,15 @@
             touch "$out"
           '';
           permission-system = pkgs.callPackage ./nix/pi-permission-system.nix { };
+          openai-server-compaction-tests = pkgs.runCommand "pi-openai-server-compaction-tests" {
+            nativeBuildInputs = [ pkgs.nodejs ];
+          } ''
+            cp -R ${openaiServerCompaction}/src ${openaiServerCompaction}/node_modules .
+            mkdir test
+            cp ${self}/extensions/openai-server-compaction/test/continuation-compaction.test.ts test/
+            node --experimental-strip-types --test test/continuation-compaction.test.ts
+            touch "$out"
+          '';
           web-access = webAccess;
 
           governance = pkgs.runCommand "pi-governance-tests" { nativeBuildInputs = [ pkgs.nodejs ]; } ''

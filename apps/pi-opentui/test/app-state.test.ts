@@ -26,9 +26,17 @@ test("folds session events and commands into app state", () => {
     text: string
     delivery: "steer" | "followUp" | undefined
   }> = []
+  const directQueueRequests: Array<{
+    text: string
+    delivery: "steer" | "followUp"
+  }> = []
+  let abortCompactionCalls = 0
   let finishPrompt: (() => void) | undefined
   let failPrompt: (() => void) | undefined
   let compactInstructions: string | undefined
+  let holdCompaction = false
+  let finishCompaction: (() => void) | undefined
+  let failCompaction: (() => void) | undefined
   let newSessionCalls = 0
   let resumedPath: string | undefined
   let selectedModel: string | undefined
@@ -43,6 +51,7 @@ test("folds session events and commands into app state", () => {
   let sessionStatsReads = 0
   let authoritativeTokens = 30
   let authoritativeCost = 0.01
+  let authoritativeContextPercent = 10
   let modelState: PiModelState = {
     selected: {
       provider: "openai",
@@ -111,6 +120,11 @@ test("folds session events and commands into app state", () => {
           total: authoritativeTokens,
         },
         cost: authoritativeCost,
+        contextUsage: {
+          tokens: authoritativeContextPercent * 1_000,
+          contextWindow: 100_000,
+          percent: authoritativeContextPercent,
+        },
       }
     }),
     modelState: Effect.sync(() => modelState),
@@ -159,8 +173,12 @@ test("folds session events and commands into app state", () => {
       },
     ]),
     messages: Effect.succeed([]),
+    presentExtensionTool: () => undefined,
     prompt: (text, delivery) => {
       promptRequests.push({ text, delivery })
+      if (text.startsWith("/after-reload") && delivery === undefined) {
+        return Effect.void
+      }
       if (delivery !== undefined) {
         return failQueuedPrompt
           ? Effect.fail(
@@ -186,6 +204,10 @@ test("folds session events and commands into app state", () => {
           )
       })
     },
+    queuePrompt: (text, delivery) =>
+      Effect.sync(() => {
+        directQueueRequests.push({ text, delivery })
+      }),
     clearQueue: Effect.sync(() => {
       const queued = queuedForClear
       queuedForClear = { steering: [], followUp: [] }
@@ -194,7 +216,24 @@ test("folds session events and commands into app state", () => {
     compact: (instructions) =>
       Effect.sync(() => {
         compactInstructions = instructions
-      }),
+      }).pipe(
+        Effect.zipRight(
+          holdCompaction
+            ? Effect.async<void, PiSessionError>((resume) => {
+                finishCompaction = () => resume(Effect.void)
+                failCompaction = () =>
+                  resume(
+                    Effect.fail(
+                      new PiSessionError({
+                        operation: "compact",
+                        cause: new Error("Compaction cancelled"),
+                      }),
+                    ),
+                  )
+              })
+            : Effect.void,
+        ),
+      ),
     reload: Effect.sync(() => {
       reloadCalls += 1
       return {
@@ -283,6 +322,17 @@ test("folds session events and commands into app state", () => {
     abort: Effect.sync(() => {
       failPrompt?.()
     }),
+    abortCompaction: Effect.sync(() => {
+      abortCompactionCalls += 1
+      emit?.({
+        type: "compaction_end",
+        reason: "manual",
+        result: undefined,
+        aborted: true,
+        willRetry: false,
+      })
+      failCompaction?.()
+    }),
     bindExtensions: (ui) =>
       Effect.sync(() => {
         extensionUi = ui
@@ -354,6 +404,8 @@ test("folds session events and commands into app state", () => {
       }
       expect((yield* app.get).thinkingLevel).toBe("high")
 
+      authoritativeContextPercent = 42
+      const readsBeforeMessageEnd = sessionStatsReads
       emit({
         type: "message_end",
         message: {
@@ -375,6 +427,8 @@ test("folds session events and commands into app state", () => {
       snapshot = yield* app.get
       expect(snapshot.liveUsage.completed.total).toBe(10)
       expect(headerViewModel(snapshot).usage).toContain("40 tokens")
+      expect(headerViewModel(snapshot).usage).toContain("ctx 42%")
+      expect(sessionStatsReads).toBeGreaterThan(readsBeforeMessageEnd)
 
       authoritativeTokens = 40
       authoritativeCost = 0.016
@@ -678,6 +732,7 @@ test("folds session events and commands into app state", () => {
       }
       expect(promptCalls).toBe(callsBeforeCommands + 2)
 
+      holdCompaction = true
       yield* app.dispatch({
         _tag: "RunCommand",
         name: "compact",
@@ -688,6 +743,117 @@ test("folds session events and commands into app state", () => {
         yield* Effect.yieldNow()
       }
       expect(compactInstructions).toBe("keep decisions")
+      emit?.({ type: "compaction_start", reason: "manual" })
+      while ((yield* app.get).lastEvent !== "compaction_start") {
+        yield* Effect.yieldNow()
+      }
+
+      yield* app.dispatch({
+        _tag: "Prompt",
+        text: "continue after compact",
+        delivery: "steer",
+      })
+      yield* app.dispatch({
+        _tag: "Prompt",
+        text: "then report",
+        delivery: "followUp",
+      })
+      while ((yield* app.get).promptQueue.followUp.length === 0) {
+        yield* Effect.yieldNow()
+      }
+      expect((yield* app.get).promptQueue).toEqual({
+        steering: ["continue after compact"],
+        followUp: ["then report"],
+      })
+      yield* app.dispatch({
+        _tag: "RunCommand",
+        name: "after-reload",
+        arguments: "staged",
+        delivery: "steer",
+      })
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        yield* Effect.yieldNow()
+      }
+      expect(promptRequests).toContainEqual({
+        text: "/after-reload staged",
+        delivery: undefined,
+      })
+      expect((yield* app.get).promptQueue).toEqual({
+        steering: ["continue after compact"],
+        followUp: ["then report"],
+      })
+
+      prompt = ""
+      emit?.({
+        type: "compaction_end",
+        reason: "manual",
+        result: undefined,
+        aborted: false,
+        willRetry: false,
+      })
+      while (
+        prompt !== "continue after compact" ||
+        !directQueueRequests.some(
+          (request) =>
+            request.text === "then report" &&
+            request.delivery === "followUp",
+        )
+      ) {
+        yield* Effect.yieldNow()
+      }
+      finishCompaction?.()
+      while ((yield* app.get).phase !== "running") {
+        yield* Effect.yieldNow()
+      }
+      finishPrompt?.()
+      while ((yield* app.get).phase !== "ready") {
+        yield* Effect.yieldNow()
+      }
+
+      compactInstructions = undefined
+      finishCompaction = undefined
+      failCompaction = undefined
+      yield* app.dispatch({
+        _tag: "RunCommand",
+        name: "compact",
+        arguments: "cancel this",
+        delivery: "steer",
+      })
+      while (compactInstructions !== "cancel this") {
+        yield* Effect.yieldNow()
+      }
+      emit?.({ type: "compaction_start", reason: "manual" })
+      while ((yield* app.get).lastEvent !== "compaction_start") {
+        yield* Effect.yieldNow()
+      }
+      yield* app.dispatch({
+        _tag: "Prompt",
+        text: "restore after cancel",
+        delivery: "steer",
+      })
+      while ((yield* app.get).promptQueue.steering.length === 0) {
+        yield* Effect.yieldNow()
+      }
+      const abortsBeforeCompaction = abortCompactionCalls
+      yield* app.dispatch({ _tag: "Abort" })
+      while (
+        abortCompactionCalls === abortsBeforeCompaction ||
+        (yield* app.get).phase !== "ready"
+      ) {
+        yield* Effect.yieldNow()
+      }
+      const cancelledRestore = (yield* app.get).draftRestore
+      expect(cancelledRestore?.text).toBe("restore after cancel")
+      yield* app.dispatch({
+        _tag: "AcknowledgeDraftRestore",
+        id: cancelledRestore?.id ?? -1,
+      })
+      while ((yield* app.get).draftRestore !== undefined) {
+        yield* Effect.yieldNow()
+      }
+      holdCompaction = false
+      finishCompaction = undefined
+      failCompaction = undefined
 
       yield* app.dispatch({
         _tag: "RunCommand",

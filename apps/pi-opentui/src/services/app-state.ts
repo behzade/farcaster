@@ -30,6 +30,7 @@ import { makeModelActions } from "./model-actions.ts"
 import { makeReloadAction } from "./reload-action.ts"
 import { makeSessionActions } from "./session-actions.ts"
 import { makePromptQueueActions } from "./prompt-queue-actions.ts"
+import { makeCompactionActions } from "./compaction-actions.ts"
 import {
   emptyLiveUsage,
   reduceLiveUsage,
@@ -44,6 +45,23 @@ import {
 
 const unlessFatal = (current: AppPhase, next: AppPhase): AppPhase =>
   current === "fatal" ? "fatal" : next
+
+const eventRefreshesContextUsage = (eventType: string): boolean =>
+  eventType === "message_end" ||
+  eventType === "turn_end" ||
+  eventType === "entry_appended" ||
+  eventType === "compaction_end" ||
+  eventType === "agent_settled"
+
+const replaceContextUsage = (
+  current: AppSnapshot["sessionStats"],
+  latest: AppSnapshot["sessionStats"],
+): AppSnapshot["sessionStats"] => {
+  const { contextUsage: _oldContextUsage, ...withoutContextUsage } = current
+  return latest.contextUsage === undefined
+    ? withoutContextUsage
+    : { ...withoutContextUsage, contextUsage: latest.contextUsage }
+}
 
 export type { AppDialog } from "./extension-ui.ts"
 export type { CommandInfo } from "./commands.ts"
@@ -196,6 +214,23 @@ export const AppStateLive: Layer.Layer<
         updateState,
         pushNotice,
       )
+      const compactionActions = yield* makeCompactionActions({
+        pi,
+        promptQueue: promptQueueActions,
+        startPrompt: (prompt) =>
+          Ref.set(promptWasAborted, false).pipe(
+            Effect.zipRight(
+              updateState((snapshot) => ({
+                ...snapshot,
+                phase: "running" as const,
+                error: undefined,
+              })),
+            ),
+            Effect.zipRight(Effect.forkIn(runPrompt(prompt), scope)),
+            Effect.asVoid,
+          ),
+        reportError: reportQueuedPromptError,
+      })
       const reload = makeReloadAction({
         pi,
         keybindings,
@@ -235,9 +270,22 @@ export const AppStateLive: Layer.Layer<
               cause instanceof Error ? cause : new Error(String(cause)),
           })
           const latestStats =
-            event.type === "agent_settled"
+            eventRefreshesContextUsage(event.type)
               ? yield* pi.sessionStats
               : undefined
+          if (event.type === "compaction_start") {
+            yield* compactionActions.begin
+          }
+          if (event.type === "queue_update") {
+            yield* promptQueueActions.updateSessionQueue({
+              steering: event.steering,
+              followUp: event.followUp,
+            })
+          }
+          const resumedAfterCompaction =
+            event.type === "compaction_end"
+              ? yield* compactionActions.finish(event.willRetry)
+              : false
           yield* updateState((snapshot) => ({
             ...snapshot,
             phase:
@@ -245,10 +293,26 @@ export const AppStateLive: Layer.Layer<
                 ? "running"
                 : event.type === "agent_settled"
                   ? "ready"
+                  : event.type === "compaction_end" &&
+                      event.reason === "manual"
+                    ? resumedAfterCompaction
+                      ? snapshot.phase
+                      : event.errorMessage === undefined
+                        ? "ready"
+                        : "error"
                   : snapshot.phase,
             eventCount: snapshot.eventCount + 1,
             lastEvent: event.type,
-            sessionStats: latestStats ?? snapshot.sessionStats,
+            error:
+              event.type === "compaction_end" && event.errorMessage
+                ? event.errorMessage
+                : snapshot.error,
+            sessionStats:
+              latestStats === undefined
+                ? snapshot.sessionStats
+                : event.type === "agent_settled"
+                  ? latestStats
+                  : replaceContextUsage(snapshot.sessionStats, latestStats),
             liveUsage:
               event.type === "agent_settled"
                 ? emptyLiveUsage
@@ -257,14 +321,11 @@ export const AppStateLive: Layer.Layer<
               event.type === "thinking_level_changed"
                 ? event.level
                 : snapshot.thinkingLevel,
-            promptQueue:
-              event.type === "queue_update"
-                ? {
-                    steering: event.steering,
-                    followUp: event.followUp,
-                  }
-                : snapshot.promptQueue,
-            transcript: reduceTranscriptEvent(snapshot.transcript, event),
+            transcript: reduceTranscriptEvent(
+              snapshot.transcript,
+              event,
+              pi.presentExtensionTool,
+            ),
           }))
         }),
       ).pipe(
@@ -282,8 +343,8 @@ export const AppStateLive: Layer.Layer<
         Effect.forkScoped,
       )
 
-      const runPrompt = (prompt: string): Effect.Effect<void> =>
-        Effect.gen(function* () {
+      function runPrompt(prompt: string): Effect.Effect<void> {
+        return Effect.gen(function* () {
           yield* pi.prompt(prompt)
           yield* updateState((snapshot) => ({
             ...snapshot,
@@ -313,6 +374,7 @@ export const AppStateLive: Layer.Layer<
             }),
           ),
         )
+      }
 
       const runCompact = (
         instructions: string | undefined,
@@ -322,33 +384,13 @@ export const AppStateLive: Layer.Layer<
           const sessionStats = yield* pi.sessionStats
           yield* updateState((snapshot) => ({
             ...snapshot,
-            phase: "ready" as const,
             sessionStats,
             liveUsage: emptyLiveUsage,
           }))
         }).pipe(
-          Effect.catchAll((error) =>
-            Effect.gen(function* () {
-              const wasAborted = yield* Ref.get(promptWasAborted)
-              yield* updateState((snapshot) =>
-                wasAborted
-                  ? {
-                      ...snapshot,
-                      phase: "ready" as const,
-                      error: undefined,
-                    }
-                  : {
-                      ...snapshot,
-                      phase: "error" as const,
-                      error: errorText(error),
-                      transcript: appendTranscriptError(
-                        snapshot.transcript,
-                        errorText(error),
-                      ),
-                    },
-              )
-            }),
-          ),
+          // AgentSession reports success, cancellation, and failure through
+          // compaction_end; the event fold owns the visible phase and error.
+          Effect.catchAll(() => Effect.void),
         )
 
       const login = (providerRef: string): Effect.Effect<void> =>
@@ -509,6 +551,7 @@ export const AppStateLive: Layer.Layer<
         const snapshot = yield* SubscriptionRef.get(state)
         if (snapshot.phase !== "running") return
 
+        const compacting = yield* compactionActions.isCompacting
         yield* promptQueueActions.restore(false).pipe(
           Effect.catchAll(reportQueuedPromptError),
         )
@@ -518,6 +561,10 @@ export const AppStateLive: Layer.Layer<
           phase: "stopping" as const,
           error: undefined,
         }))
+        if (compacting) {
+          yield* pi.abortCompaction
+          return
+        }
         yield* pi.abort
         yield* updateState((current) => ({
           ...current,
@@ -552,6 +599,9 @@ export const AppStateLive: Layer.Layer<
             return
           }
           if (snapshot.phase === "running") {
+            if (yield* compactionActions.queuePrompt(prompt, delivery)) {
+              return
+            }
             yield* Effect.forkIn(
               pi.prompt(prompt, delivery).pipe(
                 Effect.catchAll((error) =>
@@ -617,6 +667,23 @@ export const AppStateLive: Layer.Layer<
                 yield* pushNotice(
                   `Cannot run /${selected.name} while Pi is working`,
                   true,
+                )
+                return
+              }
+              if (
+                snapshot.phase === "running" &&
+                selected.source === "extension" &&
+                (yield* compactionActions.isCompacting)
+              ) {
+                yield* Effect.forkIn(
+                  pi.prompt(prompt).pipe(
+                    Effect.catchAll((error) =>
+                      promptQueueActions.restoreText(prompt).pipe(
+                        Effect.zipRight(reportQueuedPromptError(error)),
+                      ),
+                    ),
+                  ),
+                  scope,
                 )
                 return
               }

@@ -11,6 +11,10 @@ import {
   transcriptTextParts as textParts,
 } from "./transcript-values.ts"
 import { isReadToolName } from "./tool-names.ts"
+import type {
+  ExtensionToolPresentation,
+  PresentExtensionTool,
+} from "./extension-tool-presentation.ts"
 
 export type TranscriptRowKind =
   | "user"
@@ -42,6 +46,7 @@ export interface ToolTranscriptRow extends TranscriptRowBase {
   readonly partialResult: unknown
   readonly result: unknown
   readonly readGroupId?: string
+  readonly extensionPresentation?: ExtensionToolPresentation
 }
 
 export interface TextTranscriptRow extends TranscriptRowBase {
@@ -85,6 +90,26 @@ const updateRow = (
   rows: model.rows.map((row) => (row.id === id ? update(row) : row)),
 })
 
+const withExtensionPresentation = (
+  row: ToolTranscriptRow,
+  rendererArgs: unknown,
+  rendererResult: unknown,
+  pending: boolean,
+  isError: boolean,
+  presentExtensionTool: PresentExtensionTool | undefined,
+): ToolTranscriptRow => {
+  const extensionPresentation = presentExtensionTool?.({
+    toolCallId: row.toolCallId,
+    toolName: row.toolName,
+    args: rendererArgs,
+    result: rendererResult,
+    pending,
+    isError,
+  })
+  return extensionPresentation === undefined
+    ? row
+    : { ...row, extensionPresentation }
+}
 
 const assistantRow = (
   id: string,
@@ -118,9 +143,10 @@ const toolRow = (
   args: unknown,
   pending: boolean,
   readGroupId?: string,
+  presentExtensionTool?: PresentExtensionTool,
 ): ToolTranscriptRow => {
   const boundedArgs = boundedUnknown(args)
-  return {
+  const row: ToolTranscriptRow = {
     id: `tool-${toolCallId}`,
     kind: "tool",
     title: toolName,
@@ -134,6 +160,14 @@ const toolRow = (
     result: undefined,
     ...(readGroupId === undefined ? {} : { readGroupId }),
   }
+  return withExtensionPresentation(
+    row,
+    args,
+    undefined,
+    pending,
+    false,
+    presentExtensionTool,
+  )
 }
 
 interface GroupedAssistantToolCall {
@@ -181,6 +215,7 @@ const groupedAssistantToolCalls = (
 const appendAssistantToolCalls = (
   model: TranscriptModel,
   message: unknown,
+  presentExtensionTool?: PresentExtensionTool,
 ): TranscriptModel =>
   groupedAssistantToolCalls(message).reduce((current, call) => {
     const next = toolRow(
@@ -189,6 +224,7 @@ const appendAssistantToolCalls = (
       call.arguments,
       true,
       call.readGroupId,
+      presentExtensionTool,
     )
     return current.rows.some((row) => row.id === next.id)
       ? updateRow(current, next.id, () => next)
@@ -238,13 +274,14 @@ export const appendTranscriptNotice = (
 const appendSavedAssistant = (
   model: TranscriptModel,
   message: unknown,
+  presentExtensionTool?: PresentExtensionTool,
 ): TranscriptModel => {
   const row = assistantRow(`row-${model.nextRowId}`, message, false)
   const withAssistant = hasAssistantDisplay(row)
     ? appendRow(model, row)
     : model
 
-  return appendAssistantToolCalls(withAssistant, message)
+  return appendAssistantToolCalls(withAssistant, message, presentExtensionTool)
 }
 
 const finishToolRow = (
@@ -253,35 +290,59 @@ const finishToolRow = (
   toolName: string,
   result: unknown,
   isError: boolean,
+  presentExtensionTool?: PresentExtensionTool,
 ): TranscriptModel => {
   const id = `tool-${toolCallId}`
   const boundedResult = boundedUnknown(result)
   if (!model.rows.some((row) => row.id === id)) {
+    const base = toolRow(
+      toolCallId,
+      toolName,
+      {},
+      false,
+      undefined,
+      undefined,
+    )
     return appendRow(
       model,
-      {
-        ...toolRow(toolCallId, toolName, {}, false),
-        content: formatToolSummary(boundedResult),
-        result: boundedResult,
+      withExtensionPresentation(
+        {
+          ...base,
+          content: formatToolSummary(boundedResult),
+          result: boundedResult,
+          isError,
+        },
+        base.args,
+        result,
+        false,
         isError,
-      },
+        presentExtensionTool,
+      ),
     )
   }
   return updateRow(model, id, (row) =>
     row.kind === "tool"
-      ? {
-          ...row,
-          content: formatToolSummary(boundedResult),
-          result: boundedResult,
-          pending: false,
+      ? withExtensionPresentation(
+          {
+            ...row,
+            content: formatToolSummary(boundedResult),
+            result: boundedResult,
+            pending: false,
+            isError,
+          },
+          row.args,
+          result,
+          false,
           isError,
-        }
+          presentExtensionTool,
+        )
       : row,
   )
 }
 
 export const transcriptFromMessages = (
   messages: ReadonlyArray<unknown>,
+  presentExtensionTool?: PresentExtensionTool,
 ): TranscriptModel => {
   const replayed = messages.reduce<TranscriptModel>((model, message) => {
     const record = asRecord(message)
@@ -292,7 +353,9 @@ export const transcriptFromMessages = (
       return text.length > 0 ? appendUserPrompt(model, text) : model
     }
 
-    if (role === "assistant") return appendSavedAssistant(model, message)
+    if (role === "assistant") {
+      return appendSavedAssistant(model, message, presentExtensionTool)
+    }
 
     if (
       role === "toolResult" &&
@@ -304,6 +367,7 @@ export const transcriptFromMessages = (
         typeof record.toolName === "string" ? record.toolName : "tool",
         message,
         record.isError === true,
+        presentExtensionTool,
       )
     }
 
@@ -381,6 +445,7 @@ export const transcriptFromMessages = (
 export const reduceTranscriptEvent = (
   model: TranscriptModel,
   event: AgentSessionEvent,
+  presentExtensionTool?: PresentExtensionTool,
 ): TranscriptModel => {
   assertAgentSessionEventContract(event)
 
@@ -409,7 +474,7 @@ export const reduceTranscriptEvent = (
         return reduceTranscriptEvent(model, {
           type: "message_start",
           message: event.message,
-        })
+        }, presentExtensionTool)
       }
       return updateRow(model, model.activeAssistantId, (row) =>
         row.kind === "assistant"
@@ -431,7 +496,11 @@ export const reduceTranscriptEvent = (
         const withAssistant = hasAssistantDisplay(row)
           ? appendRow(model, row)
           : model
-        return appendAssistantToolCalls(withAssistant, event.message)
+        return appendAssistantToolCalls(
+          withAssistant,
+          event.message,
+          presentExtensionTool,
+        )
       }
       const ended = {
         ...updateRow(model, activeId, (row) =>
@@ -441,7 +510,7 @@ export const reduceTranscriptEvent = (
         ),
         activeAssistantId: undefined,
       }
-      return appendAssistantToolCalls(ended, event.message)
+      return appendAssistantToolCalls(ended, event.message, presentExtensionTool)
     }
 
     case "tool_execution_start": {
@@ -450,6 +519,8 @@ export const reduceTranscriptEvent = (
         event.toolName,
         event.args,
         true,
+        undefined,
+        presentExtensionTool,
       )
       return model.rows.some((current) => current.id === row.id)
         ? updateRow(model, row.id, (current) =>
@@ -465,24 +536,46 @@ export const reduceTranscriptEvent = (
       const partialResult = boundedUnknown(event.partialResult)
       const args = boundedUnknown(event.args)
       if (!model.rows.some((row) => row.id === id)) {
+        const base = toolRow(
+          event.toolCallId,
+          event.toolName,
+          event.args,
+          true,
+          undefined,
+          undefined,
+        )
         return appendRow(
           model,
-          {
-            ...toolRow(event.toolCallId, event.toolName, event.args, true),
-            content: formatToolSummary(partialResult),
-            args,
-            partialResult,
-          },
+          withExtensionPresentation(
+            {
+              ...base,
+              content: formatToolSummary(partialResult),
+              args,
+              partialResult,
+            },
+            event.args,
+            event.partialResult,
+            true,
+            false,
+            presentExtensionTool,
+          ),
         )
       }
       return updateRow(model, id, (row) =>
         row.kind === "tool"
-          ? {
-              ...row,
-              content: formatToolSummary(partialResult),
-              args,
-              partialResult,
-            }
+          ? withExtensionPresentation(
+              {
+                ...row,
+                content: formatToolSummary(partialResult),
+                args,
+                partialResult,
+              },
+              event.args,
+              event.partialResult,
+              true,
+              false,
+              presentExtensionTool,
+            )
           : row,
       )
     }
@@ -494,6 +587,7 @@ export const reduceTranscriptEvent = (
         event.toolName,
         event.result,
         event.isError,
+        presentExtensionTool,
       )
 
     case "compaction_start":
