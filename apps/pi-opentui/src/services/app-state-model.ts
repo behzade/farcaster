@@ -1,5 +1,9 @@
-import type { SessionStats } from "@earendil-works/pi-coding-agent"
+import type {
+  AgentSessionEvent,
+  SessionStats,
+} from "@earendil-works/pi-coding-agent"
 import type { Effect } from "effect"
+import type { AppActivity } from "./app-activity.ts"
 import type { CommandInfo } from "./commands.ts"
 import type { AppDialog } from "./extension-ui.ts"
 import type { LiveUsage } from "./live-usage.ts"
@@ -12,9 +16,8 @@ import type {
 } from "./pi-session.ts"
 import type { TranscriptModel } from "./transcript.ts"
 
-export type AppPhase = "ready" | "running" | "stopping" | "error" | "fatal"
-
 export type { PromptDelivery, PromptQueue } from "./pi-session.ts"
+export type { AppActivity } from "./app-activity.ts"
 
 export interface DraftRestore {
   readonly id: number
@@ -24,7 +27,7 @@ export interface DraftRestore {
 export interface AppSnapshot {
   readonly cwd: string
   readonly hideThinkingBlock: boolean
-  readonly phase: AppPhase
+  readonly activity: AppActivity
   readonly activeTools: ReadonlyArray<string>
   readonly model: PiModelInfo | undefined
   readonly thinkingLevel: PiThinkingLevel
@@ -33,8 +36,7 @@ export interface AppSnapshot {
   readonly extensionPaths: ReadonlyArray<string>
   readonly extensionErrors: ReadonlyArray<ExtensionLoadError>
   readonly eventCount: number
-  readonly lastEvent: string | undefined
-  readonly error: string | undefined
+  readonly lastEvent: AgentSessionEvent["type"] | undefined
   readonly transcript: TranscriptModel
   readonly dialog: AppDialog | undefined
   readonly authNotice: string | undefined
@@ -77,4 +79,4 @@ export type PushAppNotice = (
 export const applyAppStateUpdate = (
   snapshot: AppSnapshot,
   update: (current: AppSnapshot) => AppSnapshot,
-): AppSnapshot => snapshot.phase === "fatal" ? snapshot : update(snapshot)
+): AppSnapshot => snapshot.activity._tag === "Fatal" ? snapshot : update(snapshot)

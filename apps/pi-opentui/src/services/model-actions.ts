@@ -1,4 +1,5 @@
 import { Effect } from "effect"
+import { reduceActivity } from "./app-activity.ts"
 import type {
   PushAppNotice,
   UpdateAppState,
@@ -48,14 +49,26 @@ export const makeModelActions = ({
   pushNotice,
   reportError,
 }: ModelActionOptions): ModelActions => {
-  const applyModelState = (
-    modelState: PiModelState,
-    notice: string,
+  const transitionCommand = (
+    _tag: "StartCommand" | "FinishCommand",
+    command: "model" | "thinking",
   ): Effect.Effect<void> =>
     updateState((snapshot) => ({
       ...snapshot,
-      phase: "ready" as const,
-      error: undefined,
+      activity: reduceActivity(snapshot.activity, { _tag, command }),
+    }))
+
+  const applyModelState = (
+    modelState: PiModelState,
+    notice: string,
+    command: "model" | "thinking",
+  ): Effect.Effect<void> =>
+    updateState((snapshot) => ({
+      ...snapshot,
+      activity: reduceActivity(snapshot.activity, {
+        _tag: "FinishCommand",
+        command,
+      }),
       model: modelState.selected,
       thinkingLevel: modelState.thinkingLevel,
       transcript: appendTranscriptNotice(snapshot.transcript, notice),
@@ -63,11 +76,7 @@ export const makeModelActions = ({
 
   const chooseModel = (query: string): Effect.Effect<void> =>
     Effect.gen(function* () {
-      yield* updateState((snapshot) => ({
-        ...snapshot,
-        phase: "running" as const,
-        error: undefined,
-      }))
+      yield* transitionCommand("StartCommand", "model")
       const models = yield* pi.models
       const normalizedQuery = query.toLowerCase()
       const exactMatches =
@@ -82,11 +91,8 @@ export const makeModelActions = ({
 
       let chosen = exactMatches.length === 1 ? exactMatches[0] : undefined
       if (chosen === undefined) {
-        yield* updateState((snapshot) => ({
-          ...snapshot,
-          phase: "ready" as const,
-        }))
         if (models.length === 0) {
+          yield* transitionCommand("FinishCommand", "model")
           yield* pushNotice("No models available", true)
           return
         }
@@ -95,43 +101,37 @@ export const makeModelActions = ({
         const selected = yield* Effect.promise(() =>
           extensionUi.search("Choose model", choices, query),
         )
-        if (selected === undefined) return
+        if (selected === undefined) {
+          yield* transitionCommand("FinishCommand", "model")
+          return
+        }
         chosen = models[choices.indexOf(selected)]
-        if (chosen === undefined) return
-        yield* updateState((snapshot) => ({
-          ...snapshot,
-          phase: "running" as const,
-        }))
+        if (chosen === undefined) {
+          yield* transitionCommand("FinishCommand", "model")
+          yield* pushNotice("Selected model is no longer available", true)
+          return
+        }
       }
 
       const modelState = yield* pi.selectModel(chosen.provider, chosen.id)
       yield* applyModelState(
         modelState,
         `Model: ${chosen.provider}/${chosen.id}`,
+        "model",
       )
     }).pipe(Effect.catchAll(reportError))
 
   const chooseThinking = (requested: string): Effect.Effect<void> =>
     Effect.gen(function* () {
-      yield* updateState((snapshot) => ({
-        ...snapshot,
-        phase: "running" as const,
-        error: undefined,
-      }))
+      yield* transitionCommand("StartCommand", "thinking")
       const current = yield* pi.modelState
       if (current.selected === undefined) {
-        yield* updateState((snapshot) => ({
-          ...snapshot,
-          phase: "ready" as const,
-        }))
+        yield* transitionCommand("FinishCommand", "thinking")
         yield* pushNotice("No model selected", true)
         return
       }
       if (!current.selected.reasoning) {
-        yield* updateState((snapshot) => ({
-          ...snapshot,
-          phase: "ready" as const,
-        }))
+        yield* transitionCommand("FinishCommand", "thinking")
         yield* pushNotice("Current model does not support thinking", true)
         return
       }
@@ -140,10 +140,7 @@ export const makeModelActions = ({
         (candidate) => candidate === requested,
       )
       if (requested.length > 0 && level === undefined) {
-        yield* updateState((snapshot) => ({
-          ...snapshot,
-          phase: "ready" as const,
-        }))
+        yield* transitionCommand("FinishCommand", "thinking")
         yield* pushNotice(`Unknown thinking level: ${requested}`, true)
         return
       }
@@ -152,26 +149,26 @@ export const makeModelActions = ({
           (candidate) =>
             `${candidate} — ${thinkingDescriptions[candidate]}`,
         )
-        yield* updateState((snapshot) => ({
-          ...snapshot,
-          phase: "ready" as const,
-        }))
         const selected = yield* Effect.promise(() =>
           extensionUi.context.select("Choose thinking level", choices),
         )
-        if (selected === undefined) return
+        if (selected === undefined) {
+          yield* transitionCommand("FinishCommand", "thinking")
+          return
+        }
         level = current.thinkingLevels[choices.indexOf(selected)]
-        if (level === undefined) return
-        yield* updateState((snapshot) => ({
-          ...snapshot,
-          phase: "running" as const,
-        }))
+        if (level === undefined) {
+          yield* transitionCommand("FinishCommand", "thinking")
+          yield* pushNotice("Selected thinking level is no longer available", true)
+          return
+        }
       }
 
       const modelState = yield* pi.selectThinking(level)
       yield* applyModelState(
         modelState,
         `Thinking level: ${modelState.thinkingLevel}`,
+        "thinking",
       )
     }).pipe(Effect.catchAll(reportError))
 

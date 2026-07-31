@@ -15,6 +15,7 @@ import {
   type PiModelState,
 } from "../src/services/pi-session.ts"
 import { headerViewModel } from "../src/ui/app-view-model.ts"
+import { activityError } from "../src/services/app-activity.ts"
 
 test("folds session events and commands into app state", () => {
   let emit: ((event: AgentSessionEvent) => void) | undefined
@@ -495,7 +496,7 @@ test("folds session events and commands into app state", () => {
         yield* Effect.yieldNow()
       }
       expect(prompt).toBe("test prompt")
-      expect((yield* app.get).phase).toBe("running")
+      expect((yield* app.get).activity._tag).toBe("Turn")
       expect(promptCalls).toBe(1)
       while (
         !promptRequests.some(
@@ -549,11 +550,15 @@ test("folds session events and commands into app state", () => {
         text: "queue failure",
         delivery: "steer",
       })
-      while ((yield* app.get).error === undefined) {
+      while ((yield* app.get).draftRestore?.text !== "queue failure") {
         yield* Effect.yieldNow()
       }
-      expect((yield* app.get).phase).toBe("running")
-      expect((yield* app.get).error).toContain("Could not queue prompt")
+      expect((yield* app.get).activity._tag).toBe("Turn")
+      expect(
+        (yield* app.get).transcript.rows.some((row) =>
+          row.content.includes("Could not queue prompt"),
+        ),
+      ).toBe(true)
       const failedRestore = (yield* app.get).draftRestore
       expect(failedRestore?.text).toBe("queue failure")
       expect((yield* app.get).promptQueue).toEqual({
@@ -604,10 +609,10 @@ test("folds session events and commands into app state", () => {
         yield* Effect.yieldNow()
       }
       finishPrompt?.()
-      while ((yield* app.get).phase !== "ready") {
+      while ((yield* app.get).activity._tag !== "Idle") {
         yield* Effect.yieldNow()
       }
-      expect((yield* app.get).phase).toBe("ready")
+      expect((yield* app.get).activity._tag).toBe("Idle")
 
       prompt = ""
       yield* app.dispatch({
@@ -623,10 +628,10 @@ test("folds session events and commands into app state", () => {
         followUp: ["and this"],
       }
       yield* app.dispatch({ _tag: "Abort" })
-      while ((yield* app.get).phase !== "ready") {
+      while ((yield* app.get).activity._tag !== "Idle") {
         yield* Effect.yieldNow()
       }
-      expect((yield* app.get).error).toBeUndefined()
+      expect(activityError((yield* app.get).activity)).toBeUndefined()
       expect((yield* app.get).draftRestore?.text).toBe(
         "put this back\n\nand this",
       )
@@ -665,7 +670,7 @@ test("folds session events and commands into app state", () => {
       while (reloadCalls === 0 || keybindingReloads === 0) {
         yield* Effect.yieldNow()
       }
-      while ((yield* app.get).phase !== "ready") {
+      while ((yield* app.get).activity._tag !== "Idle") {
         yield* Effect.yieldNow()
       }
       const reloadedSnapshot = yield* app.get
@@ -698,7 +703,7 @@ test("folds session events and commands into app state", () => {
       }
       expect(promptCalls).toBe(callsBeforeCommands + 1)
       finishPrompt?.()
-      while ((yield* app.get).phase !== "ready") {
+      while ((yield* app.get).activity._tag !== "Idle") {
         yield* Effect.yieldNow()
       }
 
@@ -713,7 +718,7 @@ test("folds session events and commands into app state", () => {
       }
       expect(promptCalls).toBe(callsBeforeCommands + 2)
       finishPrompt?.()
-      while ((yield* app.get).phase !== "ready") {
+      while ((yield* app.get).activity._tag !== "Idle") {
         yield* Effect.yieldNow()
       }
 
@@ -802,11 +807,11 @@ test("folds session events and commands into app state", () => {
         yield* Effect.yieldNow()
       }
       finishCompaction?.()
-      while ((yield* app.get).phase !== "running") {
+      while ((yield* app.get).activity._tag !== "Turn") {
         yield* Effect.yieldNow()
       }
       finishPrompt?.()
-      while ((yield* app.get).phase !== "ready") {
+      while ((yield* app.get).activity._tag !== "Idle") {
         yield* Effect.yieldNow()
       }
 
@@ -838,7 +843,7 @@ test("folds session events and commands into app state", () => {
       yield* app.dispatch({ _tag: "Abort" })
       while (
         abortCompactionCalls === abortsBeforeCompaction ||
-        (yield* app.get).phase !== "ready"
+        (yield* app.get).activity._tag !== "Idle"
       ) {
         yield* Effect.yieldNow()
       }
@@ -869,6 +874,10 @@ test("folds session events and commands into app state", () => {
       expect(modelDialog.title).toBe("Choose model")
       expect(modelDialog.kind).toBe("search")
       expect(modelDialog.initialQuery).toBe("glm")
+      expect((yield* app.get).activity).toEqual({
+        _tag: "Command",
+        command: "model",
+      })
       const opencodeModel = modelDialog.options.find((option) =>
         option.startsWith("opencode-go/glm-5.2 "),
       )
@@ -883,6 +892,7 @@ test("folds session events and commands into app state", () => {
       }
       expect(selectedModel).toBe("opencode-go/glm-5.2")
       expect((yield* app.get).model?.id).toBe("glm-5.2")
+      expect((yield* app.get).activity._tag).toBe("Idle")
 
       yield* app.dispatch({
         _tag: "RunCommand",
@@ -896,6 +906,10 @@ test("folds session events and commands into app state", () => {
         thinkingDialog = (yield* app.get).dialog
       }
       expect(thinkingDialog.title).toBe("Choose thinking level")
+      expect((yield* app.get).activity).toEqual({
+        _tag: "Command",
+        command: "thinking",
+      })
       const highThinking = thinkingDialog.options.find((option) =>
         option.startsWith("high "),
       )
@@ -910,6 +924,7 @@ test("folds session events and commands into app state", () => {
       }
       expect(selectedThinking).toBe("high")
       expect((yield* app.get).thinkingLevel).toBe("high")
+      expect((yield* app.get).activity._tag).toBe("Idle")
 
       yield* app.dispatch({
         _tag: "RunCommand",
@@ -924,6 +939,10 @@ test("folds session events and commands into app state", () => {
       }
       expect(loginDialog.kind).toBe("secret")
       expect(loginDialog.title).toBe("Enter API key")
+      expect((yield* app.get).activity).toEqual({
+        _tag: "Command",
+        command: "login",
+      })
       expect(loginDialog.message).toContain(
         "https://login.example.test/device",
       )
@@ -973,10 +992,10 @@ test("folds session events and commands into app state", () => {
         id: cancelledDialog.id,
         value: undefined,
       })
-      while ((yield* app.get).phase !== "ready") {
+      while ((yield* app.get).activity._tag !== "Idle") {
         yield* Effect.yieldNow()
       }
-      expect((yield* app.get).error).toBeUndefined()
+      expect(activityError((yield* app.get).activity)).toBeUndefined()
       expect(savedLogin).toBeUndefined()
 
       yield* app.dispatch({
@@ -989,10 +1008,10 @@ test("folds session events and commands into app state", () => {
         yield* Effect.yieldNow()
       }
       yield* app.dispatch({ _tag: "Abort" })
-      while ((yield* app.get).phase !== "ready") {
+      while ((yield* app.get).activity._tag !== "Idle") {
         yield* Effect.yieldNow()
       }
-      expect((yield* app.get).error).toBeUndefined()
+      expect(activityError((yield* app.get).activity)).toBeUndefined()
       expect(savedLogin).toBeUndefined()
 
       yield* app.dispatch({
@@ -1022,6 +1041,10 @@ test("folds session events and commands into app state", () => {
         resumeDialog = (yield* app.get).dialog
       }
       expect(resumeDialog.title).toBe("Resume session")
+      expect((yield* app.get).activity).toEqual({
+        _tag: "Command",
+        command: "resume",
+      })
       yield* app.dispatch({
         _tag: "ResolveDialog",
         id: resumeDialog.id,
@@ -1035,6 +1058,7 @@ test("folds session events and commands into app state", () => {
         yield* Effect.yieldNow()
       }
       expect(resumedPath).toBe("/sessions/old.jsonl")
+      expect((yield* app.get).activity._tag).toBe("Idle")
       expect(
         (yield* app.get).transcript.rows.map((row) => row.content),
       ).toContain("old answer")
@@ -1049,17 +1073,17 @@ test("folds session events and commands into app state", () => {
         yield* Effect.yieldNow()
       }
       emit({ type: "future_event" } as unknown as AgentSessionEvent)
-      while ((yield* app.get).phase !== "fatal") {
+      while ((yield* app.get).activity._tag !== "Fatal") {
         yield* Effect.yieldNow()
       }
-      expect((yield* app.get).error).toBe(
+      expect(activityError((yield* app.get).activity)).toBe(
         "Unhandled AgentSessionEvent type: future_event",
       )
       finishPrompt?.()
       for (let index = 0; index < 5; index += 1) {
         yield* Effect.yieldNow()
       }
-      expect((yield* app.get).phase).toBe("fatal")
+      expect((yield* app.get).activity._tag).toBe("Fatal")
       const callsBeforeFatalPrompt = promptCalls
       yield* app.dispatch({
         _tag: "Prompt",
@@ -1068,7 +1092,7 @@ test("folds session events and commands into app state", () => {
       })
       yield* Effect.yieldNow()
       expect(promptCalls).toBe(callsBeforeFatalPrompt)
-      expect((yield* app.get).phase).toBe("fatal")
+      expect((yield* app.get).activity._tag).toBe("Fatal")
     }),
   ).pipe(Effect.provide(appLayer))
 

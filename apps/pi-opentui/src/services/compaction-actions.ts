@@ -3,13 +3,7 @@ import type { PiSessionError, PiSessionShape } from "./pi-session.ts"
 import type { PromptQueueActions } from "./prompt-queue-actions.ts"
 
 export interface CompactionActions {
-  readonly begin: Effect.Effect<void>
   readonly finish: (willRetry: boolean) => Effect.Effect<boolean>
-  readonly isCompacting: Effect.Effect<boolean>
-  readonly queuePrompt: (
-    text: string,
-    delivery: "steer" | "followUp",
-  ) => Effect.Effect<boolean>
 }
 
 interface CompactionActionOptions {
@@ -63,24 +57,7 @@ export const makeCompactionActions = ({
         )
       })
 
-    const queuePrompt = (
-      text: string,
-      delivery: "steer" | "followUp",
-    ): Effect.Effect<boolean> =>
-      promptQueue.isCompacting.pipe(
-        Effect.flatMap((compacting) =>
-          compacting
-            ? promptQueue
-                .queueDuringCompaction(text, delivery)
-                .pipe(Effect.as(true))
-            : Effect.succeed(false),
-        ),
-      )
-
     return {
-      begin: promptQueue.beginCompaction,
       finish,
-      isCompacting: promptQueue.isCompacting,
-      queuePrompt,
     }
   })

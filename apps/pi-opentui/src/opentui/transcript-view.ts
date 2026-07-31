@@ -37,6 +37,11 @@ export interface TranscriptViewOptions {
   readonly hideThinkingBlock?: boolean
 }
 
+const workingFramesPerStep = 18
+
+export const workingDots = (frame: number): string =>
+  ".".repeat((Math.floor(frame / workingFramesPerStep) % 3) + 1)
+
 const rowColor = (kind: TranscriptRowKind, isError: boolean): string => {
   if (isError || kind === "error") return theme.error
   switch (kind) {
@@ -131,10 +136,24 @@ class AssistantRowView implements TranscriptRowView {
   readonly root: BoxRenderable
 
   private readonly answer: StableMarkdownView
+  private readonly working: TextRenderable
   private answerModel: StableMarkdownModel
   private thinking: StableMarkdownView | undefined
   private thinkingModel: StableMarkdownModel | undefined
   private current: AssistantTranscriptRow
+  private workingActive = false
+  private workingFrame = 0
+  private workingText = ""
+
+  private readonly handleWorkingFrame = (): void => {
+    if (!this.workingActive) return
+    this.workingFrame += 1
+    const content = workingDots(this.workingFrame)
+    if (this.workingText !== content) {
+      this.workingText = content
+      this.working.content = content
+    }
+  }
 
   constructor(
     private readonly ctx: RenderContext,
@@ -160,6 +179,12 @@ class AssistantRowView implements TranscriptRowView {
       ...(treeSitterClient === undefined ? {} : { treeSitterClient }),
     })
     this.root.add(this.answer.root)
+    this.working = new TextRenderable(ctx, {
+      content: "",
+      fg: theme.muted,
+      visible: false,
+    })
+    this.root.add(this.working)
     this.update(undefined, row)
   }
 
@@ -190,9 +215,11 @@ class AssistantRowView implements TranscriptRowView {
     ) {
       this.updateThinking(current)
     }
+    this.updateWorking(current)
   }
 
   destroy(): void {
+    this.setWorking(false)
     this.root.destroyRecursively()
     this.thinking = undefined
     this.thinkingModel = undefined
@@ -248,6 +275,32 @@ class AssistantRowView implements TranscriptRowView {
     this.thinking.update(this.thinkingModel, nextThinking)
     this.thinkingModel = nextThinking
     this.thinking.root.marginBottom = row.content.length > 0 ? 1 : 0
+  }
+
+  private updateWorking(row: AssistantTranscriptRow): void {
+    this.setWorking(
+      row.pending &&
+        row.content.length === 0 &&
+        row.thinking.length === 0 &&
+        !row.thinkingRedacted,
+    )
+  }
+
+  private setWorking(active: boolean): void {
+    if (this.workingActive === active) return
+    this.workingActive = active
+    if (active) {
+      this.workingFrame = 0
+      this.working.content = workingDots(0)
+      this.working.visible = true
+      this.ctx.on("frame", this.handleWorkingFrame)
+      this.ctx.requestLive()
+      return
+    }
+    this.ctx.off("frame", this.handleWorkingFrame)
+    this.ctx.dropLive()
+    this.working.visible = false
+    this.working.content = ""
   }
 }
 

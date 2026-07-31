@@ -8,6 +8,7 @@ import {
   type RenderContext,
 } from "@opentui/core"
 import type { AppSnapshot } from "../services/app-state-model.ts"
+import { canInterrupt } from "../services/app-activity.ts"
 import type { AppClient } from "../ui/app-client.ts"
 import type { KeybindingsShape } from "../services/keybindings.ts"
 import { headerViewModel } from "../ui/app-view-model.ts"
@@ -73,8 +74,7 @@ export class AppView implements OpenTuiComponent<AppSnapshot> {
     }
     if (
       this.keybindings.matches(event.raw, "app.interrupt") &&
-      (this.snapshot.phase === "running" ||
-        this.snapshot.phase === "stopping")
+      canInterrupt(this.snapshot.activity)
     ) {
       event.preventDefault()
       event.stopPropagation()

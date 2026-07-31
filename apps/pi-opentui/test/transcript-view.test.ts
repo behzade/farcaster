@@ -10,7 +10,10 @@ import {
 } from "@opentui/core"
 import { expect, test } from "bun:test"
 import { Effect } from "effect"
-import { TranscriptView } from "../src/opentui/transcript-view.ts"
+import {
+  TranscriptView,
+  workingDots,
+} from "../src/opentui/transcript-view.ts"
 import { theme } from "../src/opentui/theme.ts"
 import type {
   AssistantTranscriptRow,
@@ -31,8 +34,54 @@ const row = (id: string, content: string): TranscriptRow => ({
 
 const model = (rows: ReadonlyArray<TranscriptRow>): TranscriptModel => ({
   rows,
-  activeAssistantId: undefined,
   nextRowId: rows.length + 1,
+})
+
+test("cycles working dots and replaces them with model output", async () => {
+  expect([0, 17, 18, 35, 36, 53, 54].map(workingDots)).toEqual([
+    ".",
+    ".",
+    "..",
+    "..",
+    "...",
+    "...",
+    ".",
+  ])
+
+  const setup = await createTestRenderer({ width: 40, height: 10 })
+  const view = new TranscriptView(setup.renderer)
+  setup.renderer.root.add(view.root)
+  const pendingRow: AssistantTranscriptRow = {
+    id: "assistant-working",
+    kind: "assistant",
+    title: "pi",
+    content: "",
+    thinking: "",
+    thinkingRedacted: false,
+    pending: true,
+    isError: false,
+  }
+  const pending = model([pendingRow])
+  const answering = model([
+    { ...pendingRow, content: "Answering now" },
+  ])
+
+  try {
+    view.update(undefined, pending)
+    await setup.renderOnce()
+    const assistant = view.root.getChildren()[1] as BoxRenderable
+    const working = assistant.getChildren().at(-1)
+    expect(working).toBeInstanceOf(TextRenderable)
+    expect((working as TextRenderable).visible).toBe(true)
+
+    view.update(pending, answering)
+    await setup.renderOnce()
+    expect((working as TextRenderable).visible).toBe(false)
+    expect(setup.captureCharFrame()).toContain("Answering now")
+  } finally {
+    view.destroy()
+    setup.renderer.destroy()
+  }
 })
 
 test("appends, reorders, and trims owned transcript rows", () =>
@@ -133,7 +182,6 @@ test("renders thinking, markdown answers, and typed file tools", async () => {
         },
       },
     ],
-    activeAssistantId: undefined,
     nextRowId: 3,
   }
 
@@ -204,7 +252,6 @@ test("uses a user band while tools and model prose keep a clear background", asy
         isError: false,
       },
     ],
-    activeAssistantId: undefined,
     nextRowId: 4,
   }
 

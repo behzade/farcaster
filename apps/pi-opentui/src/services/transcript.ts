@@ -60,13 +60,11 @@ export type TranscriptRow =
 
 export interface TranscriptModel {
   readonly rows: ReadonlyArray<TranscriptRow>
-  readonly activeAssistantId: string | undefined
   readonly nextRowId: number
 }
 
 export const emptyTranscript: TranscriptModel = {
   rows: [],
-  activeAssistantId: undefined,
   nextRowId: 1,
 }
 
@@ -88,6 +86,14 @@ const updateRow = (
 ): TranscriptModel => ({
   ...model,
   rows: model.rows.map((row) => (row.id === id ? update(row) : row)),
+})
+
+const removeRow = (
+  model: TranscriptModel,
+  id: string,
+): TranscriptModel => ({
+  ...model,
+  rows: model.rows.filter((row) => row.id !== id),
 })
 
 const withExtensionPresentation = (
@@ -136,6 +142,16 @@ const hasAssistantDisplay = (row: AssistantTranscriptRow): boolean =>
   row.content.length > 0 ||
   row.thinking.length > 0 ||
   row.thinkingRedacted
+
+const activeAssistant = (
+  model: TranscriptModel,
+): AssistantTranscriptRow | undefined => {
+  for (let index = model.rows.length - 1; index >= 0; index -= 1) {
+    const row = model.rows[index]
+    if (row?.kind === "assistant" && row.pending) return row
+  }
+  return undefined
+}
 
 const toolRow = (
   toolCallId: string,
@@ -450,6 +466,15 @@ export const reduceTranscriptEvent = (
   assertAgentSessionEventContract(event)
 
   switch (event.type) {
+    case "turn_start": {
+      if (activeAssistant(model) !== undefined) return model
+      const id = `row-${model.nextRowId}`
+      return appendRow(
+        model,
+        assistantRow(id, { role: "assistant", content: [] }, true),
+      )
+    }
+
     case "message_start": {
       const role = messageRole(event.message)
       if (role === "user") {
@@ -458,25 +483,30 @@ export const reduceTranscriptEvent = (
       }
       if (role !== "assistant") return model
 
+      const active = activeAssistant(model)
+      if (active !== undefined) {
+        return updateRow(model, active.id, (row) =>
+          row.kind === "assistant"
+            ? assistantRow(row.id, event.message, true)
+            : row,
+        )
+      }
       const id = `row-${model.nextRowId}`
       const row = assistantRow(id, event.message, true)
-      if (!hasAssistantDisplay(row)) return model
-      return {
-        ...appendRow(model, row),
-        activeAssistantId: id,
-      }
+      return appendRow(model, row)
     }
 
     case "message_update": {
       if (messageRole(event.message) !== "assistant") return model
 
-      if (model.activeAssistantId === undefined) {
+      const active = activeAssistant(model)
+      if (active === undefined) {
         return reduceTranscriptEvent(model, {
           type: "message_start",
           message: event.message,
         }, presentExtensionTool)
       }
-      return updateRow(model, model.activeAssistantId, (row) =>
+      return updateRow(model, active.id, (row) =>
         row.kind === "assistant"
           ? assistantRow(row.id, event.message, true)
           : row,
@@ -486,8 +516,8 @@ export const reduceTranscriptEvent = (
     case "message_end": {
       if (messageRole(event.message) !== "assistant") return model
 
-      const activeId = model.activeAssistantId
-      if (activeId === undefined) {
+      const active = activeAssistant(model)
+      if (active === undefined) {
         const row = assistantRow(
           `row-${model.nextRowId}`,
           event.message,
@@ -502,15 +532,17 @@ export const reduceTranscriptEvent = (
           presentExtensionTool,
         )
       }
-      const ended = {
-        ...updateRow(model, activeId, (row) =>
-          row.kind === "assistant"
-            ? assistantRow(row.id, event.message, false)
-            : row,
-        ),
-        activeAssistantId: undefined,
-      }
-      return appendAssistantToolCalls(ended, event.message, presentExtensionTool)
+      const endedRow = assistantRow(active.id, event.message, false)
+      const ended = updateRow(model, active.id, (row) =>
+        row.kind === "assistant" ? endedRow : row,
+      )
+      return appendAssistantToolCalls(
+        hasAssistantDisplay(endedRow)
+          ? ended
+          : removeRow(ended, active.id),
+        event.message,
+        presentExtensionTool,
+      )
     }
 
     case "tool_execution_start": {
@@ -622,7 +654,6 @@ export const reduceTranscriptEvent = (
     case "agent_start":
     case "agent_end":
     case "agent_settled":
-    case "turn_start":
     case "turn_end":
     case "queue_update":
     case "entry_appended":

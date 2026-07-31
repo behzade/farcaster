@@ -14,6 +14,7 @@ import type {
   AppCommand,
   AppSnapshot,
 } from "../src/services/app-state.ts"
+import { awaitingModelActivity, idleActivity } from "../src/services/app-activity.ts"
 import { emptyLiveUsage } from "../src/services/live-usage.ts"
 import {
   makeKeybindings,
@@ -28,7 +29,7 @@ import type {
 const baseSnapshot: AppSnapshot = {
   cwd: "/work/pi",
   hideThinkingBlock: false,
-  phase: "ready",
+  activity: idleActivity,
   activeTools: ["read", "sandbox"],
   model: {
     provider: "openai",
@@ -64,7 +65,6 @@ const baseSnapshot: AppSnapshot = {
   extensionErrors: [],
   eventCount: 3,
   lastEvent: "agent_settled",
-  error: undefined,
   transcript: {
     rows: [
       {
@@ -76,7 +76,6 @@ const baseSnapshot: AppSnapshot = {
         isError: false,
       },
     ],
-    activeAssistantId: undefined,
     nextRowId: 2,
   },
   dialog: undefined,
@@ -204,6 +203,47 @@ test("renders chat and sends input", () => {
   )
 })
 
+test("keeps a draft while a command owns the session", () => {
+  const state = makeClient({
+    ...baseSnapshot,
+    activity: { _tag: "Command", command: "reload" },
+  })
+  return Effect.runPromise(
+    Effect.acquireUseRelease(
+      acquireApp(state.client),
+      ({ setup }) =>
+        Effect.gen(function* () {
+          yield* Effect.tryPromise(() => setup.mockInput.typeText("keep me"))
+          setup.mockInput.pressEnter()
+          yield* Effect.tryPromise(() => setup.flush())
+
+          expect(state.commands).toEqual([])
+          expect(setup.captureCharFrame()).toContain("keep me")
+        }),
+      releaseApp,
+    ),
+  )
+})
+
+test("lets the global interrupt reach an active login", () => {
+  const state = makeClient({
+    ...baseSnapshot,
+    activity: { _tag: "Command", command: "login" },
+  })
+  return Effect.runPromise(
+    Effect.acquireUseRelease(
+      acquireApp(state.client),
+      ({ setup }) =>
+        Effect.gen(function* () {
+          setup.mockInput.pressEscape()
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(state.commands).toContainEqual({ _tag: "Abort" })
+        }),
+      releaseApp,
+    ),
+  )
+})
+
 test("uses Pi keybindings without treating ctrl+shift+c as ctrl+c", () => {
   const state = makeClient()
   return Effect.runPromise(
@@ -233,7 +273,7 @@ test("uses Pi keybindings without treating ctrl+shift+c as ctrl+c", () => {
 test("steers, queues follow-ups, and restores Pi queued messages", () => {
   const running = {
     ...baseSnapshot,
-    phase: "running" as const,
+    activity: awaitingModelActivity(),
     promptQueue: {
       steering: ["change the tests"],
       followUp: ["then write a summary"],
@@ -472,7 +512,7 @@ test("keeps concurrent clipboard pastes in request order", () => {
 test("resolves an extension selection dialog", () => {
   const state = makeClient({
     ...baseSnapshot,
-    phase: "running",
+    activity: awaitingModelActivity(),
     dialog: {
       id: 7,
       kind: "select",
@@ -586,7 +626,7 @@ test("completes file mentions while typing", () => {
 test("hides login secrets while resolving them", () => {
   const state = makeClient({
     ...baseSnapshot,
-    phase: "running",
+    activity: awaitingModelActivity(),
     dialog: {
       id: 9,
       kind: "secret",
@@ -698,7 +738,7 @@ test("replaces dialogs and restores composer focus", () => {
   const state = makeClient()
   const firstDialog: AppSnapshot = {
     ...baseSnapshot,
-    phase: "running",
+    activity: awaitingModelActivity(),
     dialog: {
       id: 11,
       kind: "select",

@@ -11,6 +11,40 @@ import {
 const event = (value: unknown): AgentSessionEvent =>
   value as AgentSessionEvent
 
+test("opens a pending assistant row before model output", () => {
+  const started = reduceTranscriptEvent(
+    emptyTranscript,
+    event({ type: "turn_start" }),
+  )
+  const assistantId = started.rows.find(
+    (row) => row.kind === "assistant" && row.pending,
+  )?.id
+
+  expect(started.rows).toEqual([
+    expect.objectContaining({
+      id: assistantId,
+      kind: "assistant",
+      content: "",
+      thinking: "",
+      pending: true,
+    }),
+  ])
+
+  const messageStarted = reduceTranscriptEvent(
+    started,
+    event({
+      type: "message_start",
+      message: { role: "assistant", content: [] },
+    }),
+  )
+  expect(messageStarted.rows).toHaveLength(1)
+  expect(
+    messageStarted.rows.find(
+      (row) => row.kind === "assistant" && row.pending,
+    )?.id,
+  ).toBe(assistantId)
+})
+
 test("keeps stable rows through assistant and tool updates", () => {
   const started = reduceTranscriptEvent(
     emptyTranscript,

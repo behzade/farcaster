@@ -12,6 +12,11 @@ import type {
   PromptDelivery,
 } from "../services/app-state-model.ts"
 import {
+  canAcceptInput,
+  canInterrupt,
+  canStartPrompt,
+} from "../services/app-activity.ts"
+import {
   type CommandInfo,
   exactSlashCommand,
   selectSlashCommand,
@@ -131,7 +136,7 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
 
   update(previous: AppSnapshot | undefined, current: AppSnapshot): void {
     this.snapshot = current
-    if (previous?.phase !== current.phase) {
+    if (previous?.activity !== current.activity) {
       this.input.placeholder = this.placeholder()
     }
     if (current.dialog !== undefined && this.palette !== undefined) {
@@ -139,7 +144,7 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
     }
     if (
       previous === undefined ||
-      previous.phase !== current.phase ||
+      previous.activity !== current.activity ||
       previous.dialog !== current.dialog ||
       previous.commands !== current.commands
     ) {
@@ -172,7 +177,7 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
     if (
       this.snapshot.dialog === undefined &&
       this.palette === undefined &&
-      this.snapshot.phase !== "fatal"
+      this.snapshot.activity._tag !== "Fatal"
     ) {
       this.input.focus()
     } else {
@@ -203,22 +208,28 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
   }
 
   private placeholder(): string {
-    return this.snapshot.phase === "fatal"
-      ? "Pi event stream failed"
-      : this.snapshot.phase === "running"
-        ? "Steer Pi"
-        : this.snapshot.phase === "stopping"
-          ? "Stopping…"
-        : "Ask Pi"
+    switch (this.snapshot.activity._tag) {
+      case "Fatal":
+        return "Pi event stream failed"
+      case "Turn":
+        return "Steer Pi"
+      case "Compacting":
+        return "Queue after compaction"
+      case "Stopping":
+        return "Stopping…"
+      case "Command":
+        return "Working…"
+      case "Idle":
+      case "Failed":
+        return "Ask Pi"
+    }
   }
 
   private canComplete(): boolean {
     return (
       this.snapshot.dialog === undefined &&
       this.palette === undefined &&
-      this.snapshot.phase !== "running" &&
-      this.snapshot.phase !== "stopping" &&
-      this.snapshot.phase !== "fatal"
+      canStartPrompt(this.snapshot.activity)
     )
   }
 
@@ -268,7 +279,7 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
     const commands = this.commandSuggestions()
     const command = commands[this.selectedIndex(commands.length)]
     this.hint.content =
-      this.snapshot.phase === "fatal"
+      this.snapshot.activity._tag === "Fatal"
         ? "restart pi after updating the Pi event handler"
         : this.canComplete() && command !== undefined
         ? `/${command.name}${command.description.length > 0 ? ` — ${command.description}` : ""} · ↑/↓ choose · tab or enter complete`
@@ -276,7 +287,10 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
   }
 
   private defaultHint(): string {
-    if (this.snapshot.phase === "running") {
+    if (
+      this.snapshot.activity._tag === "Turn" ||
+      this.snapshot.activity._tag === "Compacting"
+    ) {
       return `enter steer · ${primaryKey(this.options.keybindings, "app.message.followUp")} follow-up · ${primaryKey(this.options.keybindings, "app.message.dequeue")} restore queue`
     }
     return `enter send · shift+enter newline · ${primaryKey(this.options.keybindings, "app.clipboard.pasteImage")} paste · / commands · @ files`
@@ -377,7 +391,7 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
       return
     }
     const prompt = this.input.plainText.trim()
-    if (prompt === "/" && this.snapshot.phase === "ready") {
+    if (prompt === "/" && canStartPrompt(this.snapshot.activity)) {
       this.openPalette()
       return
     }
@@ -391,8 +405,7 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
     }
     if (
       prompt.length === 0 ||
-      this.snapshot.phase === "stopping" ||
-      this.snapshot.phase === "fatal"
+      !canAcceptInput(this.snapshot.activity)
     ) {
       return
     }
@@ -433,7 +446,7 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
     if (pasteClipboard) {
       event.preventDefault()
       event.stopPropagation()
-      if (this.snapshot.phase !== "fatal") {
+      if (this.snapshot.activity._tag !== "Fatal") {
         this.requestPaste({ kind: "clipboard" })
       }
       return
@@ -456,8 +469,8 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
     }
     if (
       this.options.keybindings.matches(event.raw, "app.interrupt") &&
-      (this.snapshot.phase === "running" ||
-        this.snapshot.phase === "stopping")
+      (canInterrupt(this.snapshot.activity) ||
+        this.snapshot.activity._tag === "Stopping")
     ) {
       return
     }
@@ -470,7 +483,7 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
 
   private handlePaste(event: PasteEvent): void {
     event.preventDefault()
-    if (this.snapshot.phase === "fatal") return
+    if (this.snapshot.activity._tag === "Fatal") return
     const text = new TextDecoder().decode(event.bytes)
     if (isLargePaste(text)) {
       this.requestPaste({ kind: "text", text })
@@ -498,7 +511,7 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
     id: number,
     insertion: PasteInsertion | undefined,
   ): void {
-    if (this.destroyed || this.snapshot.phase === "fatal") return
+    if (this.destroyed || this.snapshot.activity._tag === "Fatal") return
     const marker = this.pendingPastes.get(id)
     if (marker === undefined) return
     this.pendingPastes.delete(id)

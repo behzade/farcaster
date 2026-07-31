@@ -4,6 +4,12 @@ import {
   applyAppStateUpdate,
   type AppSnapshot,
 } from "../src/services/app-state-model.ts"
+import {
+  awaitingModelActivity,
+  fatalActivity,
+  idleActivity,
+  type AppActivity,
+} from "../src/services/app-activity.ts"
 import { emptyLiveUsage } from "../src/services/live-usage.ts"
 import { emptyTranscript } from "../src/services/transcript.ts"
 
@@ -25,10 +31,10 @@ const sessionStats: SessionStats = {
   cost: 0,
 }
 
-const snapshot = (phase: AppSnapshot["phase"]): AppSnapshot => ({
+const snapshot = (activity: AppActivity): AppSnapshot => ({
   cwd: "/work",
   hideThinkingBlock: false,
-  phase,
+  activity,
   activeTools: [],
   model: undefined,
   thinkingLevel: "off",
@@ -38,7 +44,6 @@ const snapshot = (phase: AppSnapshot["phase"]): AppSnapshot => ({
   extensionErrors: [],
   eventCount: 0,
   lastEvent: undefined,
-  error: phase === "fatal" ? "unknown event" : undefined,
   transcript: emptyTranscript,
   dialog: undefined,
   authNotice: undefined,
@@ -49,20 +54,19 @@ const snapshot = (phase: AppSnapshot["phase"]): AppSnapshot => ({
 })
 
 test("applies normal updates but freezes every field after a fatal event", () => {
-  const ready = snapshot("ready")
+  const ready = snapshot(idleActivity)
   const updated = applyAppStateUpdate(ready, (current) => ({
     ...current,
-    phase: "running",
+    activity: awaitingModelActivity(),
     eventCount: 1,
   }))
-  expect(updated.phase).toBe("running")
+  expect(updated.activity._tag).toBe("Turn")
   expect(updated.eventCount).toBe(1)
 
-  const fatal = snapshot("fatal")
+  const fatal = snapshot(fatalActivity("unknown event"))
   const lateUpdate = applyAppStateUpdate(fatal, (current) => ({
     ...current,
-    phase: "ready",
-    error: undefined,
+    activity: idleActivity,
     eventCount: 99,
     transcript: {
       ...current.transcript,

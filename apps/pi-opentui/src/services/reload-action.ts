@@ -1,4 +1,5 @@
 import { Effect } from "effect"
+import { reduceActivity } from "./app-activity.ts"
 import { commandCatalog } from "./commands.ts"
 import type { KeybindingsShape } from "./keybindings.ts"
 import type {
@@ -26,8 +27,10 @@ export const makeReloadAction = ({
   Effect.gen(function* () {
     yield* updateState((snapshot) => ({
       ...snapshot,
-      phase: "running" as const,
-      error: undefined,
+      activity: reduceActivity(snapshot.activity, {
+        _tag: "StartCommand",
+        command: "reload",
+      }),
     }))
     const reloaded = yield* pi.reload
     yield* Effect.sync(keybindings.reload)
@@ -40,7 +43,10 @@ export const makeReloadAction = ({
       commands: commandCatalog(reloaded.commands),
       model: reloaded.modelState.selected,
       thinkingLevel: reloaded.modelState.thinkingLevel,
-      phase: "ready" as const,
+      activity: reduceActivity(snapshot.activity, {
+        _tag: "FinishCommand",
+        command: "reload",
+      }),
     }))
     yield* pushNotice("Reloaded Pi resources and keybindings")
   })

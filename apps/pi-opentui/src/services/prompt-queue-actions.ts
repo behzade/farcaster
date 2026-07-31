@@ -20,8 +20,6 @@ export interface PromptQueueActions {
     notifyWhenEmpty?: boolean,
   ) => Effect.Effect<void, PiSessionError>
   readonly restoreText: (text: string) => Effect.Effect<void>
-  readonly isCompacting: Effect.Effect<boolean>
-  readonly beginCompaction: Effect.Effect<void>
   readonly queueDuringCompaction: (
     text: string,
     delivery: PromptDelivery,
@@ -49,7 +47,6 @@ export const makePromptQueueActions = (
     const compactionQueue = yield* Ref.make<
       ReadonlyArray<QueuedCompactionPrompt>
     >([])
-    const compacting = yield* Ref.make(false)
 
     const publishQueue = Effect.gen(function* () {
       const session = yield* Ref.get(sessionQueue)
@@ -164,10 +161,7 @@ export const makePromptQueueActions = (
     const finishCompaction = Ref.getAndSet(
       compactionQueue,
       [],
-    ).pipe(
-      Effect.tap(() => Ref.set(compacting, false)),
-      Effect.tap(() => publishQueue),
-    )
+    ).pipe(Effect.tap(() => publishQueue))
 
     const restoreCompactionQueue = (
       prompts: ReadonlyArray<QueuedCompactionPrompt>,
@@ -183,8 +177,6 @@ export const makePromptQueueActions = (
     return {
       restore,
       restoreText,
-      isCompacting: Ref.get(compacting),
-      beginCompaction: Ref.set(compacting, true),
       queueDuringCompaction,
       finishCompaction,
       restoreCompactionQueue,
