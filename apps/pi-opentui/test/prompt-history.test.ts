@@ -8,12 +8,12 @@ test("moves through prompts and restores the draft", () => {
 
   expect(
     history.navigate("older", { text: "draft", cursorOffset: 2 }),
-  ).toEqual({ text: "second", cursorOffset: 0 })
+  ).toEqual({ text: "second", cursorOffset: 6 })
   expect(
-    history.navigate("older", { text: "second", cursorOffset: 0 }),
-  ).toEqual({ text: "first", cursorOffset: 0 })
+    history.navigate("older", { text: "second", cursorOffset: 6 }),
+  ).toEqual({ text: "first", cursorOffset: 5 })
   expect(
-    history.navigate("newer", { text: "first", cursorOffset: 0 }),
+    history.navigate("newer", { text: "first", cursorOffset: 5 }),
   ).toEqual({ text: "second", cursorOffset: 6 })
   expect(
     history.navigate("newer", { text: "second", cursorOffset: 6 }),
@@ -29,8 +29,8 @@ test("skips blanks and adjacent duplicates", () => {
 
   expect(
     history.navigate("older", { text: "", cursorOffset: 0 }),
-  ).toEqual({ text: "same", cursorOffset: 0 })
+  ).toEqual({ text: "same", cursorOffset: 4 })
   expect(
-    history.navigate("older", { text: "same", cursorOffset: 0 }),
+    history.navigate("older", { text: "same", cursorOffset: 4 }),
   ).toBeUndefined()
 })

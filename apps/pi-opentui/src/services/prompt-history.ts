@@ -38,7 +38,7 @@ export class PromptHistory {
     const text = this.entries[this.index] ?? ""
     return {
       text,
-      cursorOffset: direction === "older" ? 0 : text.length,
+      cursorOffset: text.length,
     }
   }
 

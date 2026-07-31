@@ -234,11 +234,12 @@ test("uses up and down for prompt history and restores the draft", () => {
       ({ setup }) =>
         Effect.gen(function* () {
           setup.mockInput.pressArrow("up")
+          yield* Effect.tryPromise(() => setup.mockInput.typeText("!"))
           setup.mockInput.pressEnter()
           yield* Effect.tryPromise(() => setup.flush())
           expect(state.commands.at(-1)).toEqual({
             _tag: "Prompt",
-            text: "hello from user",
+            text: "hello from user!",
             delivery: "steer",
           })
 
