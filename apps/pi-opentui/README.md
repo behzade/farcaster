@@ -12,6 +12,7 @@ The current screen starts a saved Pi SDK session, loads and binds the normal
 Pi extension set, and provides:
 
 - a multi-line prompt;
+- clipboard image paths and temp-file storage for large text pastes;
 - streamed assistant and tool rows;
 - `Escape` to stop a turn;
 - select and text dialogs for extension tools and sandbox approvals;
@@ -39,6 +40,11 @@ bun start
 
 Press `Ctrl+C` or `Ctrl+Q` to quit. Press `Escape` to stop a running turn.
 Press `Enter` to send and `Shift+Enter` for a new line.
+Press `Ctrl+V` to paste an image from the system clipboard, with text fallback.
+Text pastes over 10 lines or 1,000 characters use a scoped temporary file.
+The app creates these files in a private OS temp directory and removes the
+directory on a clean exit. Pasting sends Pi the local path; file contents only
+leave the machine if a later agent or tool request reads and sends them.
 Enter `/` by itself to open the command menu.
 Type after `/` to see a command match, then press `Tab` or `Enter` to
 complete it. Use `Up` and `Down` to move through matches.

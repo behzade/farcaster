@@ -15,6 +15,10 @@ import type {
 } from "../src/services/app-state.ts"
 import { emptyLiveUsage } from "../src/services/live-usage.ts"
 import type { AppClient } from "../src/ui/app-client.ts"
+import type {
+  PasteInsertion,
+  PasteRequest,
+} from "../src/services/paste-model.ts"
 
 const baseSnapshot: AppSnapshot = {
   cwd: "/work/pi",
@@ -82,7 +86,15 @@ const baseSnapshot: AppSnapshot = {
   ],
 }
 
-const makeClient = (initial: AppSnapshot = baseSnapshot) => {
+type PasteResolver = (
+  request: PasteRequest,
+  accept: (insertion: PasteInsertion | undefined) => void,
+) => void
+
+const makeClient = (
+  initial: AppSnapshot = baseSnapshot,
+  resolvePaste: PasteResolver = () => undefined,
+) => {
   const commands: Array<AppCommand> = []
   const listeners = new Set<(snapshot: AppSnapshot) => void>()
   const client: AppClient = {
@@ -100,6 +112,7 @@ const makeClient = (initial: AppSnapshot = baseSnapshot) => {
     dispatch: (command) => {
       commands.push(command)
     },
+    resolvePaste,
     quit: () => undefined,
   }
   return {
@@ -164,6 +177,148 @@ test("renders chat and sends input", () => {
           expect(state.commands).toEqual([
             { _tag: "Prompt", text: "run tests" },
           ])
+        }),
+      releaseApp,
+    ),
+  )
+})
+
+test("stores a large terminal paste and submits its file path", () => {
+  const requests: Array<PasteRequest> = []
+  const state = makeClient(baseSnapshot, (request, accept) => {
+    requests.push(request)
+    accept({ kind: "file", text: "/tmp/pi-paste-large.txt" })
+  })
+
+  return Effect.runPromise(
+    Effect.acquireUseRelease(
+      acquireApp(state.client),
+      ({ setup }) =>
+        Effect.gen(function* () {
+          const content = "x".repeat(1_001)
+          yield* Effect.tryPromise(() =>
+            setup.mockInput.pasteBracketedText(content)
+          )
+          yield* Effect.tryPromise(() => setup.flush())
+
+          expect(requests).toEqual([{ kind: "text", text: content }])
+          expect(setup.captureCharFrame()).toContain(
+            "/tmp/pi-paste-large.txt",
+          )
+
+          setup.mockInput.pressEnter()
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(state.commands).toContainEqual({
+            _tag: "Prompt",
+            text: "/tmp/pi-paste-large.txt",
+          })
+        }),
+      releaseApp,
+    ),
+  )
+})
+
+test("keeps a small terminal paste inline", () => {
+  const requests: Array<PasteRequest> = []
+  const state = makeClient(baseSnapshot, (request) => {
+    requests.push(request)
+  })
+
+  return Effect.runPromise(
+    Effect.acquireUseRelease(
+      acquireApp(state.client),
+      ({ setup }) =>
+        Effect.gen(function* () {
+          yield* Effect.tryPromise(() =>
+            setup.mockInput.pasteBracketedText("short paste"),
+          )
+          setup.mockInput.pressEnter()
+          yield* Effect.tryPromise(() => setup.flush())
+
+          expect(requests).toEqual([])
+          expect(state.commands).toContainEqual({
+            _tag: "Prompt",
+            text: "short paste",
+          })
+        }),
+      releaseApp,
+    ),
+  )
+})
+
+test("pastes a clipboard image path at the cursor", () => {
+  const requests: Array<PasteRequest> = []
+  let finishPaste:
+    | ((insertion: PasteInsertion | undefined) => void)
+    | undefined
+  const state = makeClient(baseSnapshot, (request, accept) => {
+    requests.push(request)
+    finishPaste = accept
+  })
+
+  return Effect.runPromise(
+    Effect.acquireUseRelease(
+      acquireApp(state.client),
+      ({ setup }) =>
+        Effect.gen(function* () {
+          yield* Effect.tryPromise(() => setup.mockInput.typeText("inspect"))
+          setup.mockInput.pressKey("v", { ctrl: true })
+          yield* Effect.tryPromise(() => setup.mockInput.typeText(" later"))
+          yield* Effect.tryPromise(() => setup.flush())
+
+          expect(requests).toEqual([{ kind: "clipboard" }])
+          expect(setup.captureCharFrame()).toContain("[paste #1 ")
+          expect(setup.captureCharFrame()).toContain(" loading]")
+          setup.mockInput.pressEnter()
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(state.commands).toEqual([])
+
+          finishPaste?.({
+            kind: "file",
+            text: "/tmp/pi-clipboard-image.png",
+          })
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(setup.captureCharFrame()).toContain(
+            "inspect /tmp/pi-clipboard-image.png later",
+          )
+
+          setup.mockInput.pressEnter()
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(state.commands).toContainEqual({
+            _tag: "Prompt",
+            text: "inspect /tmp/pi-clipboard-image.png later",
+          })
+        }),
+      releaseApp,
+    ),
+  )
+})
+
+test("keeps concurrent clipboard pastes in request order", () => {
+  const completions: Array<
+    (insertion: PasteInsertion | undefined) => void
+  > = []
+  const state = makeClient(baseSnapshot, (_request, accept) => {
+    completions.push(accept)
+  })
+
+  return Effect.runPromise(
+    Effect.acquireUseRelease(
+      acquireApp(state.client),
+      ({ setup }) =>
+        Effect.gen(function* () {
+          setup.mockInput.pressKey("v", { ctrl: true })
+          setup.mockInput.pressKey("v", { ctrl: true })
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(completions).toHaveLength(2)
+
+          completions[1]?.({ kind: "file", text: "/tmp/second.png" })
+          completions[0]?.({ kind: "file", text: "/tmp/first.png" })
+          yield* Effect.tryPromise(() => setup.flush())
+
+          expect(setup.captureCharFrame()).toContain(
+            "/tmp/first.png /tmp/second.png",
+          )
         }),
       releaseApp,
     ),

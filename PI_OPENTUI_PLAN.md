@@ -124,7 +124,8 @@ Current progress:
   Pi SDK state, and the status line shows Pi's token, context, and cost data.
   Slash commands and `@` project paths complete in the composer. `/login` uses
   Pi's `ModelRuntime` auth flow, saves through Pi's normal credential store,
-  and supports API-key and OAuth prompts.
+  and supports API-key and OAuth prompts. Clipboard images and large text
+  pastes use scoped temporary files and insert their paths into the composer.
 
 Current file bounds:
 
@@ -141,6 +142,8 @@ Current file bounds:
   choice and auth prompts. Neither app state nor the view writes `auth.json`.
 - `project-paths.ts` owns the bounded file index. It skips source control,
   dependency, cache, and build trees.
+- `paste-service.ts` owns scoped temp files and their size limits.
+  `clipboard-source.ts` owns host clipboard commands and native fallback.
 
 `app-state.ts` remains too broad. Before adding more built-in command flows,
 split session replacement, model choice, and thought-level choice from its

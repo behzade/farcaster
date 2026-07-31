@@ -126,6 +126,7 @@ export class AppView implements OpenTuiComponent<AppSnapshot> {
       snapshot: client.initial,
       projectPaths: client.projectPaths,
       dispatch: client.dispatch,
+      resolvePaste: client.resolvePaste,
       overlayParent: this.root,
     })
     this.root.add(this.composer.root)

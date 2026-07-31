@@ -8,6 +8,7 @@
         "@earendil-works/pi-coding-agent": "0.80.10",
         "@effect/platform": "0.96.1",
         "@effect/platform-bun": "0.90.0",
+        "@mariozechner/clipboard": "0.3.9",
         "@opentui/core": "0.4.1",
         "effect": "3.21.4",
       },

@@ -11,18 +11,23 @@ import {
   listProjectPaths,
   type ProjectPath,
 } from "./services/project-paths.ts"
+import {
+  PasteService,
+  PasteServiceLive,
+} from "./services/paste-service.ts"
 import type { AppClient } from "./ui/app-client.ts"
 
 class RenderError extends Data.TaggedError("RenderError")<{
   readonly cause: unknown
 }> {}
 
-const MainLive = Layer.merge(AppLive, UiRendererLive)
+const MainLive = Layer.mergeAll(AppLive, UiRendererLive, PasteServiceLive)
 
 const program = Effect.scoped(
   Effect.gen(function* () {
     const app = yield* AppState
     const ui = yield* UiRenderer
+    const paste = yield* PasteService
     const initial = yield* app.get
     const scope = yield* Effect.scope
     const runtime = yield* Effect.runtime<never>()
@@ -47,6 +52,20 @@ const program = Effect.scoped(
       },
       dispatch: (command) => {
         runFork(app.dispatch(command), { scope })
+      },
+      resolvePaste: (request, accept) => {
+        runFork(
+          paste.resolve(request).pipe(
+            Effect.match({
+              onFailure: () => undefined,
+              onSuccess: (insertion) => insertion,
+            }),
+            Effect.tap((insertion) =>
+              Effect.sync(() => accept(insertion)),
+            ),
+          ),
+          { scope },
+        )
       },
       quit: () => {
         runFork(Deferred.succeed(stopped, undefined), { scope })

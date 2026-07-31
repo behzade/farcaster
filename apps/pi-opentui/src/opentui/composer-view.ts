@@ -21,6 +21,11 @@ import {
   type FileCompletion,
 } from "../services/file-completion.ts"
 import type { ProjectPath } from "../services/project-paths.ts"
+import {
+  isLargePaste,
+  type PasteInsertion,
+  type PasteRequest,
+} from "../services/paste-model.ts"
 import type { OpenTuiComponent } from "./component.ts"
 import { createCommandMenu } from "./dialog-view.ts"
 import type { SearchMenuView } from "./search-menu-view.ts"
@@ -30,6 +35,10 @@ export interface ComposerOptions {
   readonly snapshot: AppSnapshot
   readonly projectPaths: () => ReadonlyArray<ProjectPath>
   readonly dispatch: (command: AppCommand) => void
+  readonly resolvePaste: (
+    request: PasteRequest,
+    accept: (insertion: PasteInsertion | undefined) => void,
+  ) => void
   readonly overlayParent: BoxRenderable
 }
 
@@ -45,6 +54,9 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
   private cachedFileCursor = -1
   private cachedProjectPaths: ReadonlyArray<ProjectPath> | undefined
   private cachedFileSuggestions: ReadonlyArray<FileCompletion> = []
+  private readonly pendingPastes = new Map<number, string>()
+  private nextPasteId = 1
+  private destroyed = false
 
   constructor(
     private readonly ctx: RenderContext,
@@ -88,7 +100,7 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
       justifyContent: "space-between",
     })
     this.hint = new TextRenderable(ctx, {
-      content: "enter send · shift+enter newline · / commands · @ files",
+      content: "enter send · shift+enter newline · ctrl+v paste · / commands · @ files",
       fg: theme.muted,
     })
     footer.add(this.hint)
@@ -143,6 +155,7 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
   }
 
   destroy(): void {
+    this.destroyed = true
     this.destroyPalette(false)
     this.root.destroyRecursively()
   }
@@ -197,6 +210,10 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
   }
 
   private updateHint(): void {
+    if (this.pendingPastes.size > 0) {
+      this.hint.content = `${this.pendingPastes.size} paste${this.pendingPastes.size === 1 ? "" : "s"} loading…`
+      return
+    }
     const files = this.fileSuggestions()
     const file = files[this.selectedIndex(files.length)]
     if (this.canComplete() && file !== undefined) {
@@ -211,7 +228,7 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
         ? "restart pi-next after updating the Pi event handler"
         : this.canComplete() && command !== undefined
         ? `/${command.name}${command.description.length > 0 ? ` — ${command.description}` : ""} · ↑/↓ choose · tab or enter complete`
-        : "enter send · shift+enter newline · / commands · @ files"
+        : "enter send · shift+enter newline · ctrl+v paste · / commands · @ files"
   }
 
   private setDraft(text: string, cursorOffset = text.length): void {
@@ -281,6 +298,10 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
   }
 
   private submit(): void {
+    if (this.pendingPastes.size > 0) {
+      this.updateHint()
+      return
+    }
     const prompt = this.input.plainText.trim()
     if (prompt === "/" && this.snapshot.phase === "ready") {
       this.openPalette()
@@ -308,6 +329,18 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
   }
 
   private handleKey(event: KeyEvent): void {
+    const pasteClipboard =
+      event.name === "v" &&
+      (event.ctrl ||
+        (process.platform === "win32" && (event.meta || event.option)))
+    if (pasteClipboard) {
+      event.preventDefault()
+      event.stopPropagation()
+      if (this.snapshot.phase !== "fatal") {
+        this.requestPaste({ kind: "clipboard" })
+      }
+      return
+    }
     const count = this.activeCount()
     if (
       count > 0 &&
@@ -342,7 +375,62 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
   private handlePaste(event: PasteEvent): void {
     event.preventDefault()
     if (this.snapshot.phase === "fatal") return
+    const text = new TextDecoder().decode(event.bytes)
+    if (isLargePaste(text)) {
+      this.requestPaste({ kind: "text", text })
+      return
+    }
     this.input.handlePaste(event)
+    this.suggestionIndex = 0
+    this.updateHint()
+  }
+
+  private requestPaste(request: PasteRequest): void {
+    const id = this.nextPasteId
+    this.nextPasteId += 1
+    const marker = `[paste #${id} ${crypto.randomUUID().slice(0, 8)} loading]`
+    this.pendingPastes.set(id, marker)
+    this.input.insertText(marker)
+    this.suggestionIndex = 0
+    this.updateHint()
+    this.options.resolvePaste(request, (insertion) =>
+      this.finishPaste(id, insertion),
+    )
+  }
+
+  private finishPaste(
+    id: number,
+    insertion: PasteInsertion | undefined,
+  ): void {
+    if (this.destroyed || this.snapshot.phase === "fatal") return
+    const marker = this.pendingPastes.get(id)
+    if (marker === undefined) return
+    this.pendingPastes.delete(id)
+    const current = this.input.plainText
+    const start = current.indexOf(marker)
+    if (start < 0) {
+      this.updateHint()
+      return
+    }
+
+    let text = insertion?.text ?? ""
+    if (insertion?.kind === "file") {
+      const before = current.slice(0, start)
+      const after = current.slice(start + marker.length)
+      if (before.length > 0 && !/\s$/.test(before)) text = ` ${text}`
+      if (after.length > 0 && !/^\s/.test(after)) text = `${text} `
+    }
+    const cursor = this.input.cursorOffset
+    const markerEnd = start + marker.length
+    const next = `${current.slice(0, start)}${text}${current.slice(markerEnd)}`
+    const nextCursor =
+      cursor <= start
+        ? cursor
+        : cursor >= markerEnd
+          ? cursor + text.length - marker.length
+          : start + text.length
+    this.input.editBuffer.setText(next)
+    this.input.cursorOffset = nextCursor
     this.suggestionIndex = 0
     this.updateHint()
   }
