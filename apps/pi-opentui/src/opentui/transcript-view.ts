@@ -136,25 +136,10 @@ class AssistantRowView implements TranscriptRowView {
   readonly root: BoxRenderable
 
   private readonly answer: StableMarkdownView
-  private readonly working: TextRenderable
   private answerModel: StableMarkdownModel
   private thinking: StableMarkdownView | undefined
   private thinkingModel: StableMarkdownModel | undefined
   private current: AssistantTranscriptRow
-  private workingActive = false
-  private workingFrame = 0
-  private workingText = ""
-
-  private readonly handleWorkingFrame = (): void => {
-    if (!this.workingActive) return
-    this.workingFrame += 1
-    const content = workingDots(this.workingFrame)
-    if (this.workingText !== content) {
-      this.workingText = content
-      this.working.content = content
-    }
-  }
-
   constructor(
     private readonly ctx: RenderContext,
     private readonly syntaxStyle: SyntaxStyle,
@@ -179,12 +164,6 @@ class AssistantRowView implements TranscriptRowView {
       ...(treeSitterClient === undefined ? {} : { treeSitterClient }),
     })
     this.root.add(this.answer.root)
-    this.working = new TextRenderable(ctx, {
-      content: "",
-      fg: theme.muted,
-      visible: false,
-    })
-    this.root.add(this.working)
     this.update(undefined, row)
   }
 
@@ -215,11 +194,9 @@ class AssistantRowView implements TranscriptRowView {
     ) {
       this.updateThinking(current)
     }
-    this.updateWorking(current)
   }
 
   destroy(): void {
-    this.setWorking(false)
     this.root.destroyRecursively()
     this.thinking = undefined
     this.thinkingModel = undefined
@@ -277,31 +254,6 @@ class AssistantRowView implements TranscriptRowView {
     this.thinking.root.marginBottom = row.content.length > 0 ? 1 : 0
   }
 
-  private updateWorking(row: AssistantTranscriptRow): void {
-    this.setWorking(
-      row.pending &&
-        row.content.length === 0 &&
-        row.thinking.length === 0 &&
-        !row.thinkingRedacted,
-    )
-  }
-
-  private setWorking(active: boolean): void {
-    if (this.workingActive === active) return
-    this.workingActive = active
-    if (active) {
-      this.workingFrame = 0
-      this.working.content = workingDots(0)
-      this.working.visible = true
-      this.ctx.on("frame", this.handleWorkingFrame)
-      this.ctx.requestLive()
-      return
-    }
-    this.ctx.off("frame", this.handleWorkingFrame)
-    this.ctx.dropLive()
-    this.working.visible = false
-    this.working.content = ""
-  }
 }
 
 class ToolRowView implements TranscriptRowView {
@@ -408,6 +360,7 @@ export class TranscriptView implements OpenTuiComponent<TranscriptModel> {
   readonly root: BoxRenderable
 
   private readonly empty: TextRenderable
+  private readonly working: TextRenderable
   private readonly syntaxStyle = createToolSyntaxStyle()
   private readonly rows = new Map<
     string,
@@ -415,6 +368,18 @@ export class TranscriptView implements OpenTuiComponent<TranscriptModel> {
   >()
   private rowOrder: ReadonlyArray<string> = []
   private hideThinkingBlock: boolean
+  private workingActive = false
+  private workingFrame = 0
+  private workingText = ""
+
+  private readonly handleWorkingFrame = (): void => {
+    if (!this.workingActive) return
+    this.workingFrame += 1
+    const content = workingDots(this.workingFrame)
+    if (this.workingText === content) return
+    this.workingText = content
+    this.working.content = content
+  }
 
   constructor(
     private readonly ctx: RenderContext,
@@ -430,6 +395,12 @@ export class TranscriptView implements OpenTuiComponent<TranscriptModel> {
       fg: theme.muted,
     })
     this.root.add(this.empty)
+    this.working = new TextRenderable(ctx, {
+      content: "",
+      fg: theme.muted,
+      visible: false,
+    })
+    this.root.add(this.working)
   }
 
   update(previous: TranscriptModel | undefined, current: TranscriptModel): void {
@@ -471,7 +442,27 @@ export class TranscriptView implements OpenTuiComponent<TranscriptModel> {
     }
   }
 
+  setWorking(active: boolean): void {
+    if (this.workingActive === active) return
+    this.workingActive = active
+    if (active) {
+      this.workingFrame = 0
+      this.workingText = workingDots(0)
+      this.working.content = this.workingText
+      this.working.visible = true
+      this.ctx.on("frame", this.handleWorkingFrame)
+      this.ctx.requestLive()
+      return
+    }
+    this.ctx.off("frame", this.handleWorkingFrame)
+    this.ctx.dropLive()
+    this.workingText = ""
+    this.working.content = ""
+    this.working.visible = false
+  }
+
   destroy(): void {
+    this.setWorking(false)
     this.clearRows()
     this.root.destroyRecursively()
     this.syntaxStyle.destroy()

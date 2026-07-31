@@ -26,6 +26,7 @@ export interface DraftRestore {
 
 export interface AppSnapshot {
   readonly cwd: string
+  readonly terminalTitle: string | undefined
   readonly hideThinkingBlock: boolean
   readonly activity: AppActivity
   readonly activeTools: ReadonlyArray<string>

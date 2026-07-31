@@ -115,6 +115,7 @@ export const AppStateLive: Layer.Layer<
       )
       const state = yield* SubscriptionRef.make<AppSnapshot>({
         cwd: pi.cwd,
+        terminalTitle: undefined,
         hideThinkingBlock: pi.hideThinkingBlock,
         activity: idleActivity,
         activeTools: pi.activeTools,
@@ -197,6 +198,8 @@ export const AppStateLive: Layer.Layer<
           }),
         setAuthNotice: (authNotice) =>
           updateState((snapshot) => ({ ...snapshot, authNotice })),
+        setTitle: (terminalTitle) =>
+          updateState((snapshot) => ({ ...snapshot, terminalTitle })),
       })
       const sessionActions = makeSessionActions({
         pi,

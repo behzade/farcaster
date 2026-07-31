@@ -33,6 +33,7 @@ const sessionStats: SessionStats = {
 
 const snapshot = (activity: AppActivity): AppSnapshot => ({
   cwd: "/work",
+  terminalTitle: undefined,
   hideThinkingBlock: false,
   activity,
   activeTools: [],

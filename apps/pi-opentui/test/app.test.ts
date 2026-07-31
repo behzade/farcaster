@@ -28,6 +28,7 @@ import type {
 
 const baseSnapshot: AppSnapshot = {
   cwd: "/work/pi",
+  terminalTitle: undefined,
   hideThinkingBlock: false,
   activity: idleActivity,
   activeTools: ["read", "sandbox"],
@@ -225,6 +226,65 @@ test("keeps a draft while a command owns the session", () => {
   )
 })
 
+test("uses up and down for prompt history and restores the draft", () => {
+  const state = makeClient()
+  return Effect.runPromise(
+    Effect.acquireUseRelease(
+      acquireApp(state.client),
+      ({ setup }) =>
+        Effect.gen(function* () {
+          setup.mockInput.pressArrow("up")
+          setup.mockInput.pressEnter()
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(state.commands.at(-1)).toEqual({
+            _tag: "Prompt",
+            text: "hello from user",
+            delivery: "steer",
+          })
+
+          yield* Effect.tryPromise(() => setup.mockInput.typeText("draft"))
+          setup.mockInput.pressArrow("up")
+          setup.mockInput.pressArrow("up")
+          setup.mockInput.pressArrow("down")
+          setup.mockInput.pressEnter()
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(state.commands.at(-1)).toEqual({
+            _tag: "Prompt",
+            text: "draft",
+            delivery: "steer",
+          })
+        }),
+      releaseApp,
+    ),
+  )
+})
+
+test("keeps up and down as cursor movement inside multiline drafts", () => {
+  const state = makeClient()
+  return Effect.runPromise(
+    Effect.acquireUseRelease(
+      acquireApp(state.client),
+      ({ setup }) =>
+        Effect.gen(function* () {
+          yield* Effect.tryPromise(() => setup.mockInput.typeText("one"))
+          setup.mockInput.pressEnter({ shift: true })
+          yield* Effect.tryPromise(() => setup.mockInput.typeText("two"))
+          setup.mockInput.pressArrow("up")
+          yield* Effect.tryPromise(() => setup.mockInput.typeText("X"))
+          setup.mockInput.pressEnter()
+          yield* Effect.tryPromise(() => setup.flush())
+
+          expect(state.commands.at(-1)).toEqual({
+            _tag: "Prompt",
+            text: "oneX\ntwo",
+            delivery: "steer",
+          })
+        }),
+      releaseApp,
+    ),
+  )
+})
+
 test("lets the global interrupt reach an active login", () => {
   const state = makeClient({
     ...baseSnapshot,
@@ -238,6 +298,29 @@ test("lets the global interrupt reach an active login", () => {
           setup.mockInput.pressEscape()
           yield* Effect.tryPromise(() => setup.flush())
           expect(state.commands).toContainEqual({ _tag: "Abort" })
+        }),
+      releaseApp,
+    ),
+  )
+})
+
+test("applies extension terminal titles", () => {
+  const state = makeClient()
+  return Effect.runPromise(
+    Effect.acquireUseRelease(
+      acquireApp(state.client),
+      ({ setup }) =>
+        Effect.gen(function* () {
+          const titles: Array<string> = []
+          setup.renderer.setTerminalTitle = (title) => {
+            titles.push(title)
+          }
+          state.emit({
+            ...baseSnapshot,
+            terminalTitle: "⠋ π · pi",
+          })
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(titles).toEqual(["⠋ π · pi"])
         }),
       releaseApp,
     ),

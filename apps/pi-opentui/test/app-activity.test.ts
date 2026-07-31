@@ -12,6 +12,7 @@ import {
   idleActivity,
   promptRoute,
   reduceActivity,
+  showsAgentWorking,
   type AppActivity,
 } from "../src/services/app-activity.ts"
 
@@ -51,6 +52,12 @@ test("derives all user rules from one activity value", () => {
     "after-compaction",
   )
   expect(promptRoute(commandActivity("login"))).toBe("reject")
+  expect(showsAgentWorking(awaitingModelActivity())).toBe(true)
+  expect(
+    showsAgentWorking({ _tag: "Turn", stage: { _tag: "RunningTools" } }),
+  ).toBe(true)
+  expect(showsAgentWorking({ _tag: "Stopping", target: "turn" })).toBe(true)
+  expect(showsAgentWorking(idleActivity)).toBe(false)
 })
 
 test("folds a turn through waiting, text, tools, retry, and settle", () => {

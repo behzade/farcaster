@@ -154,6 +154,11 @@ export const promptRoute = (activity: AppActivity): PromptRoute => {
 export const isStoppingTurn = (activity: AppActivity): boolean =>
   activity._tag === "Stopping" && activity.target === "turn"
 
+export const showsAgentWorking = (activity: AppActivity): boolean =>
+  activity._tag === "Turn" ||
+  activity._tag === "Compacting" ||
+  activity._tag === "Stopping"
+
 const messageRole = (message: unknown): unknown =>
   typeof message === "object" && message !== null && "role" in message
     ? message.role

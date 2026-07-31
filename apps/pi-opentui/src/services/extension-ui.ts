@@ -39,6 +39,7 @@ export interface ExtensionUiHost {
   readonly setAuthNotice: (
     message: string | undefined,
   ) => Effect.Effect<void>
+  readonly setTitle: (title: string) => Effect.Effect<void>
 }
 
 export interface ExtensionUiBridge {
@@ -222,7 +223,9 @@ export const makeExtensionUi = (
       setWidget: () => undefined,
       setFooter: () => undefined,
       setHeader: () => undefined,
-      setTitle: () => undefined,
+      setTitle: (title) => {
+        runFork(host.setTitle(title), { scope })
+      },
       custom: <T>() =>
         runPromise(
           Effect.fail(

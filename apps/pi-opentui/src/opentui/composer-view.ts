@@ -28,6 +28,7 @@ import {
   type FileCompletion,
 } from "../services/file-completion.ts"
 import type { ProjectPath } from "../services/project-paths.ts"
+import { PromptHistory } from "../services/prompt-history.ts"
 import {
   primaryKey,
   type KeybindingsShape,
@@ -68,6 +69,7 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
   private cachedProjectPaths: ReadonlyArray<ProjectPath> | undefined
   private cachedFileSuggestions: ReadonlyArray<FileCompletion> = []
   private readonly pendingPastes = new Map<number, string>()
+  private readonly promptHistory = new PromptHistory()
   private nextPasteId = 1
   private destroyed = false
 
@@ -136,6 +138,7 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
 
   update(previous: AppSnapshot | undefined, current: AppSnapshot): void {
     this.snapshot = current
+    this.syncPromptHistory(previous, current)
     if (previous?.activity !== current.activity) {
       this.input.placeholder = this.placeholder()
     }
@@ -319,7 +322,12 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
     this.root.height = 5
   }
 
-  private setDraft(text: string, cursorOffset = text.length): void {
+  private setDraft(
+    text: string,
+    cursorOffset = text.length,
+    preserveHistory = false,
+  ): void {
+    if (!preserveHistory) this.promptHistory.exit()
     this.input.editBuffer.setText(text)
     this.input.cursorOffset = cursorOffset
     this.input.focus()
@@ -411,6 +419,7 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
     }
 
     const command = selectSlashCommand(this.snapshot.commands, prompt)
+    this.promptHistory.add(prompt)
     this.options.dispatch(
       command === undefined
         ? { _tag: "Prompt", text: prompt, delivery }
@@ -467,6 +476,7 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
       }
       return
     }
+    if (this.handleHistoryKey(event)) return
     if (
       this.options.keybindings.matches(event.raw, "app.interrupt") &&
       (canInterrupt(this.snapshot.activity) ||
@@ -476,7 +486,9 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
     }
 
     event.preventDefault()
+    const before = this.input.plainText
     this.input.handleKeyPress(event)
+    if (this.input.plainText !== before) this.promptHistory.exit()
     this.suggestionIndex = 0
     this.updateHint()
   }
@@ -484,6 +496,7 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
   private handlePaste(event: PasteEvent): void {
     event.preventDefault()
     if (this.snapshot.activity._tag === "Fatal") return
+    this.promptHistory.exit()
     const text = new TextDecoder().decode(event.bytes)
     if (isLargePaste(text)) {
       this.requestPaste({ kind: "text", text })
@@ -495,6 +508,7 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
   }
 
   private requestPaste(request: PasteRequest): void {
+    this.promptHistory.exit()
     const id = this.nextPasteId
     this.nextPasteId += 1
     const marker = `[paste #${id} ${crypto.randomUUID().slice(0, 8)} loading]`
@@ -542,5 +556,72 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
     this.input.cursorOffset = nextCursor
     this.suggestionIndex = 0
     this.updateHint()
+  }
+
+  private syncPromptHistory(
+    previous: AppSnapshot | undefined,
+    current: AppSnapshot,
+  ): void {
+    const oldRows = new Set(previous?.transcript.rows ?? [])
+    for (const row of current.transcript.rows) {
+      if (row.kind === "user" && !oldRows.has(row)) {
+        this.promptHistory.add(row.content)
+      }
+    }
+  }
+
+  private handleHistoryKey(event: KeyEvent): boolean {
+    const isUp = this.options.keybindings.matches(
+      event.raw,
+      "tui.editor.cursorUp",
+    )
+    const isDown = this.options.keybindings.matches(
+      event.raw,
+      "tui.editor.cursorDown",
+    )
+    if (!isUp && !isDown) return false
+
+    const visualStart = this.input.editorView.getVisualSOL().offset
+    const visualEnd = this.input.editorView.getVisualEOL().offset
+    const atFirstVisualLine = visualStart === 0
+    const atLastVisualLine = visualEnd >= this.input.plainText.length
+    const shouldBrowseOlder =
+      isUp &&
+      atFirstVisualLine &&
+      (this.input.plainText.length === 0 ||
+        this.promptHistory.isBrowsing ||
+        this.input.cursorOffset === 0)
+    const shouldBrowseNewer =
+      isDown && this.promptHistory.isBrowsing && atLastVisualLine
+
+    if (shouldBrowseOlder || shouldBrowseNewer) {
+      event.preventDefault()
+      event.stopPropagation()
+      const next = this.promptHistory.navigate(
+        shouldBrowseOlder ? "older" : "newer",
+        {
+          text: this.input.plainText,
+          cursorOffset: this.input.cursorOffset,
+        },
+      )
+      if (next !== undefined) {
+        this.setDraft(next.text, next.cursorOffset, true)
+      }
+      return true
+    }
+
+    if (isUp && atFirstVisualLine) {
+      event.preventDefault()
+      event.stopPropagation()
+      this.input.cursorOffset = visualStart
+      return true
+    }
+    if (isDown && atLastVisualLine) {
+      event.preventDefault()
+      event.stopPropagation()
+      this.input.cursorOffset = visualEnd
+      return true
+    }
+    return false
   }
 }

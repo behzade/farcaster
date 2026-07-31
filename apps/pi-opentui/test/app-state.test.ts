@@ -357,6 +357,13 @@ test("folds session events and commands into app state", () => {
       while (emit === undefined) {
         yield* Effect.yieldNow()
       }
+      while (extensionUi === undefined) {
+        yield* Effect.yieldNow()
+      }
+      extensionUi.setTitle("⠋ π · pi")
+      while ((yield* app.get).terminalTitle !== "⠋ π · pi") {
+        yield* Effect.yieldNow()
+      }
       emit({ type: "agent_settled" })
 
       let snapshot = yield* app.get

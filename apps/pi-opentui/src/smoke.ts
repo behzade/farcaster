@@ -24,6 +24,7 @@ const smoke = Effect.scoped(
       notify: () => Effect.void,
       setStatus: () => Effect.void,
       setAuthNotice: () => Effect.void,
+      setTitle: () => Effect.void,
     })
     yield* pi.bindExtensions(extensionUi.context, () => undefined)
     const sessionBefore = yield* pi.sessionStats

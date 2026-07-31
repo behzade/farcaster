@@ -37,7 +37,7 @@ const model = (rows: ReadonlyArray<TranscriptRow>): TranscriptModel => ({
   nextRowId: rows.length + 1,
 })
 
-test("cycles working dots and replaces them with model output", async () => {
+test("keeps working dots through model output until activity stops", async () => {
   expect([0, 17, 18, 35, 36, 53, 54].map(workingDots)).toEqual([
     ".",
     ".",
@@ -67,17 +67,21 @@ test("cycles working dots and replaces them with model output", async () => {
   ])
 
   try {
+    view.setWorking(true)
     view.update(undefined, pending)
     await setup.renderOnce()
-    const assistant = view.root.getChildren()[1] as BoxRenderable
-    const working = assistant.getChildren().at(-1)
+    const working = view.root.getChildren().at(-1)
     expect(working).toBeInstanceOf(TextRenderable)
     expect((working as TextRenderable).visible).toBe(true)
 
     view.update(pending, answering)
     await setup.renderOnce()
-    expect((working as TextRenderable).visible).toBe(false)
+    expect((working as TextRenderable).visible).toBe(true)
     expect(setup.captureCharFrame()).toContain("Answering now")
+
+    view.setWorking(false)
+    await setup.renderOnce()
+    expect((working as TextRenderable).visible).toBe(false)
   } finally {
     view.destroy()
     setup.renderer.destroy()
@@ -106,7 +110,7 @@ test("appends, reorders, and trims owned transcript rows", () =>
           yield* Effect.tryPromise(() => setup.renderOnce())
           treeSitterClient.resolveAllHighlightOnce()
           yield* Effect.tryPromise(() => setup.flush())
-          expect(view.root.getChildrenCount()).toBe(3)
+          expect(view.root.getChildrenCount()).toBe(4)
 
           const reordered = model([
             row("b", "second changed"),
@@ -120,7 +124,7 @@ test("appends, reorders, and trims owned transcript rows", () =>
           expect(reorderedFrame.indexOf("second changed")).toBeLessThan(
             reorderedFrame.indexOf("first changed"),
           )
-          expect(view.root.getChildrenCount()).toBe(3)
+          expect(view.root.getChildrenCount()).toBe(4)
           const retainedSecondRow = view.root.getChildren()[1]
 
           const trimmed = model([
@@ -135,7 +139,7 @@ test("appends, reorders, and trims owned transcript rows", () =>
           expect(trimmedFrame).toContain("second changed")
           expect(trimmedFrame).toContain("third")
           expect(trimmedFrame).not.toContain("first changed")
-          expect(view.root.getChildrenCount()).toBe(3)
+          expect(view.root.getChildrenCount()).toBe(4)
           expect(view.root.getChildren()[1]).toBe(retainedSecondRow)
         }),
       ({ setup, treeSitterClient, view }) =>
@@ -425,7 +429,7 @@ test("renders one live card for a grouped read run", async () => {
     view.update(undefined, pending)
     await setup.renderOnce()
     await setup.flush()
-    expect(view.root.getChildrenCount()).toBe(2)
+    expect(view.root.getChildrenCount()).toBe(3)
     const groupRoot = view.root.getChildren()[1] as BoxRenderable
     let frame = setup.captureCharFrame()
     expect(frame).toContain("read 2 files 0/2")
@@ -437,7 +441,7 @@ test("renders one live card for a grouped read run", async () => {
     await setup.flush()
     frame = setup.captureCharFrame()
     expect(view.root.getChildren()[1]).toBe(groupRoot)
-    expect(view.root.getChildrenCount()).toBe(2)
+    expect(view.root.getChildrenCount()).toBe(3)
     expect(frame).toContain("read 2 files 2/2")
     expect(frame).toContain("✓ README.md  2 lines")
     expect(frame).toContain("✓ src/status.ts:4-5  1 lines")

@@ -8,7 +8,10 @@ import {
   type RenderContext,
 } from "@opentui/core"
 import type { AppSnapshot } from "../services/app-state-model.ts"
-import { canInterrupt } from "../services/app-activity.ts"
+import {
+  canInterrupt,
+  showsAgentWorking,
+} from "../services/app-activity.ts"
 import type { AppClient } from "../ui/app-client.ts"
 import type { KeybindingsShape } from "../services/keybindings.ts"
 import { headerViewModel } from "../ui/app-view-model.ts"
@@ -170,6 +173,15 @@ export class AppView implements OpenTuiComponent<AppSnapshot> {
   update(previous: AppSnapshot | undefined, current: AppSnapshot): void {
     if (this.destroyed) return
     this.snapshot = current
+    if (
+      previous?.terminalTitle !== current.terminalTitle ||
+      previous?.cwd !== current.cwd
+    ) {
+      const cwdName = current.cwd.split("/").filter(Boolean).at(-1) ?? current.cwd
+      this.renderer.setTerminalTitle(
+        current.terminalTitle ?? `π · ${cwdName}`,
+      )
+    }
     const oldHeader = previous === undefined ? undefined : headerViewModel(previous)
     const nextHeader = headerViewModel(current)
     if (oldHeader?.activity !== nextHeader.activity) {
@@ -188,6 +200,7 @@ export class AppView implements OpenTuiComponent<AppSnapshot> {
     ) {
       this.transcript.setHideThinkingBlock(current.hideThinkingBlock)
     }
+    this.transcript.setWorking(showsAgentWorking(current.activity))
     this.transcript.update(previous?.transcript, current.transcript)
     this.updateDialog(previous, current)
     this.updateAuthNotice(previous, current)
