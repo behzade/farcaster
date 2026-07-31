@@ -12,6 +12,7 @@ The current screen starts a saved Pi SDK session, loads and binds the normal
 Pi extension set, and provides:
 
 - a multi-line prompt;
+- steering with `Enter`, queued follow-ups, and queue restore while a turn runs;
 - clipboard image paths and temp-file storage for large text pastes;
 - streamed assistant and tool rows;
 - `Escape` to stop a turn;
@@ -42,6 +43,9 @@ The app reads Pi's `~/.pi/agent/keybindings.json` and reloads it with `/reload`.
 By default, `Ctrl+C` clears the input, a second `Ctrl+C` quits, `Ctrl+D` quits
 when the input is empty, and `Escape` stops a running turn.
 Press `Enter` to send and `Shift+Enter` for a new line.
+While Pi works, `Enter` steers the turn, `Alt+Enter` queues a follow-up, and
+`Alt+Up` returns queued prompts to the editor. Stopping a turn also restores
+its queued prompts. These keys follow Pi's keybinding file.
 Press `Ctrl+V` to paste an image from the system clipboard, with text fallback.
 Text pastes over 10 lines or 1,000 characters use a scoped temporary file.
 The app creates these files in a private OS temp directory and removes the

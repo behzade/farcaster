@@ -9,6 +9,7 @@ import {
 import type {
   AppCommand,
   AppSnapshot,
+  PromptDelivery,
 } from "../services/app-state-model.ts"
 import {
   type CommandInfo,
@@ -53,6 +54,7 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
 
   private readonly input: TextareaRenderable
   private readonly hint: TextRenderable
+  private readonly queued: TextRenderable
   private snapshot: AppSnapshot
   private palette: SearchMenuView | undefined
   private suggestionIndex = 0
@@ -77,6 +79,14 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
       paddingLeft: 1,
       paddingRight: 1,
     })
+    this.queued = new TextRenderable(ctx, {
+      height: 0,
+      content: "",
+      fg: theme.muted,
+      wrapMode: "none",
+      visible: false,
+    })
+    this.root.add(this.queued)
     this.input = new TextareaRenderable(ctx, {
       height: 2,
       placeholder: this.placeholder(),
@@ -96,7 +106,7 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
       ],
       onKeyDown: (event) => this.handleKey(event),
       onPaste: (event) => this.handlePaste(event),
-      onSubmit: () => this.submit(),
+      onSubmit: () => this.submit("steer"),
     })
     this.root.add(this.input)
 
@@ -134,6 +144,24 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
       previous.commands !== current.commands
     ) {
       this.updateHint()
+    }
+    if (previous?.promptQueue !== current.promptQueue) {
+      this.updateQueue()
+    }
+    if (
+      current.draftRestore !== undefined &&
+      previous?.draftRestore?.id !== current.draftRestore.id
+    ) {
+      const existing = this.input.plainText
+      this.setDraft(
+        [current.draftRestore.text, existing]
+          .filter((part) => part.trim().length > 0)
+          .join("\n\n"),
+      )
+      this.options.dispatch({
+        _tag: "AcknowledgeDraftRestore",
+        id: current.draftRestore.id,
+      })
     }
     if (previous === undefined || previous.dialog !== current.dialog) {
       this.focusIfReady()
@@ -178,7 +206,9 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
     return this.snapshot.phase === "fatal"
       ? "Pi event stream failed"
       : this.snapshot.phase === "running"
-        ? "Pi is working…"
+        ? "Steer Pi"
+        : this.snapshot.phase === "stopping"
+          ? "Stopping…"
         : "Ask Pi"
   }
 
@@ -246,7 +276,33 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
   }
 
   private defaultHint(): string {
+    if (this.snapshot.phase === "running") {
+      return `enter steer · ${primaryKey(this.options.keybindings, "app.message.followUp")} follow-up · ${primaryKey(this.options.keybindings, "app.message.dequeue")} restore queue`
+    }
     return `enter send · shift+enter newline · ${primaryKey(this.options.keybindings, "app.clipboard.pasteImage")} paste · / commands · @ files`
+  }
+
+  private updateQueue(): void {
+    const { steering, followUp } = this.snapshot.promptQueue
+    const count = steering.length + followUp.length
+    if (count === 0) {
+      this.queued.content = ""
+      this.queued.height = 0
+      this.queued.visible = false
+      this.root.height = 4
+      return
+    }
+    const preview = (text: string): string =>
+      text.replace(/\s+/g, " ").trim().slice(0, 80)
+    const parts = [
+      ...steering.slice(0, 1).map((text) => `steering: ${preview(text)}`),
+      ...followUp.slice(0, 1).map((text) => `follow-up: ${preview(text)}`),
+    ]
+    const hidden = count - parts.length
+    this.queued.content = `queued · ${parts.join(" · ")}${hidden > 0 ? ` · +${hidden} more` : ""}`
+    this.queued.height = 1
+    this.queued.visible = true
+    this.root.height = 5
   }
 
   private setDraft(text: string, cursorOffset = text.length): void {
@@ -315,7 +371,7 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
     if (refocus) this.focusIfReady()
   }
 
-  private submit(): void {
+  private submit(delivery: PromptDelivery): void {
     if (this.pendingPastes.size > 0) {
       this.updateHint()
       return
@@ -335,7 +391,6 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
     }
     if (
       prompt.length === 0 ||
-      this.snapshot.phase === "running" ||
       this.snapshot.phase === "stopping" ||
       this.snapshot.phase === "fatal"
     ) {
@@ -345,13 +400,32 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
     const command = selectSlashCommand(this.snapshot.commands, prompt)
     this.options.dispatch(
       command === undefined
-        ? { _tag: "Prompt", text: prompt }
-        : { _tag: "RunCommand", ...command },
+        ? { _tag: "Prompt", text: prompt, delivery }
+        : { _tag: "RunCommand", ...command, delivery },
     )
     this.setDraft("")
   }
 
   private handleKey(event: KeyEvent): void {
+    if (
+      this.options.keybindings.matches(
+        event.raw,
+        "app.message.followUp",
+      )
+    ) {
+      event.preventDefault()
+      event.stopPropagation()
+      this.submit("followUp")
+      return
+    }
+    if (
+      this.options.keybindings.matches(event.raw, "app.message.dequeue")
+    ) {
+      event.preventDefault()
+      event.stopPropagation()
+      this.options.dispatch({ _tag: "Dequeue" })
+      return
+    }
     const pasteClipboard = this.options.keybindings.matches(
       event.raw,
       "app.clipboard.pasteImage",

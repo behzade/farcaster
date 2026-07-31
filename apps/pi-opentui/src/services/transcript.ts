@@ -386,7 +386,12 @@ export const reduceTranscriptEvent = (
 
   switch (event.type) {
     case "message_start": {
-      if (messageRole(event.message) !== "assistant") return model
+      const role = messageRole(event.message)
+      if (role === "user") {
+        const text = textParts(asRecord(event.message)?.content).join("\n")
+        return text.length > 0 ? appendUserPrompt(model, text) : model
+      }
+      if (role !== "assistant") return model
 
       const id = `row-${model.nextRowId}`
       const row = assistantRow(id, event.message, true)

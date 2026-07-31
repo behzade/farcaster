@@ -82,6 +82,8 @@ const baseSnapshot: AppSnapshot = {
   dialog: undefined,
   authNotice: undefined,
   statuses: {},
+  promptQueue: { steering: [], followUp: [] },
+  draftRestore: undefined,
   commands: [
     {
       name: "session",
@@ -194,7 +196,7 @@ test("renders chat and sends input", () => {
           yield* Effect.tryPromise(() => setup.flush())
 
           expect(state.commands).toEqual([
-            { _tag: "Prompt", text: "run tests" },
+            { _tag: "Prompt", text: "run tests", delivery: "steer" },
           ])
         }),
       releaseApp,
@@ -222,6 +224,77 @@ test("uses Pi keybindings without treating ctrl+shift+c as ctrl+c", () => {
           setup.mockInput.pressCtrlC()
           yield* Effect.tryPromise(() => setup.flush())
           expect(state.quitCalls()).toBe(1)
+        }),
+      releaseApp,
+    ),
+  )
+})
+
+test("steers, queues follow-ups, and restores Pi queued messages", () => {
+  const running = {
+    ...baseSnapshot,
+    phase: "running" as const,
+    promptQueue: {
+      steering: ["change the tests"],
+      followUp: ["then write a summary"],
+    },
+  }
+  const state = makeClient(running)
+  return Effect.runPromise(
+    Effect.acquireUseRelease(
+      acquireApp(state.client),
+      ({ setup }) =>
+        Effect.gen(function* () {
+          yield* Effect.tryPromise(() => setup.renderOnce())
+          expect(setup.captureCharFrame()).toContain(
+            "steering: change the tests",
+          )
+
+          yield* Effect.tryPromise(() => setup.mockInput.typeText("use bun"))
+          setup.mockInput.pressEnter()
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(state.commands).toContainEqual({
+            _tag: "Prompt",
+            text: "use bun",
+            delivery: "steer",
+          })
+
+          yield* Effect.tryPromise(() =>
+            setup.mockInput.typeText("report timing"),
+          )
+          setup.mockInput.pressEnter({ meta: true })
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(state.commands).toContainEqual({
+            _tag: "Prompt",
+            text: "report timing",
+            delivery: "followUp",
+          })
+
+          setup.mockInput.pressArrow("up", { meta: true })
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(state.commands).toContainEqual({ _tag: "Dequeue" })
+
+          state.emit({
+            ...running,
+            promptQueue: { steering: [], followUp: [] },
+            draftRestore: {
+              id: 4,
+              text: "change the tests\n\nthen write a summary",
+            },
+          })
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(setup.captureCharFrame()).toContain("then write a summary")
+          expect(state.commands).toContainEqual({
+            _tag: "AcknowledgeDraftRestore",
+            id: 4,
+          })
+          setup.mockInput.pressEnter()
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(state.commands).toContainEqual({
+            _tag: "Prompt",
+            text: "change the tests\n\nthen write a summary",
+            delivery: "steer",
+          })
         }),
       releaseApp,
     ),
@@ -279,6 +352,7 @@ test("stores a large terminal paste and submits its file path", () => {
           expect(state.commands).toContainEqual({
             _tag: "Prompt",
             text: "/tmp/pi-paste-large.txt",
+            delivery: "steer",
           })
         }),
       releaseApp,
@@ -307,6 +381,7 @@ test("keeps a small terminal paste inline", () => {
           expect(state.commands).toContainEqual({
             _tag: "Prompt",
             text: "short paste",
+            delivery: "steer",
           })
         }),
       releaseApp,
@@ -355,6 +430,7 @@ test("pastes a clipboard image path at the cursor", () => {
           expect(state.commands).toContainEqual({
             _tag: "Prompt",
             text: "inspect /tmp/pi-clipboard-image.png later",
+            delivery: "steer",
           })
         }),
       releaseApp,
@@ -465,6 +541,7 @@ test("completes slash commands while typing", () => {
             _tag: "RunCommand",
             name: "resume",
             arguments: "",
+            delivery: "steer",
           })
         }),
       releaseApp,
@@ -498,6 +575,7 @@ test("completes file mentions while typing", () => {
           expect(state.commands).toContainEqual({
             _tag: "Prompt",
             text: "check @src/opentui/app-view.ts",
+            delivery: "steer",
           })
         }),
       releaseApp,
@@ -677,6 +755,7 @@ test("replaces dialogs and restores composer focus", () => {
           expect(state.commands).toContainEqual({
             _tag: "Prompt",
             text: "focused",
+            delivery: "steer",
           })
         }),
       releaseApp,
@@ -708,6 +787,7 @@ test("closes the command palette and restores composer focus", () => {
           expect(state.commands).toContainEqual({
             _tag: "Prompt",
             text: "hello",
+            delivery: "steer",
           })
         }),
       releaseApp,

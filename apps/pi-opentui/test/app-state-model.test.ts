@@ -44,6 +44,8 @@ const snapshot = (phase: AppSnapshot["phase"]): AppSnapshot => ({
   authNotice: undefined,
   statuses: {},
   commands: [],
+  promptQueue: { steering: [], followUp: [] },
+  draftRestore: undefined,
 })
 
 test("applies normal updates but freezes every field after a fatal event", () => {

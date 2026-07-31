@@ -30,6 +30,7 @@ describe("PiSession", () => {
     let selectedThinking: string | undefined
     let loginCall: string | undefined
     let reloads = 0
+    let promptDelivery: string | undefined
 
     const open = (
       _cwd: string,
@@ -163,7 +164,11 @@ describe("PiSession", () => {
             },
             cost: 0,
           }),
-          prompt: () => Promise.resolve(),
+          prompt: (_text, delivery) => {
+            promptDelivery = delivery
+            return Promise.resolve()
+          },
+          clearQueue: () => ({ steering: ["adjust"], followUp: [] }),
           compact: () => Promise.resolve(),
           abort: () => Promise.resolve(),
           bindExtensions: () => Promise.resolve(),
@@ -225,6 +230,11 @@ describe("PiSession", () => {
           prompt: () => Promise.resolve("key"),
           notify: () => undefined,
         })
+        expect(yield* pi.clearQueue).toEqual({
+          steering: ["adjust"],
+          followUp: [],
+        })
+        yield* pi.prompt("adjust course", "steer")
         expect((yield* pi.reload).hideThinkingBlock).toBe(true)
         expect(openedWithSavedSessions).toBe(false)
         expect(listedSessions).toBe(1)
@@ -234,6 +244,7 @@ describe("PiSession", () => {
         expect(selectedThinking).toBe("high")
         expect(loginCall).toBe("opencode-go/api_key")
         expect(reloads).toBe(1)
+        expect(promptDelivery).toBe("steer")
       }),
     ).pipe(Effect.provide(session))
 

@@ -21,6 +21,11 @@ test("folds session events and commands into app state", () => {
   let extensionUi: ExtensionUIContext | undefined
   let prompt = ""
   let promptCalls = 0
+  let failQueuedPrompt = false
+  const promptRequests: Array<{
+    text: string
+    delivery: "steer" | "followUp" | undefined
+  }> = []
   let finishPrompt: (() => void) | undefined
   let failPrompt: (() => void) | undefined
   let compactInstructions: string | undefined
@@ -31,6 +36,10 @@ test("folds session events and commands into app state", () => {
   let savedLogin: string | undefined
   let reloadCalls = 0
   let keybindingReloads = 0
+  let queuedForClear = {
+    steering: [] as Array<string>,
+    followUp: [] as Array<string>,
+  }
   let sessionStatsReads = 0
   let authoritativeTokens = 30
   let authoritativeCost = 0.01
@@ -150,8 +159,19 @@ test("folds session events and commands into app state", () => {
       },
     ]),
     messages: Effect.succeed([]),
-    prompt: (text) =>
-      Effect.async<void, PiSessionError>((resume) => {
+    prompt: (text, delivery) => {
+      promptRequests.push({ text, delivery })
+      if (delivery !== undefined) {
+        return failQueuedPrompt
+          ? Effect.fail(
+              new PiSessionError({
+                operation: "prompt",
+                cause: new Error("Could not queue prompt"),
+              }),
+            )
+          : Effect.void
+      }
+      return Effect.async<void, PiSessionError>((resume) => {
         prompt = text
         promptCalls += 1
         finishPrompt = () => resume(Effect.void)
@@ -164,7 +184,13 @@ test("folds session events and commands into app state", () => {
               }),
             ),
           )
-      }),
+      })
+    },
+    clearQueue: Effect.sync(() => {
+      const queued = queuedForClear
+      queuedForClear = { steering: [], followUp: [] }
+      return queued
+    }),
     compact: (instructions) =>
       Effect.sync(() => {
         compactInstructions = instructions
@@ -401,14 +427,128 @@ test("folds session events and commands into app state", () => {
         ),
       ).toBe("Allow once")
 
-      yield* app.dispatch({ _tag: "Prompt", text: "  test prompt  " })
-      yield* app.dispatch({ _tag: "Prompt", text: "second prompt" })
+      yield* app.dispatch({
+        _tag: "Prompt",
+        text: "  test prompt  ",
+        delivery: "steer",
+      })
+      yield* app.dispatch({
+        _tag: "Prompt",
+        text: "second prompt",
+        delivery: "steer",
+      })
       while (prompt.length === 0) {
         yield* Effect.yieldNow()
       }
       expect(prompt).toBe("test prompt")
       expect((yield* app.get).phase).toBe("running")
       expect(promptCalls).toBe(1)
+      while (
+        !promptRequests.some(
+          (request) =>
+            request.text === "second prompt" &&
+            request.delivery === "steer",
+        )
+      ) {
+        yield* Effect.yieldNow()
+      }
+      expect(promptRequests).toContainEqual({
+        text: "second prompt",
+        delivery: "steer",
+      })
+
+      yield* app.dispatch({
+        _tag: "Prompt",
+        text: "after this turn",
+        delivery: "followUp",
+      })
+      while (
+        !promptRequests.some(
+          (request) =>
+            request.text === "after this turn" &&
+            request.delivery === "followUp",
+        )
+      ) {
+        yield* Effect.yieldNow()
+      }
+      expect(promptRequests).toContainEqual({
+        text: "after this turn",
+        delivery: "followUp",
+      })
+
+      emit?.({
+        type: "queue_update",
+        steering: ["second prompt"],
+        followUp: ["after this turn"],
+      })
+      while ((yield* app.get).lastEvent !== "queue_update") {
+        yield* Effect.yieldNow()
+      }
+      expect((yield* app.get).promptQueue).toEqual({
+        steering: ["second prompt"],
+        followUp: ["after this turn"],
+      })
+
+      failQueuedPrompt = true
+      yield* app.dispatch({
+        _tag: "Prompt",
+        text: "queue failure",
+        delivery: "steer",
+      })
+      while ((yield* app.get).error === undefined) {
+        yield* Effect.yieldNow()
+      }
+      expect((yield* app.get).phase).toBe("running")
+      expect((yield* app.get).error).toContain("Could not queue prompt")
+      const failedRestore = (yield* app.get).draftRestore
+      expect(failedRestore?.text).toBe("queue failure")
+      expect((yield* app.get).promptQueue).toEqual({
+        steering: ["second prompt"],
+        followUp: ["after this turn"],
+      })
+      yield* app.dispatch({
+        _tag: "AcknowledgeDraftRestore",
+        id: failedRestore?.id ?? -1,
+      })
+      while ((yield* app.get).draftRestore !== undefined) {
+        yield* Effect.yieldNow()
+      }
+      failQueuedPrompt = false
+
+      emit?.({
+        type: "message_start",
+        message: { role: "user", content: "second prompt" },
+      } as AgentSessionEvent)
+      while ((yield* app.get).lastEvent !== "message_start") {
+        yield* Effect.yieldNow()
+      }
+      expect(
+        (yield* app.get).transcript.rows.some(
+          (row) => row.kind === "user" && row.content === "second prompt",
+        ),
+      ).toBe(true)
+
+      queuedForClear = {
+        steering: ["second prompt"],
+        followUp: ["after this turn"],
+      }
+      yield* app.dispatch({ _tag: "Dequeue" })
+      while ((yield* app.get).draftRestore === undefined) {
+        yield* Effect.yieldNow()
+      }
+      const restore = (yield* app.get).draftRestore
+      expect(restore?.text).toBe("second prompt\n\nafter this turn")
+      expect((yield* app.get).promptQueue).toEqual({
+        steering: [],
+        followUp: [],
+      })
+      yield* app.dispatch({
+        _tag: "AcknowledgeDraftRestore",
+        id: restore?.id ?? -1,
+      })
+      while ((yield* app.get).draftRestore !== undefined) {
+        yield* Effect.yieldNow()
+      }
       finishPrompt?.()
       while ((yield* app.get).phase !== "ready") {
         yield* Effect.yieldNow()
@@ -416,15 +556,30 @@ test("folds session events and commands into app state", () => {
       expect((yield* app.get).phase).toBe("ready")
 
       prompt = ""
-      yield* app.dispatch({ _tag: "Prompt", text: "stop me" })
+      yield* app.dispatch({
+        _tag: "Prompt",
+        text: "stop me",
+        delivery: "steer",
+      })
       while (prompt !== "stop me") {
         yield* Effect.yieldNow()
+      }
+      queuedForClear = {
+        steering: ["put this back"],
+        followUp: ["and this"],
       }
       yield* app.dispatch({ _tag: "Abort" })
       while ((yield* app.get).phase !== "ready") {
         yield* Effect.yieldNow()
       }
       expect((yield* app.get).error).toBeUndefined()
+      expect((yield* app.get).draftRestore?.text).toBe(
+        "put this back\n\nand this",
+      )
+      expect((yield* app.get).promptQueue).toEqual({
+        steering: [],
+        followUp: [],
+      })
       expect(
         (yield* app.get).transcript.rows.some((row) =>
           row.content.includes("Request was aborted"),
@@ -436,6 +591,7 @@ test("folds session events and commands into app state", () => {
         _tag: "RunCommand",
         name: "session",
         arguments: "",
+        delivery: "steer",
       })
       while (
         !(yield* app.get).transcript.rows.some((row) =>
@@ -450,6 +606,7 @@ test("folds session events and commands into app state", () => {
         _tag: "RunCommand",
         name: "reload",
         arguments: "",
+        delivery: "steer",
       })
       while (reloadCalls === 0 || keybindingReloads === 0) {
         yield* Effect.yieldNow()
@@ -477,7 +634,11 @@ test("folds session events and commands into app state", () => {
 
       prompt = ""
       const pastedPath = "/tmp/pi-opentui-paste-1/paste.txt"
-      yield* app.dispatch({ _tag: "Prompt", text: pastedPath })
+      yield* app.dispatch({
+        _tag: "Prompt",
+        text: pastedPath,
+        delivery: "steer",
+      })
       while (prompt !== pastedPath) {
         yield* Effect.yieldNow()
       }
@@ -488,7 +649,11 @@ test("folds session events and commands into app state", () => {
       }
 
       prompt = ""
-      yield* app.dispatch({ _tag: "Prompt", text: "/session" })
+      yield* app.dispatch({
+        _tag: "Prompt",
+        text: "/session",
+        delivery: "steer",
+      })
       while (prompt !== "/session") {
         yield* Effect.yieldNow()
       }
@@ -502,6 +667,7 @@ test("folds session events and commands into app state", () => {
         _tag: "RunCommand",
         name: "missing",
         arguments: "",
+        delivery: "steer",
       })
       while (
         !(yield* app.get).transcript.rows.some(
@@ -516,6 +682,7 @@ test("folds session events and commands into app state", () => {
         _tag: "RunCommand",
         name: "compact",
         arguments: "keep decisions",
+        delivery: "steer",
       })
       while (compactInstructions === undefined) {
         yield* Effect.yieldNow()
@@ -526,6 +693,7 @@ test("folds session events and commands into app state", () => {
         _tag: "RunCommand",
         name: "model",
         arguments: "glm",
+        delivery: "steer",
       })
       let modelDialog = (yield* app.get).dialog
       while (modelDialog === undefined) {
@@ -554,6 +722,7 @@ test("folds session events and commands into app state", () => {
         _tag: "RunCommand",
         name: "thinking",
         arguments: "",
+        delivery: "steer",
       })
       let thinkingDialog = (yield* app.get).dialog
       while (thinkingDialog === undefined) {
@@ -580,6 +749,7 @@ test("folds session events and commands into app state", () => {
         _tag: "RunCommand",
         name: "login",
         arguments: "opencode-go",
+        delivery: "steer",
       })
       let loginDialog = (yield* app.get).dialog
       while (loginDialog === undefined) {
@@ -625,6 +795,7 @@ test("folds session events and commands into app state", () => {
         _tag: "RunCommand",
         name: "login",
         arguments: "opencode-go",
+        delivery: "steer",
       })
       let cancelledDialog = (yield* app.get).dialog
       while (cancelledDialog === undefined) {
@@ -646,6 +817,7 @@ test("folds session events and commands into app state", () => {
         _tag: "RunCommand",
         name: "login",
         arguments: "opencode-go",
+        delivery: "steer",
       })
       while ((yield* app.get).dialog === undefined) {
         yield* Effect.yieldNow()
@@ -661,6 +833,7 @@ test("folds session events and commands into app state", () => {
         _tag: "RunCommand",
         name: "new",
         arguments: "",
+        delivery: "steer",
       })
       while (
         !(yield* app.get).transcript.rows.some(
@@ -675,6 +848,7 @@ test("folds session events and commands into app state", () => {
         _tag: "RunCommand",
         name: "resume",
         arguments: "",
+        delivery: "steer",
       })
       let resumeDialog = (yield* app.get).dialog
       while (resumeDialog === undefined) {
@@ -700,7 +874,11 @@ test("folds session events and commands into app state", () => {
       ).toContain("old answer")
 
       prompt = ""
-      yield* app.dispatch({ _tag: "Prompt", text: "fatal race" })
+      yield* app.dispatch({
+        _tag: "Prompt",
+        text: "fatal race",
+        delivery: "steer",
+      })
       while (prompt !== "fatal race") {
         yield* Effect.yieldNow()
       }
@@ -717,7 +895,11 @@ test("folds session events and commands into app state", () => {
       }
       expect((yield* app.get).phase).toBe("fatal")
       const callsBeforeFatalPrompt = promptCalls
-      yield* app.dispatch({ _tag: "Prompt", text: "must not run" })
+      yield* app.dispatch({
+        _tag: "Prompt",
+        text: "must not run",
+        delivery: "steer",
+      })
       yield* Effect.yieldNow()
       expect(promptCalls).toBe(callsBeforeFatalPrompt)
       expect((yield* app.get).phase).toBe("fatal")

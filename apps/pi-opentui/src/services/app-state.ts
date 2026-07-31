@@ -11,6 +11,7 @@ import type {
   AppCommand,
   AppPhase,
   AppSnapshot,
+  PromptDelivery,
 } from "./app-state-model.ts"
 import { applyAppStateUpdate } from "./app-state-model.ts"
 import {
@@ -28,6 +29,7 @@ import { assertAgentSessionEventContract } from "./event-contract.ts"
 import { makeModelActions } from "./model-actions.ts"
 import { makeReloadAction } from "./reload-action.ts"
 import { makeSessionActions } from "./session-actions.ts"
+import { makePromptQueueActions } from "./prompt-queue-actions.ts"
 import {
   emptyLiveUsage,
   reduceLiveUsage,
@@ -108,6 +110,8 @@ export const AppStateLive: Layer.Layer<
         authNotice: undefined,
         statuses: {},
         commands: builtinCommands,
+        promptQueue: { steering: [], followUp: [] },
+        draftRestore: undefined,
       })
       const commands = yield* Queue.unbounded<AppCommand>()
       const scope = yield* Effect.scope
@@ -147,6 +151,18 @@ export const AppStateLive: Layer.Layer<
           ),
         }))
 
+      const reportQueuedPromptError = (
+        error: PiSessionError,
+      ): Effect.Effect<void> =>
+        updateState((snapshot) => ({
+          ...snapshot,
+          error: errorText(error),
+          transcript: appendTranscriptError(
+            snapshot.transcript,
+            errorText(error),
+          ),
+        }))
+
       const extensionUi = yield* makeExtensionUi({
         setDialog: (dialog) =>
           updateState((snapshot) => ({ ...snapshot, dialog })),
@@ -175,6 +191,11 @@ export const AppStateLive: Layer.Layer<
         pushNotice,
         reportError,
       })
+      const promptQueueActions = yield* makePromptQueueActions(
+        pi,
+        updateState,
+        pushNotice,
+      )
       const reload = makeReloadAction({
         pi,
         keybindings,
@@ -236,6 +257,13 @@ export const AppStateLive: Layer.Layer<
               event.type === "thinking_level_changed"
                 ? event.level
                 : snapshot.thinkingLevel,
+            promptQueue:
+              event.type === "queue_update"
+                ? {
+                    steering: event.steering,
+                    followUp: event.followUp,
+                  }
+                : snapshot.promptQueue,
             transcript: reduceTranscriptEvent(snapshot.transcript, event),
           }))
         }),
@@ -481,6 +509,9 @@ export const AppStateLive: Layer.Layer<
         const snapshot = yield* SubscriptionRef.get(state)
         if (snapshot.phase !== "running") return
 
+        yield* promptQueueActions.restore(false).pipe(
+          Effect.catchAll(reportQueuedPromptError),
+        )
         yield* Ref.set(promptWasAborted, true)
         yield* updateState((current) => ({
           ...current,
@@ -506,16 +537,31 @@ export const AppStateLive: Layer.Layer<
         ),
       )
 
-      const startPrompt = (text: string): Effect.Effect<void> =>
+      const startPrompt = (
+        text: string,
+        delivery: PromptDelivery,
+      ): Effect.Effect<void> =>
         Effect.gen(function* () {
           const prompt = text.trim()
           if (prompt.length === 0) return
           const snapshot = yield* SubscriptionRef.get(state)
           if (
-            snapshot.phase === "running" ||
             snapshot.phase === "stopping" ||
             snapshot.phase === "fatal"
           ) {
+            return
+          }
+          if (snapshot.phase === "running") {
+            yield* Effect.forkIn(
+              pi.prompt(prompt, delivery).pipe(
+                Effect.catchAll((error) =>
+                  promptQueueActions.restoreText(prompt).pipe(
+                    Effect.zipRight(reportQueuedPromptError(error)),
+                  ),
+                ),
+              ),
+              scope,
+            )
             return
           }
           yield* Ref.set(promptWasAborted, false)
@@ -523,7 +569,6 @@ export const AppStateLive: Layer.Layer<
             ...current,
             phase: "running" as const,
             error: undefined,
-            transcript: appendUserPrompt(current.transcript, prompt),
           }))
           yield* Effect.forkIn(runPrompt(prompt), scope)
         })
@@ -531,12 +576,11 @@ export const AppStateLive: Layer.Layer<
       const handleCommand = (command: AppCommand): Effect.Effect<void> => {
         switch (command._tag) {
           case "Prompt":
-            return startPrompt(command.text)
+            return startPrompt(command.text, command.delivery)
           case "RunCommand":
             return Effect.gen(function* () {
               const snapshot = yield* SubscriptionRef.get(state)
               if (
-                snapshot.phase === "running" ||
                 snapshot.phase === "stopping" ||
                 snapshot.phase === "fatal"
               ) {
@@ -558,14 +602,40 @@ export const AppStateLive: Layer.Layer<
                   : ""
               }`
               if (
-                yield* runBuiltin(selected.name, command.arguments)
+                snapshot.phase !== "running" &&
+                (yield* runBuiltin(
+                  selected.name,
+                  command.arguments,
+                ))
               ) {
                 return
               }
-              yield* startPrompt(prompt)
+              if (
+                snapshot.phase === "running" &&
+                selected.source === "builtin"
+              ) {
+                yield* pushNotice(
+                  `Cannot run /${selected.name} while Pi is working`,
+                  true,
+                )
+                return
+              }
+              yield* startPrompt(prompt, command.delivery)
             })
           case "Abort":
             return abort
+          case "Dequeue":
+            return promptQueueActions.restore().pipe(
+              Effect.catchAll(reportQueuedPromptError),
+            )
+          case "AcknowledgeDraftRestore":
+            return updateState((snapshot) => ({
+              ...snapshot,
+              draftRestore:
+                snapshot.draftRestore?.id === command.id
+                  ? undefined
+                  : snapshot.draftRestore,
+            }))
           case "ResolveDialog":
             return extensionUi.resolveDialog(command.id, command.value)
         }

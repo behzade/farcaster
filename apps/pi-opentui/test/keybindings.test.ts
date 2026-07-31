@@ -27,3 +27,13 @@ test("loads and reloads Pi keybinding overrides", async () => {
     await rm(agentDir, { recursive: true, force: true })
   }
 })
+
+test("matches modified navigation input from terminals", () => {
+  const keybindings = makeKeybindings(new KeybindingsManager())
+  expect(
+    keybindings.matches("\u001b[1;3A", "app.message.dequeue"),
+  ).toBe(true)
+  expect(
+    keybindings.matches("\u001b[57352;3u", "app.message.dequeue"),
+  ).toBe(true)
+})

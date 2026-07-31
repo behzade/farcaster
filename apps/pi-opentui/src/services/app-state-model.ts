@@ -7,10 +7,19 @@ import type {
   ExtensionLoadError,
   PiModelInfo,
   PiThinkingLevel,
+  PromptDelivery,
+  PromptQueue,
 } from "./pi-session.ts"
 import type { TranscriptModel } from "./transcript.ts"
 
 export type AppPhase = "ready" | "running" | "stopping" | "error" | "fatal"
+
+export type { PromptDelivery, PromptQueue } from "./pi-session.ts"
+
+export interface DraftRestore {
+  readonly id: number
+  readonly text: string
+}
 
 export interface AppSnapshot {
   readonly cwd: string
@@ -31,16 +40,25 @@ export interface AppSnapshot {
   readonly authNotice: string | undefined
   readonly statuses: Readonly<Record<string, string>>
   readonly commands: ReadonlyArray<CommandInfo>
+  readonly promptQueue: PromptQueue
+  readonly draftRestore: DraftRestore | undefined
 }
 
 export type AppCommand =
-  | { readonly _tag: "Prompt"; readonly text: string }
+  | {
+      readonly _tag: "Prompt"
+      readonly text: string
+      readonly delivery: PromptDelivery
+    }
   | {
       readonly _tag: "RunCommand"
       readonly name: string
       readonly arguments: string
+      readonly delivery: PromptDelivery
     }
   | { readonly _tag: "Abort" }
+  | { readonly _tag: "Dequeue" }
+  | { readonly _tag: "AcknowledgeDraftRestore"; readonly id: number }
   | {
       readonly _tag: "ResolveDialog"
       readonly id: number

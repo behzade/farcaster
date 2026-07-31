@@ -20,6 +20,13 @@ import {
   type PiAuthType,
 } from "./pi-auth.ts"
 
+export type PromptDelivery = "steer" | "followUp"
+
+export interface PromptQueue {
+  readonly steering: ReadonlyArray<string>
+  readonly followUp: ReadonlyArray<string>
+}
+
 export interface ExtensionLoadError {
   readonly path: string
   readonly error: string
@@ -77,7 +84,11 @@ export interface PiSessionShape {
     uiContext: ExtensionUIContext,
     onError: (error: ExtensionError) => void,
   ) => Effect.Effect<void, PiSessionError>
-  readonly prompt: (text: string) => Effect.Effect<void, PiSessionError>
+  readonly prompt: (
+    text: string,
+    delivery?: PromptDelivery,
+  ) => Effect.Effect<void, PiSessionError>
+  readonly clearQueue: Effect.Effect<PromptQueue, PiSessionError>
   readonly compact: (
     instructions?: string,
   ) => Effect.Effect<void, PiSessionError>
@@ -111,6 +122,7 @@ export class PiSessionError extends Data.TaggedError("PiSessionError")<{
     | "open"
     | "bind"
     | "prompt"
+    | "queue"
     | "compact"
     | "reload"
     | "models"
@@ -157,7 +169,11 @@ export interface OpenedPiSession {
     readonly dispose: () => void
     readonly getActiveToolNames: () => Array<string>
     readonly getSessionStats: () => SessionStats
-    readonly prompt: (text: string) => Promise<void>
+    readonly prompt: (
+      text: string,
+      delivery?: PromptDelivery,
+    ) => Promise<void>
+    readonly clearQueue: () => PromptQueue
     readonly compact: (instructions?: string) => Promise<unknown>
     readonly abort: () => Promise<void>
     readonly bindExtensions: (bindings: {
@@ -346,7 +362,14 @@ const openPiSession: OpenPiSession = (cwd, saveSessions) => {
           getActiveToolNames: () =>
             runtime.session.getActiveToolNames(),
           getSessionStats: () => runtime.session.getSessionStats(),
-          prompt: (text: string) => runtime.session.prompt(text),
+          prompt: (text, delivery) =>
+            runtime.session.prompt(
+              text,
+              delivery === undefined
+                ? undefined
+                : { streamingBehavior: delivery },
+            ),
+          clearQueue: () => runtime.session.clearQueue(),
           compact: (instructions?: string) =>
             runtime.session.compact(instructions),
           abort: () => runtime.session.abort(),
@@ -566,8 +589,13 @@ export const makePiSessionLayer = (
             catch: (cause) =>
               new PiSessionError({ operation: "bind", cause }),
           }),
-        prompt: (text) =>
-          sdkCall("prompt", () => result.session.prompt(text)),
+        prompt: (text, delivery) =>
+          sdkCall("prompt", () => result.session.prompt(text, delivery)),
+        clearQueue: Effect.try({
+          try: result.session.clearQueue,
+          catch: (cause) =>
+            new PiSessionError({ operation: "queue", cause }),
+        }),
         compact: (instructions) =>
           sdkCall("compact", () =>
             result.session.compact(instructions),

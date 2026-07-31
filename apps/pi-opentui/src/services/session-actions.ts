@@ -57,6 +57,8 @@ export const makeSessionActions = ({
         thinkingLevel: modelState.thinkingLevel,
         sessionStats,
         liveUsage: emptyLiveUsage,
+        promptQueue: { steering: [], followUp: [] },
+        draftRestore: undefined,
         transcript: appendTranscriptNotice(
           transcriptFromMessages(messages),
           notice,
@@ -93,4 +95,3 @@ export const makeSessionActions = ({
 
   return { replace, resume }
 }
-

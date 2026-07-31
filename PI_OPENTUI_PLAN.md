@@ -126,6 +126,9 @@ Current progress:
   Pi's `ModelRuntime` auth flow, saves through Pi's normal credential store,
   and supports API-key and OAuth prompts. Clipboard images and large text
   pastes use scoped temporary files and insert their paths into the composer.
+  Pi's steering and follow-up queues now remain active while a turn runs. The
+  composer shows queued prompts and can return them to the draft on dequeue or
+  stop.
 
 Current file bounds:
 
@@ -148,11 +151,11 @@ Current file bounds:
   input to it and does not keep a second set of app shortcut rules.
 - `reload-action.ts` owns the full Pi resource and keybinding reload. The
   process boundary only forwards typed app commands.
+- `prompt-queue-actions.ts` owns queue clearing and draft restore. App state
+  routes typed prompt delivery commands and folds Pi's queue events.
 
-`app-state.ts` remains too broad. Before adding more built-in command flows,
-split session replacement, model choice, and thought-level choice from its
-queue and snapshot core. Do not add provider, file-system, or OpenTUI details
-to that file.
+`app-state.ts` still owns the event fold and built-in command map. Keep new
+provider, file-system, queue policy, and OpenTUI details in their own files.
 
 ### 1. Prove the base
 
