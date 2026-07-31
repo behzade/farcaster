@@ -144,6 +144,10 @@ Current file bounds:
   dependency, cache, and build trees.
 - `paste-service.ts` owns scoped temp files and their size limits.
   `clipboard-source.ts` owns host clipboard commands and native fallback.
+- `keybindings.ts` owns Pi's shared keybinding manager. OpenTUI passes raw key
+  input to it and does not keep a second set of app shortcut rules.
+- `reload-action.ts` owns the full Pi resource and keybinding reload. The
+  process boundary only forwards typed app commands.
 
 `app-state.ts` remains too broad. Before adding more built-in command flows,
 split session replacement, model choice, and thought-level choice from its

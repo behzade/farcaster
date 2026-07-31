@@ -9,7 +9,7 @@ export interface CommandInfo {
   readonly source: "builtin" | "extension" | "prompt" | "skill"
 }
 
-export const builtinCommands: ReadonlyArray<CommandInfo> = [
+export const builtinCommands = [
   {
     name: "help",
     description: "List commands available in this screen",
@@ -50,12 +50,40 @@ export const builtinCommands: ReadonlyArray<CommandInfo> = [
     description: "Resume a saved session",
     source: "builtin",
   },
-]
+  {
+    name: "reload",
+    description: "Reload Pi resources and keybindings",
+    source: "builtin",
+  },
+] as const satisfies ReadonlyArray<CommandInfo>
 
-export const commandName = (text: string): string | undefined => {
+export type BuiltinCommandName =
+  (typeof builtinCommands)[number]["name"]
+
+export interface CommandSelection {
+  readonly name: string
+  readonly arguments: string
+}
+
+export const selectSlashCommand = (
+  commands: ReadonlyArray<CommandInfo>,
+  text: string,
+): CommandSelection | undefined => {
   if (!text.startsWith("/")) return undefined
-  const name = text.slice(1).split(/\s/, 1)[0]
-  return name === undefined || name.length === 0 ? undefined : name
+  const separator = text.search(/\s/)
+  const end = separator < 0 ? text.length : separator
+  const inputName = text.slice(1, end)
+  if (inputName.length === 0) return undefined
+  const command = commands.find(
+    (candidate) =>
+      candidate.name.toLowerCase() === inputName.toLowerCase(),
+  )
+  return command === undefined
+    ? undefined
+    : {
+        name: command.name,
+        arguments: separator < 0 ? "" : text.slice(separator).trim(),
+      }
 }
 
 const defaultCommandMatchLimit = 8

@@ -47,6 +47,15 @@ export interface PiModelState {
   readonly thinkingLevels: ReadonlyArray<PiThinkingLevel>
 }
 
+export interface PiReloadState {
+  readonly hideThinkingBlock: boolean
+  readonly activeTools: ReadonlyArray<string>
+  readonly extensionPaths: ReadonlyArray<string>
+  readonly extensionErrors: ReadonlyArray<ExtensionLoadError>
+  readonly commands: ReadonlyArray<SlashCommandInfo>
+  readonly modelState: PiModelState
+}
+
 export interface PiSessionShape {
   readonly cwd: string
   readonly hideThinkingBlock: boolean
@@ -72,6 +81,7 @@ export interface PiSessionShape {
   readonly compact: (
     instructions?: string,
   ) => Effect.Effect<void, PiSessionError>
+  readonly reload: Effect.Effect<PiReloadState, PiSessionError>
   readonly newSession: Effect.Effect<ReadonlyArray<unknown>, PiSessionError>
   readonly resume: (
     path: string,
@@ -102,6 +112,7 @@ export class PiSessionError extends Data.TaggedError("PiSessionError")<{
     | "bind"
     | "prompt"
     | "compact"
+    | "reload"
     | "models"
     | "auth"
     | "login"
@@ -138,6 +149,7 @@ export interface OpenedPiSession {
     type: PiAuthType,
     interaction: PiAuthInteraction,
   ) => Promise<void>
+  readonly reload: () => Promise<PiReloadState>
   readonly session: {
     readonly subscribe: (
       listener: (event: AgentSessionEvent) => void,
@@ -306,6 +318,22 @@ const openPiSession: OpenPiSession = (cwd, saveSessions) => {
           ).pipe(Effect.map((providers) => [...providers])),
         )
 
+      const getReloadState = (): PiReloadState => {
+        const extensions =
+          runtime.session.resourceLoader.getExtensions()
+        return {
+          hideThinkingBlock:
+            runtime.session.settingsManager.getHideThinkingBlock(),
+          activeTools: runtime.session.getActiveToolNames().toSorted(),
+          extensionPaths: extensions.extensions
+            .map((extension) => extension.path)
+            .toSorted(),
+          extensionErrors: extensions.errors,
+          commands: extensions.runtime.getCommands(),
+          modelState: getModelState(),
+        }
+      }
+
       return {
         getHideThinkingBlock: () =>
           runtime.session.settingsManager.getHideThinkingBlock(),
@@ -427,6 +455,12 @@ const openPiSession: OpenPiSession = (cwd, saveSessions) => {
               ),
             ).pipe(Effect.asVoid),
           ),
+        reload: () =>
+          Effect.runPromise(
+            Effect.tryPromise(() => runtime.session.reload()).pipe(
+              Effect.map(getReloadState),
+            ),
+          ),
         shutdown: () =>
           Effect.runPromise(
             Effect.sync(() => unsubscribe()).pipe(
@@ -538,6 +572,11 @@ export const makePiSessionLayer = (
           sdkCall("compact", () =>
             result.session.compact(instructions),
           ),
+        reload: Effect.tryPromise({
+          try: result.reload,
+          catch: (cause) =>
+            new PiSessionError({ operation: "reload", cause }),
+        }),
         newSession: Effect.tryPromise({
           try: result.newSession,
           catch: (cause) =>

@@ -14,8 +14,8 @@ import type {
 import { appendTranscriptNotice } from "./transcript.ts"
 
 export interface ModelActions {
-  readonly chooseModel: (prompt: string) => Effect.Effect<void>
-  readonly chooseThinking: (prompt: string) => Effect.Effect<void>
+  readonly chooseModel: (query: string) => Effect.Effect<void>
+  readonly chooseThinking: (requested: string) => Effect.Effect<void>
 }
 
 export interface ModelActionOptions {
@@ -61,7 +61,7 @@ export const makeModelActions = ({
       transcript: appendTranscriptNotice(snapshot.transcript, notice),
     }))
 
-  const chooseModel = (prompt: string): Effect.Effect<void> =>
+  const chooseModel = (query: string): Effect.Effect<void> =>
     Effect.gen(function* () {
       yield* updateState((snapshot) => ({
         ...snapshot,
@@ -69,7 +69,6 @@ export const makeModelActions = ({
         error: undefined,
       }))
       const models = yield* pi.models
-      const query = prompt.slice("/model".length).trim()
       const normalizedQuery = query.toLowerCase()
       const exactMatches =
         normalizedQuery.length === 0
@@ -112,7 +111,7 @@ export const makeModelActions = ({
       )
     }).pipe(Effect.catchAll(reportError))
 
-  const chooseThinking = (prompt: string): Effect.Effect<void> =>
+  const chooseThinking = (requested: string): Effect.Effect<void> =>
     Effect.gen(function* () {
       yield* updateState((snapshot) => ({
         ...snapshot,
@@ -137,7 +136,6 @@ export const makeModelActions = ({
         return
       }
 
-      const requested = prompt.slice("/thinking".length).trim()
       let level = current.thinkingLevels.find(
         (candidate) => candidate === requested,
       )

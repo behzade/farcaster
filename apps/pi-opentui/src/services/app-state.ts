@@ -17,14 +17,16 @@ import {
   builtinCommands,
   commandCatalog,
   commandHelp,
-  commandName,
   sessionStatsText,
+  type BuiltinCommandName,
 } from "./commands.ts"
 import { makeExtensionUi } from "./extension-ui.ts"
+import { Keybindings } from "./keybindings.ts"
 import { PiSession, PiSessionError } from "./pi-session.ts"
 import { runLoginFlow } from "./login-flow.ts"
 import { assertAgentSessionEventContract } from "./event-contract.ts"
 import { makeModelActions } from "./model-actions.ts"
+import { makeReloadAction } from "./reload-action.ts"
 import { makeSessionActions } from "./session-actions.ts"
 import {
   emptyLiveUsage,
@@ -66,11 +68,16 @@ const errorText = (error: PiSessionError): string => {
   return `${error.operation}: ${cause}`
 }
 
-export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
+export const AppStateLive: Layer.Layer<
+  AppState,
+  never,
+  PiSession | Keybindings
+> =
   Layer.scoped(
     AppState,
     Effect.gen(function* () {
       const pi = yield* PiSession
+      const keybindings = yield* Keybindings
       const initialModelState = yield* pi.modelState
       const initialSessionStats = yield* pi.sessionStats
       const initialTranscript = pi.extensionErrors.reduce(
@@ -168,6 +175,12 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
         pushNotice,
         reportError,
       })
+      const reload = makeReloadAction({
+        pi,
+        keybindings,
+        updateState,
+        pushNotice,
+      }).pipe(Effect.catchAll(reportError))
 
       yield* pi.bindExtensions(extensionUi.context, (extensionError) => {
         extensionUi.notify(
@@ -310,11 +323,10 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
           ),
         )
 
-      const login = (prompt: string): Effect.Effect<void> =>
+      const login = (providerRef: string): Effect.Effect<void> =>
         Effect.gen(function* () {
           const controller = new AbortController()
           yield* Ref.set(loginController, controller)
-          const providerRef = prompt.slice("/login".length).trim()
           const result = yield* runLoginFlow(
             pi,
             extensionUi,
@@ -371,87 +383,92 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
           Effect.ensuring(Ref.set(loginController, undefined)),
         )
 
-      const runBuiltin = (
-        name: string,
-        prompt: string,
-      ): Effect.Effect<boolean> => {
-        switch (name) {
-          case "help":
-            return SubscriptionRef.get(state).pipe(
-              Effect.flatMap((snapshot) =>
-                pushNotice(commandHelp(snapshot.commands)),
-              ),
-              Effect.as(true),
-            )
-          case "session":
-            return pi.sessionStats.pipe(
-              Effect.flatMap((stats) =>
-                pushNotice(sessionStatsText(stats)),
-              ),
-              Effect.as(true),
-            )
-          case "compact": {
-            const instructions = prompt.slice("/compact".length).trim()
-            return Effect.gen(function* () {
-              yield* Ref.set(promptWasAborted, false)
-              yield* updateState((snapshot) => ({
-                ...snapshot,
-                phase: "running" as const,
-                error: undefined,
-                transcript: appendUserPrompt(
-                  snapshot.transcript,
-                  prompt,
-                ),
-              }))
-              yield* Effect.forkIn(
-                runCompact(
-                  instructions.length > 0 ? instructions : undefined,
-                ),
-                scope,
-              )
-              return true
-            })
-          }
-          case "model":
-            return Effect.forkIn(
-              modelActions.chooseModel(prompt),
-              scope,
-            ).pipe(
-              Effect.as(true),
-            )
-          case "login":
-            return updateState((snapshot) => ({
+      type BuiltinHandler = (
+        argumentsText: string,
+      ) => Effect.Effect<unknown>
+
+      const builtinHandlers: Readonly<
+        Record<BuiltinCommandName, BuiltinHandler>
+      > = {
+        help: () =>
+          SubscriptionRef.get(state).pipe(
+            Effect.flatMap((snapshot) =>
+              pushNotice(commandHelp(snapshot.commands)),
+            ),
+          ),
+        session: () =>
+          pi.sessionStats.pipe(
+            Effect.flatMap((stats) =>
+              pushNotice(sessionStatsText(stats)),
+            ),
+          ),
+        compact: (argumentsText) => {
+          const prompt = `/compact${
+            argumentsText.length > 0 ? ` ${argumentsText}` : ""
+          }`
+          return Effect.gen(function* () {
+            yield* Ref.set(promptWasAborted, false)
+            yield* updateState((snapshot) => ({
               ...snapshot,
               phase: "running" as const,
               error: undefined,
-            })).pipe(
-              Effect.zipRight(Effect.forkIn(login(prompt), scope)),
-              Effect.as(true),
-            )
-          case "thinking":
-            return Effect.forkIn(
-              modelActions.chooseThinking(prompt),
-              scope,
-            ).pipe(
-              Effect.as(true),
-            )
-          case "new":
-            return Effect.forkIn(
-              sessionActions.replace(
-                pi.newSession,
-                "Started a new session",
+              transcript: appendUserPrompt(
+                snapshot.transcript,
+                prompt,
+              ),
+            }))
+            yield* Effect.forkIn(
+              runCompact(
+                argumentsText.length > 0
+                  ? argumentsText
+                  : undefined,
               ),
               scope,
-            ).pipe(
-              Effect.as(true),
             )
-          case "resume":
-            return Effect.forkIn(sessionActions.resume, scope).pipe(
-              Effect.as(true),
-            )
-          default:
-            return Effect.succeed(false)
+          })
+        },
+        model: (argumentsText) =>
+          Effect.forkIn(
+            modelActions.chooseModel(argumentsText),
+            scope,
+          ),
+        login: (argumentsText) =>
+          updateState((snapshot) => ({
+            ...snapshot,
+            phase: "running" as const,
+            error: undefined,
+          })).pipe(
+            Effect.zipRight(
+              Effect.forkIn(login(argumentsText), scope),
+            ),
+          ),
+        thinking: (argumentsText) =>
+          Effect.forkIn(
+            modelActions.chooseThinking(argumentsText),
+            scope,
+          ),
+        new: () =>
+          Effect.forkIn(
+            sessionActions.replace(
+              pi.newSession,
+              "Started a new session",
+            ),
+            scope,
+          ),
+        resume: () => Effect.forkIn(sessionActions.resume, scope),
+        reload: () => Effect.forkIn(reload, scope),
+      }
+
+      const runBuiltin = (
+        name: string,
+        argumentsText: string,
+      ): Effect.Effect<boolean> => {
+        if (!Object.hasOwn(builtinHandlers, name)) {
+          return Effect.succeed(false)
         }
+        return builtinHandlers[name as BuiltinCommandName](
+          argumentsText,
+        ).pipe(Effect.as(true))
       }
 
       const abort = Effect.gen(function* () {
@@ -489,13 +506,34 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
         ),
       )
 
+      const startPrompt = (text: string): Effect.Effect<void> =>
+        Effect.gen(function* () {
+          const prompt = text.trim()
+          if (prompt.length === 0) return
+          const snapshot = yield* SubscriptionRef.get(state)
+          if (
+            snapshot.phase === "running" ||
+            snapshot.phase === "stopping" ||
+            snapshot.phase === "fatal"
+          ) {
+            return
+          }
+          yield* Ref.set(promptWasAborted, false)
+          yield* updateState((current) => ({
+            ...current,
+            phase: "running" as const,
+            error: undefined,
+            transcript: appendUserPrompt(current.transcript, prompt),
+          }))
+          yield* Effect.forkIn(runPrompt(prompt), scope)
+        })
+
       const handleCommand = (command: AppCommand): Effect.Effect<void> => {
         switch (command._tag) {
           case "Prompt":
+            return startPrompt(command.text)
+          case "RunCommand":
             return Effect.gen(function* () {
-              const prompt = command.text.trim()
-              if (prompt.length === 0) return
-
               const snapshot = yield* SubscriptionRef.get(state)
               if (
                 snapshot.phase === "running" ||
@@ -504,31 +542,27 @@ export const AppStateLive: Layer.Layer<AppState, never, PiSession> =
               ) {
                 return
               }
-              const name = commandName(prompt)
-              if (name !== undefined) {
-                if (yield* runBuiltin(name, prompt)) return
-                if (
-                  !snapshot.commands.some(
-                    (candidate) =>
-                      candidate.name === name &&
-                      candidate.source !== "builtin",
-                  )
-                ) {
-                  yield* pushNotice(`Unknown command: /${name}`, true)
-                  return
-                }
+              const selected = snapshot.commands.find(
+                (candidate) => candidate.name === command.name,
+              )
+              if (selected === undefined) {
+                yield* pushNotice(
+                  `Unknown command: /${command.name}`,
+                  true,
+                )
+                return
               }
-              yield* Ref.set(promptWasAborted, false)
-              yield* updateState((current) => ({
-                ...current,
-                phase: "running" as const,
-                error: undefined,
-                transcript: appendUserPrompt(
-                  current.transcript,
-                  prompt,
-                ),
-              }))
-              yield* Effect.forkIn(runPrompt(prompt), scope)
+              const prompt = `/${selected.name}${
+                command.arguments.length > 0
+                  ? ` ${command.arguments}`
+                  : ""
+              }`
+              if (
+                yield* runBuiltin(selected.name, command.arguments)
+              ) {
+                return
+              }
+              yield* startPrompt(prompt)
             })
           case "Abort":
             return abort

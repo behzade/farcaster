@@ -29,6 +29,7 @@ describe("PiSession", () => {
     let selectedModel: string | undefined
     let selectedThinking: string | undefined
     let loginCall: string | undefined
+    let reloads = 0
 
     const open = (
       _cwd: string,
@@ -109,6 +110,26 @@ describe("PiSession", () => {
         login: (provider, type) => {
           loginCall = `${provider}/${type}`
           return Promise.resolve()
+        },
+        reload: () => {
+          reloads += 1
+          return Promise.resolve({
+            hideThinkingBlock: true,
+            activeTools: ["read", "sandbox"],
+            extensionPaths: ["/agent/extensions/sandbox"],
+            extensionErrors: [],
+            commands: [],
+            modelState: {
+              selected: {
+                provider: "openai",
+                id: "gpt-5",
+                name: "GPT-5",
+                reasoning: true,
+              },
+              thinkingLevel: "medium",
+              thinkingLevels: ["off", "medium", "high"],
+            },
+          })
         },
         shutdown: () => {
           shutDown = true
@@ -204,6 +225,7 @@ describe("PiSession", () => {
           prompt: () => Promise.resolve("key"),
           notify: () => undefined,
         })
+        expect((yield* pi.reload).hideThinkingBlock).toBe(true)
         expect(openedWithSavedSessions).toBe(false)
         expect(listedSessions).toBe(1)
         expect(newSessions).toBe(1)
@@ -211,6 +233,7 @@ describe("PiSession", () => {
         expect(selectedModel).toBe("openai/gpt-5")
         expect(selectedThinking).toBe("high")
         expect(loginCall).toBe("opencode-go/api_key")
+        expect(reloads).toBe(1)
       }),
     ).pipe(Effect.provide(session))
 

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import {
   exactSlashCommand,
+  selectSlashCommand,
   slashCommandMatches,
   type CommandInfo,
 } from "../src/services/commands.ts"
@@ -75,4 +76,14 @@ test("finds an exact command only for a complete command name", () => {
   expect(exactSlashCommand(commands, "/mod")).toBeUndefined()
   expect(exactSlashCommand(commands, "/model fast")).toBeUndefined()
   expect(exactSlashCommand(commands, "/")).toBeUndefined()
+})
+
+test("selects only names from the shown command list", () => {
+  expect(selectSlashCommand(commands, "/MODEL fast")).toEqual({
+    name: "model",
+    arguments: "fast",
+  })
+  expect(selectSlashCommand(commands, "/tmp/paste.txt")).toBeUndefined()
+  expect(selectSlashCommand(commands, "/missing")).toBeUndefined()
+  expect(selectSlashCommand(commands, "explain /model")).toBeUndefined()
 })

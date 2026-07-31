@@ -21,7 +21,7 @@ export const UiRendererLive = Layer.scoped(
   UiRenderer,
   Effect.acquireRelease(
     Effect.tryPromise({
-      try: () => createCliRenderer(),
+      try: () => createCliRenderer({ exitOnCtrlC: false }),
       catch: (cause) => new UiRendererError({ cause }),
     }).pipe(Effect.map((renderer) => ({ renderer }))),
     ({ renderer }) => Effect.sync(() => renderer.destroy()),

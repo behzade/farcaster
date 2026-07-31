@@ -17,8 +17,8 @@ Pi extension set, and provides:
 - `Escape` to stop a turn;
 - select and text dialogs for extension tools and sandbox approvals;
 - a slash menu for built-in, extension, prompt, and skill commands;
-- local `/help`, `/session`, `/compact`, `/model`, `/thinking`, `/new`, and
-  `/resume` commands;
+- local `/help`, `/session`, `/compact`, `/model`, `/login`, `/thinking`,
+  `/new`, `/resume`, and `/reload` commands;
 - saved transcript restore when a session changes;
 - current model, thinking level, token use, context use, and cost in the top
   status lines;
@@ -38,7 +38,9 @@ bun run smoke
 bun start
 ```
 
-Press `Ctrl+C` or `Ctrl+Q` to quit. Press `Escape` to stop a running turn.
+The app reads Pi's `~/.pi/agent/keybindings.json` and reloads it with `/reload`.
+By default, `Ctrl+C` clears the input, a second `Ctrl+C` quits, `Ctrl+D` quits
+when the input is empty, and `Escape` stops a running turn.
 Press `Enter` to send and `Shift+Enter` for a new line.
 Press `Ctrl+V` to paste an image from the system clipboard, with text fallback.
 Text pastes over 10 lines or 1,000 characters use a scoped temporary file.

@@ -13,6 +13,7 @@ import type {
 import {
   type CommandInfo,
   exactSlashCommand,
+  selectSlashCommand,
   slashCommandMatches,
 } from "../services/commands.ts"
 import {
@@ -21,6 +22,10 @@ import {
   type FileCompletion,
 } from "../services/file-completion.ts"
 import type { ProjectPath } from "../services/project-paths.ts"
+import {
+  primaryKey,
+  type KeybindingsShape,
+} from "../services/keybindings.ts"
 import {
   isLargePaste,
   type PasteInsertion,
@@ -39,6 +44,7 @@ export interface ComposerOptions {
     request: PasteRequest,
     accept: (insertion: PasteInsertion | undefined) => void,
   ) => void
+  readonly keybindings: KeybindingsShape
   readonly overlayParent: BoxRenderable
 }
 
@@ -100,13 +106,13 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
       justifyContent: "space-between",
     })
     this.hint = new TextRenderable(ctx, {
-      content: "enter send · shift+enter newline · ctrl+v paste · / commands · @ files",
+      content: this.defaultHint(),
       fg: theme.muted,
     })
     footer.add(this.hint)
     footer.add(
       new TextRenderable(ctx, {
-        content: "ctrl+c quit",
+        content: `${primaryKey(options.keybindings, "app.exit")} quit`,
         fg: theme.muted,
       }),
     )
@@ -144,6 +150,14 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
     } else {
       this.input.blur()
     }
+  }
+
+  isDraftEmpty(): boolean {
+    return this.input.plainText.length === 0
+  }
+
+  clearDraft(): void {
+    this.setDraft("")
   }
 
   cancelPalette(event?: KeyEvent): boolean {
@@ -228,7 +242,11 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
         ? "restart pi-next after updating the Pi event handler"
         : this.canComplete() && command !== undefined
         ? `/${command.name}${command.description.length > 0 ? ` — ${command.description}` : ""} · ↑/↓ choose · tab or enter complete`
-        : "enter send · shift+enter newline · ctrl+v paste · / commands · @ files"
+        : this.defaultHint()
+  }
+
+  private defaultHint(): string {
+    return `enter send · shift+enter newline · ${primaryKey(this.options.keybindings, "app.clipboard.pasteImage")} paste · / commands · @ files`
   }
 
   private setDraft(text: string, cursorOffset = text.length): void {
@@ -324,15 +342,20 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
       return
     }
 
-    this.options.dispatch({ _tag: "Prompt", text: prompt })
+    const command = selectSlashCommand(this.snapshot.commands, prompt)
+    this.options.dispatch(
+      command === undefined
+        ? { _tag: "Prompt", text: prompt }
+        : { _tag: "RunCommand", ...command },
+    )
     this.setDraft("")
   }
 
   private handleKey(event: KeyEvent): void {
-    const pasteClipboard =
-      event.name === "v" &&
-      (event.ctrl ||
-        (process.platform === "win32" && (event.meta || event.option)))
+    const pasteClipboard = this.options.keybindings.matches(
+      event.raw,
+      "app.clipboard.pasteImage",
+    )
     if (pasteClipboard) {
       event.preventDefault()
       event.stopPropagation()
@@ -358,10 +381,9 @@ export class ComposerView implements OpenTuiComponent<AppSnapshot> {
       return
     }
     if (
-      ((event.name === "c" || event.name === "q") && event.ctrl) ||
-      (event.name === "escape" &&
-        (this.snapshot.phase === "running" ||
-          this.snapshot.phase === "stopping"))
+      this.options.keybindings.matches(event.raw, "app.interrupt") &&
+      (this.snapshot.phase === "running" ||
+        this.snapshot.phase === "stopping")
     ) {
       return
     }

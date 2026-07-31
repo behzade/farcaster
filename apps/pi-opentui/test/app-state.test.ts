@@ -8,6 +8,7 @@ import {
   AppState,
   AppStateLive,
 } from "../src/services/app-state.ts"
+import { Keybindings } from "../src/services/keybindings.ts"
 import {
   PiSession,
   PiSessionError,
@@ -28,6 +29,8 @@ test("folds session events and commands into app state", () => {
   let selectedModel: string | undefined
   let selectedThinking: string | undefined
   let savedLogin: string | undefined
+  let reloadCalls = 0
+  let keybindingReloads = 0
   let sessionStatsReads = 0
   let authoritativeTokens = 30
   let authoritativeCost = 0.01
@@ -166,6 +169,29 @@ test("folds session events and commands into app state", () => {
       Effect.sync(() => {
         compactInstructions = instructions
       }),
+    reload: Effect.sync(() => {
+      reloadCalls += 1
+      return {
+        hideThinkingBlock: true,
+        activeTools: ["read", "sandbox"],
+        extensionPaths: ["/agent/extensions/reloaded"],
+        extensionErrors: [],
+        commands: [
+          {
+            name: "after-reload",
+            description: "Loaded after reload",
+            source: "extension" as const,
+            sourceInfo: {
+              path: "/agent/extensions/reloaded.ts",
+              source: "after-reload",
+              scope: "user" as const,
+              origin: "top-level" as const,
+            },
+          },
+        ],
+        modelState,
+      }
+    }),
     newSession: Effect.sync(() => {
       newSessionCalls += 1
       return []
@@ -236,7 +262,16 @@ test("folds session events and commands into app state", () => {
         extensionUi = ui
       }),
   })
-  const appLayer = AppStateLive.pipe(Layer.provide(pi))
+  const keybindings = Layer.succeed(Keybindings, {
+    matches: () => false,
+    keys: () => [],
+    reload: () => {
+      keybindingReloads += 1
+    },
+  })
+  const appLayer = AppStateLive.pipe(
+    Layer.provide(Layer.merge(pi, keybindings)),
+  )
 
   const program = Effect.scoped(
     Effect.gen(function* () {
@@ -397,7 +432,11 @@ test("folds session events and commands into app state", () => {
       ).toBe(false)
 
       const callsBeforeCommands = promptCalls
-      yield* app.dispatch({ _tag: "Prompt", text: "/session" })
+      yield* app.dispatch({
+        _tag: "RunCommand",
+        name: "session",
+        arguments: "",
+      })
       while (
         !(yield* app.get).transcript.rows.some((row) =>
           row.content.includes("Session session-1"),
@@ -407,7 +446,63 @@ test("folds session events and commands into app state", () => {
       }
       expect(promptCalls).toBe(callsBeforeCommands)
 
-      yield* app.dispatch({ _tag: "Prompt", text: "/missing" })
+      yield* app.dispatch({
+        _tag: "RunCommand",
+        name: "reload",
+        arguments: "",
+      })
+      while (reloadCalls === 0 || keybindingReloads === 0) {
+        yield* Effect.yieldNow()
+      }
+      while ((yield* app.get).phase !== "ready") {
+        yield* Effect.yieldNow()
+      }
+      const reloadedSnapshot = yield* app.get
+      expect(reloadedSnapshot.hideThinkingBlock).toBe(true)
+      expect(reloadedSnapshot.activeTools).toEqual(["read", "sandbox"])
+      expect(reloadedSnapshot.extensionPaths).toEqual([
+        "/agent/extensions/reloaded",
+      ])
+      expect(
+        reloadedSnapshot.commands.some(
+          (command) => command.name === "after-reload",
+        ),
+      ).toBe(true)
+      expect(
+        reloadedSnapshot.transcript.rows.some(
+          (row) =>
+            row.content === "Reloaded Pi resources and keybindings",
+        ),
+      ).toBe(true)
+
+      prompt = ""
+      const pastedPath = "/tmp/pi-opentui-paste-1/paste.txt"
+      yield* app.dispatch({ _tag: "Prompt", text: pastedPath })
+      while (prompt !== pastedPath) {
+        yield* Effect.yieldNow()
+      }
+      expect(promptCalls).toBe(callsBeforeCommands + 1)
+      finishPrompt?.()
+      while ((yield* app.get).phase !== "ready") {
+        yield* Effect.yieldNow()
+      }
+
+      prompt = ""
+      yield* app.dispatch({ _tag: "Prompt", text: "/session" })
+      while (prompt !== "/session") {
+        yield* Effect.yieldNow()
+      }
+      expect(promptCalls).toBe(callsBeforeCommands + 2)
+      finishPrompt?.()
+      while ((yield* app.get).phase !== "ready") {
+        yield* Effect.yieldNow()
+      }
+
+      yield* app.dispatch({
+        _tag: "RunCommand",
+        name: "missing",
+        arguments: "",
+      })
       while (
         !(yield* app.get).transcript.rows.some(
           (row) => row.content === "Unknown command: /missing",
@@ -415,18 +510,23 @@ test("folds session events and commands into app state", () => {
       ) {
         yield* Effect.yieldNow()
       }
-      expect(promptCalls).toBe(callsBeforeCommands)
+      expect(promptCalls).toBe(callsBeforeCommands + 2)
 
       yield* app.dispatch({
-        _tag: "Prompt",
-        text: "/compact keep decisions",
+        _tag: "RunCommand",
+        name: "compact",
+        arguments: "keep decisions",
       })
       while (compactInstructions === undefined) {
         yield* Effect.yieldNow()
       }
       expect(compactInstructions).toBe("keep decisions")
 
-      yield* app.dispatch({ _tag: "Prompt", text: "/model glm" })
+      yield* app.dispatch({
+        _tag: "RunCommand",
+        name: "model",
+        arguments: "glm",
+      })
       let modelDialog = (yield* app.get).dialog
       while (modelDialog === undefined) {
         yield* Effect.yieldNow()
@@ -450,7 +550,11 @@ test("folds session events and commands into app state", () => {
       expect(selectedModel).toBe("opencode-go/glm-5.2")
       expect((yield* app.get).model?.id).toBe("glm-5.2")
 
-      yield* app.dispatch({ _tag: "Prompt", text: "/thinking" })
+      yield* app.dispatch({
+        _tag: "RunCommand",
+        name: "thinking",
+        arguments: "",
+      })
       let thinkingDialog = (yield* app.get).dialog
       while (thinkingDialog === undefined) {
         yield* Effect.yieldNow()
@@ -473,8 +577,9 @@ test("folds session events and commands into app state", () => {
       expect((yield* app.get).thinkingLevel).toBe("high")
 
       yield* app.dispatch({
-        _tag: "Prompt",
-        text: "/login opencode-go",
+        _tag: "RunCommand",
+        name: "login",
+        arguments: "opencode-go",
       })
       let loginDialog = (yield* app.get).dialog
       while (loginDialog === undefined) {
@@ -517,8 +622,9 @@ test("folds session events and commands into app state", () => {
 
       savedLogin = undefined
       yield* app.dispatch({
-        _tag: "Prompt",
-        text: "/login opencode-go",
+        _tag: "RunCommand",
+        name: "login",
+        arguments: "opencode-go",
       })
       let cancelledDialog = (yield* app.get).dialog
       while (cancelledDialog === undefined) {
@@ -537,8 +643,9 @@ test("folds session events and commands into app state", () => {
       expect(savedLogin).toBeUndefined()
 
       yield* app.dispatch({
-        _tag: "Prompt",
-        text: "/login opencode-go",
+        _tag: "RunCommand",
+        name: "login",
+        arguments: "opencode-go",
       })
       while ((yield* app.get).dialog === undefined) {
         yield* Effect.yieldNow()
@@ -550,7 +657,11 @@ test("folds session events and commands into app state", () => {
       expect((yield* app.get).error).toBeUndefined()
       expect(savedLogin).toBeUndefined()
 
-      yield* app.dispatch({ _tag: "Prompt", text: "/new" })
+      yield* app.dispatch({
+        _tag: "RunCommand",
+        name: "new",
+        arguments: "",
+      })
       while (
         !(yield* app.get).transcript.rows.some(
           (row) => row.content === "Started a new session",
@@ -560,7 +671,11 @@ test("folds session events and commands into app state", () => {
       }
       expect(newSessionCalls).toBe(1)
 
-      yield* app.dispatch({ _tag: "Prompt", text: "/resume" })
+      yield* app.dispatch({
+        _tag: "RunCommand",
+        name: "resume",
+        arguments: "",
+      })
       let resumeDialog = (yield* app.get).dialog
       while (resumeDialog === undefined) {
         yield* Effect.yieldNow()

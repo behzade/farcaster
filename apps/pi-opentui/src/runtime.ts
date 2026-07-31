@@ -1,12 +1,15 @@
 import { Layer } from "effect"
 import { AppConfigLive } from "./services/app-config.ts"
 import { AppStateLive } from "./services/app-state.ts"
+import { KeybindingsLive } from "./services/keybindings.ts"
 import { makePiSessionLayer } from "./services/pi-session.ts"
 
 export const PiSessionLive = makePiSessionLayer().pipe(
   Layer.provide(AppConfigLive),
 )
 
-const StateLive = AppStateLive.pipe(Layer.provide(PiSessionLive))
+const StateDependencies = Layer.merge(PiSessionLive, KeybindingsLive)
 
-export const AppLive = StateLive
+export const AppLive = AppStateLive.pipe(
+  Layer.provideMerge(StateDependencies),
+)

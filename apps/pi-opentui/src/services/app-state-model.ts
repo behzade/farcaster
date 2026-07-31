@@ -35,6 +35,11 @@ export interface AppSnapshot {
 
 export type AppCommand =
   | { readonly _tag: "Prompt"; readonly text: string }
+  | {
+      readonly _tag: "RunCommand"
+      readonly name: string
+      readonly arguments: string
+    }
   | { readonly _tag: "Abort" }
   | {
       readonly _tag: "ResolveDialog"

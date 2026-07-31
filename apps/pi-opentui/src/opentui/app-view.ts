@@ -9,6 +9,7 @@ import {
 } from "@opentui/core"
 import type { AppSnapshot } from "../services/app-state-model.ts"
 import type { AppClient } from "../ui/app-client.ts"
+import type { KeybindingsShape } from "../services/keybindings.ts"
 import { headerViewModel } from "../ui/app-view-model.ts"
 import { ComposerView } from "./composer-view.ts"
 import type { OpenTuiComponent } from "./component.ts"
@@ -34,26 +35,46 @@ export class AppView implements OpenTuiComponent<AppSnapshot> {
   private unsubscribe: (() => void) | undefined
   private mounted = false
   private destroyed = false
+  private lastClearTime = 0
 
   private readonly handleKey = (event: KeyEvent): void => {
-    if ((event.name === "c" || event.name === "q") && event.ctrl) {
-      event.preventDefault()
-      event.stopPropagation()
-      this.client.quit()
-      return
-    }
-    if (event.name !== "escape") return
-
-    if (this.dialog !== undefined) {
+    if (
+      this.keybindings.matches(event.raw, "tui.select.cancel") &&
+      this.dialog !== undefined
+    ) {
       event.preventDefault()
       event.stopPropagation()
       this.dialog.cancel()
       return
     }
-    if (this.composer.cancelPalette(event)) return
     if (
-      this.snapshot.phase === "running" ||
-      this.snapshot.phase === "stopping"
+      this.keybindings.matches(event.raw, "tui.select.cancel") &&
+      this.composer.cancelPalette(event)
+    ) {
+      return
+    }
+    if (this.keybindings.matches(event.raw, "app.clear")) {
+      event.preventDefault()
+      event.stopPropagation()
+      const now = Date.now()
+      this.composer.clearDraft()
+      if (now - this.lastClearTime < 500) this.client.quit()
+      this.lastClearTime = now
+      return
+    }
+    if (
+      this.keybindings.matches(event.raw, "app.exit") &&
+      this.composer.isDraftEmpty()
+    ) {
+      event.preventDefault()
+      event.stopPropagation()
+      this.client.quit()
+      return
+    }
+    if (
+      this.keybindings.matches(event.raw, "app.interrupt") &&
+      (this.snapshot.phase === "running" ||
+        this.snapshot.phase === "stopping")
     ) {
       event.preventDefault()
       event.stopPropagation()
@@ -64,6 +85,7 @@ export class AppView implements OpenTuiComponent<AppSnapshot> {
   constructor(
     private readonly renderer: CliRenderer,
     private readonly client: AppClient,
+    private readonly keybindings: KeybindingsShape,
   ) {
     const ctx: RenderContext = renderer
     this.snapshot = client.initial
@@ -127,6 +149,7 @@ export class AppView implements OpenTuiComponent<AppSnapshot> {
       projectPaths: client.projectPaths,
       dispatch: client.dispatch,
       resolvePaste: client.resolvePaste,
+      keybindings,
       overlayParent: this.root,
     })
     this.root.add(this.composer.root)
@@ -224,8 +247,9 @@ export class AppView implements OpenTuiComponent<AppSnapshot> {
 export const mountApp = (
   renderer: CliRenderer,
   client: AppClient,
+  keybindings: KeybindingsShape,
 ): AppView => {
-  const view = new AppView(renderer, client)
+  const view = new AppView(renderer, client, keybindings)
   view.mount()
   return view
 }

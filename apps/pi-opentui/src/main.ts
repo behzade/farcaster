@@ -15,19 +15,27 @@ import {
   PasteService,
   PasteServiceLive,
 } from "./services/paste-service.ts"
+import {
+  Keybindings,
+} from "./services/keybindings.ts"
 import type { AppClient } from "./ui/app-client.ts"
 
 class RenderError extends Data.TaggedError("RenderError")<{
   readonly cause: unknown
 }> {}
 
-const MainLive = Layer.mergeAll(AppLive, UiRendererLive, PasteServiceLive)
+const MainLive = Layer.mergeAll(
+  AppLive,
+  UiRendererLive,
+  PasteServiceLive,
+)
 
 const program = Effect.scoped(
   Effect.gen(function* () {
     const app = yield* AppState
     const ui = yield* UiRenderer
     const paste = yield* PasteService
+    const keybindings = yield* Keybindings
     const initial = yield* app.get
     const scope = yield* Effect.scope
     const runtime = yield* Effect.runtime<never>()
@@ -74,7 +82,7 @@ const program = Effect.scoped(
 
     yield* Effect.acquireRelease(
       Effect.try({
-        try: () => mountApp(ui.renderer, client),
+        try: () => mountApp(ui.renderer, client, keybindings),
         catch: (cause) => new RenderError({ cause }),
       }),
       (view) => Effect.sync(() => view.destroy()),

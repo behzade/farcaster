@@ -4,6 +4,7 @@ import {
 } from "@opentui/core/testing"
 import { expect, test } from "bun:test"
 import { Effect } from "effect"
+import { KeybindingsManager } from "@earendil-works/pi-coding-agent"
 import {
   AppView,
   mountApp,
@@ -14,6 +15,10 @@ import type {
   AppSnapshot,
 } from "../src/services/app-state.ts"
 import { emptyLiveUsage } from "../src/services/live-usage.ts"
+import {
+  makeKeybindings,
+  type KeybindingsShape,
+} from "../src/services/keybindings.ts"
 import type { AppClient } from "../src/ui/app-client.ts"
 import type {
   PasteInsertion,
@@ -97,6 +102,7 @@ const makeClient = (
 ) => {
   const commands: Array<AppCommand> = []
   const listeners = new Set<(snapshot: AppSnapshot) => void>()
+  let quitCalls = 0
   const client: AppClient = {
     initial,
     projectPaths: () => [
@@ -113,7 +119,9 @@ const makeClient = (
       commands.push(command)
     },
     resolvePaste,
-    quit: () => undefined,
+    quit: () => {
+      quitCalls += 1
+    },
   }
   return {
     client,
@@ -122,6 +130,7 @@ const makeClient = (
       for (const listener of listeners) listener(snapshot)
     },
     listenerCount: () => listeners.size,
+    quitCalls: () => quitCalls,
   }
 }
 
@@ -134,12 +143,22 @@ const acquireApp = (
   client: AppClient,
   width = 100,
   height = 30,
+  keybindings: KeybindingsShape = makeKeybindings(
+    new KeybindingsManager(),
+  ),
 ): Effect.Effect<MountedApp, unknown> =>
   Effect.gen(function* () {
     const setup = yield* Effect.tryPromise(() =>
-      createTestRenderer({ width, height })
+      createTestRenderer({
+        width,
+        height,
+        exitOnCtrlC: false,
+        kittyKeyboard: true,
+      })
     )
-    const view = yield* Effect.sync(() => mountApp(setup.renderer, client))
+    const view = yield* Effect.sync(() =>
+      mountApp(setup.renderer, client, keybindings),
+    )
     return { setup, view }
   })
 
@@ -177,6 +196,55 @@ test("renders chat and sends input", () => {
           expect(state.commands).toEqual([
             { _tag: "Prompt", text: "run tests" },
           ])
+        }),
+      releaseApp,
+    ),
+  )
+})
+
+test("uses Pi keybindings without treating ctrl+shift+c as ctrl+c", () => {
+  const state = makeClient()
+  return Effect.runPromise(
+    Effect.acquireUseRelease(
+      acquireApp(state.client),
+      ({ setup }) =>
+        Effect.gen(function* () {
+          setup.mockInput.pressKey("c", { ctrl: true, shift: true })
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(state.quitCalls()).toBe(0)
+
+          yield* Effect.tryPromise(() => setup.mockInput.typeText("draft"))
+          setup.mockInput.pressCtrlC()
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(setup.captureCharFrame()).not.toContain("draft")
+          expect(state.quitCalls()).toBe(0)
+
+          setup.mockInput.pressCtrlC()
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(state.quitCalls()).toBe(1)
+        }),
+      releaseApp,
+    ),
+  )
+})
+
+test("honors Pi user overrides for the exit binding", () => {
+  const state = makeClient()
+  const keybindings = makeKeybindings(
+    new KeybindingsManager({ "app.exit": "ctrl+q" }),
+  )
+  return Effect.runPromise(
+    Effect.acquireUseRelease(
+      acquireApp(state.client, 100, 30, keybindings),
+      ({ setup }) =>
+        Effect.gen(function* () {
+          setup.mockInput.pressKey("d", { ctrl: true })
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(state.quitCalls()).toBe(0)
+
+          setup.mockInput.pressKey("q", { ctrl: true })
+          yield* Effect.tryPromise(() => setup.flush())
+          expect(state.quitCalls()).toBe(1)
         }),
       releaseApp,
     ),
@@ -394,8 +462,9 @@ test("completes slash commands while typing", () => {
           setup.mockInput.pressEnter()
           yield* Effect.tryPromise(() => setup.flush())
           expect(state.commands).toContainEqual({
-            _tag: "Prompt",
-            text: "/resume",
+            _tag: "RunCommand",
+            name: "resume",
+            arguments: "",
           })
         }),
       releaseApp,

@@ -23,5 +23,8 @@
   },
   "engines": {
     "bun": ">=1.3.0"
+  },
+  "patchedDependencies": {
+    "@earendil-works/pi-coding-agent@0.80.10": "patches/@earendil-works%2Fpi-coding-agent@0.80.10.patch"
   }
 }
