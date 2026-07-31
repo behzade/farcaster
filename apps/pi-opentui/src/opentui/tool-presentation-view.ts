@@ -78,17 +78,6 @@ const statusColor = (model: ToolPresentation): string =>
 const readMarkerColor = (state: ToolRunState): string =>
   state === "complete" ? theme.assistant : stateColor(state)
 
-const statusBackground = (model: ToolPresentation): string => {
-  switch (model.state) {
-    case "pending":
-      return theme.toolPendingBg
-    case "complete":
-      return theme.toolSuccessBg
-    case "error":
-      return theme.toolErrorBg
-  }
-}
-
 const filetypeFor = (
   body: Extract<ToolPresentationBody, { readonly kind: "code" | "diff" }>,
 ): string | undefined =>
@@ -124,7 +113,6 @@ export class ToolPresentationView
       paddingRight: 1,
       paddingTop: 1,
       paddingBottom: 1,
-      backgroundColor: statusBackground(model),
     })
     this.header = new TextRenderable(ctx, {
       content: "",
@@ -148,7 +136,6 @@ export class ToolPresentationView
     ) {
       this.header.content = statusText(current)
       this.header.fg = statusColor(current)
-      this.root.backgroundColor = statusBackground(current)
     }
     this.updateBody(current.body)
   }

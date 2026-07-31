@@ -163,7 +163,7 @@ test("renders thinking, markdown answers, and typed file tools", async () => {
   }
 })
 
-test("uses separate visual bands for user turns, tools, and model prose", async () => {
+test("uses a user band while tools and model prose keep a clear background", async () => {
   const setup = await createTestRenderer({ width: 72, height: 30 })
   const treeSitterClient = new MockTreeSitterClient()
   treeSitterClient.setMockResult({ highlights: [] })
@@ -225,7 +225,6 @@ test("uses separate visual bands for user turns, tools, and model prose", async 
 
     const captured = setup.captureSpans()
     const userBg = RGBA.fromHex(theme.userMessageBg)
-    const toolBg = RGBA.fromHex(theme.toolSuccessBg)
     const userLine = captured.lines.find((line) =>
       line.spans.some((span) => span.text.includes("Inspect the project"))
     )
@@ -238,9 +237,8 @@ test("uses separate visual bands for user turns, tools, and model prose", async 
       )
     )
     expect(userLine?.spans.some((span) => span.bg.equals(userBg))).toBe(true)
-    expect(toolLine?.spans.some((span) => span.bg.equals(toolBg))).toBe(true)
+    expect(toolLine?.spans.some((span) => span.bg.equals(userBg))).toBe(false)
     expect(answerLine?.spans.some((span) => span.bg.equals(userBg))).toBe(false)
-    expect(answerLine?.spans.some((span) => span.bg.equals(toolBg))).toBe(false)
   } finally {
     view.destroy()
     await treeSitterClient.destroy()
