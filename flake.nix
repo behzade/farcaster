@@ -58,6 +58,70 @@
         }
       );
 
+      devShells = forAllSystems (
+        system:
+        let
+          pkgs = pkgsFor system;
+          nativeRuntimeLibraries =
+            with pkgs;
+            lib.optionals stdenv.isLinux [
+              alsa-lib
+              at-spi2-atk
+              cairo
+              cups
+              dbus
+              expat
+              fontconfig
+              freetype
+              glib
+              gtk3
+              libdrm
+              libgbm
+              libGL
+              libx11
+              libxcb
+              libxcomposite
+              libxdamage
+              libxext
+              libxfixes
+              libxkbcommon
+              libxkbfile
+              libxrandr
+              libxshmfence
+              nspr
+              nss
+              pango
+              pciutils
+              stdenv.cc.cc
+              systemd
+              vulkan-loader
+              wayland
+            ];
+        in
+        rec {
+          pi-gpui = pkgs.mkShell {
+            buildInputs = nativeRuntimeLibraries;
+            packages = with pkgs; [
+              cargo
+              clippy
+              git
+              pkg-config
+              rust-analyzer
+              rustc
+              rustfmt
+              rustPlatform.bindgenHook
+            ];
+            shellHook = ''
+              ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+                export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath nativeRuntimeLibraries}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+                export NIX_LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath nativeRuntimeLibraries}''${NIX_LD_LIBRARY_PATH:+:$NIX_LD_LIBRARY_PATH}"
+              ''}
+            '';
+          };
+          default = pi-gpui;
+        }
+      );
+
       checks = forAllSystems (
         system:
         let

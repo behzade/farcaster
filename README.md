@@ -45,6 +45,9 @@ separate `nix-config` repo.
 - [`apps/pi-terminal`](apps/pi-terminal) pins the upstream Pi 0.84.2 terminal
   client and the small Pi AI output-item hook needed for cached OpenAI
   compaction.
+- [`apps/pi-gpui`](apps/pi-gpui) is a native GPUI client for Pi's public RPC
+  mode. It is a distinct GPL-3.0-or-later module; the enclosing repository's
+  MIT license does not replace that module's license.
 - [`patches`](patches) contains the local changes applied to third-party Pi
   extensions.
 - [`SYSTEM.md`](SYSTEM.md) is the base Pi system prompt. Nix fills its pinned
@@ -78,11 +81,26 @@ Run the full flake checks:
 nix flake check
 ```
 
+Run the native Pi client without rebuilding the Home Manager configuration:
+
+```sh
+make run
+make run PROJECT=/path/to/project
+```
+
+The Rust/GPUI development shell is available with either `nix develop` or
+`nix develop .#pi-gpui`; it is the default dev shell so the root `.envrc` can
+use `use flake` without building the Pi agent packages.
+
 The main checks can also be run directly:
 
 ```sh
 npm run check --prefix extensions/sandbox
 cargo test --manifest-path sandbox-broker/Cargo.toml
+CARGO_TARGET_DIR="$PWD/target" nix develop .#pi-gpui -c \
+  cargo test --manifest-path apps/pi-gpui/Cargo.toml
+CARGO_TARGET_DIR="$PWD/target" nix develop .#pi-gpui -c \
+  cargo check --manifest-path apps/pi-gpui/Cargo.toml
 node --test \
   tests/governance.test.ts \
   tests/output-bounds.test.ts \
