@@ -37,6 +37,7 @@
               denseTools
               openaiServerCompaction
               permissionSystem
+              piTerminal
               sandbox
               subagents
               webAccess
@@ -65,6 +66,7 @@
           mcpCli = pkgs.callPackage ./nix/pi-mcp-cli.nix { };
           openaiServerCompaction = pkgs.callPackage ./nix/pi-openai-server-compaction.nix { };
           piTerminal = pkgs.callPackage ./nix/pi-terminal.nix { };
+          subagents = pkgs.callPackage ./nix/pi-subagents.nix { };
           webAccess = pkgs.callPackage ./nix/pi-web-access.nix { };
         in
         {
@@ -129,11 +131,20 @@
             node --experimental-strip-types --test test/continuation-compaction.test.ts
             touch "$out"
           '';
+          subagent-output-bounds = pkgs.runCommand "pi-subagent-output-bounds" {
+            nativeBuildInputs = [ pkgs.nodejs ];
+          } ''
+            PI_SUBAGENTS_PACKAGE=${subagents} node --test ${self}/tests/output-bounds.test.ts
+            touch "$out"
+          '';
           web-access = webAccess;
 
           governance = pkgs.runCommand "pi-governance-tests" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
             node --test \
               ${self}/tests/governance.test.ts \
+              ${self}/tests/output-bounds.test.ts \
+              ${self}/tests/prompt-contract.test.ts \
+              ${self}/tests/prompt-inspector.test.ts \
               ${self}/tests/theme-and-rendering.test.ts \
               ${self}/tests/terminal-text.test.ts
             touch "$out"

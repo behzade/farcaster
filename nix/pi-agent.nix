@@ -2,6 +2,7 @@
   denseTools,
   openaiServerCompaction,
   permissionSystem,
+  piTerminal,
   sandbox,
   stdenvNoCC,
   subagents,
@@ -19,6 +20,8 @@ stdenvNoCC.mkDerivation {
 
     mkdir -p "$out/extensions" "$out/skills" "$out/themes"
 
+    substitute ${../SYSTEM.md} "$out/SYSTEM.md" \
+      --replace-fail "@piCodingAgent@" "${piTerminal}/lib/pi-terminal/node_modules/@earendil-works/pi-coding-agent"
     ln -s ${../APPEND_SYSTEM.md} "$out/APPEND_SYSTEM.md"
 
     ln -s ${denseTools} "$out/extensions/dense-tools"
@@ -29,6 +32,7 @@ stdenvNoCC.mkDerivation {
     ln -s ${webAccess} "$out/extensions/web-access"
     ln -s ${../extensions/lib} "$out/extensions/lib"
     ln -s ${../extensions/notifications.ts} "$out/extensions/notifications.ts"
+    ln -s ${../extensions/prompt-inspector.ts} "$out/extensions/prompt-inspector.ts"
     ln -s ${../extensions/session-hooks.ts} "$out/extensions/session-hooks.ts"
     ln -s ${../extensions/title-state.ts} "$out/extensions/title-state.ts"
     ln -s ${../extensions/user-input.ts} "$out/extensions/user-input.ts"

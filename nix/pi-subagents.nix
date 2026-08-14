@@ -19,6 +19,7 @@ buildNpmPackage {
     ../patches/pi-subagents-quiet-optional-result-intercom.patch
     ../patches/pi-subagents-wait-steering.patch
     ../patches/pi-subagents-orchestration-hardening.patch
+    ../patches/pi-subagents-default-output-cap.patch
   ];
 
   npmDepsHash = "sha256-Si1Fc01ORGdauY+6+Us3eRLuFzmZaAaAicZTQdcUFHY=";

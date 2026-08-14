@@ -1,0 +1,136 @@
+diff --git a/dist/core/system-prompt.js b/dist/core/system-prompt.js
+index 9d24886..d879956 100644
+--- a/dist/core/system-prompt.js
++++ b/dist/core/system-prompt.js
+@@ -3,6 +3,46 @@
+  */
+ import { getDocsPath, getExamplesPath, getReadmePath } from "../config.js";
+ import { formatSkillsForPrompt } from "./skills.js";
++/** Opt-in marker for custom prompts that retain active tool guidance. */
++const ACTIVE_TOOL_GUIDANCE_MARKER = "<!-- pi:active-tool-guidance -->";
++/** Collect active tool snippets and de-duplicated cross-call guidance. */
++function collectToolGuidance(selectedTools, toolSnippets, promptGuidelines) {
++    const tools = selectedTools || ["read", "bash", "edit", "write"];
++    const visibleTools = tools.filter((name) => !!toolSnippets?.[name]);
++    const toolsList = visibleTools.length > 0 ? visibleTools.map((name) => `- ${name}: ${toolSnippets[name]}`).join("\n") : "(none)";
++    const guidelinesList = [];
++    const guidelinesSet = new Set();
++    const addGuideline = (guideline) => {
++        const normalized = guideline.trim();
++        if (normalized.length === 0 || guidelinesSet.has(normalized)) {
++            return;
++        }
++        guidelinesSet.add(normalized);
++        guidelinesList.push(normalized);
++    };
++    if (tools.includes("bash") && !tools.includes("grep") && !tools.includes("find") && !tools.includes("ls")) {
++        addGuideline("Use bash for file operations like ls, rg, find");
++    }
++    for (const guideline of promptGuidelines ?? []) {
++        addGuideline(guideline);
++    }
++    return { tools, toolsList, guidelinesList };
++}
++/** Render the model-facing tool list and guideline block. */
++function renderToolGuidance(toolsList, guidelinesList) {
++    const guidelines = guidelinesList.length > 0 ? guidelinesList.map((guideline) => `- ${guideline}`).join("\n") : "(none)";
++    return `Available tools:
++${toolsList}
++
++In addition to the tools above, you may have access to other custom tools depending on the project.
++
++Guidelines:
++${guidelines}`;
++}
++/** Count non-overlapping marker occurrences. */
++function markerCount(text) {
++    return text.split(ACTIVE_TOOL_GUIDANCE_MARKER).length - 1;
++}
+ /** Build the system prompt with tools, guidelines, and context */
+ export function buildSystemPrompt(options) {
+     const { customPrompt, selectedTools, toolSnippets, promptGuidelines, appendSystemPrompt, cwd, contextFiles: providedContextFiles, skills: providedSkills, } = options;
+@@ -10,8 +50,15 @@ export function buildSystemPrompt(options) {
+     const appendSection = appendSystemPrompt ? `\n\n${appendSystemPrompt}` : "";
+     const contextFiles = providedContextFiles ?? [];
+     const skills = providedSkills ?? [];
++    const { tools, toolsList, guidelinesList } = collectToolGuidance(selectedTools, toolSnippets, promptGuidelines);
++    const hasRead = tools.includes("read");
+     if (customPrompt) {
+-        let prompt = customPrompt;
++        const markers = markerCount(customPrompt);
++        if (markers > 1) {
++            throw new Error(`Custom system prompt must contain at most one ${ACTIVE_TOOL_GUIDANCE_MARKER} marker`);
++        }
++        const includeActiveToolGuidance = markers === 1;
++        let prompt = includeActiveToolGuidance ? customPrompt.replace(ACTIVE_TOOL_GUIDANCE_MARKER, "") : customPrompt;
+         if (appendSection) {
+             prompt += appendSection;
+         }
+@@ -25,60 +72,24 @@ export function buildSystemPrompt(options) {
+             prompt += "</project_context>\n";
+         }
+         // Append skills section (only if read tool is available)
+-        const customPromptHasRead = !selectedTools || selectedTools.includes("read");
+-        if (customPromptHasRead && skills.length > 0) {
++        if (hasRead && skills.length > 0) {
+             prompt += formatSkillsForPrompt(skills);
+         }
+         prompt += `\nCurrent working directory: ${promptCwd}\n`;
++        if (includeActiveToolGuidance) {
++            prompt += `\n${renderToolGuidance(toolsList, guidelinesList)}`;
++        }
+         return prompt;
+     }
+     // Get absolute paths to documentation and examples
+     const readmePath = getReadmePath();
+     const docsPath = getDocsPath();
+     const examplesPath = getExamplesPath();
+-    // Build tools list based on selected tools.
+-    // A tool appears in Available tools only when the caller provides a one-line snippet.
+-    const tools = selectedTools || ["read", "bash", "edit", "write"];
+-    const visibleTools = tools.filter((name) => !!toolSnippets?.[name]);
+-    const toolsList = visibleTools.length > 0 ? visibleTools.map((name) => `- ${name}: ${toolSnippets[name]}`).join("\n") : "(none)";
+-    // Build guidelines based on which tools are actually available
+-    const guidelinesList = [];
+-    const guidelinesSet = new Set();
+-    const addGuideline = (guideline) => {
+-        if (guidelinesSet.has(guideline)) {
+-            return;
+-        }
+-        guidelinesSet.add(guideline);
+-        guidelinesList.push(guideline);
+-    };
+-    const hasBash = tools.includes("bash");
+-    const hasGrep = tools.includes("grep");
+-    const hasFind = tools.includes("find");
+-    const hasLs = tools.includes("ls");
+-    const hasRead = tools.includes("read");
+-    // File exploration guidelines
+-    if (hasBash && !hasGrep && !hasFind && !hasLs) {
+-        addGuideline("Use bash for file operations like ls, rg, find");
+-    }
+-    for (const guideline of promptGuidelines ?? []) {
+-        const normalized = guideline.trim();
+-        if (normalized.length > 0) {
+-            addGuideline(normalized);
+-        }
+-    }
+-    // Always include these
+-    addGuideline("Be concise in your responses");
+-    addGuideline("Show file paths clearly when working with files");
+-    const guidelines = guidelinesList.map((g) => `- ${g}`).join("\n");
++    const defaultGuidelines = [...new Set([...guidelinesList, "Be concise in your responses", "Show file paths clearly when working with files"])];
++    const toolGuidance = renderToolGuidance(toolsList, defaultGuidelines);
+     let prompt = `You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
+ 
+-Available tools:
+-${toolsList}
+-
+-In addition to the tools above, you may have access to other custom tools depending on the project.
+-
+-Guidelines:
+-${guidelines}
++${toolGuidance}
+ 
+ Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):
+ - Main documentation: ${readmePath}

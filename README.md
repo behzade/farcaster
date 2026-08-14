@@ -47,10 +47,20 @@ separate `nix-config` repo.
   compaction.
 - [`patches`](patches) contains the local changes applied to third-party Pi
   extensions.
-- [`APPEND_SYSTEM.md`](APPEND_SYSTEM.md) is the working contract appended to
-  Pi's system prompt.
+- [`SYSTEM.md`](SYSTEM.md) is the base Pi system prompt. Nix fills its pinned
+  Pi package path during the build.
+- [`APPEND_SYSTEM.md`](APPEND_SYSTEM.md) is the terse working contract appended
+  to that prompt.
 - [`skills`](skills), [`themes`](themes), and [`tests`](tests) contain the local
   skills, theme, and shared checks.
+
+`SYSTEM.md` is the active override, not a reference copy. Its single opt-in marker
+asks the pinned Pi patch to append active tool snippets and guidelines after
+`APPEND_SYSTEM.md`, project context, the skill catalog, and the working directory.
+This tail placement keeps the static prompt prefix stable when tools change; tool
+schemas remain separate. `/prompt-report` shows model-hidden size estimates and
+fingerprints, while `/prompt-report full` opens the exact prompt and pre-provider
+active definitions in a disposable viewer.
 
 ## Build and test
 
@@ -73,7 +83,13 @@ The main checks can also be run directly:
 ```sh
 npm run check --prefix extensions/sandbox
 cargo test --manifest-path sandbox-broker/Cargo.toml
-node --test tests/governance.test.ts tests/theme-and-rendering.test.ts tests/terminal-text.test.ts
+node --test \
+  tests/governance.test.ts \
+  tests/output-bounds.test.ts \
+  tests/prompt-contract.test.ts \
+  tests/prompt-inspector.test.ts \
+  tests/theme-and-rendering.test.ts \
+  tests/terminal-text.test.ts
 ```
 
 Individual packages are available for focused work:
@@ -136,7 +152,12 @@ To use the installed Codex CLI backend instead, set this in the global
 ```
 
 The Codex backend keeps the same filesystem policy and adds sandboxed
-background jobs and exact per-command network-host approvals.
+background jobs and exact per-command network-host approvals. A
+`background_job` read is bounded before its first model-visible result; full tmux
+history remains available for narrower follow-up reads or output redirected to a
+workspace log. Packaged subagents likewise apply their 200 KiB/5,000-line default
+to every foreground and async final result; configured artifacts or output files
+retain the complete result out of band.
 
 Global sandbox configuration lives at
 `~/.pi/agent/extensions/sandbox.json`. A project may add stricter rules in

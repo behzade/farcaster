@@ -27,6 +27,7 @@ import { SandboxBrokerClient } from "./broker-client.ts";
 import {
 	isBackgroundJobSocket,
 	isValidBackgroundJobName,
+	modelVisibleBackgroundJobOutput,
 	runBackgroundJobHelper,
 	sandboxedJobCommand,
 } from "./background-jobs.ts";
@@ -827,12 +828,13 @@ export default function (pi: ExtensionAPI) {
 				environment,
 				signal,
 			});
+			const modelOutput = modelVisibleBackgroundJobOutput(params.action, result.output);
 			return {
 				content: [
 					{
 						type: "text",
 						text:
-							result.output ||
+							modelOutput ||
 							(result.exitCode === 0 ? "Done" : "Background job request failed"),
 					},
 				],

@@ -81,6 +81,9 @@ stdenvNoCC.mkDerivation {
   buildPhase = ''
     runHook preBuild
     cp -R ${bunDeps} node_modules
+    chmod -R u+w node_modules/@earendil-works/pi-coding-agent
+    patch -d node_modules/@earendil-works/pi-coding-agent -p1 \
+      < patches/@earendil-works%2Fpi-coding-agent@0.84.2.patch
     bun test
     runHook postBuild
   '';
