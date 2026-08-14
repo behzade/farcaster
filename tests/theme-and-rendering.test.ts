@@ -7,7 +7,6 @@ const denseToolsPath = new URL("../extensions/dense-tools/index.ts", import.meta
 const pierreEditPath = new URL("../extensions/dense-tools/pierre-edit.ts", import.meta.url);
 const pierreRendererPath = new URL("../extensions/dense-tools/pierre-renderer.ts", import.meta.url);
 const piDiffPath = new URL("../extensions/dense-tools/pi-diff.ts", import.meta.url);
-const chatLayoutPath = new URL("../extensions/dense-tools/chat-layout.ts", import.meta.url);
 const sandboxPath = new URL("../extensions/sandbox/index.ts", import.meta.url);
 
 const requiredColors = [
@@ -141,17 +140,8 @@ test("pi-diff renders a whole snapshot in one process", async () => {
   assert.match(renderer, /renderSplit\(rows, width, true, theme\)/);
 });
 
-test("chat layout leaves messages unframed and gives chat rows a margin", async () => {
-  const source = await readFile(chatLayoutPath, "utf8");
-  assert.match(source, /UserMessageComponent/);
-  assert.match(source, /AssistantMessageComponent/);
-  assert.match(source, /ToolExecutionComponent/);
-  assert.match(source, /EXTRA_LEFT_MARGIN = 1/);
-  assert.match(source, /COMPOSER_PADDING = 2/);
-  assert.match(source, /setComposerMargin/);
-  assert.match(source, /setPaddingX/);
-  assert.match(source, /return lines\.map\(indent\)/);
-  assert.doesNotMatch(source, /USER_RULE|ASSISTANT_RULE/);
-  assert.doesNotMatch(source, /function rule|"around"|"plain"/);
-  assert.doesNotMatch(source, /"before"/);
+test("dense tools leave the transcript and editor layout to stock Pi", async () => {
+  const source = await readFile(denseToolsPath, "utf8");
+  assert.doesNotMatch(source, /UserMessageComponent|AssistantMessageComponent|ToolExecutionComponent/);
+  assert.doesNotMatch(source, /setEditorComponent|setPaddingX|setComposerMargin/);
 });

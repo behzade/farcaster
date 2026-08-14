@@ -6,6 +6,11 @@ import {
   responsesCompactionStreamLayer,
   type ContinuationCompactionStream,
 } from "../src/continuation-compaction.ts";
+import {
+  mergeProviderHeaders,
+  resolveProviderHeaders,
+  withRemoteCompactionV2Feature,
+} from "../src/provider-headers.ts";
 
 const usage = {
   input: 12,
@@ -120,5 +125,36 @@ describe("executeContinuationCompaction", () => {
     })();
 
     await assert.rejects(runWith(stream), /expected one compaction output item/);
+  });
+});
+
+describe("provider headers", () => {
+  it("keeps null deletion markers until the raw request boundary", () => {
+    const merged = mergeProviderHeaders(
+      { Authorization: "Bearer default", "X-Keep": "yes" },
+      { authorization: null, "x-extra": "value" },
+    );
+
+    assert.deepEqual(merged, {
+      authorization: null,
+      "X-Keep": "yes",
+      "x-extra": "value",
+    });
+    assert.deepEqual(resolveProviderHeaders(merged), {
+      "X-Keep": "yes",
+      "x-extra": "value",
+    });
+  });
+
+  it("handles a null feature header and still requests remote compaction v2", () => {
+    const headers = withRemoteCompactionV2Feature({
+      "X-Codex-Beta-Features": null,
+      "X-Remove": null,
+    });
+
+    assert.deepEqual(headers, {
+      "X-Remove": null,
+      "x-codex-beta-features": "remote_compaction_v2",
+    });
   });
 });

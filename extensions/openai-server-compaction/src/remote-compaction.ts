@@ -19,7 +19,12 @@ import {
   serializeConversation,
   type CompactionResult,
 } from "@earendil-works/pi-coding-agent";
-import { calculateCost, type Model, type Usage } from "@earendil-works/pi-ai";
+import {
+  calculateCost,
+  type Model,
+  type ProviderHeaders,
+  type Usage,
+} from "@earendil-works/pi-ai";
 import { complete } from "@earendil-works/pi-ai/compat";
 import { isRecord } from "./config.ts";
 import {
@@ -29,6 +34,13 @@ import {
   supportsRemoteCompactionModel,
   modelKey,
 } from "./openai.ts";
+import {
+  mergeProviderHeaders,
+  resolveProviderHeaders,
+  withRemoteCompactionV2Feature,
+} from "./provider-headers.ts";
+
+export { withRemoteCompactionV2Feature } from "./provider-headers.ts";
 
 type CompactionPreparation = SessionBeforeCompactEvent["preparation"];
 type AssistantPhase = "commentary" | "final_answer";
@@ -80,7 +92,6 @@ export type ResponsesTextConfig = Record<string, unknown>;
 export type RemoteCompactionUsageSnapshot = Usage;
 
 const IMAGE_CONTENT_OMITTED_PLACEHOLDER = "image content omitted because you do not support image input";
-const REMOTE_COMPACTION_V2_FEATURE = "remote_compaction_v2";
 const RETAINED_MESSAGE_TOKEN_BUDGET = 20_000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -198,49 +209,35 @@ function extractCodexAccountId(token: string): string {
   return accountId;
 }
 
-export function withRemoteCompactionV2Feature(headers: Record<string, string>): Record<string, string> {
-  const configuredFeatures = Object.entries(headers)
-    .find(([name]) => name.toLowerCase() === "x-codex-beta-features")?.[1]
-    ?.split(",")
-    .map((feature) => feature.trim())
-    .filter(Boolean) ?? [];
-  const headersWithoutFeature = Object.fromEntries(
-    Object.entries(headers).filter(([name]) => name.toLowerCase() !== "x-codex-beta-features"),
-  );
-  const features = [...new Set([...configuredFeatures, REMOTE_COMPACTION_V2_FEATURE])];
-  return {
-    ...headersWithoutFeature,
-    "x-codex-beta-features": features.join(","),
-  };
-}
-
 export function buildRemoteCompactionHeaders(params: {
   model: Model<any>;
   apiKey: string;
-  headers?: Record<string, string>;
+  headers?: ProviderHeaders;
   sessionId?: string;
 }): Record<string, string> {
   const codexIdentityHeaders = buildCodexIdentityHeaders(params.sessionId);
-  const commonHeaders = withRemoteCompactionV2Feature({
+  const defaultHeaders: ProviderHeaders = {
     authorization: `Bearer ${params.apiKey}`,
     ...codexIdentityHeaders,
-    ...(params.headers ?? {}),
     accept: "text/event-stream",
     "content-type": "application/json",
-  });
-  if (isDirectOpenAIResponsesModel(params.model)) {
-    return commonHeaders;
-  }
+  };
   if (isOpenAICodexResponsesModel(params.model)) {
-    return {
-      ...commonHeaders,
+    Object.assign(defaultHeaders, {
       "chatgpt-account-id": extractCodexAccountId(params.apiKey),
       originator: "pi",
       "user-agent": `pi-openai-server-compaction (${platform()} ${release()}; ${arch()})`,
       "OpenAI-Beta": "responses=experimental",
-    };
+    });
+  } else if (!isDirectOpenAIResponsesModel(params.model)) {
+    throw new Error("Remote compaction v2 headers are not supported for this model.");
   }
-  throw new Error("Remote compaction v2 headers are not supported for this model.");
+
+  return resolveProviderHeaders(
+    withRemoteCompactionV2Feature(
+      mergeProviderHeaders(defaultHeaders, params.headers ?? {}),
+    ),
+  );
 }
 
 function isAssistantPhase(value: unknown): value is AssistantPhase {
@@ -681,7 +678,7 @@ export async function generatePortableSummary(params: {
   messages: AgentMessage[];
   model: Model<any>;
   apiKey: string;
-  headers?: Record<string, string>;
+  headers?: ProviderHeaders;
   customInstructions?: string;
   signal?: AbortSignal;
   firstKeptEntryId: string;
@@ -725,7 +722,7 @@ export async function generateBestEffortLocalSummary(params: {
   messages: AgentMessage[];
   model: Model<any>;
   apiKey: string;
-  headers?: Record<string, string>;
+  headers?: ProviderHeaders;
   customInstructions?: string;
   signal?: AbortSignal;
   thinkingLevel?: ThinkingLevel;
@@ -919,7 +916,7 @@ export function parseRemoteCompactionV2Events(events: unknown[]): RemoteCompacti
 export async function callRemoteCompactionEndpoint(params: {
   model: Model<any>;
   apiKey: string;
-  headers?: Record<string, string>;
+  headers?: ProviderHeaders;
   sessionId?: string;
   input: ResponseItem[];
   instructions?: string;

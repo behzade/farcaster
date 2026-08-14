@@ -308,12 +308,6 @@ export default function (pi: ExtensionAPI) {
 	let userBashCounter = 0;
 	let sessionGeneration = 0;
 
-	pi.on("session_start", () => {
-		pi.setActiveTools(
-			pi.getActiveTools().filter((name) => name !== "grep" && name !== "find"),
-		);
-	});
-
 	const runtimeGrants = (): CodexSandboxGrants => {
 		const grants = grantsToRuntime(persistentPermissions);
 		return {
