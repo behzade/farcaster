@@ -42,9 +42,9 @@ separate `nix-config` repo.
   owns the OpenAI compaction code. Codex compaction reuses Pi AI's cached
   WebSocket response chain when the host exposes native output items.
 - [`nix`](nix) contains the pinned builds for Pi and every packaged extension.
-- [`apps/pi-opentui`](apps/pi-opentui) provides the canonical `pi` command with
-  OpenTUI core, TypeScript, Bun, and Effect. Its staged design is in
-  [`PI_OPENTUI_PLAN.md`](PI_OPENTUI_PLAN.md).
+- [`apps/pi-terminal`](apps/pi-terminal) pins the upstream Pi 0.84.2 terminal
+  client and the small Pi AI output-item hook needed for cached OpenAI
+  compaction.
 - [`patches`](patches) contains the local changes applied to third-party Pi
   extensions.
 - [`APPEND_SYSTEM.md`](APPEND_SYSTEM.md) is the working contract appended to
@@ -86,6 +86,7 @@ nix build .#mcp-cli
 nix build .#subagents
 nix build .#openai-server-compaction
 nix build .#permission-system
+nix build .#pi-terminal
 nix build .#web-access
 ```
 
