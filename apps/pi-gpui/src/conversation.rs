@@ -55,6 +55,7 @@ struct LiveMessage {
 #[derive(Clone, Debug, Default, PartialEq)]
 struct PartialContent {
     kind: PartialKind,
+    label: String,
     value: String,
 }
 
@@ -203,13 +204,23 @@ impl ConversationState {
             "thinking_start" => reset_partial(partial, PartialKind::Thinking),
             "thinking_delta" => append_delta(partial, delta),
             "thinking_end" => finish_content(partial, delta),
-            "toolcall_start" => reset_partial(partial, PartialKind::ToolCall),
+            "toolcall_start" => {
+                reset_partial(partial, PartialKind::ToolCall);
+                partial.label = delta
+                    .get("toolCall")
+                    .and_then(tool_name)
+                    .or_else(|| delta.get("toolName").and_then(Value::as_str))
+                    .map(display_tool_name)
+                    .unwrap_or_default();
+            }
             "toolcall_delta" => append_delta(partial, delta),
             "toolcall_end" => {
-                partial.value = delta
-                    .get("toolCall")
-                    .map(tool_call_text)
-                    .unwrap_or_else(|| partial.value.clone());
+                if let Some(tool_call) = delta.get("toolCall") {
+                    partial.label = tool_name(tool_call)
+                        .map(display_tool_name)
+                        .unwrap_or_else(|| "Tool".into());
+                    partial.value = tool_arguments(tool_call);
+                }
             }
             _ => return,
         }
@@ -230,9 +241,9 @@ impl ConversationState {
                     PartialKind::ToolCall => TranscriptKind::Tool,
                 },
                 label: match partial.kind {
-                    PartialKind::Text => "Pi",
-                    PartialKind::Thinking => "Thinking",
-                    PartialKind::ToolCall => "Tool call",
+                    PartialKind::Text | PartialKind::Thinking => "",
+                    PartialKind::ToolCall if partial.label.is_empty() => "Tool",
+                    PartialKind::ToolCall => &partial.label,
                 }
                 .into(),
                 text: partial.value.clone(),
@@ -264,10 +275,10 @@ impl ConversationState {
     fn start_tool(&mut self, event: &Value) {
         let id = text_field(event, "toolCallId");
         let name = text_field(event, "toolName");
-        let args = event.get("args").map(compact_json).unwrap_or_default();
+        let args = event.get("args").map(readable_json).unwrap_or_default();
         self.items.push(TranscriptItem {
             kind: TranscriptKind::Tool,
-            label: format!("Running {name}"),
+            label: display_tool_name(&name),
             text: args,
             streaming: true,
             is_error: false,
@@ -299,12 +310,6 @@ impl ConversationState {
             item.text = event.get("result").map(result_text).unwrap_or_default();
             item.streaming = false;
             item.is_error = is_error;
-            item.label = if is_error {
-                "Tool failed"
-            } else {
-                "Tool finished"
-            }
-            .into();
         }
     }
 
@@ -328,6 +333,7 @@ impl ConversationState {
 
 fn reset_partial(partial: &mut PartialContent, kind: PartialKind) {
     partial.kind = kind;
+    partial.label.clear();
     partial.value.clear();
 }
 
@@ -368,26 +374,30 @@ fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
                         let (kind, label, text) = match block.get("type").and_then(Value::as_str) {
                             Some("text") => (
                                 TranscriptKind::Assistant,
-                                "Pi",
+                                String::new(),
                                 block.get("text").and_then(Value::as_str)?.to_owned(),
                             ),
                             Some("thinking") => (
                                 TranscriptKind::Thinking,
-                                "Thinking",
+                                String::new(),
                                 block.get("thinking").and_then(Value::as_str)?.to_owned(),
                             ),
-                            Some("toolCall") => {
-                                (TranscriptKind::Tool, "Tool call", tool_call_text(block))
-                            }
+                            Some("toolCall") => (
+                                TranscriptKind::Tool,
+                                tool_name(block)
+                                    .map(display_tool_name)
+                                    .unwrap_or_else(|| "Tool".into()),
+                                tool_arguments(block),
+                            ),
                             _ => return None,
                         };
                         Some(TranscriptItem {
-                            kind: if is_error {
+                            kind: if is_error && kind != TranscriptKind::Tool {
                                 TranscriptKind::Error
                             } else {
                                 kind
                             },
-                            label: label.into(),
+                            label,
                             text,
                             streaming: false,
                             is_error,
@@ -398,30 +408,38 @@ fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
             .unwrap_or_default();
     }
     let (kind, label, display) = match role {
-        "user" => (TranscriptKind::User, "You", true),
-        "toolResult" => (TranscriptKind::Tool, "Tool result", true),
-        "bashExecution" => (TranscriptKind::Tool, "Shell", true),
+        "user" => (TranscriptKind::User, String::new(), true),
+        "toolResult" => (
+            TranscriptKind::Tool,
+            message
+                .get("toolName")
+                .and_then(Value::as_str)
+                .map(display_tool_name)
+                .unwrap_or_else(|| "Tool".into()),
+            true,
+        ),
+        "bashExecution" => (TranscriptKind::Tool, "Shell".into(), true),
         "custom" => (
             TranscriptKind::Custom,
-            "Extension",
+            "Extension".into(),
             message
                 .get("display")
                 .and_then(Value::as_bool)
                 .unwrap_or(true),
         ),
-        "branchSummary" | "compactionSummary" => (TranscriptKind::Notice, "Summary", true),
+        "branchSummary" | "compactionSummary" => (TranscriptKind::Notice, "Summary".into(), true),
         _ => return Vec::new(),
     };
     if !display {
         return Vec::new();
     }
     vec![TranscriptItem {
-        kind: if is_error {
+        kind: if is_error && kind != TranscriptKind::Tool {
             TranscriptKind::Error
         } else {
             kind
         },
-        label: label.into(),
+        label,
         text: message_text(message),
         streaming: false,
         is_error,
@@ -434,6 +452,20 @@ fn message_text(message: &Value) -> String {
     {
         return text.to_owned();
     }
+    if let Some(text) = message
+        .get("content")
+        .and_then(Value::as_array)
+        .map(|blocks| {
+            blocks
+                .iter()
+                .filter_map(|block| block.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .filter(|text| !text.is_empty())
+    {
+        return text;
+    }
     message
         .get("summary")
         .and_then(Value::as_str)
@@ -442,10 +474,38 @@ fn message_text(message: &Value) -> String {
         .to_owned()
 }
 
-fn tool_call_text(value: &Value) -> String {
-    let name = value.get("name").and_then(Value::as_str).unwrap_or("tool");
-    let args = value.get("arguments").map(compact_json).unwrap_or_default();
-    format!("{name} {args}")
+fn tool_name(value: &Value) -> Option<&str> {
+    value
+        .get("name")
+        .or_else(|| value.get("toolName"))
+        .and_then(Value::as_str)
+}
+
+fn tool_arguments(value: &Value) -> String {
+    value
+        .get("arguments")
+        .map(readable_json)
+        .unwrap_or_default()
+}
+
+pub(crate) fn display_tool_name(name: &str) -> String {
+    let title = name
+        .trim()
+        .split('_')
+        .filter(|word| !word.is_empty())
+        .map(|word| {
+            let mut chars = word.chars();
+            chars.next().map_or_else(String::new, |first| {
+                first.to_uppercase().chain(chars).collect()
+            })
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    if title.is_empty() {
+        "Tool".into()
+    } else {
+        title
+    }
 }
 
 fn result_text(value: &Value) -> String {
@@ -460,12 +520,102 @@ fn result_text(value: &Value) -> String {
                 .join("\n")
         })
         .filter(|text| !text.is_empty())
-        .unwrap_or_else(|| compact_json(value))
+        .unwrap_or_else(|| readable_json(value))
 }
 
-fn compact_json(value: &Value) -> String {
-    serde_json::to_string(value).unwrap_or_default()
+fn readable_json(value: &Value) -> String {
+    if let Some(raw) = value.as_str()
+        && let Ok(parsed) = serde_json::from_str::<Value>(raw)
+    {
+        return readable_json(&parsed);
+    }
+    let mut output = String::new();
+    write_readable_json(value, 0, &mut output);
+    if output.is_empty() {
+        "None".into()
+    } else {
+        output
+    }
 }
+
+fn write_readable_json(value: &Value, depth: usize, output: &mut String) {
+    match value {
+        Value::Object(fields) if fields.is_empty() => output.push_str("None"),
+        Value::Object(fields) => {
+            for (index, (key, value)) in fields.iter().enumerate() {
+                if index > 0 {
+                    output.push('\n');
+                }
+                push_indent(output, depth);
+                output.push_str(&display_field_name(key));
+                output.push(':');
+                if let Some(value) = readable_scalar(value) {
+                    output.push(' ');
+                    output.push_str(&value);
+                } else {
+                    output.push('\n');
+                    write_readable_json(value, depth.saturating_add(1), output);
+                }
+            }
+        }
+        Value::Array(items) if items.is_empty() => output.push_str("None"),
+        Value::Array(items) => {
+            for (index, value) in items.iter().enumerate() {
+                if index > 0 {
+                    output.push('\n');
+                }
+                push_indent(output, depth);
+                output.push('-');
+                if let Some(value) = readable_scalar(value) {
+                    output.push(' ');
+                    output.push_str(&value);
+                } else {
+                    output.push('\n');
+                    write_readable_json(value, depth.saturating_add(1), output);
+                }
+            }
+        }
+        value => output.push_str(&readable_scalar(value).unwrap_or_default()),
+    }
+}
+
+fn readable_scalar(value: &Value) -> Option<String> {
+    match value {
+        Value::Null => Some("None".into()),
+        Value::Bool(value) => Some(if *value { "Yes" } else { "No" }.into()),
+        Value::Number(value) => Some(value.to_string()),
+        Value::String(value) => Some(value.clone()),
+        Value::Array(_) | Value::Object(_) => None,
+    }
+}
+
+fn push_indent(output: &mut String, depth: usize) {
+    output.extend(std::iter::repeat_n(' ', depth.saturating_mul(2)));
+}
+
+fn display_field_name(name: &str) -> String {
+    let mut words = String::with_capacity(name.len());
+    let mut previous_was_lowercase = false;
+    for character in name.chars() {
+        if character == '_' {
+            if !words.ends_with(' ') {
+                words.push(' ');
+            }
+            previous_was_lowercase = false;
+        } else {
+            if character.is_uppercase() && previous_was_lowercase {
+                words.push(' ');
+            }
+            words.extend(character.to_lowercase());
+            previous_was_lowercase = character.is_lowercase();
+        }
+    }
+    let mut characters = words.trim().chars();
+    characters.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(characters).collect()
+    })
+}
+
 fn text_field(value: &Value, field: &str) -> String {
     value
         .get(field)

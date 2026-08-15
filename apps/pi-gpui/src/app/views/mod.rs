@@ -7,7 +7,7 @@ use gpui::{
 };
 use gpui_component::FocusTrapElement as _;
 
-use super::{DismissSurface, PiApp};
+use super::{DismissSurface, PiApp, SubmitFollowUp};
 pub(crate) const OVERLAY_KEY_CONTEXT: &str = "PiGpuiOverlay";
 
 use crate::{
@@ -94,6 +94,9 @@ impl Render for PiApp {
             .text_size(THEME.type_scale.body)
             .on_action(cx.listener(|this, _: &DismissSurface, window, cx| {
                 this.dismiss_surface(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SubmitFollowUp, _, cx| {
+                this.submit_follow_up(cx);
             }))
             .child(
                 div()

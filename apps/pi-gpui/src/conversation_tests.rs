@@ -22,6 +22,7 @@ fn assembles_ordered_text_thinking_and_tool_arguments_by_index() {
     assert_eq!(state.items[1].kind, TranscriptKind::Assistant);
     assert_eq!(state.items[1].text, "answer");
     assert_eq!(state.items[2].kind, TranscriptKind::Tool);
+    assert_eq!(state.items[2].label, "Tool");
     assert_eq!(state.items[2].text, "{\"path\":\"x\"}");
 }
 
@@ -36,7 +37,8 @@ fn authoritative_end_replaces_all_partial_blocks_without_duplicate() {
     assert_eq!(state.items.len(), 3);
     assert_eq!(state.items[0].text, "final thought");
     assert_eq!(state.items[1].text, "final");
-    assert!(state.items[2].text.contains("read"));
+    assert_eq!(state.items[2].label, "Read");
+    assert_eq!(state.items[2].text, "Path: x");
     assert!(state.items.iter().all(|item| !item.streaming));
 }
 
@@ -68,7 +70,55 @@ fn tool_updates_replace_snapshots_and_correlate() {
     state.reduce(&json!({"type":"tool_execution_update","toolCallId":"a","partialResult":{"content":[{"type":"text","text":"one two"}]}}));
     state.reduce(&json!({"type":"tool_execution_end","toolCallId":"a","result":{"content":[{"type":"text","text":"done"}]},"isError":false}));
     assert_eq!(state.items[0].text, "done");
+    assert_eq!(state.items[0].label, "Bash");
     assert!(!state.items[0].streaming);
+}
+
+#[test]
+fn transcript_uses_quiet_speaker_labels_and_readable_tool_names() {
+    let mut state = ConversationState::default();
+    state.replace_history(&[
+        json!({"role":"user","content":"question"}),
+        json!({"role":"assistant","content":[
+            {"type":"thinking","thinking":"first line\nmore"},
+            {"type":"text","text":"answer"},
+            {"type":"toolCall","id":"a","name":"request_user_input","arguments":{}}
+        ]}),
+        json!({"role":"toolResult","toolCallId":"a","toolName":"request_user_input","content":[{"type":"text","text":"done"}]})
+    ]);
+
+    assert_eq!(state.items[0].label, "");
+    assert_eq!(state.items[1].label, "");
+    assert_eq!(state.items[2].label, "");
+    assert_eq!(state.items[3].label, "Request User Input");
+    assert_eq!(state.items[4].label, "Request User Input");
+    assert_eq!(state.items[4].text, "done");
+}
+
+#[test]
+fn tool_name_capitalizes_each_underscore_separated_word() {
+    assert_eq!(display_tool_name("x_y"), "X Y");
+    assert_eq!(display_tool_name("gitHub_lookup"), "GitHub Lookup");
+    assert_eq!(display_tool_name(""), "Tool");
+}
+
+#[test]
+fn tool_arguments_are_readable_fields_instead_of_raw_json() {
+    let mut state = ConversationState::default();
+    state.replace_history(&[json!({"role":"assistant","content":[{
+        "type":"toolCall",
+        "id":"a",
+        "name":"edit_file",
+        "arguments":{
+            "path":"src/main.rs",
+            "dryRun":false,
+            "edits":[{"oldText":"before","newText":"after"}]
+        }
+    }]})]);
+    assert_eq!(
+        state.items[0].text,
+        "Path: src/main.rs\nDry run: No\nEdits:\n  -\n    Old text: before\n    New text: after"
+    );
 }
 
 #[test]

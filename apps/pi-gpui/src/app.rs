@@ -6,10 +6,11 @@ pub(crate) use views::OVERLAY_KEY_CONTEXT;
 use std::{collections::HashSet, ops::Range, path::PathBuf, time::Duration};
 
 use gpui::{
-    AppContext as _, Context, Entity, FocusHandle, Focusable as _, FollowMode, ListAlignment,
-    ListState, Subscription, Task, Window, actions,
+    AppContext as _, Bounds, Context, Entity, FocusHandle, Focusable as _, FollowMode,
+    ListAlignment, ListState, Pixels, Point, Subscription, Task, Window, actions,
 };
 use gpui_component::input::{InputEvent, InputState};
+use gpui_fps::FpsMonitor;
 
 use crate::{
     extension_ui::{ExtensionEffect, ExtensionUiState},
@@ -20,6 +21,7 @@ use crate::{
 
 const MAX_SESSION_ROWS: usize = 100;
 const MAX_EXTENSION_ERRORS: usize = 16;
+pub(crate) const COMPOSER_KEY_CONTEXT: &str = "PiComposer";
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PendingSubmission {
     generation: u64,
@@ -33,12 +35,12 @@ enum SubmissionResolution {
     Ignore,
 }
 
-actions!(pi_gpui, [DismissSurface]);
+actions!(pi_gpui, [DismissSurface, QuitApplication, SubmitFollowUp]);
 
 pub(crate) struct PiApp {
     project: PathBuf,
     runtime: RuntimeHandle,
-    snapshot: RuntimeSnapshot,
+    pub(crate) snapshot: RuntimeSnapshot,
     sessions: Vec<SessionSummary>,
     sessions_error: Option<String>,
     session_generation: u64,
@@ -55,9 +57,12 @@ pub(crate) struct PiApp {
     transcript_list: ListState,
     transcript_following: bool,
     transcript_unseen: usize,
-    expanded_transcript_items: HashSet<usize>,
+    pub(crate) expanded_transcript_items: HashSet<usize>,
     last_transcript_count: usize,
-    prompt_mode: PromptMode,
+    pub(crate) transcript_layout: crate::transcript::TranscriptLayoutCache,
+    pub(crate) transcript_bounds: Option<Bounds<Pixels>>,
+    pub(crate) transcript_width: Pixels,
+    fps_monitor: Entity<FpsMonitor>,
     extension: ExtensionUiState,
     pending_dialog_setup: bool,
     pending_title: Option<(u64, String)>,
@@ -99,7 +104,7 @@ impl PiApp {
                 if let InputEvent::PressEnter { shift: false, .. } = event {
                     let value = state.read(cx).value().trim().to_owned();
                     if !value.is_empty() {
-                        this.submit(value, cx);
+                        this.submit(value, this.enter_mode(), cx);
                     }
                 }
             },
@@ -127,6 +132,11 @@ impl PiApp {
             crate::theme::THEME.layout.transcript_overdraw,
         );
         transcript_list.set_follow_mode(FollowMode::Tail);
+        let fps_monitor = cx.new(|cx| {
+            FpsMonitor::new(window, cx)
+                .continuous(true)
+                .show_resources(false)
+        });
         let app = cx.entity().downgrade();
         transcript_list.set_scroll_handler(move |event, _, cx| {
             let following = event.is_following_tail;
@@ -166,7 +176,10 @@ impl PiApp {
             transcript_unseen: 0,
             expanded_transcript_items: HashSet::new(),
             last_transcript_count: 0,
-            prompt_mode: PromptMode::Normal,
+            transcript_layout: crate::transcript::TranscriptLayoutCache::default(),
+            transcript_bounds: None,
+            transcript_width: crate::theme::THEME.layout.transcript_max,
+            fps_monitor,
             extension: ExtensionUiState::default(),
             pending_dialog_setup: false,
             pending_title: None,
@@ -187,25 +200,16 @@ impl PiApp {
         if let Err(error) = self.runtime.send(command) {
             let index = self.snapshot.conversation.items.len();
             self.snapshot.conversation.push_transport_error(error);
-            self.transcript_list.splice(index..index, 1);
+            self.mark_transcript_changed(index, index == 0);
         }
     }
 
-    fn submit(&mut self, value: String, cx: &mut Context<Self>) {
+    fn submit(&mut self, value: String, mode: PromptMode, cx: &mut Context<Self>) {
         if !self.can_submit() {
-            if self.prompt_mode == PromptMode::Normal && self.snapshot.conversation.running {
-                let index = self.snapshot.conversation.items.len();
-                self.snapshot.conversation.push_local_error(
-                    "Prompt not sent",
-                    "Pi is working. Choose Steer or Follow-up to queue this draft.".into(),
-                );
-                self.transcript_list.splice(index..index, 1);
-                cx.notify();
-            }
             return;
         }
         match self.runtime.send(RuntimeCommand::Prompt {
-            mode: self.prompt_mode,
+            mode,
             message: value.clone(),
         }) {
             Ok(()) => {
@@ -225,9 +229,18 @@ impl PiApp {
     }
 
     fn can_submit(&self) -> bool {
-        self.pending_submission.is_none()
-            && self.snapshot.connected
-            && !(self.prompt_mode == PromptMode::Normal && self.snapshot.conversation.running)
+        self.pending_submission.is_none() && self.snapshot.connected
+    }
+
+    fn enter_mode(&self) -> PromptMode {
+        prompt_mode_for_enter(self.snapshot.conversation.running)
+    }
+
+    fn submit_follow_up(&mut self, cx: &mut Context<Self>) {
+        let value = self.composer.read(cx).value().trim().to_owned();
+        if !value.is_empty() {
+            self.submit(value, PromptMode::FollowUp, cx);
+        }
     }
 
     fn drain_runtime(&mut self, cx: &mut Context<Self>) {
@@ -261,7 +274,6 @@ impl PiApp {
                 RuntimeEvent::HistoryReset { generation }
                     if generation == self.runtime_generation =>
                 {
-                    self.prompt_mode = PromptMode::Normal;
                     self.reset_transcript_ui();
                 }
                 RuntimeEvent::Sessions {
@@ -343,7 +355,9 @@ impl PiApp {
         self.sheet_return_focus = None;
         self.pending_sheet_setup = false;
         self.extension_errors.clear();
-        self.reset_transcript_ui();
+        if !preserve_submission {
+            self.reset_transcript_ui();
+        }
     }
 
     fn reset_transcript_ui(&mut self) {
@@ -351,15 +365,13 @@ impl PiApp {
         self.transcript_list.reset(0);
         self.transcript_list.set_follow_mode(FollowMode::Tail);
         self.expanded_transcript_items.clear();
+        self.transcript_layout.clear();
+        self.transcript_bounds = None;
         self.transcript_following = true;
         self.transcript_unseen = 0;
         self.last_transcript_count = 0;
     }
 
-    fn set_prompt_mode(&mut self, mode: PromptMode, cx: &mut Context<Self>) {
-        self.prompt_mode = mode;
-        cx.notify();
-    }
     fn resume(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.send(RuntimeCommand::Resume(path));
         self.sessions_sheet = false;
@@ -506,27 +518,40 @@ impl PiApp {
         if !self.expanded_transcript_items.remove(&index) {
             self.expanded_transcript_items.insert(index);
         }
-        self.transcript_list.remeasure_items(index..index + 1);
+        self.transcript_layout.mark_dirty(index);
+        self.transcript_list.remeasure_items(0..1);
         cx.notify();
     }
 
-    pub(crate) fn transcript_item(
-        &self,
-        index: usize,
-    ) -> Option<(crate::conversation::TranscriptItem, bool)> {
-        self.snapshot
-            .conversation
-            .items
-            .get(index)
-            .cloned()
-            .map(|item| (item, self.expanded_transcript_items.contains(&index)))
+    pub(crate) fn toggle_transcript_at(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        let Some(bounds) = self.transcript_bounds else {
+            return;
+        };
+        if let Some(index) = self.transcript_layout.thinking_item_at(bounds, position) {
+            self.toggle_transcript_item(index, cx);
+        }
     }
 
     fn sync_transcript_list(&mut self, next: &[crate::conversation::TranscriptItem]) {
-        if let Some((old_range, new_count)) =
+        if let Some((old_range, _new_count)) =
             transcript_splice(&self.snapshot.conversation.items, next)
         {
-            self.transcript_list.splice(old_range, new_count);
+            self.transcript_layout.mark_dirty(old_range.start);
+            match (self.snapshot.conversation.items.is_empty(), next.is_empty()) {
+                (true, false) => self.transcript_list.splice(0..0, 1),
+                (false, true) => self.transcript_list.splice(0..1, 0),
+                (false, false) => self.transcript_list.remeasure_items(0..1),
+                (true, true) => {}
+            }
+        }
+    }
+
+    fn mark_transcript_changed(&mut self, index: usize, was_empty: bool) {
+        self.transcript_layout.mark_dirty(index);
+        if was_empty {
+            self.transcript_list.splice(0..0, 1);
+        } else {
+            self.transcript_list.remeasure_items(0..1);
         }
     }
 
@@ -585,6 +610,14 @@ fn submission_resolution(
         SubmissionResolution::ClearEditor
     } else {
         SubmissionResolution::KeepEditor
+    }
+}
+
+fn prompt_mode_for_enter(running: bool) -> PromptMode {
+    if running {
+        PromptMode::Steer
+    } else {
+        PromptMode::Normal
     }
 }
 
@@ -654,6 +687,12 @@ mod tests {
             submission_resolution(Some(&pending), 8, true, "submitted"),
             SubmissionResolution::Ignore
         );
+    }
+
+    #[test]
+    fn enter_prompts_when_idle_and_steers_while_running() {
+        assert_eq!(prompt_mode_for_enter(false), PromptMode::Normal);
+        assert_eq!(prompt_mode_for_enter(true), PromptMode::Steer);
     }
 
     #[test]

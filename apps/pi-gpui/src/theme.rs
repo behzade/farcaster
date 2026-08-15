@@ -67,7 +67,6 @@ pub(crate) struct Layout {
     pub agent_row_height: Pixels,
     pub agent_list_max_height: Pixels,
     pub status_row_height: Pixels,
-    pub status_key_width: Pixels,
 }
 
 const fn rgb(hex: u32) -> Rgba {
@@ -126,7 +125,7 @@ pub(crate) const THEME: Theme = Theme {
         collapsed_rail: px(44.0),
         run_panel: px(260.0),
         transcript_max: px(820.0),
-        transcript_overdraw: px(640.0),
+        transcript_overdraw: px(160.0),
         transcript_label_width: px(84.0),
         composer_min: px(80.0),
         dialog_width: px(560.0),
@@ -136,7 +135,6 @@ pub(crate) const THEME: Theme = Theme {
         agent_row_height: px(32.0),
         agent_list_max_height: px(264.0),
         status_row_height: px(24.0),
-        status_key_width: px(64.0),
     },
 };
 

@@ -7,7 +7,7 @@ use gpui_component::{FocusTrapElement as _, input::Input};
 use super::super::PiApp;
 use crate::{
     primitives::{ButtonTone, button, dialog_backdrop, dialog_surface},
-    protocol::{ExtensionUiRequest, PromptMode},
+    protocol::ExtensionUiRequest,
     runtime::RuntimeCommand,
     theme::THEME,
 };
@@ -16,9 +16,6 @@ impl PiApp {
     pub(super) fn render_composer(&self, entity: WeakEntity<Self>) -> impl IntoElement {
         let widgets_above = widget_region("above", &self.extension.above_widgets);
         let widgets_below = widget_region("below", &self.extension.below_widgets);
-        let normal = entity.clone();
-        let steer = entity.clone();
-        let follow = entity.clone();
         let send_entity = entity.clone();
         let abort_entity = entity;
         div()
@@ -31,6 +28,8 @@ impl PiApp {
             .when_some(widgets_above, |composer, widgets| composer.child(widgets))
             .child(
                 div()
+                    .id("composer-input")
+                    .key_context(super::super::COMPOSER_KEY_CONTEXT)
                     .px(THEME.space.sm)
                     .child(Input::new(&self.composer).w_full().appearance(false)),
             )
@@ -41,47 +40,8 @@ impl PiApp {
                     .flex()
                     .flex_wrap()
                     .items_center()
-                    .justify_between()
+                    .justify_end()
                     .gap(THEME.space.sm)
-                    .child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .gap(THEME.space.xs)
-                            .child(button(
-                                "mode-normal",
-                                "Prompt",
-                                tone(self.prompt_mode == PromptMode::Normal),
-                                true,
-                                move |_, cx| {
-                                    let _ = normal.update(cx, |this, cx| {
-                                        this.set_prompt_mode(PromptMode::Normal, cx)
-                                    });
-                                },
-                            ))
-                            .child(button(
-                                "mode-steer",
-                                "Steer",
-                                tone(self.prompt_mode == PromptMode::Steer),
-                                !self.snapshot.history_preview,
-                                move |_, cx| {
-                                    let _ = steer.update(cx, |this, cx| {
-                                        this.set_prompt_mode(PromptMode::Steer, cx)
-                                    });
-                                },
-                            ))
-                            .child(button(
-                                "mode-follow",
-                                "Follow-up",
-                                tone(self.prompt_mode == PromptMode::FollowUp),
-                                !self.snapshot.history_preview,
-                                move |_, cx| {
-                                    let _ = follow.update(cx, |this, cx| {
-                                        this.set_prompt_mode(PromptMode::FollowUp, cx)
-                                    });
-                                },
-                            )),
-                    )
                     .child(
                         div()
                             .flex()
@@ -108,7 +68,7 @@ impl PiApp {
                                         let value =
                                             this.composer.read(cx).value().trim().to_owned();
                                         if !value.is_empty() {
-                                            this.submit(value, cx);
+                                            this.submit(value, this.enter_mode(), cx);
                                         }
                                     });
                                 },
@@ -274,14 +234,6 @@ impl PiApp {
                     .focus_trap("extension-dialog-trap", &self.dialog_focus),
             ),
         )
-    }
-}
-
-fn tone(active: bool) -> ButtonTone {
-    if active {
-        ButtonTone::Accent
-    } else {
-        ButtonTone::Quiet
     }
 }
 

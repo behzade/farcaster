@@ -198,6 +198,7 @@ impl RuntimeOwner {
     fn start_process(&mut self, session: Option<PathBuf>) {
         self.process_generation = self.process_generation.saturating_add(1);
         let preserve_submission = self.deferred_prompt.is_some();
+        let keep_preview = preserve_submission && self.snapshot.history_preview;
         if let Some(mut old) = self.process.take() {
             let _ = old.terminate();
         }
@@ -210,7 +211,16 @@ impl RuntimeOwner {
             || "Starting new session".into(),
             |_| "Resuming session".into(),
         );
-        reset_snapshot_for_process(&mut self.snapshot, session.clone(), status);
+        if keep_preview {
+            let mut loading = RuntimeSnapshot {
+                auto_retry: self.snapshot.auto_retry,
+                ..RuntimeSnapshot::default()
+            };
+            reset_snapshot_for_process(&mut loading, session.clone(), status);
+            self.parked_snapshot = Some(loading);
+        } else {
+            reset_snapshot_for_process(&mut self.snapshot, session.clone(), status);
+        }
         let _ = self.event_tx.send(RuntimeEvent::SessionReset {
             generation: self.process_generation,
             preserve_submission,
@@ -219,8 +229,9 @@ impl RuntimeOwner {
         match RpcProcess::spawn(&self.process_command, &self.project, session.as_deref()) {
             Ok(process) => {
                 self.process = Some(process);
-                self.snapshot.connected = true;
-                self.snapshot.status = "Loading session".into();
+                let snapshot = self.active_snapshot_mut();
+                snapshot.connected = true;
+                snapshot.status = "Loading session".into();
                 self.send_startup_queries();
             }
             Err(error) => self.fail(error),
@@ -300,12 +311,6 @@ impl RuntimeOwner {
 
     fn send_prompt(&mut self, mode: PromptMode, message: String) {
         if self.snapshot.history_preview {
-            if mode != PromptMode::Normal {
-                self.reject_prompt(
-                    "A history preview has no live run; use Prompt to resume this session".into(),
-                );
-                return;
-            }
             let Some(path) = self.snapshot.selected_session.clone() else {
                 self.reject_prompt("No session is selected".into());
                 return;
@@ -368,12 +373,17 @@ impl RuntimeOwner {
                 });
             }
             ProcessItem::Event(event) => {
+                let settled = event.get("type").and_then(Value::as_str) == Some("agent_settled");
                 let previewing = self.parked_snapshot.is_some();
                 let snapshot = self.active_snapshot_mut();
                 snapshot.conversation.reduce(&event);
                 snapshot.status = run_status(&snapshot.conversation).to_owned();
                 if !previewing {
                     self.publish();
+                }
+                if settled {
+                    self.send(command("get_session_stats"));
+                    self.load_sessions(String::new());
                 }
             }
             ProcessItem::Stderr(chunk) => {
@@ -486,6 +496,8 @@ impl RuntimeOwner {
             self.emit_prompt_result(response.success);
         }
         if !response.success {
+            let blocks_resume = self.deferred_prompt.is_some()
+                && matches!(response.command.as_str(), "get_state" | "get_messages");
             let snapshot = self.active_snapshot_mut();
             snapshot.conversation.push_local_error(
                 "Command failed",
@@ -496,6 +508,13 @@ impl RuntimeOwner {
                 ),
             );
             snapshot.status = "Command failed".into();
+            if blocks_resume {
+                self.deferred_prompt = None;
+                self.emit_prompt_result(false);
+                if let Some(snapshot) = self.parked_snapshot.take() {
+                    self.snapshot = snapshot;
+                }
+            }
             if self.parked_snapshot.is_none() {
                 self.publish();
             }
@@ -617,6 +636,11 @@ impl RuntimeOwner {
             return;
         }
         if let Some((mode, message)) = self.deferred_prompt.take() {
+            if self.snapshot.history_preview
+                && let Some(snapshot) = self.parked_snapshot.take()
+            {
+                self.snapshot = snapshot;
+            }
             self.send_prompt(mode, message);
         }
     }
@@ -669,9 +693,10 @@ impl RuntimeOwner {
         snapshot.connected = false;
         snapshot.status = "Connection failed".into();
         snapshot.conversation.push_transport_error(error);
-        if !previewing {
-            self.publish();
+        if previewing && let Some(snapshot) = self.parked_snapshot.take() {
+            self.snapshot = snapshot;
         }
+        self.publish();
     }
 
     fn publish(&self) {
@@ -956,10 +981,37 @@ mod tests {
             Some(old_path)
         );
 
+        let _ = event_rx.try_iter().count();
         owner.send_prompt(PromptMode::Normal, "continue".into());
-        assert!(!owner.snapshot.history_preview);
+        assert!(owner.snapshot.history_preview);
+        assert_eq!(owner.snapshot.conversation.items[0].text, "previewed");
         assert_eq!(owner.active_session, Some(new_path));
         assert!(owner.deferred_prompt.is_some());
+        let resume_events = event_rx.try_iter().collect::<Vec<_>>();
+        assert!(resume_events.iter().any(|event| matches!(
+            event,
+            RuntimeEvent::SessionReset {
+                preserve_submission: true,
+                ..
+            }
+        )));
+        assert!(
+            resume_events
+                .iter()
+                .filter_map(|event| match event {
+                    RuntimeEvent::Snapshot { snapshot, .. } => Some(snapshot),
+                    _ => None,
+                })
+                .all(|snapshot| {
+                    snapshot.history_preview
+                        && snapshot
+                            .conversation
+                            .items
+                            .first()
+                            .map(|item| item.text.as_str())
+                            == Some("previewed")
+                })
+        );
 
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
@@ -973,6 +1025,7 @@ mod tests {
         }
         assert!(owner.deferred_prompt.is_none());
         assert!(owner.pending_prompt_id.is_none());
+        assert!(!owner.snapshot.history_preview);
         assert!(
             event_rx
                 .try_iter()

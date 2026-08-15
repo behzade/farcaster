@@ -16,6 +16,27 @@ const MAX_DEPTH: usize = 6;
 const MAX_LINES_PER_FILE: usize = 10_000;
 const MAX_SEARCH_BYTES: usize = 64 * 1024;
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct UsageSummary {
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
+    pub cache_write: u64,
+    pub total: u64,
+    pub cost_micros: u64,
+}
+
+impl UsageSummary {
+    pub(crate) fn add(&mut self, other: Self) {
+        self.input = self.input.saturating_add(other.input);
+        self.output = self.output.saturating_add(other.output);
+        self.cache_read = self.cache_read.saturating_add(other.cache_read);
+        self.cache_write = self.cache_write.saturating_add(other.cache_write);
+        self.total = self.total.saturating_add(other.total);
+        self.cost_micros = self.cost_micros.saturating_add(other.cost_micros);
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SessionSummary {
     pub id: String,
@@ -26,6 +47,7 @@ pub(crate) struct SessionSummary {
     pub parent_session: Option<String>,
     pub modified: SystemTime,
     pub message_count: usize,
+    pub usage: UsageSummary,
     search: String,
 }
 
@@ -420,6 +442,7 @@ fn parse_candidate(path: &Path, project: &Path) -> Result<Option<SessionSummary>
     let mut name = None;
     let mut first_user_message = None;
     let mut message_count = 0_usize;
+    let mut usage = UsageSummary::default();
     let mut search = String::new();
     for _ in 0..MAX_LINES_PER_FILE {
         line.clear();
@@ -441,6 +464,7 @@ fn parse_candidate(path: &Path, project: &Path) -> Result<Option<SessionSummary>
             Some("message") => {
                 message_count = message_count.saturating_add(1);
                 if let Some(message) = entry.get("message") {
+                    usage.add(message_usage(message));
                     let text = visible_user_text(message);
                     if !text.is_empty()
                         && message.get("role").and_then(Value::as_str) == Some("user")
@@ -482,8 +506,43 @@ fn parse_candidate(path: &Path, project: &Path) -> Result<Option<SessionSummary>
         parent_session,
         modified,
         message_count,
+        usage,
         search: search.to_lowercase(),
     }))
+}
+
+fn message_usage(message: &Value) -> UsageSummary {
+    let Some(usage) = message.get("usage") else {
+        return UsageSummary::default();
+    };
+    let input = u64_field(usage, "input");
+    let output = u64_field(usage, "output");
+    let cache_read = u64_field(usage, "cacheRead");
+    let cache_write = u64_field(usage, "cacheWrite");
+    let total = u64_field(usage, "totalTokens").max(
+        input
+            .saturating_add(output)
+            .saturating_add(cache_read)
+            .saturating_add(cache_write),
+    );
+    let cost_micros = usage
+        .get("cost")
+        .and_then(|cost| cost.get("total"))
+        .and_then(Value::as_f64)
+        .filter(|cost| cost.is_finite() && *cost > 0.0)
+        .map_or(0, |cost| (cost * 1_000_000.0).round() as u64);
+    UsageSummary {
+        input,
+        output,
+        cache_read,
+        cache_write,
+        total,
+        cost_micros,
+    }
+}
+
+fn u64_field(value: &Value, field: &str) -> u64 {
+    value.get(field).and_then(Value::as_u64).unwrap_or(0)
 }
 
 fn parent_session_from_path(path: &Path) -> Option<String> {
@@ -740,6 +799,48 @@ mod tests {
         content.push_str("\n{broken\n");
         fs::write(path, content)?;
         assert_eq!(discover_in(root.path(), project.path(), "bEtA")?.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn discovery_sums_token_and_cost_usage_from_assistant_messages() -> TestResult {
+        let root = tempdir()?;
+        let project = tempdir()?;
+        session(root.path(), "usage", project.path(), None, "Question")?;
+        let path = root.path().join("custom/nested/usage.jsonl");
+        let mut content = fs::read_to_string(&path)?;
+        content.push_str(&format!(
+            "\n{}",
+            serde_json::json!({
+                "type": "message",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "Answer"}],
+                    "usage": {
+                        "input": 1000,
+                        "output": 200,
+                        "cacheRead": 3000,
+                        "cacheWrite": 50,
+                        "totalTokens": 4250,
+                        "cost": {"total": 0.123456}
+                    }
+                }
+            })
+        ));
+        fs::write(path, content)?;
+
+        let sessions = discover_in(root.path(), project.path(), "")?;
+        assert_eq!(
+            sessions[0].usage,
+            UsageSummary {
+                input: 1000,
+                output: 200,
+                cache_read: 3000,
+                cache_write: 50,
+                total: 4250,
+                cost_micros: 123_456,
+            }
+        );
         Ok(())
     }
 

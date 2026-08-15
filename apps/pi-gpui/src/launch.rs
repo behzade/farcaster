@@ -9,7 +9,10 @@ use std::{
 };
 
 use crate::{
-    app::{DismissSurface, OVERLAY_KEY_CONTEXT, PiApp},
+    app::{
+        COMPOSER_KEY_CONTEXT, DismissSurface, OVERLAY_KEY_CONTEXT, PiApp, QuitApplication,
+        SubmitFollowUp,
+    },
     assets::AppAssets,
     theme::{THEME, install_component_theme},
 };
@@ -56,11 +59,16 @@ pub(crate) fn run(project: PathBuf) -> Result<(), LaunchError> {
         .run(move |cx: &mut App| {
             gpui_component::init(cx);
             install_component_theme(cx);
-            cx.bind_keys([KeyBinding::new(
-                "escape",
-                DismissSurface,
-                Some(OVERLAY_KEY_CONTEXT),
-            )]);
+            cx.on_action(quit);
+            cx.bind_keys([
+                KeyBinding::new("cmd-q", QuitApplication, None),
+                KeyBinding::new("escape", DismissSurface, Some(OVERLAY_KEY_CONTEXT)),
+                KeyBinding::new(
+                    "tab",
+                    SubmitFollowUp,
+                    Some(&format!("{COMPOSER_KEY_CONTEXT} > Input")),
+                ),
+            ]);
             cx.on_window_closed(|cx, _| {
                 if cx.windows().is_empty() {
                     cx.quit();
@@ -99,6 +107,10 @@ pub(crate) fn run(project: PathBuf) -> Result<(), LaunchError> {
     } else {
         Ok(())
     }
+}
+
+fn quit(_: &QuitApplication, cx: &mut App) {
+    cx.quit();
 }
 
 #[cfg(test)]

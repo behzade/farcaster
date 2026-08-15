@@ -11,7 +11,9 @@ use crate::{
     layout::LayoutMode,
     primitives::{ButtonTone, FeedbackTone, button, feedback, icon_button, panel, section_heading},
     runtime::RuntimeCommand,
-    sessions::{SessionSummary, descendant_sessions, root_session_for_path, root_sessions},
+    sessions::{
+        SessionSummary, UsageSummary, descendant_sessions, root_session_for_path, root_sessions,
+    },
     theme::THEME,
 };
 
@@ -284,10 +286,15 @@ impl PiApp {
         let descendants = root
             .map(|root| descendant_sessions(&self.sessions, &root.id))
             .unwrap_or_default();
+        let show_main_context = root.is_none_or(|root| {
+            self.snapshot.selected_session.as_deref() == Some(root.path.as_path())
+        });
+        let mut aggregate_usage = root.map(|root| root.usage).unwrap_or_default();
+        for (session, _) in &descendants {
+            aggregate_usage.add(session.usage);
+        }
         let mut agent_rows = Vec::new();
-        if !descendants.is_empty()
-            && let Some(root) = root
-        {
+        if let Some(root) = root {
             agent_rows.push((
                 root.clone(),
                 0,
@@ -324,41 +331,6 @@ impl PiApp {
         .w_full()
         .h(agent_height)
         .max_h(THEME.layout.agent_list_max_height);
-        let statuses = self
-            .extension
-            .statuses
-            .iter()
-            .map(|(key, value)| {
-                div()
-                    .h(THEME.layout.status_row_height)
-                    .flex()
-                    .items_center()
-                    .gap(THEME.space.sm)
-                    .border_b(THEME.border)
-                    .border_color(THEME.colors.border)
-                    .text_size(THEME.type_scale.caption)
-                    .child(
-                        div()
-                            .w(THEME.layout.status_key_width)
-                            .flex_none()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .text_color(THEME.colors.subtle)
-                            .child(key.clone()),
-                    )
-                    .child(
-                        div()
-                            .min_w_0()
-                            .flex_1()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .text_color(THEME.colors.muted)
-                            .child(strip_terminal_control(value)),
-                    )
-            })
-            .collect::<Vec<_>>();
         let body = div()
             .id("run-panel-scroll")
             .flex_1()
@@ -368,100 +340,105 @@ impl PiApp {
             .p(THEME.space.sm)
             .gap(THEME.space.md)
             .overflow_y_scroll()
-            .when(agent_count > 0, |run| {
-                run.child(div().overflow_y_hidden().child(agent_list))
-            })
+            .child(section_heading("Status"))
+            .child(self.fps_monitor.clone())
+            .child(usage_metrics(
+                show_main_context.then_some(&self.snapshot.stats),
+                aggregate_usage,
+            ))
             .when(!self.snapshot.history_preview, |run| {
-                run.child(section_heading("Session"))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .items_center()
-                            .gap(THEME.space.xs)
-                            .child(icon_button(
-                                "compact",
-                                AppIcon::Archive,
-                                "Compact context",
+                run.child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap(THEME.space.xs)
+                        .child(icon_button(
+                            "compact",
+                            AppIcon::Archive,
+                            "Compact context",
+                            ButtonTone::Neutral,
+                            self.snapshot.connected && !self.snapshot.conversation.running,
+                            move |_, cx| {
+                                let _ = compact_entity
+                                    .update(cx, |this, _| this.send(RuntimeCommand::Compact));
+                            },
+                        ))
+                        .when(!self.snapshot.connected, |actions| {
+                            actions.child(icon_button(
+                                "restart",
+                                AppIcon::ArrowClockwise,
+                                "Reconnect",
                                 ButtonTone::Neutral,
-                                self.snapshot.connected && !self.snapshot.conversation.running,
+                                true,
                                 move |_, cx| {
-                                    let _ = compact_entity
-                                        .update(cx, |this, _| this.send(RuntimeCommand::Compact));
+                                    let _ = retry_entity
+                                        .update(cx, |this, _| this.send(RuntimeCommand::Restart));
                                 },
                             ))
-                            .when(!self.snapshot.connected, |actions| {
-                                actions.child(icon_button(
-                                    "restart",
-                                    AppIcon::ArrowClockwise,
-                                    "Reconnect",
-                                    ButtonTone::Neutral,
-                                    true,
-                                    move |_, cx| {
-                                        let _ = retry_entity.update(cx, |this, _| {
-                                            this.send(RuntimeCommand::Restart)
-                                        });
-                                    },
-                                ))
-                            })
-                            .when(self.snapshot.conversation.retrying, |actions| {
-                                actions.child(icon_button(
-                                    "abort-retry",
-                                    AppIcon::Stop,
-                                    "Stop retry",
-                                    ButtonTone::Danger,
-                                    true,
-                                    move |_, cx| {
-                                        let _ = abort_retry_entity.update(cx, |this, _| {
-                                            this.send(RuntimeCommand::AbortRetry)
-                                        });
-                                    },
-                                ))
-                            }),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .gap(THEME.space.xs)
-                            .child(button(
-                                "auto-retry",
-                                format!("Retry {}", on_off(self.snapshot.auto_retry)),
-                                ButtonTone::Quiet,
-                                self.snapshot.connected,
+                        })
+                        .when(self.snapshot.conversation.retrying, |actions| {
+                            actions.child(icon_button(
+                                "abort-retry",
+                                AppIcon::Stop,
+                                "Stop retry",
+                                ButtonTone::Danger,
+                                true,
                                 move |_, cx| {
-                                    let _ = auto_retry_entity.update(cx, |this, _| {
-                                        this.send(RuntimeCommand::SetAutoRetry(
-                                            !this.snapshot.auto_retry,
-                                        ))
+                                    let _ = abort_retry_entity.update(cx, |this, _| {
+                                        this.send(RuntimeCommand::AbortRetry)
                                     });
                                 },
                             ))
-                            .child(button(
-                                "auto-compact",
-                                format!(
-                                    "Compact {}",
-                                    on_off(
-                                        self.snapshot
-                                            .session
-                                            .as_ref()
-                                            .is_some_and(|state| state.auto_compaction_enabled)
-                                    )
-                                ),
-                                ButtonTone::Quiet,
-                                self.snapshot.connected,
-                                move |_, cx| {
-                                    let _ = auto_compact_entity.update(cx, |this, _| {
-                                        let enabled = this
-                                            .snapshot
-                                            .session
-                                            .as_ref()
-                                            .is_some_and(|state| state.auto_compaction_enabled);
-                                        this.send(RuntimeCommand::SetAutoCompaction(!enabled));
-                                    });
-                                },
-                            )),
-                    )
+                        }),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap(THEME.space.xs)
+                        .child(button(
+                            "auto-retry",
+                            format!("Retry {}", on_off(self.snapshot.auto_retry)),
+                            ButtonTone::Quiet,
+                            self.snapshot.connected,
+                            move |_, cx| {
+                                let _ = auto_retry_entity.update(cx, |this, _| {
+                                    this.send(RuntimeCommand::SetAutoRetry(
+                                        !this.snapshot.auto_retry,
+                                    ))
+                                });
+                            },
+                        ))
+                        .child(button(
+                            "auto-compact",
+                            format!(
+                                "Compact {}",
+                                on_off(
+                                    self.snapshot
+                                        .session
+                                        .as_ref()
+                                        .is_some_and(|state| state.auto_compaction_enabled)
+                                )
+                            ),
+                            ButtonTone::Quiet,
+                            self.snapshot.connected,
+                            move |_, cx| {
+                                let _ = auto_compact_entity.update(cx, |this, _| {
+                                    let enabled = this
+                                        .snapshot
+                                        .session
+                                        .as_ref()
+                                        .is_some_and(|state| state.auto_compaction_enabled);
+                                    this.send(RuntimeCommand::SetAutoCompaction(!enabled));
+                                });
+                            },
+                        )),
+                )
+            })
+            .when(agent_count > 0, |run| {
+                run.child(section_heading("Agents"))
+                    .child(div().overflow_y_hidden().child(agent_list))
             })
             .when(has_queue, |run| {
                 run.child(section_heading("Queue")).child(
@@ -474,9 +451,6 @@ impl PiApp {
                             queue.follow_up.len()
                         )),
                 )
-            })
-            .when(!statuses.is_empty(), |run| {
-                run.child(section_heading("Status")).children(statuses)
             })
             .when(!self.extension_errors.is_empty(), |run| {
                 run.child(section_heading("Extension errors")).children(
@@ -515,7 +489,7 @@ impl PiApp {
                     .text_size(THEME.type_scale.caption)
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(THEME.colors.muted)
-                    .child(if agent_count > 0 { "AGENTS" } else { "RUN" }),
+                    .child("RUN"),
             )
             .child(body)
     }
@@ -581,7 +555,7 @@ fn agent_session_row(
 ) -> AnyElement {
     let path = session.path.clone();
     let title = session.title.clone();
-    let message_count = session.message_count;
+    let tokens = compact_number(session.usage.total);
     div()
         .id(format!("agent-session-{}", session.id))
         .role(Role::Button)
@@ -618,9 +592,101 @@ fn agent_session_row(
                 .flex_none()
                 .text_size(THEME.type_scale.caption)
                 .text_color(THEME.colors.subtle)
-                .child(message_count.to_string()),
+                .child(tokens),
         )
         .into_any_element()
+}
+
+fn usage_metrics(stats: Option<&serde_json::Value>, usage: UsageSummary) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap(THEME.space.xs)
+        .child(metric_row(
+            "Main context",
+            stats.map_or_else(|| "—".into(), context_usage),
+        ))
+        .child(metric_row("Tokens", compact_number(usage.total)))
+        .child(metric_row("Input", compact_number(usage.input)))
+        .child(metric_row("Output", compact_number(usage.output)))
+        .child(metric_row(
+            "Cache",
+            compact_number(usage.cache_read.saturating_add(usage.cache_write)),
+        ))
+        .child(metric_row("Cost", format_cost(usage.cost_micros)))
+}
+
+fn metric_row(label: &'static str, value: String) -> impl IntoElement {
+    div()
+        .h(THEME.layout.status_row_height)
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(THEME.space.sm)
+        .text_size(THEME.type_scale.caption)
+        .child(div().text_color(THEME.colors.subtle).child(label))
+        .child(
+            div()
+                .min_w_0()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(THEME.colors.muted)
+                .child(value),
+        )
+}
+
+fn context_usage(stats: &serde_json::Value) -> String {
+    let Some(context) = stats.get("contextUsage") else {
+        return "—".into();
+    };
+    let tokens = context.get("tokens").and_then(serde_json::Value::as_u64);
+    let window = context
+        .get("contextWindow")
+        .and_then(serde_json::Value::as_u64);
+    let percent = context.get("percent").and_then(serde_json::Value::as_f64);
+    match (tokens, window, percent) {
+        (Some(tokens), Some(window), Some(percent)) => format!(
+            "{} / {} · {percent:.0}%",
+            compact_number(tokens),
+            compact_number(window)
+        ),
+        (Some(tokens), Some(window), None) => {
+            format!("{} / {}", compact_number(tokens), compact_number(window))
+        }
+        (Some(tokens), None, _) => compact_number(tokens),
+        _ => "—".into(),
+    }
+}
+
+fn compact_number(value: u64) -> String {
+    if value >= 1_000_000 {
+        compact_scaled(value, 1_000_000, "m")
+    } else if value >= 1_000 {
+        compact_scaled(value, 1_000, "k")
+    } else {
+        value.to_string()
+    }
+}
+
+fn compact_scaled(value: u64, scale: u64, suffix: &str) -> String {
+    if value.is_multiple_of(scale) {
+        format!("{}{suffix}", value / scale)
+    } else {
+        format!("{:.1}{suffix}", value as f64 / scale as f64)
+    }
+}
+
+fn format_cost(micros: u64) -> String {
+    let dollars = micros as f64 / 1_000_000.0;
+    if micros == 0 {
+        "$0".into()
+    } else if dollars < 0.01 {
+        format!("${dollars:.4}")
+    } else {
+        format!("${dollars:.2}")
+    }
 }
 
 fn bounded_label(value: &str, max: usize) -> String {
@@ -652,36 +718,9 @@ fn on_off(value: bool) -> &'static str {
     if value { "on" } else { "off" }
 }
 
-fn strip_terminal_control(value: &str) -> String {
-    let chars = value.chars().collect::<Vec<_>>();
-    let mut clean = String::with_capacity(value.len());
-    let mut index = 0;
-    while index < chars.len() {
-        let starts_escape = chars[index] == '\u{1b}' && chars.get(index + 1) == Some(&'[');
-        let starts_bare_sgr = chars[index] == '[';
-        if starts_escape || starts_bare_sgr {
-            let start = index + usize::from(starts_escape) + 1;
-            let mut end = start;
-            while chars
-                .get(end)
-                .is_some_and(|character| character.is_ascii_digit() || *character == ';')
-            {
-                end += 1;
-            }
-            if end > start && chars.get(end) == Some(&'m') {
-                index = end + 1;
-                continue;
-            }
-        }
-        clean.push(chars[index]);
-        index += 1;
-    }
-    clean
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{compact_subagent_label, strip_terminal_control};
+    use super::{compact_number, compact_subagent_label, context_usage, format_cost};
 
     #[test]
     fn subagent_labels_keep_the_role_and_drop_generated_ids() {
@@ -693,14 +732,14 @@ mod tests {
     }
 
     #[test]
-    fn terminal_colors_never_leak_into_status_copy() {
+    fn usage_values_are_compact_and_context_is_main_only() {
+        assert_eq!(compact_number(105_250), "105.2k");
+        assert_eq!(format_cost(456_789), "$0.46");
         assert_eq!(
-            strip_terminal_control("sandbox: \u{1b}[38;2;142;192;124m🔒 Codex\u{1b}[39m"),
-            "sandbox: 🔒 Codex"
-        );
-        assert_eq!(
-            strip_terminal_control("IO: [39mpi-sandbox[39m"),
-            "IO: pi-sandbox"
+            context_usage(&serde_json::json!({
+                "contextUsage": {"tokens": 60_000, "contextWindow": 200_000, "percent": 30.0}
+            })),
+            "60k / 200k · 30%"
         );
     }
 }
