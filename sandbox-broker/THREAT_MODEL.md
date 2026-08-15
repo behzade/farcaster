@@ -24,15 +24,35 @@ The user account and Pi host process remain outside this boundary. The broker li
 
 ## Current release status
 
-The native backend is the default on macOS and Linux. The macOS unsandboxed release gate passed. Protocol v2 keeps IP network access blocked and adds at most 16 exact Unix socket paths from trusted machine config. It still has no background-job support. A session-long, bounded macOS denial collector now emits structured hints with `complete: false`. Process-group cleanup, bounded pipe draining, and a best-effort macOS descendant tracker have landed. The tracker registers the root before the launch barrier opens, follows kqueue fork events with `proc_listchildpids` snapshots, and checks process start times before signaling observed survivors.
+The native backend is the sole default on macOS and Linux. The macOS
+unsandboxed release gate and the extension's real-broker end-to-end gate pass.
+Protocol v3 keeps network blocked unless the extension starts a command-scoped
+proxy for an exact approved host set. It also adds interactive stdin so the
+extension can run each background job in a separate broker with its own rights.
+macOS accepts at most 16 exact Unix socket paths from trusted machine config. A
+session-long, bounded macOS denial collector emits structured hints with
+`complete: false`. Process-group cleanup, bounded pipe draining, and a
+best-effort macOS descendant tracker have landed. The tracker registers the root
+before the launch barrier opens, follows kqueue fork events with
+`proc_listchildpids` snapshots, and checks process start times before signaling
+observed survivors.
 
 Unified denial records carry a PID but no process start time. A fast PID reuse or delayed record can therefore misattribute a hint even though cleanup signaling still checks process identity. Hints always need user approval and never prove command membership.
 
 A child can still win the non-atomic fork-and-enumeration race, then leave the process group with `setpgid`, `setsid`, or a double fork. Public unprivileged macOS APIs do not provide a kill-and-reap container for such children; creating a new kernel coalition fails with `EPERM` for a normal user process. Pi explicitly places deliberate daemon escape outside the native backend's threat model. Any survivor keeps its Seatbelt limits, but it may continue using CPU and rights that the command received until it exits or the user kills it.
 
-The Rust broker now has the default Linux Bubblewrap backend with a fixed binary path, read-only root, ordered exact write and deny mounts, user/PID/network/IPC/UTS namespaces, private `/proc`, `no_new_privs`, a reviewed blocked-network seccomp filter, and PID-namespace teardown. Its automated, ignored host release gate still needs to pass on x86_64 and aarch64 Linux. Missing Bubblewrap or unavailable unprivileged namespaces fail readiness rather than falling back.
+The Rust broker has a Linux Bubblewrap backend with a fixed binary path,
+read-only root, ordered exact write and deny mounts, user/PID/network/IPC/UTS
+namespaces, private `/proc`, `no_new_privs`, a reviewed blocked-network seccomp
+filter, and PID-namespace teardown. Proxy mode adds only one loopback listener
+inside the network namespace. A host-only launcher bridges that listener to the
+validated proxy socket, then starts the user command under a filter that denies
+`AF_UNIX`. Its automated, ignored host release gate still needs to pass on
+x86_64 and aarch64 Linux; the new proxy bridge has not yet run on Linux. Missing
+Bubblewrap or unavailable unprivileged namespaces fail readiness rather than
+falling back.
 
-Bubblewrap can mask only concrete paths. Linux expands existing secret-name glob matches under the active workspace before launch, with strict scan bounds, then mounts those matches after writable roots. Fixed hard denies separately protect SSH, cloud, auth, and control paths in the broker HOME. Directory symlinks into the immutable, globally readable Nix store are scan boundaries; ordinary user-directory symlinks are followed. The host user and Pi process are trusted, so a host-created post-snapshot secret is outside this boundary. A sandboxed command can create a new matching name in a writable tree, but that file contains data the command already controls. Linux v1 does not claim dynamic path-pattern mediation.
+Bubblewrap can mask only concrete paths. Linux expands existing secret-name glob matches under the active workspace before launch, with strict scan bounds, then mounts those matches after writable roots. Fixed hard denies separately protect SSH, cloud, auth, and control paths in the broker HOME. Directory symlinks into the immutable, globally readable Nix store are scan boundaries; ordinary user-directory symlinks are followed. The host user and Pi process are trusted, so a host-created post-snapshot secret is outside this boundary. A sandboxed command can create a new matching name in a writable tree, but that file contains data the command already controls. Linux does not claim dynamic path-pattern mediation.
 
 ## Security rules
 
@@ -43,11 +63,11 @@ Bubblewrap can mask only concrete paths. Linux expands existing secret-name glob
 5. **No path alias escape.** Existing symlinks resolve before policy build. For a missing leaf, the broker resolves the nearest existing ancestor and appends checked normal components. Tests cover symlinks, `..`, missing paths, and protected children under broad roots.
 6. **Private control channel.** Commands inherit only their stdin/stdout/stderr and needed job handles. They do not inherit broker protocol handles or a public control socket.
 7. **Lifecycle control.** On macOS, the backend registers the root before the launch barrier and combines process-group cleanup with best-effort descendant observations. It does not claim atomic ownership of a child that deliberately wins the macOS fork-and-reparent race. Linux uses Bubblewrap's PID namespace and init/reaper as the descendant boundary; its release gate must prove that cancellation, timeout, shutdown, `setsid`, and double-fork cases leave that namespace empty.
-8. **Bounded data.** Frame, request, output, diagnostic, active-command, process-observation, denial, and later job limits are fixed. The broker drains capped output and marks it truncated. The macOS tracker keeps at most 4,096 process identities per command; the collector also caps raw lines, retained records, and per-command results.
-9. **Explicit local service rights.** IP network access stays blocked. Unix socket paths come only from trusted machine config, stay separate from file rights, use exact Seatbelt filters, and never include the background-job control socket. A later approved-host stage must use a host-owned allowlisting proxy.
+8. **Bounded data.** Frame, request, output, diagnostic, active-command, process-observation, denial, and job limits are fixed. The broker drains capped output and marks it truncated. The extension retains at most 2 MiB from each background job. The macOS tracker keeps at most 4,096 process identities per command; the collector also caps raw lines, retained records, and per-command results.
+9. **Explicit local service rights.** Network access stays blocked unless the user approved each exact hostname or IP. The host proxy enforces that set. macOS permits only its exact loopback port. Linux gives the user command only isolated loopback, blocks its `AF_UNIX` sockets, keeps the proxy socket in the host launcher, and remounts the proxy's unique directory read-only after writable `/tmp`. A host grant covers all ports for that host. Trusted machine Unix socket paths stay separate from file and proxy rights and use exact Seatbelt filters.
 10. **Hints do not grant.** The Seatbelt denial collector may explain exact rights. The extension checks every path against base rights, saved or command rights, hard protected paths, and configured denies, then asks the user before retrying. Four distinct sibling-file hints may produce one explicit choice between those exact files and their recursive parent folder; the parent is never added without that choice. Broader approved trees retain hard-denied subtrees as carve-outs. Missing, late, unrelated, ambiguous, or `/dev` device denial data never adds access.
-11. **Environment is replaced.** The child receives the filtered map in its request. It does not inherit the broker environment. The broker adds only fixed status markers and later required proxy values.
-12. **Background parity.** Before native background jobs ship, they must use the same policy builder. Their one-time rights must last for that job's sandbox only and never enter another job.
+11. **Environment is replaced.** The child receives the filtered map in its request. It does not inherit the broker environment. The broker removes inherited proxy variables and adds its fixed proxy values only in proxy mode.
+12. **Background parity.** Each native background job uses the same policy builder and its own broker, proxy, command ID, bounded output, and stdin. Its one-time rights last for that job only. Session shutdown stops every job. A job has no PTY.
 
 ## Main attacks and checks
 
@@ -59,7 +79,7 @@ Bubblewrap can mask only concrete paths. Linux expands existing secret-name glob
 | Forge broker output | Framed private pipe; base64 child chunks; protocol handles closed in child |
 | Leave an ordinary descendant after timeout | Process-group cleanup plus start-time-checked signaling of tracker observations |
 | Deliberately win the fork/reparent tracking race | Out of scope on native macOS; the survivor remains under its command's Seatbelt profile |
-| Reach Docker, SSH agent, tmux, or another local service | Unix sockets denied unless listed; reserved job socket always denied to normal bash |
+| Reach Docker, SSH agent, tmux, or another local service | Unix sockets denied unless trusted machine config lists the exact macOS path; Linux user commands cannot open host Unix sockets |
 | Exfiltrate through network | Network blocked or forced through host allowlist proxy; no broad local targets |
 | Obtain a broad grant from an app's vague error | Explicit preflight rights or four exact safe sibling hints plus a clear recursive-folder choice; no prose guessing or automatic widening |
 | Redirect an implicit cache root with a symlink | Omit fixed cache rights reached through symlinks; broker canonicalization remains authoritative |
@@ -77,13 +97,14 @@ Bubblewrap can mask only concrete paths. Linux expands existing secret-name glob
 
 ## Release gates
 
-`tests/macos_release.rs` is the unsandboxed macOS gate. It passes with filesystem rules, blocked network and sockets, environment replacement, output limits, structured denial collection for a generic application error, cancellation, timeout, shutdown, process-group cleanup, and cleanup of an observed detached child. Deliberate fast `setsid` or double-fork escape is not a macOS release assertion.
+`tests/macos_release.rs` is the unsandboxed macOS broker gate. It passes with filesystem rules, blocked network and sockets, environment replacement, output limits, structured denial collection for a generic application error, cancellation, timeout, shutdown, process-group cleanup, and cleanup of an observed detached child. The extension end-to-end gate also passes with exact single, multiple, sibling, and nested file approval retries; exact host and IP proxy grants over several ports; denied hosts and direct bypass; and background input, stop, and cleanup. Deliberate fast `setsid` or double-fork escape is not a macOS release assertion.
 
 Linux has an automated ignored host release gate for read-only root mounts,
 exact and fresh writable grants, hidden read denies, protected control mounts,
 symlink and missing-path cases, blocked IP and host Unix sockets, user/PID
-namespace behavior, `no_new_privs`, seccomp, environment replacement, malformed
-framing, output bounds, cancellation, timeout, shutdown, and strict `setsid -f`
-and double-fork descendant cleanup. The gate must pass outside an existing
-sandbox on both x86_64 and aarch64 before declaring the Linux backend
-production-ready.
+namespace behavior, the proxy bridge and direct Unix-socket denial,
+`no_new_privs`, seccomp, environment replacement, malformed framing, output
+bounds, cancellation, timeout, shutdown, and strict `setsid -f` and double-fork
+descendant cleanup. The new proxy case has not run. The gate must pass outside
+an existing sandbox on both x86_64 and aarch64 before declaring the Linux
+backend production-ready.

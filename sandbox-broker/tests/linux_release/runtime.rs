@@ -1,8 +1,10 @@
 use std::fs;
+use std::io::{Read, Write};
 use std::os::unix::net::UnixListener;
 use std::path::Path;
+use std::thread;
 
-use pi_sandbox_broker::protocol::ExecRequest;
+use pi_sandbox_broker::protocol::{ExecRequest, NetworkPolicy};
 
 use super::support::{Broker, TempRoot, request};
 
@@ -80,6 +82,58 @@ fn linux_runtime_release_gate() {
         Some(0),
         "Unix socket probe failed:\n{}",
         String::from_utf8_lossy(&unix_socket.output)
+    );
+
+    let proxy_path = root.0.join("network-proxy.sock");
+    let listener = UnixListener::bind(&proxy_path).expect("host proxy fixture");
+    let proxy_thread = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept bridge connection");
+        let mut input = [0_u8; 4];
+        stream.read_exact(&mut input).expect("read bridge input");
+        assert_eq!(&input, b"ping");
+        stream.write_all(b"pong").expect("write bridge output");
+    });
+    let mut proxied = request(
+		"network-proxy-bridge",
+		&workspace,
+		"python3 -c 'import socket; s=socket.create_connection((\"127.0.0.1\",31128)); s.sendall(b\"ping\"); print(s.recv(4).decode(), end=\"\")'".to_owned(),
+		vec![],
+		vec![],
+		Some(5_000),
+		64 * 1024,
+	);
+    proxied.policy.network = NetworkPolicy::Proxy {
+        tcp_port: 40_000,
+        unix_socket: proxy_path.to_string_lossy().into_owned(),
+    };
+    let proxied = broker.exec(proxied);
+    assert_eq!(
+        proxied.code,
+        Some(0),
+        "proxy bridge failed:\n{}",
+        String::from_utf8_lossy(&proxied.output)
+    );
+    assert_eq!(proxied.output, b"pong");
+    proxy_thread.join().expect("proxy fixture thread");
+
+    let direct_socket_path = root.0.join("direct-proxy.sock");
+    let _direct_listener = UnixListener::bind(&direct_socket_path).expect("direct proxy fixture");
+    let mut direct_socket = probe_request(
+        "network-proxy-direct-socket",
+        &workspace,
+        "unix-socket",
+        Some(&direct_socket_path),
+    );
+    direct_socket.policy.network = NetworkPolicy::Proxy {
+        tcp_port: 40_001,
+        unix_socket: direct_socket_path.to_string_lossy().into_owned(),
+    };
+    let direct_socket = broker.exec(direct_socket);
+    assert_eq!(
+        direct_socket.code,
+        Some(0),
+        "proxied command reached the host Unix socket directly:\n{}",
+        String::from_utf8_lossy(&direct_socket.output)
     );
 }
 

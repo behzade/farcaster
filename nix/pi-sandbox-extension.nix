@@ -17,17 +17,16 @@ stdenvNoCC.mkDerivation {
   installPhase = ''
     runHook preInstall
     mkdir -p $out
-    cp background-jobs.ts broker-client.ts broker-policy.ts index.ts codex-command.ts development-caches.ts io-permissions.ts io-policy.ts native-denials.ts native-sandbox-ops.ts permission-system-approval.ts sandbox-failures.ts package.json $out/
+    cp background-jobs.ts broker-client.ts broker-policy.ts index.ts native-background-jobs.ts native-network-proxy.ts sandbox-config.ts development-caches.ts io-permissions.ts io-policy.ts native-denials.ts native-sandbox-ops.ts permission-system-approval.ts sandbox-failures.ts package.json $out/
     substituteInPlace $out/index.ts \
       --replace-fail '@PI_SANDBOX_BROKER@' '${brokerRoot}'
-    substituteInPlace $out/codex-command.ts \
+    substituteInPlace $out/sandbox-config.ts \
       --replace-fail '@PI_MCP_CLI@' '${mcpCli}/bin/mcp-cli'
-    install -Dm755 background-job.sh $out/background-job.sh
     runHook postInstall
   '';
 
   meta = {
-    description = "Pi bash sandbox adapter with Codex and native broker clients";
+    description = "Pi bash sandbox adapter with the native sandbox broker";
     license = lib.licenses.mit;
     platforms = lib.platforms.darwin ++ lib.platforms.linux;
   };

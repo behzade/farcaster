@@ -4,7 +4,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { buildBrokerExecRequest } from "./broker-policy.ts";
-import { DEFAULT_CONFIG } from "./codex-command.ts";
+import { DEFAULT_CONFIG } from "./sandbox-config.ts";
 import {
 	developmentCacheRoot,
 	ensureDevelopmentCacheDirectories,
@@ -185,12 +185,23 @@ test("native deny globs reject dot segments before reaching Rust", () => {
 	}
 });
 
-test("native preview rejects requested hosts and keeps narrow configured socket rights", () => {
+test("native preview maps approved hosts to one command-scoped proxy", () => {
 	const cwd = mkdtempSync(join(tmpdir(), "pi-broker-policy-"));
-	assert.throws(
-		() => buildBrokerExecRequest("one", "true", cwd, undefined, DEFAULT_CONFIG, [], ["example.com"]),
-		/does not yet support network hosts/,
+	const proxied = buildBrokerExecRequest(
+		"one",
+		"true",
+		cwd,
+		undefined,
+		DEFAULT_CONFIG,
+		[],
+		["example.com"],
+		{ port: 43127, socketPath: "/tmp/pi-proxy.sock" },
 	);
+	assert.deepEqual(proxied.policy.network, {
+		mode: "proxy",
+		tcp_port: 43127,
+		unix_socket: "/tmp/pi-proxy.sock",
+	});
 	const request = buildBrokerExecRequest(
 		"one",
 		"true",
@@ -241,24 +252,4 @@ test("native preview rejects broad and relative Unix socket access", () => {
 			),
 		/must be absolute/,
 	);
-});
-
-test("native preview never forwards the background job control socket", () => {
-	const cwd = mkdtempSync(join(tmpdir(), "pi-broker-policy-"));
-	const request = buildBrokerExecRequest(
-		"one",
-		"true",
-		cwd,
-		undefined,
-		{
-			...DEFAULT_CONFIG,
-			network: {
-				...DEFAULT_CONFIG.network,
-				allowUnixSockets: ["/tmp/pi-agent-tmux.sock"],
-			},
-		},
-		[],
-		[],
-	);
-	assert.deepEqual(request.policy.unix_socket_roots, []);
 });

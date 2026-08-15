@@ -30,8 +30,8 @@ separate `nix-config` repo.
 ## Repository map
 
 - [`extensions/sandbox`](extensions/sandbox) contains the Pi adapter,
-  permission UI, native broker client, Codex fallback, and background-job
-  support.
+  permission UI, native broker client, exact-host proxy, and native
+  background-job support.
 - [`sandbox-broker`](sandbox-broker) contains the Rust broker and its security
   documentation.
 - [`extensions/dense-tools`](extensions/dense-tools) renders compact tool output
@@ -110,6 +110,14 @@ node --test \
   tests/terminal-text.test.ts
 ```
 
+The full sandbox test needs a built broker and an unsandboxed host because it
+must observe real OS denials and bind local network fixtures:
+
+```sh
+cargo build --manifest-path sandbox-broker/Cargo.toml
+npm run check:e2e --prefix extensions/sandbox
+```
+
 Individual packages are available for focused work:
 
 ```sh
@@ -134,7 +142,8 @@ broker per Pi session and a fresh OS sandbox for each foreground command:
 
 - macOS uses `/usr/bin/sandbox-exec` with a generated Seatbelt profile.
 - Linux uses a Nix-pinned Bubblewrap binary, a read-only host root, private
-  namespaces and `/proc`, `NoNewPrivs`, and a blocked-network seccomp filter.
+  namespaces and `/proc`, `NoNewPrivs`, and a network namespace with a
+  restricted loopback bridge when a host is approved.
 
 The default policy can read most of the host and write the workspace, temporary
 directories, and a sandbox-only development cache. It keeps `.git`, project
@@ -151,31 +160,20 @@ are scoped to the real workspace path.
 
 Native execution is deliberately narrow:
 
-- It supports one foreground command at a time.
-- Network access is blocked.
+- Each broker supports one command at a time. The session owns one foreground
+  broker and each background job owns a separate broker.
+- Network access starts blocked. A user may grant one exact hostname or IP for
+  one command or save it for the workspace. A host-owned proxy enforces that
+  set; the OS sandbox blocks direct bypass. A host grant applies to all ports on
+  that host.
 - macOS denial hints are best effort; Linux has no structured denial source.
-- Native background jobs and per-command network grants are not implemented.
+- Background jobs support bounded output, status, input, stop, and session
+  cleanup. They do not provide a PTY.
 
-The macOS release gate passes. The Linux broker is in use on x86-64, but its
-ignored release test still needs to be run as a dedicated host-level gate
-before treating the backend as portable beyond this setup.
-
-To use the installed Codex CLI backend instead, set this in the global
-`~/.pi/agent/extensions/sandbox.json`:
-
-```json
-{
-  "backend": "codex"
-}
-```
-
-The Codex backend keeps the same filesystem policy and adds sandboxed
-background jobs and exact per-command network-host approvals. A
-`background_job` read is bounded before its first model-visible result; full tmux
-history remains available for narrower follow-up reads or output redirected to a
-workspace log. Packaged subagents likewise apply their 200 KiB/5,000-line default
-to every foreground and async final result; configured artifacts or output files
-retain the complete result out of band.
+The macOS release gate and the extension's real-broker end-to-end test pass.
+The Linux broker is in use on x86-64, but its ignored host release test,
+including the new network bridge checks, still needs a Linux run before this
+change can claim Linux network parity.
 
 Global sandbox configuration lives at
 `~/.pi/agent/extensions/sandbox.json`. A project may add stricter rules in

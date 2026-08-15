@@ -6,7 +6,8 @@
 	"scripts": {
 		"clean": "echo 'nothing to clean'",
 		"build": "echo 'nothing to build'",
-		"check": "node --import ./test-setup.ts --test background-jobs.test.ts broker-client.test.ts broker-policy.test.ts codex-command.test.ts development-caches.test.ts io-permissions.test.ts io-policy.test.ts native-denials.test.ts native-sandbox-ops.test.ts permission-system-approval.test.ts sandbox-failures.test.ts"
+		"check": "node --import ./test-setup.ts --test background-jobs.test.ts broker-client.test.ts broker-policy.test.ts native-background-jobs.test.ts native-network-proxy.test.ts sandbox-config.test.ts development-caches.test.ts io-permissions.test.ts io-policy.test.ts native-denials.test.ts native-sandbox-ops.test.ts permission-system-approval.test.ts sandbox-failures.test.ts",
+		"check:e2e": "node --test native-sandbox.e2e.test.ts"
 	},
 	"pi": {
 		"extensions": [

@@ -1,24 +1,15 @@
-import { existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import {
-	backgroundJobSocket,
-	isBackgroundJobSocket,
-} from "./background-jobs.ts";
+import { dirname } from "node:path";
 import {
 	DEFAULT_DEVELOPMENT_CACHE_CONFIG,
 	developmentCacheEnvironment,
-	developmentCacheWriteRightsForWorkspace,
 	type DevelopmentCacheConfig,
 	normalizeDevelopmentCacheConfig,
 } from "./development-caches.ts";
-import {
-	canonicalize,
-	normalizeNetworkHost,
-} from "./io-permissions.ts";
+import { normalizeNetworkHost } from "./io-permissions.ts";
 
 const PACKAGED_MCP_CLI = "@PI_MCP_CLI@";
 
-export interface CodexSandboxNetworkConfig {
+export interface NativeSandboxNetworkConfig {
 	enabled?: boolean;
 	allowedDomains?: string[];
 	deniedDomains?: string[];
@@ -26,7 +17,7 @@ export interface CodexSandboxNetworkConfig {
 	allowAllUnixSockets?: boolean;
 }
 
-export interface CodexSandboxFilesystemConfig {
+export interface NativeSandboxFilesystemConfig {
 	allowRead?: string[];
 	denyRead?: string[];
 	allowWrite?: string[];
@@ -35,7 +26,7 @@ export interface CodexSandboxFilesystemConfig {
 
 export type ShellEnvironmentInheritance = "all" | "core" | "none";
 
-export interface CodexSandboxShellEnvironmentConfig {
+export interface NativeSandboxShellEnvironmentConfig {
 	inherit?: ShellEnvironmentInheritance;
 	ignoreDefaultExcludes?: boolean;
 	exclude?: string[];
@@ -43,32 +34,28 @@ export interface CodexSandboxShellEnvironmentConfig {
 	set?: Record<string, string>;
 }
 
-export interface CodexSandboxGrants {
+export interface NativeSandboxGrants {
 	read?: readonly string[];
 	write?: readonly string[];
 	networkHosts?: readonly string[];
 }
 
-export interface CodexSandboxConfig {
+export interface NativeSandboxConfig {
 	enabled?: boolean;
-	backend?: "codex" | "native-preview";
+	backend?: "native-preview";
 	brokerPath?: string;
-	codexCommand?: string;
-	permissionProfile?: string;
 	developmentCache?: DevelopmentCacheConfig;
-	network?: CodexSandboxNetworkConfig;
-	filesystem?: CodexSandboxFilesystemConfig;
-	shellEnvironment?: CodexSandboxShellEnvironmentConfig;
+	network?: NativeSandboxNetworkConfig;
+	filesystem?: NativeSandboxFilesystemConfig;
+	shellEnvironment?: NativeSandboxShellEnvironmentConfig;
 }
 
 export const DEFAULT_CONFIG: Required<
-	Pick<CodexSandboxConfig, "enabled" | "backend" | "codexCommand" | "permissionProfile">
+	Pick<NativeSandboxConfig, "enabled" | "backend">
 > &
-	CodexSandboxConfig = {
+	NativeSandboxConfig = {
 	enabled: true,
 	backend: "native-preview",
-	codexCommand: "codex",
-	permissionProfile: "pi-sandbox",
 	developmentCache: DEFAULT_DEVELOPMENT_CACHE_CONFIG,
 	network: {
 		enabled: true,
@@ -108,7 +95,6 @@ export const DEFAULT_CONFIG: Required<
 	},
 };
 
-const PROFILE_NAME = /^[A-Za-z0-9_-]+$/;
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const UNIX_CORE_ENV_VARS = [
 	"PATH",
@@ -189,7 +175,7 @@ function stringMap(value: unknown, field: string): Record<string, string> | unde
 	return Object.fromEntries(entries);
 }
 
-export function normalizeConfig(value: unknown): CodexSandboxConfig {
+export function normalizeConfig(value: unknown): NativeSandboxConfig {
 	if (!value || typeof value !== "object" || Array.isArray(value)) {
 		throw new Error("sandbox config must be a JSON object");
 	}
@@ -200,41 +186,27 @@ export function normalizeConfig(value: unknown): CodexSandboxConfig {
 			"enabled",
 			"backend",
 			"brokerPath",
-			"codexCommand",
-			"permissionProfile",
 			"developmentCache",
 			"network",
 			"filesystem",
 			"shellEnvironment",
-			"allowPty",
 		],
 		"sandbox config",
 	);
 	const enabled = input.enabled;
 	const backend = input.backend;
 	const brokerPath = input.brokerPath;
-	const codexCommand = input.codexCommand;
-	const permissionProfile = input.permissionProfile;
 	if (enabled !== undefined && typeof enabled !== "boolean") {
 		throw new Error("enabled must be a boolean");
 	}
-	if (backend !== undefined && backend !== "codex" && backend !== "native-preview") {
-		throw new Error("backend must be codex or native-preview");
+	if (backend !== undefined && backend !== "native-preview") {
+		throw new Error("backend must be native-preview");
 	}
 	if (
 		brokerPath !== undefined &&
 		(typeof brokerPath !== "string" || !brokerPath.startsWith("/"))
 	) {
 		throw new Error("brokerPath must be an absolute path");
-	}
-	if (codexCommand !== undefined && (typeof codexCommand !== "string" || codexCommand.length === 0)) {
-		throw new Error("codexCommand must be a non-empty string");
-	}
-	if (
-		permissionProfile !== undefined &&
-		(typeof permissionProfile !== "string" || !PROFILE_NAME.test(permissionProfile))
-	) {
-		throw new Error("permissionProfile must contain only letters, digits, underscores, and hyphens");
 	}
 
 	const networkInput =
@@ -316,10 +288,8 @@ export function normalizeConfig(value: unknown): CodexSandboxConfig {
 
 	return {
 		enabled: enabled as boolean | undefined,
-		backend: backend as "codex" | "native-preview" | undefined,
+		backend: backend as "native-preview" | undefined,
 		brokerPath: brokerPath as string | undefined,
-		codexCommand: codexCommand as string | undefined,
-		permissionProfile: permissionProfile as string | undefined,
 		developmentCache: normalizeDevelopmentCacheConfig(input.developmentCache),
 		network: networkInput
 			? {
@@ -364,9 +334,9 @@ export function normalizeConfig(value: unknown): CodexSandboxConfig {
 }
 
 export function mergeGlobalConfig(
-	defaults: CodexSandboxConfig,
-	override: CodexSandboxConfig,
-): CodexSandboxConfig {
+	defaults: NativeSandboxConfig,
+	override: NativeSandboxConfig,
+): NativeSandboxConfig {
 	const defined = <T extends object>(value: T | undefined): Partial<T> =>
 		Object.fromEntries(
 			Object.entries(value ?? {}).filter(([, entry]) => entry !== undefined),
@@ -433,9 +403,9 @@ function stricterInheritance(
 }
 
 export function applyProjectRestrictions(
-	base: CodexSandboxConfig,
-	project: CodexSandboxConfig,
-): CodexSandboxConfig {
+	base: NativeSandboxConfig,
+	project: NativeSandboxConfig,
+): NativeSandboxConfig {
 	return {
 		...base,
 		// A project file may tighten the active profile, but it may not turn off
@@ -529,7 +499,7 @@ function matchesAny(name: string, patterns: readonly string[]): boolean {
 }
 
 export function buildShellEnvironment(
-	config: CodexSandboxConfig,
+	config: NativeSandboxConfig,
 	source: NodeJS.ProcessEnv = process.env,
 	packagedMcpCli = PACKAGED_MCP_CLI,
 ): Record<string, string> {
@@ -577,209 +547,4 @@ export function buildShellEnvironment(
 	}
 
 	return environment;
-}
-
-function tomlString(value: string): string {
-	return JSON.stringify(value);
-}
-
-type FilesystemAccess = "write" | "read" | "deny";
-
-const ACCESS_RANK: Record<FilesystemAccess, number> = {
-	write: 0,
-	read: 1,
-	deny: 2,
-};
-
-function setStrictestAccess(
-	entries: Map<string, FilesystemAccess>,
-	path: string,
-	access: FilesystemAccess,
-): void {
-	const current = entries.get(path);
-	if (!current || ACCESS_RANK[access] > ACCESS_RANK[current]) entries.set(path, access);
-}
-
-function containsGlob(path: string): boolean {
-	return path.includes("*") || path.includes("?") || path.includes("[");
-}
-
-function configOverride(path: string, value: string | boolean): string {
-	const encoded = typeof value === "string" ? tomlString(value) : String(value);
-	return `${path}=${encoded}`;
-}
-
-function rawConfigOverride(path: string, tomlValue: string): string {
-	return `${path}=${tomlValue}`;
-}
-
-interface RawToml {
-	raw: string;
-}
-
-type TomlValue = string | boolean | RawToml;
-
-function rawToml(raw: string): RawToml {
-	return { raw };
-}
-
-function inlineTable(entries: readonly [string, TomlValue][]): string {
-	return `{ ${entries
-		.map(([key, value]) => {
-			const encoded =
-				typeof value === "string"
-					? tomlString(value)
-					: typeof value === "boolean"
-						? String(value)
-						: value.raw;
-			return `${tomlString(key)} = ${encoded}`;
-		})
-		.join(", ")} }`;
-}
-
-export function buildCodexSandboxArgs(
-	cwd: string,
-	config: CodexSandboxConfig,
-	command: string,
-	grants: CodexSandboxGrants = {},
-): string[] {
-	const effectiveConfig = mergeGlobalConfig(DEFAULT_CONFIG, config);
-	const profileBase = effectiveConfig.permissionProfile ?? DEFAULT_CONFIG.permissionProfile;
-	if (!PROFILE_NAME.test(profileBase)) {
-		throw new Error("invalid Codex permission profile name");
-	}
-	// A per-process name prevents an unrelated profile in the user's Codex
-	// config from merging extra permissions into this generated profile.
-	const profile = `${profileBase}-${process.pid}`;
-
-	const filesystemEntries = new Map<string, FilesystemAccess>();
-	// Codex's workspace profile protects `.git` by name. Add the canonical root
-	// too so a symlinked repository control folder stays read-only.
-	const gitControlPath = resolve(cwd, ".git");
-	if (existsSync(gitControlPath)) filesystemEntries.set(canonicalize(gitControlPath), "read");
-	// Project-local Pi files can load code and prompts on reload. Keep the
-	// control folder read-only until the user grants it for this workspace.
-	const projectControlPath = canonicalize(resolve(cwd, ".pi"));
-	const projectControlGranted = (grants.write ?? []).some(
-		(path) => canonicalize(path) === projectControlPath,
-	);
-	if (!projectControlGranted) {
-		filesystemEntries.set(".pi", "read");
-		if (existsSync(resolve(cwd, ".pi"))) filesystemEntries.set(projectControlPath, "read");
-	}
-	// Normal bash must not control the host-side background-job broker.
-	filesystemEntries.set(backgroundJobSocket(), "read");
-	for (const path of [...(effectiveConfig.filesystem?.allowRead ?? []), ...(grants.read ?? [])]) {
-		filesystemEntries.set(path, "read");
-	}
-	const cacheWritePaths = developmentCacheWriteRightsForWorkspace(
-		cwd,
-		effectiveConfig.developmentCache,
-	).map((right) => right.path);
-	for (const path of [
-		...(effectiveConfig.filesystem?.allowWrite ?? []),
-		...cacheWritePaths,
-		...(grants.write ?? []),
-	]) {
-		filesystemEntries.set(path, "write");
-	}
-	for (const path of effectiveConfig.filesystem?.denyWrite ?? []) {
-		setStrictestAccess(filesystemEntries, path, "read");
-	}
-	for (const path of effectiveConfig.filesystem?.denyRead ?? []) {
-		setStrictestAccess(filesystemEntries, path, "deny");
-	}
-	const directFilesystemEntries: [string, TomlValue][] = [];
-	const workspaceFilesystemEntries: [string, TomlValue][] = [];
-	for (const [path, requestedAccess] of [...filesystemEntries].sort(([left], [right]) =>
-		left.localeCompare(right),
-	)) {
-		// Codex accepts glob paths only for deny rules. Tighten a read-only glob
-		// to deny rather than reject the whole sandbox or permit writes.
-		const access = requestedAccess === "read" && containsGlob(path) ? "deny" : requestedAccess;
-		if (path.startsWith("/") || path.startsWith("~") || path.startsWith(":")) {
-			directFilesystemEntries.push([path, access]);
-		} else {
-			workspaceFilesystemEntries.push([path, access]);
-		}
-	}
-	if (workspaceFilesystemEntries.length > 0) {
-		directFilesystemEntries.push([
-			":workspace_roots",
-			rawToml(inlineTable(workspaceFilesystemEntries)),
-		]);
-	}
-	const networkEnabled = effectiveConfig.network?.enabled ?? false;
-	const domainEntries = new Map<string, "allow" | "deny">();
-	for (const domain of unique(effectiveConfig.network?.allowedDomains ?? [])) {
-		domainEntries.set(normalizeNetworkHost(domain), "allow");
-	}
-	for (const host of unique(grants.networkHosts ?? [])) {
-		if (networkEnabled) domainEntries.set(normalizeNetworkHost(host), "allow");
-	}
-	for (const domain of unique(effectiveConfig.network?.deniedDomains ?? [])) {
-		domainEntries.set(domain, "deny");
-	}
-	const networkEntries: [string, TomlValue][] = [["enabled", networkEnabled]];
-	if (networkEnabled) {
-		networkEntries.push(
-			["mode", "full"],
-			["allow_local_binding", false],
-			[
-				"domains",
-				rawToml(
-					inlineTable(
-						[...domainEntries]
-							.sort(([left], [right]) => left.localeCompare(right))
-							.map(([domain, access]): [string, TomlValue] => [domain, access]),
-					),
-				),
-			],
-		);
-		const sockets = unique(effectiveConfig.network?.allowUnixSockets ?? [])
-			.filter((socket) => !isBackgroundJobSocket(socket, canonicalize))
-			.sort();
-		if (sockets.length > 0) {
-			networkEntries.push([
-				"unix_sockets",
-				rawToml(
-					inlineTable(
-						sockets.map((socket): [string, TomlValue] => [socket, "allow"]),
-					),
-				),
-			]);
-		}
-		if (effectiveConfig.network?.allowAllUnixSockets) {
-			networkEntries.push(["dangerously_allow_all_unix_sockets", true]);
-		}
-	}
-
-	const profileValue = inlineTable([
-		["extends", ":workspace"],
-		[
-			"filesystem",
-			rawToml(
-				inlineTable(directFilesystemEntries),
-			),
-		],
-		["network", rawToml(inlineTable(networkEntries))],
-	]);
-	const overrides = [
-		rawConfigOverride(`permissions.${profile}`, profileValue),
-		...(networkEnabled ? [configOverride("features.network_proxy", true)] : []),
-	];
-
-	return [
-		...overrides.flatMap((override) => ["-c", override]),
-		"sandbox",
-		"--permission-profile",
-		profile,
-		"--cd",
-		cwd,
-		"--include-managed-config",
-		"--",
-		"bash",
-		"-c",
-		command,
-	];
 }

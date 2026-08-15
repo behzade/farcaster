@@ -8,7 +8,7 @@ import type {
 	BrokerExecRequest,
 	BrokerExecResult,
 } from "./broker-client.ts";
-import { DEFAULT_CONFIG } from "./codex-command.ts";
+import { DEFAULT_CONFIG } from "./sandbox-config.ts";
 import { canonicalize } from "./io-permissions.ts";
 import {
 	createApprovingNativeSandboxOps,
@@ -105,6 +105,7 @@ test("model history keeps only the final internal permission attempt", () => {
 test("native structured denial prompts and retries without parsing app output", async () => {
 	const cwd = mkdtempSync(join(tmpdir(), "pi-native-retry-"));
 	const path = `/home/sandbox-user/pi-native-retry-${process.pid}/state.db`;
+	const expectedPath = canonicalize(path);
 	const broker = new FakeBroker((request, onData) => {
 		if (request.id.endsWith("attempt-0")) {
 			onData(Buffer.from("service unavailable\n"));
@@ -132,7 +133,7 @@ test("native structured denial prompts and retries without parsing app output", 
 		onData: (data) => output.push(data),
 	});
 	assert.equal(result.exitCode, 0);
-	assert.deepEqual(approvals, [path]);
+	assert.deepEqual(approvals, [expectedPath]);
 	assert.deepEqual(
 		broker.requests.map((request) => request.id),
 		["tool-1/attempt-0", "tool-1/attempt-1"],
@@ -141,7 +142,7 @@ test("native structured denial prompts and retries without parsing app output", 
 	assert.deepEqual(broker.requests[1]?.policy.grants, [
 		{
 			access: "write",
-			path,
+			path: expectedPath,
 			scope: "file",
 			missing_path: "create_file",
 		},
@@ -191,6 +192,7 @@ test("native denied retry keeps the failed attempt output", async () => {
 test("native Linux falls back to an exact stderr path when denial hints are unavailable", async () => {
 	const cwd = mkdtempSync(join(tmpdir(), "pi-native-stderr-retry-"));
 	const path = `/home/sandbox-user/pi-native-stderr-retry-${process.pid}`;
+	const expectedPath = canonicalize(path);
 	const broker = new FakeBroker((request, onData) => {
 		if (request.id.endsWith("attempt-0")) {
 			onData(
@@ -225,7 +227,7 @@ test("native Linux falls back to an exact stderr path when denial hints are unav
 
 	assert.equal(result.exitCode, 0);
 	assert.deepEqual(approvals[0]?.permissions, [
-		{ kind: "write", path, directory: true },
+		{ kind: "write", path: expectedPath, directory: true },
 	]);
 	assert.equal(
 		modelVisibleApprovedRetryOutput(Buffer.concat(output).toString("utf8")),

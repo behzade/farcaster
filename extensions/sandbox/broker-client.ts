@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { accessSync, constants } from "node:fs";
 
-const PROTOCOL_VERSION = 2;
+const PROTOCOL_VERSION = 3;
 export const MAX_BROKER_FRAME_BYTES = 1024 * 1024;
 const READY_TIMEOUT_MS = 5_000;
 const SHUTDOWN_TIMEOUT_MS = 5_000;
@@ -48,11 +48,14 @@ export interface BrokerExecRequest {
 	cwd: string;
 	env: Record<string, string>;
 	timeout_ms: number | null;
+	interactive?: boolean;
 	policy: {
 		base_rights: BrokerFilesystemRight[];
 		grants: BrokerFilesystemRight[];
 		denies: BrokerFilesystemDeny[];
-		network: { mode: "blocked" };
+		network:
+			| { mode: "blocked" }
+			| { mode: "proxy"; tcp_port: number; unix_socket: string };
 		unix_socket_roots: string[];
 		output_limit_bytes: number;
 	};
@@ -61,6 +64,7 @@ export interface BrokerExecRequest {
 type BrokerRequest =
 	| BrokerExecRequest
 	| { type: "cancel"; id: string }
+	| { type: "write_stdin"; id: string; data_base64: string }
 	| { type: "shutdown" };
 
 type BrokerEvent =
@@ -103,6 +107,7 @@ interface PendingExec {
 	timeoutSeconds?: number;
 	denials?: BrokerDenial[];
 	denialsComplete: boolean;
+	onStarted?: (pid: number) => void;
 }
 
 export class FramedJsonDecoder {
@@ -192,6 +197,7 @@ export class SandboxBrokerClient {
 		request: BrokerExecRequest,
 		onData: (data: Buffer) => void,
 		signal?: AbortSignal,
+		onStarted?: (pid: number) => void,
 	): Promise<BrokerExecResult> {
 		if (!this.#ready || this.#closed) throw new Error("Sandbox broker is not ready");
 		if (this.#pending.has(request.id)) throw new Error(`Duplicate broker command ID: ${request.id}`);
@@ -205,6 +211,7 @@ export class SandboxBrokerClient {
 				stdoutSequence: 0,
 				stderrSequence: 0,
 				denialsComplete: false,
+				onStarted,
 				timeoutSeconds:
 					request.timeout_ms === null ? undefined : request.timeout_ms / 1000,
 			};
@@ -221,6 +228,16 @@ export class SandboxBrokerClient {
 				reject(asError(error));
 			}
 		});
+	}
+
+	writeStdin(id: string, data: Buffer): void {
+		if (!this.#pending.get(id)?.started) throw new Error(`Command is not running: ${id}`);
+		this.#send({ type: "write_stdin", id, data_base64: data.toString("base64") });
+	}
+
+	cancel(id: string): void {
+		if (!this.#pending.has(id)) return;
+		this.#send({ type: "cancel", id });
 	}
 
 	async shutdown(): Promise<void> {
@@ -294,6 +311,7 @@ export class SandboxBrokerClient {
 			if (!pending) throw new Error(`Broker start has unknown command ID: ${event.id}`);
 			if (pending.started) throw new Error(`Broker started command twice: ${event.id}`);
 			pending.started = true;
+			pending.onStarted?.(event.pid);
 			return;
 		}
 		if (event.type === "denials") {

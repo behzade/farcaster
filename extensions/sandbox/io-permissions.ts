@@ -173,7 +173,12 @@ export function normalizeNetworkHost(input: string): string {
 		value = value.slice(1, -1);
 		if (!isIP(value)) throw new Error("Invalid IP address");
 	}
-	if (isIP(value)) return value.toLowerCase();
+	const ipVersion = isIP(value);
+	if (ipVersion === 4) return value;
+	if (ipVersion === 6) {
+		const canonical = new URL(`http://[${value}]/`).hostname;
+		return canonical.slice(1, -1).toLowerCase();
+	}
 	if (
 		value.length === 0 ||
 		value.includes("*") ||

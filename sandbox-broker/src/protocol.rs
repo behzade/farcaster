@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -11,6 +11,7 @@ pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub enum ClientRequest {
     Exec(ExecRequest),
     Cancel { id: String },
+    WriteStdin { id: String, data_base64: String },
     Shutdown,
 }
 
@@ -22,6 +23,8 @@ pub struct ExecRequest {
     pub cwd: String,
     pub env: BTreeMap<String, String>,
     pub timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub interactive: bool,
     pub policy: SandboxPolicy,
 }
 
@@ -101,10 +104,11 @@ pub enum MissingPathBehavior {
     CreateTree,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 pub enum NetworkPolicy {
     Blocked,
+    Proxy { tcp_port: u16, unix_socket: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -203,6 +207,7 @@ mod tests {
             cwd: "/work".to_owned(),
             env: BTreeMap::from([("PATH".to_owned(), "/usr/bin:/bin".to_owned())]),
             timeout_ms: Some(5_000),
+            interactive: false,
             policy: SandboxPolicy {
                 base_rights: vec![
                     tree_right(Access::Read, "/"),
@@ -230,8 +235,14 @@ mod tests {
     }
 
     #[test]
-    fn protocol_v2_has_no_network_proxy_grant() {
-        let with_proxy = br#"{"mode":"proxy","loopback_ports":[1234]}"#;
-        assert!(serde_json::from_slice::<NetworkPolicy>(with_proxy).is_err());
+    fn protocol_v3_has_narrow_network_proxy_grant() {
+        let with_proxy = br#"{"mode":"proxy","tcp_port":1234,"unix_socket":"/tmp/proxy.sock"}"#;
+        assert_eq!(
+            serde_json::from_slice::<NetworkPolicy>(with_proxy).expect("proxy policy"),
+            NetworkPolicy::Proxy {
+                tcp_port: 1234,
+                unix_socket: "/tmp/proxy.sock".to_owned(),
+            }
+        );
     }
 }

@@ -1,3 +1,4 @@
+use base64::Engine as _;
 use std::io;
 #[cfg(target_os = "macos")]
 use std::path::Path;
@@ -17,6 +18,17 @@ use pi_sandbox_broker::seatbelt::{SANDBOX_EXEC, self_test};
 use pi_sandbox_broker::validation::validate_exec;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(target_os = "linux")]
+    {
+        let arguments = std::env::args().skip(1).collect::<Vec<_>>();
+        if arguments
+            .first()
+            .is_some_and(|item| item == "__linux_proxy_launch")
+        {
+            let code = linux::run_proxy_launcher(&arguments[1..])?;
+            std::process::exit(code);
+        }
+    }
     let stdin = io::stdin();
     let mut reader = stdin.lock();
 
@@ -64,53 +76,80 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             runtime.shutdown();
             return Ok(());
         };
-        match request {
-            ClientRequest::Shutdown => {
-                runtime.shutdown();
-                return Ok(());
+        if handle_request(request, &runtime, can_exec, backend_name, &hard_policy)? {
+            return Ok(());
+        }
+    }
+}
+
+fn handle_request(
+    request: ClientRequest,
+    runtime: &Runtime,
+    can_exec: bool,
+    backend_name: &str,
+    hard_policy: &Result<HardPolicy, String>,
+) -> Result<bool, String> {
+    match request {
+        ClientRequest::Shutdown => {
+            runtime.shutdown();
+            Ok(true)
+        }
+        ClientRequest::Exec(request) => {
+            let id = request.id.clone();
+            if !can_exec {
+                return send_error(
+                    runtime,
+                    id,
+                    ErrorCode::BackendUnavailable,
+                    format!("the {backend_name} backend is unavailable; command blocked"),
+                );
             }
-            ClientRequest::Exec(request) => {
-                let id = Some(request.id.clone());
-                if !can_exec {
-                    runtime.send(&ServerEvent::Error {
-                        id,
-                        code: ErrorCode::BackendUnavailable,
-                        message: format!(
-                            "the {backend_name} backend is unavailable; command blocked"
-                        ),
-                    })?;
-                    continue;
-                }
-                let hard_policy = hard_policy
-                    .as_ref()
-                    .expect("can_exec requires a valid hard policy");
-                match validate_exec(request, hard_policy) {
-                    Ok(request) => {
-                        let id = request.id.clone();
-                        if let Err((code, message)) = runtime.start(request) {
-                            runtime.send(&ServerEvent::Error {
-                                id: Some(id),
-                                code,
-                                message,
-                            })?;
-                        }
+            let hard_policy = hard_policy
+                .as_ref()
+                .expect("can_exec requires a valid hard policy");
+            match validate_exec(request, hard_policy) {
+                Ok(request) => {
+                    let id = request.id.clone();
+                    if let Err((code, message)) = runtime.start(request) {
+                        return send_error(runtime, id, code, message);
                     }
-                    Err(message) => runtime.send(&ServerEvent::Error {
-                        id,
-                        code: ErrorCode::InvalidRequest,
-                        message,
-                    })?,
+                    Ok(false)
                 }
+                Err(message) => send_error(runtime, id, ErrorCode::InvalidRequest, message),
             }
-            ClientRequest::Cancel { id } => {
-                if let Err((code, message)) = runtime.cancel(&id) {
-                    runtime.send(&ServerEvent::Error {
-                        id: Some(id),
-                        code,
-                        message,
-                    })?;
-                }
+        }
+        ClientRequest::Cancel { id } => match runtime.cancel(&id) {
+            Ok(()) => Ok(false),
+            Err((code, message)) => send_error(runtime, id, code, message),
+        },
+        ClientRequest::WriteStdin { id, data_base64 } => {
+            let result = base64::engine::general_purpose::STANDARD
+                .decode(data_base64)
+                .map_err(|error| {
+                    (
+                        ErrorCode::InvalidRequest,
+                        format!("invalid stdin base64: {error}"),
+                    )
+                })
+                .and_then(|data| runtime.write_stdin(&id, &data));
+            match result {
+                Ok(()) => Ok(false),
+                Err((code, message)) => send_error(runtime, id, code, message),
             }
         }
     }
+}
+
+fn send_error(
+    runtime: &Runtime,
+    id: String,
+    code: ErrorCode,
+    message: String,
+) -> Result<bool, String> {
+    runtime.send(&ServerEvent::Error {
+        id: Some(id),
+        code,
+        message,
+    })?;
+    Ok(false)
 }

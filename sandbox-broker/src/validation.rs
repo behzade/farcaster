@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
+use std::os::unix::fs::FileTypeExt;
 use std::path::{Path, PathBuf};
 
-use crate::protocol::ExecRequest;
+use crate::protocol::{ExecRequest, NetworkPolicy};
 use crate::seatbelt::{HardPolicy, NormalizedDeny, NormalizedRight, normalize_policy};
 
 const MAX_ID_BYTES: usize = 256;
@@ -18,10 +19,18 @@ pub struct ValidatedExec {
     pub cwd: PathBuf,
     pub env: BTreeMap<String, String>,
     pub timeout_ms: Option<u64>,
+    pub interactive: bool,
     pub output_limit_bytes: u64,
     pub rights: Vec<NormalizedRight>,
     pub denies: Vec<NormalizedDeny>,
     pub unix_socket_roots: Vec<PathBuf>,
+    pub network: ValidatedNetworkPolicy,
+}
+
+#[derive(Debug, Clone)]
+pub enum ValidatedNetworkPolicy {
+    Blocked,
+    Proxy { tcp_port: u16, unix_socket: PathBuf },
 }
 
 /// Validates a complete request before the broker starts a child.
@@ -79,6 +88,22 @@ pub fn validate_exec(request: ExecRequest, hard: &HardPolicy) -> Result<Validate
     }
     let (rights, denies) = normalize_policy(&request.policy, hard)?;
     let unix_socket_roots = normalize_unix_socket_roots(&request.policy.unix_socket_roots)?;
+    let network = match &request.policy.network {
+        NetworkPolicy::Blocked => ValidatedNetworkPolicy::Blocked,
+        NetworkPolicy::Proxy {
+            tcp_port,
+            unix_socket,
+        } => {
+            if *tcp_port == 0 {
+                return Err("network proxy port must be positive".to_owned());
+            }
+            let unix_socket = canonical_existing_socket(Path::new(unix_socket))?;
+            ValidatedNetworkPolicy::Proxy {
+                tcp_port: *tcp_port,
+                unix_socket,
+            }
+        }
+    };
     Ok(ValidatedExec {
         id: request.id,
         program,
@@ -86,10 +111,12 @@ pub fn validate_exec(request: ExecRequest, hard: &HardPolicy) -> Result<Validate
         cwd,
         env: request.env,
         timeout_ms: request.timeout_ms,
+        interactive: request.interactive,
         output_limit_bytes,
         rights,
         denies,
         unix_socket_roots,
+        network,
     })
 }
 
@@ -103,12 +130,6 @@ fn normalize_unix_socket_roots(paths: &[String]) -> Result<Vec<PathBuf>, String>
         .collect::<Result<Vec<_>, _>>()?;
     normalized.sort();
     normalized.dedup();
-    if normalized.iter().any(|path| {
-        path.file_name()
-            .is_some_and(|name| name == "pi-agent-tmux.sock")
-    }) {
-        return Err("normal commands cannot access the background-job control socket".to_owned());
-    }
     Ok(normalized)
 }
 
@@ -156,6 +177,20 @@ fn canonical_socket_path(path: &Path) -> Result<PathBuf, String> {
     Ok(parent.join(name))
 }
 
+fn canonical_existing_socket(path: &Path) -> Result<PathBuf, String> {
+    let path = canonical_socket_path(path)?;
+    if !path
+        .metadata()
+        .is_ok_and(|metadata| metadata.file_type().is_socket())
+    {
+        return Err(format!(
+            "network proxy socket is unavailable: {}",
+            path.display()
+        ));
+    }
+    Ok(path)
+}
+
 fn validate_text(label: &str, value: &str, maximum: usize) -> Result<(), String> {
     if value.len() > maximum {
         return Err(format!("{label} is too large"));
@@ -201,6 +236,8 @@ fn is_env_name(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::net::UnixListener;
+
     use super::*;
 
     #[test]
@@ -227,12 +264,31 @@ mod tests {
             vec![socket]
         );
         assert!(normalize_unix_socket_roots(&["relative.sock".to_owned()]).is_err());
-        assert!(
-            normalize_unix_socket_roots(&[root
-                .join("pi-agent-tmux.sock")
-                .to_string_lossy()
-                .into_owned()])
-            .is_err()
+    }
+
+    #[test]
+    fn network_proxy_requires_an_existing_unix_socket() {
+        let root = std::env::temp_dir()
+            .canonicalize()
+            .expect("canonical temp directory");
+        let regular = root.join(format!(
+            "pi-sandbox-validation-regular-{}",
+            std::process::id()
+        ));
+        std::fs::write(&regular, "not a socket").expect("regular fixture");
+        assert!(canonical_existing_socket(&regular).is_err());
+        std::fs::remove_file(&regular).expect("remove regular fixture");
+
+        let socket = root.join(format!(
+            "pi-sandbox-validation-socket-{}",
+            std::process::id()
+        ));
+        let listener = UnixListener::bind(&socket).expect("socket fixture");
+        assert_eq!(
+            canonical_existing_socket(&socket).expect("valid socket"),
+            socket
         );
+        drop(listener);
+        std::fs::remove_file(&socket).expect("remove socket fixture");
     }
 }

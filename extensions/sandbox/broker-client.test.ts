@@ -61,7 +61,7 @@ test("framing rejects partial, oversized, and malformed UTF-8 input", () => {
 test("readiness accepts only the platform's fixed native backend", () => {
 	const ready = (platform: string, backend: string) => ({
 		type: "ready" as const,
-		version: 2,
+		version: 3,
 		platform,
 		backend,
 		can_exec: true,
@@ -84,7 +84,7 @@ test("event validation rejects unknown fields and non-canonical output", () => {
 		() =>
 			validateBrokerEvent({
 				type: "ready",
-				version: 2,
+				version: 3,
 				platform: "macos",
 				backend: "seatbelt",
 				can_exec: true,
@@ -129,7 +129,7 @@ const encode = value => {
   process.stdout.write(frame);
 };
 let pending = Buffer.alloc(0);
-encode({ type: "ready", version: 2, platform: "macos", backend: "seatbelt", can_exec: true, max_frame_bytes: ${MAX_BROKER_FRAME_BYTES} });
+encode({ type: "ready", version: 3, platform: "macos", backend: "seatbelt", can_exec: true, max_frame_bytes: ${MAX_BROKER_FRAME_BYTES} });
 process.stdin.on("data", chunk => {
   pending = Buffer.concat([pending, chunk]);
   while (pending.length >= 4) {
@@ -182,7 +182,7 @@ const encode = value => {
   process.stdout.write(frame);
 };
 let pending = Buffer.alloc(0);
-encode({ type: "ready", version: 2, platform: "linux", backend: "bubblewrap", can_exec: true, max_frame_bytes: ${MAX_BROKER_FRAME_BYTES} });
+encode({ type: "ready", version: 3, platform: "linux", backend: "bubblewrap", can_exec: true, max_frame_bytes: ${MAX_BROKER_FRAME_BYTES} });
 process.stdin.on("data", chunk => {
   pending = Buffer.concat([pending, chunk]);
   if (pending.length < 4) return;
@@ -224,7 +224,7 @@ const encode = value => {
   process.stdout.write(frame);
 };
 let pending = Buffer.alloc(0);
-encode({ type: "ready", version: 2, platform: "macos", backend: "seatbelt", can_exec: true, max_frame_bytes: ${MAX_BROKER_FRAME_BYTES} });
+encode({ type: "ready", version: 3, platform: "macos", backend: "seatbelt", can_exec: true, max_frame_bytes: ${MAX_BROKER_FRAME_BYTES} });
 process.stdin.on("data", chunk => {
   pending = Buffer.concat([pending, chunk]);
   if (pending.length < 4) return;
@@ -262,7 +262,7 @@ const encode = value => {
   process.stdout.write(frame);
 };
 let pending = Buffer.alloc(0);
-encode({ type: "ready", version: 2, platform: "macos", backend: "seatbelt", can_exec: true, max_frame_bytes: ${MAX_BROKER_FRAME_BYTES} });
+encode({ type: "ready", version: 3, platform: "macos", backend: "seatbelt", can_exec: true, max_frame_bytes: ${MAX_BROKER_FRAME_BYTES} });
 process.stdin.on("data", chunk => {
   pending = Buffer.concat([pending, chunk]);
   if (pending.length < 4) return;

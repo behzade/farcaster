@@ -3,16 +3,21 @@
 //! Adapted from OpenAI Codex commit
 //! `65ae4c26e088913176a50d6daeb742d00942caee`, chiefly
 //! `codex-rs/linux-sandbox/src/{bwrap.rs,landlock.rs,linux_run_main.rs}`.
-//! Pi keeps only protocol-v1 foreground execution, uses a compile-time fixed
-//! Bubblewrap path, and passes a small reviewed seccomp filter directly to
-//! Bubblewrap instead of re-entering the broker.
+//! Pi uses a compile-time fixed Bubblewrap path. Blocked commands receive a
+//! small reviewed seccomp filter. Proxied commands re-enter this binary only
+//! inside their private network namespace to bridge isolated loopback to one
+//! validated host proxy socket.
 
 #![cfg(target_os = "linux")]
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
+use std::net::{Ipv4Addr, Shutdown, TcpListener, TcpStream};
 use std::os::fd::AsRawFd;
+use std::os::unix::fs::FileTypeExt;
+use std::os::unix::net::UnixStream;
+use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -23,6 +28,7 @@ use regex_lite::{Regex, escape};
 use crate::protocol::{Access, DeniedAccess, DenyScope, PathScope};
 use crate::seatbelt::{NormalizedDeny, NormalizedRight};
 use crate::validation::ValidatedExec;
+use crate::validation::ValidatedNetworkPolicy;
 
 pub const BWRAP: &str = match option_env!("PI_BWRAP_PATH") {
     Some(path) => path,
@@ -33,6 +39,8 @@ const MAX_SCAN_ENTRIES: usize = 200_000;
 const MAX_GLOB_MATCHES: usize = 8_192;
 const MAX_SCAN_DEPTH: usize = 64;
 const PROTECTED_METADATA_NAMES: [&str; 2] = [".git", ".pi"];
+pub const PROXY_LOOPBACK_PORT: u16 = 31_128;
+const PROXY_LAUNCHER_PATH: &str = "/tmp/.pi-sandbox-network-launcher";
 
 const BPF_LD_W_ABS: u16 = 0x20;
 const BPF_JMP_JEQ_K: u16 = 0x15;
@@ -82,7 +90,7 @@ pub fn prepare(request: &ValidatedExec, command: &[String]) -> Result<PreparedLa
             && right.scope == PathScope::Tree
             && right.path == Path::new("/")
     }) {
-        return Err("Linux protocol v2 requires an explicit read right for /".to_owned());
+        return Err("Linux protocol v3 requires an explicit read right for /".to_owned());
     }
     if command.is_empty() {
         return Err("command is empty".to_owned());
@@ -111,7 +119,20 @@ pub fn prepare(request: &ValidatedExec, command: &[String]) -> Result<PreparedLa
         !deny.path.is_dir() && matches!(deny.access, DeniedAccess::Read | DeniedAccess::ReadWrite)
     });
     let hidden_file = needs_hidden_file.then(hidden_file_source).transpose()?;
-    let seccomp = seccomp_file()?;
+    let proxy_socket = match &request.network {
+        ValidatedNetworkPolicy::Blocked => None,
+        ValidatedNetworkPolicy::Proxy { unix_socket, .. } => Some(unix_socket.clone()),
+    };
+    let seccomp = proxy_socket.is_none().then(seccomp_file).transpose()?;
+    let launcher = proxy_socket
+        .as_ref()
+        .map(|_| {
+            let file = File::open(std::env::current_exe().map_err(|error| error.to_string())?)
+                .map_err(|error| format!("cannot open network launcher: {error}"))?;
+            make_inheritable(&file, "network launcher")?;
+            Ok::<File, String>(file)
+        })
+        .transpose()?;
 
     // Create only normalized write targets after every read-only policy scan
     // has succeeded, so a rejected request leaves no approved-path artifact.
@@ -137,16 +158,45 @@ pub fn prepare(request: &ValidatedExec, command: &[String]) -> Result<PreparedLa
     for deny in denies {
         append_deny(&mut args, &deny, hidden_file.as_ref())?;
     }
+    if let Some(socket) = &proxy_socket {
+        let directory = socket
+            .parent()
+            .ok_or_else(|| "network proxy socket has no parent directory".to_owned())?;
+        // The workspace can normally write `/tmp`. Mount the unique proxy
+        // directory read-only after all write mounts so user code cannot swap
+        // the validated socket for a host service path before the bridge opens.
+        push_mount(&mut args, "--ro-bind", directory, directory);
+    }
+    // Install the launcher after parent write mounts so a writable `/tmp`
+    // cannot hide or replace this final read-only file mount.
+    if let Some(launcher) = &launcher {
+        args.extend([
+            "--ro-bind-data".to_owned(),
+            launcher.as_raw_fd().to_string(),
+            PROXY_LAUNCHER_PATH.to_owned(),
+        ]);
+    }
 
-    args.push("--seccomp".to_owned());
-    args.push(seccomp.as_raw_fd().to_string());
+    if let Some(seccomp) = &seccomp {
+        args.push("--seccomp".to_owned());
+        args.push(seccomp.as_raw_fd().to_string());
+    }
     args.push("--chdir".to_owned());
     args.push(path_string(&request.cwd));
     args.push("--".to_owned());
+    if let Some(socket) = proxy_socket {
+        args.extend([
+            PROXY_LAUNCHER_PATH.to_owned(),
+            "__linux_proxy_launch".to_owned(),
+            path_string(&socket),
+            "--".to_owned(),
+        ]);
+    }
     args.extend_from_slice(command);
 
     let mut resources = hidden_file.into_iter().collect::<Vec<_>>();
-    resources.push(seccomp);
+    resources.extend(seccomp);
+    resources.extend(launcher);
     Ok(PreparedLaunch {
         program: BWRAP,
         args,
@@ -472,9 +522,9 @@ fn expand_glob(pattern: &str, cwd: &Path) -> Result<Vec<PathBuf>, String> {
 
 fn immutable_store_directory_symlink(path: &Path, file_type: &fs::FileType) -> bool {
     file_type.is_symlink()
-        && path.canonicalize().is_ok_and(|target| {
-            target.is_dir() && target.starts_with(Path::new("/nix/store"))
-        })
+        && path
+            .canonicalize()
+            .is_ok_and(|target| target.is_dir() && target.starts_with(Path::new("/nix/store")))
 }
 
 fn glob_scan_roots(pattern: &str, cwd: &Path) -> Result<BTreeSet<PathBuf>, String> {
@@ -497,7 +547,7 @@ fn glob_scan_roots(pattern: &str, cwd: &Path) -> Result<BTreeSet<PathBuf>, Strin
         return Ok(BTreeSet::from([static_root.to_path_buf()]));
     }
 
-    // Root-wide startup scans are both costly and misleading. Protocol v2
+    // Root-wide startup scans are both costly and misleading. Protocol v3
     // applies filename-pattern denies to the active workspace; fixed hard
     // denies separately protect SSH, cloud, auth, and control paths in HOME.
     Ok(BTreeSet::from([cwd.to_path_buf()]))
@@ -742,6 +792,180 @@ fn seccomp_file() -> Result<File, String> {
     Ok(file)
 }
 
+/// Runs inside a fresh Bubblewrap network namespace. The bridge itself may
+/// connect to the one host proxy socket. The user command receives a seccomp
+/// filter that blocks AF_UNIX, so it cannot reuse this launcher to reach other
+/// host services. AF_INET stays inside the isolated namespace and can reach
+/// only this loopback listener.
+pub fn run_proxy_launcher(arguments: &[String]) -> Result<i32, String> {
+    let separator = arguments
+        .iter()
+        .position(|argument| argument == "--")
+        .ok_or("network launcher command separator is missing")?;
+    if separator != 1 || arguments.len() <= 2 {
+        return Err("network launcher arguments are invalid".to_owned());
+    }
+    let socket_path = PathBuf::from(&arguments[0]);
+    if !socket_path.is_absolute()
+        || !socket_path
+            .metadata()
+            .is_ok_and(|item| item.file_type().is_socket())
+    {
+        return Err("network launcher proxy socket is invalid".to_owned());
+    }
+    ensure_loopback_up()?;
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, PROXY_LOOPBACK_PORT))
+        .map_err(|error| format!("cannot bind sandbox proxy loopback: {error}"))?;
+    let bridge_socket = socket_path.clone();
+    std::thread::spawn(move || {
+        for incoming in listener.incoming() {
+            let Ok(tcp) = incoming else { break };
+            let socket = bridge_socket.clone();
+            std::thread::spawn(move || {
+                let Ok(unix) = UnixStream::connect(socket) else {
+                    return;
+                };
+                let _ = proxy_bidirectional(tcp, unix);
+            });
+        }
+    });
+
+    let mut child = Command::new(&arguments[separator + 1]);
+    child.args(&arguments[separator + 2..]);
+    // SAFETY: this closure runs after fork and calls only libc before exec.
+    unsafe {
+        child.pre_exec(|| install_proxy_user_seccomp().map_err(std::io::Error::other));
+    }
+    let status = child
+        .status()
+        .map_err(|error| format!("cannot start proxied command: {error}"))?;
+    Ok(status
+        .code()
+        .unwrap_or_else(|| 128 + status.signal().unwrap_or(1)))
+}
+
+fn ensure_loopback_up() -> Result<(), String> {
+    let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, 0) };
+    if fd < 0 {
+        return Err(format!(
+            "cannot open loopback control socket: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let mut request = unsafe { std::mem::zeroed::<libc::ifreq>() };
+    for (index, byte) in b"lo".iter().copied().enumerate() {
+        request.ifr_name[index] = byte as libc::c_char;
+    }
+    let read = unsafe { libc::ioctl(fd, libc::SIOCGIFFLAGS as libc::Ioctl, &mut request) };
+    if read < 0 {
+        unsafe { libc::close(fd) };
+        return Err(format!(
+            "cannot read loopback flags: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    unsafe {
+        request.ifr_ifru.ifru_flags |= libc::IFF_UP as libc::c_short;
+    }
+    let write = unsafe { libc::ioctl(fd, libc::SIOCSIFFLAGS as libc::Ioctl, &request) };
+    unsafe { libc::close(fd) };
+    if write < 0 {
+        return Err(format!(
+            "cannot enable loopback: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+fn install_proxy_user_seccomp() -> Result<(), String> {
+    let errno = SECCOMP_RET_ERRNO | u32::try_from(libc::EPERM).expect("EPERM is positive");
+    let mut program = vec![
+        statement(BPF_LD_W_ABS, SECCOMP_DATA_ARCH_OFFSET),
+        jump(AUDIT_ARCH, 1, 0),
+        statement(BPF_RET_K, SECCOMP_RET_KILL_PROCESS),
+        statement(BPF_LD_W_ABS, 0),
+    ];
+    #[cfg(target_arch = "x86_64")]
+    program.extend([
+        jump_greater_or_equal(0x4000_0000, 0, 1),
+        statement(BPF_RET_K, errno),
+    ]);
+    for syscall in [
+        libc::SYS_ptrace,
+        libc::SYS_process_vm_readv,
+        libc::SYS_process_vm_writev,
+        libc::SYS_io_uring_setup,
+        libc::SYS_io_uring_enter,
+        libc::SYS_io_uring_register,
+    ] {
+        program.push(jump(
+            u32::try_from(syscall).expect("syscall fits u32"),
+            0,
+            1,
+        ));
+        program.push(statement(BPF_RET_K, errno));
+    }
+    for syscall in [libc::SYS_socket, libc::SYS_socketpair] {
+        program.push(jump(
+            u32::try_from(syscall).expect("syscall fits u32"),
+            0,
+            3,
+        ));
+        program.push(statement(BPF_LD_W_ABS, SECCOMP_DATA_ARGS_OFFSET));
+        program.push(jump(
+            u32::try_from(libc::AF_UNIX).expect("AF_UNIX fits u32"),
+            0,
+            1,
+        ));
+        program.push(statement(BPF_RET_K, errno));
+        program.push(statement(BPF_LD_W_ABS, 0));
+    }
+    program.push(statement(BPF_RET_K, SECCOMP_RET_ALLOW));
+    let mut filters = program
+        .into_iter()
+        .map(|instruction| libc::sock_filter {
+            code: instruction.code,
+            jt: instruction.jump_true,
+            jf: instruction.jump_false,
+            k: instruction.value,
+        })
+        .collect::<Vec<_>>();
+    let filter = libc::sock_fprog {
+        len: u16::try_from(filters.len()).map_err(|_| "seccomp filter is too large")?,
+        filter: filters.as_mut_ptr(),
+    };
+    if unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } != 0 {
+        return Err(format!(
+            "cannot set no_new_privs: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    if unsafe { libc::prctl(libc::PR_SET_SECCOMP, libc::SECCOMP_MODE_FILTER, &filter) } != 0 {
+        return Err(format!(
+            "cannot install proxy seccomp: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+fn proxy_bidirectional(mut tcp: TcpStream, mut unix: UnixStream) -> std::io::Result<()> {
+    let mut tcp_reader = tcp.try_clone()?;
+    let mut unix_writer = unix.try_clone()?;
+    let left = std::thread::spawn(move || {
+        let result = std::io::copy(&mut tcp_reader, &mut unix_writer);
+        let _ = unix_writer.shutdown(Shutdown::Write);
+        result
+    });
+    let right = std::io::copy(&mut unix, &mut tcp);
+    let _ = tcp.shutdown(Shutdown::Write);
+    left.join()
+        .map_err(|_| std::io::Error::other("proxy bridge thread panicked"))??;
+    right?;
+    Ok(())
+}
+
 fn make_inheritable(file: &File, label: &str) -> Result<(), String> {
     fcntl(file, FcntlArg::F_SETFD(FdFlag::empty()))
         .map_err(|error| format!("cannot make {label} inheritable: {error}"))?;
@@ -847,10 +1071,8 @@ mod tests {
     fn concrete_deny_mounts_the_target_of_a_symlink() {
         use std::os::unix::fs::symlink;
 
-        let root = std::env::temp_dir().join(format!(
-            "pi-linux-deny-symlink-test-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("pi-linux-deny-symlink-test-{}", std::process::id()));
         fs::create_dir_all(&root).expect("fixture directory");
         let target = root.join("target");
         let link = root.join("link");
@@ -859,7 +1081,10 @@ mod tests {
         let denies = vec![concrete_deny_for_test(DeniedAccess::Read, link)];
         let concrete = concrete_denies(&denies, &root).expect("concrete denies");
         assert_eq!(concrete.len(), 1);
-        assert_eq!(concrete[0].path, target.canonicalize().expect("canonical target"));
+        assert_eq!(
+            concrete[0].path,
+            target.canonicalize().expect("canonical target")
+        );
         fs::remove_dir_all(root).expect("cleanup");
     }
 

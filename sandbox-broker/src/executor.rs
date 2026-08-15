@@ -1,7 +1,7 @@
 use std::io::{BufWriter, Read, Write};
 use std::os::fd::AsFd;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
-use std::process::{Command, Stdio};
+use std::process::{ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::thread;
@@ -18,8 +18,9 @@ use crate::framing::write_frame;
 use crate::pid_tracker::{PidTracker, ProcessGuard, cleanup as cleanup_tracked_processes};
 use crate::protocol::{ErrorCode, ServerEvent};
 #[cfg(target_os = "macos")]
-use crate::seatbelt::{SANDBOX_EXEC, build_args};
+use crate::seatbelt::{SANDBOX_EXEC, build_args_with_network};
 use crate::validation::ValidatedExec;
+use crate::validation::ValidatedNetworkPolicy;
 
 const OUTPUT_CHUNK_BYTES: usize = 16 * 1024;
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
@@ -50,6 +51,7 @@ struct CommandControl {
     cancel: AtomicBool,
     pid: AtomicI32,
     root: Mutex<Option<ProcessGuard>>,
+    stdin: Mutex<Option<ChildStdin>>,
     launch: AtomicU8,
 }
 
@@ -97,7 +99,7 @@ impl Runtime {
         send_event(&self.writer, event)
     }
 
-    /// Starts one command. Protocol v2 permits no parallel command.
+    /// Starts one command. Protocol v3 permits no parallel command per broker.
     ///
     /// # Errors
     ///
@@ -108,6 +110,7 @@ impl Runtime {
             cancel: AtomicBool::new(false),
             pid: AtomicI32::new(0),
             root: Mutex::new(None),
+            stdin: Mutex::new(None),
             launch: AtomicU8::new(LAUNCH_PENDING),
         });
         {
@@ -127,7 +130,7 @@ impl Runtime {
                 } else {
                     (
                         ErrorCode::InvalidRequest,
-                        "protocol v2 permits one active command".to_owned(),
+                        "protocol v3 permits one active command per broker".to_owned(),
                     )
                 });
             }
@@ -185,6 +188,47 @@ impl Runtime {
         Ok(())
     }
 
+    /// Writes bytes to an active interactive command.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the command is absent, its stdin is closed, the
+    /// state lock is poisoned, or the pipe write fails.
+    pub fn write_stdin(&self, id: &str, data: &[u8]) -> Result<(), (ErrorCode, String)> {
+        let control = {
+            let (state, _) = &*self.state;
+            let state = state.lock().map_err(|_| {
+                (
+                    ErrorCode::ProtocolError,
+                    "runtime state lock is poisoned".to_owned(),
+                )
+            })?;
+            state
+                .active
+                .clone()
+                .filter(|active| active.id == id)
+                .ok_or_else(|| (ErrorCode::NotFound, format!("command is not active: {id}")))?
+        };
+        let mut stdin = control.stdin.lock().map_err(|_| {
+            (
+                ErrorCode::ProtocolError,
+                "command stdin lock is poisoned".to_owned(),
+            )
+        })?;
+        let stdin = stdin.as_mut().ok_or_else(|| {
+            (
+                ErrorCode::InvalidRequest,
+                format!("command stdin is not open: {id}"),
+            )
+        })?;
+        stdin.write_all(data).map_err(|error| {
+            (
+                ErrorCode::InvalidRequest,
+                format!("cannot write command stdin: {error}"),
+            )
+        })
+    }
+
     pub fn shutdown(&self) {
         let control = {
             let (state, _) = &*self.state;
@@ -238,12 +282,13 @@ fn run_command(
 ) {
     let command = launch_command(request);
     #[cfg(target_os = "macos")]
-    let prepared = build_args(
+    let prepared = build_args_with_network(
         &command,
         &request.cwd,
         &request.rights,
         &request.denies,
         &request.unix_socket_roots,
+        &request.network,
     )
     .map(|args| {
         (
@@ -275,12 +320,41 @@ fn run_command(
             return;
         }
     };
+    let mut environment = request.env.clone();
+    strip_proxy_environment(&mut environment);
+    if let ValidatedNetworkPolicy::Proxy { tcp_port, .. } = &request.network {
+        #[cfg(target_os = "linux")]
+        let proxy_port = {
+            let _ = tcp_port;
+            crate::linux::PROXY_LOOPBACK_PORT
+        };
+        #[cfg(not(target_os = "linux"))]
+        let proxy_port = *tcp_port;
+        let http_proxy = format!("http://127.0.0.1:{proxy_port}");
+        let socks_proxy = format!("socks5h://127.0.0.1:{proxy_port}");
+        for name in [
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "NPM_CONFIG_PROXY",
+            "NPM_CONFIG_HTTP_PROXY",
+            "NPM_CONFIG_HTTPS_PROXY",
+        ] {
+            environment.insert(name.to_owned(), http_proxy.clone());
+        }
+        for name in ["ALL_PROXY", "all_proxy"] {
+            environment.insert(name.to_owned(), socks_proxy.clone());
+        }
+        environment.insert("NO_PROXY".to_owned(), String::new());
+        environment.insert("no_proxy".to_owned(), String::new());
+    }
     let mut process = Command::new(program);
     process
         .args(args)
         .current_dir(&request.cwd)
         .env_clear()
-        .envs(&request.env)
+        .envs(environment)
         .env("IN_SANDBOX", "1")
         .env("PI_SANDBOX", marker)
         .stdin(Stdio::piped())
@@ -402,6 +476,11 @@ fn run_command(
     // command ID are registered, then close the pipe so user code gets EOF.
     if let Some(mut barrier) = child.stdin.take() {
         let _ = barrier.write_all(b"go\n");
+        if request.interactive
+            && let Ok(mut stdin) = control.stdin.lock()
+        {
+            *stdin = Some(barrier);
+        }
     }
 
     let output_used = Arc::new(AtomicU64::new(0));
@@ -489,6 +568,26 @@ fn run_command(
             output_truncated: output_truncated.load(Ordering::Acquire),
         },
     );
+}
+
+fn strip_proxy_environment(environment: &mut std::collections::BTreeMap<String, String>) {
+    const PROXY_NAMES: [&str; 12] = [
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "no_proxy",
+        "NPM_CONFIG_PROXY",
+        "NPM_CONFIG_HTTP_PROXY",
+        "NPM_CONFIG_HTTPS_PROXY",
+        "GIT_PROXY_COMMAND",
+    ];
+    for name in PROXY_NAMES {
+        environment.remove(name);
+    }
 }
 
 fn abort_denials(collector: Option<&DenialCollector>, id: &str) {
@@ -632,6 +731,9 @@ fn group_exists(control: &CommandControl) -> bool {
 }
 
 fn clear_process(control: &CommandControl) {
+    if let Ok(mut stdin) = control.stdin.lock() {
+        *stdin = None;
+    }
     if let Ok(mut root) = control.root.lock() {
         *root = None;
     }

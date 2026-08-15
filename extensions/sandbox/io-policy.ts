@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { basename, isAbsolute, relative, resolve, sep } from "node:path";
-import type { CodexSandboxConfig } from "./codex-command.ts";
+import type { NativeSandboxConfig } from "./sandbox-config.ts";
 import {
 	canonicalize,
 	gitControlRoot,
@@ -12,7 +12,7 @@ import {
 
 export function isBaseReadAllowed(
 	path: string,
-	config: CodexSandboxConfig,
+	config: NativeSandboxConfig,
 	cwd: string,
 ): boolean {
 	const actual = canonicalize(path);
@@ -28,7 +28,7 @@ export function isBaseReadAllowed(
 
 export function isBaseWriteAllowed(
 	path: string,
-	config: CodexSandboxConfig,
+	config: NativeSandboxConfig,
 	cwd: string,
 ): boolean {
 	if (gitControlRoot(path, cwd)) return false;
@@ -50,7 +50,7 @@ export function isBaseWriteAllowed(
 export function isDeniedByConfig(
 	path: string,
 	access: "read" | "write",
-	config: CodexSandboxConfig,
+	config: NativeSandboxConfig,
 	cwd: string,
 ): boolean {
 	const rules = [

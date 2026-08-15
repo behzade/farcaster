@@ -188,6 +188,7 @@ test("network rights require one exact normalized host or IP", () => {
 	const ip = normalizePermission({ kind: "network_host", host: "[::1]" }, workspace);
 	assert.deepEqual(host, { kind: "network_host", host: "api.example.com" });
 	assert.deepEqual(ip, { kind: "network_host", host: "::1" });
+	assert.equal(normalizeNetworkHost("0:0:0:0:0:0:0:1"), "::1");
 	assert.deepEqual(grantsToRuntime([host, ip]), {
 		read: [],
 		write: [],

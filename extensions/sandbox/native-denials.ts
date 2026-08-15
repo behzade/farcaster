@@ -1,7 +1,7 @@
 import { existsSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import type { BrokerDenial } from "./broker-client.ts";
-import type { CodexSandboxConfig } from "./codex-command.ts";
+import type { NativeSandboxConfig } from "./sandbox-config.ts";
 import {
 	canonicalize,
 	gitControlRoot,
@@ -31,7 +31,7 @@ export type NativeDenialDecision =
 export function permissionForNativeDenial(
 	denial: BrokerDenial,
 	cwd: string,
-	config: CodexSandboxConfig,
+	config: NativeSandboxConfig,
 	grants: readonly NativeFilePermission[],
 	blockedPaths: readonly string[] = [],
 ): NativeDenialDecision {

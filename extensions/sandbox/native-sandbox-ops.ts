@@ -4,13 +4,14 @@ import type {
 	BrokerExecRequest,
 	BrokerExecResult,
 } from "./broker-client.ts";
-import type { CodexSandboxConfig } from "./codex-command.ts";
+import type { NativeSandboxConfig } from "./sandbox-config.ts";
 import { buildBrokerExecRequest } from "./broker-policy.ts";
 import {
 	permissionForNativeDenial,
 	type NativeFilePermission,
 } from "./native-denials.ts";
 import { parseFilesystemFailures } from "./sandbox-failures.ts";
+import { startNativeNetworkProxy } from "./native-network-proxy.ts";
 
 const MAX_NATIVE_ATTEMPTS = 8;
 const MAX_FAILURE_OUTPUT_BYTES = 1024 * 1024;
@@ -69,31 +70,40 @@ export function resolveNativeApprovalChoice(
 
 export function createNativeSandboxOps(
 	client: NativeBroker,
-	config: CodexSandboxConfig,
+	config: NativeSandboxConfig,
 	permissions: readonly NativeFilePermission[],
 	networkHosts: readonly string[],
 	commandId: string,
 ): BashOperations {
 	return {
 		async exec(command, cwd, { onData, signal, timeout }) {
-			const request = buildBrokerExecRequest(
-				commandId,
-				command,
-				cwd,
-				timeout,
-				config,
-				permissions,
-				networkHosts,
-			);
-			return client.exec(request, onData, signal);
+			const proxy = networkHosts.length > 0
+				? await startNativeNetworkProxy(networkHosts)
+				: undefined;
+			try {
+				const request = buildBrokerExecRequest(
+					commandId,
+					command,
+					cwd,
+					timeout,
+					config,
+					permissions,
+					networkHosts,
+					proxy ? { port: proxy.port, socketPath: proxy.socketPath } : undefined,
+				);
+				return await client.exec(request, onData, signal);
+			} finally {
+				await proxy?.close();
+			}
 		},
 	};
 }
 
 export function createApprovingNativeSandboxOps(options: {
 	client: NativeBroker;
-	config: CodexSandboxConfig;
+	config: NativeSandboxConfig;
 	initialPermissions: readonly NativeFilePermission[];
+	initialNetworkHosts?: readonly string[];
 	toolCallId: string;
 	blockedPaths: readonly string[];
 	approve: (
@@ -103,6 +113,10 @@ export function createApprovingNativeSandboxOps(options: {
 }): BashOperations {
 	return {
 		async exec(command, cwd, execOptions) {
+			const networkHosts = options.initialNetworkHosts ?? [];
+			const proxy = networkHosts.length > 0
+				? await startNativeNetworkProxy(networkHosts)
+				: undefined;
 			const permissions = [...options.initialPermissions];
 			const denialHistory = new Map<string, Map<string, NativeFilePermission>>();
 			let lastResult: BrokerExecResult = {
@@ -111,7 +125,8 @@ export function createApprovingNativeSandboxOps(options: {
 				denialsComplete: false,
 			};
 
-			for (let attempt = 0; attempt < MAX_NATIVE_ATTEMPTS; attempt += 1) {
+			try {
+				for (let attempt = 0; attempt < MAX_NATIVE_ATTEMPTS; attempt += 1) {
 				const output: Buffer[] = [];
 				let retainedBytes = 0;
 				const request = buildBrokerExecRequest(
@@ -121,7 +136,8 @@ export function createApprovingNativeSandboxOps(options: {
 					execOptions.timeout,
 					options.config,
 					permissions,
-					[],
+					networkHosts,
+					proxy ? { port: proxy.port, socketPath: proxy.socketPath } : undefined,
 				);
 				lastResult = await options.client.exec(
 					request,
@@ -238,8 +254,11 @@ export function createApprovingNativeSandboxOps(options: {
 				}
 				if (execOptions.signal?.aborted) throw new Error("aborted");
 				execOptions.onData(Buffer.from(NATIVE_RETRY_STARTED));
+				}
+				return lastResult;
+			} finally {
+				await proxy?.close();
 			}
-			return lastResult;
 		},
 	};
 }

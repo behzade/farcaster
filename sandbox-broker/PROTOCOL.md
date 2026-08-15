@@ -1,4 +1,4 @@
-# Broker Protocol v2
+# Broker Protocol v3
 
 ## Channel
 
@@ -15,7 +15,7 @@ The first server frame is `ready`:
 ```json
 {
   "type": "ready",
-  "version": 2,
+  "version": 3,
   "platform": "macos",
   "backend": "seatbelt",
   "can_exec": true,
@@ -46,6 +46,7 @@ self-test; finding a binary alone is not enough.
   "cwd": "/absolute/workspace",
   "env": { "HOME": "/Users/user", "PATH": "/usr/bin:/bin" },
   "timeout_ms": 30000,
+  "interactive": false,
   "policy": {
     "base_rights": [
       { "access": "read", "path": "/", "scope": "tree", "missing_path": "reject" },
@@ -68,7 +69,7 @@ self-test; finding a binary alone is not enough.
 Rules:
 
 - The active command ID is unique. The extension generates a fresh ID for each call and retry.
-- `program`, `cwd`, and each non-glob path are absolute. v2 permits one active command; a second `exec` fails.
+- `program`, `cwd`, and each non-glob path are absolute. v3 permits one active command per broker; a second `exec` fails. The extension uses one broker for foreground work and a separate broker for each background job.
 - `command` uses argv. The bash tool chooses `/bin/bash -c`; the broker does not parse shell text.
 - `env` is the whole child environment, not a patch over the broker environment.
 - `scope: file` uses an exact path. `scope: tree` uses that path and its children.
@@ -77,8 +78,10 @@ Rules:
 - Denies have file, tree, or reviewed glob scope. Denies and broker hard rules win over every right.
 - The broker resolves paths again, checks the nearest existing parent for a missing target, and applies its own hard denies last. Seatbelt remains the run-time control against rename and symlink races.
 - An absent timeout means no deadline. Cancellation still works.
+- `interactive: true` keeps stdin open for `write_stdin`. Normal foreground commands set it to false and receive EOF after the broker's start barrier opens.
 - `output_limit_bytes` has a broker-set upper bound. The broker keeps draining pipes after the cap so a child cannot block on output.
-- Protocol v2 accepts only `network: {"mode":"blocked"}`. On macOS, `unix_socket_roots` contains at most 16 absolute socket paths from trusted machine config. The broker canonicalizes them, rejects the Pi background-job socket, and emits exact-path Seatbelt rules. Linux rejects non-empty socket paths. Exact network hosts still need a host-owned allowlist proxy and a later protocol version.
+- `network: {"mode":"blocked"}` denies IP networking. Proxy mode is `{"mode":"proxy","tcp_port":43123,"unix_socket":"/tmp/pi-native-proxy-.../proxy.sock"}`. The extension creates both endpoints for one host-owned proxy with an exact approved hostname and IP set. The broker validates the port and existing socket. On macOS, Seatbelt permits only the proxy's loopback TCP port. On Linux, Bubblewrap keeps the command in a private network namespace; a fixed in-namespace loopback bridge reaches only the validated proxy socket, and the user command's seccomp filter denies `AF_UNIX` sockets. The proxy supports HTTP, HTTP CONNECT, and SOCKS5. A host right has no wildcard and applies to all ports on that exact host.
+- On macOS, `unix_socket_roots` contains at most 16 absolute socket paths from trusted machine config and emits exact-path Seatbelt rules. Linux rejects non-empty general socket paths. The network proxy socket is a separate field and never becomes a user-command file or socket right.
 
 ### `cancel`
 
@@ -86,7 +89,17 @@ Rules:
 { "type": "cancel", "id": "tool-call-id/attempt-0" }
 ```
 
-The broker signals the command process group, waits for a short fixed cleanup limit, then kills what remains in that group. It also stops its best-effort macOS descendant tracker and signals observed processes whose PID and start time still match. A timeout uses the same path. Cancellation is idempotent when no command is active because an `exit` event may cross a late cancel request. A cancel for a different active ID still fails. `exit` remains the final command event. Deliberate fast `setpgid`, `setsid`, or double-fork escape from the non-atomic tracker is outside protocol v2's lifecycle guarantee.
+The broker signals the command process group, waits for a short fixed cleanup limit, then kills what remains in that group. It also stops its best-effort macOS descendant tracker and signals observed processes whose PID and start time still match. A timeout uses the same path. Cancellation is idempotent when no command is active because an `exit` event may cross a late cancel request. A cancel for a different active ID still fails. `exit` remains the final command event. Deliberate fast `setpgid`, `setsid`, or double-fork escape from the non-atomic tracker is outside protocol v3's lifecycle guarantee.
+
+### `write_stdin`
+
+```json
+{ "type": "write_stdin", "id": "background/server", "data_base64": "aGVsbG8K" }
+```
+
+The request writes bounded framed bytes to an active command whose `interactive`
+flag is true. It fails for an unknown ID, a normal command, or a command whose
+stdin has closed. Stdin bytes do not enter the command output stream.
 
 ### `shutdown`
 
@@ -130,4 +143,6 @@ Rights live in the immutable request for one ID; there is no shared one-time-rig
 
 ## Version changes
 
-Adding proxy ports, Unix sockets, parallel execution, PTY handles, or a new right form requires a new protocol version. Strict unknown-field checks prevent silent version skew.
+Protocol v3 added proxy endpoints, interactive stdin, and `write_stdin`.
+Adding parallel commands per broker, PTY handles, or a new right form requires a
+new protocol version. Strict unknown-field checks prevent silent version skew.

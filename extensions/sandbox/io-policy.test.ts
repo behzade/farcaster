@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, symlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { DEFAULT_CONFIG } from "./codex-command.ts";
+import { DEFAULT_CONFIG } from "./sandbox-config.ts";
 import { developmentCacheRoot } from "./development-caches.ts";
 import {
 	isBaseReadAllowed,

@@ -297,6 +297,30 @@ pub fn build_args(
     denies: &[NormalizedDeny],
     unix_socket_roots: &[PathBuf],
 ) -> Result<Vec<String>, String> {
+    build_args_with_network(
+        command,
+        cwd,
+        rights,
+        denies,
+        unix_socket_roots,
+        &crate::validation::ValidatedNetworkPolicy::Blocked,
+    )
+}
+
+/// Builds Seatbelt arguments with blocked or proxy-only network access.
+///
+/// # Errors
+///
+/// Returns an error if the command is empty or a file, socket, deny, or proxy
+/// rule cannot be translated safely.
+pub fn build_args_with_network(
+    command: &[String],
+    cwd: &Path,
+    rights: &[NormalizedRight],
+    denies: &[NormalizedDeny],
+    unix_socket_roots: &[PathBuf],
+    network: &crate::validation::ValidatedNetworkPolicy,
+) -> Result<Vec<String>, String> {
     if command.is_empty() {
         return Err("command is empty".to_owned());
     }
@@ -331,12 +355,19 @@ pub fn build_args(
     );
     let deny_policy = build_explicit_deny_policy(denies)?;
     let socket_policy = build_unix_socket_policy(unix_socket_roots, &mut params);
+    let network_policy = match network {
+        crate::validation::ValidatedNetworkPolicy::Blocked => String::new(),
+        crate::validation::ValidatedNetworkPolicy::Proxy { tcp_port, .. } => {
+            format!("(allow network-outbound (remote ip \"localhost:{tcp_port}\"))")
+        }
+    };
     let policy = [
         BASE_POLICY,
         &read_policy,
         &write_policy,
         &deny_policy,
         &socket_policy,
+        &network_policy,
     ]
     .join("\n");
 
@@ -643,6 +674,26 @@ mod tests {
             args.iter()
                 .any(|arg| { arg == "-DUNIX_SOCKET_PATH_0=/nix/var/nix/daemon-socket/socket" })
         );
+    }
+
+    #[test]
+    fn proxy_network_allows_only_one_loopback_port() {
+        let args = build_args_with_network(
+            &["/usr/bin/true".to_owned()],
+            Path::new("/work"),
+            &[],
+            &[],
+            &[],
+            &crate::validation::ValidatedNetworkPolicy::Proxy {
+                tcp_port: 43_127,
+                unix_socket: PathBuf::from("/tmp/proxy.sock"),
+            },
+        )
+        .expect("policy");
+        let policy = &args[1];
+        assert!(policy.contains("(allow network-outbound (remote ip \"localhost:43127\"))"));
+        assert!(!policy.contains("(remote ip \"localhost:*\")"));
+        assert!(!policy.contains("\n(allow network-outbound)\n"));
     }
 
     #[test]

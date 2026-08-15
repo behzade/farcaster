@@ -104,7 +104,7 @@ impl Broker {
             matches!(
                 ready,
                 ServerEvent::Ready {
-                    version: 2,
+                    version: 3,
                     ref platform,
                     ref backend,
                     can_exec: true,
@@ -265,6 +265,7 @@ pub fn request(
             ),
         ]),
         timeout_ms,
+        interactive: false,
         policy: SandboxPolicy {
             base_rights: vec![
                 tree_right(Access::Read, Path::new("/")),

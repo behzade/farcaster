@@ -14,17 +14,20 @@ policy, and owns command cleanup.
 - macOS uses Seatbelt and returns best-effort structured denial hints. Cleanup
   combines a process group with a bounded descendant tracker.
 - Linux uses a fixed Bubblewrap binary, a read-only host root, user and PID
-  namespaces, a private `/proc`, `NoNewPrivs`, and a blocked-network seccomp
-  filter. PID namespaces provide the command lifetime boundary.
+  namespaces, a private `/proc`, `NoNewPrivs`, and a private network namespace.
+  PID namespaces provide the command lifetime boundary.
 
 Both backends support one foreground command, command-scoped file and tree
 rights, hard denies, filtered environments, bounded output, timeouts,
-cancellation, and shutdown cleanup. Protocol v2 keeps IP networking blocked
-and does not support native background jobs. macOS may receive a small set of
-trusted exact Unix socket paths; Linux rejects them.
+cancellation, interactive stdin, and shutdown cleanup. Protocol v3 can route a
+command through one host-owned proxy. macOS limits outbound traffic to that
+proxy's loopback port. Linux exposes only a private loopback bridge and blocks
+the user command from opening host Unix sockets. macOS may also receive a small
+set of trusted exact Unix socket paths; Linux rejects those general paths.
 
-The default extension config calls this backend `native-preview`. Global config
-may select the Codex CLI backend instead.
+The extension calls this sole and default backend `native-preview`. It starts a
+separate broker for each background job so one-time file and network rights stay
+with that job.
 
 ## Documentation
 
@@ -49,8 +52,15 @@ cargo test --manifest-path sandbox-broker/Cargo.toml --test macos_release -- --i
 cargo test --manifest-path sandbox-broker/Cargo.toml --test linux_release -- --ignored --test-threads=1
 ```
 
-The macOS gate passes. The Linux gate automates filesystem, namespace,
-seccomp, environment, framing, output, cancellation, timeout, shutdown, and
-detached-descendant checks, but it must still pass on each supported release
-architecture before this broker should be treated as a portable general-purpose
-sandbox.
+The extension also has a real-broker gate for approval retry, exact nested
+paths, the host allowlist proxy, bypass denial, and background jobs:
+
+```sh
+cargo build --manifest-path sandbox-broker/Cargo.toml
+npm run check:e2e --prefix extensions/sandbox
+```
+
+The macOS gate and extension end-to-end gate pass. The Linux gate automates
+filesystem, namespace, seccomp, proxy bridge, direct Unix-socket denial,
+environment, framing, output, cancellation, timeout, shutdown, and detached
+descendant checks. The new Linux proxy case has not yet run on a Linux host.

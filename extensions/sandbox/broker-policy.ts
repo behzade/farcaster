@@ -1,7 +1,6 @@
 import { accessSync, constants, existsSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
-import { isBackgroundJobSocket } from "./background-jobs.ts";
 import type {
 	BrokerExecRequest,
 	BrokerFilesystemDeny,
@@ -12,8 +11,8 @@ import {
 	DEFAULT_CONFIG,
 	buildShellEnvironment,
 	mergeGlobalConfig,
-	type CodexSandboxConfig,
-} from "./codex-command.ts";
+	type NativeSandboxConfig,
+} from "./sandbox-config.ts";
 import {
 	canonicalize,
 	type IoPermission,
@@ -29,13 +28,14 @@ export function buildBrokerExecRequest(
 	command: string,
 	cwd: string,
 	timeoutSeconds: number | undefined,
-	config: CodexSandboxConfig,
+	config: NativeSandboxConfig,
 	permissions: readonly FilePermission[],
 	networkHosts: readonly string[],
+	proxy?: { port: number; socketPath: string },
 ): BrokerExecRequest {
 	const effective = mergeGlobalConfig(DEFAULT_CONFIG, config);
-	if (networkHosts.length > 0) {
-		throw new Error("The native sandbox preview does not yet support network hosts");
+	if ((networkHosts.length > 0) !== (proxy !== undefined)) {
+		throw new Error("Native network hosts and proxy state must be provided together");
 	}
 	if (effective.network?.allowAllUnixSockets) {
 		throw new Error("The native sandbox does not support allowing all Unix sockets");
@@ -61,11 +61,14 @@ export function buildBrokerExecRequest(
 			timeoutSeconds === undefined || timeoutSeconds <= 0
 				? null
 				: Math.max(1, Math.round(timeoutSeconds * 1000)),
+		interactive: false,
 		policy: {
 			base_rights: baseRights(effective, actualCwd),
 			grants: permissions.map(permissionRight),
 			denies: denyRules(effective, actualCwd),
-			network: { mode: "blocked" },
+			network: proxy
+				? { mode: "proxy", tcp_port: proxy.port, unix_socket: proxy.socketPath }
+				: { mode: "blocked" },
 			unix_socket_roots: unixSocketRoots(effective),
 			output_limit_bytes: OUTPUT_LIMIT_BYTES,
 		},
@@ -86,21 +89,20 @@ function hostBash(): string {
 	return canonicalize("/bin/bash");
 }
 
-function unixSocketRoots(config: CodexSandboxConfig): string[] {
+function unixSocketRoots(config: NativeSandboxConfig): string[] {
 	const roots = new Set<string>();
 	for (const socket of config.network?.allowUnixSockets ?? []) {
 		if (!isAbsolute(socket)) {
 			throw new Error(`Native sandbox Unix socket paths must be absolute: ${socket}`);
 		}
 		const path = canonicalize(socket);
-		if (isBackgroundJobSocket(path, canonicalize)) continue;
 		roots.add(path);
 	}
 	return [...roots].sort();
 }
 
 function baseRights(
-	config: CodexSandboxConfig,
+	config: NativeSandboxConfig,
 	cwd: string,
 ): BrokerFilesystemRight[] {
 	const rights = new Map<string, BrokerFilesystemRight>();
@@ -174,7 +176,7 @@ function permissionRight(permission: FilePermission): BrokerFilesystemRight {
 }
 
 function denyRules(
-	config: CodexSandboxConfig,
+	config: NativeSandboxConfig,
 	cwd: string,
 ): BrokerFilesystemDeny[] {
 	const rules = new Map<string, BrokerFilesystemDeny>();

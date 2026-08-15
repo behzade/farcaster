@@ -4,7 +4,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { DEFAULT_CONFIG } from "./codex-command.ts";
+import { DEFAULT_CONFIG } from "./sandbox-config.ts";
 import { developmentCacheRoot } from "./development-caches.ts";
 import { canonicalize } from "./io-permissions.ts";
 import { permissionForNativeDenial } from "./native-denials.ts";
@@ -12,6 +12,7 @@ import { permissionForNativeDenial } from "./native-denials.ts";
 test("native write denials yield one exact file permission", () => {
 	const cwd = mkdtempSync(join(tmpdir(), "pi-native-denial-"));
 	const path = `/home/sandbox-user/pi-native-denial-${process.pid}/state.db`;
+	const expectedPath = canonicalize(path);
 	assert.deepEqual(
 		permissionForNativeDenial(
 			{ operation: "file-write-create", path, process: "issues" },
@@ -21,7 +22,7 @@ test("native write denials yield one exact file permission", () => {
 		),
 		{
 			kind: "permission",
-			permission: { kind: "write", path, directory: false },
+			permission: { kind: "write", path: expectedPath, directory: false },
 		},
 	);
 });
