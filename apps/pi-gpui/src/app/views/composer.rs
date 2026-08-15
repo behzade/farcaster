@@ -1,6 +1,7 @@
 use gpui::{
-    FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
+    App, CursorStyle, ElementId, FontWeight, InteractiveElement as _, IntoElement,
+    ParentElement as _, Role, SharedString, StatefulInteractiveElement as _, Styled as _,
+    WeakEntity, Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{FocusTrapElement as _, input::Input};
 
@@ -84,18 +85,17 @@ impl PiApp {
         let cancel_button_entity = entity.clone();
         let (title, body) = match dialog {
             ExtensionUiRequest::Select { title, options, .. } => {
-                let buttons = options
+                let choices = options
                     .iter()
                     .enumerate()
                     .map(|(index, option)| {
                         let value = option.clone();
                         let id = id.clone();
                         let choice_entity = entity.clone();
-                        button(
+                        dialog_choice(
                             ("dialog-option", index),
-                            option.clone(),
-                            ButtonTone::Neutral,
-                            true,
+                            option,
+                            index == 0,
                             move |window, cx| {
                                 let _ = choice_entity.update(cx, |this, cx| {
                                     if let Some(response) =
@@ -109,13 +109,29 @@ impl PiApp {
                         )
                     })
                     .collect::<Vec<_>>();
+                let (heading, prompt) = dialog_copy(title);
                 (
-                    title.clone(),
+                    heading,
                     div()
                         .flex()
                         .flex_col()
-                        .gap(THEME.space.xs)
-                        .children(buttons)
+                        .gap(THEME.space.md)
+                        .when_some(prompt, |body, prompt| {
+                            body.child(
+                                div()
+                                    .text_size(THEME.type_scale.body)
+                                    .text_color(THEME.colors.muted)
+                                    .line_height(px(22.0))
+                                    .child(prompt),
+                            )
+                        })
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(THEME.space.xs)
+                                .children(choices),
+                        )
                         .into_any_element(),
                 )
             }
@@ -125,7 +141,7 @@ impl PiApp {
                 let yes = entity.clone();
                 let no = entity.clone();
                 (
-                    title.clone(),
+                    SharedString::from(title.clone()),
                     div()
                         .flex()
                         .flex_col()
@@ -173,7 +189,7 @@ impl PiApp {
                 let submit_id = id.clone();
                 let submit = entity.clone();
                 (
-                    title.clone(),
+                    SharedString::from(title.clone()),
                     div()
                         .flex()
                         .flex_col()
@@ -211,30 +227,136 @@ impl PiApp {
                 dialog_surface("extension-dialog", title.clone())
                     .track_focus(&self.dialog_focus)
                     .key_context(super::OVERLAY_KEY_CONTEXT)
+                    .w(px(520.0))
                     .max_w_full()
-                    .p(THEME.space.md)
                     .child(
                         div()
-                            .mb(THEME.space.md)
+                            .px(THEME.space.md)
+                            .pt(THEME.space.md)
+                            .pb(THEME.space.sm)
                             .text_size(THEME.type_scale.heading)
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(title),
                     )
-                    .child(body)
-                    .child(div().mt(THEME.space.md).flex().justify_end().child(button(
-                        "dialog-cancel",
-                        "Cancel",
-                        ButtonTone::Quiet,
-                        true,
-                        move |window, cx| {
-                            let _ = cancel_button_entity
-                                .update(cx, |this, cx| this.cancel_dialog(window, cx));
-                        },
-                    )))
+                    .child(div().px(THEME.space.md).pb(THEME.space.md).child(body))
+                    .child(
+                        div()
+                            .flex()
+                            .justify_end()
+                            .px(THEME.space.md)
+                            .pb(THEME.space.md)
+                            .child(button(
+                                "dialog-cancel",
+                                "Cancel",
+                                ButtonTone::Quiet,
+                                true,
+                                move |window, cx| {
+                                    let _ = cancel_button_entity
+                                        .update(cx, |this, cx| this.cancel_dialog(window, cx));
+                                },
+                            )),
+                    )
                     .focus_trap("extension-dialog-trap", &self.dialog_focus),
             ),
         )
     }
+}
+
+fn dialog_choice(
+    id: impl Into<ElementId>,
+    label: &str,
+    primary: bool,
+    on_press: impl Fn(&mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    let (title, detail) = choice_copy(label);
+    div()
+        .id(id)
+        .role(Role::Button)
+        .aria_label(label.to_owned())
+        .tab_index(0)
+        .w_full()
+        .min_h(px(48.0))
+        .flex()
+        .items_center()
+        .gap(THEME.space.sm)
+        .px(THEME.space.sm)
+        .py(THEME.space.xs)
+        .rounded(THEME.radius)
+        .border(THEME.border)
+        .border_color(if primary {
+            THEME.colors.accent
+        } else {
+            THEME.colors.border
+        })
+        .bg(if primary {
+            THEME.colors.selection
+        } else {
+            THEME.colors.surface
+        })
+        .hover(|choice| choice.bg(THEME.colors.hover))
+        .focus(|choice| choice.border_color(THEME.colors.accent))
+        .cursor(CursorStyle::PointingHand)
+        .on_click(move |_, window, cx| on_press(window, cx))
+        .child(
+            div()
+                .min_w_0()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .gap(THEME.space.xs)
+                .child(
+                    div()
+                        .font_weight(if primary {
+                            FontWeight::SEMIBOLD
+                        } else {
+                            FontWeight::MEDIUM
+                        })
+                        .text_color(THEME.colors.text)
+                        .child(title),
+                )
+                .when_some(detail, |copy, detail| {
+                    copy.child(
+                        div()
+                            .text_size(THEME.type_scale.caption)
+                            .text_color(THEME.colors.subtle)
+                            .child(detail),
+                    )
+                }),
+        )
+}
+
+fn dialog_copy(value: &str) -> (SharedString, Option<SharedString>) {
+    let mut lines = value.lines();
+    let heading = match lines.next().unwrap_or_default().trim() {
+        "Tool requests an IO right" | "Tool requests grouped IO rights" => "File access request",
+        "" => "Action required",
+        heading => heading,
+    };
+    let prompt = lines.collect::<Vec<_>>().join("\n");
+    let prompt = prompt
+        .trim()
+        .replace(" to access write file ", " to write to ")
+        .replace(" to access read file ", " to read ");
+    (
+        heading.to_owned().into(),
+        (!prompt.is_empty()).then(|| prompt.into()),
+    )
+}
+
+fn choice_copy(value: &str) -> (SharedString, Option<SharedString>) {
+    let (title, detail) = match value {
+        "Allow once and retry" => ("Allow once", Some("Retry this command")),
+        "Always allow in this workspace and retry" => (
+            "Always allow",
+            Some("Remember for this workspace and retry"),
+        ),
+        "Allow once" => ("Allow once", None),
+        "Always allow in this workspace" => ("Always allow", Some("Remember for this workspace")),
+        "No" => ("Deny", None),
+        "No, with comment" => ("Deny with note", Some("Tell Pi what to do instead")),
+        value => (value, None),
+    };
+    (title.to_owned().into(), detail.map(Into::into))
 }
 
 fn widget_region(
@@ -264,4 +386,36 @@ fn widget_region(
             }))
             .into_any_element(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{choice_copy, dialog_copy};
+
+    #[test]
+    fn permission_dialog_copy_is_short_and_keeps_the_target() {
+        let (heading, prompt) =
+            dialog_copy("Tool requests an IO right\nAllow bash to access write file /work/file?");
+        assert_eq!(heading.as_ref(), "File access request");
+        assert_eq!(
+            prompt.as_ref().map(AsRef::as_ref),
+            Some("Allow bash to write to /work/file?")
+        );
+    }
+
+    #[test]
+    fn permission_choices_use_short_labels_with_clear_scope() {
+        let (label, detail) = choice_copy("Always allow in this workspace and retry");
+        assert_eq!(label.as_ref(), "Always allow");
+        assert_eq!(
+            detail.as_ref().map(AsRef::as_ref),
+            Some("Remember for this workspace and retry")
+        );
+        let (label, detail) = choice_copy("No, with comment");
+        assert_eq!(label.as_ref(), "Deny with note");
+        assert_eq!(
+            detail.as_ref().map(AsRef::as_ref),
+            Some("Tell Pi what to do instead")
+        );
+    }
 }

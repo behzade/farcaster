@@ -7,13 +7,15 @@ use std::{collections::HashSet, ops::Range, path::PathBuf, time::Duration};
 
 use gpui::{
     AppContext as _, Bounds, Context, Entity, FocusHandle, Focusable as _, FollowMode,
-    ListAlignment, ListState, Pixels, Point, Subscription, Task, Window, actions,
+    ListAlignment, ListState, PathPromptOptions, Pixels, Point, Subscription, Task, Window,
+    actions,
 };
 use gpui_component::input::{InputEvent, InputState};
 use gpui_fps::FpsMonitor;
 
 use crate::{
     extension_ui::{ExtensionEffect, ExtensionUiState},
+    projects,
     protocol::{ExtensionUiRequest, Model, PromptMode},
     runtime::{RuntimeCommand, RuntimeEvent, RuntimeHandle, RuntimeSnapshot},
     sessions::SessionSummary,
@@ -41,6 +43,11 @@ pub(crate) struct PiApp {
     runtime: RuntimeHandle,
     pub(crate) snapshot: RuntimeSnapshot,
     sessions: Vec<SessionSummary>,
+    projects: Vec<PathBuf>,
+    drafts: Vec<projects::DraftSession>,
+    selected_draft: Option<String>,
+    live_draft: Option<String>,
+    live_draft_submitted: bool,
     sessions_error: Option<String>,
     session_generation: u64,
     runtime_generation: u64,
@@ -63,6 +70,7 @@ pub(crate) struct PiApp {
     pub(crate) transcript_width: Pixels,
     fps_monitor: Option<Entity<FpsMonitor>>,
     extension: ExtensionUiState,
+    parked_extension: Option<ExtensionUiState>,
     pending_dialog_setup: bool,
     pending_title: Option<(u64, String)>,
     pending_editor_text: Option<(u64, String)>,
@@ -80,6 +88,27 @@ pub(crate) struct PiApp {
 impl PiApp {
     pub(crate) fn new(project: PathBuf, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let runtime = RuntimeHandle::spawn(project.clone());
+        let (mut registry, mut project_registry_error) = match projects::load() {
+            Ok(registry) => (registry, None),
+            Err(error) => (projects::Registry::default(), Some(error)),
+        };
+        projects::add_unique(&mut registry.projects, project.clone());
+        let selected_draft = registry
+            .drafts
+            .iter()
+            .find(|draft| draft.project == project)
+            .map(|draft| draft.id.clone())
+            .unwrap_or_else(|| {
+                let draft = projects::DraftSession::new(project.clone());
+                let id = draft.id.clone();
+                registry.drafts.insert(0, draft);
+                id
+            });
+        if project_registry_error.is_none()
+            && let Err(error) = projects::save(&registry)
+        {
+            project_registry_error = Some(error);
+        }
         let composer = cx.new(|cx| {
             InputState::new(window, cx)
                 .multi_line(true)
@@ -161,7 +190,12 @@ impl PiApp {
                 ..RuntimeSnapshot::default()
             },
             sessions: Vec::new(),
-            sessions_error: None,
+            projects: registry.projects,
+            drafts: registry.drafts,
+            selected_draft: Some(selected_draft.clone()),
+            live_draft: Some(selected_draft),
+            live_draft_submitted: false,
+            sessions_error: project_registry_error,
             session_generation: 0,
             runtime_generation: 0,
             composer,
@@ -183,6 +217,7 @@ impl PiApp {
             transcript_width: crate::theme::THEME.layout.transcript_max,
             fps_monitor,
             extension: ExtensionUiState::default(),
+            parked_extension: None,
             pending_dialog_setup: false,
             pending_title: None,
             pending_editor_text: None,
@@ -263,9 +298,19 @@ impl PiApp {
                             .transcript_unseen
                             .saturating_add(count - self.last_transcript_count);
                     }
+                    if snapshot.history_preview && !self.snapshot.history_preview {
+                        park_extension_surface(&mut self.extension, &mut self.parked_extension);
+                        self.pending_dialog_setup = false;
+                        self.dialog_return_focus = None;
+                    } else if !snapshot.history_preview && self.snapshot.history_preview {
+                        restore_extension_surface(&mut self.extension, &mut self.parked_extension);
+                        self.pending_dialog_setup = self.extension.dialog.is_some();
+                        self.dialog_return_focus = None;
+                    }
                     self.sync_transcript_list(&snapshot.conversation.items);
                     self.last_transcript_count = count;
                     self.snapshot = *snapshot;
+                    self.reconcile_live_draft();
                 }
                 RuntimeEvent::SessionReset {
                     generation,
@@ -283,8 +328,12 @@ impl PiApp {
                     sessions,
                 } if generation >= self.session_generation => {
                     self.session_generation = generation;
+                    for session in &sessions {
+                        projects::add_unique(&mut self.projects, session.project.clone());
+                    }
                     self.sessions = sessions;
                     self.sessions_error = None;
+                    self.reconcile_live_draft();
                 }
                 RuntimeEvent::SessionsFailed {
                     generation,
@@ -296,29 +345,20 @@ impl PiApp {
                 RuntimeEvent::ExtensionUi {
                     generation,
                     request,
-                } if generation == self.runtime_generation => match self.extension.apply(request) {
-                    ExtensionEffect::DialogOpened => self.pending_dialog_setup = true,
-                    ExtensionEffect::SetTitle(title) => {
-                        self.pending_title = Some((generation, title))
+                } if generation == self.runtime_generation => {
+                    if let Some(extension) = self.parked_extension.as_mut() {
+                        let _ = extension.apply(request);
+                    } else {
+                        self.apply_extension_request(request, generation);
                     }
-                    ExtensionEffect::SetEditorText(text) => {
-                        self.pending_editor_text = Some((generation, text))
-                    }
-                    ExtensionEffect::PersistError(message) => {
-                        self.extension_errors.push(message);
-                        if self.extension_errors.len() > MAX_EXTENSION_ERRORS {
-                            self.extension_errors.remove(0);
-                        }
-                    }
-                    ExtensionEffect::Diagnostic(message) => {
-                        self.snapshot.conversation.diagnostics.push(message)
-                    }
-                    ExtensionEffect::None => {}
-                },
+                }
                 RuntimeEvent::PromptResult {
                     generation,
                     accepted,
                 } if generation == self.runtime_generation => {
+                    if accepted && self.live_draft.is_some() {
+                        self.live_draft_submitted = true;
+                    }
                     self.pending_submission_result = Some((generation, accepted));
                 }
                 RuntimeEvent::Stopped => self.snapshot.status = "Stopped".into(),
@@ -339,6 +379,7 @@ impl PiApp {
     fn reset_session_ui(&mut self, generation: u64, preserve_submission: bool) {
         self.runtime_generation = generation;
         self.extension.reset();
+        self.parked_extension = None;
         self.pending_dialog_setup = false;
         self.pending_title = Some((generation, "Pi".into()));
         self.pending_editor_text = None;
@@ -362,6 +403,26 @@ impl PiApp {
         }
     }
 
+    fn apply_extension_request(&mut self, request: ExtensionUiRequest, generation: u64) {
+        match self.extension.apply(request) {
+            ExtensionEffect::DialogOpened => self.pending_dialog_setup = true,
+            ExtensionEffect::SetTitle(title) => self.pending_title = Some((generation, title)),
+            ExtensionEffect::SetEditorText(text) => {
+                self.pending_editor_text = Some((generation, text))
+            }
+            ExtensionEffect::PersistError(message) => {
+                self.extension_errors.push(message);
+                if self.extension_errors.len() > MAX_EXTENSION_ERRORS {
+                    self.extension_errors.remove(0);
+                }
+            }
+            ExtensionEffect::Diagnostic(message) => {
+                self.snapshot.conversation.diagnostics.push(message)
+            }
+            ExtensionEffect::None => {}
+        }
+    }
+
     fn reset_transcript_ui(&mut self) {
         self.snapshot.conversation.items.clear();
         self.transcript_list.reset(0);
@@ -375,14 +436,137 @@ impl PiApp {
     }
 
     fn resume(&mut self, path: PathBuf, project: PathBuf, cx: &mut Context<Self>) {
+        self.selected_draft = None;
         self.send(RuntimeCommand::Resume { path, project });
         self.sessions_sheet = false;
         cx.notify();
     }
-    fn new_session(&mut self, cx: &mut Context<Self>) {
-        self.send(RuntimeCommand::NewSession);
+    fn new_session(&mut self, project: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        let draft = projects::DraftSession::new(project.clone());
+        self.selected_draft = Some(draft.id.clone());
+        self.live_draft = Some(draft.id.clone());
+        self.live_draft_submitted = false;
+        self.drafts.insert(0, draft);
+        self.save_project_registry();
+        self.send(RuntimeCommand::NewSession {
+            project: project.clone(),
+        });
+        self.project = project;
+        self.search
+            .update(cx, |input, cx| input.set_value("", window, cx));
         self.sessions_sheet = false;
         cx.notify();
+    }
+
+    fn resume_draft(&mut self, id: String, project: PathBuf, cx: &mut Context<Self>) {
+        if self.selected_draft.as_deref() == Some(id.as_str()) && !self.snapshot.history_preview {
+            return;
+        }
+        let is_live = self.live_draft.as_deref() == Some(id.as_str());
+        self.selected_draft = Some(id.clone());
+        if !is_live {
+            self.live_draft = Some(id);
+            self.live_draft_submitted = false;
+        }
+        self.project = project.clone();
+        self.send(RuntimeCommand::ResumeDraft { project });
+        self.sessions_sheet = false;
+        cx.notify();
+    }
+
+    fn choose_project_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let selected = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Add project".into()),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(mut paths))) = selected.await else {
+                return;
+            };
+            let Some(project) = paths.pop() else {
+                return;
+            };
+            let _ = this.update(cx, |this, cx| this.add_project(project, cx));
+        })
+        .detach();
+    }
+
+    fn add_project(&mut self, project: PathBuf, cx: &mut Context<Self>) {
+        let project = match project.canonicalize() {
+            Ok(project) if project.is_dir() => project,
+            Ok(project) => {
+                self.sessions_error = Some(format!(
+                    "Project path is not a folder: {}",
+                    project.display()
+                ));
+                cx.notify();
+                return;
+            }
+            Err(error) => {
+                self.sessions_error = Some(format!("Open {}: {error}", project.display()));
+                cx.notify();
+                return;
+            }
+        };
+        if projects::add_unique(&mut self.projects, project) {
+            self.save_project_registry();
+        }
+        cx.notify();
+    }
+
+    fn available_projects(&self) -> Vec<PathBuf> {
+        let mut available = self.projects.clone();
+        for session in &self.sessions {
+            projects::add_unique(&mut available, session.project.clone());
+        }
+        let current = if self.snapshot.project.as_os_str().is_empty() {
+            &self.project
+        } else {
+            &self.snapshot.project
+        };
+        if let Some(index) = available.iter().position(|project| project == current) {
+            available.swap(0, index);
+        }
+        available
+    }
+
+    fn save_project_registry(&mut self) {
+        if let Err(error) = projects::save(&projects::Registry {
+            projects: self.projects.clone(),
+            drafts: self.drafts.clone(),
+        }) {
+            self.sessions_error = Some(error);
+        }
+    }
+
+    fn remove_live_draft(&mut self) {
+        let Some(id) = self.live_draft.take() else {
+            return;
+        };
+        self.drafts.retain(|draft| draft.id != id);
+        if self.selected_draft.as_deref() == Some(id.as_str()) {
+            self.selected_draft = None;
+        }
+        self.live_draft_submitted = false;
+        self.save_project_registry();
+    }
+
+    fn reconcile_live_draft(&mut self) {
+        if !self.live_draft_submitted {
+            return;
+        }
+        let Some(path) = self.snapshot.live_session.as_deref() else {
+            return;
+        };
+        if self
+            .sessions
+            .iter()
+            .any(|session| session.path.as_path() == path)
+        {
+            self.remove_live_draft();
+        }
     }
 
     fn cycle_model(&mut self, cx: &mut Context<Self>) {
@@ -599,6 +783,21 @@ fn transcript_splice(
     (prefix != old_end || new_count != 0).then_some((prefix..old_end, new_count))
 }
 
+fn park_extension_surface(visible: &mut ExtensionUiState, parked: &mut Option<ExtensionUiState>) {
+    if parked.is_none() {
+        *parked = Some(std::mem::take(visible));
+    }
+}
+
+fn restore_extension_surface(
+    visible: &mut ExtensionUiState,
+    parked: &mut Option<ExtensionUiState>,
+) {
+    if let Some(session) = parked.take() {
+        *visible = session;
+    }
+}
+
 fn submission_resolution(
     pending: Option<&PendingSubmission>,
     generation: u64,
@@ -725,5 +924,54 @@ mod tests {
         let mut appended = current.clone();
         appended.push(item("four"));
         assert_eq!(transcript_splice(&current, &appended), Some((3..3, 1)));
+    }
+
+    #[test]
+    fn extension_dialog_is_parked_and_restored_with_its_session() {
+        let mut visible = ExtensionUiState::default();
+        visible.apply(ExtensionUiRequest::Confirm {
+            id: "approval".into(),
+            title: "Permission".into(),
+            message: "Allow it?".into(),
+            timeout: None,
+        });
+        let mut parked = None;
+
+        park_extension_surface(&mut visible, &mut parked);
+        assert!(visible.dialog.is_none());
+        assert_eq!(
+            parked
+                .as_ref()
+                .and_then(|session| session.dialog.as_ref())
+                .and_then(ExtensionUiRequest::dialog_id),
+            Some("approval")
+        );
+        parked
+            .as_mut()
+            .expect("live session surface should be parked")
+            .apply(ExtensionUiRequest::Input {
+                id: "follow-up".into(),
+                title: "Need a note".into(),
+                placeholder: None,
+                timeout: None,
+            });
+
+        restore_extension_surface(&mut visible, &mut parked);
+        assert!(parked.is_none());
+        assert_eq!(
+            visible
+                .dialog
+                .as_ref()
+                .and_then(ExtensionUiRequest::dialog_id),
+            Some("approval")
+        );
+        assert!(visible.respond_confirm("approval", true).is_some());
+        assert_eq!(
+            visible
+                .dialog
+                .as_ref()
+                .and_then(ExtensionUiRequest::dialog_id),
+            Some("follow-up")
+        );
     }
 }

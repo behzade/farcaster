@@ -15,7 +15,8 @@ use crate::{
 pub(crate) enum RuntimeCommand {
     Prompt { mode: PromptMode, message: String },
     Abort,
-    NewSession,
+    NewSession { project: PathBuf },
+    ResumeDraft { project: PathBuf },
     Resume { path: PathBuf, project: PathBuf },
     SetModel { provider: String, model_id: String },
     SetThinking(String),
@@ -266,13 +267,12 @@ impl RuntimeOwner {
         match runtime_command {
             RuntimeCommand::Prompt { mode, message } => self.send_prompt(mode, message),
             RuntimeCommand::Abort => self.send(command("abort")),
-            RuntimeCommand::NewSession => {
-                if self.snapshot.history_preview {
-                    self.start_process(None);
-                } else {
-                    self.send(command("new_session"));
-                }
+            RuntimeCommand::NewSession { project } => {
+                self.project = project;
+                self.deferred_prompt = None;
+                self.start_process(None);
             }
+            RuntimeCommand::ResumeDraft { project } => self.resume_draft(project),
             RuntimeCommand::Resume { path, project } => self.preview_history(path, project),
             RuntimeCommand::SetModel { provider, model_id } => {
                 self.send(json!({"type":"set_model","provider":provider,"modelId":model_id}))
@@ -396,6 +396,7 @@ impl RuntimeOwner {
                     self.publish();
                 }
                 if settled {
+                    self.send(command("get_state"));
                     self.send(command("get_session_stats"));
                     self.load_sessions(String::new());
                 }
@@ -453,6 +454,26 @@ impl RuntimeOwner {
                 });
             })
             .ok();
+    }
+
+    fn resume_draft(&mut self, project: PathBuf) {
+        let can_restore = self.active_session.is_none()
+            && self
+                .parked_snapshot
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.project == project);
+        if can_restore && let Some(snapshot) = self.parked_snapshot.take() {
+            self.snapshot = snapshot;
+            self.project = project;
+            let _ = self.event_tx.send(RuntimeEvent::HistoryReset {
+                generation: self.process_generation,
+            });
+            self.publish();
+            return;
+        }
+        self.project = project;
+        self.deferred_prompt = None;
+        self.start_process(None);
     }
 
     fn apply_history(&mut self, result: HistoryResult) {
@@ -533,6 +554,7 @@ impl RuntimeOwner {
         match response.command.as_str() {
             "get_state" => match serde_json::from_value::<SessionState>(response.data) {
                 Ok(state) => {
+                    let previous_session = self.active_session.clone();
                     let selected_session = state
                         .session_file
                         .as_ref()
@@ -545,6 +567,9 @@ impl RuntimeOwner {
                     snapshot.session = Some(state);
                     snapshot.status = "Ready".into();
                     self.startup_state_loaded = true;
+                    if self.active_session.is_some() && self.active_session != previous_session {
+                        self.load_sessions(String::new());
+                    }
                 }
                 Err(error) => {
                     self.fail(format!("decode get_state: {error}"));
@@ -625,7 +650,8 @@ impl RuntimeOwner {
                 self.load_sessions(String::new());
             }
             "prompt" | "steer" | "follow_up" => {
-                self.active_snapshot_mut().status = "Accepted".into()
+                self.active_snapshot_mut().status = "Accepted".into();
+                self.send(command("get_state"));
             }
             "abort" => self.active_snapshot_mut().status = "Stopping".into(),
             "compact" | "set_auto_compaction" | "set_auto_retry" | "abort_retry" => {
@@ -793,6 +819,48 @@ mod tests {
 
     use super::*;
 
+    fn owner_without_process(
+        project: PathBuf,
+    ) -> (
+        RuntimeOwner,
+        mpsc::Receiver<RuntimeEvent>,
+        mpsc::Receiver<DiscoveryResult>,
+    ) {
+        let (event_tx, event_rx) = mpsc::channel();
+        let (discovery_tx, discovery_rx) = mpsc::channel();
+        let (history_tx, _history_rx) = mpsc::channel();
+        (
+            RuntimeOwner {
+                project: project.clone(),
+                process_command: ProcessCommand {
+                    program: PathBuf::from("/definitely/missing/pi-gpui-test-command"),
+                    prefix_args: Vec::new(),
+                },
+                process: None,
+                snapshot: RuntimeSnapshot {
+                    connected: true,
+                    status: "Ready".into(),
+                    project,
+                    ..RuntimeSnapshot::default()
+                },
+                session_generation: 0,
+                process_generation: 1,
+                pending_prompt_id: None,
+                event_tx,
+                discovery_tx,
+                history_tx,
+                history_generation: 0,
+                active_session: None,
+                parked_snapshot: None,
+                deferred_prompt: None,
+                startup_state_loaded: false,
+                startup_history_loaded: false,
+            },
+            event_rx,
+            discovery_rx,
+        )
+    }
+
     #[test]
     fn agent_end_does_not_report_ready_until_settled() {
         let mut conversation = ConversationState::default();
@@ -809,6 +877,80 @@ mod tests {
         assert!(can_send_prompt(PromptMode::Steer, true));
         assert!(can_send_prompt(PromptMode::FollowUp, true));
         assert!(can_send_prompt(PromptMode::Normal, false));
+    }
+
+    #[test]
+    fn new_session_starts_pi_in_the_selected_project() -> Result<(), Box<dyn std::error::Error>> {
+        let old_project = tempdir()?;
+        let new_project = tempdir()?;
+        let (mut owner, _events, _discovery) =
+            owner_without_process(old_project.path().to_path_buf());
+
+        owner.apply_command(RuntimeCommand::NewSession {
+            project: new_project.path().to_path_buf(),
+        });
+
+        assert_eq!(owner.project, new_project.path());
+        assert_eq!(owner.snapshot.project, new_project.path());
+        assert_eq!(owner.active_session, None);
+        assert_eq!(owner.process_generation, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn first_session_path_triggers_a_sidebar_refresh() {
+        let project = std::env::temp_dir();
+        let session = project.join("new-session.jsonl");
+        let (mut owner, _events, _discovery) = owner_without_process(project);
+
+        owner.apply_response(crate::protocol::RpcResponse {
+            id: Some("state".into()),
+            command: "get_state".into(),
+            success: true,
+            data: json!({
+                "model": null,
+                "thinkingLevel": "off",
+                "isStreaming": true,
+                "isCompacting": false,
+                "sessionFile": session,
+                "sessionId": "new-session",
+                "sessionName": null,
+                "autoCompactionEnabled": true,
+                "messageCount": 1,
+                "pendingMessageCount": 0
+            }),
+            error: None,
+        });
+
+        assert_eq!(owner.active_session, Some(session));
+        assert_eq!(owner.session_generation, 1);
+    }
+
+    #[test]
+    fn draft_can_restore_its_parked_blank_run_without_restarting_pi() {
+        let project = std::env::temp_dir().join("draft-project");
+        let (mut owner, _events, _discovery) = owner_without_process(project.clone());
+        owner.snapshot = RuntimeSnapshot {
+            history_preview: true,
+            project: PathBuf::from("/other"),
+            selected_session: Some(PathBuf::from("/other/session.jsonl")),
+            ..RuntimeSnapshot::default()
+        };
+        owner.parked_snapshot = Some(RuntimeSnapshot {
+            connected: true,
+            status: "Idle".into(),
+            project: project.clone(),
+            ..RuntimeSnapshot::default()
+        });
+        let generation = owner.process_generation;
+
+        owner.resume_draft(project.clone());
+
+        assert_eq!(owner.project, project);
+        assert_eq!(owner.snapshot.project, owner.project);
+        assert!(!owner.snapshot.history_preview);
+        assert!(owner.parked_snapshot.is_none());
+        assert_eq!(owner.process_generation, generation);
     }
 
     #[test]

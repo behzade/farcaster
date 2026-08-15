@@ -5,17 +5,22 @@ use std::{
 };
 
 use gpui::{
-    AnyElement, CursorStyle, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-    Role, StatefulInteractiveElement as _, Styled as _, WeakEntity, accesskit, div,
-    prelude::FluentBuilder as _, px, uniform_list,
+    Anchor, AnyElement, CursorStyle, FontWeight, InteractiveElement as _, IntoElement,
+    ParentElement as _, Role, StatefulInteractiveElement as _, Styled as _, WeakEntity, accesskit,
+    div, prelude::FluentBuilder as _, px, uniform_list,
 };
-use gpui_component::{Icon, Sizable as _, Size, input::Input};
+use gpui_component::{
+    Icon, Sizable as _, Size,
+    input::Input,
+    menu::{DropdownMenu as _, PopupMenuItem},
+};
 
 use super::super::PiApp;
 use crate::{
     assets::AppIcon,
     layout::LayoutMode,
     primitives::{ButtonTone, FeedbackTone, button, feedback, icon_button, panel, section_heading},
+    projects::DraftSession,
     runtime::RuntimeCommand,
     sessions::{
         SessionSummary, UsageSummary, descendant_sessions, root_session_for_path, root_sessions,
@@ -198,20 +203,52 @@ impl PiApp {
                 .into_any_element();
         }
         let new_entity = entity.clone();
+        let add_project_entity = entity.clone();
+        let available_projects = self.available_projects();
+        let available_project_count = available_projects.len();
+        let drafts = self.drafts.clone();
+        let selected_draft = self.selected_draft.clone();
+        let live_draft = self.live_draft.clone();
+        let live_draft_submitted = self.live_draft_submitted;
         let selected_root =
             root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
                 .map(|session| session.id.clone());
         let live_root =
             root_session_for_path(&self.sessions, self.snapshot.live_session.as_deref())
                 .map(|session| session.id.clone());
-        let (rows, project_count) = session_rail_items(&self.sessions);
-        let row_count = rows.len();
+        let (rows, _) = session_rail_items(
+            &self.sessions,
+            drafts.iter().map(|draft| draft.project.as_path()),
+        );
+        let draft_count = drafts.len();
+        let row_count = rows.len() + draft_count;
         let row_entity = entity.clone();
         let live_status = self.snapshot.live_status.clone();
         let session_list = uniform_list("session-list", row_count, move |range, _, _| {
             range
-                .filter_map(|index| rows.get(index))
-                .map(|item| {
+                .filter_map(|index| {
+                    if let Some(draft) = drafts.get(index) {
+                        let selected = selected_draft.as_deref() == Some(draft.id.as_str());
+                        let status = if live_draft.as_deref() == Some(draft.id.as_str())
+                            && live_draft_submitted
+                        {
+                            if live_status.is_empty() {
+                                "Working"
+                            } else {
+                                live_status.as_str()
+                            }
+                        } else {
+                            "Draft"
+                        };
+                        return Some(draft_session_row(
+                            draft,
+                            selected,
+                            status,
+                            row_entity.clone(),
+                        ));
+                    }
+                    let stored_index = index.saturating_sub(draft_count);
+                    let item = rows.get(stored_index)?;
                     let selected = selected_root.as_deref() == Some(item.session.id.as_str());
                     let badge = session_badge(
                         item.kind,
@@ -219,7 +256,7 @@ impl PiApp {
                         live_root.as_deref(),
                         &live_status,
                     );
-                    session_row(item, selected, badge, row_entity.clone())
+                    Some(session_row(item, selected, badge, row_entity.clone()))
                 })
                 .collect::<Vec<_>>()
         })
@@ -243,16 +280,35 @@ impl PiApp {
                             .text_color(THEME.colors.text)
                             .child("Pi"),
                     )
-                    .child(icon_button(
-                        "new-session",
-                        AppIcon::Plus,
-                        "New session",
-                        ButtonTone::Quiet,
-                        self.snapshot.connected,
-                        move |_, cx| {
-                            let _ = new_entity.update(cx, |this, cx| this.new_session(cx));
-                        },
-                    )),
+                    .child(
+                        icon_button(
+                            "new-session",
+                            AppIcon::Plus,
+                            "New session",
+                            ButtonTone::Quiet,
+                            !available_projects.is_empty(),
+                            |_, _| {},
+                        )
+                        .dropdown_menu_with_anchor(
+                            Anchor::TopRight,
+                            move |menu, _, _| {
+                                let mut menu = menu.min_w(px(220.0)).label("New session in");
+                                for project in &available_projects {
+                                    let label = project_label(project);
+                                    let target = project.clone();
+                                    let entity = new_entity.clone();
+                                    menu = menu.item(PopupMenuItem::new(label).on_click(
+                                        move |_, window, cx| {
+                                            let _ = entity.update(cx, |this, cx| {
+                                                this.new_session(target.clone(), window, cx);
+                                            });
+                                        },
+                                    ));
+                                }
+                                menu
+                            },
+                        ),
+                    ),
             )
             .child(
                 div()
@@ -295,8 +351,19 @@ impl PiApp {
                         div()
                             .text_size(THEME.type_scale.caption)
                             .text_color(THEME.colors.subtle)
-                            .child(project_count.to_string()),
-                    ),
+                            .child(available_project_count.to_string()),
+                    )
+                    .child(icon_button(
+                        "add-project",
+                        AppIcon::FolderPlus,
+                        "Add project",
+                        ButtonTone::Quiet,
+                        true,
+                        move |window, cx| {
+                            let _ = add_project_entity
+                                .update(cx, |this, cx| this.choose_project_folder(window, cx));
+                        },
+                    )),
             )
             .when_some(self.sessions_error.clone(), |rail, error| {
                 rail.child(feedback("sessions-error", error, FeedbackTone::Error))
@@ -556,8 +623,14 @@ struct SessionRailItem {
     starts_settled: bool,
 }
 
-fn session_rail_items(sessions: &[SessionSummary]) -> (Vec<SessionRailItem>, usize) {
+fn session_rail_items<'a>(
+    sessions: &[SessionSummary],
+    draft_projects: impl IntoIterator<Item = &'a Path>,
+) -> (Vec<SessionRailItem>, usize) {
     let mut projects = HashSet::new();
+    for project in draft_projects {
+        projects.insert(project.to_path_buf());
+    }
     let mut current = Vec::new();
     let mut settled = Vec::new();
     for session in root_sessions(sessions) {
@@ -578,9 +651,94 @@ fn session_rail_items(sessions: &[SessionSummary]) -> (Vec<SessionRailItem>, usi
     if let Some(first) = settled.first_mut() {
         first.starts_settled = true;
     }
-    let project_count = current.len();
+    let project_count = projects.len();
     current.extend(settled);
     (current, project_count)
+}
+
+fn draft_session_row(
+    draft: &DraftSession,
+    selected: bool,
+    status: &str,
+    entity: WeakEntity<PiApp>,
+) -> AnyElement {
+    let id = draft.id.clone();
+    let project = draft.project.clone();
+    div()
+        .h(THEME.layout.session_row_height)
+        .w_full()
+        .px(THEME.space.sm)
+        .child(
+            div()
+                .id(format!("session-{id}"))
+                .role(Role::Button)
+                .aria_label(format!("Open draft session in {}", project.display()))
+                .aria_selected(selected)
+                .tab_index(0)
+                .size_full()
+                .h(THEME.layout.session_row_height)
+                .flex()
+                .flex_col()
+                .justify_center()
+                .gap(THEME.space.xs)
+                .px(THEME.space.sm)
+                .rounded(THEME.radius)
+                .bg(if selected {
+                    THEME.colors.surface
+                } else {
+                    THEME.colors.panel
+                })
+                .hover(|row| row.bg(THEME.colors.hover))
+                .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
+                .cursor(CursorStyle::PointingHand)
+                .on_click(move |_, _, cx| {
+                    let _ = entity.update(cx, |this, cx| {
+                        this.resume_draft(id.clone(), project.clone(), cx);
+                    });
+                })
+                .child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .items_center()
+                        .gap(THEME.space.xs)
+                        .text_color(THEME.colors.muted)
+                        .child(Icon::new(AppIcon::Folder).with_size(Size::Small))
+                        .child(
+                            div()
+                                .min_w_0()
+                                .flex_1()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .text_size(THEME.type_scale.caption)
+                                .child(project_label(&draft.project)),
+                        )
+                        .child(
+                            div()
+                                .flex_none()
+                                .text_size(THEME.type_scale.caption)
+                                .text_color(if status == "Draft" {
+                                    THEME.colors.subtle
+                                } else {
+                                    THEME.colors.accent
+                                })
+                                .child(status.to_owned()),
+                        ),
+                )
+                .child(
+                    div()
+                        .w_full()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_size(THEME.type_scale.body)
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(THEME.colors.text)
+                        .child("New session"),
+                ),
+        )
+        .into_any_element()
 }
 
 fn session_badge(

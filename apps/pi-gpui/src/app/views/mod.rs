@@ -71,7 +71,9 @@ impl Render for PiApp {
         }
         let mode = layout_mode(window.viewport_size().width);
         let entity = cx.entity().downgrade();
+        let dialog = self.render_dialog(entity.clone());
         let main = div()
+            .relative()
             .flex_1()
             .min_w_0()
             .h_full()
@@ -85,7 +87,8 @@ impl Render for PiApp {
                 entity.clone(),
                 cx,
             )))
-            .child(self.render_composer(entity.clone()));
+            .child(self.render_composer(entity.clone()))
+            .children(dialog);
         div()
             .relative()
             .size_full()
@@ -195,6 +198,5 @@ impl Render for PiApp {
                         )),
                 )
             })
-            .children(self.render_dialog(entity))
     }
 }

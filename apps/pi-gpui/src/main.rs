@@ -6,6 +6,7 @@ mod framing;
 mod launch;
 mod layout;
 mod primitives;
+mod projects;
 mod protocol;
 mod rpc_process;
 mod runtime;

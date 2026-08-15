@@ -217,6 +217,10 @@ Keep dialog focus inside the surface and restore it to the prior control on
 close. A timeout is owned by Pi; the client need not run a second timer, but it
 must safely ignore a late response after Pi has resolved it.
 
+Keep approval dialogs inside the chat pane so the session rail remains usable.
+The dialog belongs to the live session: park it while history is visible and
+restore it unchanged when the user returns to that session.
+
 RPC mode reports `ctx.hasUI = true`. TUI-only custom component methods are not
 supported by RPC and need no GUI emulation.
 
@@ -254,6 +258,20 @@ in a parked snapshot, never publish them into the visible history, and restore
 that snapshot when the user returns to the live session.
 
 Create and show the FPS monitor only when the process has `DEBUG=true`.
+
+## Native project and draft state
+
+The new-session button lists known projects. “Add project” owns the native
+folder picker; starting a session never opens a picker. Known projects come
+from session headers, the launch path, and the small GUI registry at
+`${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/gui-state.json`.
+
+An unsubmitted new session is a GUI draft. Keep it in the left rail with a
+`Draft` badge, including while another session's history is visible and across
+app restarts. Once Pi accepts its first prompt, keep the row until discovery
+finds Pi's real session file, then replace the draft through the normal session
+list. Ask `get_state` after prompt acceptance and settlement so the runtime
+learns that file path and refreshes discovery.
 
 ## Recommended architecture and seam contracts
 

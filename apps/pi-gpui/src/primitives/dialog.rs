@@ -1,7 +1,7 @@
 use crate::theme::THEME;
 use gpui::{
     App, Div, ElementId, InteractiveElement as _, Role, SharedString, Stateful,
-    StatefulInteractiveElement as _, Styled as _, Window, div,
+    StatefulInteractiveElement as _, Styled as _, Window, div, px,
 };
 
 pub(crate) fn dialog_backdrop(
@@ -34,7 +34,7 @@ pub(crate) fn dialog_surface(
         .max_w_full()
         .max_h(THEME.layout.dialog_max_height)
         .overflow_y_scroll()
-        .rounded(THEME.radius)
+        .rounded(px(12.0))
         .border(THEME.border)
         .border_color(THEME.colors.border)
         .bg(THEME.colors.panel)
