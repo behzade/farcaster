@@ -1,3 +1,5 @@
+#[cfg(target_os = "macos")]
+pub mod conceal;
 pub mod denial_collector;
 pub mod executor;
 pub mod framing;

@@ -11,8 +11,10 @@ policy, and owns command cleanup.
 
 ## Backends
 
-- macOS uses Seatbelt and returns best-effort structured denial hints. Cleanup
-  combines a process group with a bounded descendant tracker.
+- macOS uses Seatbelt and returns best-effort structured denial hints. A
+  broker-owned helper reports protected read probes as missing to compatible
+  tools while Seatbelt keeps the deny in force. Cleanup combines a process
+  group with a bounded descendant tracker.
 - Linux uses a fixed Bubblewrap binary, a read-only host root, user and PID
   namespaces, a private `/proc`, `NoNewPrivs`, and a private network namespace.
   PID namespaces provide the command lifetime boundary.
@@ -53,7 +55,8 @@ cargo test --manifest-path sandbox-broker/Cargo.toml --test linux_release -- --i
 ```
 
 The extension also has a real-broker gate for approval retry, exact nested
-paths, the host allowlist proxy, bypass denial, and background jobs:
+paths, Bun optional-file handling, the macOS Seatbelt backstop, the host
+allowlist proxy, bypass denial, and background jobs:
 
 ```sh
 cargo build --manifest-path sandbox-broker/Cargo.toml

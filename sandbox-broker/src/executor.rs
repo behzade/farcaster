@@ -282,22 +282,25 @@ fn run_command(
 ) {
     let command = launch_command(request);
     #[cfg(target_os = "macos")]
-    let prepared = build_args_with_network(
-        &command,
-        &request.cwd,
-        &request.rights,
-        &request.denies,
-        &request.unix_socket_roots,
-        &request.network,
-    )
-    .map(|args| {
-        (
-            SANDBOX_EXEC,
-            args,
-            "seatbelt-broker",
-            PreparedResources { _files: Vec::new() },
-        )
-    });
+    let prepared = crate::conceal::wrap_command(&request.program, &request.args, &request.denies)
+        .and_then(|concealed| {
+            build_args_with_network(
+                concealed.as_ref().unwrap_or(&command),
+                &request.cwd,
+                &request.rights,
+                &request.denies,
+                &request.unix_socket_roots,
+                &request.network,
+            )
+        })
+        .map(|args| {
+            (
+                SANDBOX_EXEC,
+                args,
+                "seatbelt-broker",
+                PreparedResources { _files: Vec::new() },
+            )
+        });
     #[cfg(target_os = "linux")]
     let prepared = crate::linux::prepare(request, &command).map(|launch| {
         (
@@ -396,7 +399,7 @@ fn run_command(
         }
         None => None,
     };
-    // The fixed shell wrapper is still blocked on stdin here. Register the
+    // The fixed launch wrapper is still blocked on stdin here. Register the
     // root with the best-effort descendant tracker before user code can fork.
     let tracker_result = match observer {
         Some(observer) => PidTracker::start_observed(pid, observer),
@@ -472,7 +475,7 @@ fn run_command(
         clear_process(control);
         return;
     }
-    // The fixed shell wrapper waits on stdin. Release it only after the PID and
+    // The fixed launch wrapper waits on stdin. Release it only after the PID and
     // command ID are registered, then close the pipe so user code gets EOF.
     if let Some(mut barrier) = child.stdin.take() {
         let _ = barrier.write_all(b"go\n");

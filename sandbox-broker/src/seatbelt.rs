@@ -83,6 +83,10 @@ impl HardPolicy {
         ] {
             push_path_denies(&mut denies, access, &path, scope);
         }
+        #[cfg(target_os = "macos")]
+        for helper in crate::conceal::helper_paths()? {
+            push_path_denies(&mut denies, DeniedAccess::Write, &helper, DenyScope::File);
+        }
         for pattern in ["/**/*.env", "/**/.env.*", "/**/*.key"] {
             denies.push(glob_deny(DeniedAccess::ReadWrite, pattern));
         }

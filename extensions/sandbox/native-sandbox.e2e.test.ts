@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import {
+	accessSync,
+	constants,
 	existsSync,
 	mkdtempSync,
 	mkdirSync,
@@ -9,7 +11,7 @@ import {
 } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, before, test } from "node:test";
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
@@ -26,6 +28,7 @@ const defaultBrokerPath = fileURLToPath(
 	new URL("../../sandbox-broker/target/debug/pi-sandbox-broker", import.meta.url),
 );
 const brokerPath = process.env.PI_SANDBOX_BROKER_E2E ?? defaultBrokerPath;
+const bunPath = findOnPath("bun");
 if (!existsSync(brokerPath)) {
 	throw new Error(
 		"build the broker first: cargo build --manifest-path sandbox-broker/Cargo.toml",
@@ -115,6 +118,59 @@ test("deep nested paths keep every slash and space through approval", { skip }, 
 	assert.equal(readFileSync(target, "utf8"), "nested");
 	assert.deepEqual(flattenPaths(approvals), [target]);
 });
+
+test(
+	"Bun treats a protected optional env file as missing",
+	{ skip: bunPath === undefined ? "set PI_BUN_E2E or put bun on PATH" : skip },
+	async () => {
+		assert.ok(bunPath);
+		writeFileSync(
+			join(workspace, "package.json"),
+			readFileSync(new URL("../../apps/pi-terminal/package.json", import.meta.url)),
+		);
+		writeFileSync(
+			join(workspace, "bun.lock"),
+			readFileSync(new URL("../../apps/pi-terminal/bun.lock", import.meta.url)),
+		);
+		writeFileSync(join(workspace, ".env.local"), "PI_CONCEAL_E2E_SECRET=must-not-leak\n");
+		const ops = createNativeSandboxOps(client, DEFAULT_CONFIG, [], [], "e2e-bun-conceal");
+		const bun = quote(bunPath);
+		const noSecret = quote("process.exit(process.env.PI_CONCEAL_E2E_SECRET ? 23 : 0)");
+		const result = await run(ops, `${bun} -e ${noSecret} && ${bun} pm ls`);
+
+		assert.equal(result.exitCode, 0, result.output);
+		assert.doesNotMatch(result.output, /must-not-leak|PermissionDenied/);
+	},
+);
+
+test("Seatbelt still blocks a protected read after dropping the conceal shim", { skip }, async () => {
+	const secret = join(workspace, ".env.local");
+	writeFileSync(secret, "PI_CONCEAL_BACKSTOP=must-not-leak\n");
+	const ops = createNativeSandboxOps(client, DEFAULT_CONFIG, [], [], "e2e-conceal-backstop");
+	const result = await run(
+		ops,
+		`/usr/bin/env -u DYLD_INSERT_LIBRARIES -u PI_SANDBOX_CONCEALED_PATHS /bin/cat ${quote(secret)}`,
+	);
+
+	assert.notEqual(result.exitCode, 0, result.output);
+	assert.doesNotMatch(result.output, /must-not-leak/);
+});
+
+function findOnPath(name: string): string | undefined {
+	const override = process.env[`PI_${name.toUpperCase()}_E2E`];
+	for (const candidate of [
+		...(override ? [override] : []),
+		...(process.env.PATH ?? "").split(delimiter).map((directory) => join(directory, name)),
+	]) {
+		try {
+			accessSync(candidate, constants.X_OK);
+			return candidate;
+		} catch {
+			// Keep looking.
+		}
+	}
+	return undefined;
+}
 
 test("one approved hostname reaches one port only through the proxy", { skip }, async () => {
 	await withServers(1, async ([server]) => {
