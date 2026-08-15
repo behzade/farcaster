@@ -15,6 +15,7 @@ import {
   useTerminalText,
 } from "./pierre-renderer.ts";
 import { selectThemeWhenAvailable } from "./theme-selection.ts";
+import { registerOnceForTui } from "./tui-only.ts";
 
 useTerminalText({ sliceByColumn, truncateToWidth, visibleWidth });
 
@@ -68,31 +69,34 @@ class PierreDiffComponent {
 
 export default function (pi: ExtensionAPI) {
   const edit = createEditTool(process.cwd());
-
-  pi.on("session_start", (_event, ctx) => {
-    selectThemeWhenAvailable(ctx.ui, THEME_NAME);
+  const registerTool = registerOnceForTui(() => {
+    pi.registerTool({
+      ...edit,
+      renderShell: "self",
+      renderCall(args, theme, context) {
+        const text = context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
+        text.setText(`${theme.fg("toolTitle", theme.bold("edit"))} ${theme.fg("accent", args.path)}`);
+        return text;
+      },
+      renderResult(result, options, theme, context) {
+        if (context.isError) {
+          const message = result.content.filter((item) => item.type === "text").map((item: any) => item.text).join("\n");
+          return new Text(theme.fg("error", message), 0, 0);
+        }
+        const details = result.details as EditToolDetails | undefined;
+        if (!details?.patch) return new Text(theme.fg("success", "edited"), 0, 0);
+        const component = context.lastComponent instanceof PierreDiffComponent
+          ? context.lastComponent
+          : new PierreDiffComponent(details.patch, options.expanded, theme);
+        component.set(details.patch, options.expanded, theme);
+        return component;
+      },
+    });
   });
 
-  pi.registerTool({
-    ...edit,
-    renderShell: "self",
-    renderCall(args, theme, context) {
-      const text = context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
-      text.setText(`${theme.fg("toolTitle", theme.bold("edit"))} ${theme.fg("accent", args.path)}`);
-      return text;
-    },
-    renderResult(result, options, theme, context) {
-      if (context.isError) {
-        const message = result.content.filter((item) => item.type === "text").map((item: any) => item.text).join("\n");
-        return new Text(theme.fg("error", message), 0, 0);
-      }
-      const details = result.details as EditToolDetails | undefined;
-      if (!details?.patch) return new Text(theme.fg("success", "edited"), 0, 0);
-      const component = context.lastComponent instanceof PierreDiffComponent
-        ? context.lastComponent
-        : new PierreDiffComponent(details.patch, options.expanded, theme);
-      component.set(details.patch, options.expanded, theme);
-      return component;
-    },
+  pi.on("session_start", (_event, ctx) => {
+    if (ctx.mode !== "tui") return;
+    registerTool(ctx.mode);
+    selectThemeWhenAvailable(ctx.ui, THEME_NAME);
   });
 }

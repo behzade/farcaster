@@ -11,7 +11,7 @@ use crate::{
     layout::LayoutMode,
     primitives::{ButtonTone, FeedbackTone, button, feedback, icon_button, panel, section_heading},
     runtime::RuntimeCommand,
-    sessions::{descendant_sessions, root_session_for_path, root_sessions},
+    sessions::{SessionSummary, descendant_sessions, root_session_for_path, root_sessions},
     theme::THEME,
 };
 
@@ -283,58 +283,33 @@ impl PiApp {
         let auto_compact_entity = entity.clone();
         let queue = &self.snapshot.conversation.queue;
         let has_queue = !queue.steering.is_empty() || !queue.follow_up.is_empty();
-        let subagent_rows =
-            root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
-                .map(|root| descendant_sessions(&self.sessions, &root.id))
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(session, depth)| {
-                    let path = session.path.clone();
-                    let row_entity = entity.clone();
-                    let selected =
-                        self.snapshot.selected_session.as_deref() == Some(path.as_path());
-                    div()
-                        .id(format!("subagent-session-{}", session.id))
-                        .role(Role::Button)
-                        .aria_label(format!("Open subagent session: {}", session.title))
-                        .aria_selected(selected)
-                        .tab_index(0)
-                        .flex()
-                        .items_center()
-                        .gap(THEME.space.xs)
-                        .pl(px(8.0 + depth.saturating_sub(1) as f32 * 12.0))
-                        .pr(THEME.space.xs)
-                        .py(THEME.space.xs)
-                        .rounded(THEME.radius)
-                        .when(selected, |row| row.bg(THEME.colors.surface))
-                        .hover(|row| row.bg(THEME.colors.hover))
-                        .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
-                        .cursor_pointer()
-                        .on_click(move |_, _, cx| {
-                            let _ = row_entity.update(cx, |this, cx| this.resume(path.clone(), cx));
-                        })
-                        .child(
-                            Icon::new(AppIcon::Robot)
-                                .with_size(Size::XSmall)
-                                .text_color(THEME.colors.subtle),
-                        )
-                        .child(
-                            div()
-                                .min_w_0()
-                                .flex_1()
-                                .text_size(THEME.type_scale.caption)
-                                .text_color(THEME.colors.text)
-                                .child(compact_subagent_label(&session.title)),
-                        )
-                        .child(
-                            div()
-                                .flex_none()
-                                .text_size(THEME.type_scale.caption)
-                                .text_color(THEME.colors.subtle)
-                                .child(session.message_count.to_string()),
-                        )
-                })
-                .collect::<Vec<_>>();
+        let root = root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref());
+        let descendants = root
+            .map(|root| descendant_sessions(&self.sessions, &root.id))
+            .unwrap_or_default();
+        let mut subagent_rows = Vec::new();
+        if !descendants.is_empty()
+            && let Some(root) = root
+        {
+            subagent_rows.push(agent_session_row(
+                root,
+                0,
+                "Main".into(),
+                "main-session",
+                self.snapshot.selected_session.as_deref() == Some(root.path.as_path()),
+                entity.clone(),
+            ));
+            subagent_rows.extend(descendants.into_iter().map(|(session, depth)| {
+                agent_session_row(
+                    session,
+                    depth,
+                    compact_subagent_label(&session.title),
+                    "subagent-session",
+                    self.snapshot.selected_session.as_deref() == Some(session.path.as_path()),
+                    entity.clone(),
+                )
+            }));
+        }
         let statuses = self
             .extension
             .statuses
@@ -485,6 +460,59 @@ impl PiApp {
                 ))
             })
     }
+}
+
+fn agent_session_row(
+    session: &SessionSummary,
+    depth: usize,
+    label: String,
+    id_prefix: &str,
+    selected: bool,
+    entity: WeakEntity<PiApp>,
+) -> impl IntoElement {
+    let path = session.path.clone();
+    let title = session.title.clone();
+    let message_count = session.message_count;
+    div()
+        .id(format!("{id_prefix}-{}", session.id))
+        .role(Role::Button)
+        .aria_label(format!("Open agent session: {title}"))
+        .aria_selected(selected)
+        .tab_index(0)
+        .flex()
+        .items_center()
+        .gap(THEME.space.xs)
+        .pl(px(8.0 + depth as f32 * 12.0))
+        .pr(THEME.space.xs)
+        .py(THEME.space.xs)
+        .rounded(THEME.radius)
+        .when(selected, |row| row.bg(THEME.colors.surface))
+        .hover(|row| row.bg(THEME.colors.hover))
+        .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
+        .cursor_pointer()
+        .on_click(move |_, _, cx| {
+            let _ = entity.update(cx, |this, cx| this.resume(path.clone(), cx));
+        })
+        .child(
+            Icon::new(AppIcon::Robot)
+                .with_size(Size::XSmall)
+                .text_color(THEME.colors.subtle),
+        )
+        .child(
+            div()
+                .min_w_0()
+                .flex_1()
+                .text_size(THEME.type_scale.caption)
+                .text_color(THEME.colors.text)
+                .child(label),
+        )
+        .child(
+            div()
+                .flex_none()
+                .text_size(THEME.type_scale.caption)
+                .text_color(THEME.colors.subtle)
+                .child(message_count.to_string()),
+        )
 }
 
 fn bounded_label(value: &str, max: usize) -> String {

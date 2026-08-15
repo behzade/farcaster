@@ -211,6 +211,7 @@
               ${self}/tests/prompt-inspector.test.ts \
               ${self}/tests/theme-and-rendering.test.ts \
               ${self}/tests/theme-selection.test.ts \
+              ${self}/tests/tui-only.test.ts \
               ${self}/tests/terminal-text.test.ts
             touch "$out"
           '';

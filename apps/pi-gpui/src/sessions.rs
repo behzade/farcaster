@@ -415,7 +415,8 @@ fn parse_candidate(path: &Path, project: &Path) -> Result<Option<SessionSummary>
     let parent_session = header
         .get("parentSession")
         .and_then(Value::as_str)
-        .map(str::to_owned);
+        .map(str::to_owned)
+        .or_else(|| parent_session_from_path(path));
     let mut name = None;
     let mut first_user_message = None;
     let mut message_count = 0_usize;
@@ -483,6 +484,36 @@ fn parse_candidate(path: &Path, project: &Path) -> Result<Option<SessionSummary>
         message_count,
         search: search.to_lowercase(),
     }))
+}
+
+fn parent_session_from_path(path: &Path) -> Option<String> {
+    for directory in path.parent()?.ancestors() {
+        let mut root_name = directory.file_name()?.to_os_string();
+        root_name.push(".jsonl");
+        let root_path = directory.with_file_name(root_name);
+        let Ok(file) = File::open(root_path) else {
+            continue;
+        };
+        let mut reader = BufReader::new(file);
+        let mut line = Vec::new();
+        let Ok(read) = reader.read_until(b'\n', &mut line) else {
+            continue;
+        };
+        if read == 0 {
+            continue;
+        }
+        trim_frame(&mut line);
+        let Ok(header) = serde_json::from_slice::<Value>(&line) else {
+            continue;
+        };
+        if header.get("type").and_then(Value::as_str) == Some("session")
+            && let Some(id) = header.get("id").and_then(Value::as_str)
+            && !id.is_empty()
+        {
+            return Some(id.to_owned());
+        }
+    }
+    None
 }
 
 fn visible_user_text(message: &Value) -> String {
@@ -612,6 +643,35 @@ mod tests {
         Ok(())
     }
 
+    fn nested_session(
+        root: &Path,
+        root_file: &str,
+        id: &str,
+        cwd: &Path,
+        name: &str,
+        message: &str,
+    ) -> TestResult {
+        let directory = root
+            .join("custom/nested")
+            .join(root_file)
+            .join("agent/run-0");
+        fs::create_dir_all(&directory)?;
+        let lines = [
+            serde_json::json!({"type":"session","version":3,"id":id,"timestamp":"2026-01-02T00:00:00Z","cwd":cwd}),
+            serde_json::json!({"type":"message","message":{"role":"user","content":message}}),
+            serde_json::json!({"type":"session_info","name":name}),
+        ];
+        fs::write(
+            directory.join("session.jsonl"),
+            lines
+                .into_iter()
+                .map(|line| line.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )?;
+        Ok(())
+    }
+
     #[test]
     fn override_resolution_order_is_explicit() {
         let cwd = Path::new("/work");
@@ -694,13 +754,13 @@ mod tests {
             Some("Main"),
             "ordinary",
         )?;
-        session_with_parent(
+        nested_session(
             root.path(),
+            "root",
             "child",
             project.path(),
-            Some("subagent-reviewer-long-id"),
+            "subagent-reviewer-long-id",
             "Needle",
-            Some("root"),
         )?;
         session_with_parent(
             root.path(),
@@ -728,6 +788,7 @@ mod tests {
             .iter()
             .find(|session| session.id == "child")
             .expect("matching child should remain");
+        assert_eq!(child.parent_session.as_deref(), Some("root"));
         assert_eq!(
             root_session_for_path(&sessions, Some(child.path.as_path()))
                 .map(|session| session.id.as_str()),

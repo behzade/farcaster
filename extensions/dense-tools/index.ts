@@ -13,6 +13,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Container, Text } from "@earendil-works/pi-tui";
 import { homedir } from "node:os";
+import { registerOnceForTui } from "./tui-only.ts";
 
 interface ReadEntry {
   id: string;
@@ -111,6 +112,7 @@ function renderReadGroup(group: ReadGroup, expanded: boolean, theme: Theme): str
 }
 
 export default function denseTools(pi: ExtensionAPI) {
+  let tuiActive = false;
   const cwd = process.cwd();
   const read = createReadTool(cwd);
   const tools = [
@@ -120,41 +122,45 @@ export default function denseTools(pi: ExtensionAPI) {
     createLsTool(cwd),
   ];
 
-  for (const tool of tools) {
-    pi.registerTool({ ...tool, renderShell: "self" });
-  }
+  const registerTools = registerOnceForTui(() => {
+    for (const tool of tools) {
+      pi.registerTool({ ...tool, renderShell: "self" });
+    }
 
-  pi.registerTool({
-    ...read,
-    renderShell: "self",
-    renderCall(args, theme, context) {
-      const { group, entry } = ensureReadEntry(context.toolCallId, args);
-      if (group.entries[0] !== entry) return new Container();
-      group.invalidateLeader = context.invalidate;
-      const text = context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
-      text.setText(renderReadGroup(group, context.expanded, theme));
-      return text;
-    },
-    renderResult(result, options, _theme, context) {
-      const { group, entry } = ensureReadEntry(context.toolCallId, context.args);
-      const changed =
-        entry.result?.content !== result.content ||
-        entry.result?.details !== result.details ||
-        entry.partial !== options.isPartial ||
-        entry.isError !== context.isError;
-      entry.result = result;
-      entry.partial = options.isPartial;
-      entry.isError = context.isError;
-      if (changed) queueMicrotask(() => group.invalidateLeader?.());
-      return new Container();
-    },
+    pi.registerTool({
+      ...read,
+      renderShell: "self",
+      renderCall(args, theme, context) {
+        const { group, entry } = ensureReadEntry(context.toolCallId, args);
+        if (group.entries[0] !== entry) return new Container();
+        group.invalidateLeader = context.invalidate;
+        const text = context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
+        text.setText(renderReadGroup(group, context.expanded, theme));
+        return text;
+      },
+      renderResult(result, options, _theme, context) {
+        const { group, entry } = ensureReadEntry(context.toolCallId, context.args);
+        const changed =
+          entry.result?.content !== result.content ||
+          entry.result?.details !== result.details ||
+          entry.partial !== options.isPartial ||
+          entry.isError !== context.isError;
+        entry.result = result;
+        entry.partial = options.isPartial;
+        entry.isError = context.isError;
+        if (changed) queueMicrotask(() => group.invalidateLeader?.());
+        return new Container();
+      },
+    });
   });
 
   pi.on("turn_start", () => {
+    if (!tuiActive) return;
     currentReadGroup = undefined;
   });
 
   pi.on("tool_execution_start", (event) => {
+    if (!tuiActive) return;
     if (event.toolName !== "read") {
       currentReadGroup = undefined;
       return;
@@ -166,10 +172,12 @@ export default function denseTools(pi: ExtensionAPI) {
   });
 
   pi.on("turn_end", () => {
+    if (!tuiActive) return;
     currentReadGroup = undefined;
   });
 
   pi.on("message_end", (event) => {
+    if (!tuiActive) return;
     if (event.message.role !== "assistant") return;
     const claimedGroups = new Set<ReadGroup>();
     let desiredGroup: ReadGroup | undefined;
@@ -204,6 +212,13 @@ export default function denseTools(pi: ExtensionAPI) {
   });
 
   pi.on("session_start", (_event, ctx) => {
+    tuiActive = ctx.mode === "tui";
+    if (!tuiActive) {
+      readGroupsById.clear();
+      currentReadGroup = undefined;
+      return;
+    }
+    registerTools(ctx.mode);
     readGroupsById.clear();
     currentReadGroup = undefined;
 
@@ -222,6 +237,7 @@ export default function denseTools(pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", () => {
+    tuiActive = false;
     readGroupsById.clear();
     currentReadGroup = undefined;
   });

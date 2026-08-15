@@ -57,6 +57,9 @@ impl ExtensionUiState {
                 }
             }
             ExtensionUiRequest::Notify { message, tone, .. } => {
+                if is_rpc_capability_notice(&message) {
+                    return ExtensionEffect::None;
+                }
                 self.notifications.push_back(Notification {
                     message: message.clone(),
                     tone,
@@ -160,6 +163,10 @@ impl ExtensionUiState {
     }
 }
 
+fn is_rpc_capability_notice(message: &str) -> bool {
+    message.ends_with(" not supported in RPC mode")
+}
+
 fn bounded_widget_lines(lines: Vec<String>) -> Vec<String> {
     lines
         .into_iter()
@@ -187,6 +194,19 @@ mod tests {
             placeholder: None,
             timeout: None,
         }
+    }
+
+    #[test]
+    fn rpc_capability_notices_are_not_user_facing_errors() {
+        let mut state = ExtensionUiState::default();
+        let effect = state.apply(ExtensionUiRequest::Notify {
+            id: "notice".into(),
+            message: "Theme switching not supported in RPC mode".into(),
+            tone: NotifyTone::Error,
+        });
+
+        assert_eq!(effect, ExtensionEffect::None);
+        assert!(state.notifications.is_empty());
     }
 
     #[test]
