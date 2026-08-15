@@ -11,3 +11,5 @@ For Pi work only, read its own sources first:
 - Examples: @piCodingAgent@/examples
 
 Resolve `docs/...` under Docs and `examples/...` under Examples. Read relevant files fully. Follow their Markdown links before changing Pi code.
+
+NEVER UNDER ANY CIRCUMSTANCES CREATE NEW NIX CACHE FOLDERS OR TEMP RUST DIRECTORIES OR NEW NODE MODULE FOLDERS WE DON'T LIVE IN MAGIC LAND WITH INFINITE DISK SPACE

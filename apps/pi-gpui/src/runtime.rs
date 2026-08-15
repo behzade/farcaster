@@ -82,6 +82,7 @@ pub(crate) enum RuntimeEvent {
     },
     PromptResult {
         generation: u64,
+        target: String,
         accepted: bool,
     },
     SessionStatus {
@@ -291,9 +292,12 @@ fn run_supervisor(
                     RuntimeEvent::HistoryReset { .. } if key == selected => {
                         let _ = event_tx.send(RuntimeEvent::HistoryReset { generation });
                     }
-                    RuntimeEvent::PromptResult { accepted, .. } if key == selected => {
+                    RuntimeEvent::PromptResult {
+                        target, accepted, ..
+                    } => {
                         let _ = event_tx.send(RuntimeEvent::PromptResult {
                             generation,
+                            target,
                             accepted,
                         });
                     }
@@ -318,8 +322,7 @@ fn run_supervisor(
                     RuntimeEvent::Stopped
                     | RuntimeEvent::SessionStatus { .. }
                     | RuntimeEvent::SessionReset { .. }
-                    | RuntimeEvent::HistoryReset { .. }
-                    | RuntimeEvent::PromptResult { .. } => {}
+                    | RuntimeEvent::HistoryReset { .. } => {}
                 }
             }
         }
@@ -506,6 +509,7 @@ struct RuntimeOwner {
     session_generation: u64,
     process_generation: u64,
     pending_prompt_id: Option<String>,
+    pending_prompt_target: Option<String>,
     pending_outbox_id: Option<i64>,
     event_tx: mpsc::Sender<RuntimeEvent>,
     discovery_tx: mpsc::Sender<DiscoveryResult>,
@@ -558,6 +562,7 @@ fn run(
         session_generation: 0,
         process_generation: 0,
         pending_prompt_id: None,
+        pending_prompt_target: None,
         pending_outbox_id: None,
         event_tx,
         discovery_tx,
@@ -729,13 +734,13 @@ impl RuntimeOwner {
     }
 
     fn send_prompt(&mut self, target: String, mode: PromptMode, message: String) {
-        if self.pending_prompt_id.is_some() {
-            self.reject_prompt("Another message is still being sent".into());
+        if self.pending_prompt_id.is_some() || self.pending_prompt_target.is_some() {
+            self.reject_prompt(&target, "Another message is still being sent".into());
             return;
         }
         let was_running = self.active_snapshot().conversation.running;
         if !can_send_prompt(mode, was_running) {
-            self.reject_prompt("Pi is already working on this session".into());
+            self.reject_prompt(&target, "Pi is already working on this session".into());
             return;
         }
         let outbox_id = match self.state.as_ref() {
@@ -748,19 +753,19 @@ impl RuntimeOwner {
             ) {
                 Ok(id) => Some(id),
                 Err(error) => {
-                    self.reject_prompt(error);
+                    self.reject_prompt(&target, error);
                     return;
                 }
             },
             None => {
-                self.reject_prompt("Couldn’t save the message".into());
+                self.reject_prompt(&target, "Couldn’t save the message".into());
                 return;
             }
         };
+        self.pending_prompt_target = Some(target);
         self.snapshot.conversation.push_local_user(message.clone());
         self.snapshot.conversation.running = true;
         self.snapshot.status = "Working".into();
-        self.emit_prompt_result(true);
         self.publish();
         self.dispatch_prompt(mode, message, outbox_id);
     }
@@ -769,6 +774,7 @@ impl RuntimeOwner {
         self.project = prompt.project;
         self.snapshot.project = self.project.clone();
         self.snapshot.selected_session = prompt.session.clone();
+        self.pending_prompt_target = Some(prompt.target);
         self.snapshot
             .conversation
             .push_local_user(prompt.message.clone());
@@ -796,7 +802,8 @@ impl RuntimeOwner {
             && let Some(state) = &self.state
             && let Err(error) = state.begin_prompt(id)
         {
-            self.reject_prompt(error);
+            let target = self.pending_prompt_target.take().unwrap_or_default();
+            self.reject_prompt(&target, error);
             return;
         }
         let command = prompt_command(mode, message);
@@ -820,18 +827,19 @@ impl RuntimeOwner {
         }
     }
 
-    fn reject_prompt(&mut self, message: String) {
+    fn reject_prompt(&mut self, target: &str, message: String) {
         self.snapshot
             .conversation
             .push_local_error("Prompt not sent", message);
         self.snapshot.status = "Prompt not sent".into();
-        self.emit_prompt_result(false);
+        self.emit_prompt_result(target, false);
         self.publish();
     }
 
-    fn emit_prompt_result(&self, accepted: bool) {
+    fn emit_prompt_result(&self, target: &str, accepted: bool) {
         let _ = self.event_tx.send(RuntimeEvent::PromptResult {
             generation: self.process_generation,
+            target: target.to_owned(),
             accepted,
         });
     }
@@ -1018,6 +1026,9 @@ impl RuntimeOwner {
                         .unwrap_or("Pi rejected the prompt"),
                 );
             }
+            if let Some(target) = self.pending_prompt_target.take() {
+                self.emit_prompt_result(&target, response.success);
+            }
         }
         if !response.success {
             let blocks_resume = self.deferred_prompt.is_some()
@@ -1034,7 +1045,9 @@ impl RuntimeOwner {
             snapshot.status = "Command failed".into();
             if blocks_resume {
                 self.deferred_prompt = None;
-                self.emit_prompt_result(false);
+                if let Some(target) = self.pending_prompt_target.take() {
+                    self.emit_prompt_result(&target, false);
+                }
                 if let Some(snapshot) = self.parked_snapshot.take() {
                     self.snapshot = snapshot;
                 }
@@ -1165,10 +1178,10 @@ impl RuntimeOwner {
             return;
         }
         if let Some((mode, message, outbox_id)) = self.deferred_prompt.take() {
-            if let Some(snapshot) = self.parked_snapshot.as_mut() {
-                snapshot.conversation.push_local_user(message.clone());
-                snapshot.conversation.running = true;
-            }
+            let snapshot = self.active_snapshot_mut();
+            snapshot.conversation.push_local_user(message.clone());
+            snapshot.conversation.running = true;
+            snapshot.status = "Working".into();
             if self.snapshot.history_preview
                 && let Some(snapshot) = self.parked_snapshot.take()
             {
@@ -1250,11 +1263,10 @@ impl RuntimeOwner {
     }
 
     fn fail(&mut self, error: String) {
-        if self.pending_prompt_id.take().is_some() {
-            self.emit_prompt_result(false);
-        }
-        if self.deferred_prompt.take().is_some() {
-            self.emit_prompt_result(false);
+        self.pending_prompt_id = None;
+        self.deferred_prompt = None;
+        if let Some(target) = self.pending_prompt_target.take() {
+            self.emit_prompt_result(&target, false);
         }
         if let Some(mut process) = self.process.take() {
             let _ = process.terminate();
@@ -1393,6 +1405,7 @@ mod tests {
                 session_generation: 0,
                 process_generation: 1,
                 pending_prompt_id: None,
+                pending_prompt_target: None,
                 pending_outbox_id: None,
                 event_tx,
                 discovery_tx,
@@ -1618,6 +1631,7 @@ mod tests {
             session_generation: 0,
             process_generation: 4,
             pending_prompt_id: None,
+            pending_prompt_target: None,
             pending_outbox_id: None,
             event_tx,
             discovery_tx,
@@ -1708,6 +1722,7 @@ mod tests {
             session_generation: 0,
             process_generation: 3,
             pending_prompt_id: None,
+            pending_prompt_target: None,
             pending_outbox_id: None,
             event_tx,
             discovery_tx,
@@ -1758,13 +1773,13 @@ mod tests {
         );
         assert!(owner.snapshot.history_preview);
         assert_eq!(owner.snapshot.conversation.items[0].text, "previewed");
-        assert_eq!(owner.active_session, Some(new_path));
+        assert_eq!(owner.active_session, Some(new_path.clone()));
         assert!(owner.deferred_prompt.is_some());
         let resume_events = event_rx.try_iter().collect::<Vec<_>>();
         assert!(
             resume_events
                 .iter()
-                .any(|event| matches!(event, RuntimeEvent::PromptResult { accepted: true, .. }))
+                .all(|event| !matches!(event, RuntimeEvent::PromptResult { accepted: true, .. }))
         );
         assert!(resume_events.iter().any(|event| matches!(
             event,
@@ -1804,6 +1819,17 @@ mod tests {
         assert!(owner.deferred_prompt.is_none());
         assert!(owner.pending_prompt_id.is_none());
         assert!(!owner.snapshot.history_preview);
+        assert!(owner.snapshot.conversation.items.iter().any(|item| {
+            item.kind == crate::conversation::TranscriptKind::User && item.text == "continue"
+        }));
+        assert!(event_rx.try_iter().any(|event| matches!(
+            event,
+            RuntimeEvent::PromptResult {
+                target,
+                accepted: true,
+                ..
+            } if target == format!("session:{}", new_path.display())
+        )));
         Ok(())
     }
 
@@ -1840,6 +1866,7 @@ mod tests {
             session_generation: 0,
             process_generation: 7,
             pending_prompt_id: Some("pending-prompt".into()),
+            pending_prompt_target: Some(format!("session:{}", active_path.display())),
             pending_outbox_id: None,
             event_tx,
             discovery_tx,

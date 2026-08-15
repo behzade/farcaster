@@ -35,7 +35,6 @@ const MAX_EXTENSION_ERRORS: usize = 16;
 pub(crate) const COMPOSER_KEY_CONTEXT: &str = "PiComposer";
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PendingSubmission {
-    generation: u64,
     target: String,
     text: String,
 }
@@ -88,7 +87,7 @@ pub(crate) struct PiApp {
     pending_title: Option<(u64, String)>,
     pending_editor_text: Option<(u64, String)>,
     pending_submission: Option<PendingSubmission>,
-    pending_submission_result: Option<(u64, bool)>,
+    pending_submission_result: Option<(String, bool)>,
     pending_session_reset: bool,
     extension_errors: Vec<String>,
     sessions_sheet: bool,
@@ -290,7 +289,6 @@ impl PiApp {
             Ok(()) => {
                 self.composer_sessions.record_submission(&target, &value);
                 self.pending_submission = Some(PendingSubmission {
-                    generation: self.runtime_generation,
                     target,
                     text: editor_text,
                 });
@@ -403,13 +401,23 @@ impl PiApp {
                     }
                 }
                 RuntimeEvent::PromptResult {
-                    generation,
-                    accepted,
-                } if generation == self.runtime_generation => {
-                    if accepted && self.live_draft.is_some() {
+                    target, accepted, ..
+                } => {
+                    if accepted
+                        && self
+                            .live_draft
+                            .as_deref()
+                            .is_some_and(|id| target == draft_target(id))
+                    {
                         self.live_draft_submitted = true;
                     }
-                    self.pending_submission_result = Some((generation, accepted));
+                    if self
+                        .pending_submission
+                        .as_ref()
+                        .is_some_and(|pending| pending.target == target)
+                    {
+                        self.pending_submission_result = Some((target, accepted));
+                    }
                 }
                 RuntimeEvent::SessionStatus {
                     target,
@@ -427,7 +435,6 @@ impl PiApp {
                 | RuntimeEvent::SessionReset { .. }
                 | RuntimeEvent::HistoryReset { .. }
                 | RuntimeEvent::ExtensionUi { .. }
-                | RuntimeEvent::PromptResult { .. }
                 | RuntimeEvent::Sessions { .. }
                 | RuntimeEvent::SessionsFailed { .. } => {}
             }
@@ -444,14 +451,6 @@ impl PiApp {
         self.pending_dialog_setup = false;
         self.pending_title = Some((generation, "Pi".into()));
         self.pending_editor_text = None;
-        if preserve_submission {
-            if let Some(pending) = self.pending_submission.as_mut() {
-                pending.generation = generation;
-            }
-        } else {
-            self.pending_submission = None;
-        }
-        self.pending_submission_result = None;
         self.pending_session_reset = true;
         self.dialog_return_focus = None;
         self.sessions_sheet = false;
@@ -679,7 +678,12 @@ impl PiApp {
         if let Some(pending) = self.pending_submission.as_mut()
             && pending.target == draft_key
         {
-            pending.target = session_key;
+            pending.target = session_key.clone();
+        }
+        if let Some((target, _)) = self.pending_submission_result.as_mut()
+            && *target == draft_key
+        {
+            *target = session_key;
         }
         self.drafts.retain(|draft| draft.id != id);
         if self.selected_draft.as_deref() == Some(id.as_str()) {
@@ -922,17 +926,13 @@ impl PiApp {
     }
 
     fn resolve_pending_submission(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((generation, accepted)) = self.pending_submission_result.take() else {
+        let Some((target, accepted)) = self.pending_submission_result.take() else {
             return;
         };
-        let current = self
-            .pending_submission
-            .as_ref()
-            .map(|pending| self.composer_sessions.snapshot_for(&pending.target).text)
-            .unwrap_or_default();
+        let current = self.composer_sessions.snapshot_for(&target).text;
         match submission_resolution(
             self.pending_submission.as_ref(),
-            generation,
+            &target,
             accepted,
             &current,
         ) {
@@ -998,11 +998,11 @@ fn restore_extension_surface(
 
 fn submission_resolution(
     pending: Option<&PendingSubmission>,
-    generation: u64,
+    target: &str,
     accepted: bool,
     current_text: &str,
 ) -> SubmissionResolution {
-    let Some(pending) = pending.filter(|pending| pending.generation == generation) else {
+    let Some(pending) = pending.filter(|pending| pending.target == target) else {
         return SubmissionResolution::Ignore;
     };
     if accepted && current_text == pending.text {
@@ -1055,7 +1055,6 @@ mod tests {
 
     fn pending() -> PendingSubmission {
         PendingSubmission {
-            generation: 7,
             target: "session:test".into(),
             text: "submitted".into(),
         }
@@ -1075,11 +1074,11 @@ mod tests {
     fn accepted_submission_clears_only_the_unchanged_editor() {
         let pending = pending();
         assert_eq!(
-            submission_resolution(Some(&pending), 7, true, "submitted"),
+            submission_resolution(Some(&pending), "session:test", true, "submitted"),
             SubmissionResolution::ClearEditor
         );
         assert_eq!(
-            submission_resolution(Some(&pending), 7, true, "newer edit"),
+            submission_resolution(Some(&pending), "session:test", true, "newer edit"),
             SubmissionResolution::KeepEditor
         );
     }
@@ -1088,11 +1087,11 @@ mod tests {
     fn rejected_or_stale_submission_never_clears_the_editor() {
         let pending = pending();
         assert_eq!(
-            submission_resolution(Some(&pending), 7, false, "submitted"),
+            submission_resolution(Some(&pending), "session:test", false, "submitted"),
             SubmissionResolution::KeepEditor
         );
         assert_eq!(
-            submission_resolution(Some(&pending), 8, true, "submitted"),
+            submission_resolution(Some(&pending), "session:other", true, "submitted"),
             SubmissionResolution::Ignore
         );
     }
