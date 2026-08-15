@@ -40,6 +40,7 @@ pub(crate) struct ConversationState {
     pub settled: bool,
     pub compacting: bool,
     pub retrying: bool,
+    pub latest_cache_hit_rate: Option<f64>,
     pub diagnostics: Vec<String>,
     live_message: Option<LiveMessage>,
     content: BTreeMap<usize, PartialContent>,
@@ -85,6 +86,12 @@ impl ConversationState {
 
     pub(crate) fn replace_history(&mut self, messages: &[Value]) {
         self.items = messages.iter().flat_map(project_message_items).collect();
+        self.latest_cache_hit_rate = None;
+        for message in messages {
+            if message.get("role").and_then(Value::as_str) == Some("assistant") {
+                self.latest_cache_hit_rate = cache_hit_rate(message);
+            }
+        }
         self.live_message = None;
         self.content.clear();
         self.tools.clear();
@@ -289,6 +296,9 @@ impl ConversationState {
 
     fn end_message(&mut self, message: Option<&Value>) {
         let Some(message) = message else { return };
+        if message.get("role").and_then(Value::as_str) == Some("assistant") {
+            self.latest_cache_hit_rate = cache_hit_rate(message);
+        }
         let final_items = project_message_items(message);
         if let Some(live) = self.live_message.take() {
             self.items
@@ -379,6 +389,15 @@ fn finish_content(partial: &mut PartialContent, delta: &Value) {
         .and_then(Value::as_str)
         .unwrap_or(&partial.value)
         .to_owned();
+}
+
+fn cache_hit_rate(message: &Value) -> Option<f64> {
+    let usage = message.get("usage")?;
+    let input = usage.get("input").and_then(Value::as_u64)?;
+    let cache_read = usage.get("cacheRead").and_then(Value::as_u64).unwrap_or(0);
+    let cache_write = usage.get("cacheWrite").and_then(Value::as_u64).unwrap_or(0);
+    let prompt_tokens = input.saturating_add(cache_read).saturating_add(cache_write);
+    (prompt_tokens > 0).then(|| cache_read as f64 / prompt_tokens as f64 * 100.0)
 }
 
 fn project_message_items(message: &Value) -> Vec<TranscriptItem> {

@@ -426,6 +426,7 @@ impl PiApp {
             .child(usage_metrics(
                 show_main_context.then_some(&self.snapshot.stats),
                 aggregate_usage,
+                self.snapshot.conversation.latest_cache_hit_rate,
             ))
             .when(agent_count > 0, |run| {
                 run.child(section_heading("Agents"))
@@ -834,7 +835,11 @@ fn agent_session_row(
         .into_any_element()
 }
 
-fn usage_metrics(stats: Option<&serde_json::Value>, usage: UsageSummary) -> impl IntoElement {
+fn usage_metrics(
+    stats: Option<&serde_json::Value>,
+    usage: UsageSummary,
+    latest_cache_hit_rate: Option<f64>,
+) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
@@ -849,6 +854,10 @@ fn usage_metrics(stats: Option<&serde_json::Value>, usage: UsageSummary) -> impl
         .child(metric_row(
             "Cache",
             compact_number(usage.cache_read.saturating_add(usage.cache_write)),
+        ))
+        .child(metric_row(
+            "Cache hit rate",
+            format_cache_hit_rate(latest_cache_hit_rate),
         ))
         .child(metric_row("Cost", format_cost(usage.cost_micros)))
 }
@@ -915,6 +924,10 @@ fn compact_scaled(value: u64, scale: u64, suffix: &str) -> String {
     }
 }
 
+fn format_cache_hit_rate(rate: Option<f64>) -> String {
+    rate.map_or_else(|| "—".into(), |rate| format!("{rate:.1}%"))
+}
+
 fn format_cost(micros: u64) -> String {
     let dollars = micros as f64 / 1_000_000.0;
     if micros == 0 {
@@ -954,8 +967,8 @@ fn compact_subagent_label(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        SessionRailKind, compact_number, compact_subagent_label, context_usage, format_cost,
-        session_badge,
+        SessionRailKind, compact_number, compact_subagent_label, context_usage,
+        format_cache_hit_rate, format_cost, session_badge,
     };
 
     #[test]
@@ -970,6 +983,8 @@ mod tests {
     #[test]
     fn usage_values_are_compact_and_context_is_main_only() {
         assert_eq!(compact_number(105_250), "105.2k");
+        assert_eq!(format_cache_hit_rate(Some(87.654)), "87.7%");
+        assert_eq!(format_cache_hit_rate(None), "—");
         assert_eq!(format_cost(456_789), "$0.46");
         assert_eq!(
             context_usage(&serde_json::json!({

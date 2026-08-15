@@ -43,6 +43,39 @@ fn authoritative_end_replaces_all_partial_blocks_without_duplicate() {
 }
 
 #[test]
+fn cache_hit_rate_matches_the_latest_assistant_prompt_usage() {
+    let mut state = ConversationState::default();
+    state.replace_history(&[
+        json!({"role":"assistant","content":[],"usage":{"input":100,"cacheRead":0,"cacheWrite":0}}),
+        json!({"role":"assistant","content":[],"usage":{"input":100,"cacheRead":300,"cacheWrite":100}}),
+    ]);
+    assert_eq!(state.latest_cache_hit_rate, Some(60.0));
+
+    state.reduce(&json!({"type":"message_end","message":{
+        "role":"assistant",
+        "content":[],
+        "usage":{"input":200,"cacheRead":700,"cacheWrite":100}
+    }}));
+    assert_eq!(state.latest_cache_hit_rate, Some(70.0));
+}
+
+#[test]
+fn assistant_usage_without_prompt_tokens_clears_the_cache_hit_rate() {
+    let mut state = ConversationState::default();
+    state.replace_history(&[json!({
+        "role":"assistant",
+        "content":[],
+        "usage":{"input":100,"cacheRead":300,"cacheWrite":100}
+    })]);
+    state.reduce(&json!({"type":"message_end","message":{
+        "role":"assistant",
+        "content":[],
+        "usage":{"input":0,"cacheRead":0,"cacheWrite":0}
+    }}));
+    assert_eq!(state.latest_cache_hit_rate, None);
+}
+
+#[test]
 fn history_preserves_assistant_block_roles() {
     let mut state = ConversationState::default();
     state.replace_history(&[json!({"role":"assistant","content":[
