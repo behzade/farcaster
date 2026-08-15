@@ -30,6 +30,7 @@
           subagents = pkgs.callPackage ./nix/pi-subagents.nix { };
           webAccess = pkgs.callPackage ./nix/pi-web-access.nix { };
           openaiServerCompaction = pkgs.callPackage ./nix/pi-openai-server-compaction.nix { };
+          projectTools = pkgs.callPackage ./nix/pi-project-tools.nix { };
           piTerminal = pkgs.callPackage ./nix/pi-terminal.nix { };
           piGpui = pkgs.callPackage ./nix/pi-gpui.nix { inherit piTerminal; };
           pi = pkgs.symlinkJoin {
@@ -51,6 +52,7 @@
               openaiServerCompaction
               permissionSystem
               piTerminal
+              projectTools
               sandbox
               subagents
               webAccess
@@ -66,6 +68,7 @@
           sandbox-broker = sandboxBroker;
           dense-tools = denseTools;
           openai-server-compaction = openaiServerCompaction;
+          project-tools = projectTools;
           web-access = webAccess;
           default = agent;
         }
@@ -142,6 +145,7 @@
           denseTools = pkgs.callPackage ./nix/pi-dense-tools.nix { };
           mcpCli = pkgs.callPackage ./nix/pi-mcp-cli.nix { };
           openaiServerCompaction = pkgs.callPackage ./nix/pi-openai-server-compaction.nix { };
+          projectTools = pkgs.callPackage ./nix/pi-project-tools.nix { };
           piTerminal = pkgs.callPackage ./nix/pi-terminal.nix { };
           piGpui = pkgs.callPackage ./nix/pi-gpui.nix { inherit piTerminal; };
           subagents = pkgs.callPackage ./nix/pi-subagents.nix { };
@@ -210,6 +214,15 @@
             mkdir test
             cp ${self}/extensions/openai-server-compaction/test/continuation-compaction.test.ts test/
             node --experimental-strip-types --test test/continuation-compaction.test.ts
+            touch "$out"
+          '';
+          project-tools-tests = pkgs.runCommand "pi-project-tools-tests" {
+            nativeBuildInputs = [ pkgs.nodejs ];
+          } ''
+            cp -R ${projectTools}/src ${projectTools}/node_modules .
+            mkdir test
+            cp ${self}/extensions/project-tools/test/project-tools.test.ts test/
+            node --experimental-strip-types --test test/project-tools.test.ts
             touch "$out"
           '';
           subagent-output-bounds = pkgs.runCommand "pi-subagent-output-bounds" {

@@ -3,6 +3,7 @@
   openaiServerCompaction,
   permissionSystem,
   piTerminal,
+  projectTools,
   sandbox,
   stdenvNoCC,
   subagents,
@@ -27,6 +28,7 @@ stdenvNoCC.mkDerivation {
     ln -s ${denseTools} "$out/extensions/dense-tools"
     ln -s ${openaiServerCompaction} "$out/extensions/openai-server-compaction"
     ln -s ${permissionSystem} "$out/extensions/permission-system"
+    ln -s ${projectTools} "$out/extensions/project-tools"
     ln -s ${sandbox} "$out/extensions/sandbox"
     ln -s ${subagents} "$out/extensions/subagent"
     ln -s ${webAccess} "$out/extensions/web-access"

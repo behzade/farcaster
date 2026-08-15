@@ -24,6 +24,8 @@ separate `nix-config` repo.
 - Stateless MCP access through a pinned `mcp-cli`.
 - Server-side OpenAI compaction for long sessions.
 - Compact read, edit, and shell output with syntax-highlighted diffs.
+- Trusted project-scoped Effect v4 tools loaded from `.pi/tools` with full host
+  rights after project trust.
 - A Gruvbox dark-hard theme and small hooks for notifications, titles, user
   input, and session state.
 
@@ -41,6 +43,9 @@ separate `nix-config` repo.
 - [`extensions/openai-server-compaction`](extensions/openai-server-compaction)
   owns the OpenAI compaction code. Codex compaction reuses Pi AI's cached
   WebSocket response chain when the host exposes native output items.
+- [`extensions/project-tools`](extensions/project-tools) loads strict tool
+  manifests and Effect v4 handlers from trusted project `.pi/tools`
+  directories. These handlers run in Pi's host process, not the shell sandbox.
 - [`nix`](nix) contains the pinned builds for Pi and every packaged extension.
 - [`apps/pi-terminal`](apps/pi-terminal) pins the upstream Pi 0.84.2 terminal
   client and the small Pi AI output-item hook needed for cached OpenAI
@@ -96,6 +101,7 @@ The main checks can also be run directly:
 
 ```sh
 npm run check --prefix extensions/sandbox
+npm run check --prefix extensions/project-tools
 cargo test --manifest-path sandbox-broker/Cargo.toml
 CARGO_TARGET_DIR="$PWD/target" nix develop .#pi-gpui -c \
   cargo test --manifest-path apps/pi-gpui/Cargo.toml
@@ -128,6 +134,7 @@ nix build .#mcp-cli
 nix build .#subagents
 nix build .#openai-server-compaction
 nix build .#permission-system
+nix build .#project-tools
 nix build .#pi-terminal
 nix build .#web-access
 ```

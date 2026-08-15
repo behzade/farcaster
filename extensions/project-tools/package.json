@@ -1,0 +1,21 @@
+{
+  "name": "@behzad/pi-project-tools",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Trusted project-scoped Effect tools for Pi",
+  "license": "MIT",
+  "scripts": {
+    "check": "node --experimental-strip-types --test test/*.test.ts"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "dependencies": {
+    "effect": "4.0.0-beta.107",
+    "jiti": "2.7.0",
+    "typebox": "1.3.7"
+  }
+}

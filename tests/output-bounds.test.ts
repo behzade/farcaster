@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 
-const patchPath = new URL("../patches/pi-subagents-default-output-cap.patch", import.meta.url);
+const patchPath = new URL("../patches/pi-subagents-local-hardening.patch", import.meta.url);
 const packagePath = new URL("../nix/pi-subagents.nix", import.meta.url);
 const installedPackage = process.env.PI_SUBAGENTS_PACKAGE;
 
@@ -14,7 +14,7 @@ test("packaged subagents bound every final model-visible output path", async () 
     readFile(packagePath, "utf8"),
   ]);
 
-  assert.match(packageExpression, /pi-subagents-default-output-cap\.patch/);
+  assert.match(packageExpression, /pi-subagents-local-hardening\.patch/);
   for (const source of [
     "src/shared/types.ts",
     "src/runs/foreground/execution.ts",
@@ -26,7 +26,7 @@ test("packaged subagents bound every final model-visible output path", async () 
     assert.ok(patch.includes(source), `missing output-bound patch for ${source}`);
   }
   assert.match(patch, /boundForegroundModelOutput\(/);
-  assert.match(patch, /withForkThinkingNotes\(await runParallelPath/);
+  assert.match(patch, /const finalizeForegroundResult = .*boundForegroundModelOutput/s);
   assert.match(patch, /const errorResult = boundForegroundModelOutput\(/);
   assert.match(patch, /candidate && fs\.existsSync\(candidate\)/);
   assert.match(patch, /options\.artifactConfig\?\.includeOutput !== false/);
