@@ -31,6 +31,19 @@
           webAccess = pkgs.callPackage ./nix/pi-web-access.nix { };
           openaiServerCompaction = pkgs.callPackage ./nix/pi-openai-server-compaction.nix { };
           piTerminal = pkgs.callPackage ./nix/pi-terminal.nix { };
+          piGpui = pkgs.callPackage ./nix/pi-gpui.nix { inherit piTerminal; };
+          pi = pkgs.symlinkJoin {
+            name = "pi";
+            paths = [
+              piTerminal
+              piGpui
+            ];
+            meta = {
+              description = "Pi terminal and native GUI clients";
+              mainProgram = "pi";
+              platforms = pkgs.lib.platforms.darwin ++ pkgs.lib.platforms.linux;
+            };
+          };
           permissionSystem = pkgs.callPackage ./nix/pi-permission-system.nix { };
           agent = pkgs.callPackage ./nix/pi-agent.nix {
             inherit
@@ -46,7 +59,7 @@
         in
         {
           inherit agent sandbox subagents;
-          pi = piTerminal;
+          inherit pi;
           pi-terminal = piTerminal;
           mcp-cli = mcpCli;
           permission-system = permissionSystem;
@@ -130,6 +143,7 @@
           mcpCli = pkgs.callPackage ./nix/pi-mcp-cli.nix { };
           openaiServerCompaction = pkgs.callPackage ./nix/pi-openai-server-compaction.nix { };
           piTerminal = pkgs.callPackage ./nix/pi-terminal.nix { };
+          piGpui = pkgs.callPackage ./nix/pi-gpui.nix { inherit piTerminal; };
           subagents = pkgs.callPackage ./nix/pi-subagents.nix { };
           webAccess = pkgs.callPackage ./nix/pi-web-access.nix { };
         in
@@ -188,6 +202,7 @@
             test "$(pi --version)" = "0.84.2"
             touch "$out"
           '';
+          pi-gpui = piGpui;
           openai-server-compaction-tests = pkgs.runCommand "pi-openai-server-compaction-tests" {
             nativeBuildInputs = [ pkgs.nodejs ];
           } ''
