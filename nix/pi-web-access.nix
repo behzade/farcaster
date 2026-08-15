@@ -1,24 +1,27 @@
 {
   buildNpmPackage,
-  fetchurl,
+  fetchFromGitHub,
   lib,
 }:
 
 buildNpmPackage {
   pname = "pi-web-access";
-  version = "0.15.0";
+  version = "0.23.0";
 
-  src = fetchurl {
-    url = "https://registry.npmjs.org/pi-web-access/-/pi-web-access-0.15.0.tgz";
-    hash = "sha256-d7gpWnXZFCz7okWsuD1HCfdk6UUm9bawYyDBUMCIFXA=";
+  src = fetchFromGitHub {
+    owner = "nicobailon";
+    repo = "pi-web-access";
+    rev = "v0.23.0";
+    hash = "sha256-q/TZUkgeC/W/Ft7RMVIDc6m/Dsj2amicHhSeCbzk05E=";
   };
 
+  patches = [ ../patches/pi-web-access-default-openai.patch ];
+
   postPatch = ''
-    patch -p1 < ${../patches/pi-web-access-default-openai.patch}
     cp ${./pi-web-access-package-lock.json} package-lock.json
   '';
 
-  npmDepsHash = "sha256-F9/bnvVFc55RZv+NBkWAhV94Do4E4EHzEu5oOe5eaHw=";
+  npmDepsHash = "sha256-TUOiefsKK1rbjn2PGUfuanLHg39bm08NvMOZTVMqfLo=";
   npmInstallFlags = [
     "--legacy-peer-deps"
     "--omit=dev"

@@ -1,18 +1,19 @@
 diff --git a/packages/pi-permission-system/README.md b/packages/pi-permission-system/README.md
-index 201e5f3..4f7129b 100644
+index 201e5f36..deab16f6 100644
 --- a/packages/pi-permission-system/README.md
 +++ b/packages/pi-permission-system/README.md
-@@ -22,6 +22,7 @@ Permission enforcement extension for the [Pi](https://pi.mariozechner.at/) codin
+@@ -22,6 +22,8 @@ Permission enforcement extension for the [Pi](https://pi.mariozechner.at/) codin
  - **Fails closed** — an internal gate error blocks the tool (with a `gate_error` review-log entry), and an unparseable bash command — or an indirection wrapper that hides the gated command (`bash -c`/`eval`, `sudo`, `env`, `xargs`, `find -exec`, …) — prompts (`ask`) rather than passing silently
  - **Forwards prompts from subagents** — `ask` policies work even in non-UI execution contexts
  - **Broadcasts UI prompt events** — `permissions:ui_prompt` fires only when the permission system is about to invoke the active user-facing permission UI
 +- **Shares approval transport** — other extensions can submit caller-owned choices through `PermissionsService.requestUserApproval()` while retaining their own policy and grant storage
++- **Supports approval-transport-only mode** — set `approvalTransportOnly` in the global config to publish and forward caller-owned prompts without registering tool, shell, path, or skill permission gates
  - **Native [`@gotgenes/pi-subagents`](https://github.com/gotgenes/pi-subagents) integration** — in-process child sessions register with the permission system automatically, enabling per-agent policy enforcement and `ask`-state forwarding to the parent UI without configuration
  
  ## Install
 diff --git a/packages/pi-permission-system/dist/public.d.ts b/packages/pi-permission-system/dist/public.d.ts
 new file mode 100644
-index 0000000..c772e9e
+index 00000000..c772e9e0
 --- /dev/null
 +++ b/packages/pi-permission-system/dist/public.d.ts
 @@ -0,0 +1,452 @@
@@ -469,7 +470,7 @@ index 0000000..c772e9e
 +export { PERMISSIONS_DECISION_CHANNEL, PERMISSIONS_READY_CHANNEL, PERMISSIONS_UI_PROMPT_CHANNEL, getPermissionsService, publishPermissionsService, unpublishPermissionsService };
 +export type { Authorizer, AuthorizerLog, AuthorizerVerdict, ForwardedPromptContext, PermissionCheckResult, PermissionDecisionEvent, PermissionQuery, PermissionState, PermissionUiPromptEvent, PermissionUiPromptSource, PermissionsReadyEvent, PermissionsService, PromptPermissionDetails, ToolInputFormatter, UserApprovalChoice, UserApprovalRequest, UserApprovalResult };
 diff --git a/packages/pi-permission-system/docs/cross-extension-api.md b/packages/pi-permission-system/docs/cross-extension-api.md
-index 8f3d20a..ea100a5 100644
+index 8f3d20a9..ea100a5d 100644
 --- a/packages/pi-permission-system/docs/cross-extension-api.md
 +++ b/packages/pi-permission-system/docs/cross-extension-api.md
 @@ -58,6 +58,11 @@ interface PermissionsService {
@@ -524,11 +525,28 @@ index 8f3d20a..ea100a5 100644
  #### `registerToolInputFormatter`
  
  Register a custom preview formatter for a specific tool name.
+diff --git a/packages/pi-permission-system/schemas/permissions.schema.json b/packages/pi-permission-system/schemas/permissions.schema.json
+index bd940cae..be04047a 100644
+--- a/packages/pi-permission-system/schemas/permissions.schema.json
++++ b/packages/pi-permission-system/schemas/permissions.schema.json
+@@ -19,6 +19,12 @@
+       "default": true,
+       "type": "boolean"
+     },
++    "approvalTransportOnly": {
++      "description": "Publish and forward caller-owned approval prompts without enforcing tool, shell, path, or skill policy.",
++      "markdownDescription": "Publish `PermissionsService.requestUserApproval()` and keep parent/child prompt forwarding active, but do not register permission-system gates. Use this when another extension owns the permission boundary.",
++      "default": false,
++      "type": "boolean"
++    },
+     "yoloMode": {
+       "description": "Auto-approve ask-state permission checks, including subagent approval forwarding.",
+       "markdownDescription": "Auto-approve `ask`-state permission checks, including subagent approval forwarding.\n\n⚠️ **Use with caution** — this disables all interactive confirmation prompts.",
 diff --git a/packages/pi-permission-system/src/authority/permission-dialog.ts b/packages/pi-permission-system/src/authority/permission-dialog.ts
-index 844ea5b..dd5a5d6 100644
+index 83e0a004..8e54fb4e 100644
 --- a/packages/pi-permission-system/src/authority/permission-dialog.ts
 +++ b/packages/pi-permission-system/src/authority/permission-dialog.ts
-@@ -26,8 +26,16 @@ export type PermissionPromptDecision = {
+@@ -29,8 +29,16 @@ export type PermissionPromptDecision = {
  };
  
  export interface PermissionDecisionUi {
@@ -547,8 +565,119 @@ index 844ea5b..dd5a5d6 100644
  }
  
  const APPROVE_OPTION = "Yes";
+diff --git a/packages/pi-permission-system/src/config-loader.ts b/packages/pi-permission-system/src/config-loader.ts
+index b99ddb42..844fce0b 100644
+--- a/packages/pi-permission-system/src/config-loader.ts
++++ b/packages/pi-permission-system/src/config-loader.ts
+@@ -199,7 +199,7 @@ function formatConfigIssues(error: ZodError): string[] {
+  */
+ // Scalar knobs merged by override-replaces-base; keep in sync with
+ // PermissionSystemExtensionConfig booleans (debugLog, permissionReviewLog,
+-// yoloMode, doublePressToConfirm).
++// approvalTransportOnly, yoloMode, doublePressToConfirm).
+ export function mergeUnifiedConfigs(
+   base: UnifiedPermissionConfig,
+   override: UnifiedPermissionConfig,
+@@ -210,6 +210,7 @@ export function mergeUnifiedConfigs(
+   for (const key of [
+     "debugLog",
+     "permissionReviewLog",
++    "approvalTransportOnly",
+     "yoloMode",
+     "doublePressToConfirm",
+   ] as const) {
+diff --git a/packages/pi-permission-system/src/config-modal.ts b/packages/pi-permission-system/src/config-modal.ts
+index 3c59addc..012060a4 100644
+--- a/packages/pi-permission-system/src/config-modal.ts
++++ b/packages/pi-permission-system/src/config-modal.ts
+@@ -50,6 +50,7 @@ function cloneDefaultConfig(): PermissionSystemExtensionConfig {
+   return {
+     debugLog: DEFAULT_EXTENSION_CONFIG.debugLog,
+     permissionReviewLog: DEFAULT_EXTENSION_CONFIG.permissionReviewLog,
++    approvalTransportOnly: DEFAULT_EXTENSION_CONFIG.approvalTransportOnly,
+     yoloMode: DEFAULT_EXTENSION_CONFIG.yoloMode,
+     doublePressToConfirm: DEFAULT_EXTENSION_CONFIG.doublePressToConfirm,
+   };
+diff --git a/packages/pi-permission-system/src/config-schema.ts b/packages/pi-permission-system/src/config-schema.ts
+index b0812849..1c318ff7 100644
+--- a/packages/pi-permission-system/src/config-schema.ts
++++ b/packages/pi-permission-system/src/config-schema.ts
+@@ -173,6 +173,13 @@ export const unifiedConfigSchema = z
+         "Write permission request and decision audit events to `logs/pi-permission-system-permission-review.jsonl` under the extension config directory.",
+       default: true,
+     }),
++    approvalTransportOnly: z.boolean().optional().meta({
++      description:
++        "Publish and forward caller-owned approval prompts without enforcing tool, shell, path, or skill policy.",
++      markdownDescription:
++        "Publish `PermissionsService.requestUserApproval()` and keep parent/child prompt forwarding active, but do not register permission-system gates. Use this when another extension owns the permission boundary.",
++      default: false,
++    }),
+     yoloMode: z.boolean().optional().meta({
+       description:
+         "Auto-approve ask-state permission checks, including subagent approval forwarding.",
+diff --git a/packages/pi-permission-system/src/config-store.ts b/packages/pi-permission-system/src/config-store.ts
+index bf779c82..fa7eaeda 100644
+--- a/packages/pi-permission-system/src/config-store.ts
++++ b/packages/pi-permission-system/src/config-store.ts
+@@ -129,6 +129,7 @@ export class ConfigStore implements SessionConfigStore, CommandConfigStore {
+       warning: warning ?? null,
+       debugLog: runtimeConfig.debugLog,
+       permissionReviewLog: runtimeConfig.permissionReviewLog,
++      approvalTransportOnly: runtimeConfig.approvalTransportOnly,
+       yoloMode: runtimeConfig.yoloMode,
+       projectTrusted,
+     });
+@@ -154,6 +155,7 @@ export class ConfigStore implements SessionConfigStore, CommandConfigStore {
+       ...existing.config,
+       debugLog: normalized.debugLog,
+       permissionReviewLog: normalized.permissionReviewLog,
++      approvalTransportOnly: normalized.approvalTransportOnly,
+       yoloMode: normalized.yoloMode,
+     };
+ 
+@@ -185,6 +187,7 @@ export class ConfigStore implements SessionConfigStore, CommandConfigStore {
+     this.deps.logger.debug("config.saved", {
+       debugLog: normalized.debugLog,
+       permissionReviewLog: normalized.permissionReviewLog,
++      approvalTransportOnly: normalized.approvalTransportOnly,
+       yoloMode: normalized.yoloMode,
+     });
+   }
+diff --git a/packages/pi-permission-system/src/extension-config.ts b/packages/pi-permission-system/src/extension-config.ts
+index f7bb1d05..1ca152e9 100644
+--- a/packages/pi-permission-system/src/extension-config.ts
++++ b/packages/pi-permission-system/src/extension-config.ts
+@@ -15,6 +15,11 @@ export const EXTENSION_ID = "pi-permission-system";
+ export interface PermissionSystemExtensionConfig {
+   debugLog: boolean;
+   permissionReviewLog: boolean;
++  /**
++   * Keep only the approval service and parent/child prompt forwarding active.
++   * The caller remains the sole owner of policy and grant storage.
++   */
++  approvalTransportOnly?: boolean;
+   yoloMode: boolean;
+   /** Require a confirming second press of a decision hotkey in the inline TUI dialog. Defaults to true. */
+   doublePressToConfirm: boolean;
+@@ -35,6 +40,7 @@ export interface PermissionSystemExtensionConfig {
+ export const DEFAULT_EXTENSION_CONFIG: PermissionSystemExtensionConfig = {
+   debugLog: false,
+   permissionReviewLog: true,
++  approvalTransportOnly: false,
+   yoloMode: false,
+   doublePressToConfirm: true,
+ };
+@@ -67,6 +73,7 @@ export function normalizePermissionSystemConfig(
+   const result: PermissionSystemExtensionConfig = {
+     debugLog: raw.debugLog === true,
+     permissionReviewLog: raw.permissionReviewLog !== false,
++    approvalTransportOnly: raw.approvalTransportOnly === true,
+     yoloMode: raw.yoloMode === true,
+     doublePressToConfirm: raw.doublePressToConfirm !== false,
+   };
 diff --git a/packages/pi-permission-system/src/index.ts b/packages/pi-permission-system/src/index.ts
-index c226ea5..e883918 100644
+index d6fbffc3..ec72c493 100644
 --- a/packages/pi-permission-system/src/index.ts
 +++ b/packages/pi-permission-system/src/index.ts
 @@ -6,6 +6,7 @@ import { AuthorizerRegistry } from "./authority/authorizer-registry";
@@ -559,7 +688,7 @@ index c226ea5..e883918 100644
    type ServingPolicy,
  } from "./authority/forwarded-request-server";
  import { ForwardingManager } from "./authority/forwarding-manager";
-@@ -41,6 +42,7 @@ import { PermissionSessionLogger } from "./session-logger";
+@@ -43,6 +44,7 @@ import { PermissionSessionLogger } from "./session-logger";
  import { SessionRules } from "./session-rules";
  import { ToolAccessExtractorRegistry } from "./tool-access-extractor-registry";
  import { ToolInputFormatterRegistry } from "./tool-input-formatter-registry";
@@ -567,7 +696,7 @@ index c226ea5..e883918 100644
  
  export default function piPermissionSystemExtension(pi: ExtensionAPI): void {
    const agentDir = getAgentDir();
-@@ -157,10 +159,24 @@ export default function piPermissionSystemExtension(pi: ExtensionAPI): void {
+@@ -166,12 +168,27 @@ export default function piPermissionSystemExtension(pi: ExtensionAPI): void {
      recorder: sessionRules,
      registry: subagentRegistry,
    });
@@ -576,6 +705,7 @@ index c226ea5..e883918 100644
 +    getContext: () => session.getRuntimeContext(),
 +    detection: subagentDetection,
 +    registry: subagentRegistry,
++    serving: servingRegistry,
 +    events: pi.events,
 +    logger,
 +  });
@@ -588,12 +718,14 @@ index c226ea5..e883918 100644
  
    session = new PermissionSession(
      paths,
--    new ForwardingManager(subagentDetection, requestServer),
-+    new ForwardingManager(subagentDetection, inbox),
-     permissionManager,
-     sessionRules,
-     configStore,
-@@ -191,6 +207,7 @@ export default function piPermissionSystemExtension(pi: ExtensionAPI): void {
+     new ForwardingManager({
+       detection: subagentDetection,
+-      forwarder: requestServer,
++      forwarder: inbox,
+       serving: servingRegistry,
+       logger,
+     }),
+@@ -205,6 +222,7 @@ export default function piPermissionSystemExtension(pi: ExtensionAPI): void {
      formatterRegistry,
      accessExtractorRegistry,
      authorizerRegistry,
@@ -601,8 +733,41 @@ index c226ea5..e883918 100644
    );
  
    // Subscribe to @gotgenes/pi-subagents' child lifecycle events so child
+@@ -278,15 +296,21 @@ export default function piPermissionSystemExtension(pi: ExtensionAPI): void {
+     lifecycle.handleResourcesDiscover(event, ctx),
+   );
+   pi.on("session_shutdown", () => lifecycle.handleSessionShutdown());
+-  pi.on("before_agent_start", (event, ctx) => agentPrep.handle(event, ctx));
+-  pi.on("input", (event, ctx) => gates.handleInput(event, ctx));
+-  pi.on(
+-    "tool_call",
+-    createFailClosedToolCall(
+-      (event, ctx) => gates.handleToolCall(event, ctx),
+-      reporter,
+-      audit,
+-      logger,
+-    ),
+-  );
++
++  // Read this after the initial global-only refresh. A project config cannot
++  // turn enforcement off, and a project does not need a command allowlist when
++  // a separate sandbox owns the I/O boundary.
++  if (!configStore.current().approvalTransportOnly) {
++    pi.on("before_agent_start", (event, ctx) => agentPrep.handle(event, ctx));
++    pi.on("input", (event, ctx) => gates.handleInput(event, ctx));
++    pi.on(
++      "tool_call",
++      createFailClosedToolCall(
++        (event, ctx) => gates.handleToolCall(event, ctx),
++        reporter,
++        audit,
++        logger,
++      ),
++    );
++  }
+ }
 diff --git a/packages/pi-permission-system/src/permissions-service.ts b/packages/pi-permission-system/src/permissions-service.ts
-index 29c7d8c..39bb3a1 100644
+index 29c7d8c1..39bb3a12 100644
 --- a/packages/pi-permission-system/src/permissions-service.ts
 +++ b/packages/pi-permission-system/src/permissions-service.ts
 @@ -15,6 +15,10 @@ import type {
@@ -633,7 +798,7 @@ index 29c7d8c..39bb3a1 100644
      surface: string,
      value?: string,
 diff --git a/packages/pi-permission-system/src/service.ts b/packages/pi-permission-system/src/service.ts
-index 59d149f..58ee827 100644
+index 59d149f7..d200a32d 100644
 --- a/packages/pi-permission-system/src/service.ts
 +++ b/packages/pi-permission-system/src/service.ts
 @@ -51,6 +51,40 @@ export {
@@ -677,7 +842,7 @@ index 59d149f..58ee827 100644
  /** Process-global key for the service slot. */
  const SERVICE_KEY = Symbol.for("@gotgenes/pi-permission-system:service");
  
-@@ -100,6 +134,17 @@ export interface PermissionQuery {
+@@ -100,6 +134,19 @@ export interface PermissionQuery {
   * rules internally.
   */
  export interface PermissionsService extends PermissionQuery {
@@ -690,18 +855,20 @@ index 59d149f..58ee827 100644
 +   * cancellation, timeout, or malformed forwarding responses fail closed with
 +   * `choiceId: null`.
 +   */
-+  requestUserApproval(request: UserApprovalRequest): Promise<UserApprovalResult>;
++  requestUserApproval(
++    request: UserApprovalRequest,
++  ): Promise<UserApprovalResult>;
 +
    /**
     * Register a custom preview formatter for a specific tool name.
     *
 diff --git a/packages/pi-permission-system/src/user-approval.ts b/packages/pi-permission-system/src/user-approval.ts
 new file mode 100644
-index 0000000..a741052
+index 00000000..1d5b7697
 --- /dev/null
 +++ b/packages/pi-permission-system/src/user-approval.ts
-@@ -0,0 +1,440 @@
-+import { existsSync, readFileSync, readdirSync } from "node:fs";
+@@ -0,0 +1,553 @@
++import { existsSync, readdirSync, readFileSync } from "node:fs";
 +import { join } from "node:path";
 +import type { ForwarderContext } from "#src/authority/forwarder-context";
 +import {
@@ -714,18 +881,23 @@ index 0000000..a741052
 +} from "#src/authority/forwarding-io";
 +import {
 +  PERMISSION_FORWARDING_POLL_INTERVAL_MS,
++  PERMISSION_FORWARDING_SERVING_GRACE_MS,
 +  PERMISSION_FORWARDING_TIMEOUT_MS,
-+  resolvePermissionForwardingTargetSessionId,
++  resolvePermissionForwardingTarget,
 +} from "#src/authority/permission-forwarding";
++import type { ServingLookup } from "#src/authority/serving-registry";
 +import type { SubagentDetector } from "#src/authority/subagent-detection";
 +import type { SubagentSessionRegistry } from "#src/authority/subagent-registry";
-+import { emitUiPromptEvent, type PermissionEventBus } from "#src/permission-events";
-+import type { DebugReviewLogger } from "#src/session-logger";
++import {
++  emitUiPromptEvent,
++  type PermissionEventBus,
++} from "#src/permission-events";
 +import type {
 +  UserApprovalChoice,
 +  UserApprovalRequest,
 +  UserApprovalResult,
 +} from "#src/service";
++import type { DebugReviewLogger } from "#src/session-logger";
 +
 +const USER_APPROVAL_PROTOCOL_VERSION = 1;
 +const MAX_REQUEST_TEXT_LENGTH = 32 * 1024;
@@ -767,6 +939,7 @@ index 0000000..a741052
 +  getContext: () => ForwarderContext | null;
 +  detection: SubagentDetector;
 +  registry?: SubagentSessionRegistry;
++  serving?: ServingLookup;
 +  events: PermissionEventBus;
 +  logger: DebugReviewLogger;
 +}
@@ -806,7 +979,11 @@ index 0000000..a741052
 +      const requestPath = join(location.requestsDir, fileName);
 +      const request = readForwardedRequest(requestPath);
 +      if (!request || request.targetSessionId !== sessionId) {
-+        safeDeleteFile(this.deps.logger, requestPath, "forwarded user approval request");
++        safeDeleteFile(
++          this.deps.logger,
++          requestPath,
++          "forwarded user approval request",
++        );
 +        continue;
 +      }
 +      await this.serve(ctx, location, requestPath, request);
@@ -820,7 +997,7 @@ index 0000000..a741052
 +    signal?: AbortSignal,
 +  ): Promise<UserApprovalResult> {
 +    const requesterSessionId = ctx.sessionManager.getSessionId();
-+    const targetSessionId = resolvePermissionForwardingTargetSessionId({
++    const target = resolvePermissionForwardingTarget({
 +      hasUI: false,
 +      isSubagent: true,
 +      currentSessionId: requesterSessionId,
@@ -828,16 +1005,18 @@ index 0000000..a741052
 +      sessionId: requesterSessionId,
 +      registry: this.deps.registry,
 +    });
-+    if (!requesterSessionId || !targetSessionId) {
++    if (!requesterSessionId || !target) {
 +      return unavailable("Parent permission session could not be resolved");
 +    }
++    const targetSessionId = target.sessionId;
 +
 +    const location = ensureApprovalLocation(
 +      this.deps.logger,
 +      this.deps.forwardingDir,
 +      targetSessionId,
 +    );
-+    if (!location) return unavailable("Parent approval transport is unavailable");
++    if (!location)
++      return unavailable("Parent approval transport is unavailable");
 +
 +    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}-${process.pid}`;
 +    const forwarded: ForwardedUserApprovalRequest = {
@@ -868,23 +1047,67 @@ index 0000000..a741052
 +    }
 +
 +    const deadline = Date.now() + PERMISSION_FORWARDING_TIMEOUT_MS;
++    let unservedSince: number | null = null;
 +    while (Date.now() < deadline) {
 +      if (signal?.aborted) {
-+        safeDeleteFile(this.deps.logger, requestPath, "cancelled user approval request");
++        safeDeleteFile(
++          this.deps.logger,
++          requestPath,
++          "cancelled user approval request",
++        );
 +        cleanupLocation(this.deps.logger, location);
 +        return { choiceId: null, aborted: true };
 +      }
 +      if (existsSync(responsePath)) {
 +        const response = readForwardedResponse(responsePath, request.choices);
-+        safeDeleteFile(this.deps.logger, responsePath, "user approval response");
++        safeDeleteFile(
++          this.deps.logger,
++          responsePath,
++          "user approval response",
++        );
 +        safeDeleteFile(this.deps.logger, requestPath, "user approval request");
 +        cleanupLocation(this.deps.logger, location);
-+        return response ?? unavailable("Parent returned an invalid approval response");
++        return (
++          response ??
++          unavailable("Parent returned an invalid approval response")
++        );
++      }
++      if (
++        target.source === "registry" &&
++        this.deps.serving &&
++        !this.deps.serving.isServing(targetSessionId)
++      ) {
++        unservedSince ??= Date.now();
++        if (
++          Date.now() - unservedSince >=
++          PERMISSION_FORWARDING_SERVING_GRACE_MS
++        ) {
++          this.deps.logger.review("user_approval.no_serving_session", {
++            requesterSessionId,
++            targetSessionId,
++            servingSessionIds: this.deps.serving.servingIds(),
++          });
++          safeDeleteFile(
++            this.deps.logger,
++            requestPath,
++            "unserved user approval request",
++          );
++          cleanupLocation(this.deps.logger, location);
++          return unavailable(
++            `Session '${targetSessionId}' is not serving approval requests`,
++          );
++        }
++      } else {
++        unservedSince = null;
 +      }
 +      await sleep(PERMISSION_FORWARDING_POLL_INTERVAL_MS);
 +    }
 +
-+    safeDeleteFile(this.deps.logger, requestPath, "timed-out user approval request");
++    safeDeleteFile(
++      this.deps.logger,
++      requestPath,
++      "timed-out user approval request",
++    );
 +    cleanupLocation(this.deps.logger, location);
 +    return unavailable("Timed out waiting for parent approval");
 +  }
@@ -925,7 +1148,11 @@ index 0000000..a741052
 +        responderSessionId: ctx.sessionManager.getSessionId() ?? "unknown",
 +        respondedAt: Date.now(),
 +      } satisfies ForwardedUserApprovalResponse);
-+      safeDeleteFile(this.deps.logger, requestPath, "served user approval request");
++      safeDeleteFile(
++        this.deps.logger,
++        requestPath,
++        "served user approval request",
++      );
 +    } catch (error) {
 +      this.deps.logger.review("user_approval.response_failed", {
 +        requestId: request.callerRequestId,
@@ -938,7 +1165,10 @@ index 0000000..a741052
 +    ctx: ForwarderContext,
 +    request: UserApprovalRequest,
 +    signal: AbortSignal | undefined,
-+    forwarding: { requesterAgentName: string | null; requesterSessionId: string | null } | null,
++    forwarding: {
++      requesterAgentName: string | null;
++      requesterSessionId: string | null;
++    } | null,
 +  ): Promise<UserApprovalResult> {
 +    emitUiPromptEvent(this.deps.events, {
 +      requestId: request.requestId,
@@ -954,7 +1184,9 @@ index 0000000..a741052
 +      request.choices.map((choice) => choice.label),
 +      { signal },
 +    );
-+    const choice = request.choices.find((candidate) => candidate.label === selected);
++    const choice = request.choices.find(
++      (candidate) => candidate.label === selected,
++    );
 +    if (!choice) {
 +      return { choiceId: null, ...(signal?.aborted ? { aborted: true } : {}) };
 +    }
@@ -969,9 +1201,13 @@ index 0000000..a741052
 +  }
 +}
 +
-+function normalizeUserApprovalRequest(request: UserApprovalRequest): UserApprovalRequest {
++function normalizeUserApprovalRequest(
++  request: UserApprovalRequest,
++): UserApprovalRequest {
 +  if (!boundedText(request.requestId, MAX_CHOICE_TEXT_LENGTH)) {
-+    throw new Error("User approval requestId must be a non-empty bounded string");
++    throw new Error(
++      "User approval requestId must be a non-empty bounded string",
++    );
 +  }
 +  if (!boundedText(request.title, MAX_CHOICE_TEXT_LENGTH)) {
 +    throw new Error("User approval title must be a non-empty bounded string");
@@ -981,10 +1217,22 @@ index 0000000..a741052
 +  }
 +  if (
 +    !["tool_call", "skill_input", "skill_read"].includes(request.source) ||
-+    !(request.surface === null || boundedText(request.surface, MAX_CHOICE_TEXT_LENGTH)) ||
-+    !(request.value === null || boundedText(request.value, MAX_REQUEST_TEXT_LENGTH)) ||
-+    !(request.agentName === undefined || boundedText(request.agentName, MAX_CHOICE_TEXT_LENGTH)) ||
-+    !(request.reasonTitle === undefined || boundedText(request.reasonTitle, MAX_CHOICE_TEXT_LENGTH)) ||
++    !(
++      request.surface === null ||
++      boundedText(request.surface, MAX_CHOICE_TEXT_LENGTH)
++    ) ||
++    !(
++      request.value === null ||
++      boundedText(request.value, MAX_REQUEST_TEXT_LENGTH)
++    ) ||
++    !(
++      request.agentName === undefined ||
++      boundedText(request.agentName, MAX_CHOICE_TEXT_LENGTH)
++    ) ||
++    !(
++      request.reasonTitle === undefined ||
++      boundedText(request.reasonTitle, MAX_CHOICE_TEXT_LENGTH)
++    ) ||
 +    !(
 +      request.reasonPlaceholder === undefined ||
 +      boundedText(request.reasonPlaceholder, MAX_CHOICE_TEXT_LENGTH)
@@ -1004,7 +1252,9 @@ index 0000000..a741052
 +      ids.has(choice.id) ||
 +      labels.has(choice.label)
 +    ) {
-+      throw new Error("User approval choices require unique bounded ids and labels");
++      throw new Error(
++        "User approval choices require unique bounded ids and labels",
++      );
 +    }
 +    ids.add(choice.id);
 +    labels.add(choice.label);
@@ -1016,14 +1266,19 @@ index 0000000..a741052
 +}
 +
 +function boundedText(value: unknown, maxLength: number): value is string {
-+  return typeof value === "string" && value.length > 0 && value.length <= maxLength;
++  return (
++    typeof value === "string" && value.length > 0 && value.length <= maxLength
++  );
 +}
 +
 +function unavailable(reason: string): UserApprovalResult {
 +  return { choiceId: null, unavailableReason: reason };
 +}
 +
-+function approvalLocation(forwardingDir: string, sessionId: string): UserApprovalLocation {
++function approvalLocation(
++  forwardingDir: string,
++  sessionId: string,
++): UserApprovalLocation {
 +  const rootDir = join(
 +    forwardingDir,
 +    "user-approvals",
@@ -1043,21 +1298,40 @@ index 0000000..a741052
 +  sessionId: string,
 +): UserApprovalLocation | null {
 +  const location = approvalLocation(forwardingDir, sessionId);
-+  return ensureDirectoryExists(logger, location.rootDir, "user approval root") &&
-+    ensureDirectoryExists(logger, location.requestsDir, "user approval requests") &&
-+    ensureDirectoryExists(logger, location.responsesDir, "user approval responses")
++  return ensureDirectoryExists(
++    logger,
++    location.rootDir,
++    "user approval root",
++  ) &&
++    ensureDirectoryExists(
++      logger,
++      location.requestsDir,
++      "user approval requests",
++    ) &&
++    ensureDirectoryExists(
++      logger,
++      location.responsesDir,
++      "user approval responses",
++    )
 +    ? location
 +    : null;
 +}
 +
-+function cleanupLocation(logger: DebugReviewLogger, location: UserApprovalLocation): void {
++function cleanupLocation(
++  logger: DebugReviewLogger,
++  location: UserApprovalLocation,
++): void {
 +  const requestsGone = tryRemoveDirectoryIfEmpty(
 +    logger,
 +    location.requestsDir,
 +    "user approval requests",
 +  );
 +  if (requestsGone) {
-+    tryRemoveDirectoryIfEmpty(logger, location.responsesDir, "user approval responses");
++    tryRemoveDirectoryIfEmpty(
++      logger,
++      location.responsesDir,
++      "user approval responses",
++    );
 +  }
 +  tryRemoveDirectoryIfEmpty(logger, location.rootDir, "user approval root");
 +}
@@ -1072,9 +1346,13 @@ index 0000000..a741052
 +  }
 +}
 +
-+function readForwardedRequest(path: string): ForwardedUserApprovalRequest | null {
++function readForwardedRequest(
++  path: string,
++): ForwardedUserApprovalRequest | null {
 +  try {
-+    const parsed = JSON.parse(readFileSync(path, "utf8")) as ForwardedUserApprovalRequest;
++    const parsed = JSON.parse(
++      readFileSync(path, "utf8"),
++    ) as ForwardedUserApprovalRequest;
 +    if (
 +      parsed.protocolVersion !== USER_APPROVAL_PROTOCOL_VERSION ||
 +      !boundedText(parsed.id, MAX_CHOICE_TEXT_LENGTH) ||
@@ -1116,7 +1394,9 @@ index 0000000..a741052
 +  choices: readonly UserApprovalChoice[],
 +): UserApprovalResult | null {
 +  try {
-+    const parsed = JSON.parse(readFileSync(path, "utf8")) as ForwardedUserApprovalResponse;
++    const parsed = JSON.parse(
++      readFileSync(path, "utf8"),
++    ) as ForwardedUserApprovalResponse;
 +    if (
 +      parsed.protocolVersion !== USER_APPROVAL_PROTOCOL_VERSION ||
 +      typeof parsed.responderSessionId !== "string" ||
@@ -1142,7 +1422,7 @@ index 0000000..a741052
 +  }
 +}
 diff --git a/packages/pi-permission-system/test/permissions-service.test.ts b/packages/pi-permission-system/test/permissions-service.test.ts
-index c14f975..ae89004 100644
+index c14f9750..ae890049 100644
 --- a/packages/pi-permission-system/test/permissions-service.test.ts
 +++ b/packages/pi-permission-system/test/permissions-service.test.ts
 @@ -77,11 +77,18 @@ function makeAuthorizerRegistry(): AuthorizerRegistrar {
@@ -1220,7 +1500,7 @@ index c14f975..ae89004 100644
    it("resolves a non-path surface through a tool intent", () => {
      const { service, resolver } = makeService();
 diff --git a/packages/pi-permission-system/test/service-lifecycle.test.ts b/packages/pi-permission-system/test/service-lifecycle.test.ts
-index d0b598a..d06a3e0 100644
+index d0b598aa..d06a3e08 100644
 --- a/packages/pi-permission-system/test/service-lifecycle.test.ts
 +++ b/packages/pi-permission-system/test/service-lifecycle.test.ts
 @@ -29,6 +29,7 @@ function makeService(): PermissionsService {
@@ -1232,7 +1512,7 @@ index d0b598a..d06a3e0 100644
      registerToolAccessExtractor: vi.fn(),
      registerAuthorizer: vi.fn(),
 diff --git a/packages/pi-permission-system/test/service.test.ts b/packages/pi-permission-system/test/service.test.ts
-index 22bed2e..f765e70 100644
+index 22bed2e6..f765e70f 100644
 --- a/packages/pi-permission-system/test/service.test.ts
 +++ b/packages/pi-permission-system/test/service.test.ts
 @@ -22,6 +22,7 @@ function makeService(
@@ -1253,20 +1533,24 @@ index 22bed2e..f765e70 100644
    }
 diff --git a/packages/pi-permission-system/test/user-approval.test.ts b/packages/pi-permission-system/test/user-approval.test.ts
 new file mode 100644
-index 0000000..2febf96
+index 00000000..0cbd5e9e
 --- /dev/null
 +++ b/packages/pi-permission-system/test/user-approval.test.ts
-@@ -0,0 +1,126 @@
+@@ -0,0 +1,170 @@
 +import { mkdtempSync, rmSync } from "node:fs";
 +import { tmpdir } from "node:os";
 +import { join } from "node:path";
-+import { createEventBus, type ExtensionContext } from "@earendil-works/pi-coding-agent";
++import {
++  createEventBus,
++  type ExtensionContext,
++} from "@earendil-works/pi-coding-agent";
 +import { afterEach, describe, expect, it, vi } from "vitest";
 +import { UserApprovalBroker } from "#src/user-approval";
 +
 +const roots: string[] = [];
 +
 +afterEach(() => {
++  vi.useRealTimers();
 +  vi.unstubAllEnvs();
 +  for (const root of roots.splice(0)) {
 +    rmSync(root, { recursive: true, force: true });
@@ -1296,11 +1580,20 @@ index 0000000..2febf96
 +  forwardingDir: string;
 +  ctx: ExtensionContext;
 +  isSubagent: boolean;
++  registry?: {
++    get(sessionId: string): { parentSessionId: string } | undefined;
++  };
++  serving?: {
++    isServing(sessionId: string): boolean;
++    servingIds(): readonly string[];
++  };
 +}) {
 +  return new UserApprovalBroker({
 +    forwardingDir: options.forwardingDir,
 +    getContext: () => options.ctx,
 +    detection: { isSubagent: () => options.isSubagent },
++    registry: options.registry as never,
++    serving: options.serving,
 +    events: createEventBus(),
 +    logger: { review: vi.fn(), debug: vi.fn() },
 +  });
@@ -1330,7 +1623,9 @@ index 0000000..2febf96
 +    });
 +    const broker = makeBroker({ forwardingDir: root, ctx, isSubagent: false });
 +
-+    await expect(broker.request(request)).resolves.toEqual({ choiceId: "allow" });
++    await expect(broker.request(request)).resolves.toEqual({
++      choiceId: "allow",
++    });
 +  });
 +
 +  it("rejects duplicate choice labels", async () => {
@@ -1352,6 +1647,27 @@ index 0000000..2febf96
 +});
 +
 +describe("forwarded approval", () => {
++  it("abandons an in-process request when no parent session serves it", async () => {
++    vi.useFakeTimers();
++    const root = mkdtempSync(join(tmpdir(), "pi-user-approval-"));
++    roots.push(root);
++    const childCtx = makeCtx({ sessionId: "child", hasUI: false });
++    const broker = makeBroker({
++      forwardingDir: root,
++      ctx: childCtx,
++      isSubagent: true,
++      registry: { get: () => ({ parentSessionId: "parent" }) },
++      serving: { isServing: () => false, servingIds: () => [] },
++    });
++
++    const pending = broker.request(request);
++    await vi.advanceTimersByTimeAsync(2_250);
++    await expect(pending).resolves.toEqual({
++      choiceId: null,
++      unavailableReason: "Session 'parent' is not serving approval requests",
++    });
++  });
++
 +  it("routes a headless child request to the parent UI", async () => {
 +    const root = mkdtempSync(join(tmpdir(), "pi-user-approval-"));
 +    roots.push(root);
@@ -1362,8 +1678,16 @@ index 0000000..2febf96
 +      hasUI: true,
 +      select: async () => "Allow",
 +    });
-+    const child = makeBroker({ forwardingDir: root, ctx: childCtx, isSubagent: true });
-+    const parent = makeBroker({ forwardingDir: root, ctx: parentCtx, isSubagent: false });
++    const child = makeBroker({
++      forwardingDir: root,
++      ctx: childCtx,
++      isSubagent: true,
++    });
++    const parent = makeBroker({
++      forwardingDir: root,
++      ctx: parentCtx,
++      isSubagent: false,
++    });
 +
 +    const pending = child.request(request);
 +    const deadline = Date.now() + 2000;

@@ -10,18 +10,17 @@
 
 stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "pi-permission-system";
-  version = "24.0.0-pi.1";
+  version = "25.1.0";
 
   src = fetchFromGitHub {
     owner = "gotgenes";
     repo = "pi-packages";
-    rev = "095ee67a9fd847a871215c7b031da3bb0f0dd377";
-    hash = "sha256-ogX1c4WPbvh2J7nhD3skyjUXtL/TMTuwOB/RBlJjIbk=";
+    rev = "pi-permission-system-v25.1.0";
+    hash = "sha256-qIjW6OWJq/Tb6gOYlWMGrSSnVrSOtFsYXBuXmZWDkog=";
   };
 
   patches = [
-    ../patches/pi-permission-system-user-approval.patch
-    ../patches/pi-permission-system-approval-transport-only.patch
+    ../patches/pi-permission-system-approval-transport.patch
   ];
 
   pnpmDeps = fetchPnpmDeps {

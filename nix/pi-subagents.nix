@@ -6,23 +6,20 @@
 
 buildNpmPackage {
   pname = "pi-subagents";
-  version = "0.36.0";
+  version = "0.49.0";
 
   src = fetchFromGitHub {
     owner = "nicobailon";
     repo = "pi-subagents";
-    rev = "v0.36.0";
-    hash = "sha256-o4x//aNXBweHPiwUhGp08iVZ/LeLjkFSzEm60G8EzxY=";
+    rev = "v0.49.0";
+    hash = "sha256-qcapXaNEbQHwjPfIt3wcjHdeLiZC/ReFj2BtvwWkHFc=";
   };
 
   patches = [
-    ../patches/pi-subagents-quiet-optional-result-intercom.patch
-    ../patches/pi-subagents-wait-steering.patch
-    ../patches/pi-subagents-orchestration-hardening.patch
-    ../patches/pi-subagents-default-output-cap.patch
+    ../patches/pi-subagents-local-hardening.patch
   ];
 
-  npmDepsHash = "sha256-Si1Fc01ORGdauY+6+Us3eRLuFzmZaAaAicZTQdcUFHY=";
+  npmDepsHash = "sha256-VeUptKmEiwuMyhAozpoIx8SACsJMjk7EFNcE8EG8lhU=";
   npmInstallFlags = [ "--omit=dev" ];
   dontNpmBuild = true;
 
