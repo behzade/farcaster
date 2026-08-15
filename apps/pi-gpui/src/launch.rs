@@ -8,14 +8,13 @@ use std::{
     },
 };
 
-use gpui::{
-    App, AppContext as _, Bounds, KeyBinding, TitlebarOptions, WindowBounds, WindowOptions, size,
-};
-use gpui_component_assets::Assets;
-
 use crate::{
     app::{DismissSurface, OVERLAY_KEY_CONTEXT, PiApp},
+    assets::AppAssets,
     theme::{THEME, install_component_theme},
+};
+use gpui::{
+    App, AppContext as _, Bounds, KeyBinding, TitlebarOptions, WindowBounds, WindowOptions, size,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -53,7 +52,7 @@ pub(crate) fn run(project: PathBuf) -> Result<(), LaunchError> {
     let failed = Arc::new(AtomicBool::new(false));
     let failed_in_app = failed.clone();
     gpui_platform::application()
-        .with_assets(Assets)
+        .with_assets(AppAssets)
         .run(move |cx: &mut App| {
             gpui_component::init(cx);
             install_component_theme(cx);

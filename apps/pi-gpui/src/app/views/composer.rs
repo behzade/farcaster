@@ -67,7 +67,7 @@ impl PiApp {
                                 "mode-steer",
                                 "Steer",
                                 tone(self.prompt_mode == PromptMode::Steer),
-                                true,
+                                !self.snapshot.history_preview,
                                 move |_, cx| {
                                     let _ = steer.update(cx, |this, cx| {
                                         this.set_prompt_mode(PromptMode::Steer, cx)
@@ -78,7 +78,7 @@ impl PiApp {
                                 "mode-follow",
                                 "Follow-up",
                                 tone(self.prompt_mode == PromptMode::FollowUp),
-                                true,
+                                !self.snapshot.history_preview,
                                 move |_, cx| {
                                     let _ = follow.update(cx, |this, cx| {
                                         this.set_prompt_mode(PromptMode::FollowUp, cx)

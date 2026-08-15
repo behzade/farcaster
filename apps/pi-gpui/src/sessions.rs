@@ -1,7 +1,7 @@
 //! Read-only, bounded discovery of Pi v3 session metadata.
 
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, HashSet, VecDeque},
     fs::{self, File},
     io::{BufRead as _, BufReader},
     path::{Component, Path, PathBuf},
@@ -27,6 +27,73 @@ pub(crate) struct SessionSummary {
     pub modified: SystemTime,
     pub message_count: usize,
     search: String,
+}
+
+pub(crate) fn root_sessions(sessions: &[SessionSummary]) -> Vec<&SessionSummary> {
+    sessions
+        .iter()
+        .filter(|session| session.parent_session.is_none())
+        .collect()
+}
+
+pub(crate) fn root_session_for_path<'a>(
+    sessions: &'a [SessionSummary],
+    selected: Option<&Path>,
+) -> Option<&'a SessionSummary> {
+    let by_id = sessions
+        .iter()
+        .map(|session| (session.id.as_str(), session))
+        .collect::<HashMap<_, _>>();
+    let mut current = sessions
+        .iter()
+        .find(|session| selected == Some(session.path.as_path()))?;
+    let mut seen = HashSet::new();
+    while seen.insert(current.id.as_str()) {
+        let Some(parent) = current.parent_session.as_deref() else {
+            break;
+        };
+        let Some(parent) = by_id.get(parent) else {
+            break;
+        };
+        current = *parent;
+    }
+    Some(current)
+}
+
+pub(crate) fn descendant_sessions<'a>(
+    sessions: &'a [SessionSummary],
+    root_id: &str,
+) -> Vec<(&'a SessionSummary, usize)> {
+    let mut by_parent: HashMap<&str, Vec<&SessionSummary>> = HashMap::new();
+    for session in sessions {
+        if let Some(parent) = session.parent_session.as_deref() {
+            by_parent.entry(parent).or_default().push(session);
+        }
+    }
+    let mut stack = by_parent
+        .get(root_id)
+        .into_iter()
+        .flatten()
+        .rev()
+        .map(|session| (*session, 1_usize))
+        .collect::<Vec<_>>();
+    let mut descendants = Vec::new();
+    let mut seen = HashSet::new();
+    while let Some((session, depth)) = stack.pop() {
+        if !seen.insert(session.id.as_str()) {
+            continue;
+        }
+        descendants.push((session, depth));
+        if let Some(children) = by_parent.get(session.id.as_str()) {
+            stack.extend(
+                children
+                    .iter()
+                    .rev()
+                    .map(|child| (*child, depth.saturating_add(1))),
+            );
+        }
+    }
+    descendants
 }
 
 pub(crate) fn configured_session_root() -> Result<PathBuf, String> {
@@ -73,6 +140,130 @@ pub(crate) fn discover(project: &Path, query: &str) -> Result<Vec<SessionSummary
     discover_in(&configured_session_root()?, project, query)
 }
 
+/// Read the visible, active branch of a session without starting Pi.
+pub(crate) fn load_history(path: &Path) -> Result<Vec<Value>, String> {
+    let file = File::open(path).map_err(|error| format!("open {}: {error}", path.display()))?;
+    let mut reader = BufReader::new(file);
+    let mut line = Vec::new();
+    let mut entries = Vec::new();
+    for _ in 0..MAX_LINES_PER_FILE {
+        line.clear();
+        if reader
+            .read_until(b'\n', &mut line)
+            .map_err(|error| format!("read {}: {error}", path.display()))?
+            == 0
+        {
+            break;
+        }
+        trim_frame(&mut line);
+        if let Ok(entry) = serde_json::from_slice::<Value>(&line)
+            && entry.get("type").and_then(Value::as_str) != Some("session")
+        {
+            entries.push(entry);
+        }
+    }
+    Ok(project_history(&entries))
+}
+
+fn project_history(entries: &[Value]) -> Vec<Value> {
+    let by_id = entries
+        .iter()
+        .filter_map(|entry| {
+            entry
+                .get("id")
+                .and_then(Value::as_str)
+                .map(|id| (id, entry))
+        })
+        .collect::<HashMap<_, _>>();
+    let Some(mut current) = entries.last() else {
+        return Vec::new();
+    };
+    let mut branch = Vec::new();
+    let mut seen = HashSet::new();
+    while let Some(id) = current.get("id").and_then(Value::as_str) {
+        if !seen.insert(id) {
+            break;
+        }
+        branch.push(current);
+        let Some(parent) = current.get("parentId").and_then(Value::as_str) else {
+            break;
+        };
+        let Some(entry) = by_id.get(parent) else {
+            break;
+        };
+        current = entry;
+    }
+    branch.reverse();
+
+    let context = if let Some((index, compaction)) = branch
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, entry)| entry.get("type").and_then(Value::as_str) == Some("compaction"))
+    {
+        let first_kept = compaction.get("firstKeptEntryId").and_then(Value::as_str);
+        let mut projected = vec![*compaction];
+        if let Some(first_kept) = first_kept
+            && let Some(kept_index) = branch[..index]
+                .iter()
+                .position(|entry| entry.get("id").and_then(Value::as_str) == Some(first_kept))
+        {
+            projected.extend_from_slice(&branch[kept_index..index]);
+        }
+        projected.extend_from_slice(&branch[index + 1..]);
+        projected
+    } else {
+        branch
+    };
+
+    context.into_iter().filter_map(entry_message).collect()
+}
+
+fn entry_message(entry: &Value) -> Option<Value> {
+    match entry.get("type").and_then(Value::as_str)? {
+        "message" => entry.get("message").cloned(),
+        "custom_message" => Some(json_object([
+            ("role", Value::String("custom".into())),
+            (
+                "customType",
+                entry.get("customType").cloned().unwrap_or(Value::Null),
+            ),
+            (
+                "content",
+                entry.get("content").cloned().unwrap_or(Value::Null),
+            ),
+            (
+                "display",
+                entry.get("display").cloned().unwrap_or(Value::Bool(true)),
+            ),
+        ])),
+        "branch_summary" => Some(json_object([
+            ("role", Value::String("branchSummary".into())),
+            (
+                "summary",
+                entry.get("summary").cloned().unwrap_or(Value::Null),
+            ),
+        ])),
+        "compaction" => Some(json_object([
+            ("role", Value::String("compactionSummary".into())),
+            (
+                "summary",
+                entry.get("summary").cloned().unwrap_or(Value::Null),
+            ),
+        ])),
+        _ => None,
+    }
+}
+
+fn json_object<const N: usize>(fields: [(&str, Value); N]) -> Value {
+    Value::Object(
+        fields
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value))
+            .collect(),
+    )
+}
+
 pub(crate) fn discover_in(
     root: &Path,
     project: &Path,
@@ -106,12 +297,67 @@ pub(crate) fn discover_in(
             }
         }
     }
-    let needle = query.to_lowercase();
     let mut sessions = candidates
         .into_iter()
         .filter_map(|path| parse_candidate(&path, &project).ok().flatten())
-        .filter(|session| needle.is_empty() || session.search.contains(&needle))
         .collect::<Vec<_>>();
+    let needle = query.to_lowercase();
+    if !needle.is_empty() {
+        let by_id = sessions
+            .iter()
+            .map(|session| (session.id.as_str(), session))
+            .collect::<HashMap<_, _>>();
+        let mut included = sessions
+            .iter()
+            .filter(|session| session.search.contains(&needle))
+            .map(|session| session.id.clone())
+            .collect::<HashSet<_>>();
+        let matches = included.clone();
+        for id in matches {
+            let mut current = by_id.get(id.as_str()).copied();
+            let mut seen = HashSet::new();
+            while let Some(session) = current {
+                if !seen.insert(session.id.as_str()) {
+                    break;
+                }
+                included.insert(session.id.clone());
+                current = session
+                    .parent_session
+                    .as_deref()
+                    .and_then(|parent| by_id.get(parent).copied());
+            }
+        }
+        let by_parent = sessions.iter().fold(
+            HashMap::<&str, Vec<&str>>::new(),
+            |mut children, session| {
+                if let Some(parent) = session.parent_session.as_deref() {
+                    children
+                        .entry(parent)
+                        .or_default()
+                        .push(session.id.as_str());
+                }
+                children
+            },
+        );
+        let mut stack = sessions
+            .iter()
+            .filter(|session| session.parent_session.is_none() && included.contains(&session.id))
+            .map(|session| session.id.as_str())
+            .collect::<Vec<_>>();
+        let mut expanded = HashSet::new();
+        while let Some(parent) = stack.pop() {
+            if !expanded.insert(parent) {
+                continue;
+            }
+            if let Some(children) = by_parent.get(parent) {
+                for child in children {
+                    included.insert((*child).to_owned());
+                    stack.push(*child);
+                }
+            }
+        }
+        sessions.retain(|session| included.contains(&session.id));
+    }
     sessions.sort_by(|left, right| {
         right
             .modified
@@ -332,10 +578,21 @@ mod tests {
         name: Option<&str>,
         message: &str,
     ) -> TestResult {
+        session_with_parent(root, file, cwd, name, message, None)
+    }
+
+    fn session_with_parent(
+        root: &Path,
+        file: &str,
+        cwd: &Path,
+        name: Option<&str>,
+        message: &str,
+        parent: Option<&str>,
+    ) -> TestResult {
         let directory = root.join("custom/nested");
         fs::create_dir_all(&directory)?;
         let mut lines = vec![
-            serde_json::json!({"type":"session","version":3,"id":file,"timestamp":"2026-01-02T00:00:00Z","cwd":cwd}),
+            serde_json::json!({"type":"session","version":3,"id":file,"timestamp":"2026-01-02T00:00:00Z","cwd":cwd,"parentSession":parent}),
         ];
         lines.push(serde_json::json!({"type":"unknown","data":true}));
         lines.push(
@@ -424,5 +681,109 @@ mod tests {
         fs::write(path, content)?;
         assert_eq!(discover_in(root.path(), project.path(), "bEtA")?.len(), 1);
         Ok(())
+    }
+
+    #[test]
+    fn child_search_keeps_its_root_and_hierarchy_is_stable() -> TestResult {
+        let root = tempdir()?;
+        let project = tempdir()?;
+        session(
+            root.path(),
+            "root",
+            project.path(),
+            Some("Main"),
+            "ordinary",
+        )?;
+        session_with_parent(
+            root.path(),
+            "child",
+            project.path(),
+            Some("subagent-reviewer-long-id"),
+            "Needle",
+            Some("root"),
+        )?;
+        session_with_parent(
+            root.path(),
+            "grandchild",
+            project.path(),
+            Some("subagent-worker-long-id"),
+            "Nested",
+            Some("child"),
+        )?;
+        session_with_parent(
+            root.path(),
+            "orphan",
+            project.path(),
+            Some("subagent-worker-orphan-1"),
+            "Detached",
+            Some("missing"),
+        )?;
+
+        let sessions = discover_in(root.path(), project.path(), "needle")?;
+        assert_eq!(sessions.len(), 3);
+        let roots = root_sessions(&sessions);
+        assert_eq!(roots.len(), 1);
+        assert_eq!(roots[0].id, "root");
+        let child = sessions
+            .iter()
+            .find(|session| session.id == "child")
+            .expect("matching child should remain");
+        assert_eq!(
+            root_session_for_path(&sessions, Some(child.path.as_path()))
+                .map(|session| session.id.as_str()),
+            Some("root")
+        );
+
+        let all = discover_in(root.path(), project.path(), "")?;
+        assert_eq!(
+            root_sessions(&all)
+                .iter()
+                .map(|session| session.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["root"]
+        );
+        let descendants = descendant_sessions(&all, "root");
+        assert_eq!(
+            descendants
+                .iter()
+                .map(|(session, depth)| (session.id.as_str(), *depth))
+                .collect::<Vec<_>>(),
+            vec![("child", 1), ("grandchild", 2)]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn history_follows_the_current_branch_and_projects_display_entries() {
+        let entries = vec![
+            serde_json::json!({"type":"message","id":"one","parentId":null,"message":{"role":"user","content":"root"}}),
+            serde_json::json!({"type":"message","id":"old","parentId":"one","message":{"role":"assistant","content":[{"type":"text","text":"old branch"}]}}),
+            serde_json::json!({"type":"message","id":"two","parentId":"one","message":{"role":"assistant","content":[{"type":"text","text":"current"}]}}),
+            serde_json::json!({"type":"custom_message","id":"three","parentId":"two","customType":"note","content":"visible","display":true}),
+        ];
+
+        let history = project_history(&entries);
+
+        assert_eq!(history.len(), 3);
+        assert_eq!(history[0]["content"], "root");
+        assert_eq!(history[1]["content"][0]["text"], "current");
+        assert_eq!(history[2]["role"], "custom");
+    }
+
+    #[test]
+    fn history_matches_pi_compaction_order() {
+        let entries = vec![
+            serde_json::json!({"type":"message","id":"one","parentId":null,"message":{"role":"user","content":"summarized"}}),
+            serde_json::json!({"type":"message","id":"two","parentId":"one","message":{"role":"user","content":"kept"}}),
+            serde_json::json!({"type":"compaction","id":"three","parentId":"two","summary":"summary","firstKeptEntryId":"two"}),
+            serde_json::json!({"type":"message","id":"four","parentId":"three","message":{"role":"user","content":"after"}}),
+        ];
+
+        let history = project_history(&entries);
+
+        assert_eq!(history.len(), 3);
+        assert_eq!(history[0]["role"], "compactionSummary");
+        assert_eq!(history[1]["content"], "kept");
+        assert_eq!(history[2]["content"], "after");
     }
 }

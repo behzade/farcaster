@@ -1,4 +1,5 @@
 mod app;
+mod assets;
 mod conversation;
 mod extension_ui;
 mod framing;

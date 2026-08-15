@@ -24,7 +24,7 @@ stdenvNoCC.mkDerivation {
   installPhase = ''
     runHook preInstall
     mkdir -p "$out/themes"
-    cp index.ts pierre-edit.ts pierre-renderer.ts terminal-text.ts pi-diff.ts package.json NOTICE.md "$out/"
+    cp index.ts pierre-edit.ts pierre-renderer.ts theme-selection.ts terminal-text.ts pi-diff.ts package.json NOTICE.md "$out/"
     cp ${../themes/gruvbox-dark-hard.json} $out/themes/gruvbox-dark-hard.json
     cp ${pierreDiffs} $out/diffs.bundle.mjs
     substituteInPlace $out/diffs.bundle.mjs \

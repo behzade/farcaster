@@ -218,7 +218,7 @@ impl PiApp {
                     snapshot,
                 } if generation >= self.runtime_generation => {
                     if generation > self.runtime_generation {
-                        self.reset_session_ui(generation);
+                        self.reset_session_ui(generation, false);
                     }
                     let count = snapshot.conversation.items.len();
                     if count > self.last_transcript_count && !self.transcript_following {
@@ -229,10 +229,17 @@ impl PiApp {
                     self.last_transcript_count = count;
                     self.snapshot = *snapshot;
                 }
-                RuntimeEvent::SessionReset { generation }
-                    if generation >= self.runtime_generation =>
+                RuntimeEvent::SessionReset {
+                    generation,
+                    preserve_submission,
+                } if generation >= self.runtime_generation => {
+                    self.reset_session_ui(generation, preserve_submission);
+                }
+                RuntimeEvent::HistoryReset { generation }
+                    if generation == self.runtime_generation =>
                 {
-                    self.reset_session_ui(generation);
+                    self.prompt_mode = PromptMode::Normal;
+                    self.reset_transcript_ui();
                 }
                 RuntimeEvent::Sessions {
                     generation,
@@ -280,6 +287,7 @@ impl PiApp {
                 RuntimeEvent::Stopped => self.snapshot.status = "Stopped".into(),
                 RuntimeEvent::Snapshot { .. }
                 | RuntimeEvent::SessionReset { .. }
+                | RuntimeEvent::HistoryReset { .. }
                 | RuntimeEvent::ExtensionUi { .. }
                 | RuntimeEvent::PromptResult { .. }
                 | RuntimeEvent::Sessions { .. }
@@ -294,13 +302,19 @@ impl PiApp {
         }
     }
 
-    fn reset_session_ui(&mut self, generation: u64) {
+    fn reset_session_ui(&mut self, generation: u64, preserve_submission: bool) {
         self.runtime_generation = generation;
         self.extension.reset();
         self.pending_dialog_setup = false;
         self.pending_title = Some((generation, "Pi".into()));
         self.pending_editor_text = None;
-        self.pending_submission = None;
+        if preserve_submission {
+            if let Some(pending) = self.pending_submission.as_mut() {
+                pending.generation = generation;
+            }
+        } else {
+            self.pending_submission = None;
+        }
         self.pending_submission_result = None;
         self.pending_session_reset = true;
         self.dialog_return_focus = None;
@@ -309,6 +323,10 @@ impl PiApp {
         self.sheet_return_focus = None;
         self.pending_sheet_setup = false;
         self.extension_errors.clear();
+        self.reset_transcript_ui();
+    }
+
+    fn reset_transcript_ui(&mut self) {
         self.transcript_visible_items = INITIAL_TRANSCRIPT_ITEMS;
         self.expanded_transcript_items.clear();
         self.transcript_following = true;

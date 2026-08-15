@@ -14,6 +14,7 @@ import {
   type PierreRows,
   useTerminalText,
 } from "./pierre-renderer.ts";
+import { selectThemeWhenAvailable } from "./theme-selection.ts";
 
 useTerminalText({ sliceByColumn, truncateToWidth, visibleWidth });
 
@@ -69,8 +70,7 @@ export default function (pi: ExtensionAPI) {
   const edit = createEditTool(process.cwd());
 
   pi.on("session_start", (_event, ctx) => {
-    const selected = ctx.ui.setTheme(THEME_NAME);
-    if (!selected.success) ctx.ui.notify(selected.error ?? `Could not select ${THEME_NAME}`, "error");
+    selectThemeWhenAvailable(ctx.ui, THEME_NAME);
   });
 
   pi.registerTool({
