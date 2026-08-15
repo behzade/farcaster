@@ -24,7 +24,7 @@ separate `nix-config` repo.
 - Stateless MCP access through a pinned `mcp-cli`.
 - Server-side OpenAI compaction for long sessions.
 - Compact read, edit, and shell output with syntax-highlighted diffs.
-- Trusted project-scoped Effect v4 tools loaded from `.pi/tools` with full host
+- Trusted project-scoped Effect v4 tools loaded from `.pi/project-tools` with full host
   rights after project trust.
 - A Gruvbox dark-hard theme and small hooks for notifications, titles, user
   input, and session state.
@@ -44,7 +44,7 @@ separate `nix-config` repo.
   owns the OpenAI compaction code. Codex compaction reuses Pi AI's cached
   WebSocket response chain when the host exposes native output items.
 - [`extensions/project-tools`](extensions/project-tools) loads strict tool
-  manifests and Effect v4 handlers from trusted project `.pi/tools`
+  manifests and Effect v4 handlers from trusted project `.pi/project-tools`
   directories. These handlers run in Pi's host process, not the shell sandbox.
 - [`nix`](nix) contains the pinned builds for Pi and every packaged extension.
 - [`apps/pi-terminal`](apps/pi-terminal) pins the upstream Pi 0.84.2 terminal

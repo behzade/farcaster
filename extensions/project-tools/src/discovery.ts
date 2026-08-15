@@ -26,7 +26,7 @@ const attempt = <A>(path: string, message: string, operation: () => Promise<A>) 
 export const discoverProjectTools = (projectRoot: string) =>
   Effect.gen(function*() {
     const canonicalRoot = yield* attempt(projectRoot, "could not resolve project root", () => realpath(projectRoot));
-    const toolsRoot = join(canonicalRoot, ".pi", "tools");
+    const toolsRoot = join(canonicalRoot, ".pi", "project-tools");
     const rootStat = yield* Effect.result(attempt(toolsRoot, "could not read project tools directory", () => lstat(toolsRoot)));
     if (Result.isFailure(rootStat)) {
       const cause = rootStat.failure.cause as NodeJS.ErrnoException | undefined;
@@ -34,14 +34,14 @@ export const discoverProjectTools = (projectRoot: string) =>
       return {
         projectRoot: canonicalRoot,
         tools: [],
-        diagnostics: [{ tool: ".pi/tools", message: rootStat.failure.message }],
+        diagnostics: [{ tool: ".pi/project-tools", message: rootStat.failure.message }],
       } satisfies ProjectToolDiscovery;
     }
     if (!rootStat.success.isDirectory() || rootStat.success.isSymbolicLink()) {
       return {
         projectRoot: canonicalRoot,
         tools: [],
-        diagnostics: [{ tool: ".pi/tools", message: "must be a real directory" }],
+        diagnostics: [{ tool: ".pi/project-tools", message: "must be a real directory" }],
       } satisfies ProjectToolDiscovery;
     }
 

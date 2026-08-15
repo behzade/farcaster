@@ -21,9 +21,9 @@ const objectResult = {
   properties: { value: { type: "string" } },
 };
 
-async function makeProject(options: ToolOptions = {}) {
+async function makeProject(options: ToolOptions = {}, controlDirectory = "project-tools") {
   const root = await mkdtemp(join(tmpdir(), "pi-project-tools-"));
-  const directory = join(root, ".pi", "tools", "example");
+  const directory = join(root, ".pi", controlDirectory, "example");
   await mkdir(directory, { recursive: true });
   const manifest = {
     version: 1,
@@ -47,6 +47,15 @@ async function makeProject(options: ToolOptions = {}) {
   ].join("\n"));
   return { root, cleanup: () => rm(root, { recursive: true, force: true }) };
 }
+
+test("ignores Pi's deprecated .pi/tools directory", async (t) => {
+  const project = await makeProject({}, "tools");
+  t.after(project.cleanup);
+
+  const discovery = await Effect.runPromise(discoverProjectTools(project.root));
+  assert.deepEqual(discovery.tools, []);
+  assert.deepEqual(discovery.diagnostics, []);
+});
 
 async function discoverOne(root: string) {
   const discovery = await Effect.runPromise(discoverProjectTools(root));

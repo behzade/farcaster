@@ -1,6 +1,6 @@
 # Project tools
 
-This global Pi extension loads trusted project tools from `.pi/tools` after project trust. It imports each tool into Pi's host process. Project tools have the same user rights as project extensions. The native sandbox and its broker do not take part.
+This global Pi extension loads trusted project tools from `.pi/project-tools` after project trust. It imports each tool into Pi's host process. Project tools have the same user rights as project extensions. The native sandbox and its broker do not take part.
 
 Pi scans tools on startup and `/reload`. It does not watch tool files.
 It loads at most 32 valid tools from one project.
@@ -8,7 +8,7 @@ It loads at most 32 valid tools from one project.
 ## Layout
 
 ```text
-.pi/tools/example/
+.pi/project-tools/example/
 ├── tool.json
 └── main.ts
 ```
