@@ -49,7 +49,45 @@ pub(crate) struct SessionSummary {
     pub modified: SystemTime,
     pub message_count: usize,
     pub usage: UsageSummary,
+    pub settled: bool,
     search: String,
+}
+
+impl SessionSummary {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_cached(
+        id: String,
+        path: PathBuf,
+        project: PathBuf,
+        title: String,
+        first_user_message: String,
+        timestamp: String,
+        parent_session: Option<String>,
+        modified: SystemTime,
+        message_count: usize,
+        usage: UsageSummary,
+        settled: bool,
+        search: String,
+    ) -> Self {
+        Self {
+            id,
+            path,
+            project,
+            title,
+            first_user_message,
+            timestamp,
+            parent_session,
+            modified,
+            message_count,
+            usage,
+            settled,
+            search,
+        }
+    }
+
+    pub(crate) fn search_text(&self) -> &str {
+        &self.search
+    }
 }
 
 pub(crate) fn root_sessions(sessions: &[SessionSummary]) -> Vec<&SessionSummary> {
@@ -505,6 +543,7 @@ fn parse_candidate(path: &Path) -> Result<Option<SessionSummary>, String> {
         modified,
         message_count,
         usage,
+        settled: false,
         search: search.to_lowercase(),
     }))
 }

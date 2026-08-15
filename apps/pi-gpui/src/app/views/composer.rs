@@ -1,7 +1,7 @@
 use gpui::{
-    App, CursorStyle, ElementId, FontWeight, InteractiveElement as _, IntoElement,
-    ParentElement as _, Role, SharedString, StatefulInteractiveElement as _, Styled as _,
-    WeakEntity, Window, div, prelude::FluentBuilder as _, px,
+    App, CursorStyle, ElementId, FontWeight, InteractiveElement as _, IntoElement, KeyDownEvent,
+    MouseButton, ParentElement as _, Role, SharedString, StatefulInteractiveElement as _,
+    Styled as _, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{FocusTrapElement as _, input::Input};
 
@@ -18,6 +18,8 @@ impl PiApp {
         let widgets_above = widget_region("above", &self.extension.above_widgets);
         let widgets_below = widget_region("below", &self.extension.below_widgets);
         let send_entity = entity.clone();
+        let history_entity = entity.clone();
+        let cursor_entity = entity.clone();
         let abort_entity = entity;
         div()
             .flex_none()
@@ -32,6 +34,25 @@ impl PiApp {
                     .id("composer-input")
                     .key_context(super::super::COMPOSER_KEY_CONTEXT)
                     .px(THEME.space.sm)
+                    .on_key_down(move |event: &KeyDownEvent, window, cx| {
+                        let handled = history_entity
+                            .update(cx, |this, cx| {
+                                this.handle_composer_history_key(
+                                    event.keystroke.key.as_str(),
+                                    window,
+                                    cx,
+                                )
+                            })
+                            .unwrap_or(false);
+                        if handled {
+                            window.prevent_default();
+                        } else {
+                            capture_after_input(history_entity.clone(), cx);
+                        }
+                    })
+                    .on_mouse_up(MouseButton::Left, move |_, _, cx| {
+                        capture_after_input(cursor_entity.clone(), cx);
+                    })
                     .child(Input::new(&self.composer).w_full().appearance(false)),
             )
             .when_some(widgets_below, |composer, widgets| composer.child(widgets))
@@ -260,6 +281,12 @@ impl PiApp {
             ),
         )
     }
+}
+
+fn capture_after_input(entity: WeakEntity<PiApp>, cx: &mut App) {
+    cx.defer(move |cx| {
+        let _ = entity.update(cx, |this, cx| this.capture_composer_session(cx));
+    });
 }
 
 fn dialog_choice(

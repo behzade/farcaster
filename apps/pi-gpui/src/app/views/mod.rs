@@ -20,6 +20,7 @@ use crate::{
 
 impl Render for PiApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.capture_composer_session(cx);
         self.resolve_pending_submission(window, cx);
         if self.pending_session_reset {
             self.pending_session_reset = false;
@@ -64,8 +65,9 @@ impl Render for PiApp {
         if let Some((generation, text)) = self.pending_editor_text.take() {
             cx.defer_in(window, move |this, window, cx| {
                 if this.runtime_generation == generation {
-                    this.composer
-                        .update(cx, |state, cx| state.set_value(text, window, cx));
+                    let snapshot = crate::composer_sessions::ComposerSnapshot::new(text, 0, 0..0);
+                    this.apply_composer_snapshot(snapshot.clone(), window, cx);
+                    this.composer_sessions.capture_current(snapshot);
                 }
             });
         }
@@ -160,7 +162,7 @@ impl Render for PiApp {
                         let _ = close.update(cx, |this, cx| this.close_sheet(window, cx));
                     })
                     .child(
-                        dialog_surface("run-dialog", "Run details")
+                        dialog_surface("run-dialog", "Session details")
                             .track_focus(&self.sheet_focus)
                             .key_context(OVERLAY_KEY_CONTEXT)
                             .h_full()

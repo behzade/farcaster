@@ -68,6 +68,21 @@ enum PartialKind {
 }
 
 impl ConversationState {
+    pub(crate) fn push_local_user(&mut self, message: String) {
+        if self.items.last().is_some_and(|item| {
+            item.kind == TranscriptKind::User && item.text == message && !item.is_error
+        }) {
+            return;
+        }
+        self.items.push(TranscriptItem {
+            kind: TranscriptKind::User,
+            label: String::new(),
+            text: message,
+            streaming: false,
+            is_error: false,
+        });
+    }
+
     pub(crate) fn replace_history(&mut self, messages: &[Value]) {
         self.items = messages.iter().flat_map(project_message_items).collect();
         self.live_message = None;
@@ -173,11 +188,23 @@ impl ConversationState {
 
     fn start_message(&mut self, message: Option<&Value>) {
         self.content.clear();
-        let start = self.items.len();
         let mut projected = message.map(project_message_items).unwrap_or_default();
         for item in &mut projected {
             item.streaming = true;
         }
+        if projected.len() == 1
+            && self.items.last().is_some_and(|last| {
+                last.kind == TranscriptKind::User
+                    && last.text == projected[0].text
+                    && !last.streaming
+            })
+        {
+            let start = self.items.len().saturating_sub(1);
+            self.items[start] = projected.remove(0);
+            self.live_message = Some(LiveMessage { start, len: 1 });
+            return;
+        }
+        let start = self.items.len();
         let len = projected.len();
         self.items.extend(projected);
         self.live_message = Some(LiveMessage { start, len });

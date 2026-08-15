@@ -9,6 +9,8 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use crate::state::StateStore;
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct DraftSession {
     pub id: String,
@@ -37,11 +39,21 @@ pub(crate) struct Registry {
 }
 
 pub(crate) fn load() -> Result<Registry, String> {
-    load_from(&registry_path()?)
+    let mut store = StateStore::open()?;
+    let registry = store.load_registry()?;
+    if registry == Registry::default() {
+        let legacy_path = registry_path()?;
+        if legacy_path.exists() {
+            let legacy = load_from(&legacy_path)?;
+            store.save_registry(&legacy)?;
+            return Ok(legacy);
+        }
+    }
+    Ok(registry)
 }
 
 pub(crate) fn save(registry: &Registry) -> Result<(), String> {
-    save_to(&registry_path()?, registry)
+    StateStore::open()?.save_registry(registry)
 }
 
 pub(crate) fn add_unique(projects: &mut Vec<PathBuf>, project: PathBuf) -> bool {
@@ -100,6 +112,7 @@ fn load_from(path: &Path) -> Result<Registry, String> {
     Ok(Registry { projects, drafts })
 }
 
+#[cfg(test)]
 fn save_to(path: &Path, registry: &Registry) -> Result<(), String> {
     let parent = path
         .parent()

@@ -1,13 +1,12 @@
 use std::{
-    collections::HashSet,
     path::Path,
     time::{Duration, SystemTime},
 };
 
 use gpui::{
     Anchor, AnyElement, CursorStyle, FontWeight, InteractiveElement as _, IntoElement,
-    ParentElement as _, Role, StatefulInteractiveElement as _, Styled as _, WeakEntity, accesskit,
-    div, prelude::FluentBuilder as _, px, uniform_list,
+    ParentElement as _, Role, StatefulInteractiveElement as _, Styled as _, WeakEntity, div,
+    prelude::FluentBuilder as _, px, uniform_list,
 };
 use gpui_component::{
     Icon, Sizable as _, Size,
@@ -21,7 +20,6 @@ use crate::{
     layout::LayoutMode,
     primitives::{ButtonTone, FeedbackTone, button, feedback, icon_button, panel, section_heading},
     projects::DraftSession,
-    runtime::RuntimeCommand,
     sessions::{
         SessionSummary, UsageSummary, descendant_sessions, root_session_for_path, root_sessions,
     },
@@ -60,11 +58,6 @@ impl PiApp {
             .as_ref()
             .map(|state| state.thinking_level.clone())
             .unwrap_or_else(|| "off".into());
-        let status_accessible = if self.snapshot.history_preview {
-            "History preview. Pi loads when you send.".into()
-        } else {
-            self.snapshot.status.clone()
-        };
         let model_entity = entity.clone();
         let thinking_entity = entity.clone();
         let sessions_entity = entity.clone();
@@ -151,7 +144,7 @@ impl PiApp {
                     .when(mode != LayoutMode::Wide, |actions| {
                         actions.child(button(
                             "open-run",
-                            "Run",
+                            "Session",
                             ButtonTone::Quiet,
                             true,
                             move |window, cx| {
@@ -159,30 +152,7 @@ impl PiApp {
                                     .update(cx, |this, cx| this.open_run_sheet(window, cx));
                             },
                         ))
-                    })
-                    .child(
-                        div()
-                            .id("run-status")
-                            .role(Role::Status)
-                            .a11y_synthetic_children(move |builder| {
-                                builder.parent_node().set_live(accesskit::Live::Polite);
-                                builder.parent_node().set_value(status_accessible.as_ref());
-                            })
-                            .when(self.snapshot.history_preview, |status| {
-                                status.child(
-                                    div().size(px(8.0)).rounded_full().bg(THEME.colors.subtle),
-                                )
-                            })
-                            .when(!self.snapshot.history_preview, |status| {
-                                status.child(div().size(px(8.0)).rounded_full().bg(
-                                    if self.snapshot.connected {
-                                        THEME.colors.accent
-                                    } else {
-                                        THEME.colors.error
-                                    },
-                                ))
-                            }),
-                    ),
+                    }),
             )
     }
 
@@ -216,30 +186,30 @@ impl PiApp {
         let live_root =
             root_session_for_path(&self.sessions, self.snapshot.live_session.as_deref())
                 .map(|session| session.id.clone());
-        let (rows, _) = session_rail_items(
-            &self.sessions,
-            drafts.iter().map(|draft| draft.project.as_path()),
-        );
+        let rows = session_rail_items(&self.sessions);
         let draft_count = drafts.len();
         let row_count = rows.len() + draft_count;
         let row_entity = entity.clone();
-        let live_status = self.snapshot.live_status.clone();
+        let selected_live_status = self.snapshot.live_status.clone();
+        let run_statuses = self.run_statuses.clone();
         let session_list = uniform_list("session-list", row_count, move |range, _, _| {
             range
                 .filter_map(|index| {
                     if let Some(draft) = drafts.get(index) {
                         let selected = selected_draft.as_deref() == Some(draft.id.as_str());
-                        let status = if live_draft.as_deref() == Some(draft.id.as_str())
-                            && live_draft_submitted
-                        {
-                            if live_status.is_empty() {
-                                "Working"
-                            } else {
-                                live_status.as_str()
-                            }
-                        } else {
-                            "Draft"
-                        };
+                        let target = format!("draft:{}", draft.id);
+                        let status = run_statuses.get(&target).map_or_else(
+                            || {
+                                if live_draft.as_deref() == Some(draft.id.as_str())
+                                    && live_draft_submitted
+                                {
+                                    "Working"
+                                } else {
+                                    "Draft"
+                                }
+                            },
+                            String::as_str,
+                        );
                         return Some(draft_session_row(
                             draft,
                             selected,
@@ -250,12 +220,15 @@ impl PiApp {
                     let stored_index = index.saturating_sub(draft_count);
                     let item = rows.get(stored_index)?;
                     let selected = selected_root.as_deref() == Some(item.session.id.as_str());
-                    let badge = session_badge(
-                        item.kind,
-                        &item.session.id,
-                        live_root.as_deref(),
-                        &live_status,
-                    );
+                    let target = format!("session:{}", item.session.path.display());
+                    let badge = run_statuses.get(&target).cloned().or_else(|| {
+                        session_badge(
+                            item.kind,
+                            &item.session.id,
+                            live_root.as_deref(),
+                            &selected_live_status,
+                        )
+                    });
                     Some(session_row(item, selected, badge, row_entity.clone()))
                 })
                 .collect::<Vec<_>>()
@@ -390,13 +363,6 @@ impl PiApp {
     }
 
     pub(super) fn render_run_panel(&self, entity: WeakEntity<Self>) -> impl IntoElement {
-        let retry_entity = entity.clone();
-        let compact_entity = entity.clone();
-        let abort_retry_entity = entity.clone();
-        let auto_retry_entity = entity.clone();
-        let auto_compact_entity = entity.clone();
-        let queue = &self.snapshot.conversation.queue;
-        let has_queue = !queue.steering.is_empty() || !queue.follow_up.is_empty();
         let root = root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref());
         let descendants = root
             .map(|root| descendant_sessions(&self.sessions, &root.id))
@@ -461,132 +427,9 @@ impl PiApp {
                 show_main_context.then_some(&self.snapshot.stats),
                 aggregate_usage,
             ))
-            .when(!self.snapshot.history_preview, |run| {
-                run.child(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .items_center()
-                        .gap(THEME.space.xs)
-                        .child(icon_button(
-                            "compact",
-                            AppIcon::Archive,
-                            "Compact context",
-                            ButtonTone::Neutral,
-                            self.snapshot.connected && !self.snapshot.conversation.running,
-                            move |_, cx| {
-                                let _ = compact_entity
-                                    .update(cx, |this, _| this.send(RuntimeCommand::Compact));
-                            },
-                        ))
-                        .when(!self.snapshot.connected, |actions| {
-                            actions.child(icon_button(
-                                "restart",
-                                AppIcon::ArrowClockwise,
-                                "Reconnect",
-                                ButtonTone::Neutral,
-                                true,
-                                move |_, cx| {
-                                    let _ = retry_entity
-                                        .update(cx, |this, _| this.send(RuntimeCommand::Restart));
-                                },
-                            ))
-                        })
-                        .when(self.snapshot.conversation.retrying, |actions| {
-                            actions.child(icon_button(
-                                "abort-retry",
-                                AppIcon::Stop,
-                                "Stop retry",
-                                ButtonTone::Danger,
-                                true,
-                                move |_, cx| {
-                                    let _ = abort_retry_entity.update(cx, |this, _| {
-                                        this.send(RuntimeCommand::AbortRetry)
-                                    });
-                                },
-                            ))
-                        }),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .gap(THEME.space.xs)
-                        .child(button(
-                            "auto-retry",
-                            format!("Retry {}", on_off(self.snapshot.auto_retry)),
-                            ButtonTone::Quiet,
-                            self.snapshot.connected,
-                            move |_, cx| {
-                                let _ = auto_retry_entity.update(cx, |this, _| {
-                                    this.send(RuntimeCommand::SetAutoRetry(
-                                        !this.snapshot.auto_retry,
-                                    ))
-                                });
-                            },
-                        ))
-                        .child(button(
-                            "auto-compact",
-                            format!(
-                                "Compact {}",
-                                on_off(
-                                    self.snapshot
-                                        .session
-                                        .as_ref()
-                                        .is_some_and(|state| state.auto_compaction_enabled)
-                                )
-                            ),
-                            ButtonTone::Quiet,
-                            self.snapshot.connected,
-                            move |_, cx| {
-                                let _ = auto_compact_entity.update(cx, |this, _| {
-                                    let enabled = this
-                                        .snapshot
-                                        .session
-                                        .as_ref()
-                                        .is_some_and(|state| state.auto_compaction_enabled);
-                                    this.send(RuntimeCommand::SetAutoCompaction(!enabled));
-                                });
-                            },
-                        )),
-                )
-            })
             .when(agent_count > 0, |run| {
                 run.child(section_heading("Agents"))
                     .child(div().overflow_y_hidden().child(agent_list))
-            })
-            .when(has_queue, |run| {
-                run.child(section_heading("Queue")).child(
-                    div()
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.muted)
-                        .child(format!(
-                            "{} steer · {} later",
-                            queue.steering.len(),
-                            queue.follow_up.len()
-                        )),
-                )
-            })
-            .when(!self.extension_errors.is_empty(), |run| {
-                run.child(section_heading("Extension errors")).children(
-                    self.extension_errors
-                        .iter()
-                        .enumerate()
-                        .map(|(index, error)| {
-                            feedback(
-                                ("extension-error", index),
-                                error.clone(),
-                                FeedbackTone::Error,
-                            )
-                        }),
-                )
-            })
-            .when(!self.snapshot.stderr.is_empty(), |run| {
-                run.child(feedback(
-                    "stderr",
-                    self.snapshot.stderr.clone(),
-                    FeedbackTone::Warning,
-                ))
             });
         panel()
             .size_full()
@@ -604,7 +447,7 @@ impl PiApp {
                     .text_size(THEME.type_scale.caption)
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(THEME.colors.muted)
-                    .child("RUN"),
+                    .child("SESSION"),
             )
             .child(body)
     }
@@ -623,18 +466,11 @@ struct SessionRailItem {
     starts_settled: bool,
 }
 
-fn session_rail_items<'a>(
-    sessions: &[SessionSummary],
-    draft_projects: impl IntoIterator<Item = &'a Path>,
-) -> (Vec<SessionRailItem>, usize) {
-    let mut projects = HashSet::new();
-    for project in draft_projects {
-        projects.insert(project.to_path_buf());
-    }
+fn session_rail_items(sessions: &[SessionSummary]) -> Vec<SessionRailItem> {
     let mut current = Vec::new();
     let mut settled = Vec::new();
     for session in root_sessions(sessions) {
-        if projects.insert(session.project.clone()) {
+        if !session.settled {
             current.push(SessionRailItem {
                 session: session.clone(),
                 kind: SessionRailKind::Project,
@@ -651,9 +487,8 @@ fn session_rail_items<'a>(
     if let Some(first) = settled.first_mut() {
         first.starts_settled = true;
     }
-    let project_count = projects.len();
     current.extend(settled);
-    (current, project_count)
+    current
 }
 
 fn draft_session_row(
@@ -663,7 +498,9 @@ fn draft_session_row(
     entity: WeakEntity<PiApp>,
 ) -> AnyElement {
     let id = draft.id.clone();
+    let discard_id = id.clone();
     let project = draft.project.clone();
+    let discard_entity = entity.clone();
     div()
         .h(THEME.layout.session_row_height)
         .w_full()
@@ -691,9 +528,9 @@ fn draft_session_row(
                 .hover(|row| row.bg(THEME.colors.hover))
                 .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
                 .cursor(CursorStyle::PointingHand)
-                .on_click(move |_, _, cx| {
+                .on_click(move |_, window, cx| {
                     let _ = entity.update(cx, |this, cx| {
-                        this.resume_draft(id.clone(), project.clone(), cx);
+                        this.resume_draft(id.clone(), project.clone(), window, cx);
                     });
                 })
                 .child(
@@ -724,6 +561,23 @@ fn draft_session_row(
                                     THEME.colors.accent
                                 })
                                 .child(status.to_owned()),
+                        )
+                        .child(
+                            div()
+                                .id(format!("discard-{discard_id}"))
+                                .role(Role::Button)
+                                .aria_label("Discard draft")
+                                .tab_index(0)
+                                .p(THEME.space.xs)
+                                .rounded(THEME.radius)
+                                .hover(|button| button.bg(THEME.colors.hover))
+                                .child(Icon::new(AppIcon::X).with_size(Size::Small))
+                                .on_click(move |_, window, cx| {
+                                    cx.stop_propagation();
+                                    let _ = discard_entity.update(cx, |this, cx| {
+                                        this.discard_draft(&discard_id, window, cx);
+                                    });
+                                }),
                         ),
                 )
                 .child(
@@ -770,6 +624,8 @@ fn session_row(
     let path = session.path.clone();
     let project = session.project.clone();
     let project_name = project_label(&project);
+    let settle_path = session.path.clone();
+    let settle_entity = entity.clone();
     let age = relative_age(session.modified);
     let is_settled = item.kind == SessionRailKind::Settled;
     let metadata = if item.starts_settled {
@@ -804,9 +660,9 @@ fn session_row(
         .hover(|row| row.bg(THEME.colors.hover))
         .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
         .cursor(CursorStyle::PointingHand)
-        .on_click(move |_, _, cx| {
+        .on_click(move |_, window, cx| {
             let _ = entity.update(cx, |this, cx| {
-                this.resume(path.clone(), project.clone(), cx)
+                this.resume(path.clone(), project.clone(), window, cx)
             });
         })
         .child(
@@ -846,6 +702,32 @@ fn session_row(
                             None => THEME.colors.subtle,
                         })
                         .child(status.unwrap_or(age)),
+                )
+                .child(
+                    div()
+                        .id(format!("settle-{}", session.id))
+                        .role(Role::Button)
+                        .aria_label(if is_settled {
+                            "Restore session"
+                        } else {
+                            "Settle session"
+                        })
+                        .tab_index(0)
+                        .p(THEME.space.xs)
+                        .rounded(THEME.radius)
+                        .text_color(if is_settled {
+                            THEME.colors.success
+                        } else {
+                            THEME.colors.subtle
+                        })
+                        .hover(|button| button.bg(THEME.colors.hover))
+                        .child(Icon::new(AppIcon::CheckCircle).with_size(Size::Small))
+                        .on_click(move |_, _, cx| {
+                            cx.stop_propagation();
+                            let _ = settle_entity.update(cx, |this, cx| {
+                                this.set_session_settled(settle_path.clone(), !is_settled, cx);
+                            });
+                        }),
                 ),
         )
         .child(
@@ -929,9 +811,9 @@ fn agent_session_row(
         .hover(|row| row.bg(THEME.colors.hover))
         .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
         .cursor_pointer()
-        .on_click(move |_, _, cx| {
+        .on_click(move |_, window, cx| {
             let _ = entity.update(cx, |this, cx| {
-                this.resume(path.clone(), project.clone(), cx)
+                this.resume(path.clone(), project.clone(), window, cx)
             });
         })
         .child(
@@ -1067,10 +949,6 @@ fn compact_subagent_label(value: &str) -> String {
         .next()
         .filter(|suffix| suffix.chars().all(|character| character.is_ascii_digit()))
         .map_or_else(|| role.to_owned(), |suffix| format!("{role} {suffix}"))
-}
-
-fn on_off(value: bool) -> &'static str {
-    if value { "on" } else { "off" }
 }
 
 #[cfg(test)]

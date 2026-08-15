@@ -6,6 +6,8 @@
   <string>Pi</string>
   <key>CFBundleExecutable</key>
   <string>pi-gpui</string>
+  <key>CFBundleIconFile</key>
+  <string>Pi.icns</string>
   <key>CFBundleIdentifier</key>
   <string>local.pi.gpui</string>
   <key>CFBundleName</key>

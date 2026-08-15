@@ -1,10 +1,12 @@
 {
   description = "Behzad's reviewed Pi coding-agent extensions";
 
+  inputs.crane.url = "github:ipetkov/crane";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
   outputs =
     {
+      crane,
       nixpkgs,
       self,
     }:
@@ -32,7 +34,10 @@
           openaiServerCompaction = pkgs.callPackage ./nix/pi-openai-server-compaction.nix { };
           projectTools = pkgs.callPackage ./nix/pi-project-tools.nix { };
           piTerminal = pkgs.callPackage ./nix/pi-terminal.nix { };
-          piGpui = pkgs.callPackage ./nix/pi-gpui.nix { inherit piTerminal; };
+          piGpui = pkgs.callPackage ./nix/pi-gpui.nix {
+            craneLib = crane.mkLib pkgs;
+            inherit piTerminal;
+          };
           pi = pkgs.symlinkJoin {
             name = "pi";
             paths = [
@@ -147,7 +152,10 @@
           openaiServerCompaction = pkgs.callPackage ./nix/pi-openai-server-compaction.nix { };
           projectTools = pkgs.callPackage ./nix/pi-project-tools.nix { };
           piTerminal = pkgs.callPackage ./nix/pi-terminal.nix { };
-          piGpui = pkgs.callPackage ./nix/pi-gpui.nix { inherit piTerminal; };
+          piGpui = pkgs.callPackage ./nix/pi-gpui.nix {
+            craneLib = crane.mkLib pkgs;
+            inherit piTerminal;
+          };
           subagents = pkgs.callPackage ./nix/pi-subagents.nix { };
           webAccess = pkgs.callPackage ./nix/pi-web-access.nix { };
         in

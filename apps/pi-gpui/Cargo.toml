@@ -12,6 +12,7 @@ gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "bc174a7ec4534b2a4174fddde314b38d30d69093" }
 gpui-fps = { git = "https://github.com/longbridge/gpui-component", rev = "41bee9c280b6708d3671b5e9b137a78f49394568" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit", "wayland", "x11"] }
+rusqlite = { version = "0.37.0", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 thiserror = "2.0.19"

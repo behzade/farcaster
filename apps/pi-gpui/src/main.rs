@@ -1,5 +1,8 @@
 mod app;
 mod assets;
+mod composer_sessions;
+#[cfg(test)]
+mod composer_sessions_test;
 mod conversation;
 mod extension_ui;
 mod framing;
@@ -11,6 +14,9 @@ mod protocol;
 mod rpc_process;
 mod runtime;
 mod sessions;
+mod state;
+#[cfg(test)]
+mod state_test;
 mod theme;
 mod transcript;
 

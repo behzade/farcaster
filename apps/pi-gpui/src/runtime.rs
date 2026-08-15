@@ -1,6 +1,12 @@
 //! UI-neutral application runtime and active-session ownership.
 
-use std::{path::PathBuf, sync::mpsc, thread, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    sync::mpsc,
+    thread,
+    time::Duration,
+};
 
 use serde_json::{Value, json};
 
@@ -9,24 +15,43 @@ use crate::{
     protocol::{ExtensionUiResponse, Model, PromptMode, SessionState, command, prompt_command},
     rpc_process::{ProcessCommand, ProcessItem, RpcProcess},
     sessions::{SessionSummary, discover, load_history},
+    state::StateStore,
 };
+
+const MAX_IDLE_PI_ACTORS: usize = 4;
 
 #[derive(Clone, Debug)]
 pub(crate) enum RuntimeCommand {
-    Prompt { mode: PromptMode, message: String },
+    Prompt {
+        target: String,
+        mode: PromptMode,
+        message: String,
+    },
     Abort,
-    NewSession { project: PathBuf },
-    ResumeDraft { project: PathBuf },
-    Resume { path: PathBuf, project: PathBuf },
-    SetModel { provider: String, model_id: String },
+    NewSession {
+        id: String,
+        project: PathBuf,
+    },
+    ResumeDraft {
+        id: String,
+        project: PathBuf,
+    },
+    Resume {
+        path: PathBuf,
+        project: PathBuf,
+    },
+    SetModel {
+        provider: String,
+        model_id: String,
+    },
     SetThinking(String),
-    Compact,
-    SetAutoCompaction(bool),
-    SetAutoRetry(bool),
-    AbortRetry,
     ExtensionResponse(ExtensionUiResponse),
+    DeliverQueued(crate::state::QueuedPrompt),
+    SetSettled {
+        path: PathBuf,
+        settled: bool,
+    },
     LoadSessions(String),
-    Restart,
     Shutdown,
 }
 
@@ -59,6 +84,11 @@ pub(crate) enum RuntimeEvent {
         generation: u64,
         accepted: bool,
     },
+    SessionStatus {
+        target: String,
+        session: Option<PathBuf>,
+        status: String,
+    },
     Stopped,
 }
 
@@ -87,16 +117,22 @@ pub(crate) struct RuntimeHandle {
 }
 
 impl RuntimeHandle {
-    pub(crate) fn spawn(project: PathBuf) -> Self {
-        Self::spawn_with(project, ProcessCommand::default())
+    pub(crate) fn spawn(project: PathBuf, draft_id: String) -> Self {
+        Self::spawn_with(project, draft_id, ProcessCommand::default())
     }
 
-    pub(crate) fn spawn_with(project: PathBuf, process_command: ProcessCommand) -> Self {
+    pub(crate) fn spawn_with(
+        project: PathBuf,
+        draft_id: String,
+        process_command: ProcessCommand,
+    ) -> Self {
         let (commands, command_rx) = mpsc::channel();
         let (event_tx, events) = mpsc::channel();
         thread::Builder::new()
-            .name("pi-gpui-runtime".into())
-            .spawn(move || run(project, process_command, command_rx, event_tx))
+            .name("pi-gpui-supervisor".into())
+            .spawn(move || {
+                run_supervisor(project, draft_id, process_command, command_rx, event_tx);
+            })
             .ok();
         Self { commands, events }
     }
@@ -112,6 +148,356 @@ impl RuntimeHandle {
     }
 }
 
+struct SessionRuntimeHandle {
+    commands: mpsc::Sender<RuntimeCommand>,
+    events: mpsc::Receiver<RuntimeEvent>,
+}
+
+impl SessionRuntimeHandle {
+    fn spawn(project: PathBuf, process_command: ProcessCommand, load_catalog: bool) -> Self {
+        let (commands, command_rx) = mpsc::channel();
+        let (event_tx, events) = mpsc::channel();
+        thread::Builder::new()
+            .name("pi-gpui-session".into())
+            .spawn(move || run(project, process_command, command_rx, event_tx, load_catalog))
+            .ok();
+        Self { commands, events }
+    }
+
+    fn send(&self, command: RuntimeCommand) {
+        let _ = self.commands.send(command);
+    }
+}
+
+fn run_supervisor(
+    project: PathBuf,
+    draft_id: String,
+    process_command: ProcessCommand,
+    command_rx: mpsc::Receiver<RuntimeCommand>,
+    event_tx: mpsc::Sender<RuntimeEvent>,
+) {
+    let initial_key = format!("draft:{draft_id}");
+    let catalog_key = "catalog".to_owned();
+    let mut actors = HashMap::from([
+        (
+            catalog_key.clone(),
+            SessionRuntimeHandle::spawn(project.clone(), process_command.clone(), true),
+        ),
+        (
+            initial_key.clone(),
+            SessionRuntimeHandle::spawn(project, process_command.clone(), false),
+        ),
+    ]);
+    let mut selected = initial_key.clone();
+    let mut generation = 0_u64;
+    let mut latest = HashMap::<String, RuntimeSnapshot>::new();
+    let mut pending_extensions = HashMap::<String, Vec<crate::protocol::ExtensionUiRequest>>::new();
+    let mut active_dialogs = HashMap::<String, Vec<crate::protocol::ExtensionUiRequest>>::new();
+    let mut needs_input = HashSet::<String>::new();
+    let mut clock = 0_u64;
+    let mut last_touch = HashMap::from([(initial_key.clone(), clock)]);
+    if let Ok(state) = StateStore::open()
+        && let Ok(prompts) = state.queued_prompts()
+    {
+        for prompt in prompts {
+            let key = prompt.target.clone();
+            let actor = actors.entry(key).or_insert_with(|| {
+                SessionRuntimeHandle::spawn(prompt.project.clone(), process_command.clone(), false)
+            });
+            actor.send(RuntimeCommand::DeliverQueued(prompt));
+        }
+    }
+    let mut running = true;
+    while running {
+        let keys = actors.keys().cloned().collect::<Vec<_>>();
+        for key in keys {
+            let mut events = Vec::new();
+            if let Some(actor) = actors.get(&key) {
+                while let Ok(event) = actor.events.try_recv() {
+                    events.push(event);
+                }
+            }
+            for event in events {
+                clock = clock.saturating_add(1);
+                last_touch.insert(key.clone(), clock);
+                match event {
+                    RuntimeEvent::Snapshot { snapshot, .. } => {
+                        let snapshot = *snapshot;
+                        if snapshot.conversation.settled {
+                            needs_input.remove(&key);
+                            active_dialogs.remove(&key);
+                        }
+                        let status = if needs_input.contains(&key) {
+                            "Needs input"
+                        } else {
+                            semantic_status(&snapshot)
+                        };
+                        let _ = event_tx.send(RuntimeEvent::SessionStatus {
+                            target: key.clone(),
+                            session: snapshot
+                                .live_session
+                                .clone()
+                                .or_else(|| snapshot.selected_session.clone()),
+                            status: status.into(),
+                        });
+                        latest.insert(key.clone(), snapshot.clone());
+                        if key == selected {
+                            let _ = event_tx.send(RuntimeEvent::Snapshot {
+                                generation,
+                                snapshot: Box::new(snapshot),
+                            });
+                        }
+                    }
+                    RuntimeEvent::ExtensionUi { request, .. } => {
+                        if request.dialog_id().is_some() {
+                            active_dialogs
+                                .entry(key.clone())
+                                .or_default()
+                                .push(request.clone());
+                            needs_input.insert(key.clone());
+                            let session = latest.get(&key).and_then(|snapshot| {
+                                snapshot
+                                    .live_session
+                                    .clone()
+                                    .or_else(|| snapshot.selected_session.clone())
+                            });
+                            let _ = event_tx.send(RuntimeEvent::SessionStatus {
+                                target: key.clone(),
+                                session,
+                                status: "Needs input".into(),
+                            });
+                        }
+                        if key == selected {
+                            let _ = event_tx.send(RuntimeEvent::ExtensionUi {
+                                generation,
+                                request,
+                            });
+                        } else if request.dialog_id().is_none() {
+                            pending_extensions
+                                .entry(key.clone())
+                                .or_default()
+                                .push(request);
+                        }
+                    }
+                    RuntimeEvent::SessionReset {
+                        preserve_submission,
+                        ..
+                    } if key == selected => {
+                        let _ = event_tx.send(RuntimeEvent::SessionReset {
+                            generation,
+                            preserve_submission,
+                        });
+                    }
+                    RuntimeEvent::HistoryReset { .. } if key == selected => {
+                        let _ = event_tx.send(RuntimeEvent::HistoryReset { generation });
+                    }
+                    RuntimeEvent::PromptResult { accepted, .. } if key == selected => {
+                        let _ = event_tx.send(RuntimeEvent::PromptResult {
+                            generation,
+                            accepted,
+                        });
+                    }
+                    RuntimeEvent::Sessions {
+                        generation: session_generation,
+                        sessions,
+                    } => {
+                        let _ = event_tx.send(RuntimeEvent::Sessions {
+                            generation: session_generation,
+                            sessions,
+                        });
+                    }
+                    RuntimeEvent::SessionsFailed {
+                        generation: session_generation,
+                        message,
+                    } => {
+                        let _ = event_tx.send(RuntimeEvent::SessionsFailed {
+                            generation: session_generation,
+                            message,
+                        });
+                    }
+                    RuntimeEvent::Stopped
+                    | RuntimeEvent::SessionStatus { .. }
+                    | RuntimeEvent::SessionReset { .. }
+                    | RuntimeEvent::HistoryReset { .. }
+                    | RuntimeEvent::PromptResult { .. } => {}
+                }
+            }
+        }
+        evict_idle_actors(&mut actors, &mut latest, &mut last_touch, &selected);
+        match command_rx.recv_timeout(Duration::from_millis(12)) {
+            Ok(RuntimeCommand::Shutdown) => running = false,
+            Ok(command) => {
+                if matches!(&command, RuntimeCommand::ExtensionResponse(_)) {
+                    if let Some(dialogs) = active_dialogs.get_mut(&selected) {
+                        if !dialogs.is_empty() {
+                            dialogs.remove(0);
+                        }
+                        if dialogs.is_empty() {
+                            active_dialogs.remove(&selected);
+                            needs_input.remove(&selected);
+                        }
+                    }
+                    let session = latest.get(&selected).and_then(|snapshot| {
+                        snapshot
+                            .live_session
+                            .clone()
+                            .or_else(|| snapshot.selected_session.clone())
+                    });
+                    let _ = event_tx.send(RuntimeEvent::SessionStatus {
+                        target: selected.clone(),
+                        session,
+                        status: "Working".into(),
+                    });
+                }
+                let next = command_target(&command);
+                if let Some((requested_key, project)) = next {
+                    let key = actor_key_for_command(&command, &requested_key, &latest);
+                    clock = clock.saturating_add(1);
+                    last_touch.insert(key.clone(), clock);
+                    let selection_changed = key != selected;
+                    if selection_changed {
+                        generation = generation.saturating_add(1);
+                        selected = key.clone();
+                        let _ = event_tx.send(RuntimeEvent::SessionReset {
+                            generation,
+                            preserve_submission: false,
+                        });
+                    }
+                    let actor = actors.entry(key.clone()).or_insert_with(|| {
+                        SessionRuntimeHandle::spawn(project, process_command.clone(), false)
+                    });
+                    actor.send(command);
+                    if let Some(snapshot) = latest.get(&key).cloned() {
+                        let _ = event_tx.send(RuntimeEvent::Snapshot {
+                            generation,
+                            snapshot: Box::new(snapshot),
+                        });
+                    }
+                    if let Some(requests) = pending_extensions.remove(&key) {
+                        for request in requests {
+                            let _ = event_tx.send(RuntimeEvent::ExtensionUi {
+                                generation,
+                                request,
+                            });
+                        }
+                    }
+                    if selection_changed && let Some(dialogs) = active_dialogs.get(&key) {
+                        for request in dialogs {
+                            let _ = event_tx.send(RuntimeEvent::ExtensionUi {
+                                generation,
+                                request: request.clone(),
+                            });
+                        }
+                    }
+                } else {
+                    let target = if matches!(
+                        &command,
+                        RuntimeCommand::LoadSessions(_) | RuntimeCommand::SetSettled { .. }
+                    ) {
+                        &catalog_key
+                    } else {
+                        &selected
+                    };
+                    if let Some(actor) = actors.get(target) {
+                        actor.send(command);
+                    }
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => running = false,
+        }
+    }
+    for actor in actors.values() {
+        actor.send(RuntimeCommand::Shutdown);
+    }
+    let _ = event_tx.send(RuntimeEvent::Stopped);
+}
+
+fn command_target(command: &RuntimeCommand) -> Option<(String, PathBuf)> {
+    match command {
+        RuntimeCommand::NewSession { id, project }
+        | RuntimeCommand::ResumeDraft { id, project } => {
+            Some((format!("draft:{id}"), project.clone()))
+        }
+        RuntimeCommand::Resume { path, project } => {
+            Some((format!("session:{}", path.display()), project.clone()))
+        }
+        _ => None,
+    }
+}
+
+fn actor_key_for_command(
+    command: &RuntimeCommand,
+    requested_key: &str,
+    latest: &HashMap<String, RuntimeSnapshot>,
+) -> String {
+    let RuntimeCommand::Resume { path, .. } = command else {
+        return requested_key.to_owned();
+    };
+    latest
+        .iter()
+        .find(|(_, snapshot)| {
+            snapshot.live_session.as_deref() == Some(path.as_path())
+                || snapshot.selected_session.as_deref() == Some(path.as_path())
+        })
+        .map_or_else(|| requested_key.to_owned(), |(key, _)| key.clone())
+}
+
+fn semantic_status(snapshot: &RuntimeSnapshot) -> &'static str {
+    if snapshot.conversation.running {
+        "Working"
+    } else if snapshot
+        .conversation
+        .items
+        .last()
+        .is_some_and(|item| item.is_error)
+    {
+        "Failed"
+    } else if snapshot.history_preview && snapshot.selected_session.is_none() {
+        "Draft"
+    } else {
+        "Done"
+    }
+}
+
+fn evict_idle_actors(
+    actors: &mut HashMap<String, SessionRuntimeHandle>,
+    latest: &mut HashMap<String, RuntimeSnapshot>,
+    last_touch: &mut HashMap<String, u64>,
+    selected: &str,
+) {
+    let connected = latest
+        .iter()
+        .filter(|(_, snapshot)| snapshot.connected)
+        .count();
+    if connected <= MAX_IDLE_PI_ACTORS {
+        return;
+    }
+    let mut candidates = latest
+        .iter()
+        .filter(|(key, snapshot)| {
+            key.as_str() != selected && snapshot.connected && semantic_status(snapshot) == "Done"
+        })
+        .map(|(key, _)| {
+            (
+                last_touch.get(key).copied().unwrap_or_default(),
+                key.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|(touch, _)| *touch);
+    for (_, key) in candidates
+        .into_iter()
+        .take(connected.saturating_sub(MAX_IDLE_PI_ACTORS))
+    {
+        if let Some(actor) = actors.remove(&key) {
+            actor.send(RuntimeCommand::Shutdown);
+        }
+        latest.remove(&key);
+        last_touch.remove(&key);
+    }
+}
+
 struct RuntimeOwner {
     project: PathBuf,
     process_command: ProcessCommand,
@@ -120,15 +506,18 @@ struct RuntimeOwner {
     session_generation: u64,
     process_generation: u64,
     pending_prompt_id: Option<String>,
+    pending_outbox_id: Option<i64>,
     event_tx: mpsc::Sender<RuntimeEvent>,
     discovery_tx: mpsc::Sender<DiscoveryResult>,
     history_tx: mpsc::Sender<HistoryResult>,
     history_generation: u64,
     active_session: Option<PathBuf>,
     parked_snapshot: Option<RuntimeSnapshot>,
-    deferred_prompt: Option<(PromptMode, String)>,
+    deferred_prompt: Option<(PromptMode, String, Option<i64>)>,
     startup_state_loaded: bool,
     startup_history_loaded: bool,
+    state: Option<StateStore>,
+    session_query: String,
 }
 
 struct DiscoveryResult {
@@ -148,15 +537,20 @@ fn run(
     process_command: ProcessCommand,
     command_rx: mpsc::Receiver<RuntimeCommand>,
     event_tx: mpsc::Sender<RuntimeEvent>,
+    load_catalog: bool,
 ) {
     let (discovery_tx, discovery_rx) = mpsc::channel();
     let (history_tx, history_rx) = mpsc::channel();
+    let (state, state_error) = match StateStore::open() {
+        Ok(state) => (Some(state), None),
+        Err(error) => (None, Some(error)),
+    };
     let mut owner = RuntimeOwner {
         project: project.clone(),
         process_command,
         process: None,
         snapshot: RuntimeSnapshot {
-            status: "Starting Pi".into(),
+            status: "Done".into(),
             project,
             auto_retry: true,
             ..RuntimeSnapshot::default()
@@ -164,6 +558,7 @@ fn run(
         session_generation: 0,
         process_generation: 0,
         pending_prompt_id: None,
+        pending_outbox_id: None,
         event_tx,
         discovery_tx,
         history_tx,
@@ -173,9 +568,19 @@ fn run(
         deferred_prompt: None,
         startup_state_loaded: false,
         startup_history_loaded: false,
+        state,
+        session_query: String::new(),
     };
-    owner.load_sessions(String::new());
-    owner.start_process(None);
+    if let Some(error) = state_error {
+        owner
+            .snapshot
+            .conversation
+            .push_local_error("State unavailable", error);
+    }
+    if load_catalog {
+        owner.load_sessions(String::new());
+    }
+    owner.publish();
     let mut running = true;
     while running {
         while let Ok(result) = discovery_rx.try_recv() {
@@ -265,14 +670,17 @@ impl RuntimeOwner {
 
     fn apply_command(&mut self, runtime_command: RuntimeCommand) {
         match runtime_command {
-            RuntimeCommand::Prompt { mode, message } => self.send_prompt(mode, message),
+            RuntimeCommand::Prompt {
+                target,
+                mode,
+                message,
+            } => self.send_prompt(target, mode, message),
+            RuntimeCommand::DeliverQueued(prompt) => self.deliver_queued(prompt),
             RuntimeCommand::Abort => self.send(command("abort")),
-            RuntimeCommand::NewSession { project } => {
-                self.project = project;
-                self.deferred_prompt = None;
-                self.start_process(None);
+            RuntimeCommand::NewSession { project, .. } => {
+                self.preview_draft(project);
             }
-            RuntimeCommand::ResumeDraft { project } => self.resume_draft(project),
+            RuntimeCommand::ResumeDraft { project, .. } => self.resume_draft(project),
             RuntimeCommand::Resume { path, project } => self.preview_history(path, project),
             RuntimeCommand::SetModel { provider, model_id } => {
                 self.send(json!({"type":"set_model","provider":provider,"modelId":model_id}))
@@ -280,15 +688,6 @@ impl RuntimeOwner {
             RuntimeCommand::SetThinking(level) => {
                 self.send(json!({"type":"set_thinking_level","level":level}))
             }
-            RuntimeCommand::Compact => self.send(command("compact")),
-            RuntimeCommand::SetAutoCompaction(enabled) => {
-                self.send(json!({"type":"set_auto_compaction","enabled":enabled}))
-            }
-            RuntimeCommand::SetAutoRetry(enabled) => {
-                self.snapshot.auto_retry = enabled;
-                self.send(json!({"type":"set_auto_retry","enabled":enabled}));
-            }
-            RuntimeCommand::AbortRetry => self.send(command("abort_retry")),
             RuntimeCommand::ExtensionResponse(response) => {
                 if let Some(process) = self.process.as_mut()
                     && let Err(error) = process.send_extension_response(response)
@@ -296,8 +695,18 @@ impl RuntimeOwner {
                     self.fail(error);
                 }
             }
+            RuntimeCommand::SetSettled { path, settled } => {
+                if let Some(state) = &self.state
+                    && let Err(error) = state.set_settled(&path, settled)
+                {
+                    let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
+                        generation: self.session_generation,
+                        message: error,
+                    });
+                }
+                self.load_sessions(self.session_query.clone());
+            }
             RuntimeCommand::LoadSessions(query) => self.load_sessions(query),
-            RuntimeCommand::Restart => self.start_process(self.snapshot.selected_session.clone()),
             RuntimeCommand::Shutdown => {}
         }
     }
@@ -319,24 +728,75 @@ impl RuntimeOwner {
         }
     }
 
-    fn send_prompt(&mut self, mode: PromptMode, message: String) {
-        if self.snapshot.history_preview {
-            let Some(path) = self.snapshot.selected_session.clone() else {
-                self.reject_prompt("No session is selected".into());
-                return;
-            };
-            self.deferred_prompt = Some((mode, message));
-            self.start_process(Some(path));
-            return;
-        }
+    fn send_prompt(&mut self, target: String, mode: PromptMode, message: String) {
         if self.pending_prompt_id.is_some() {
-            self.reject_prompt("Another composer submission is awaiting Pi acceptance".into());
+            self.reject_prompt("Another message is still being sent".into());
             return;
         }
-        if !can_send_prompt(mode, self.snapshot.conversation.running) {
-            self.reject_prompt(
-                "A normal prompt cannot be sent while Pi is working; use Steer or Follow-up".into(),
-            );
+        let was_running = self.active_snapshot().conversation.running;
+        if !can_send_prompt(mode, was_running) {
+            self.reject_prompt("Pi is already working on this session".into());
+            return;
+        }
+        let outbox_id = match self.state.as_ref() {
+            Some(state) => match state.enqueue_prompt(
+                &target,
+                &self.project,
+                self.snapshot.selected_session.as_deref(),
+                mode,
+                &message,
+            ) {
+                Ok(id) => Some(id),
+                Err(error) => {
+                    self.reject_prompt(error);
+                    return;
+                }
+            },
+            None => {
+                self.reject_prompt("Couldn’t save the message".into());
+                return;
+            }
+        };
+        self.snapshot.conversation.push_local_user(message.clone());
+        self.snapshot.conversation.running = true;
+        self.snapshot.status = "Working".into();
+        self.emit_prompt_result(true);
+        self.publish();
+        self.dispatch_prompt(mode, message, outbox_id);
+    }
+
+    fn deliver_queued(&mut self, prompt: crate::state::QueuedPrompt) {
+        self.project = prompt.project;
+        self.snapshot.project = self.project.clone();
+        self.snapshot.selected_session = prompt.session.clone();
+        self.snapshot
+            .conversation
+            .push_local_user(prompt.message.clone());
+        self.snapshot.conversation.running = true;
+        self.snapshot.status = "Working".into();
+        self.publish();
+        self.dispatch_prompt(prompt.mode, prompt.message, Some(prompt.id));
+    }
+
+    fn dispatch_prompt(&mut self, mode: PromptMode, message: String, outbox_id: Option<i64>) {
+        if self.snapshot.history_preview {
+            let path = self.snapshot.selected_session.clone();
+            self.pending_outbox_id = outbox_id;
+            self.deferred_prompt = Some((mode, message, outbox_id));
+            self.start_process(path);
+            return;
+        }
+        if self.process.is_none() {
+            self.pending_outbox_id = outbox_id;
+            self.deferred_prompt = Some((mode, message, outbox_id));
+            self.start_process(self.snapshot.selected_session.clone());
+            return;
+        }
+        if let Some(id) = outbox_id
+            && let Some(state) = &self.state
+            && let Err(error) = state.begin_prompt(id)
+        {
+            self.reject_prompt(error);
             return;
         }
         let command = prompt_command(mode, message);
@@ -345,13 +805,16 @@ impl RuntimeOwner {
             .as_mut()
             .map(|process| process.send_command(command))
         {
-            Some(Ok(id)) => self.pending_prompt_id = Some(id),
+            Some(Ok(id)) => {
+                self.pending_prompt_id = Some(id);
+                self.pending_outbox_id = outbox_id;
+            }
             Some(Err(error)) => {
-                self.emit_prompt_result(false);
+                self.mark_outbox_failed(error.as_str());
                 self.fail(error);
             }
             None => {
-                self.emit_prompt_result(false);
+                self.mark_outbox_failed("Pi is not connected");
                 self.fail("Cannot send prompt: Pi is not connected".into());
             }
         }
@@ -471,9 +934,26 @@ impl RuntimeOwner {
             self.publish();
             return;
         }
-        self.project = project;
-        self.deferred_prompt = None;
-        self.start_process(None);
+        self.preview_draft(project);
+    }
+
+    fn preview_draft(&mut self, project: PathBuf) {
+        self.history_generation = self.history_generation.saturating_add(1);
+        if self.parked_snapshot.is_none() && self.process.is_some() {
+            self.parked_snapshot = Some(std::mem::take(&mut self.snapshot));
+        }
+        self.project = project.clone();
+        self.snapshot = RuntimeSnapshot {
+            status: "Draft".into(),
+            project,
+            auto_retry: true,
+            history_preview: true,
+            ..RuntimeSnapshot::default()
+        };
+        let _ = self.event_tx.send(RuntimeEvent::HistoryReset {
+            generation: self.process_generation,
+        });
+        self.publish();
     }
 
     fn apply_history(&mut self, result: HistoryResult) {
@@ -524,7 +1004,20 @@ impl RuntimeOwner {
                 && response.id.as_ref() == self.pending_prompt_id.as_ref();
         if is_prompt_response {
             self.pending_prompt_id = None;
-            self.emit_prompt_result(response.success);
+            if response.success {
+                if let Some(id) = self.pending_outbox_id.take()
+                    && let Some(state) = &self.state
+                {
+                    let _ = state.complete_prompt(id);
+                }
+            } else {
+                self.mark_outbox_failed(
+                    response
+                        .error
+                        .as_deref()
+                        .unwrap_or("Pi rejected the prompt"),
+                );
+            }
         }
         if !response.success {
             let blocks_resume = self.deferred_prompt.is_some()
@@ -671,17 +1164,41 @@ impl RuntimeOwner {
         if !self.startup_state_loaded || !self.startup_history_loaded {
             return;
         }
-        if let Some((mode, message)) = self.deferred_prompt.take() {
+        if let Some((mode, message, outbox_id)) = self.deferred_prompt.take() {
+            if let Some(snapshot) = self.parked_snapshot.as_mut() {
+                snapshot.conversation.push_local_user(message.clone());
+                snapshot.conversation.running = true;
+            }
             if self.snapshot.history_preview
                 && let Some(snapshot) = self.parked_snapshot.take()
             {
                 self.snapshot = snapshot;
             }
-            self.send_prompt(mode, message);
+            self.dispatch_prompt(mode, message, outbox_id);
         }
     }
 
     fn load_sessions(&mut self, query: String) {
+        self.session_query = query.clone();
+        if let Some(state) = &self.state {
+            match state.cached_sessions(&query) {
+                Ok(sessions) => {
+                    let _ = self.event_tx.send(RuntimeEvent::Sessions {
+                        generation: self.session_generation,
+                        sessions,
+                    });
+                }
+                Err(error) => {
+                    let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
+                        generation: self.session_generation,
+                        message: error,
+                    });
+                }
+            }
+        }
+        if !query.is_empty() {
+            return;
+        }
         self.session_generation = self.session_generation.saturating_add(1);
         let generation = self.session_generation;
         let sender = self.discovery_tx.clone();
@@ -690,21 +1207,40 @@ impl RuntimeOwner {
             .spawn(move || {
                 let _ = sender.send(DiscoveryResult {
                     generation,
-                    result: discover(&query),
+                    result: discover(""),
                 });
             })
             .ok();
     }
 
-    fn apply_discovery(&self, result: DiscoveryResult) {
+    fn apply_discovery(&mut self, result: DiscoveryResult) {
         if result.generation != self.session_generation {
             return;
         }
         let event = match result.result {
-            Ok(sessions) => RuntimeEvent::Sessions {
-                generation: result.generation,
-                sessions,
-            },
+            Ok(sessions) => {
+                let sessions = if let Some(state) = self.state.as_mut() {
+                    match state
+                        .replace_sessions(&sessions)
+                        .and_then(|()| state.cached_sessions(&self.session_query))
+                    {
+                        Ok(indexed) => indexed,
+                        Err(error) => {
+                            let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
+                                generation: result.generation,
+                                message: error,
+                            });
+                            sessions
+                        }
+                    }
+                } else {
+                    sessions
+                };
+                RuntimeEvent::Sessions {
+                    generation: result.generation,
+                    sessions,
+                }
+            }
             Err(message) => RuntimeEvent::SessionsFailed {
                 generation: result.generation,
                 message,
@@ -726,12 +1262,23 @@ impl RuntimeOwner {
         let previewing = self.parked_snapshot.is_some();
         let snapshot = self.active_snapshot_mut();
         snapshot.connected = false;
-        snapshot.status = "Connection failed".into();
-        snapshot.conversation.push_transport_error(error);
+        snapshot.status = "Failed".into();
+        snapshot.conversation.diagnostics.push(error);
+        snapshot
+            .conversation
+            .push_local_error("Couldn’t send", "Try again from the composer.".into());
         if previewing && let Some(snapshot) = self.parked_snapshot.take() {
             self.snapshot = snapshot;
         }
         self.publish();
+    }
+
+    fn mark_outbox_failed(&mut self, error: &str) {
+        if let Some(id) = self.pending_outbox_id.take()
+            && let Some(state) = &self.state
+        {
+            let _ = state.fail_prompt(id, error);
+        }
     }
 
     fn publish(&self) {
@@ -846,6 +1393,7 @@ mod tests {
                 session_generation: 0,
                 process_generation: 1,
                 pending_prompt_id: None,
+                pending_outbox_id: None,
                 event_tx,
                 discovery_tx,
                 history_tx,
@@ -855,6 +1403,8 @@ mod tests {
                 deferred_prompt: None,
                 startup_state_loaded: false,
                 startup_history_loaded: false,
+                state: None,
+                session_query: String::new(),
             },
             event_rx,
             discovery_rx,
@@ -869,6 +1419,27 @@ mod tests {
         assert_eq!(run_status(&conversation), "Working");
         conversation.reduce(&json!({"type":"agent_settled"}));
         assert_eq!(run_status(&conversation), "Ready");
+    }
+
+    #[test]
+    fn saved_path_reuses_the_actor_that_started_as_a_draft() {
+        let path = PathBuf::from("/sessions/one.jsonl");
+        let command = RuntimeCommand::Resume {
+            path: path.clone(),
+            project: PathBuf::from("/project"),
+        };
+        let latest = HashMap::from([(
+            "draft:one".into(),
+            RuntimeSnapshot {
+                live_session: Some(path.clone()),
+                ..RuntimeSnapshot::default()
+            },
+        )]);
+
+        assert_eq!(
+            actor_key_for_command(&command, &format!("session:{}", path.display()), &latest,),
+            "draft:one"
+        );
     }
 
     #[test]
@@ -887,13 +1458,14 @@ mod tests {
             owner_without_process(old_project.path().to_path_buf());
 
         owner.apply_command(RuntimeCommand::NewSession {
+            id: "draft-new".into(),
             project: new_project.path().to_path_buf(),
         });
 
         assert_eq!(owner.project, new_project.path());
         assert_eq!(owner.snapshot.project, new_project.path());
         assert_eq!(owner.active_session, None);
-        assert_eq!(owner.process_generation, 2);
+        assert_eq!(owner.process_generation, 1);
         Ok(())
     }
 
@@ -1046,6 +1618,7 @@ mod tests {
             session_generation: 0,
             process_generation: 4,
             pending_prompt_id: None,
+            pending_outbox_id: None,
             event_tx,
             discovery_tx,
             history_tx,
@@ -1055,6 +1628,8 @@ mod tests {
             deferred_prompt: None,
             startup_state_loaded: false,
             startup_history_loaded: false,
+            state: None,
+            session_query: String::new(),
         };
         owner.snapshot.conversation.reduce(&json!({
             "type": "queue_update",
@@ -1084,7 +1659,14 @@ mod tests {
                 .conversation
                 .items
                 .iter()
-                .any(|item| item.text.contains("definitely/missing"))
+                .any(|item| item.text == "Try again from the composer.")
+        );
+        assert!(
+            latest
+                .conversation
+                .diagnostics
+                .iter()
+                .any(|item| item.contains("definitely/missing"))
         );
     }
 
@@ -1126,6 +1708,7 @@ mod tests {
             session_generation: 0,
             process_generation: 3,
             pending_prompt_id: None,
+            pending_outbox_id: None,
             event_tx,
             discovery_tx,
             history_tx,
@@ -1135,6 +1718,8 @@ mod tests {
             deferred_prompt: None,
             startup_state_loaded: false,
             startup_history_loaded: false,
+            state: Some(StateStore::open_at(&temp.path().join("gui-state.sqlite3"))?),
+            session_query: String::new(),
         };
 
         owner.preview_history(old_path.clone(), old_project);
@@ -1166,12 +1751,21 @@ mod tests {
         );
 
         let _ = event_rx.try_iter().count();
-        owner.send_prompt(PromptMode::Normal, "continue".into());
+        owner.send_prompt(
+            format!("session:{}", new_path.display()),
+            PromptMode::Normal,
+            "continue".into(),
+        );
         assert!(owner.snapshot.history_preview);
         assert_eq!(owner.snapshot.conversation.items[0].text, "previewed");
         assert_eq!(owner.active_session, Some(new_path));
         assert!(owner.deferred_prompt.is_some());
         let resume_events = event_rx.try_iter().collect::<Vec<_>>();
+        assert!(
+            resume_events
+                .iter()
+                .any(|event| matches!(event, RuntimeEvent::PromptResult { accepted: true, .. }))
+        );
         assert!(resume_events.iter().any(|event| matches!(
             event,
             RuntimeEvent::SessionReset {
@@ -1210,11 +1804,6 @@ mod tests {
         assert!(owner.deferred_prompt.is_none());
         assert!(owner.pending_prompt_id.is_none());
         assert!(!owner.snapshot.history_preview);
-        assert!(
-            event_rx
-                .try_iter()
-                .any(|event| matches!(event, RuntimeEvent::PromptResult { accepted: true, .. }))
-        );
         Ok(())
     }
 
@@ -1251,6 +1840,7 @@ mod tests {
             session_generation: 0,
             process_generation: 7,
             pending_prompt_id: Some("pending-prompt".into()),
+            pending_outbox_id: None,
             event_tx,
             discovery_tx,
             history_tx,
@@ -1260,6 +1850,8 @@ mod tests {
             deferred_prompt: None,
             startup_state_loaded: true,
             startup_history_loaded: true,
+            state: None,
+            session_query: String::new(),
         };
         owner
             .snapshot
