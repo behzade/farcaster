@@ -22,6 +22,7 @@ pub(crate) struct Colors {
     pub panel: Rgba,
     pub surface: Rgba,
     pub hover: Rgba,
+    pub selection: Rgba,
     pub border: Rgba,
     pub text: Rgba,
     pub muted: Rgba,
@@ -42,6 +43,7 @@ pub(crate) struct Space {
 #[derive(Clone, Copy)]
 pub(crate) struct TypeScale {
     pub caption: Pixels,
+    pub body_small: Pixels,
     pub body: Pixels,
     pub heading: Pixels,
     pub line_body: Pixels,
@@ -55,10 +57,17 @@ pub(crate) struct Layout {
     pub collapsed_rail: Pixels,
     pub run_panel: Pixels,
     pub transcript_max: Pixels,
+    pub transcript_overdraw: Pixels,
+    pub transcript_label_width: Pixels,
     pub composer_min: Pixels,
     pub dialog_width: Pixels,
     pub dialog_max_height: Pixels,
     pub tool_max_height: Pixels,
+    pub session_row_height: Pixels,
+    pub agent_row_height: Pixels,
+    pub agent_list_max_height: Pixels,
+    pub status_row_height: Pixels,
+    pub status_key_width: Pixels,
 }
 
 const fn rgb(hex: u32) -> Rgba {
@@ -80,45 +89,54 @@ const fn rgba(hex: u32) -> Rgba {
 
 pub(crate) const THEME: Theme = Theme {
     colors: Colors {
-        canvas: rgb(0x1d2021),
-        panel: rgb(0x282828),
-        surface: rgb(0x3c3836),
-        hover: rgb(0x504945),
-        border: rgb(0x665c54),
-        text: rgb(0xebdbb2),
-        muted: rgb(0xa89984),
-        subtle: rgb(0x928374),
-        accent: rgb(0x8ec07c),
-        warning: rgb(0xfabd2f),
-        error: rgb(0xfb4934),
-        success: rgb(0xb8bb26),
+        canvas: rgb(0x0e1012),
+        panel: rgb(0x121518),
+        surface: rgb(0x161a1e),
+        hover: rgb(0x20262c),
+        selection: rgba(0x3b82f64d),
+        border: rgb(0x2a3036),
+        text: rgb(0xf2f4f7),
+        muted: rgb(0xa5adb7),
+        subtle: rgb(0x7d8792),
+        accent: rgb(0x5aa2ff),
+        warning: rgb(0xe8b34f),
+        error: rgb(0xef6a70),
+        success: rgb(0x65c48b),
         backdrop: rgba(0x000000b3),
     },
     space: Space {
-        xs: px(6.0),
-        sm: px(10.0),
+        xs: px(4.0),
+        sm: px(8.0),
         md: px(16.0),
     },
     type_scale: TypeScale {
         caption: px(12.0),
+        body_small: px(13.0),
         body: px(14.0),
         heading: px(17.0),
-        line_body: px(20.0),
+        line_body: px(18.0),
     },
-    radius: px(7.0),
+    radius: px(6.0),
     border: px(1.0),
     layout: Layout {
         window_width: px(1240.0),
         window_height: px(820.0),
         header_height: px(52.0),
-        session_rail: px(230.0),
-        collapsed_rail: px(48.0),
-        run_panel: px(280.0),
+        session_rail: px(216.0),
+        collapsed_rail: px(44.0),
+        run_panel: px(260.0),
         transcript_max: px(820.0),
-        composer_min: px(84.0),
+        transcript_overdraw: px(640.0),
+        transcript_label_width: px(84.0),
+        composer_min: px(80.0),
         dialog_width: px(560.0),
         dialog_max_height: px(680.0),
         tool_max_height: px(220.0),
+        session_row_height: px(44.0),
+        agent_row_height: px(32.0),
+        agent_list_max_height: px(264.0),
+        status_row_height: px(24.0),
+        status_key_width: px(64.0),
     },
 };
 
@@ -153,10 +171,10 @@ pub(crate) fn install_component_theme(cx: &mut App) {
     colors.button_hover = THEME.colors.hover.into();
     colors.button_active = THEME.colors.hover.into();
     colors.button_foreground = THEME.colors.text.into();
-    colors.button_primary = THEME.colors.surface.into();
-    colors.button_primary_hover = THEME.colors.hover.into();
-    colors.button_primary_active = THEME.colors.hover.into();
-    colors.button_primary_foreground = THEME.colors.text.into();
+    colors.button_primary = rgb(0x3b82f6).into();
+    colors.button_primary_hover = THEME.colors.accent.into();
+    colors.button_primary_active = rgb(0x2563eb).into();
+    colors.button_primary_foreground = rgb(0xffffff).into();
     colors.danger = THEME.colors.error.into();
     colors.danger_foreground = THEME.colors.canvas.into();
     colors.warning = THEME.colors.warning.into();
@@ -165,6 +183,6 @@ pub(crate) fn install_component_theme(cx: &mut App) {
     colors.success_foreground = THEME.colors.canvas.into();
     colors.ring = THEME.colors.accent.into();
     colors.caret = THEME.colors.text.into();
-    colors.selection = rgba(0x8ec07c40).into();
+    colors.selection = THEME.colors.selection.into();
     theme.tokens = ThemeTokens::from(theme.colors);
 }

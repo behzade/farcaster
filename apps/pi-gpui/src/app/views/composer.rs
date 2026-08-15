@@ -27,14 +27,10 @@ impl PiApp {
             .border_t(THEME.border)
             .border_color(THEME.colors.border)
             .bg(THEME.colors.panel)
-            .p(THEME.space.md)
+            .p(THEME.space.sm)
             .when_some(widgets_above, |composer, widgets| composer.child(widgets))
             .child(
                 div()
-                    .rounded(THEME.radius)
-                    .border(THEME.border)
-                    .border_color(THEME.colors.border)
-                    .bg(THEME.colors.canvas)
                     .px(THEME.space.sm)
                     .child(Input::new(&self.composer).w_full().appearance(false)),
             )
@@ -89,21 +85,22 @@ impl PiApp {
                     .child(
                         div()
                             .flex()
-                            .flex_wrap()
                             .gap(THEME.space.xs)
-                            .child(button(
-                                "abort",
-                                "Abort",
-                                ButtonTone::Danger,
-                                self.snapshot.conversation.running,
-                                move |_, cx| {
-                                    let _ = abort_entity
-                                        .update(cx, |this, _| this.send(RuntimeCommand::Abort));
-                                },
-                            ))
+                            .when(self.snapshot.conversation.running, |actions| {
+                                actions.child(button(
+                                    "abort",
+                                    "Abort",
+                                    ButtonTone::Danger,
+                                    true,
+                                    move |_, cx| {
+                                        let _ = abort_entity
+                                            .update(cx, |this, _| this.send(RuntimeCommand::Abort));
+                                    },
+                                ))
+                            })
                             .child(button(
                                 "send",
-                                self.prompt_mode.label(),
+                                "Send",
                                 ButtonTone::Accent,
                                 self.can_submit(),
                                 move |_window, cx| {

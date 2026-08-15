@@ -1,9 +1,9 @@
 use gpui::{
-    FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Role,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, accesskit, div,
-    prelude::FluentBuilder as _, px,
+    AnyElement, CursorStyle, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
+    Role, StatefulInteractiveElement as _, Styled as _, WeakEntity, accesskit, div,
+    prelude::FluentBuilder as _, px, uniform_list,
 };
-use gpui_component::{Icon, Sizable as _, Size, input::Input};
+use gpui_component::input::Input;
 
 use super::super::{MAX_SESSION_ROWS, PiApp};
 use crate::{
@@ -26,6 +26,10 @@ impl PiApp {
             .file_name()
             .and_then(|name| name.to_str())
             .map_or_else(|| self.project.display().to_string(), str::to_owned);
+        let session_title =
+            root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
+                .map(|session| bounded_label(&session.title, 42))
+                .unwrap_or_else(|| "New session".into());
         let model = self
             .snapshot
             .session
@@ -52,7 +56,6 @@ impl PiApp {
             .min_h(THEME.layout.header_height)
             .flex_none()
             .flex()
-            .flex_wrap()
             .items_center()
             .justify_between()
             .gap(THEME.space.md)
@@ -60,18 +63,24 @@ impl PiApp {
             .py(THEME.space.xs)
             .border_b(THEME.border)
             .border_color(THEME.colors.border)
-            .bg(THEME.colors.panel)
+            .bg(THEME.colors.surface)
             .child(
                 div()
                     .min_w_0()
                     .flex()
                     .items_center()
-                    .gap(THEME.space.sm)
+                    .flex_col()
+                    .items_start()
+                    .gap(THEME.space.xs)
                     .child(
                         div()
-                            .text_size(THEME.type_scale.heading)
+                            .max_w(px(420.0))
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_size(THEME.type_scale.body)
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child("Pi"),
+                            .child(session_title),
                     )
                     .when(mode != LayoutMode::Narrow, |identity| {
                         identity.child(
@@ -85,7 +94,6 @@ impl PiApp {
             .child(
                 div()
                     .flex()
-                    .flex_wrap()
                     .items_center()
                     .gap(THEME.space.xs)
                     .when(mode != LayoutMode::Wide, |actions| {
@@ -149,14 +157,13 @@ impl PiApp {
                                 )
                             })
                             .when(!self.snapshot.history_preview, |status| {
-                                status
-                                    .text_size(THEME.type_scale.caption)
-                                    .text_color(if self.snapshot.connected {
+                                status.child(div().size(px(8.0)).rounded_full().bg(
+                                    if self.snapshot.connected {
                                         THEME.colors.accent
                                     } else {
                                         THEME.colors.error
-                                    })
-                                    .child(self.snapshot.status.clone())
+                                    },
+                                ))
                             }),
                     ),
             )
@@ -182,55 +189,27 @@ impl PiApp {
         let roots = root_sessions(&self.sessions);
         let selected_root =
             root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
-                .map(|session| session.id.as_str());
+                .map(|session| session.id.clone());
         let rows = roots
             .iter()
             .take(MAX_SESSION_ROWS)
-            .map(|session| {
-                let path = session.path.clone();
-                let element_id = format!("session-{}", session.id);
-                let row_entity = entity.clone();
-                let selected = selected_root == Some(session.id.as_str());
-                div()
-                    .id(element_id)
-                    .role(Role::Button)
-                    .aria_label(format!("Resume session: {}", session.title))
-                    .aria_selected(selected)
-                    .tab_index(0)
-                    .px(THEME.space.sm)
-                    .py(THEME.space.xs)
-                    .border_b(THEME.border)
-                    .border_color(THEME.colors.border)
-                    .when(selected, |row| row.bg(THEME.colors.surface))
-                    .hover(|row| row.bg(THEME.colors.hover))
-                    .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
-                    .cursor_pointer()
-                    .on_click(move |_, _, cx| {
-                        let _ = row_entity.update(cx, |this, cx| this.resume(path.clone(), cx));
-                    })
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .gap(THEME.space.sm)
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .text_size(THEME.type_scale.body)
-                                    .text_color(THEME.colors.text)
-                                    .child(session.title.clone()),
-                            )
-                            .child(
-                                div()
-                                    .flex_none()
-                                    .text_size(THEME.type_scale.caption)
-                                    .text_color(THEME.colors.subtle)
-                                    .child(session.message_count.to_string()),
-                            ),
-                    )
-            })
+            .map(|session| (*session).clone())
             .collect::<Vec<_>>();
+        let row_count = rows.len();
+        let row_entity = entity.clone();
+        let session_list = uniform_list("session-list", row_count, move |range, _, _| {
+            range
+                .filter_map(|index| rows.get(index))
+                .map(|session| {
+                    session_row(
+                        session,
+                        selected_root.as_deref() == Some(session.id.as_str()),
+                        row_entity.clone(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .size_full();
         div()
             .size_full()
             .flex()
@@ -238,21 +217,38 @@ impl PiApp {
             .bg(THEME.colors.panel)
             .child(
                 div()
+                    .h(THEME.layout.header_height)
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .px(THEME.space.sm)
+                    .border_b(THEME.border)
+                    .border_color(THEME.colors.border)
+                    .child(
+                        div()
+                            .text_size(THEME.type_scale.caption)
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(THEME.colors.muted)
+                            .child("SESSIONS"),
+                    )
+                    .child(icon_button(
+                        "new-session",
+                        AppIcon::Plus,
+                        "New session",
+                        ButtonTone::Quiet,
+                        self.snapshot.connected,
+                        move |_, cx| {
+                            let _ = new_entity.update(cx, |this, cx| this.new_session(cx));
+                        },
+                    )),
+            )
+            .child(
+                div()
                     .p(THEME.space.sm)
                     .border_b(THEME.border)
                     .border_color(THEME.colors.border)
-                    .child(Input::new(&self.search).w_full()),
+                    .child(Input::new(&self.search).w_full().appearance(false)),
             )
-            .child(div().p(THEME.space.xs).child(icon_button(
-                "new-session",
-                AppIcon::Plus,
-                "New session",
-                ButtonTone::Accent,
-                self.snapshot.connected,
-                move |_, cx| {
-                    let _ = new_entity.update(cx, |this, cx| this.new_session(cx));
-                },
-            )))
             .when_some(self.sessions_error.clone(), |rail, error| {
                 rail.child(feedback("sessions-error", error, FeedbackTone::Error))
             })
@@ -260,8 +256,9 @@ impl PiApp {
                 div()
                     .id("session-list-scroll")
                     .flex_1()
-                    .overflow_y_scroll()
-                    .children(rows),
+                    .min_h_0()
+                    .overflow_y_hidden()
+                    .child(session_list),
             )
             .when(roots.len() > MAX_SESSION_ROWS, |rail| {
                 rail.child(
@@ -287,141 +284,184 @@ impl PiApp {
         let descendants = root
             .map(|root| descendant_sessions(&self.sessions, &root.id))
             .unwrap_or_default();
-        let mut subagent_rows = Vec::new();
+        let mut agent_rows = Vec::new();
         if !descendants.is_empty()
             && let Some(root) = root
         {
-            subagent_rows.push(agent_session_row(
-                root,
+            agent_rows.push((
+                root.clone(),
                 0,
                 "Main".into(),
-                "main-session",
                 self.snapshot.selected_session.as_deref() == Some(root.path.as_path()),
-                entity.clone(),
             ));
-            subagent_rows.extend(descendants.into_iter().map(|(session, depth)| {
-                agent_session_row(
-                    session,
+            agent_rows.extend(descendants.into_iter().map(|(session, depth)| {
+                (
+                    session.clone(),
                     depth,
                     compact_subagent_label(&session.title),
-                    "subagent-session",
                     self.snapshot.selected_session.as_deref() == Some(session.path.as_path()),
-                    entity.clone(),
                 )
             }));
         }
+        let agent_count = agent_rows.len();
+        let agent_height =
+            px((agent_count.min(7) as f32) * f32::from(THEME.layout.agent_row_height));
+        let agent_entity = entity.clone();
+        let agent_list = uniform_list("agent-session-list", agent_count, move |range, _, _| {
+            range
+                .filter_map(|index| agent_rows.get(index))
+                .map(|(session, depth, label, selected)| {
+                    agent_session_row(
+                        session,
+                        *depth,
+                        label.clone(),
+                        *selected,
+                        agent_entity.clone(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .w_full()
+        .h(agent_height)
+        .max_h(THEME.layout.agent_list_max_height);
         let statuses = self
             .extension
             .statuses
             .iter()
             .map(|(key, value)| {
                 div()
+                    .h(THEME.layout.status_row_height)
+                    .flex()
+                    .items_center()
+                    .gap(THEME.space.sm)
+                    .border_b(THEME.border)
+                    .border_color(THEME.colors.border)
                     .text_size(THEME.type_scale.caption)
-                    .text_color(THEME.colors.muted)
-                    .child(format!("{key} · {value}"))
+                    .child(
+                        div()
+                            .w(THEME.layout.status_key_width)
+                            .flex_none()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_color(THEME.colors.subtle)
+                            .child(key.clone()),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_color(THEME.colors.muted)
+                            .child(strip_terminal_control(value)),
+                    )
             })
             .collect::<Vec<_>>();
-        panel()
+        let body = div()
             .id("run-panel-scroll")
-            .size_full()
-            .rounded_none()
-            .border_0()
-            .p(THEME.space.md)
-            .gap(THEME.space.sm)
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .p(THEME.space.sm)
+            .gap(THEME.space.md)
             .overflow_y_scroll()
-            .when(!subagent_rows.is_empty(), |run| {
-                run.child(section_heading("Subagents"))
-                    .child(div().flex().flex_col().children(subagent_rows))
+            .when(agent_count > 0, |run| {
+                run.child(div().overflow_y_hidden().child(agent_list))
             })
             .when(!self.snapshot.history_preview, |run| {
-                run.child(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .items_center()
-                        .gap(THEME.space.xs)
-                        .child(icon_button(
-                            "compact",
-                            AppIcon::Archive,
-                            "Compact context",
-                            ButtonTone::Neutral,
-                            self.snapshot.connected && !self.snapshot.conversation.running,
-                            move |_, cx| {
-                                let _ = compact_entity
-                                    .update(cx, |this, _| this.send(RuntimeCommand::Compact));
-                            },
-                        ))
-                        .when(!self.snapshot.connected, |actions| {
-                            actions.child(icon_button(
-                                "restart",
-                                AppIcon::ArrowClockwise,
-                                "Reconnect",
+                run.child(section_heading("Session"))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .items_center()
+                            .gap(THEME.space.xs)
+                            .child(icon_button(
+                                "compact",
+                                AppIcon::Archive,
+                                "Compact context",
                                 ButtonTone::Neutral,
-                                true,
+                                self.snapshot.connected && !self.snapshot.conversation.running,
                                 move |_, cx| {
-                                    let _ = retry_entity
-                                        .update(cx, |this, _| this.send(RuntimeCommand::Restart));
+                                    let _ = compact_entity
+                                        .update(cx, |this, _| this.send(RuntimeCommand::Compact));
                                 },
                             ))
-                        })
-                        .when(self.snapshot.conversation.retrying, |actions| {
-                            actions.child(icon_button(
-                                "abort-retry",
-                                AppIcon::Stop,
-                                "Stop retry",
-                                ButtonTone::Danger,
-                                true,
+                            .when(!self.snapshot.connected, |actions| {
+                                actions.child(icon_button(
+                                    "restart",
+                                    AppIcon::ArrowClockwise,
+                                    "Reconnect",
+                                    ButtonTone::Neutral,
+                                    true,
+                                    move |_, cx| {
+                                        let _ = retry_entity.update(cx, |this, _| {
+                                            this.send(RuntimeCommand::Restart)
+                                        });
+                                    },
+                                ))
+                            })
+                            .when(self.snapshot.conversation.retrying, |actions| {
+                                actions.child(icon_button(
+                                    "abort-retry",
+                                    AppIcon::Stop,
+                                    "Stop retry",
+                                    ButtonTone::Danger,
+                                    true,
+                                    move |_, cx| {
+                                        let _ = abort_retry_entity.update(cx, |this, _| {
+                                            this.send(RuntimeCommand::AbortRetry)
+                                        });
+                                    },
+                                ))
+                            }),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap(THEME.space.xs)
+                            .child(button(
+                                "auto-retry",
+                                format!("Retry {}", on_off(self.snapshot.auto_retry)),
+                                ButtonTone::Quiet,
+                                self.snapshot.connected,
                                 move |_, cx| {
-                                    let _ = abort_retry_entity.update(cx, |this, _| {
-                                        this.send(RuntimeCommand::AbortRetry)
+                                    let _ = auto_retry_entity.update(cx, |this, _| {
+                                        this.send(RuntimeCommand::SetAutoRetry(
+                                            !this.snapshot.auto_retry,
+                                        ))
                                     });
                                 },
                             ))
-                        }),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .gap(THEME.space.xs)
-                        .child(button(
-                            "auto-retry",
-                            format!("Retry {}", on_off(self.snapshot.auto_retry)),
-                            ButtonTone::Quiet,
-                            self.snapshot.connected,
-                            move |_, cx| {
-                                let _ = auto_retry_entity.update(cx, |this, _| {
-                                    this.send(RuntimeCommand::SetAutoRetry(
-                                        !this.snapshot.auto_retry,
-                                    ))
-                                });
-                            },
-                        ))
-                        .child(button(
-                            "auto-compact",
-                            format!(
-                                "Compact {}",
-                                on_off(
-                                    self.snapshot
-                                        .session
-                                        .as_ref()
-                                        .is_some_and(|state| state.auto_compaction_enabled)
-                                )
-                            ),
-                            ButtonTone::Quiet,
-                            self.snapshot.connected,
-                            move |_, cx| {
-                                let _ = auto_compact_entity.update(cx, |this, _| {
-                                    let enabled = this
-                                        .snapshot
-                                        .session
-                                        .as_ref()
-                                        .is_some_and(|state| state.auto_compaction_enabled);
-                                    this.send(RuntimeCommand::SetAutoCompaction(!enabled));
-                                });
-                            },
-                        )),
-                )
+                            .child(button(
+                                "auto-compact",
+                                format!(
+                                    "Compact {}",
+                                    on_off(
+                                        self.snapshot
+                                            .session
+                                            .as_ref()
+                                            .is_some_and(|state| state.auto_compaction_enabled)
+                                    )
+                                ),
+                                ButtonTone::Quiet,
+                                self.snapshot.connected,
+                                move |_, cx| {
+                                    let _ = auto_compact_entity.update(cx, |this, _| {
+                                        let enabled = this
+                                            .snapshot
+                                            .session
+                                            .as_ref()
+                                            .is_some_and(|state| state.auto_compaction_enabled);
+                                        this.send(RuntimeCommand::SetAutoCompaction(!enabled));
+                                    });
+                                },
+                            )),
+                    )
             })
             .when(has_queue, |run| {
                 run.child(section_heading("Queue")).child(
@@ -458,46 +498,113 @@ impl PiApp {
                     self.snapshot.stderr.clone(),
                     FeedbackTone::Warning,
                 ))
-            })
+            });
+        panel()
+            .size_full()
+            .rounded_none()
+            .border_0()
+            .child(
+                div()
+                    .h(THEME.layout.header_height)
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .px(THEME.space.sm)
+                    .border_b(THEME.border)
+                    .border_color(THEME.colors.border)
+                    .text_size(THEME.type_scale.caption)
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(THEME.colors.muted)
+                    .child(if agent_count > 0 { "AGENTS" } else { "RUN" }),
+            )
+            .child(body)
     }
+}
+
+fn session_row(session: &SessionSummary, selected: bool, entity: WeakEntity<PiApp>) -> AnyElement {
+    let path = session.path.clone();
+    div()
+        .id(format!("session-{}", session.id))
+        .role(Role::Button)
+        .aria_label(format!("Resume session: {}", session.title))
+        .aria_selected(selected)
+        .tab_index(0)
+        .h(THEME.layout.session_row_height)
+        .w_full()
+        .flex()
+        .items_center()
+        .gap(THEME.space.sm)
+        .px(THEME.space.sm)
+        .border_b(THEME.border)
+        .border_color(THEME.colors.border)
+        .bg(if selected {
+            THEME.colors.surface
+        } else {
+            THEME.colors.panel
+        })
+        .when(selected, |row| {
+            row.border_l(px(2.0)).border_color(THEME.colors.accent)
+        })
+        .hover(|row| row.bg(THEME.colors.hover))
+        .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
+        .cursor(CursorStyle::PointingHand)
+        .on_click(move |_, _, cx| {
+            let _ = entity.update(cx, |this, cx| this.resume(path.clone(), cx));
+        })
+        .child(
+            div()
+                .min_w_0()
+                .flex_1()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .text_size(THEME.type_scale.body)
+                .text_color(THEME.colors.text)
+                .child(session.title.clone()),
+        )
+        .child(
+            div()
+                .flex_none()
+                .text_size(THEME.type_scale.caption)
+                .text_color(THEME.colors.subtle)
+                .child(session.message_count.to_string()),
+        )
+        .into_any_element()
 }
 
 fn agent_session_row(
     session: &SessionSummary,
     depth: usize,
     label: String,
-    id_prefix: &str,
     selected: bool,
     entity: WeakEntity<PiApp>,
-) -> impl IntoElement {
+) -> AnyElement {
     let path = session.path.clone();
     let title = session.title.clone();
     let message_count = session.message_count;
     div()
-        .id(format!("{id_prefix}-{}", session.id))
+        .id(format!("agent-session-{}", session.id))
         .role(Role::Button)
         .aria_label(format!("Open agent session: {title}"))
         .aria_selected(selected)
         .tab_index(0)
         .flex()
         .items_center()
-        .gap(THEME.space.xs)
+        .gap(THEME.space.sm)
         .pl(px(8.0 + depth as f32 * 12.0))
         .pr(THEME.space.xs)
-        .py(THEME.space.xs)
-        .rounded(THEME.radius)
-        .when(selected, |row| row.bg(THEME.colors.surface))
+        .h(THEME.layout.agent_row_height)
+        .border_b(THEME.border)
+        .border_color(THEME.colors.border)
+        .when(selected, |row| {
+            row.border_l(px(2.0)).border_color(THEME.colors.accent)
+        })
         .hover(|row| row.bg(THEME.colors.hover))
         .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
         .cursor_pointer()
         .on_click(move |_, _, cx| {
             let _ = entity.update(cx, |this, cx| this.resume(path.clone(), cx));
         })
-        .child(
-            Icon::new(AppIcon::Robot)
-                .with_size(Size::XSmall)
-                .text_color(THEME.colors.subtle),
-        )
         .child(
             div()
                 .min_w_0()
@@ -513,6 +620,7 @@ fn agent_session_row(
                 .text_color(THEME.colors.subtle)
                 .child(message_count.to_string()),
         )
+        .into_any_element()
 }
 
 fn bounded_label(value: &str, max: usize) -> String {
@@ -544,9 +652,36 @@ fn on_off(value: bool) -> &'static str {
     if value { "on" } else { "off" }
 }
 
+fn strip_terminal_control(value: &str) -> String {
+    let chars = value.chars().collect::<Vec<_>>();
+    let mut clean = String::with_capacity(value.len());
+    let mut index = 0;
+    while index < chars.len() {
+        let starts_escape = chars[index] == '\u{1b}' && chars.get(index + 1) == Some(&'[');
+        let starts_bare_sgr = chars[index] == '[';
+        if starts_escape || starts_bare_sgr {
+            let start = index + usize::from(starts_escape) + 1;
+            let mut end = start;
+            while chars
+                .get(end)
+                .is_some_and(|character| character.is_ascii_digit() || *character == ';')
+            {
+                end += 1;
+            }
+            if end > start && chars.get(end) == Some(&'m') {
+                index = end + 1;
+                continue;
+            }
+        }
+        clean.push(chars[index]);
+        index += 1;
+    }
+    clean
+}
+
 #[cfg(test)]
 mod tests {
-    use super::compact_subagent_label;
+    use super::{compact_subagent_label, strip_terminal_control};
 
     #[test]
     fn subagent_labels_keep_the_role_and_drop_generated_ids() {
@@ -555,5 +690,17 @@ mod tests {
             "reviewer 1"
         );
         assert_eq!(compact_subagent_label("named child"), "named child");
+    }
+
+    #[test]
+    fn terminal_colors_never_leak_into_status_copy() {
+        assert_eq!(
+            strip_terminal_control("sandbox: \u{1b}[38;2;142;192;124m🔒 Codex\u{1b}[39m"),
+            "sandbox: 🔒 Codex"
+        );
+        assert_eq!(
+            strip_terminal_control("IO: [39mpi-sandbox[39m"),
+            "IO: pi-sandbox"
+        );
     }
 }

@@ -47,16 +47,6 @@ pub(crate) enum PromptMode {
     FollowUp,
 }
 
-impl PromptMode {
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::Normal => "Prompt",
-            Self::Steer => "Steer",
-            Self::FollowUp => "Follow-up",
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum WireMessage {
     Response(RpcResponse),

@@ -79,13 +79,11 @@ impl Render for PiApp {
             .flex_col()
             .child(self.render_header(mode, entity.clone()))
             .child(div().flex_1().min_h_0().child(transcript::render(
-                &self.snapshot.conversation.items,
-                &self.transcript_scroll,
-                self.transcript_visible_items,
-                &self.expanded_transcript_items,
+                &self.transcript_list,
                 self.transcript_following,
                 self.transcript_unseen,
                 entity.clone(),
+                cx,
             )))
             .child(self.render_composer(entity.clone()));
         div()
@@ -110,6 +108,8 @@ impl Render for PiApp {
                                     THEME.layout.collapsed_rail
                                 })
                                 .flex_none()
+                                .border_r(THEME.border)
+                                .border_color(THEME.colors.border)
                                 .child(
                                     self.render_sessions(
                                         mode == LayoutMode::Compact,
@@ -124,6 +124,8 @@ impl Render for PiApp {
                             div()
                                 .w(THEME.layout.run_panel)
                                 .flex_none()
+                                .border_l(THEME.border)
+                                .border_color(THEME.colors.border)
                                 .child(self.render_run_panel(entity.clone())),
                         )
                     }),

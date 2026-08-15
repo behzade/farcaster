@@ -1,11 +1,9 @@
 //! GPUI projection of the bounded transcript surface.
 
-use std::collections::HashSet;
-
 use gpui::{
-    AnyElement, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _,
-    ScrollDelta, ScrollHandle, StatefulInteractiveElement as _, Styled as _, WeakEntity, div,
-    prelude::FluentBuilder as _,
+    AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement as _, ListSizingBehavior,
+    ListState, ParentElement as _, StatefulInteractiveElement as _, Styled as _, WeakEntity, div,
+    list, prelude::FluentBuilder as _,
 };
 
 use crate::{
@@ -15,34 +13,30 @@ use crate::{
     theme::THEME,
 };
 
-pub(crate) const DEFAULT_VISIBLE_ITEMS: usize = 300;
-const VISIBLE_PAGE_ITEMS: usize = 300;
-const MAX_VISIBLE_ITEMS: usize = 1_200;
 const MAX_TOOL_CHARS: usize = 12_000;
 const MAX_EXPANDED_TOOL_CHARS: usize = 200_000;
 
 pub(crate) fn render(
-    items: &[TranscriptItem],
-    scroll: &ScrollHandle,
-    visible_items: usize,
-    expanded: &HashSet<usize>,
+    list_state: &ListState,
     following: bool,
     unseen: usize,
     entity: WeakEntity<PiApp>,
+    cx: &mut Context<PiApp>,
 ) -> AnyElement {
-    let visible_items = visible_items.min(MAX_VISIBLE_ITEMS);
-    let omitted = items.len().saturating_sub(visible_items);
-    let rows = items
-        .iter()
-        .enumerate()
-        .skip(omitted)
-        .map(|(index, item)| render_item(index, item, expanded.contains(&index), entity.clone()))
-        .collect::<Vec<_>>();
-    let pause = entity.clone();
-    let reveal = entity.clone();
     let jump = entity;
-    let total_items = items.len();
-    let can_reveal_more = visible_items < MAX_VISIBLE_ITEMS;
+    let row_entity = jump.clone();
+    let rows = list(
+        list_state.clone(),
+        cx.processor(move |this, index, _, _| {
+            this.transcript_item(index)
+                .map(|(item, expanded)| render_item(index, &item, expanded, row_entity.clone()))
+                .unwrap_or_else(|| div().into_any_element())
+        }),
+    )
+    .with_sizing_behavior(ListSizingBehavior::Auto)
+    .w_full()
+    .max_w(THEME.layout.transcript_max)
+    .flex_grow_1();
     div()
         .size_full()
         .flex()
@@ -52,44 +46,11 @@ pub(crate) fn render(
                 .id("transcript-scroll")
                 .flex_1()
                 .min_h_0()
-                .overflow_y_scroll()
-                .track_scroll(scroll)
-                .on_scroll_wheel(move |event, _, cx| {
-                    if scrolls_toward_older(event.delta) {
-                        let _ = pause.update(cx, |this, cx| this.pause_transcript_follow(cx));
-                    }
-                })
+                .overflow_y_hidden()
+                .flex()
+                .justify_center()
                 .bg(THEME.colors.canvas)
-                .child(
-                    div()
-                        .w_full()
-                        .max_w(THEME.layout.transcript_max)
-                        .mx_auto()
-                        .py(THEME.space.md)
-                        .when(omitted > 0, |content| {
-                            content.child(div().px(THEME.space.md).py(THEME.space.sm).child(
-                                button(
-                                    "reveal-older-transcript",
-                                    if can_reveal_more {
-                                        format!(
-                                            "Show {} more older transcript items",
-                                            omitted.min(VISIBLE_PAGE_ITEMS)
-                                        )
-                                    } else {
-                                        format!("{omitted} older transcript items remain hidden")
-                                    },
-                                    ButtonTone::Quiet,
-                                    can_reveal_more,
-                                    move |_, cx| {
-                                        let _ = reveal.update(cx, |this, cx| {
-                                            this.reveal_older_transcript(total_items, cx)
-                                        });
-                                    },
-                                ),
-                            ))
-                        })
-                        .children(rows),
-                ),
+                .child(rows),
         )
         .when(!following, |root| {
             root.child(
@@ -123,12 +84,10 @@ fn render_item(
     expanded: bool,
     entity: WeakEntity<PiApp>,
 ) -> AnyElement {
-    let (surface, color, compact) = match item.kind {
-        TranscriptKind::User => (THEME.colors.panel, THEME.colors.text, false),
-        TranscriptKind::Assistant => (THEME.colors.canvas, THEME.colors.text, false),
-        TranscriptKind::Thinking => (THEME.colors.canvas, THEME.colors.subtle, true),
+    let (color, compact) = match item.kind {
+        TranscriptKind::User | TranscriptKind::Assistant => (THEME.colors.text, false),
+        TranscriptKind::Thinking => (THEME.colors.subtle, true),
         TranscriptKind::Tool => (
-            THEME.colors.panel,
             if item.is_error {
                 THEME.colors.error
             } else {
@@ -136,10 +95,8 @@ fn render_item(
             },
             true,
         ),
-        TranscriptKind::Error => (THEME.colors.panel, THEME.colors.error, false),
-        TranscriptKind::Notice | TranscriptKind::Custom => {
-            (THEME.colors.panel, THEME.colors.muted, true)
-        }
+        TranscriptKind::Error => (THEME.colors.error, false),
+        TranscriptKind::Notice | TranscriptKind::Custom => (THEME.colors.muted, true),
     };
     let is_tool = item.kind == TranscriptKind::Tool;
     let is_thinking = item.kind == TranscriptKind::Thinking;
@@ -163,67 +120,81 @@ fn render_item(
     }
     let can_expand = is_thinking || (is_tool && item.text.chars().count() > MAX_TOOL_CHARS);
     let toggle = entity;
+    let label = if can_expand {
+        format!("{} {}", item.label, if expanded { "‹" } else { "›" })
+    } else {
+        item.label.clone()
+    };
+    let gutter = if can_expand {
+        div()
+            .id(("toggle-transcript-item", index))
+            .role(gpui::Role::Button)
+            .aria_label(if expanded {
+                "Collapse transcript item"
+            } else {
+                "Expand transcript item"
+            })
+            .tab_index(0)
+            .w(THEME.layout.transcript_label_width)
+            .flex_none()
+            .text_right()
+            .text_size(THEME.type_scale.caption)
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(THEME.colors.subtle)
+            .cursor_pointer()
+            .on_click(move |_, _, cx| {
+                let _ = toggle.update(cx, |this, cx| this.toggle_transcript_item(index, cx));
+            })
+            .child(label)
+            .into_any_element()
+    } else {
+        div()
+            .w(THEME.layout.transcript_label_width)
+            .flex_none()
+            .text_right()
+            .text_size(THEME.type_scale.caption)
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(THEME.colors.subtle)
+            .child(label)
+            .into_any_element()
+    };
     div()
         .id(("transcript-item", index))
         .w_full()
+        .flex()
+        .items_start()
+        .gap(THEME.space.sm)
         .px(THEME.space.md)
         .py(if compact {
             THEME.space.xs
         } else {
             THEME.space.sm
         })
-        .bg(surface)
-        .when(is_tool, |row| {
+        .bg(THEME.colors.canvas)
+        .border_b(THEME.border)
+        .border_color(THEME.colors.border)
+        .when(is_tool && (item.is_error || item.streaming), |row| {
             row.border_l(THEME.space.xs).border_color(if item.is_error {
                 THEME.colors.error
-            } else if item.streaming {
-                THEME.colors.warning
             } else {
-                THEME.colors.accent
+                THEME.colors.warning
             })
         })
-        .child(
-            div()
-                .mb(THEME.space.xs)
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap(THEME.space.xs)
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .text_size(THEME.type_scale.caption)
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(color)
-                        .child(item.label.clone())
-                        .when(item.streaming, |label| label.child(" · running")),
-                )
-                .when(can_expand, |header| {
-                    header.child(button(
-                        ("toggle-transcript-item", index),
-                        if expanded { "Collapse" } else { "Expand" },
-                        ButtonTone::Quiet,
-                        true,
-                        move |_, cx| {
-                            let _ = toggle
-                                .update(cx, |this, cx| this.toggle_transcript_item(index, cx));
-                        },
-                    ))
-                }),
-        )
+        .child(gutter)
         .child(
             div()
                 .id(("transcript-body", index))
+                .min_w_0()
+                .flex_1()
                 .when(is_tool, |body| {
                     body.max_h(THEME.layout.tool_max_height).overflow_y_scroll()
                 })
                 .when(is_tool, |body| body.font_family("monospace"))
-                .text_size(THEME.type_scale.body)
+                .text_size(THEME.type_scale.body_small)
                 .line_height(THEME.type_scale.line_body)
                 .text_color(color)
                 .child(if is_thinking && !expanded {
-                    "Thinking is collapsed".to_owned()
+                    "Collapsed".to_owned()
                 } else if text.is_empty() {
                     "…".to_owned()
                 } else {
@@ -231,43 +202,4 @@ fn render_item(
                 }),
         )
         .into_any_element()
-}
-
-pub(crate) fn next_visible_limit(current: usize, total: usize) -> usize {
-    current
-        .saturating_add(VISIBLE_PAGE_ITEMS)
-        .min(MAX_VISIBLE_ITEMS)
-        .min(total.max(DEFAULT_VISIBLE_ITEMS))
-}
-
-pub(crate) fn scrolls_toward_older(delta: ScrollDelta) -> bool {
-    match delta {
-        ScrollDelta::Pixels(point) => point.y > gpui::px(0.),
-        ScrollDelta::Lines(point) => point.y > 0.,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{MAX_VISIBLE_ITEMS, next_visible_limit, scrolls_toward_older};
-    use gpui::{ScrollDelta, point, px};
-
-    #[test]
-    fn only_upward_history_scroll_pauses_following() {
-        assert!(scrolls_toward_older(ScrollDelta::Pixels(point(
-            px(0.),
-            px(1.)
-        ))));
-        assert!(!scrolls_toward_older(ScrollDelta::Lines(point(0., -1.))));
-    }
-
-    #[test]
-    fn older_transcript_reveals_in_pages_with_a_hard_render_cap() {
-        assert_eq!(next_visible_limit(300, 10_000), 600);
-        assert_eq!(next_visible_limit(600, 750), 750);
-        assert_eq!(
-            next_visible_limit(MAX_VISIBLE_ITEMS, 10_000),
-            MAX_VISIBLE_ITEMS
-        );
-    }
 }

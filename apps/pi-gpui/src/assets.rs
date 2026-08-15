@@ -4,11 +4,10 @@ use gpui::{AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 5] = [
+const ICON_PATHS: [&str; 4] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrow-clockwise.svg",
     "icons/phosphor/plus.svg",
-    "icons/phosphor/robot.svg",
     "icons/phosphor/stop.svg",
 ];
 
@@ -24,9 +23,6 @@ impl AssetSource for AppAssets {
                 "../assets/phosphor-icons/arrow-clockwise.svg"
             )),
             "icons/phosphor/plus.svg" => Some(include_bytes!("../assets/phosphor-icons/plus.svg")),
-            "icons/phosphor/robot.svg" => {
-                Some(include_bytes!("../assets/phosphor-icons/robot.svg"))
-            }
             "icons/phosphor/stop.svg" => Some(include_bytes!("../assets/phosphor-icons/stop.svg")),
             _ => None,
         };
@@ -53,7 +49,6 @@ pub(crate) enum AppIcon {
     Archive,
     ArrowClockwise,
     Plus,
-    Robot,
     Stop,
 }
 
@@ -63,7 +58,6 @@ impl IconNamed for AppIcon {
             Self::Archive => "archive",
             Self::ArrowClockwise => "arrow-clockwise",
             Self::Plus => "plus",
-            Self::Robot => "robot",
             Self::Stop => "stop",
         };
         format!("{ICON_ROOT}/{name}.svg").into()
@@ -83,7 +77,6 @@ mod tests {
             AppIcon::Archive,
             AppIcon::ArrowClockwise,
             AppIcon::Plus,
-            AppIcon::Robot,
             AppIcon::Stop,
         ] {
             let path = icon.path();
