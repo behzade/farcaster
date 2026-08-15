@@ -41,6 +41,7 @@ impl UsageSummary {
 pub(crate) struct SessionSummary {
     pub id: String,
     pub path: PathBuf,
+    pub project: PathBuf,
     pub title: String,
     pub first_user_message: String,
     pub timestamp: String,
@@ -158,8 +159,8 @@ fn session_root_from_at(
     })
 }
 
-pub(crate) fn discover(project: &Path, query: &str) -> Result<Vec<SessionSummary>, String> {
-    discover_in(&configured_session_root()?, project, query)
+pub(crate) fn discover(query: &str) -> Result<Vec<SessionSummary>, String> {
+    discover_in(&configured_session_root()?, query)
 }
 
 /// Read the visible, active branch of a session without starting Pi.
@@ -286,12 +287,7 @@ fn json_object<const N: usize>(fields: [(&str, Value); N]) -> Value {
     )
 }
 
-pub(crate) fn discover_in(
-    root: &Path,
-    project: &Path,
-    query: &str,
-) -> Result<Vec<SessionSummary>, String> {
-    let project = normalize_existing(project)?;
+pub(crate) fn discover_in(root: &Path, query: &str) -> Result<Vec<SessionSummary>, String> {
     if !root.exists() {
         return Ok(Vec::new());
     }
@@ -321,7 +317,7 @@ pub(crate) fn discover_in(
     }
     let mut sessions = candidates
         .into_iter()
-        .filter_map(|path| parse_candidate(&path, &project).ok().flatten())
+        .filter_map(|path| parse_candidate(&path).ok().flatten())
         .collect::<Vec<_>>();
     let needle = query.to_lowercase();
     if !needle.is_empty() {
@@ -389,7 +385,7 @@ pub(crate) fn discover_in(
     Ok(sessions)
 }
 
-fn parse_candidate(path: &Path, project: &Path) -> Result<Option<SessionSummary>, String> {
+fn parse_candidate(path: &Path) -> Result<Option<SessionSummary>, String> {
     let file = File::open(path).map_err(|error| format!("open {}: {error}", path.display()))?;
     let modified = file
         .metadata()
@@ -416,11 +412,11 @@ fn parse_candidate(path: &Path, project: &Path) -> Result<Option<SessionSummary>
         .get("cwd")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let normalized_cwd =
-        normalize_existing(Path::new(cwd)).unwrap_or_else(|_| normalize_lexical(Path::new(cwd)));
-    if normalized_cwd != project {
+    if cwd.is_empty() {
         return Ok(None);
     }
+    let project =
+        normalize_existing(Path::new(cwd)).unwrap_or_else(|_| normalize_lexical(Path::new(cwd)));
     let id = header
         .get("id")
         .and_then(Value::as_str)
@@ -494,12 +490,14 @@ fn parse_candidate(path: &Path, project: &Path) -> Result<Option<SessionSummary>
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| fallback_title(&first_user_message, &timestamp));
     append_bounded(&mut search, &title);
+    append_bounded(&mut search, &project.to_string_lossy());
     Ok(Some(SessionSummary {
         id,
         path: path
             .canonicalize()
             .map(|path| normalize_lexical(&path))
             .map_err(|error| format!("resolve session {}: {error}", path.display()))?,
+        project,
         title,
         first_user_message,
         timestamp,
@@ -758,7 +756,7 @@ mod tests {
     }
 
     #[test]
-    fn discovers_exact_cwd_and_name_or_message_fallback() -> TestResult {
+    fn discovers_all_projects_and_name_or_message_fallback() -> TestResult {
         let root = tempdir()?;
         let project = tempdir()?;
         let other = tempdir()?;
@@ -776,11 +774,22 @@ mod tests {
             None,
             "A useful fallback title continues",
         )?;
-        session(root.path(), "other", other.path(), Some("Wrong"), "hidden")?;
-        let sessions = discover_in(root.path(), project.path(), "")?;
-        assert_eq!(sessions.len(), 2);
+        session(
+            root.path(),
+            "other",
+            other.path(),
+            Some("Other run"),
+            "visible",
+        )?;
+        let sessions = discover_in(root.path(), "")?;
+        assert_eq!(sessions.len(), 3);
         assert!(sessions.iter().all(|item| item.path.is_absolute()));
+        assert!(sessions.iter().all(|item| item.project.is_absolute()));
         assert!(sessions.iter().any(|item| item.title == "Named run"));
+        assert!(sessions.iter().any(|item| {
+            item.title == "Other run"
+                && item.project == other.path().canonicalize().expect("project path")
+        }));
         assert!(
             sessions
                 .iter()
@@ -798,7 +807,7 @@ mod tests {
         let mut content = fs::read_to_string(&path)?;
         content.push_str("\n{broken\n");
         fs::write(path, content)?;
-        assert_eq!(discover_in(root.path(), project.path(), "bEtA")?.len(), 1);
+        assert_eq!(discover_in(root.path(), "bEtA")?.len(), 1);
         Ok(())
     }
 
@@ -829,7 +838,7 @@ mod tests {
         ));
         fs::write(path, content)?;
 
-        let sessions = discover_in(root.path(), project.path(), "")?;
+        let sessions = discover_in(root.path(), "")?;
         assert_eq!(
             sessions[0].usage,
             UsageSummary {
@@ -880,7 +889,7 @@ mod tests {
             Some("missing"),
         )?;
 
-        let sessions = discover_in(root.path(), project.path(), "needle")?;
+        let sessions = discover_in(root.path(), "needle")?;
         assert_eq!(sessions.len(), 3);
         let roots = root_sessions(&sessions);
         assert_eq!(roots.len(), 1);
@@ -896,7 +905,7 @@ mod tests {
             Some("root")
         );
 
-        let all = discover_in(root.path(), project.path(), "")?;
+        let all = discover_in(root.path(), "")?;
         assert_eq!(
             root_sessions(&all)
                 .iter()

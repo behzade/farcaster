@@ -19,7 +19,6 @@ use crate::{
     sessions::SessionSummary,
 };
 
-const MAX_SESSION_ROWS: usize = 100;
 const MAX_EXTENSION_ERRORS: usize = 16;
 pub(crate) const COMPOSER_KEY_CONTEXT: &str = "PiComposer";
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -62,7 +61,7 @@ pub(crate) struct PiApp {
     pub(crate) transcript_layout: crate::transcript::TranscriptLayoutCache,
     pub(crate) transcript_bounds: Option<Bounds<Pixels>>,
     pub(crate) transcript_width: Pixels,
-    fps_monitor: Entity<FpsMonitor>,
+    fps_monitor: Option<Entity<FpsMonitor>>,
     extension: ExtensionUiState,
     pending_dialog_setup: bool,
     pending_title: Option<(u64, String)>,
@@ -132,10 +131,12 @@ impl PiApp {
             crate::theme::THEME.layout.transcript_overdraw,
         );
         transcript_list.set_follow_mode(FollowMode::Tail);
-        let fps_monitor = cx.new(|cx| {
-            FpsMonitor::new(window, cx)
-                .continuous(true)
-                .show_resources(false)
+        let fps_monitor = debug_enabled().then(|| {
+            cx.new(|cx| {
+                FpsMonitor::new(window, cx)
+                    .continuous(true)
+                    .show_resources(false)
+            })
         });
         let app = cx.entity().downgrade();
         transcript_list.set_scroll_handler(move |event, _, cx| {
@@ -152,10 +153,11 @@ impl PiApp {
             });
         });
         Self {
-            project,
+            project: project.clone(),
             runtime,
             snapshot: RuntimeSnapshot {
                 status: "Starting".into(),
+                project: project.clone(),
                 ..RuntimeSnapshot::default()
             },
             sessions: Vec::new(),
@@ -372,8 +374,8 @@ impl PiApp {
         self.last_transcript_count = 0;
     }
 
-    fn resume(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        self.send(RuntimeCommand::Resume(path));
+    fn resume(&mut self, path: PathBuf, project: PathBuf, cx: &mut Context<Self>) {
+        self.send(RuntimeCommand::Resume { path, project });
         self.sessions_sheet = false;
         cx.notify();
     }
@@ -621,6 +623,14 @@ fn prompt_mode_for_enter(running: bool) -> PromptMode {
     }
 }
 
+fn debug_enabled() -> bool {
+    debug_value_enabled(std::env::var("DEBUG").ok().as_deref())
+}
+
+fn debug_value_enabled(value: Option<&str>) -> bool {
+    value == Some("true")
+}
+
 fn next_model<'a>(models: &'a [Model], current: Option<&Model>) -> Option<&'a Model> {
     if models.is_empty() {
         return None;
@@ -693,6 +703,14 @@ mod tests {
     fn enter_prompts_when_idle_and_steers_while_running() {
         assert_eq!(prompt_mode_for_enter(false), PromptMode::Normal);
         assert_eq!(prompt_mode_for_enter(true), PromptMode::Steer);
+    }
+
+    #[test]
+    fn fps_debug_flag_accepts_only_literal_true() {
+        assert!(super::debug_value_enabled(Some("true")));
+        assert!(!super::debug_value_enabled(Some("TRUE")));
+        assert!(!super::debug_value_enabled(Some("1")));
+        assert!(!super::debug_value_enabled(None));
     }
 
     #[test]

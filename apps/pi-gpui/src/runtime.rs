@@ -16,7 +16,7 @@ pub(crate) enum RuntimeCommand {
     Prompt { mode: PromptMode, message: String },
     Abort,
     NewSession,
-    Resume(PathBuf),
+    Resume { path: PathBuf, project: PathBuf },
     SetModel { provider: String, model_id: String },
     SetThinking(String),
     Compact,
@@ -65,6 +65,7 @@ pub(crate) enum RuntimeEvent {
 pub(crate) struct RuntimeSnapshot {
     pub connected: bool,
     pub status: String,
+    pub project: PathBuf,
     pub session: Option<SessionState>,
     pub selected_session: Option<PathBuf>,
     pub conversation: ConversationState,
@@ -135,6 +136,7 @@ struct DiscoveryResult {
 struct HistoryResult {
     generation: u64,
     path: PathBuf,
+    project: PathBuf,
     result: Result<Vec<Value>, String>,
 }
 
@@ -147,11 +149,12 @@ fn run(
     let (discovery_tx, discovery_rx) = mpsc::channel();
     let (history_tx, history_rx) = mpsc::channel();
     let mut owner = RuntimeOwner {
-        project,
+        project: project.clone(),
         process_command,
         process: None,
         snapshot: RuntimeSnapshot {
             status: "Starting Pi".into(),
+            project,
             auto_retry: true,
             ..RuntimeSnapshot::default()
         },
@@ -216,10 +219,15 @@ impl RuntimeOwner {
                 auto_retry: self.snapshot.auto_retry,
                 ..RuntimeSnapshot::default()
             };
-            reset_snapshot_for_process(&mut loading, session.clone(), status);
+            reset_snapshot_for_process(&mut loading, self.project.clone(), session.clone(), status);
             self.parked_snapshot = Some(loading);
         } else {
-            reset_snapshot_for_process(&mut self.snapshot, session.clone(), status);
+            reset_snapshot_for_process(
+                &mut self.snapshot,
+                self.project.clone(),
+                session.clone(),
+                status,
+            );
         }
         let _ = self.event_tx.send(RuntimeEvent::SessionReset {
             generation: self.process_generation,
@@ -263,7 +271,7 @@ impl RuntimeOwner {
                     self.send(command("new_session"));
                 }
             }
-            RuntimeCommand::Resume(path) => self.preview_history(path),
+            RuntimeCommand::Resume { path, project } => self.preview_history(path, project),
             RuntimeCommand::SetModel { provider, model_id } => {
                 self.send(json!({"type":"set_model","provider":provider,"modelId":model_id}))
             }
@@ -405,26 +413,15 @@ impl RuntimeOwner {
         self.parked_snapshot.as_mut().unwrap_or(&mut self.snapshot)
     }
 
-    fn preview_history(&mut self, path: PathBuf) {
+    fn preview_history(&mut self, path: PathBuf, project: PathBuf) {
         self.history_generation = self.history_generation.saturating_add(1);
         if self.snapshot.selected_session.as_deref() == Some(path.as_path()) {
-            return;
-        }
-        let active = self.parked_snapshot.as_ref().unwrap_or(&self.snapshot);
-        if active.conversation.running
-            || active.conversation.retrying
-            || active.conversation.compacting
-            || !active.conversation.queue.steering.is_empty()
-            || !active.conversation.queue.follow_up.is_empty()
-            || self.pending_prompt_id.is_some()
-        {
-            self.snapshot.status = "Finish the active run before switching history".into();
-            self.publish();
             return;
         }
         if self.active_session.as_deref() == Some(path.as_path()) {
             if let Some(snapshot) = self.parked_snapshot.take() {
                 self.snapshot = snapshot;
+                self.project = project;
                 let _ = self.event_tx.send(RuntimeEvent::HistoryReset {
                     generation: self.process_generation,
                 });
@@ -441,6 +438,7 @@ impl RuntimeOwner {
                 let _ = sender.send(HistoryResult {
                     generation,
                     path,
+                    project,
                     result,
                 });
             })
@@ -465,6 +463,7 @@ impl RuntimeOwner {
         if self.parked_snapshot.is_none() {
             self.parked_snapshot = Some(std::mem::take(&mut self.snapshot));
         }
+        self.project = result.project.clone();
         let auto_retry = self
             .parked_snapshot
             .as_ref()
@@ -474,6 +473,7 @@ impl RuntimeOwner {
         self.snapshot = RuntimeSnapshot {
             connected: true,
             status: "History preview · Pi loads when you send".into(),
+            project: result.project,
             selected_session: Some(result.path),
             conversation,
             auto_retry,
@@ -648,14 +648,13 @@ impl RuntimeOwner {
     fn load_sessions(&mut self, query: String) {
         self.session_generation = self.session_generation.saturating_add(1);
         let generation = self.session_generation;
-        let project = self.project.clone();
         let sender = self.discovery_tx.clone();
         thread::Builder::new()
             .name("pi-gpui-sessions".into())
             .spawn(move || {
                 let _ = sender.send(DiscoveryResult {
                     generation,
-                    result: discover(&project, &query),
+                    result: discover(&query),
                 });
             })
             .ok();
@@ -709,12 +708,14 @@ impl RuntimeOwner {
 
 fn reset_snapshot_for_process(
     snapshot: &mut RuntimeSnapshot,
+    project: PathBuf,
     selected_session: Option<PathBuf>,
     status: String,
 ) {
     let auto_retry = snapshot.auto_retry;
     *snapshot = RuntimeSnapshot {
         status,
+        project,
         selected_session,
         auto_retry,
         ..RuntimeSnapshot::default()
@@ -723,9 +724,11 @@ fn reset_snapshot_for_process(
 
 fn reset_snapshot_for_live_session(snapshot: &mut RuntimeSnapshot, status: String) {
     let auto_retry = snapshot.auto_retry;
+    let project = snapshot.project.clone();
     *snapshot = RuntimeSnapshot {
         connected: true,
         status,
+        project,
         auto_retry,
         ..RuntimeSnapshot::default()
     };
@@ -821,12 +824,14 @@ mod tests {
 
         reset_snapshot_for_process(
             &mut snapshot,
+            PathBuf::from("/new-project"),
             Some(PathBuf::from("/new")),
             "Resuming session".into(),
         );
 
         assert!(!snapshot.connected);
         assert_eq!(snapshot.status, "Resuming session");
+        assert_eq!(snapshot.project, PathBuf::from("/new-project"));
         assert_eq!(snapshot.selected_session, Some(PathBuf::from("/new")));
         assert!(!snapshot.auto_retry);
         assert_eq!(snapshot.session, None);
@@ -933,13 +938,17 @@ mod tests {
         let (history_tx, _history_rx) = mpsc::channel();
         let old_path = PathBuf::from("/old");
         let new_path = PathBuf::from("/new");
+        let old_project = temp.path().to_path_buf();
+        let new_project = temp.path().join("other-project");
+        fs::create_dir(&new_project).map_err(|error| error.to_string())?;
         let mut owner = RuntimeOwner {
-            project: temp.path().to_path_buf(),
+            project: old_project.clone(),
             process_command,
             process: Some(process),
             snapshot: RuntimeSnapshot {
                 connected: true,
                 status: "Ready".into(),
+                project: old_project.clone(),
                 selected_session: Some(old_path.clone()),
                 ..RuntimeSnapshot::default()
             },
@@ -957,21 +966,25 @@ mod tests {
             startup_history_loaded: false,
         };
 
-        owner.preview_history(old_path.clone());
+        owner.preview_history(old_path.clone(), old_project);
         owner.apply_history(HistoryResult {
             generation: 1,
             path: new_path.clone(),
+            project: new_project.clone(),
             result: Ok(vec![json!({"role":"user","content":"previewed"})]),
         });
         assert!(!owner.snapshot.history_preview);
         owner.apply_history(HistoryResult {
             generation: 2,
             path: new_path.clone(),
+            project: new_project.clone(),
             result: Ok(vec![json!({"role":"user","content":"previewed"})]),
         });
 
         assert!(owner.process.is_some());
         assert!(owner.snapshot.history_preview);
+        assert_eq!(owner.snapshot.project, new_project);
+        assert_eq!(owner.project, owner.snapshot.project);
         assert_eq!(owner.snapshot.selected_session, Some(new_path.clone()));
         assert_eq!(
             owner
@@ -1030,6 +1043,107 @@ mod tests {
             event_rx
                 .try_iter()
                 .any(|event| matches!(event, RuntimeEvent::PromptResult { accepted: true, .. }))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn active_session_events_stay_parked_while_other_history_is_visible() -> Result<(), String> {
+        let temp = tempdir().map_err(|error| error.to_string())?;
+        let active_path = temp.path().join("active.jsonl");
+        let history_path = temp.path().join("history.jsonl");
+        let history_project = temp.path().join("history-project");
+        fs::create_dir(&history_project).map_err(|error| error.to_string())?;
+        fs::write(
+            &history_path,
+            format!(
+                "{{\"type\":\"session\",\"id\":\"history\",\"cwd\":{},\"timestamp\":\"2026-08-15T00:00:00Z\"}}\n{{\"type\":\"message\",\"id\":\"one\",\"parentId\":null,\"message\":{{\"role\":\"user\",\"content\":\"history message\"}}}}\n",
+                serde_json::to_string(&history_project).map_err(|error| error.to_string())?
+            ),
+        )
+        .map_err(|error| error.to_string())?;
+
+        let (event_tx, event_rx) = mpsc::channel();
+        let (discovery_tx, _discovery_rx) = mpsc::channel();
+        let (history_tx, history_rx) = mpsc::channel();
+        let mut owner = RuntimeOwner {
+            project: temp.path().to_path_buf(),
+            process_command: ProcessCommand::default(),
+            process: None,
+            snapshot: RuntimeSnapshot {
+                connected: true,
+                status: "Working".into(),
+                project: temp.path().to_path_buf(),
+                selected_session: Some(active_path.clone()),
+                ..RuntimeSnapshot::default()
+            },
+            session_generation: 0,
+            process_generation: 7,
+            pending_prompt_id: Some("pending-prompt".into()),
+            event_tx,
+            discovery_tx,
+            history_tx,
+            history_generation: 0,
+            active_session: Some(active_path.clone()),
+            parked_snapshot: None,
+            deferred_prompt: None,
+            startup_state_loaded: true,
+            startup_history_loaded: true,
+        };
+        owner
+            .snapshot
+            .conversation
+            .reduce(&json!({"type":"agent_start"}));
+
+        owner.preview_history(history_path.clone(), history_project.clone());
+        let history = history_rx
+            .recv_timeout(Duration::from_secs(1))
+            .map_err(|error| format!("history switch was rejected: {error}"))?;
+        owner.apply_history(history);
+
+        assert!(owner.snapshot.history_preview);
+        assert_eq!(owner.snapshot.selected_session, Some(history_path));
+        assert_eq!(owner.snapshot.conversation.items[0].text, "history message");
+        assert!(
+            owner
+                .parked_snapshot
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.conversation.running)
+        );
+        let _ = event_rx.try_iter().count();
+
+        owner.apply_process_item(ProcessItem::Event(json!({
+            "type": "message_start",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "active output"}]
+            }
+        })));
+
+        assert_eq!(owner.snapshot.conversation.items[0].text, "history message");
+        assert!(owner.parked_snapshot.as_ref().is_some_and(|snapshot| {
+            snapshot
+                .conversation
+                .items
+                .iter()
+                .any(|item| item.text == "active output")
+        }));
+        assert!(
+            event_rx
+                .try_iter()
+                .all(|event| !matches!(event, RuntimeEvent::Snapshot { .. }))
+        );
+
+        owner.preview_history(active_path.clone(), temp.path().to_path_buf());
+        assert!(!owner.snapshot.history_preview);
+        assert_eq!(owner.snapshot.selected_session, Some(active_path));
+        assert!(
+            owner
+                .snapshot
+                .conversation
+                .items
+                .iter()
+                .any(|item| item.text == "active output")
         );
         Ok(())
     }

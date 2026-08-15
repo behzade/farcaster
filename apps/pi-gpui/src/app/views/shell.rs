@@ -1,11 +1,17 @@
+use std::{
+    collections::HashSet,
+    path::Path,
+    time::{Duration, SystemTime},
+};
+
 use gpui::{
     AnyElement, CursorStyle, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
     Role, StatefulInteractiveElement as _, Styled as _, WeakEntity, accesskit, div,
     prelude::FluentBuilder as _, px, uniform_list,
 };
-use gpui_component::input::Input;
+use gpui_component::{Icon, Sizable as _, Size, input::Input};
 
-use super::super::{MAX_SESSION_ROWS, PiApp};
+use super::super::PiApp;
 use crate::{
     assets::AppIcon,
     layout::LayoutMode,
@@ -23,8 +29,12 @@ impl PiApp {
         mode: LayoutMode,
         entity: WeakEntity<Self>,
     ) -> impl IntoElement {
-        let project = self
-            .project
+        let project_path = if self.snapshot.project.as_os_str().is_empty() {
+            &self.project
+        } else {
+            &self.snapshot.project
+        };
+        let project = project_path
             .file_name()
             .and_then(|name| name.to_str())
             .map_or_else(|| self.project.display().to_string(), str::to_owned);
@@ -188,24 +198,26 @@ impl PiApp {
                 .into_any_element();
         }
         let new_entity = entity.clone();
-        let roots = root_sessions(&self.sessions);
         let selected_root =
             root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
                 .map(|session| session.id.clone());
-        let rows = roots
-            .iter()
-            .take(MAX_SESSION_ROWS)
-            .map(|session| (*session).clone())
-            .collect::<Vec<_>>();
+        let (rows, project_count) = session_rail_items(&self.sessions);
         let row_count = rows.len();
         let row_entity = entity.clone();
+        let selected_status = if self.snapshot.history_preview {
+            "History".to_owned()
+        } else {
+            self.snapshot.status.clone()
+        };
         let session_list = uniform_list("session-list", row_count, move |range, _, _| {
             range
                 .filter_map(|index| rows.get(index))
-                .map(|session| {
+                .map(|item| {
+                    let selected = selected_root.as_deref() == Some(item.session.id.as_str());
                     session_row(
-                        session,
-                        selected_root.as_deref() == Some(session.id.as_str()),
+                        item,
+                        selected,
+                        selected.then(|| selected_status.clone()),
                         row_entity.clone(),
                     )
                 })
@@ -223,15 +235,13 @@ impl PiApp {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .px(THEME.space.sm)
-                    .border_b(THEME.border)
-                    .border_color(THEME.colors.border)
+                    .px(THEME.space.md)
                     .child(
                         div()
-                            .text_size(THEME.type_scale.caption)
+                            .text_size(THEME.type_scale.heading)
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(THEME.colors.muted)
-                            .child("SESSIONS"),
+                            .text_color(THEME.colors.text)
+                            .child("Pi"),
                     )
                     .child(icon_button(
                         "new-session",
@@ -246,10 +256,47 @@ impl PiApp {
             )
             .child(
                 div()
-                    .p(THEME.space.sm)
-                    .border_b(THEME.border)
-                    .border_color(THEME.colors.border)
-                    .child(Input::new(&self.search).w_full().appearance(false)),
+                    .mx(THEME.space.sm)
+                    .mb(THEME.space.xs)
+                    .h(px(40.0))
+                    .flex()
+                    .items_center()
+                    .gap(THEME.space.sm)
+                    .px(THEME.space.sm)
+                    .rounded(THEME.radius)
+                    .bg(THEME.colors.surface)
+                    .text_color(THEME.colors.muted)
+                    .child(Icon::new(AppIcon::MagnifyingGlass).with_size(Size::Small))
+                    .child(
+                        Input::new(&self.search)
+                            .flex_1()
+                            .min_w_0()
+                            .appearance(false),
+                    ),
+            )
+            .child(
+                div()
+                    .h(px(38.0))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .gap(THEME.space.sm)
+                    .px(THEME.space.md)
+                    .text_color(THEME.colors.muted)
+                    .child(Icon::new(AppIcon::Folder).with_size(Size::Small))
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_size(THEME.type_scale.body)
+                            .font_weight(FontWeight::MEDIUM)
+                            .child("All projects"),
+                    )
+                    .child(
+                        div()
+                            .text_size(THEME.type_scale.caption)
+                            .text_color(THEME.colors.subtle)
+                            .child(project_count.to_string()),
+                    ),
             )
             .when_some(self.sessions_error.clone(), |rail, error| {
                 rail.child(feedback("sessions-error", error, FeedbackTone::Error))
@@ -262,13 +309,14 @@ impl PiApp {
                     .overflow_y_hidden()
                     .child(session_list),
             )
-            .when(roots.len() > MAX_SESSION_ROWS, |rail| {
+            .when(row_count == 0 && self.sessions_error.is_none(), |rail| {
                 rail.child(
                     div()
-                        .p(THEME.space.sm)
+                        .px(THEME.space.md)
+                        .py(THEME.space.sm)
                         .text_size(THEME.type_scale.caption)
                         .text_color(THEME.colors.subtle)
-                        .child("Refine the search to see more sessions"),
+                        .child("No matching sessions"),
                 )
             })
             .into_any_element()
@@ -341,7 +389,7 @@ impl PiApp {
             .gap(THEME.space.md)
             .overflow_y_scroll()
             .child(section_heading("Status"))
-            .child(self.fps_monitor.clone())
+            .when_some(self.fps_monitor.clone(), |run, monitor| run.child(monitor))
             .child(usage_metrics(
                 show_main_context.then_some(&self.snapshot.stats),
                 aggregate_usage,
@@ -495,55 +543,182 @@ impl PiApp {
     }
 }
 
-fn session_row(session: &SessionSummary, selected: bool, entity: WeakEntity<PiApp>) -> AnyElement {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SessionRailKind {
+    Project,
+    Settled,
+}
+
+#[derive(Clone, Debug)]
+struct SessionRailItem {
+    session: SessionSummary,
+    kind: SessionRailKind,
+    starts_settled: bool,
+}
+
+fn session_rail_items(sessions: &[SessionSummary]) -> (Vec<SessionRailItem>, usize) {
+    let mut projects = HashSet::new();
+    let mut current = Vec::new();
+    let mut settled = Vec::new();
+    for session in root_sessions(sessions) {
+        if projects.insert(session.project.clone()) {
+            current.push(SessionRailItem {
+                session: session.clone(),
+                kind: SessionRailKind::Project,
+                starts_settled: false,
+            });
+        } else {
+            settled.push(SessionRailItem {
+                session: session.clone(),
+                kind: SessionRailKind::Settled,
+                starts_settled: false,
+            });
+        }
+    }
+    if let Some(first) = settled.first_mut() {
+        first.starts_settled = true;
+    }
+    let project_count = current.len();
+    current.extend(settled);
+    (current, project_count)
+}
+
+fn session_row(
+    item: &SessionRailItem,
+    selected: bool,
+    status: Option<String>,
+    entity: WeakEntity<PiApp>,
+) -> AnyElement {
+    let session = &item.session;
     let path = session.path.clone();
-    div()
+    let project = session.project.clone();
+    let project_name = project_label(&project);
+    let age = relative_age(session.modified);
+    let is_settled = item.kind == SessionRailKind::Settled;
+    let metadata = if item.starts_settled {
+        format!("Settled · {project_name}")
+    } else {
+        project_name
+    };
+    let icon = if is_settled {
+        AppIcon::ChatCircle
+    } else {
+        AppIcon::Folder
+    };
+    let row = div()
         .id(format!("session-{}", session.id))
         .role(Role::Button)
         .aria_label(format!("Resume session: {}", session.title))
         .aria_selected(selected)
         .tab_index(0)
+        .size_full()
         .h(THEME.layout.session_row_height)
-        .w_full()
         .flex()
-        .items_center()
-        .gap(THEME.space.sm)
+        .flex_col()
+        .justify_center()
+        .gap(THEME.space.xs)
         .px(THEME.space.sm)
-        .border_b(THEME.border)
-        .border_color(THEME.colors.border)
+        .rounded(THEME.radius)
         .bg(if selected {
             THEME.colors.surface
         } else {
             THEME.colors.panel
         })
-        .when(selected, |row| {
-            row.border_l(px(2.0)).border_color(THEME.colors.accent)
-        })
         .hover(|row| row.bg(THEME.colors.hover))
         .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
         .cursor(CursorStyle::PointingHand)
         .on_click(move |_, _, cx| {
-            let _ = entity.update(cx, |this, cx| this.resume(path.clone(), cx));
+            let _ = entity.update(cx, |this, cx| {
+                this.resume(path.clone(), project.clone(), cx)
+            });
         })
         .child(
             div()
-                .min_w_0()
-                .flex_1()
+                .w_full()
+                .flex()
+                .items_center()
+                .gap(THEME.space.xs)
+                .text_color(if is_settled {
+                    THEME.colors.subtle
+                } else {
+                    THEME.colors.muted
+                })
+                .child(Icon::new(icon).with_size(Size::Small))
+                .child(
+                    div()
+                        .min_w_0()
+                        .flex_1()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_size(THEME.type_scale.caption)
+                        .font_weight(if item.starts_settled {
+                            FontWeight::SEMIBOLD
+                        } else {
+                            FontWeight::NORMAL
+                        })
+                        .child(metadata),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .text_size(THEME.type_scale.caption)
+                        .text_color(if status.is_some() {
+                            THEME.colors.success
+                        } else {
+                            THEME.colors.subtle
+                        })
+                        .child(status.unwrap_or(age)),
+                ),
+        )
+        .child(
+            div()
+                .w_full()
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .text_ellipsis()
                 .text_size(THEME.type_scale.body)
-                .text_color(THEME.colors.text)
+                .font_weight(if selected || !is_settled {
+                    FontWeight::SEMIBOLD
+                } else {
+                    FontWeight::NORMAL
+                })
+                .text_color(if is_settled && !selected {
+                    THEME.colors.muted
+                } else {
+                    THEME.colors.text
+                })
                 .child(session.title.clone()),
-        )
-        .child(
-            div()
-                .flex_none()
-                .text_size(THEME.type_scale.caption)
-                .text_color(THEME.colors.subtle)
-                .child(session.message_count.to_string()),
-        )
+        );
+    div()
+        .h(THEME.layout.session_row_height)
+        .w_full()
+        .px(THEME.space.sm)
+        .child(row)
         .into_any_element()
+}
+
+fn project_label(project: &Path) -> String {
+    project
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .map_or_else(|| project.display().to_string(), str::to_owned)
+}
+
+fn relative_age(modified: SystemTime) -> String {
+    let age = SystemTime::now()
+        .duration_since(modified)
+        .unwrap_or(Duration::ZERO);
+    if age < Duration::from_secs(60) {
+        "now".into()
+    } else if age < Duration::from_secs(60 * 60) {
+        format!("{}m", age.as_secs() / 60)
+    } else if age < Duration::from_secs(24 * 60 * 60) {
+        format!("{}h", age.as_secs() / (60 * 60))
+    } else {
+        format!("{}d", age.as_secs() / (24 * 60 * 60))
+    }
 }
 
 fn agent_session_row(
@@ -554,6 +729,7 @@ fn agent_session_row(
     entity: WeakEntity<PiApp>,
 ) -> AnyElement {
     let path = session.path.clone();
+    let project = session.project.clone();
     let title = session.title.clone();
     let tokens = compact_number(session.usage.total);
     div()
@@ -577,7 +753,9 @@ fn agent_session_row(
         .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
         .cursor_pointer()
         .on_click(move |_, _, cx| {
-            let _ = entity.update(cx, |this, cx| this.resume(path.clone(), cx));
+            let _ = entity.update(cx, |this, cx| {
+                this.resume(path.clone(), project.clone(), cx)
+            });
         })
         .child(
             div()

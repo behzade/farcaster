@@ -4,9 +4,12 @@ use gpui::{AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 4] = [
+const ICON_PATHS: [&str; 7] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrow-clockwise.svg",
+    "icons/phosphor/chat-circle.svg",
+    "icons/phosphor/folder.svg",
+    "icons/phosphor/magnifying-glass.svg",
     "icons/phosphor/plus.svg",
     "icons/phosphor/stop.svg",
 ];
@@ -21,6 +24,15 @@ impl AssetSource for AppAssets {
             }
             "icons/phosphor/arrow-clockwise.svg" => Some(include_bytes!(
                 "../assets/phosphor-icons/arrow-clockwise.svg"
+            )),
+            "icons/phosphor/chat-circle.svg" => {
+                Some(include_bytes!("../assets/phosphor-icons/chat-circle.svg"))
+            }
+            "icons/phosphor/folder.svg" => {
+                Some(include_bytes!("../assets/phosphor-icons/folder.svg"))
+            }
+            "icons/phosphor/magnifying-glass.svg" => Some(include_bytes!(
+                "../assets/phosphor-icons/magnifying-glass.svg"
             )),
             "icons/phosphor/plus.svg" => Some(include_bytes!("../assets/phosphor-icons/plus.svg")),
             "icons/phosphor/stop.svg" => Some(include_bytes!("../assets/phosphor-icons/stop.svg")),
@@ -48,6 +60,9 @@ impl AssetSource for AppAssets {
 pub(crate) enum AppIcon {
     Archive,
     ArrowClockwise,
+    ChatCircle,
+    Folder,
+    MagnifyingGlass,
     Plus,
     Stop,
 }
@@ -57,6 +72,9 @@ impl IconNamed for AppIcon {
         let name = match self {
             Self::Archive => "archive",
             Self::ArrowClockwise => "arrow-clockwise",
+            Self::ChatCircle => "chat-circle",
+            Self::Folder => "folder",
+            Self::MagnifyingGlass => "magnifying-glass",
             Self::Plus => "plus",
             Self::Stop => "stop",
         };
@@ -76,6 +94,9 @@ mod tests {
         for icon in [
             AppIcon::Archive,
             AppIcon::ArrowClockwise,
+            AppIcon::ChatCircle,
+            AppIcon::Folder,
+            AppIcon::MagnifyingGlass,
             AppIcon::Plus,
             AppIcon::Stop,
         ] {

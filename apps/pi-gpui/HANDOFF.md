@@ -232,9 +232,9 @@ Resolution order:
 2. Otherwise `${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/sessions`
 
 Do not rely only on reconstructing the encoded folder name. Scan bounded JSONL
-candidates off the GPUI thread, parse the first `session` header, and filter
-`header.cwd` by exact normalized selected-project path. A custom session dir
-may not use the default folder layout.
+candidates off the GPUI thread and parse the first `session` header. Use its
+normalized `header.cwd` to group sessions from every project. A custom session
+dir may not use the default folder layout.
 
 For list/search metadata, tolerate unknown entry types and parse only what is
 needed:
@@ -248,6 +248,12 @@ Never rewrite session files. Let Pi migrate/open them. Use temporary session
 roots in tests. Search should be bounded and case-insensitive. Perform file IO
 and parsing off the GPUI thread and guard late results by a generation/session
 identifier.
+
+History may be viewed while the live session is running. Keep live RPC events
+in a parked snapshot, never publish them into the visible history, and restore
+that snapshot when the user returns to the live session.
+
+Create and show the FPS monitor only when the process has `DEBUG=true`.
 
 ## Recommended architecture and seam contracts
 
@@ -426,7 +432,7 @@ Write behavior tests before or with implementation for:
    - `agent_end` not settled; `agent_settled` settled
 4. Sessions
    - temporary v3 JSONL fixtures
-   - exact cwd filtering
+   - discovery and project grouping across cwd values
    - environment override paths
    - name and first-user-message fallback
    - bounded case-insensitive search
