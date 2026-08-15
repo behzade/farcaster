@@ -658,7 +658,16 @@ index fc847dc..ef0b18d 100644
  export const SUBAGENT_PARENT_EVENT_SINK_ENV = "PI_SUBAGENT_PARENT_EVENT_SINK";
  export const SUBAGENT_PARENT_CONTROL_INBOX_ENV =
  	"PI_SUBAGENT_PARENT_CONTROL_INBOX";
-@@ -661,6 +663,7 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
+@@ -332,6 +334,8 @@ export function resolvePermissionSystemExtension(): string | undefined {
+ 			"@gotgenes",
+ 			"pi-permission-system",
+ 		),
++		// package-managed extension directory used by the Nix layout
++		path.join(agentDir, "extensions", "permission-system"),
+ 		// direct extension directory (some layouts)
+ 		path.join(agentDir, "extensions", "pi-permission-system"),
+ 	];
+@@ -661,6 +665,7 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
  			: undefined;
  	env[SUBAGENT_CHILD_ENV] = "1";
  	env[SUBAGENT_FANOUT_CHILD_ENV] = toolPlan.fanoutAuthorized ? "1" : "0";

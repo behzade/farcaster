@@ -239,6 +239,12 @@
             PI_SUBAGENTS_PACKAGE=${subagents} node --test ${self}/tests/output-bounds.test.ts
             touch "$out"
           '';
+          subagent-permission-system-resolution = pkgs.runCommand "pi-subagent-permission-system-resolution" {
+            nativeBuildInputs = [ pkgs.nodejs ];
+          } ''
+            PI_SUBAGENTS_PACKAGE=${subagents} node --test ${self}/tests/permission-system-resolution.test.ts
+            touch "$out"
+          '';
           web-access = webAccess;
 
           governance = pkgs.runCommand "pi-governance-tests" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
