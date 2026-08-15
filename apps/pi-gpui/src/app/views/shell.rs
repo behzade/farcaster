@@ -201,25 +201,25 @@ impl PiApp {
         let selected_root =
             root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
                 .map(|session| session.id.clone());
+        let live_root =
+            root_session_for_path(&self.sessions, self.snapshot.live_session.as_deref())
+                .map(|session| session.id.clone());
         let (rows, project_count) = session_rail_items(&self.sessions);
         let row_count = rows.len();
         let row_entity = entity.clone();
-        let selected_status = if self.snapshot.history_preview {
-            "History".to_owned()
-        } else {
-            self.snapshot.status.clone()
-        };
+        let live_status = self.snapshot.live_status.clone();
         let session_list = uniform_list("session-list", row_count, move |range, _, _| {
             range
                 .filter_map(|index| rows.get(index))
                 .map(|item| {
                     let selected = selected_root.as_deref() == Some(item.session.id.as_str());
-                    session_row(
-                        item,
-                        selected,
-                        selected.then(|| selected_status.clone()),
-                        row_entity.clone(),
-                    )
+                    let badge = session_badge(
+                        item.kind,
+                        &item.session.id,
+                        live_root.as_deref(),
+                        &live_status,
+                    );
+                    session_row(item, selected, badge, row_entity.clone())
                 })
                 .collect::<Vec<_>>()
         })
@@ -583,6 +583,25 @@ fn session_rail_items(sessions: &[SessionSummary]) -> (Vec<SessionRailItem>, usi
     (current, project_count)
 }
 
+fn session_badge(
+    kind: SessionRailKind,
+    session_id: &str,
+    live_session_id: Option<&str>,
+    live_status: &str,
+) -> Option<String> {
+    if live_session_id == Some(session_id) {
+        Some(if live_status.is_empty() {
+            "Done".into()
+        } else {
+            live_status.into()
+        })
+    } else if kind == SessionRailKind::Project {
+        Some("Done".into())
+    } else {
+        None
+    }
+}
+
 fn session_row(
     item: &SessionRailItem,
     selected: bool,
@@ -663,10 +682,10 @@ fn session_row(
                     div()
                         .flex_none()
                         .text_size(THEME.type_scale.caption)
-                        .text_color(if status.is_some() {
-                            THEME.colors.success
-                        } else {
-                            THEME.colors.subtle
+                        .text_color(match status.as_deref() {
+                            Some("Done") => THEME.colors.success,
+                            Some(_) => THEME.colors.accent,
+                            None => THEME.colors.subtle,
                         })
                         .child(status.unwrap_or(age)),
                 ),
@@ -898,7 +917,10 @@ fn on_off(value: bool) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{compact_number, compact_subagent_label, context_usage, format_cost};
+    use super::{
+        SessionRailKind, compact_number, compact_subagent_label, context_usage, format_cost,
+        session_badge,
+    };
 
     #[test]
     fn subagent_labels_keep_the_role_and_drop_generated_ids() {
@@ -918,6 +940,22 @@ mod tests {
                 "contextUsage": {"tokens": 60_000, "contextWindow": 200_000, "percent": 30.0}
             })),
             "60k / 200k · 30%"
+        );
+    }
+
+    #[test]
+    fn session_badges_do_not_depend_on_selection() {
+        assert_eq!(
+            session_badge(SessionRailKind::Project, "other", Some("live"), "Working"),
+            Some("Done".into())
+        );
+        assert_eq!(
+            session_badge(SessionRailKind::Settled, "live", Some("live"), "Working"),
+            Some("Working".into())
+        );
+        assert_eq!(
+            session_badge(SessionRailKind::Settled, "old", Some("live"), "Working"),
+            None
         );
     }
 }

@@ -66,6 +66,8 @@ pub(crate) struct RuntimeSnapshot {
     pub connected: bool,
     pub status: String,
     pub project: PathBuf,
+    pub live_session: Option<PathBuf>,
+    pub live_status: String,
     pub session: Option<SessionState>,
     pub selected_session: Option<PathBuf>,
     pub conversation: ConversationState,
@@ -383,10 +385,14 @@ impl RuntimeOwner {
             ProcessItem::Event(event) => {
                 let settled = event.get("type").and_then(Value::as_str) == Some("agent_settled");
                 let previewing = self.parked_snapshot.is_some();
+                let previous_live_status =
+                    previewing.then(|| session_badge_status(&self.active_snapshot().conversation));
                 let snapshot = self.active_snapshot_mut();
                 snapshot.conversation.reduce(&event);
                 snapshot.status = run_status(&snapshot.conversation).to_owned();
-                if !previewing {
+                let live_status_changed = previous_live_status
+                    .is_some_and(|status| status != session_badge_status(&snapshot.conversation));
+                if !previewing || live_status_changed {
                     self.publish();
                 }
                 if settled {
@@ -411,6 +417,10 @@ impl RuntimeOwner {
 
     fn active_snapshot_mut(&mut self) -> &mut RuntimeSnapshot {
         self.parked_snapshot.as_mut().unwrap_or(&mut self.snapshot)
+    }
+
+    fn active_snapshot(&self) -> &RuntimeSnapshot {
+        self.parked_snapshot.as_ref().unwrap_or(&self.snapshot)
     }
 
     fn preview_history(&mut self, path: PathBuf, project: PathBuf) {
@@ -699,9 +709,16 @@ impl RuntimeOwner {
     }
 
     fn publish(&self) {
+        let active_snapshot = self.active_snapshot();
+        let mut snapshot = self.snapshot.clone();
+        snapshot.live_session = self
+            .active_session
+            .clone()
+            .or_else(|| active_snapshot.selected_session.clone());
+        snapshot.live_status = session_badge_status(&active_snapshot.conversation).into();
         let _ = self.event_tx.send(RuntimeEvent::Snapshot {
             generation: self.process_generation,
-            snapshot: Box::new(self.snapshot.clone()),
+            snapshot: Box::new(snapshot),
         });
     }
 }
@@ -749,6 +766,18 @@ fn run_status(conversation: &ConversationState) -> &'static str {
         "Ready"
     } else {
         "Idle"
+    }
+}
+
+fn session_badge_status(conversation: &ConversationState) -> &'static str {
+    if conversation.compacting {
+        "Compacting"
+    } else if conversation.retrying {
+        "Retrying"
+    } else if conversation.running {
+        "Working"
+    } else {
+        "Done"
     }
 }
 
@@ -1110,7 +1139,17 @@ mod tests {
                 .as_ref()
                 .is_some_and(|snapshot| snapshot.conversation.running)
         );
-        let _ = event_rx.try_iter().count();
+        let visible = event_rx
+            .try_iter()
+            .filter_map(|event| match event {
+                RuntimeEvent::Snapshot { snapshot, .. } => Some(snapshot),
+                _ => None,
+            })
+            .last()
+            .expect("history preview should publish");
+        assert_eq!(visible.live_session, Some(active_path.clone()));
+        assert_eq!(visible.live_status, "Working");
+        assert_eq!(visible.conversation.items[0].text, "history message");
 
         owner.apply_process_item(ProcessItem::Event(json!({
             "type": "message_start",
@@ -1133,6 +1172,22 @@ mod tests {
                 .try_iter()
                 .all(|event| !matches!(event, RuntimeEvent::Snapshot { .. }))
         );
+
+        owner.apply_process_item(ProcessItem::Event(json!({
+            "type": "compaction_start",
+            "reason": "test"
+        })));
+        let visible = event_rx
+            .try_iter()
+            .filter_map(|event| match event {
+                RuntimeEvent::Snapshot { snapshot, .. } => Some(snapshot),
+                _ => None,
+            })
+            .last()
+            .expect("live badge change should publish");
+        assert_eq!(visible.live_session, Some(active_path.clone()));
+        assert_eq!(visible.live_status, "Compacting");
+        assert_eq!(visible.conversation.items[0].text, "history message");
 
         owner.preview_history(active_path.clone(), temp.path().to_path_buf());
         assert!(!owner.snapshot.history_preview);
