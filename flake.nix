@@ -245,10 +245,20 @@
             PI_SUBAGENTS_PACKAGE=${subagents} node --test ${self}/tests/permission-system-resolution.test.ts
             touch "$out"
           '';
+          subagent-feedback = pkgs.runCommand "pi-subagent-feedback-test" { } ''
+            test -f ${subagents}/agent-feedback/index.ts
+            test -f ${subagents}/agent-feedback/lib/agent-feedback.ts
+            for agent in ${subagents}/agents/*.md; do
+              grep -F 'report_pi_feedback' "$agent"
+              grep -F 'subagentOnlyExtensions: ${subagents}/agent-feedback/index.ts' "$agent"
+            done
+            touch "$out"
+          '';
           web-access = webAccess;
 
           governance = pkgs.runCommand "pi-governance-tests" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
             node --test \
+              ${self}/tests/agent-feedback.test.ts \
               ${self}/tests/governance.test.ts \
               ${self}/tests/output-bounds.test.ts \
               ${self}/tests/prompt-contract.test.ts \

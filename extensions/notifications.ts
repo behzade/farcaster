@@ -5,6 +5,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { NotificationCoalescer, osc9Sequence, preview } from "./lib/notification-core.ts";
 type Condition = "always" | "unfocused" | "never";
 type NotificationType =
+  | "agent-feedback"
   | "agent-turn-complete"
   | "approval-command"
   | "approval-file-write"
@@ -25,7 +26,7 @@ interface PendingNotification {
 
 const defaults: NotificationConfig = {
   condition: "unfocused",
-  types: ["agent-turn-complete", "approval-command", "approval-file-write", "user-input"],
+  types: ["agent-feedback", "agent-turn-complete", "approval-command", "approval-file-write", "user-input"],
   method: "auto",
 };
 
@@ -33,7 +34,12 @@ function loadConfig(): NotificationConfig {
   const path = join(getAgentDir(), "extensions", "notifications.json");
   if (!existsSync(path)) return defaults;
   try {
-    return { ...defaults, ...(JSON.parse(readFileSync(path, "utf8")) as Partial<NotificationConfig>) };
+    const configured = JSON.parse(readFileSync(path, "utf8")) as Partial<NotificationConfig>;
+    return {
+      ...defaults,
+      ...configured,
+      types: [...new Set(["agent-feedback" as const, ...(configured.types ?? defaults.types)])],
+    };
   } catch (error) {
     console.error(`Could not load notification settings ${path}: ${error}`);
     return defaults;
@@ -99,6 +105,15 @@ export default function (pi: ExtensionAPI) {
       : "user-input";
     enqueue({ type, title: request.title ?? "Pi needs approval", message: request.summary ?? "Input needed", priority: type === "user-input" ? 3 : 2 });
   });
+  const unsubscribeFeedback = pi.events.on("agent-feedback:reported", (data: unknown) => {
+    const feedback = data as { title?: string; message?: string };
+    enqueue({
+      type: "agent-feedback",
+      title: feedback.title ?? "Pi agent feedback",
+      message: feedback.message ?? "New Pi feedback recorded",
+      priority: 3,
+    });
+  });
 
   pi.on("session_start", (_event, ctx) => {
     terminalFocused = ctx.mode === "tui";
@@ -122,6 +137,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_shutdown", () => {
     unsubscribeApproval();
+    unsubscribeFeedback();
     if (flushTimer) clearTimeout(flushTimer);
     if (focusReporting) {
       process.stdin.off("data", onInput);
