@@ -99,6 +99,26 @@ test("provides an exported Effect layer to declared dependencies", async (t) => 
   assert.deepEqual(value, { value: "layer:ok" });
 });
 
+test("loads Effect v4 subpath imports from project tools", async (t) => {
+  const project = await makeProject({
+    main: [
+      'import { Effect } from "effect";',
+      'import { FetchHttpClient } from "effect/unstable/http";',
+      "export const dependencies = FetchHttpClient.layer;",
+      "export const execute = (args: { input: string }) => Effect.succeed({ value: args.input });",
+    ].join("\n"),
+  });
+  t.after(project.cleanup);
+
+  const tool = await discoverOne(project.root);
+  const value = await Effect.runPromise(executeProjectTool(tool, { input: "subpath" }, {
+    toolCallId: "call-subpath",
+    projectRoot: project.root,
+    signal: undefined,
+  }));
+  assert.deepEqual(value, { value: "subpath" });
+});
+
 test("uses the Effect failure exit as the tool error", async (t) => {
   const project = await makeProject({
     main: [

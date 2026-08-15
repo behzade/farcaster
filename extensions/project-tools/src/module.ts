@@ -1,5 +1,6 @@
 import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { createJiti } from "jiti";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { LoadedManifest } from "./manifest.ts";
 import { ProjectToolLoadError, ProjectToolRunError } from "./errors.ts";
@@ -24,7 +25,7 @@ export interface LoadedProjectTool extends LoadedManifest {
 
 const effectEntry = fileURLToPath(import.meta.resolve("effect"));
 const jiti = createJiti(import.meta.url, {
-  alias: { effect: effectEntry },
+  alias: { effect: dirname(effectEntry) },
   moduleCache: false,
 });
 
