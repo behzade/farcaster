@@ -9,7 +9,7 @@ pub(crate) enum LayoutMode {
     Narrow,
 }
 
-pub(crate) const WIDE_MIN_WIDTH: f32 = 1_180.0;
+pub(crate) const WIDE_MIN_WIDTH: f32 = 1_320.0;
 pub(crate) const COMPACT_MIN_WIDTH: f32 = 960.0;
 
 pub(crate) fn layout_mode(width: Pixels) -> LayoutMode {
@@ -32,7 +32,7 @@ mod tests {
     fn exact_layout_boundaries_are_stable() {
         assert_eq!(layout_mode(px(959.0)), LayoutMode::Narrow);
         assert_eq!(layout_mode(px(960.0)), LayoutMode::Compact);
-        assert_eq!(layout_mode(px(1_179.0)), LayoutMode::Compact);
-        assert_eq!(layout_mode(px(1_180.0)), LayoutMode::Wide);
+        assert_eq!(layout_mode(px(1_319.0)), LayoutMode::Compact);
+        assert_eq!(layout_mode(px(1_320.0)), LayoutMode::Wide);
     }
 }

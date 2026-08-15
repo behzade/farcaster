@@ -1,20 +1,26 @@
+use std::rc::Rc;
+
 use gpui::{
-    App, CursorStyle, ElementId, FontWeight, InteractiveElement as _, IntoElement, KeyDownEvent,
-    MouseButton, ParentElement as _, Role, SharedString, StatefulInteractiveElement as _,
-    Styled as _, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
+    AnyElement, App, CursorStyle, ElementId, FontWeight, InteractiveElement as _, IntoElement,
+    KeyDownEvent, MouseButton, ParentElement as _, Role, SharedString,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div,
+    prelude::FluentBuilder as _, px,
 };
-use gpui_component::{FocusTrapElement as _, input::Input};
+use gpui_component::input::Input;
 
 use super::super::PiApp;
 use crate::{
-    primitives::{ButtonTone, button, dialog_backdrop, dialog_surface},
+    primitives::{ButtonTone, button},
     protocol::ExtensionUiRequest,
     runtime::RuntimeCommand,
     theme::THEME,
 };
 
 impl PiApp {
-    pub(super) fn render_composer(&self, entity: WeakEntity<Self>) -> impl IntoElement {
+    pub(super) fn render_composer(&self, entity: WeakEntity<Self>) -> AnyElement {
+        if self.extension.dialog.is_some() {
+            return self.render_composer_request(entity);
+        }
         let widgets_above = widget_region("above", &self.extension.above_widgets);
         let widgets_below = widget_region("below", &self.extension.below_widgets);
         let send_entity = entity.clone();
@@ -29,6 +35,9 @@ impl PiApp {
             .bg(THEME.colors.panel)
             .p(THEME.space.sm)
             .when_some(widgets_above, |composer, widgets| composer.child(widgets))
+            .when_some(composer_status(self), |composer, status| {
+                composer.child(status)
+            })
             .child(
                 div()
                     .id("composer-input")
@@ -82,7 +91,11 @@ impl PiApp {
                             })
                             .child(button(
                                 "send",
-                                "Send",
+                                if self.snapshot.conversation.running {
+                                    "Steer"
+                                } else {
+                                    "Send"
+                                },
                                 ButtonTone::Accent,
                                 self.can_submit(),
                                 move |_window, cx| {
@@ -97,12 +110,16 @@ impl PiApp {
                             )),
                     ),
             )
+            .into_any_element()
     }
 
-    pub(super) fn render_dialog(&self, entity: WeakEntity<Self>) -> Option<impl IntoElement> {
-        let dialog = self.extension.dialog.as_ref()?;
-        let id = dialog.dialog_id()?.to_owned();
-        let cancel_entity = entity.clone();
+    fn render_composer_request(&self, entity: WeakEntity<Self>) -> AnyElement {
+        let Some(dialog) = self.extension.dialog.as_ref() else {
+            return div().into_any_element();
+        };
+        let Some(id) = dialog.dialog_id().map(str::to_owned) else {
+            return div().into_any_element();
+        };
         let cancel_button_entity = entity.clone();
         let (title, body) = match dialog {
             ExtensionUiRequest::Select { title, options, .. } => {
@@ -238,49 +255,85 @@ impl PiApp {
                         .into_any_element(),
                 )
             }
-            _ => return None,
+            _ => return div().into_any_element(),
         };
-        Some(
-            dialog_backdrop("extension-dialog-backdrop", move |window, cx| {
-                let _ = cancel_entity.update(cx, |this, cx| this.cancel_dialog(window, cx));
-            })
+        div()
+            .id("extension-composer-request")
+            .role(Role::Group)
+            .aria_label(title.clone())
+            .track_focus(&self.dialog_focus)
+            .key_context(super::OVERLAY_KEY_CONTEXT)
+            .flex_none()
+            .min_h(THEME.layout.composer_min)
+            .max_h(THEME.layout.dialog_max_height)
+            .overflow_y_scroll()
+            .border_t(THEME.border)
+            .border_color(THEME.colors.accent)
+            .bg(THEME.colors.panel)
             .child(
-                dialog_surface("extension-dialog", title.clone())
-                    .track_focus(&self.dialog_focus)
-                    .key_context(super::OVERLAY_KEY_CONTEXT)
-                    .w(px(520.0))
-                    .max_w_full()
-                    .child(
-                        div()
-                            .px(THEME.space.md)
-                            .pt(THEME.space.md)
-                            .pb(THEME.space.sm)
-                            .text_size(THEME.type_scale.heading)
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(title),
-                    )
-                    .child(div().px(THEME.space.md).pb(THEME.space.md).child(body))
-                    .child(
-                        div()
-                            .flex()
-                            .justify_end()
-                            .px(THEME.space.md)
-                            .pb(THEME.space.md)
-                            .child(button(
-                                "dialog-cancel",
-                                "Cancel",
-                                ButtonTone::Quiet,
-                                true,
-                                move |window, cx| {
-                                    let _ = cancel_button_entity
-                                        .update(cx, |this, cx| this.cancel_dialog(window, cx));
-                                },
-                            )),
-                    )
-                    .focus_trap("extension-dialog-trap", &self.dialog_focus),
-            ),
-        )
+                div()
+                    .px(THEME.space.md)
+                    .pt(THEME.space.sm)
+                    .pb(THEME.space.xs)
+                    .text_size(THEME.type_scale.body)
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(title),
+            )
+            .child(div().px(THEME.space.md).pb(THEME.space.sm).child(body))
+            .child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .px(THEME.space.md)
+                    .pb(THEME.space.sm)
+                    .child(button(
+                        "dialog-cancel",
+                        "Cancel",
+                        ButtonTone::Quiet,
+                        true,
+                        move |window, cx| {
+                            let _ = cancel_button_entity
+                                .update(cx, |this, cx| this.cancel_dialog(window, cx));
+                        },
+                    )),
+            )
+            .on_mouse_down(MouseButton::Left, move |_, _, cx| cx.stop_propagation())
+            .into_any_element()
     }
+}
+
+fn composer_status(app: &PiApp) -> Option<AnyElement> {
+    let queued = app.snapshot.conversation.queue.steering.len()
+        + app.snapshot.conversation.queue.follow_up.len();
+    let mut parts = Vec::new();
+    if !matches!(app.snapshot.status.as_str(), "" | "Ready" | "Idle" | "Done") {
+        parts.push(app.snapshot.status.clone());
+    }
+    parts.extend(app.extension.statuses.values().cloned());
+    if let Some(error) = app.extension_errors.last() {
+        parts.push(error.chars().take(120).collect());
+    }
+    if queued > 0 {
+        parts.push(format!("{queued} queued"));
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    Some(
+        div()
+            .px(THEME.space.sm)
+            .pb(THEME.space.xs)
+            .text_size(THEME.type_scale.caption)
+            .text_color(
+                if app.snapshot.status == "Failed" || !app.extension_errors.is_empty() {
+                    THEME.colors.error
+                } else {
+                    THEME.colors.subtle
+                },
+            )
+            .child(parts.join(" · "))
+            .into_any_element(),
+    )
 }
 
 fn capture_after_input(entity: WeakEntity<PiApp>, cx: &mut App) {
@@ -296,6 +349,8 @@ fn dialog_choice(
     on_press: impl Fn(&mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     let (title, detail) = choice_copy(label);
+    let on_press = Rc::new(on_press);
+    let keyboard_press = on_press.clone();
     div()
         .id(id)
         .role(Role::Button)
@@ -323,6 +378,12 @@ fn dialog_choice(
         .hover(|choice| choice.bg(THEME.colors.hover))
         .focus(|choice| choice.border_color(THEME.colors.accent))
         .cursor(CursorStyle::PointingHand)
+        .on_key_down(move |event: &KeyDownEvent, window, cx| {
+            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                window.prevent_default();
+                keyboard_press(window, cx);
+            }
+        })
         .on_click(move |_, window, cx| on_press(window, cx))
         .child(
             div()

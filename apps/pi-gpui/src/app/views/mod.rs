@@ -1,4 +1,5 @@
 mod composer;
+mod models;
 mod shell;
 
 use gpui::{
@@ -73,7 +74,7 @@ impl Render for PiApp {
         }
         let mode = layout_mode(window.viewport_size().width);
         let entity = cx.entity().downgrade();
-        let dialog = self.render_dialog(entity.clone());
+        let transcript_rows = transcript::project_rows(&self.snapshot.conversation.items);
         let main = div()
             .relative()
             .flex_1()
@@ -86,11 +87,11 @@ impl Render for PiApp {
                 &self.transcript_list,
                 self.transcript_following,
                 self.transcript_unseen,
+                transcript_rows,
+                self.expanded_transcript_items.clone(),
                 entity.clone(),
-                cx,
             )))
-            .child(self.render_composer(entity.clone()))
-            .children(dialog);
+            .child(self.render_composer(entity.clone()));
         div()
             .relative()
             .size_full()
@@ -107,23 +108,14 @@ impl Render for PiApp {
                 div()
                     .size_full()
                     .flex()
-                    .when(mode != LayoutMode::Narrow, |shell| {
+                    .when(mode == LayoutMode::Wide, |shell| {
                         shell.child(
                             div()
-                                .w(if mode == LayoutMode::Wide {
-                                    THEME.layout.session_rail
-                                } else {
-                                    THEME.layout.collapsed_rail
-                                })
+                                .w(THEME.layout.session_rail)
                                 .flex_none()
                                 .border_r(THEME.border)
                                 .border_color(THEME.colors.border)
-                                .child(
-                                    self.render_sessions(
-                                        mode == LayoutMode::Compact,
-                                        entity.clone(),
-                                    ),
-                                ),
+                                .child(self.render_sessions(entity.clone())),
                         )
                     })
                     .child(main)
@@ -150,7 +142,7 @@ impl Render for PiApp {
                             .key_context(OVERLAY_KEY_CONTEXT)
                             .h_full()
                             .max_w_full()
-                            .child(self.render_sessions(false, entity.clone()))
+                            .child(self.render_sessions(entity.clone()))
                             .focus_trap("sessions-sheet-trap", &self.sheet_focus),
                     ),
                 )

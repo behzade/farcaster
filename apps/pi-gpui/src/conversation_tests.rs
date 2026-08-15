@@ -102,9 +102,27 @@ fn tool_updates_replace_snapshots_and_correlate() {
     state.reduce(&json!({"type":"tool_execution_update","toolCallId":"a","partialResult":{"content":[{"type":"text","text":"one"}]}}));
     state.reduce(&json!({"type":"tool_execution_update","toolCallId":"a","partialResult":{"content":[{"type":"text","text":"one two"}]}}));
     state.reduce(&json!({"type":"tool_execution_end","toolCallId":"a","result":{"content":[{"type":"text","text":"done"}]},"isError":false}));
-    assert_eq!(state.items[0].text, "done");
+    assert_eq!(state.items[0].tool_output, "done");
     assert_eq!(state.items[0].label, "Bash");
     assert!(!state.items[0].streaming);
+}
+
+#[test]
+fn tool_result_messages_update_the_existing_call_without_a_duplicate() {
+    let mut state = ConversationState::default();
+    state.reduce(
+        &json!({"type":"message_end","message":{"role":"assistant","content":[
+            {"type":"toolCall","id":"a","name":"read","arguments":{"path":"x"}}
+        ]}}),
+    );
+    state.reduce(&json!({"type":"tool_execution_start","toolCallId":"a","toolName":"read","args":{"path":"x"}}));
+    state.reduce(&json!({"type":"tool_execution_end","toolCallId":"a","result":{"content":[{"type":"text","text":"live"}]},"isError":false}));
+    state.reduce(&json!({"type":"message_start","message":{"role":"toolResult","toolCallId":"a","toolName":"read","content":[{"type":"text","text":"final"}]}}));
+    state.reduce(&json!({"type":"message_end","message":{"role":"toolResult","toolCallId":"a","toolName":"read","content":[{"type":"text","text":"final"}]}}));
+
+    assert_eq!(state.items.len(), 1);
+    assert_eq!(state.items[0].text, "Path: x");
+    assert_eq!(state.items[0].tool_output, "final");
 }
 
 #[test]
@@ -124,8 +142,7 @@ fn transcript_uses_quiet_speaker_labels_and_readable_tool_names() {
     assert_eq!(state.items[1].label, "");
     assert_eq!(state.items[2].label, "");
     assert_eq!(state.items[3].label, "Request User Input");
-    assert_eq!(state.items[4].label, "Request User Input");
-    assert_eq!(state.items[4].text, "done");
+    assert_eq!(state.items[3].tool_output, "done");
 }
 
 #[test]

@@ -7,13 +7,12 @@ use std::{
     collections::{HashMap, HashSet},
     ops::Range,
     path::PathBuf,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use gpui::{
-    AppContext as _, Bounds, Context, Entity, FocusHandle, Focusable as _, FollowMode,
-    ListAlignment, ListState, PathPromptOptions, Pixels, Point, Subscription, Task, Window,
-    actions,
+    AppContext as _, Context, Entity, FocusHandle, Focusable as _, FollowMode, ListAlignment,
+    ListState, PathPromptOptions, Subscription, Task, Window, actions,
 };
 use gpui_component::input::{InputEvent, InputState};
 use gpui_fps::FpsMonitor;
@@ -32,6 +31,7 @@ use crate::{
 };
 
 const MAX_EXTENSION_ERRORS: usize = 16;
+const RECENT_COMPLETION_LIFETIME: Duration = Duration::from_secs(10 * 60);
 pub(crate) const COMPOSER_KEY_CONTEXT: &str = "PiComposer";
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PendingSubmission {
@@ -54,6 +54,7 @@ pub(crate) struct PiApp {
     pub(crate) snapshot: RuntimeSnapshot,
     sessions: Vec<SessionSummary>,
     run_statuses: HashMap<String, String>,
+    recent_completions: HashMap<String, Instant>,
     projects: Vec<PathBuf>,
     drafts: Vec<projects::DraftSession>,
     selected_draft: Option<String>,
@@ -77,9 +78,6 @@ pub(crate) struct PiApp {
     transcript_unseen: usize,
     pub(crate) expanded_transcript_items: HashSet<usize>,
     last_transcript_count: usize,
-    pub(crate) transcript_layout: crate::transcript::TranscriptLayoutCache,
-    pub(crate) transcript_bounds: Option<Bounds<Pixels>>,
-    pub(crate) transcript_width: Pixels,
     fps_monitor: Option<Entity<FpsMonitor>>,
     extension: ExtensionUiState,
     parked_extension: Option<ExtensionUiState>,
@@ -223,6 +221,7 @@ impl PiApp {
             },
             sessions: Vec::new(),
             run_statuses: HashMap::new(),
+            recent_completions: HashMap::new(),
             projects: registry.projects,
             drafts: registry.drafts,
             selected_draft: Some(selected_draft.clone()),
@@ -246,9 +245,6 @@ impl PiApp {
             transcript_unseen: 0,
             expanded_transcript_items: HashSet::new(),
             last_transcript_count: 0,
-            transcript_layout: crate::transcript::TranscriptLayoutCache::default(),
-            transcript_bounds: None,
-            transcript_width: crate::theme::THEME.layout.transcript_max,
             fps_monitor,
             extension: ExtensionUiState::default(),
             parked_extension: None,
@@ -320,6 +316,7 @@ impl PiApp {
 
     fn drain_runtime(&mut self, cx: &mut Context<Self>) {
         let mut changed = self.extension.prune_notifications();
+        changed |= self.prune_recent_completions();
         while let Ok(event) = self.runtime.try_recv() {
             changed = true;
             match event {
@@ -330,7 +327,7 @@ impl PiApp {
                     if generation > self.runtime_generation {
                         self.reset_session_ui(generation, false);
                     }
-                    let count = snapshot.conversation.items.len();
+                    let count = crate::transcript::project_rows(&snapshot.conversation.items).len();
                     if count > self.last_transcript_count && !self.transcript_following {
                         self.transcript_unseen = self
                             .transcript_unseen
@@ -401,8 +398,10 @@ impl PiApp {
                     }
                 }
                 RuntimeEvent::PromptResult {
-                    target, accepted, ..
-                } => {
+                    generation,
+                    target,
+                    accepted,
+                } if generation == self.runtime_generation => {
                     if accepted
                         && self
                             .live_draft
@@ -424,10 +423,13 @@ impl PiApp {
                     session,
                     status,
                 } => {
-                    self.run_statuses.insert(target, status.clone());
+                    let recent = self.record_run_status(target, status.clone(), false);
                     if let Some(path) = session {
-                        self.run_statuses
-                            .insert(format!("session:{}", path.display()), status);
+                        self.record_run_status(
+                            format!("session:{}", path.display()),
+                            status,
+                            recent,
+                        );
                     }
                 }
                 RuntimeEvent::Stopped => self.snapshot.status = "Stopped".into(),
@@ -435,6 +437,7 @@ impl PiApp {
                 | RuntimeEvent::SessionReset { .. }
                 | RuntimeEvent::HistoryReset { .. }
                 | RuntimeEvent::ExtensionUi { .. }
+                | RuntimeEvent::PromptResult { .. }
                 | RuntimeEvent::Sessions { .. }
                 | RuntimeEvent::SessionsFailed { .. } => {}
             }
@@ -442,6 +445,40 @@ impl PiApp {
         if changed {
             cx.notify();
         }
+    }
+
+    fn record_run_status(&mut self, target: String, status: String, force_recent: bool) -> bool {
+        if status == "Done" {
+            if starts_recent_completion(
+                self.run_statuses.get(&target).map(String::as_str),
+                &status,
+                force_recent,
+            ) {
+                self.run_statuses.insert(target.clone(), status);
+                self.recent_completions.insert(target, Instant::now());
+                return true;
+            }
+            if self.recent_completions.contains_key(&target) {
+                self.run_statuses.insert(target, status);
+                return true;
+            }
+            self.run_statuses.remove(&target);
+            self.recent_completions.remove(&target);
+            return false;
+        }
+        self.recent_completions.remove(&target);
+        self.run_statuses.insert(target, status);
+        false
+    }
+
+    fn prune_recent_completions(&mut self) -> bool {
+        let before = self.recent_completions.len();
+        self.recent_completions
+            .retain(|_, completed| completed.elapsed() < RECENT_COMPLETION_LIFETIME);
+        self.run_statuses.retain(|target, status| {
+            status != "Done" || self.recent_completions.contains_key(target)
+        });
+        self.recent_completions.len() != before
     }
 
     fn reset_session_ui(&mut self, generation: u64, preserve_submission: bool) {
@@ -488,8 +525,6 @@ impl PiApp {
         self.transcript_list.reset(0);
         self.transcript_list.set_follow_mode(FollowMode::Tail);
         self.expanded_transcript_items.clear();
-        self.transcript_layout.clear();
-        self.transcript_bounds = None;
         self.transcript_following = true;
         self.transcript_unseen = 0;
         self.last_transcript_count = 0;
@@ -593,22 +628,6 @@ impl PiApp {
             self.save_project_registry();
         }
         cx.notify();
-    }
-
-    fn available_projects(&self) -> Vec<PathBuf> {
-        let mut available = self.projects.clone();
-        for session in &self.sessions {
-            projects::add_unique(&mut available, session.project.clone());
-        }
-        let current = if self.snapshot.project.as_os_str().is_empty() {
-            &self.project
-        } else {
-            &self.snapshot.project
-        };
-        if let Some(index) = available.iter().position(|project| project == current) {
-            available.swap(0, index);
-        }
-        available
     }
 
     fn save_project_registry(&mut self) {
@@ -753,41 +772,28 @@ impl PiApp {
         }
     }
 
-    fn cycle_model(&mut self, cx: &mut Context<Self>) {
-        let Some(next) = next_model(
-            &self.snapshot.models,
-            self.snapshot
-                .session
-                .as_ref()
-                .and_then(|state| state.model.as_ref()),
-        ) else {
-            return;
-        };
+    fn select_provider(&mut self, provider: &str, cx: &mut Context<Self>) {
+        if let Some(model) = self
+            .snapshot
+            .models
+            .iter()
+            .find(|model| model.provider == provider)
+            .cloned()
+        {
+            self.select_model(&model, cx);
+        }
+    }
+
+    fn select_model(&mut self, model: &Model, cx: &mut Context<Self>) {
         self.send(RuntimeCommand::SetModel {
-            provider: next.provider.clone(),
-            model_id: next.id.clone(),
+            provider: model.provider.clone(),
+            model_id: model.id.clone(),
         });
         cx.notify();
     }
-    fn cycle_thinking(&mut self, cx: &mut Context<Self>) {
-        if self.snapshot.thinking_levels.is_empty() {
-            return;
-        }
-        let current = self
-            .snapshot
-            .session
-            .as_ref()
-            .map(|state| state.thinking_level.as_str())
-            .unwrap_or("off");
-        let index = self
-            .snapshot
-            .thinking_levels
-            .iter()
-            .position(|level| level == current)
-            .map_or(0, |index| (index + 1) % self.snapshot.thinking_levels.len());
-        self.send(RuntimeCommand::SetThinking(
-            self.snapshot.thinking_levels[index].clone(),
-        ));
+
+    fn set_thinking_level(&mut self, level: String, cx: &mut Context<Self>) {
+        self.send(RuntimeCommand::SetThinking(level));
         cx.notify();
     }
 
@@ -884,45 +890,29 @@ impl PiApp {
         cx.notify();
     }
 
-    pub(crate) fn toggle_transcript_item(&mut self, index: usize, cx: &mut Context<Self>) {
-        if !self.expanded_transcript_items.remove(&index) {
-            self.expanded_transcript_items.insert(index);
+    pub(crate) fn toggle_transcript_item(&mut self, key: usize, cx: &mut Context<Self>) {
+        if !self.expanded_transcript_items.remove(&key) {
+            self.expanded_transcript_items.insert(key);
         }
-        self.transcript_layout.mark_dirty(index);
-        self.transcript_list.remeasure_items(0..1);
+        let rows = crate::transcript::project_rows(&self.snapshot.conversation.items);
+        if let Some(index) = rows.iter().position(|row| row.key() == key) {
+            self.transcript_list
+                .remeasure_items(index..index.saturating_add(1));
+        }
         cx.notify();
     }
 
-    pub(crate) fn toggle_transcript_at(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
-        let Some(bounds) = self.transcript_bounds else {
-            return;
-        };
-        if let Some(index) = self.transcript_layout.thinking_item_at(bounds, position) {
-            self.toggle_transcript_item(index, cx);
-        }
-    }
-
     fn sync_transcript_list(&mut self, next: &[crate::conversation::TranscriptItem]) {
-        if let Some((old_range, _new_count)) =
-            transcript_splice(&self.snapshot.conversation.items, next)
-        {
-            self.transcript_layout.mark_dirty(old_range.start);
-            match (self.snapshot.conversation.items.is_empty(), next.is_empty()) {
-                (true, false) => self.transcript_list.splice(0..0, 1),
-                (false, true) => self.transcript_list.splice(0..1, 0),
-                (false, false) => self.transcript_list.remeasure_items(0..1),
-                (true, true) => {}
-            }
+        let current_rows = crate::transcript::project_rows(&self.snapshot.conversation.items);
+        let next_rows = crate::transcript::project_rows(next);
+        if let Some((old_range, new_count)) = transcript_splice(&current_rows, &next_rows) {
+            self.transcript_list.splice(old_range, new_count);
         }
     }
 
-    fn mark_transcript_changed(&mut self, index: usize, was_empty: bool) {
-        self.transcript_layout.mark_dirty(index);
-        if was_empty {
-            self.transcript_list.splice(0..0, 1);
-        } else {
-            self.transcript_list.remeasure_items(0..1);
-        }
+    fn mark_transcript_changed(&mut self, _index: usize, _was_empty: bool) {
+        let row_count = crate::transcript::project_rows(&self.snapshot.conversation.items).len();
+        self.transcript_list.reset(row_count);
     }
 
     fn resolve_pending_submission(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -961,10 +951,7 @@ fn input_snapshot(input: &InputState) -> ComposerSnapshot {
     )
 }
 
-fn transcript_splice(
-    current: &[crate::conversation::TranscriptItem],
-    next: &[crate::conversation::TranscriptItem],
-) -> Option<(Range<usize>, usize)> {
+fn transcript_splice<T: PartialEq>(current: &[T], next: &[T]) -> Option<(Range<usize>, usize)> {
     let prefix = current
         .iter()
         .zip(next)
@@ -1020,26 +1007,16 @@ fn prompt_mode_for_enter(running: bool) -> PromptMode {
     }
 }
 
+fn starts_recent_completion(previous: Option<&str>, next: &str, force: bool) -> bool {
+    next == "Done" && (force || previous.is_some_and(|status| status != "Done"))
+}
+
 fn debug_enabled() -> bool {
     debug_value_enabled(std::env::var("DEBUG").ok().as_deref())
 }
 
 fn debug_value_enabled(value: Option<&str>) -> bool {
     value == Some("true")
-}
-
-fn next_model<'a>(models: &'a [Model], current: Option<&Model>) -> Option<&'a Model> {
-    if models.is_empty() {
-        return None;
-    }
-    let index = current
-        .and_then(|current| {
-            models
-                .iter()
-                .position(|model| model.provider == current.provider && model.id == current.id)
-        })
-        .map_or(0, |index| (index + 1) % models.len());
-    models.get(index)
 }
 
 impl Drop for PiApp {
@@ -1067,6 +1044,8 @@ mod tests {
             text: text.into(),
             streaming: false,
             is_error: false,
+            tool_call_id: None,
+            tool_output: String::new(),
         }
     }
 
@@ -1100,6 +1079,15 @@ mod tests {
     fn enter_prompts_when_idle_and_steers_while_running() {
         assert_eq!(prompt_mode_for_enter(false), PromptMode::Normal);
         assert_eq!(prompt_mode_for_enter(true), PromptMode::Steer);
+    }
+
+    #[test]
+    fn done_is_recent_only_after_an_active_status_transition() {
+        assert!(!starts_recent_completion(None, "Done", false));
+        assert!(!starts_recent_completion(Some("Done"), "Done", false));
+        assert!(starts_recent_completion(Some("Working"), "Done", false));
+        assert!(starts_recent_completion(None, "Done", true));
+        assert!(!starts_recent_completion(Some("Working"), "Failed", false));
     }
 
     #[test]

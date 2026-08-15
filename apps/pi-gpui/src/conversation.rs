@@ -24,6 +24,8 @@ pub(crate) struct TranscriptItem {
     pub text: String,
     pub streaming: bool,
     pub is_error: bool,
+    pub tool_call_id: Option<String>,
+    pub tool_output: String,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -81,20 +83,52 @@ impl ConversationState {
             text: message,
             streaming: false,
             is_error: false,
+            tool_call_id: None,
+            tool_output: String::new(),
         });
     }
 
     pub(crate) fn replace_history(&mut self, messages: &[Value]) {
-        self.items = messages.iter().flat_map(project_message_items).collect();
+        self.items.clear();
         self.latest_cache_hit_rate = None;
         for message in messages {
             if message.get("role").and_then(Value::as_str) == Some("assistant") {
                 self.latest_cache_hit_rate = cache_hit_rate(message);
             }
+            self.project_history_message(message);
         }
         self.live_message = None;
         self.content.clear();
         self.tools.clear();
+    }
+
+    fn project_history_message(&mut self, message: &Value) {
+        if message.get("role").and_then(Value::as_str) == Some("toolResult") {
+            let id = message
+                .get("toolCallId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if !id.is_empty()
+                && let Some(item) = self.items.iter_mut().rev().find(|item| {
+                    item.kind == TranscriptKind::Tool && item.tool_call_id.as_deref() == Some(id)
+                })
+            {
+                item.tool_output = message_text(message);
+                item.is_error = message
+                    .get("isError")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                item.streaming = false;
+                return;
+            }
+        }
+        let mut projected = project_message_items(message);
+        if message.get("role").and_then(Value::as_str) == Some("toolResult") {
+            for item in &mut projected {
+                item.tool_output = std::mem::take(&mut item.text);
+            }
+        }
+        self.items.extend(projected);
     }
 
     pub(crate) fn reduce(&mut self, event: &Value) {
@@ -170,6 +204,8 @@ impl ConversationState {
             text: message,
             streaming: false,
             is_error: true,
+            tool_call_id: None,
+            tool_output: String::new(),
         });
     }
 
@@ -180,6 +216,8 @@ impl ConversationState {
             text: message,
             streaming: false,
             is_error: true,
+            tool_call_id: None,
+            tool_output: String::new(),
         });
     }
 
@@ -190,11 +228,31 @@ impl ConversationState {
             text: message,
             streaming: false,
             is_error: true,
+            tool_call_id: None,
+            tool_output: String::new(),
         });
     }
 
     fn start_message(&mut self, message: Option<&Value>) {
         self.content.clear();
+        if message.is_some_and(|message| {
+            message.get("role").and_then(Value::as_str) == Some("toolResult")
+                && message
+                    .get("toolCallId")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| {
+                        self.items.iter().any(|item| {
+                            item.kind == TranscriptKind::Tool
+                                && item.tool_call_id.as_deref() == Some(id)
+                        })
+                    })
+        }) {
+            self.live_message = Some(LiveMessage {
+                start: self.items.len(),
+                len: 0,
+            });
+            return;
+        }
         let mut projected = message.map(project_message_items).unwrap_or_default();
         for item in &mut projected {
             item.streaming = true;
@@ -283,6 +341,8 @@ impl ConversationState {
                 text: partial.value.clone(),
                 streaming: true,
                 is_error: false,
+                tool_call_id: None,
+                tool_output: String::new(),
             })
             .collect::<Vec<_>>();
         let len = projected.len();
@@ -299,6 +359,27 @@ impl ConversationState {
         if message.get("role").and_then(Value::as_str) == Some("assistant") {
             self.latest_cache_hit_rate = cache_hit_rate(message);
         }
+        if message.get("role").and_then(Value::as_str) == Some("toolResult") {
+            if let Some(live) = self.live_message.take() {
+                self.items.splice(live.start..live.start + live.len, []);
+            }
+            let id = message
+                .get("toolCallId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if let Some(item) = self.items.iter_mut().rev().find(|item| {
+                item.kind == TranscriptKind::Tool && item.tool_call_id.as_deref() == Some(id)
+            }) {
+                item.tool_output = message_text(message);
+                item.is_error = message
+                    .get("isError")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                item.streaming = false;
+                self.content.clear();
+                return;
+            }
+        }
         let final_items = project_message_items(message);
         if let Some(live) = self.live_message.take() {
             self.items
@@ -313,12 +394,25 @@ impl ConversationState {
         let id = text_field(event, "toolCallId");
         let name = text_field(event, "toolName");
         let args = event.get("args").map(readable_json).unwrap_or_default();
+        if let Some(index) = self.items.iter().rposition(|item| {
+            item.kind == TranscriptKind::Tool && item.tool_call_id.as_deref() == Some(id.as_str())
+        }) {
+            if let Some(item) = self.items.get_mut(index) {
+                item.label = display_tool_name(&name);
+                item.text = args;
+                item.streaming = true;
+            }
+            self.tools.insert(id, index);
+            return;
+        }
         self.items.push(TranscriptItem {
             kind: TranscriptKind::Tool,
             label: display_tool_name(&name),
             text: args,
             streaming: true,
             is_error: false,
+            tool_call_id: Some(id.clone()),
+            tool_output: String::new(),
         });
         self.tools.insert(id, self.items.len() - 1);
     }
@@ -328,7 +422,7 @@ impl ConversationState {
         if let Some(index) = self.tools.get(&id).copied()
             && let Some(item) = self.items.get_mut(index)
         {
-            item.text = event
+            item.tool_output = event
                 .get("partialResult")
                 .map(result_text)
                 .unwrap_or_default();
@@ -344,7 +438,7 @@ impl ConversationState {
         if let Some(index) = self.tools.remove(&id)
             && let Some(item) = self.items.get_mut(index)
         {
-            item.text = event.get("result").map(result_text).unwrap_or_default();
+            item.tool_output = event.get("result").map(result_text).unwrap_or_default();
             item.streaming = false;
             item.is_error = is_error;
         }
@@ -357,6 +451,8 @@ impl ConversationState {
             text,
             streaming: false,
             is_error: false,
+            tool_call_id: None,
+            tool_output: String::new(),
         });
     }
 
@@ -447,6 +543,11 @@ fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
                             text,
                             streaming: false,
                             is_error,
+                            tool_call_id: block
+                                .get("id")
+                                .and_then(Value::as_str)
+                                .map(str::to_owned),
+                            tool_output: String::new(),
                         })
                     })
                     .collect()
@@ -489,6 +590,11 @@ fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
         text: message_text(message),
         streaming: false,
         is_error,
+        tool_call_id: message
+            .get("toolCallId")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        tool_output: String::new(),
     }]
 }
 

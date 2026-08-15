@@ -5,8 +5,8 @@ use std::{
 
 use gpui::{
     Anchor, AnyElement, CursorStyle, FontWeight, InteractiveElement as _, IntoElement,
-    ParentElement as _, Role, StatefulInteractiveElement as _, Styled as _, WeakEntity, div,
-    prelude::FluentBuilder as _, px, uniform_list,
+    KeyDownEvent, ParentElement as _, Role, StatefulInteractiveElement as _, Styled as _,
+    WeakEntity, div, prelude::FluentBuilder as _, px, uniform_list,
 };
 use gpui_component::{
     Icon, Sizable as _, Size,
@@ -45,21 +45,6 @@ impl PiApp {
             root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
                 .map(|session| bounded_label(&session.title, 42))
                 .unwrap_or_else(|| "New session".into());
-        let model = self
-            .snapshot
-            .session
-            .as_ref()
-            .and_then(|state| state.model.as_ref())
-            .map(|model| bounded_label(&model.name, 28))
-            .unwrap_or_else(|| "No model".into());
-        let thinking = self
-            .snapshot
-            .session
-            .as_ref()
-            .map(|state| state.thinking_level.clone())
-            .unwrap_or_else(|| "off".into());
-        let model_entity = entity.clone();
-        let thinking_entity = entity.clone();
         let sessions_entity = entity.clone();
         let run_entity = entity.clone();
         div()
@@ -118,29 +103,6 @@ impl PiApp {
                             },
                         ))
                     })
-                    .when(!self.snapshot.history_preview, |actions| {
-                        actions
-                            .child(button(
-                                "cycle-model",
-                                model,
-                                ButtonTone::Neutral,
-                                !self.snapshot.models.is_empty(),
-                                move |_, cx| {
-                                    let _ =
-                                        model_entity.update(cx, |this, cx| this.cycle_model(cx));
-                                },
-                            ))
-                            .child(button(
-                                "cycle-thinking",
-                                thinking,
-                                ButtonTone::Neutral,
-                                !self.snapshot.thinking_levels.is_empty(),
-                                move |_, cx| {
-                                    let _ = thinking_entity
-                                        .update(cx, |this, cx| this.cycle_thinking(cx));
-                                },
-                            ))
-                    })
                     .when(mode != LayoutMode::Wide, |actions| {
                         actions.child(button(
                             "open-run",
@@ -156,26 +118,26 @@ impl PiApp {
             )
     }
 
-    pub(super) fn render_sessions(
-        &self,
-        collapsed: bool,
-        entity: WeakEntity<Self>,
-    ) -> impl IntoElement {
-        if collapsed {
-            return div()
-                .size_full()
-                .flex()
-                .items_start()
-                .justify_center()
-                .pt(THEME.space.md)
-                .text_color(THEME.colors.accent)
-                .child("π")
-                .into_any_element();
-        }
+    pub(super) fn render_sessions(&self, entity: WeakEntity<Self>) -> impl IntoElement {
         let new_entity = entity.clone();
         let add_project_entity = entity.clone();
-        let available_projects = self.available_projects();
-        let available_project_count = available_projects.len();
+        let current_project = if self.snapshot.project.as_os_str().is_empty() {
+            self.project.clone()
+        } else {
+            self.snapshot.project.clone()
+        };
+        let mut available_projects = self.projects.clone();
+        for session in &self.sessions {
+            if !available_projects.contains(&session.project) {
+                available_projects.push(session.project.clone());
+            }
+        }
+        if let Some(index) = available_projects
+            .iter()
+            .position(|project| project == &current_project)
+        {
+            available_projects.swap(0, index);
+        }
         let drafts = self.drafts.clone();
         let selected_draft = self.selected_draft.clone();
         let live_draft = self.live_draft.clone();
@@ -254,33 +216,58 @@ impl PiApp {
                             .child("Pi"),
                     )
                     .child(
-                        icon_button(
-                            "new-session",
-                            AppIcon::Plus,
-                            "New session",
-                            ButtonTone::Quiet,
-                            !available_projects.is_empty(),
-                            |_, _| {},
-                        )
-                        .dropdown_menu_with_anchor(
-                            Anchor::TopRight,
-                            move |menu, _, _| {
-                                let mut menu = menu.min_w(px(220.0)).label("New session in");
-                                for project in &available_projects {
-                                    let label = project_label(project);
-                                    let target = project.clone();
-                                    let entity = new_entity.clone();
-                                    menu = menu.item(PopupMenuItem::new(label).on_click(
-                                        move |_, window, cx| {
-                                            let _ = entity.update(cx, |this, cx| {
-                                                this.new_session(target.clone(), window, cx);
-                                            });
-                                        },
-                                    ));
-                                }
-                                menu
-                            },
-                        ),
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(THEME.space.xs)
+                            .child(
+                                icon_button(
+                                    "new-session",
+                                    AppIcon::Plus,
+                                    "New session",
+                                    ButtonTone::Quiet,
+                                    !available_projects.is_empty(),
+                                    |_, _| {},
+                                )
+                                .dropdown_menu_with_anchor(
+                                    Anchor::TopRight,
+                                    move |menu, _, _| {
+                                        let mut menu = menu
+                                            .min_w(px(220.0))
+                                            .max_h(px(420.0))
+                                            .label("New session in");
+                                        for project in &available_projects {
+                                            let label = project_label(project);
+                                            let target = project.clone();
+                                            let entity = new_entity.clone();
+                                            menu = menu.item(PopupMenuItem::new(label).on_click(
+                                                move |_, window, cx| {
+                                                    let _ = entity.update(cx, |this, cx| {
+                                                        this.new_session(
+                                                            target.clone(),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    });
+                                                },
+                                            ));
+                                        }
+                                        menu
+                                    },
+                                ),
+                            )
+                            .child(icon_button(
+                                "add-project",
+                                AppIcon::FolderPlus,
+                                "Add project",
+                                ButtonTone::Quiet,
+                                true,
+                                move |window, cx| {
+                                    let _ = add_project_entity.update(cx, |this, cx| {
+                                        this.choose_project_folder(window, cx);
+                                    });
+                                },
+                            )),
                     ),
             )
             .child(
@@ -302,41 +289,6 @@ impl PiApp {
                             .min_w_0()
                             .appearance(false),
                     ),
-            )
-            .child(
-                div()
-                    .h(px(38.0))
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .gap(THEME.space.sm)
-                    .px(THEME.space.md)
-                    .text_color(THEME.colors.muted)
-                    .child(Icon::new(AppIcon::Folder).with_size(Size::Small))
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_size(THEME.type_scale.body)
-                            .font_weight(FontWeight::MEDIUM)
-                            .child("All projects"),
-                    )
-                    .child(
-                        div()
-                            .text_size(THEME.type_scale.caption)
-                            .text_color(THEME.colors.subtle)
-                            .child(available_project_count.to_string()),
-                    )
-                    .child(icon_button(
-                        "add-project",
-                        AppIcon::FolderPlus,
-                        "Add project",
-                        ButtonTone::Quiet,
-                        true,
-                        move |window, cx| {
-                            let _ = add_project_entity
-                                .update(cx, |this, cx| this.choose_project_folder(window, cx));
-                        },
-                    )),
             )
             .when_some(self.sessions_error.clone(), |rail, error| {
                 rail.child(feedback("sessions-error", error, FeedbackTone::Error))
@@ -422,7 +374,13 @@ impl PiApp {
             .gap(THEME.space.md)
             .overflow_y_scroll()
             .child(section_heading("Status"))
+            .child(metric_row("State", self.snapshot.status.clone()))
+            .when(!self.snapshot.history_preview, |run| {
+                run.child(section_heading("Model"))
+                    .child(self.render_model_controls(entity.clone()))
+            })
             .when_some(self.fps_monitor.clone(), |run, monitor| run.child(monitor))
+            .child(section_heading("Usage"))
             .child(usage_metrics(
                 show_main_context.then_some(&self.snapshot.stats),
                 aggregate_usage,
@@ -501,7 +459,12 @@ fn draft_session_row(
     let id = draft.id.clone();
     let discard_id = id.clone();
     let project = draft.project.clone();
+    let keyboard_id = id.clone();
+    let keyboard_project = project.clone();
+    let keyboard_entity = entity.clone();
     let discard_entity = entity.clone();
+    let keyboard_discard_entity = discard_entity.clone();
+    let keyboard_discard_id = discard_id.clone();
     div()
         .h(THEME.layout.session_row_height)
         .w_full()
@@ -529,6 +492,19 @@ fn draft_session_row(
                 .hover(|row| row.bg(THEME.colors.hover))
                 .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
                 .cursor(CursorStyle::PointingHand)
+                .on_key_down(move |event: &KeyDownEvent, window, cx| {
+                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                        window.prevent_default();
+                        let _ = keyboard_entity.update(cx, |this, cx| {
+                            this.resume_draft(
+                                keyboard_id.clone(),
+                                keyboard_project.clone(),
+                                window,
+                                cx,
+                            );
+                        });
+                    }
+                })
                 .on_click(move |_, window, cx| {
                     let _ = entity.update(cx, |this, cx| {
                         this.resume_draft(id.clone(), project.clone(), window, cx);
@@ -573,6 +549,15 @@ fn draft_session_row(
                                 .rounded(THEME.radius)
                                 .hover(|button| button.bg(THEME.colors.hover))
                                 .child(Icon::new(AppIcon::X).with_size(Size::Small))
+                                .on_key_down(move |event: &KeyDownEvent, window, cx| {
+                                    cx.stop_propagation();
+                                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                        window.prevent_default();
+                                        let _ = keyboard_discard_entity.update(cx, |this, cx| {
+                                            this.discard_draft(&keyboard_discard_id, window, cx);
+                                        });
+                                    }
+                                })
                                 .on_click(move |_, window, cx| {
                                     cx.stop_propagation();
                                     let _ = discard_entity.update(cx, |this, cx| {
@@ -597,22 +582,16 @@ fn draft_session_row(
 }
 
 fn session_badge(
-    kind: SessionRailKind,
+    _kind: SessionRailKind,
     session_id: &str,
     live_session_id: Option<&str>,
     live_status: &str,
 ) -> Option<String> {
-    if live_session_id == Some(session_id) {
-        Some(if live_status.is_empty() {
-            "Done".into()
-        } else {
-            live_status.into()
-        })
-    } else if kind == SessionRailKind::Project {
-        Some("Done".into())
-    } else {
-        None
+    if live_session_id != Some(session_id) || matches!(live_status, "" | "Done" | "Idle" | "Ready")
+    {
+        return None;
     }
+    Some(live_status.into())
 }
 
 fn session_row(
@@ -624,13 +603,18 @@ fn session_row(
     let session = &item.session;
     let path = session.path.clone();
     let project = session.project.clone();
+    let keyboard_path = path.clone();
+    let keyboard_project = project.clone();
+    let keyboard_entity = entity.clone();
     let project_name = project_label(&project);
     let settle_path = session.path.clone();
     let settle_entity = entity.clone();
+    let keyboard_settle_path = settle_path.clone();
+    let keyboard_settle_entity = settle_entity.clone();
     let age = relative_age(session.modified);
     let is_settled = item.kind == SessionRailKind::Settled;
     let metadata = if item.starts_settled {
-        format!("Settled · {project_name}")
+        format!("Archived · {project_name}")
     } else {
         project_name
     };
@@ -661,6 +645,14 @@ fn session_row(
         .hover(|row| row.bg(THEME.colors.hover))
         .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
         .cursor(CursorStyle::PointingHand)
+        .on_key_down(move |event: &KeyDownEvent, window, cx| {
+            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                window.prevent_default();
+                let _ = keyboard_entity.update(cx, |this, cx| {
+                    this.resume(keyboard_path.clone(), keyboard_project.clone(), window, cx)
+                });
+            }
+        })
         .on_click(move |_, window, cx| {
             let _ = entity.update(cx, |this, cx| {
                 this.resume(path.clone(), project.clone(), window, cx)
@@ -711,7 +703,7 @@ fn session_row(
                         .aria_label(if is_settled {
                             "Restore session"
                         } else {
-                            "Settle session"
+                            "Archive session"
                         })
                         .tab_index(0)
                         .p(THEME.space.xs)
@@ -723,6 +715,19 @@ fn session_row(
                         })
                         .hover(|button| button.bg(THEME.colors.hover))
                         .child(Icon::new(AppIcon::CheckCircle).with_size(Size::Small))
+                        .on_key_down(move |event: &KeyDownEvent, window, cx| {
+                            cx.stop_propagation();
+                            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                window.prevent_default();
+                                let _ = keyboard_settle_entity.update(cx, |this, cx| {
+                                    this.set_session_settled(
+                                        keyboard_settle_path.clone(),
+                                        !is_settled,
+                                        cx,
+                                    );
+                                });
+                            }
+                        })
                         .on_click(move |_, _, cx| {
                             cx.stop_propagation();
                             let _ = settle_entity.update(cx, |this, cx| {
@@ -790,6 +795,9 @@ fn agent_session_row(
 ) -> AnyElement {
     let path = session.path.clone();
     let project = session.project.clone();
+    let keyboard_path = path.clone();
+    let keyboard_project = project.clone();
+    let keyboard_entity = entity.clone();
     let title = session.title.clone();
     let tokens = compact_number(session.usage.total);
     div()
@@ -812,6 +820,14 @@ fn agent_session_row(
         .hover(|row| row.bg(THEME.colors.hover))
         .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
         .cursor_pointer()
+        .on_key_down(move |event: &KeyDownEvent, window, cx| {
+            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                window.prevent_default();
+                let _ = keyboard_entity.update(cx, |this, cx| {
+                    this.resume(keyboard_path.clone(), keyboard_project.clone(), window, cx)
+                });
+            }
+        })
         .on_click(move |_, window, cx| {
             let _ = entity.update(cx, |this, cx| {
                 this.resume(path.clone(), project.clone(), window, cx)
@@ -965,48 +981,5 @@ fn compact_subagent_label(value: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        SessionRailKind, compact_number, compact_subagent_label, context_usage,
-        format_cache_hit_rate, format_cost, session_badge,
-    };
-
-    #[test]
-    fn subagent_labels_keep_the_role_and_drop_generated_ids() {
-        assert_eq!(
-            compact_subagent_label("subagent-reviewer-a7d59830-87da-46d7-1"),
-            "reviewer 1"
-        );
-        assert_eq!(compact_subagent_label("named child"), "named child");
-    }
-
-    #[test]
-    fn usage_values_are_compact_and_context_is_main_only() {
-        assert_eq!(compact_number(105_250), "105.2k");
-        assert_eq!(format_cache_hit_rate(Some(87.654)), "87.7%");
-        assert_eq!(format_cache_hit_rate(None), "—");
-        assert_eq!(format_cost(456_789), "$0.46");
-        assert_eq!(
-            context_usage(&serde_json::json!({
-                "contextUsage": {"tokens": 60_000, "contextWindow": 200_000, "percent": 30.0}
-            })),
-            "60k / 200k · 30%"
-        );
-    }
-
-    #[test]
-    fn session_badges_do_not_depend_on_selection() {
-        assert_eq!(
-            session_badge(SessionRailKind::Project, "other", Some("live"), "Working"),
-            Some("Done".into())
-        );
-        assert_eq!(
-            session_badge(SessionRailKind::Settled, "live", Some("live"), "Working"),
-            Some("Working".into())
-        );
-        assert_eq!(
-            session_badge(SessionRailKind::Settled, "old", Some("live"), "Working"),
-            None
-        );
-    }
-}
+#[path = "shell_tests.rs"]
+mod tests;
