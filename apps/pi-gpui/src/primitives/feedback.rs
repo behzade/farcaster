@@ -35,6 +35,7 @@ pub(crate) fn feedback(
             builder.parent_node().set_value(accessible.as_ref());
         })
         .rounded(THEME.radius)
+        .bg(THEME.colors.panel)
         .border(THEME.border)
         .border_color(color)
         .px(THEME.space.sm)
