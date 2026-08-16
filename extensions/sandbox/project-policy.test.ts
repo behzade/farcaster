@@ -25,8 +25,9 @@ function workspace(): string {
 const basePolicy = (): ProjectSandboxPolicy => ({ version: 1, rights: [] });
 const machine = mergeGlobalConfig(DEFAULT_CONFIG, {});
 
-test("loads and saves one portable versioned project policy", () => {
+test("loads and saves one portable versioned project policy under Pi's extension trust root", () => {
 	const cwd = workspace();
+	assert.equal(projectPolicyPath(cwd), join(cwd, ".pi", "extensions", "sandbox", "sandbox.json"));
 	const policy: ProjectSandboxPolicy = {
 		version: 1,
 		rights: [
@@ -141,12 +142,24 @@ test("safe project cache environment additions stay under the shared managed roo
 	}, cwd, machine), /cannot replace managed (?:cache )?mapping CARGO_HOME/);
 });
 
-test("a symlinked project control root cannot supply or receive policy", () => {
-	const cwd = workspace();
+test("symlinked project policy directories cannot supply or receive policy", () => {
+	const projectRootLink = workspace();
 	const target = workspace();
-	symlinkSync(target, join(cwd, ".pi"));
-	assert.throws(() => loadProjectPolicy(cwd, machine), /symlinked project control folder/);
-	assert.throws(() => saveProjectPolicy(cwd, basePolicy()), /symlinked project control folder/);
+	symlinkSync(target, join(projectRootLink, ".pi"));
+	assert.throws(() => loadProjectPolicy(projectRootLink, machine), /symlinked project control folder/);
+	assert.throws(() => saveProjectPolicy(projectRootLink, basePolicy()), /symlinked project control folder/);
+
+	const extensionsLink = workspace();
+	mkdirSync(join(extensionsLink, ".pi"));
+	symlinkSync(target, join(extensionsLink, ".pi", "extensions"));
+	assert.throws(() => loadProjectPolicy(extensionsLink, machine), /symlinked project control folder/);
+	assert.throws(() => saveProjectPolicy(extensionsLink, basePolicy()), /symlinked project control folder/);
+
+	const sandboxLink = workspace();
+	mkdirSync(join(sandboxLink, ".pi", "extensions"), { recursive: true });
+	symlinkSync(target, join(sandboxLink, ".pi", "extensions", "sandbox"));
+	assert.throws(() => loadProjectPolicy(sandboxLink, machine), /symlinked project control folder/);
+	assert.throws(() => saveProjectPolicy(sandboxLink, basePolicy()), /symlinked project control folder/);
 });
 
 test("request paths are converted to portable forms and checked-in absolutes are rejected", () => {

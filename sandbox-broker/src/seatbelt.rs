@@ -389,17 +389,11 @@ pub fn build_args_with_network(
     );
     let deny_policy = build_explicit_deny_policy(denies)?;
     let socket_policy = build_unix_socket_policy(unix_socket_roots, &mut params);
-    let local_network_policy = || {
-        [
-            "(allow network-bind (local ip \"localhost:*\"))",
-            "(allow network-inbound (local ip \"localhost:*\"))",
-            "(allow network-outbound (remote ip \"localhost:*\"))",
-        ]
-        .join("\n")
-    };
     let network_policy = match network {
         crate::validation::ValidatedNetworkPolicy::Blocked => String::new(),
-        crate::validation::ValidatedNetworkPolicy::Loopback => local_network_policy(),
+        crate::validation::ValidatedNetworkPolicy::Loopback => {
+            build_local_network_policy(cwd, &write_roots, denies, &mut params)?
+        }
         crate::validation::ValidatedNetworkPolicy::Proxy {
             tcp_port,
             allow_local_binding,
@@ -407,7 +401,10 @@ pub fn build_args_with_network(
         } => {
             let proxy = format!("(allow network-outbound (remote ip \"localhost:{tcp_port}\"))");
             if *allow_local_binding {
-                format!("{}\n{proxy}", local_network_policy())
+                format!(
+                    "{}\n{proxy}",
+                    build_local_network_policy(cwd, &write_roots, denies, &mut params)?
+                )
             } else {
                 proxy
             }
@@ -432,6 +429,61 @@ pub fn build_args_with_network(
     args.push("--".to_owned());
     args.extend_from_slice(command);
     Ok(args)
+}
+
+fn build_local_network_policy(
+    cwd: &Path,
+    write_roots: &[NormalizedRight],
+    denies: &[NormalizedDeny],
+    params: &mut Vec<(String, PathBuf)>,
+) -> Result<String, String> {
+    let mut lines = vec![
+        "(allow network-bind (local ip \"localhost:*\"))".to_owned(),
+        "(allow network-inbound (local ip \"localhost:*\"))".to_owned(),
+        "(allow network-outbound (remote ip \"localhost:*\"))".to_owned(),
+    ];
+    let writable_directories = write_roots
+        .iter()
+        .enumerate()
+        .filter(|(_, root)| root.scope == PathScope::Tree)
+        .collect::<Vec<_>>();
+    if !writable_directories.is_empty() {
+        lines.push("(allow system-socket (socket-domain AF_UNIX))".to_owned());
+    }
+    for (index, root) in writable_directories {
+        let key = format!("LOCAL_UNIX_SOCKET_ROOT_{index}");
+        params.push((key.clone(), root.path.clone()));
+        let path_filter = build_network_root_requirement(root, &key, cwd, denies, params)?;
+        lines.push(format!(
+            "(allow network-bind (local unix-socket {path_filter}))"
+        ));
+    }
+    Ok(lines.join("\n"))
+}
+
+fn build_network_root_requirement(
+    root: &NormalizedRight,
+    root_key: &str,
+    cwd: &Path,
+    denies: &[NormalizedDeny],
+    params: &mut Vec<(String, PathBuf)>,
+) -> Result<String, String> {
+    let mut requirements = vec![build_root_requirement(
+        root,
+        root_key,
+        cwd,
+        denies,
+        Access::Write,
+        params,
+    )];
+    for deny in denies {
+        if !deny_applies_to(deny.access, Access::Write) || deny.scope != DenyScope::Glob {
+            continue;
+        }
+        let pattern = seatbelt_regex_for_glob(&deny.pattern)?.replace('"', "\\\"");
+        requirements.push(format!("(require-not (regex #\"{pattern}\"))"));
+    }
+    Ok(format!("(require-all {})", requirements.join(" ")))
 }
 
 fn build_unix_socket_policy(
@@ -472,45 +524,57 @@ fn build_access_policy(
     for (index, root) in roots.iter().enumerate() {
         let root_key = format!("{prefix}_{index}");
         params.push((root_key.clone(), root.path.clone()));
-        if root.scope == PathScope::File {
-            components.push(format!("(literal (param \"{root_key}\"))"));
-            continue;
-        }
-        let mut requirements = vec![format!(
-            "(require-any (literal (param \"{root_key}\")) (subpath (param \"{root_key}\")))"
-        )];
-        let mut excluded = BTreeSet::new();
-        for deny in denies {
-            if !deny_applies_to(deny.access, access) || deny.scope == DenyScope::Glob {
-                continue;
-            }
-            let Some(path) = &deny.path else { continue };
-            if path.starts_with(&root.path) {
-                excluded.insert(path.clone());
-            }
-        }
-        for (excluded_index, path) in excluded.into_iter().enumerate() {
-            let key = format!("{prefix}_{index}_EXCLUDED_{excluded_index}");
-            params.push((key.clone(), path));
-            requirements.push(format!("(require-not (literal (param \"{key}\")))"));
-            requirements.push(format!("(require-not (subpath (param \"{key}\")))"));
-        }
-        if access == Access::Write
-            && !is_control_grant(root)
-            && (cwd.starts_with(&root.path) || root.path.starts_with(cwd))
-        {
-            for name in PROTECTED_METADATA_NAMES {
-                let pattern = protected_name_regex(cwd, name).replace('"', "\\\"");
-                requirements.push(format!("(require-not (regex #\"{pattern}\"))"));
-            }
-        }
-        components.push(format!("(require-all {})", requirements.join(" ")));
+        components.push(build_root_requirement(
+            root, &root_key, cwd, denies, access, params,
+        ));
     }
     if components.is_empty() {
         String::new()
     } else {
         format!("(allow {action}\n{}\n)", components.join("\n"))
     }
+}
+
+fn build_root_requirement(
+    root: &NormalizedRight,
+    root_key: &str,
+    cwd: &Path,
+    denies: &[NormalizedDeny],
+    access: Access,
+    params: &mut Vec<(String, PathBuf)>,
+) -> String {
+    if root.scope == PathScope::File {
+        return format!("(literal (param \"{root_key}\"))");
+    }
+    let mut requirements = vec![format!(
+        "(require-any (literal (param \"{root_key}\")) (subpath (param \"{root_key}\")))"
+    )];
+    let mut excluded = BTreeSet::new();
+    for deny in denies {
+        if !deny_applies_to(deny.access, access) || deny.scope == DenyScope::Glob {
+            continue;
+        }
+        let Some(path) = &deny.path else { continue };
+        if path.starts_with(&root.path) {
+            excluded.insert(path.clone());
+        }
+    }
+    for (excluded_index, path) in excluded.into_iter().enumerate() {
+        let key = format!("{root_key}_EXCLUDED_{excluded_index}");
+        params.push((key.clone(), path));
+        requirements.push(format!("(require-not (literal (param \"{key}\")))"));
+        requirements.push(format!("(require-not (subpath (param \"{key}\")))"));
+    }
+    if access == Access::Write
+        && !is_control_grant(root)
+        && (cwd.starts_with(&root.path) || root.path.starts_with(cwd))
+    {
+        for name in PROTECTED_METADATA_NAMES {
+            let pattern = protected_name_regex(cwd, name).replace('"', "\\\"");
+            requirements.push(format!("(require-not (regex #\"{pattern}\"))"));
+        }
+    }
+    format!("(require-all {})", requirements.join(" "))
 }
 
 fn is_control_grant(root: &NormalizedRight) -> bool {
@@ -785,10 +849,16 @@ mod tests {
 
     #[test]
     fn proxy_network_allows_only_one_loopback_port() {
+        let rights = vec![NormalizedRight {
+            access: Access::Write,
+            path: PathBuf::from("/work"),
+            scope: PathScope::Tree,
+            approved: false,
+        }];
         let args = build_args_with_network(
             &["/usr/bin/true".to_owned()],
             Path::new("/work"),
-            &[],
+            &rights,
             &[],
             &[],
             &crate::validation::ValidatedNetworkPolicy::Proxy {
@@ -801,16 +871,77 @@ mod tests {
         let policy = &args[1];
         assert!(policy.contains("(allow network-outbound (remote ip \"localhost:43127\"))"));
         assert!(!policy.contains("(remote ip \"localhost:*\")"));
+        assert!(!policy.contains("LOCAL_UNIX_SOCKET_ROOT"));
         assert!(!policy.contains("\n(allow network-outbound)\n"));
     }
 
     #[test]
-    fn loopback_network_allows_local_servers_without_broad_outbound_access() {
+    fn proxy_with_local_binding_keeps_scoped_unix_bind_rules() {
+        let rights = vec![NormalizedRight {
+            access: Access::Write,
+            path: PathBuf::from("/work"),
+            scope: PathScope::Tree,
+            approved: false,
+        }];
         let args = build_args_with_network(
             &["/usr/bin/true".to_owned()],
             Path::new("/work"),
+            &rights,
             &[],
             &[],
+            &crate::validation::ValidatedNetworkPolicy::Proxy {
+                tcp_port: 43_127,
+                unix_socket: PathBuf::from("/tmp/proxy.sock"),
+                allow_local_binding: true,
+            },
+        )
+        .expect("policy");
+        let policy = &args[1];
+        assert!(policy.contains("(remote ip \"localhost:43127\")"));
+        assert!(policy.contains("(remote ip \"localhost:*\")"));
+        assert!(policy.contains("(allow network-bind (local unix-socket"));
+        assert!(!policy.contains("(remote unix-socket"));
+        assert!(
+            args.iter()
+                .any(|arg| arg == "-DLOCAL_UNIX_SOCKET_ROOT_0=/work")
+        );
+    }
+
+    #[test]
+    fn loopback_network_allows_local_servers_without_broad_outbound_access() {
+        let rights = vec![
+            NormalizedRight {
+                access: Access::Write,
+                path: PathBuf::from("/work"),
+                scope: PathScope::Tree,
+                approved: false,
+            },
+            NormalizedRight {
+                access: Access::Write,
+                path: PathBuf::from("/work/exact.sock"),
+                scope: PathScope::File,
+                approved: true,
+            },
+        ];
+        let denies = vec![
+            NormalizedDeny {
+                access: DeniedAccess::Write,
+                pattern: "/work/blocked.sock".to_owned(),
+                scope: DenyScope::File,
+                path: Some(PathBuf::from("/work/blocked.sock")),
+            },
+            NormalizedDeny {
+                access: DeniedAccess::Write,
+                pattern: "/work/**/*.secret".to_owned(),
+                scope: DenyScope::Glob,
+                path: None,
+            },
+        ];
+        let args = build_args_with_network(
+            &["/usr/bin/true".to_owned()],
+            Path::new("/work"),
+            &rights,
+            &denies,
             &[],
             &crate::validation::ValidatedNetworkPolicy::Loopback,
         )
@@ -819,6 +950,30 @@ mod tests {
         assert!(policy.contains("(allow network-bind (local ip \"localhost:*\"))"));
         assert!(policy.contains("(allow network-inbound (local ip \"localhost:*\"))"));
         assert!(policy.contains("(allow network-outbound (remote ip \"localhost:*\"))"));
+        assert!(policy.contains("(allow system-socket (socket-domain AF_UNIX))"));
+        assert!(policy.contains("(allow network-bind (local unix-socket"));
+        assert!(!policy.contains("(network-inbound (local unix-socket"));
+        assert!(!policy.contains("(remote unix-socket"));
+        assert!(
+            args.iter()
+                .any(|arg| arg == "-DLOCAL_UNIX_SOCKET_ROOT_0=/work")
+        );
+        assert!(
+            args.iter()
+                .any(|arg| { arg == "-DLOCAL_UNIX_SOCKET_ROOT_0_EXCLUDED_0=/work/blocked.sock" })
+        );
+        assert!(
+            !args
+                .iter()
+                .any(|arg| arg.starts_with("-DLOCAL_UNIX_SOCKET_ROOT_1="))
+        );
+        let unix_bind = policy
+            .lines()
+            .find(|line| line.contains("(allow network-bind (local unix-socket"))
+            .expect("Unix bind policy");
+        assert!(unix_bind.contains("LOCAL_UNIX_SOCKET_ROOT_0_EXCLUDED_0"));
+        assert!(unix_bind.contains("^/work/(.*/)?\\.pi(/.*)?$"));
+        assert!(unix_bind.contains("\\.secret$"));
         assert!(!policy.contains("(remote ip \"*:*\")"));
         assert!(!policy.contains("\n(allow network-outbound)\n"));
     }

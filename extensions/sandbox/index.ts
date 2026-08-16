@@ -122,7 +122,7 @@ export default function (pi: ExtensionAPI) {
 		name: "request_access",
 		label: "Request project access",
 		description:
-			"Ask the user to add a batch of portable filesystem, network, and/or managed development-cache adapter entries to checked-in .pi/sandbox.json. This host tool updates policy only; it never runs or retries a command.",
+			"Ask the user to add a batch of portable filesystem, network, and/or managed development-cache adapter entries to checked-in .pi/extensions/sandbox/sandbox.json. This host tool updates policy only; it never runs or retries a command.",
 		promptSnippet:
 			"After a sandbox denial, use request_access for the smallest useful project/home file tree, exact host, local network, or development_cache environment mapping. If approved, explicitly rerun later.",
 		parameters: RequestAccessParams,
@@ -218,7 +218,7 @@ export default function (pi: ExtensionAPI) {
 		name: "background_job",
 		label: "Background job",
 		description:
-			"Start, list, inspect, interact with, or stop a session-scoped long-running command. New jobs use the active .pi/sandbox.json policy captured at start; existing jobs keep their start policy.",
+			"Start, list, inspect, interact with, or stop a session-scoped long-running command. New jobs use the active .pi/extensions/sandbox/sandbox.json policy captured at start; existing jobs keep their start policy.",
 		promptSnippet:
 			"Use background_job for long-running servers, watchers, builds, and tests. Use request_access separately if policy must change, then start a new job.",
 		parameters: BackgroundJobParams,

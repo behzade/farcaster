@@ -7,13 +7,14 @@ import {
 } from "node:fs";
 import { resolve } from "node:path";
 
+const PROJECT_POLICY_DIRECTORIES = [".pi", "extensions", "sandbox"] as const;
+
 export function projectPolicyPath(cwd: string): string {
-	return resolve(cwd, ".pi", "sandbox.json");
+	return resolve(cwd, ...PROJECT_POLICY_DIRECTORIES, "sandbox.json");
 }
 
 export function readProjectPolicySource(cwd: string): string | null {
-	const controlRoot = resolve(cwd, ".pi");
-	assertSafeProjectControlRoot(controlRoot, "supply sandbox policy");
+	assertSafeProjectPolicyDirectories(cwd, "supply sandbox policy");
 	const path = projectPolicyPath(cwd);
 	const metadata = lstatIfExists(path);
 	if (!metadata) return null;
@@ -29,13 +30,12 @@ export function writeProjectPolicySource(
 	sourceText: string,
 	expectedSourceText?: string | null,
 ): void {
-	const controlRoot = resolve(cwd, ".pi");
-	assertSafeProjectControlRoot(controlRoot, "hold sandbox policy");
+	assertSafeProjectPolicyDirectories(cwd, "hold sandbox policy");
 	if (expectedSourceText !== undefined && readProjectPolicySource(cwd) !== expectedSourceText) {
 		throw new Error("Project sandbox policy changed while request_access was awaiting approval");
 	}
-	mkdirSync(controlRoot, { recursive: true, mode: 0o700 });
-	assertSafeProjectControlRoot(controlRoot, "hold sandbox policy");
+	ensureProjectPolicyDirectories(cwd);
+	assertSafeProjectPolicyDirectories(cwd, "hold sandbox policy");
 	if (expectedSourceText !== undefined && readProjectPolicySource(cwd) !== expectedSourceText) {
 		throw new Error("Project sandbox policy changed while request_access was awaiting approval");
 	}
@@ -45,9 +45,29 @@ export function writeProjectPolicySource(
 	renameSync(temporary, path);
 }
 
-function assertSafeProjectControlRoot(controlRoot: string, action: string): void {
-	if (lstatIfExists(controlRoot)?.isSymbolicLink()) {
-		throw new Error(`A symlinked project control folder cannot ${action}: ${controlRoot}`);
+function projectPolicyDirectories(cwd: string): string[] {
+	const directories: string[] = [];
+	for (let length = 1; length <= PROJECT_POLICY_DIRECTORIES.length; length += 1) {
+		directories.push(resolve(cwd, ...PROJECT_POLICY_DIRECTORIES.slice(0, length)));
+	}
+	return directories;
+}
+
+function assertSafeProjectPolicyDirectories(cwd: string, action: string): void {
+	for (const directory of projectPolicyDirectories(cwd)) {
+		const metadata = lstatIfExists(directory);
+		if (metadata?.isSymbolicLink()) {
+			throw new Error(`A symlinked project control folder cannot ${action}: ${directory}`);
+		}
+		if (metadata && !metadata.isDirectory()) {
+			throw new Error(`Project sandbox control path must be a directory: ${directory}`);
+		}
+	}
+}
+
+function ensureProjectPolicyDirectories(cwd: string): void {
+	for (const directory of projectPolicyDirectories(cwd)) {
+		if (!lstatIfExists(directory)) mkdirSync(directory, { mode: 0o700 });
 	}
 }
 

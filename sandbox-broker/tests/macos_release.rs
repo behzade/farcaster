@@ -13,8 +13,9 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use pi_sandbox_broker::framing::{read_frame, write_frame};
 use pi_sandbox_broker::protocol::{
-    Access, ClientRequest, CommandSpec, Denial, ExecRequest, FilesystemRight, MissingPathBehavior,
-    NetworkPolicy, PathScope, SandboxPolicy, ServerEvent,
+    Access, ClientRequest, CommandSpec, Denial, DeniedAccess, DenyScope, ExecRequest,
+    FilesystemDeny, FilesystemRight, MissingPathBehavior, NetworkPolicy, PathScope, SandboxPolicy,
+    ServerEvent,
 };
 
 const RELEASE_TEST_TIMEOUT: Duration = Duration::from_secs(5);
@@ -510,6 +511,133 @@ fn native_broker_release_gate() {
     let loopback = broker.exec(loopback);
     assert_eq!(loopback.code, Some(0));
     assert!(loopback.output.ends_with(b"ok"));
+
+    let loopback_unix_path = workspace.join("loopback.sock");
+    let mut loopback_unix = request(
+        "loopback-unix-allowed",
+        &workspace,
+        format!(
+            "/usr/bin/python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.listen()' {}",
+            shell_quote(&loopback_unix_path.to_string_lossy())
+        ),
+        vec![],
+        None,
+        1024,
+    );
+    loopback_unix.policy.network = NetworkPolicy::Loopback;
+    let loopback_unix = broker.exec(loopback_unix);
+    assert_eq!(loopback_unix.code, Some(0));
+    assert!(loopback_unix_path.exists());
+    fs::remove_file(loopback_unix_path).expect("remove loopback Unix socket");
+
+    let project_control = workspace.join(".pi");
+    fs::create_dir_all(&project_control).expect("create project control folder");
+    let project_control_socket = project_control.join("blocked.sock");
+    let mut project_control_bind = request(
+        "loopback-unix-project-control-blocked",
+        &workspace,
+        format!(
+            "/usr/bin/python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])' {}",
+            shell_quote(&project_control_socket.to_string_lossy())
+        ),
+        vec![],
+        None,
+        1024,
+    );
+    project_control_bind.policy.network = NetworkPolicy::Loopback;
+    let project_control_bind = broker.exec(project_control_bind);
+    assert_ne!(project_control_bind.code, Some(0));
+    assert!(!project_control_socket.exists());
+
+    let denied_socket_root = workspace.join("denied-sockets");
+    fs::create_dir_all(&denied_socket_root).expect("create denied socket folder");
+    let denied_socket_path = denied_socket_root.join("blocked.sock");
+    let mut denied_socket_bind = request(
+        "loopback-unix-denied-child-blocked",
+        &workspace,
+        format!(
+            "/usr/bin/python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])' {}",
+            shell_quote(&denied_socket_path.to_string_lossy())
+        ),
+        vec![],
+        None,
+        1024,
+    );
+    denied_socket_bind.policy.network = NetworkPolicy::Loopback;
+    denied_socket_bind.policy.denies.push(FilesystemDeny {
+        access: DeniedAccess::Write,
+        pattern: denied_socket_root.to_string_lossy().into_owned(),
+        scope: DenyScope::Tree,
+    });
+    let denied_socket_bind = broker.exec(denied_socket_bind);
+    assert_ne!(denied_socket_bind.code, Some(0));
+    assert!(!denied_socket_path.exists());
+
+    let glob_denied_socket_path = workspace.join("blocked.secret");
+    let mut glob_denied_socket_bind = request(
+        "loopback-unix-glob-denied-blocked",
+        &workspace,
+        format!(
+            "/usr/bin/python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])' {}",
+            shell_quote(&glob_denied_socket_path.to_string_lossy())
+        ),
+        vec![],
+        None,
+        1024,
+    );
+    glob_denied_socket_bind.policy.network = NetworkPolicy::Loopback;
+    glob_denied_socket_bind.policy.denies.push(FilesystemDeny {
+        access: DeniedAccess::Write,
+        pattern: format!("{}/**/*.secret", workspace.display()),
+        scope: DenyScope::Glob,
+    });
+    let glob_denied_socket_bind = broker.exec(glob_denied_socket_bind);
+    assert_ne!(glob_denied_socket_bind.code, Some(0));
+    assert!(!glob_denied_socket_path.exists());
+
+    let outside_socket_path = PathBuf::from(format!(
+        "/tmp/pi-broker-{}-outside-write-root.sock",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&outside_socket_path);
+    let mut outside_socket_bind = request(
+        "loopback-unix-outside-write-root-blocked",
+        &workspace,
+        format!(
+            "/usr/bin/python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])' {}",
+            shell_quote(&outside_socket_path.to_string_lossy())
+        ),
+        vec![],
+        None,
+        1024,
+    );
+    outside_socket_bind.policy.network = NetworkPolicy::Loopback;
+    let outside_socket_bind = broker.exec(outside_socket_bind);
+    assert_ne!(outside_socket_bind.code, Some(0));
+    assert!(!outside_socket_path.exists());
+
+    let existing_socket_path = workspace.join("existing.sock");
+    let existing_socket = UnixListener::bind(&existing_socket_path)
+        .expect("bind existing workspace Unix socket fixture");
+    let existing_socket_path = existing_socket_path
+        .canonicalize()
+        .expect("canonical existing workspace Unix socket fixture");
+    let mut existing_socket_connect = request(
+        "loopback-unix-existing-outbound-blocked",
+        &workspace,
+        format!(
+            "/usr/bin/python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1])' {}",
+            shell_quote(&existing_socket_path.to_string_lossy())
+        ),
+        vec![],
+        None,
+        1024,
+    );
+    existing_socket_connect.policy.network = NetworkPolicy::Loopback;
+    let existing_socket_connect = broker.exec(existing_socket_connect);
+    assert_ne!(existing_socket_connect.code, Some(0));
+    drop(existing_socket);
+    fs::remove_file(existing_socket_path).expect("remove existing Unix socket fixture");
 
     let outbound = broker.exec(request(
         "outbound-blocked",

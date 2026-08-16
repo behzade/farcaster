@@ -30,7 +30,7 @@ test("project control roots are identified before symlink canonicalization", () 
 	mkdirSync(join(cwd, ".git"));
 	mkdirSync(join(cwd, ".pi"));
 	assert.equal(gitControlRoot(join(cwd, ".git", "index"), cwd), join(cwd, ".git"));
-	assert.equal(projectControlRoot(join(cwd, ".pi", "sandbox.json"), cwd), join(cwd, ".pi"));
+	assert.equal(projectControlRoot(join(cwd, ".pi", "extensions", "sandbox", "sandbox.json"), cwd), join(cwd, ".pi"));
 	const target = mkdtempSync(join(tmpdir(), "pi-git-target-"));
 	const linked = mkdtempSync(join(tmpdir(), "pi-git-link-"));
 	symlinkSync(target, join(linked, ".git"));

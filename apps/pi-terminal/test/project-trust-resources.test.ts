@@ -17,9 +17,10 @@ function project(): string {
   return root;
 }
 
-test("project sandbox policy requires project trust", () => {
+test("project sandbox policy uses Pi's trusted extension root", () => {
   const root = project();
-  writeFileSync(join(root, ".pi", "sandbox.json"), "{}\n");
+  mkdirSync(join(root, ".pi", "extensions", "sandbox"), { recursive: true });
+  writeFileSync(join(root, ".pi", "extensions", "sandbox", "sandbox.json"), "{}\n");
   expect(hasTrustRequiringProjectResources(root)).toBe(true);
 });
 

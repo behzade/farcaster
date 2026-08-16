@@ -22,11 +22,12 @@ applies hard denies, builds the platform policy, and owns command cleanup.
 Both backends support one foreground command, immutable file and tree rights,
 hard denies, filtered environments, bounded output, timeouts, cancellation,
 interactive stdin, and shutdown cleanup. Protocol v4 can apply active project
-policy for local test ports, route through one host-owned proxy, or do both.
-macOS adds only the requested loopback rules. Linux keeps local ports in a
-private network namespace and blocks the user command from opening host Unix
-sockets. macOS may also receive a small set of trusted exact Unix socket paths;
-Linux rejects those general paths.
+policy for local servers, route through one host-owned proxy, or do both.
+macOS adds loopback rules and permits Unix socket bind only below effective write
+roots; connecting to an existing Unix socket still needs an exact machine
+right. Linux keeps local ports in a private network namespace and blocks the
+user command from opening host Unix sockets. macOS may also receive a small set
+of trusted exact Unix socket paths; Linux rejects those general paths.
 
 The extension calls this sole and default backend `native-preview`. It starts a
 separate broker for each background job so the policy snapshot captured at job

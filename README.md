@@ -184,9 +184,10 @@ Native execution is deliberately narrow:
 - Each broker supports one command at a time. The session owns one foreground
   broker and each background job owns a separate broker.
 - Network access starts blocked. Project policy may grant one exact hostname or
-  IP, enforced by a host-owned proxy, or `network_local` for test ports. A host
-  grant applies to all ports on that exact host. Linux keeps local ports in the
-  command's private network namespace; macOS uses the host loopback interface.
+  IP, enforced by a host-owned proxy, or `network_local` for local servers. A
+  host grant applies to all ports on that exact host. Linux keeps local ports in
+  the command's private network namespace. macOS uses the host loopback
+  interface and permits Unix socket bind only at paths the command may write.
 - When macOS denial hints are available, summaries are grouped and best effort;
   Linux has no structured denial source. Hints are diagnostics only and never
   prompt or grant access.
@@ -200,7 +201,8 @@ change can claim Linux network parity.
 
 Global machine hard policy lives at
 `~/.pi/agent/extensions/sandbox.json`. A trusted project's portable access
-policy is checked in at `.pi/sandbox.json`:
+policy is checked in at `.pi/extensions/sandbox/sandbox.json`. Keeping it under
+Pi's project-extension root makes stock Pi require project trust before loading it:
 
 ```json
 {
