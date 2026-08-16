@@ -56,6 +56,20 @@ impl HardPolicy {
     }
 
     fn from_paths(home: &Path, broker: &Path) -> Result<Self, String> {
+        let mut policy = Self::base_for_paths(home, broker);
+        #[cfg(target_os = "macos")]
+        for helper in crate::conceal::helper_paths()? {
+            push_path_denies(
+                &mut policy.denies,
+                DeniedAccess::Write,
+                &helper,
+                DenyScope::File,
+            );
+        }
+        Ok(policy)
+    }
+
+    fn base_for_paths(home: &Path, broker: &Path) -> Self {
         let mut denies = Vec::new();
         for (access, path, scope) in [
             (DeniedAccess::ReadWrite, home.join(".ssh"), DenyScope::Tree),
@@ -90,10 +104,6 @@ impl HardPolicy {
         ] {
             push_path_denies(&mut denies, access, &path, scope);
         }
-        #[cfg(target_os = "macos")]
-        for helper in crate::conceal::helper_paths()? {
-            push_path_denies(&mut denies, DeniedAccess::Write, &helper, DenyScope::File);
-        }
         for pattern in ["/**/*.env", "/**/.env.*"] {
             denies.push(glob_deny(DeniedAccess::ReadWrite, pattern));
         }
@@ -103,7 +113,7 @@ impl HardPolicy {
         ));
         denies.push(glob_deny(DeniedAccess::Write, "/**/*.key"));
         denies.push(glob_deny(DeniedAccess::Write, "/**/*.pem"));
-        Ok(Self { denies })
+        Self { denies }
     }
 }
 
@@ -634,7 +644,7 @@ mod tests {
     fn hard_policy_scopes_key_reads_to_home_but_blocks_all_key_writes() {
         let home = temp_root("hard-policy-home");
         let broker = std::env::current_exe().expect("broker fixture");
-        let hard = HardPolicy::from_paths(&home, &broker).expect("hard policy");
+        let hard = HardPolicy::base_for_paths(&home, &broker);
         assert!(hard.denies.iter().any(|deny| {
             deny.access == DeniedAccess::Read
                 && deny.pattern == format!("{}/**/*.key", home.display())
