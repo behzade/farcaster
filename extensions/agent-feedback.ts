@@ -5,6 +5,7 @@ import {
   getAgentDir,
   type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
+import { Effect } from "effect";
 import { Type } from "typebox";
 import {
   appendAgentFeedback,
@@ -38,25 +39,35 @@ const Params = Type.Object({
 
 const feedbackPath = () => join(getAgentDir(), "agent-feedback.jsonl");
 
-function notifyFromHeadlessChild(pi: ExtensionAPI, message: string): void {
-  if (!process.env.PI_SUBAGENT_CHILD) return;
-  if (process.platform === "darwin") {
-    void pi.exec("terminal-notifier", [
-      "-title",
-      "Pi agent feedback",
-      "-message",
-      message,
-      "-group",
-      "pi-feedback",
-      "-activate",
-      "com.mitchellh.ghostty",
-    ], { timeout: 5000 }).catch(() => undefined);
-  } else if (process.platform === "linux") {
-    void pi.exec("notify-send", ["--app-name=Pi", "Pi agent feedback", message], {
-      timeout: 5000,
-    }).catch(() => undefined);
-  }
-}
+const notifyFromHeadlessChild = Effect.fn("AgentFeedback.notifyHeadless")(
+  (pi: ExtensionAPI, message: string) => {
+    if (!process.env.PI_SUBAGENT_CHILD) return Effect.void;
+    if (process.platform === "darwin") {
+      return Effect.tryPromise({
+        try: () => pi.exec("terminal-notifier", [
+          "-title",
+          "Pi agent feedback",
+          "-message",
+          message,
+          "-group",
+          "pi-feedback",
+          "-activate",
+          "com.mitchellh.ghostty",
+        ], { timeout: 5000 }),
+        catch: () => undefined,
+      }).pipe(Effect.ignore);
+    }
+    if (process.platform === "linux") {
+      return Effect.tryPromise({
+        try: () => pi.exec("notify-send", ["--app-name=Pi", "Pi agent feedback", message], {
+          timeout: 5000,
+        }),
+        catch: () => undefined,
+      }).pipe(Effect.ignore);
+    }
+    return Effect.void;
+  },
+);
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
@@ -73,7 +84,8 @@ export default function (pi: ExtensionAPI) {
     ],
     parameters: Params,
     executionMode: "sequential",
-    async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+    execute(toolCallId, params, signal, _onUpdate, ctx) {
+      return Effect.runPromise(Effect.sync(() => {
       const path = feedbackPath();
       const sessionId = ctx.sessionManager.getSessionId();
       const sessionFile = ctx.sessionManager.getSessionFile();
@@ -101,7 +113,7 @@ export default function (pi: ExtensionAPI) {
       const notice = `${record.severity}: ${record.summary}`;
       ctx.ui.notify(`Pi feedback recorded — ${notice}`, "warning");
       if (process.env.PI_SUBAGENT_CHILD) {
-        notifyFromHeadlessChild(pi, notice);
+        Effect.runFork(notifyFromHeadlessChild(pi, notice));
       } else {
         pi.events.emit("agent-feedback:reported", {
           title: "Pi agent feedback",
@@ -112,11 +124,12 @@ export default function (pi: ExtensionAPI) {
 
       return {
         content: [{
-          type: "text",
+          type: "text" as const,
           text: `Feedback recorded in ${path}. Continue with a safe workaround if possible; no user response is required.`,
         }],
         details: { id: record.id, path },
       };
+      }), { signal });
     },
   });
 }

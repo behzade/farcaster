@@ -288,7 +288,7 @@ export default function openaiServerCompactionExtension(pi: ExtensionAPI) {
           Effect.provide(
             responsesCompactionStreamLayer(provider.stream as ContinuationCompactionStream),
           ),
-        ));
+        ), { signal: event.signal });
         remoteResult = {
           output: buildRemoteCompactionV2History(
             continuationResult.promptInput,
@@ -297,7 +297,7 @@ export default function openaiServerCompactionExtension(pi: ExtensionAPI) {
           usage: continuationResult.usage,
         };
       } else {
-        remoteResult = await callRemoteCompactionEndpoint({
+        remoteResult = await Effect.runPromise(callRemoteCompactionEndpoint({
           model,
           apiKey: auth.apiKey,
           headers: auth.headers,
@@ -309,7 +309,7 @@ export default function openaiServerCompactionExtension(pi: ExtensionAPI) {
           reasoning,
           text,
           signal: event.signal,
-        });
+        }), { signal: event.signal });
       }
     } catch (error) {
       if (event.signal.aborted === false && ctx.hasUI) {

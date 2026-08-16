@@ -3,6 +3,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
+import { Effect } from "effect";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
@@ -168,7 +169,8 @@ export default function (pi: ExtensionAPI) {
 				sessionId: ctx.sessionManager.getSessionId(),
 				cwd: ctx.cwd,
 			});
-			const result = await requestUserApproval(ctx, {
+			let approvalDecision: "allowed" | "denied" = "denied";
+			const result = await Effect.runPromise(requestUserApproval(ctx, {
 				requestId: toolCallId,
 				title: "Add rights to project sandbox policy",
 				message: `${diff}\n\nReason: ${params.reason}`,
@@ -180,14 +182,18 @@ export default function (pi: ExtensionAPI) {
 					{ id: "deny", label: "Deny" },
 				],
 				signal,
-			});
+			}).pipe(
+				Effect.tap((value) => Effect.sync(() => {
+					approvalDecision = value.choiceId === "add" ? "allowed" : "denied";
+				})),
+				Effect.ensuring(Effect.sync(() => pi.events.emit("approval:resolved", {
+					kind: "io-permission",
+					toolName: "request_access",
+					toolCallId,
+					decision: approvalDecision,
+				}))),
+			), { signal });
 			const approved = result.choiceId === "add";
-			pi.events.emit("approval:resolved", {
-				kind: "io-permission",
-				toolName: "request_access",
-				toolCallId,
-				decision: approved ? "allowed" : "denied",
-			});
 			if (!approved) {
 				return accessError(result.unavailableReason ?? "Project policy change denied.", "denied");
 			}
@@ -223,7 +229,7 @@ export default function (pi: ExtensionAPI) {
 			"Use background_job for long-running servers, watchers, builds, and tests. Use request_access separately if policy must change, then start a new job.",
 		parameters: BackgroundJobParams,
 		executionMode: "sequential",
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			if ("name" in params && !isValidBackgroundJobName(params.name)) {
 				return toolError("Job names must start with pi- and use only letters, digits, dots, underscores, or hyphens.");
 			}
@@ -244,7 +250,7 @@ export default function (pi: ExtensionAPI) {
 						revalidatePermissions: () => revalidateProject(projectAtStart).filesystem,
 						networkHosts: networkHosts(projectAtStart),
 						allowLocalBinding: projectAtStart.allowLocalBinding,
-					});
+					}, signal);
 				} else if (params.action === "list") output = backgroundJobs.list();
 				else if (params.action === "status") output = backgroundJobs.status(params.name);
 				else if (params.action === "read") output = modelVisibleBackgroundJobOutput("read", backgroundJobs.read(params.name, params.lines ?? 200));

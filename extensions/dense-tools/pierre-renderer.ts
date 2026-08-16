@@ -1,4 +1,5 @@
 import * as pierre from "./diffs.bundle.mjs";
+import { Effect } from "effect";
 import * as standaloneTerminalText from "./terminal-text.ts";
 
 export const THEME_NAME = "gruvbox-dark-hard";
@@ -27,11 +28,14 @@ pierre.registerCustomTheme(THEME_NAME, async () => ({
   ],
 }));
 
-const highlighter = await pierre.getSharedHighlighter({
-  themes: [THEME_NAME],
-  langs: ["typescript", "tsx", "javascript", "jsx", "json", "css", "html", "markdown", "bash", "python", "rust", "go", "nix", "yaml", "toml"],
-  preferredHighlighter: "shiki-js",
-});
+const highlighter = await Effect.runPromise(Effect.tryPromise({
+  try: () => pierre.getSharedHighlighter({
+    themes: [THEME_NAME],
+    langs: ["typescript", "tsx", "javascript", "jsx", "json", "css", "html", "markdown", "bash", "python", "rust", "go", "nix", "yaml", "toml"],
+    preferredHighlighter: "shiki-js",
+  }),
+  catch: (cause) => cause,
+}));
 
 export interface DiffTheme {
   fg(color: "accent" | "borderMuted" | "dim" | "error" | "toolDiffContext", value: string): string;

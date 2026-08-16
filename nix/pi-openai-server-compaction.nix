@@ -9,7 +9,7 @@ buildNpmPackage {
 
   src = ../extensions/openai-server-compaction;
 
-  npmDepsHash = "sha256-19dAHM/XpDkEK8LAg3H745HGZqrrD07OG8wjMZ6Qy9o=";
+  npmDepsHash = "sha256-WzzsrKRTWjo5r0S+ZtIS9IvFA6MHg+CVSsahElvwjP4=";
   dontNpmBuild = true;
 
   installPhase = ''

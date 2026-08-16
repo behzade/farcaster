@@ -24,6 +24,8 @@ separate `nix-config` repo.
 - Stateless MCP access through a pinned `mcp-cli`.
 - Server-side OpenAI compaction for long sessions.
 - Compact read, edit, and shell output with syntax-highlighted diffs.
+- First-party TypeScript host integrations use Effect v4 for async work, typed failures,
+  cancellation, and resource lifetimes; pure parsers, policies, and renderers stay synchronous.
 - Trusted project-scoped Effect v4 tools loaded from `.pi/project-tools` with full host
   rights after project trust.
 - A global `report_pi_feedback` tool that records concrete agent-environment
@@ -48,6 +50,9 @@ separate `nix-config` repo.
 - [`extensions/project-tools`](extensions/project-tools) loads strict tool
   manifests and Effect v4 handlers from trusted project `.pi/project-tools`
   directories. These handlers run in Pi's host process, not the shell sandbox.
+- The loose entrypoints under [`extensions`](extensions) are packaged together by
+  `pi-core-extensions`; notifications, title animation, user input, and feedback use the
+  same pinned Effect v4 runtime while Pi callbacks remain boundary adapters.
 - [`extensions/agent-feedback.ts`](extensions/agent-feedback.ts) exposes the
   non-blocking feedback tool to main and packaged subagents.
 - [`nix`](nix) contains the pinned builds for Pi and every packaged extension.
@@ -132,6 +137,7 @@ npm run check:e2e --prefix extensions/sandbox
 Individual packages are available for focused work:
 
 ```sh
+nix build .#core-extensions
 nix build .#sandbox
 nix build .#sandbox-broker
 nix build .#dense-tools

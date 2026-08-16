@@ -23,6 +23,7 @@
         system:
         let
           pkgs = pkgsFor system;
+          coreExtensions = pkgs.callPackage ./nix/pi-core-extensions.nix { };
           mcpCli = pkgs.callPackage ./nix/pi-mcp-cli.nix { };
           sandboxBroker = pkgs.callPackage ./nix/pi-sandbox-broker.nix { };
           sandbox = pkgs.callPackage ./nix/pi-sandbox-extension.nix {
@@ -53,6 +54,7 @@
           permissionSystem = pkgs.callPackage ./nix/pi-permission-system.nix { };
           agent = pkgs.callPackage ./nix/pi-agent.nix {
             inherit
+              coreExtensions
               denseTools
               openaiServerCompaction
               permissionSystem
@@ -66,6 +68,7 @@
         in
         {
           inherit agent sandbox subagents;
+          core-extensions = coreExtensions;
           inherit pi;
           pi-terminal = piTerminal;
           mcp-cli = mcpCli;
@@ -147,8 +150,13 @@
         system:
         let
           pkgs = pkgsFor system;
+          coreExtensions = pkgs.callPackage ./nix/pi-core-extensions.nix { };
           denseTools = pkgs.callPackage ./nix/pi-dense-tools.nix { };
           mcpCli = pkgs.callPackage ./nix/pi-mcp-cli.nix { };
+          sandboxBroker = pkgs.callPackage ./nix/pi-sandbox-broker.nix { };
+          sandbox = pkgs.callPackage ./nix/pi-sandbox-extension.nix {
+            inherit mcpCli sandboxBroker;
+          };
           openaiServerCompaction = pkgs.callPackage ./nix/pi-openai-server-compaction.nix { };
           projectTools = pkgs.callPackage ./nix/pi-project-tools.nix { };
           piTerminal = pkgs.callPackage ./nix/pi-terminal.nix { };
@@ -160,26 +168,53 @@
           webAccess = pkgs.callPackage ./nix/pi-web-access.nix { };
         in
         {
-          sandbox-tests = pkgs.runCommand "pi-sandbox-tests" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
-            node --import ${self}/extensions/sandbox/test-setup.ts --test \
-              ${self}/extensions/sandbox/background-jobs.test.ts \
-              ${self}/extensions/sandbox/broker-client.test.ts \
-              ${self}/extensions/sandbox/broker-policy.test.ts \
-              ${self}/extensions/sandbox/native-background-jobs.test.ts \
-              ${self}/extensions/sandbox/native-network-proxy.test.ts \
-              ${self}/extensions/sandbox/network-policy.test.ts \
-              ${self}/extensions/sandbox/sandbox-config.test.ts \
-              ${self}/extensions/sandbox/development-caches.test.ts \
-              ${self}/extensions/sandbox/extension-schema.test.ts \
-              ${self}/extensions/sandbox/io-permissions.test.ts \
-              ${self}/extensions/sandbox/io-policy.test.ts \
-              ${self}/extensions/sandbox/native-sandbox-ops.test.ts \
-              ${self}/extensions/sandbox/project-policy.test.ts \
-              ${self}/extensions/sandbox/permission-system-approval.test.ts
+          core-extensions = pkgs.runCommand "pi-core-extensions-test" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
+            cp -R ${coreExtensions}/* .
+            chmod -R u+w node_modules
+            mkdir -p node_modules/@earendil-works
+            ln -s ${piTerminal}/lib/pi-terminal/node_modules/@earendil-works/pi-ai node_modules/@earendil-works/pi-ai
+            ln -s ${piTerminal}/lib/pi-terminal/node_modules/@earendil-works/pi-coding-agent node_modules/@earendil-works/pi-coding-agent
+            ln -s ${piTerminal}/lib/pi-terminal/node_modules/typebox node_modules/typebox
+            timeout 60 node --experimental-strip-types -e '
+              await Promise.all([
+                import("./agent-feedback.ts"),
+                import("./notifications.ts"),
+                import("./prompt-inspector.ts"),
+                import("./session-hooks.ts"),
+                import("./title-state.ts"),
+                import("./user-input.ts"),
+              ])
+            '
             touch "$out"
           '';
 
-          sandbox-broker = pkgs.callPackage ./nix/pi-sandbox-broker.nix { };
+          sandbox-tests = pkgs.runCommand "pi-sandbox-tests" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
+            cp ${self}/extensions/sandbox/*.ts .
+            cp -R ${sandbox}/node_modules .
+            chmod -R u+w node_modules
+            mkdir -p node_modules/@earendil-works
+            ln -s ${piTerminal}/lib/pi-terminal/node_modules/@earendil-works/pi-ai node_modules/@earendil-works/pi-ai
+            ln -s ${piTerminal}/lib/pi-terminal/node_modules/@earendil-works/pi-coding-agent node_modules/@earendil-works/pi-coding-agent
+            ln -s ${piTerminal}/lib/pi-terminal/node_modules/typebox node_modules/typebox
+            node --import ./test-setup.ts --test \
+              background-jobs.test.ts \
+              broker-client.test.ts \
+              broker-policy.test.ts \
+              native-background-jobs.test.ts \
+              native-network-proxy.test.ts \
+              network-policy.test.ts \
+              sandbox-config.test.ts \
+              development-caches.test.ts \
+              extension-schema.test.ts \
+              io-permissions.test.ts \
+              io-policy.test.ts \
+              native-sandbox-ops.test.ts \
+              project-policy.test.ts \
+              permission-system-approval.test.ts
+            touch "$out"
+          '';
+
+          sandbox-broker = sandboxBroker;
           mcp-cli = pkgs.runCommand "pi-mcp-cli-test" { nativeBuildInputs = [ mcpCli ]; } ''
             test "$(mcp-cli --version)" = "mcp-cli v0.3.0"
             touch "$out"
@@ -220,9 +255,16 @@
             nativeBuildInputs = [ pkgs.nodejs ];
           } ''
             cp -R ${openaiServerCompaction}/src ${openaiServerCompaction}/node_modules .
-            mkdir test
-            cp ${self}/extensions/openai-server-compaction/test/continuation-compaction.test.ts test/
-            node --experimental-strip-types --test test/continuation-compaction.test.ts
+            chmod -R u+w node_modules
+            mkdir -p node_modules/@earendil-works test
+            ln -s ${piTerminal}/lib/pi-terminal/node_modules/@earendil-works/pi-agent-core node_modules/@earendil-works/pi-agent-core
+            ln -s ${piTerminal}/lib/pi-terminal/node_modules/@earendil-works/pi-ai node_modules/@earendil-works/pi-ai
+            ln -s ${piTerminal}/lib/pi-terminal/node_modules/@earendil-works/pi-coding-agent node_modules/@earendil-works/pi-coding-agent
+            cp ${self}/extensions/openai-server-compaction/test/*.test.ts test/
+            timeout 60 node --experimental-strip-types -e 'import("./src/index.ts")'
+            timeout 60 node --experimental-strip-types --test test/openai-ws-connection.test.ts
+            timeout 60 node --experimental-strip-types --test test/openai-ws-stream.test.ts
+            timeout 60 node --experimental-strip-types --test test/continuation-compaction.test.ts
             touch "$out"
           '';
           project-tools-tests = pkgs.runCommand "pi-project-tools-tests" {

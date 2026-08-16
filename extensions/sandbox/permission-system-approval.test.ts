@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Effect } from "effect";
 import { requestUserApproval, type UserApprovalRequest } from "./permission-system-approval.ts";
 
 const SERVICE_KEY = Symbol.for("@gotgenes/pi-permission-system:service");
@@ -29,7 +30,7 @@ test.afterEach(clearService);
 
 test("uses the local UI when one is available", async () => {
 	setService({ requestUserApproval: async () => { throw new Error("must not delegate"); } });
-	const result = await requestUserApproval(
+	const result = await Effect.runPromise(requestUserApproval(
 		{
 			hasUI: true,
 			ui: {
@@ -38,12 +39,12 @@ test("uses the local UI when one is available", async () => {
 			} as never,
 		},
 		request,
-	);
+	));
 	assert.deepEqual(result, { choiceId: "allow" });
 });
 
 test("collects a denial reason from the local UI", async () => {
-	const result = await requestUserApproval(
+	const result = await Effect.runPromise(requestUserApproval(
 		{
 			hasUI: true,
 			ui: {
@@ -52,7 +53,7 @@ test("collects a denial reason from the local UI", async () => {
 			} as never,
 		},
 		request,
-	);
+	));
 	assert.deepEqual(result, {
 		choiceId: "deny-reason",
 		reason: "Use the checked-in fixture",
@@ -66,12 +67,12 @@ test("delegates a headless prompt through the published permission service", asy
 			return { choiceId: "allow" };
 		},
 	});
-	const result = await requestUserApproval({ hasUI: false, ui: {} as never }, request);
+	const result = await Effect.runPromise(requestUserApproval({ hasUI: false, ui: {} as never }, request));
 	assert.deepEqual(result, { choiceId: "allow" });
 });
 
 test("fails closed when the permission service cannot forward approvals", async () => {
-	const result = await requestUserApproval({ hasUI: false, ui: {} as never }, request);
+	const result = await Effect.runPromise(requestUserApproval({ hasUI: false, ui: {} as never }, request));
 	assert.equal(result.choiceId, null);
 	assert.match(result.unavailableReason ?? "", /pi-permission-system/);
 });

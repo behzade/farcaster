@@ -41,34 +41,38 @@ function registerTool(pi: ExtensionAPI, projectRoot: string, tool: LoadedProject
   return name;
 }
 
-async function loadForSession(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
-  if (!ctx.isProjectTrusted()) return;
-  const discovery = await Effect.runPromise(discoverProjectTools(ctx.cwd));
-  const diagnostics = [...discovery.diagnostics];
-  const occupied = new Set(pi.getAllTools().map((tool) => tool.name));
-  const registered: string[] = [];
-  for (const tool of discovery.tools) {
-    const name = registeredName(discovery.projectRoot, tool.manifest.name);
-    if (occupied.has(name)) {
-      diagnostics.push({ tool: tool.manifest.name, message: `tool name collides with ${name}` });
-      continue;
-    }
-    registered.push(registerTool(pi, discovery.projectRoot, tool));
-    occupied.add(name);
-  }
-  if (registered.length > 0) {
-    pi.setActiveTools([...new Set([...pi.getActiveTools(), ...registered])]);
-  }
-  if (ctx.hasUI) {
-    for (const diagnostic of diagnostics) {
-      ctx.ui.notify(`Project tool ${diagnostic.tool} disabled: ${diagnostic.message}`, "warning");
-    }
-  }
-}
+const loadForSession = Effect.fn("ProjectTools.loadForSession")(
+  function* (pi: ExtensionAPI, ctx: ExtensionContext) {
+    if (!ctx.isProjectTrusted()) return;
+    const discovery = yield* discoverProjectTools(ctx.cwd);
+    yield* Effect.sync(() => {
+      const diagnostics = [...discovery.diagnostics];
+      const occupied = new Set(pi.getAllTools().map((tool) => tool.name));
+      const registered: string[] = [];
+      for (const tool of discovery.tools) {
+        const name = registeredName(discovery.projectRoot, tool.manifest.name);
+        if (occupied.has(name)) {
+          diagnostics.push({ tool: tool.manifest.name, message: `tool name collides with ${name}` });
+          continue;
+        }
+        registered.push(registerTool(pi, discovery.projectRoot, tool));
+        occupied.add(name);
+      }
+      if (registered.length > 0) {
+        pi.setActiveTools([...new Set([...pi.getActiveTools(), ...registered])]);
+      }
+      if (ctx.hasUI) {
+        for (const diagnostic of diagnostics) {
+          ctx.ui.notify(`Project tool ${diagnostic.tool} disabled: ${diagnostic.message}`, "warning");
+        }
+      }
+    });
+  },
+);
 
 export default function projectTools(pi: ExtensionAPI): void {
   pi.on("session_start", async (event, ctx) => {
     if (event.reason !== "startup" && event.reason !== "reload") return;
-    await loadForSession(pi, ctx);
+    await Effect.runPromise(loadForSession(pi, ctx));
   });
 }

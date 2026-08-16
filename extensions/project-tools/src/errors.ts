@@ -1,12 +1,19 @@
-import { Data } from "effect";
+import { Schema } from "effect";
 
-export class ProjectToolLoadError extends Data.TaggedError("ProjectToolLoadError")<{
-  readonly path: string;
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
-export class ProjectToolRunError extends Data.TaggedError("ProjectToolRunError")<{
-  readonly toolName: string;
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+export class ProjectToolLoadError extends Schema.TaggedError<ProjectToolLoadError>()(
+  "ProjectToolLoadError",
+  {
+    path: Schema.String,
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
+export class ProjectToolRunError extends Schema.TaggedError<ProjectToolRunError>()(
+  "ProjectToolRunError",
+  {
+    toolName: Schema.String,
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}

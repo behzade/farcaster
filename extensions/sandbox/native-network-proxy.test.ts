@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { createServer as createHttpServer } from "node:http";
-import { connect } from "node:net";
+import { connect, createServer } from "node:net";
 import { stat } from "node:fs/promises";
+import { dirname } from "node:path";
 import test from "node:test";
 import { startNativeNetworkProxy } from "./native-network-proxy.ts";
 
@@ -59,6 +60,48 @@ test("native proxy accepts SOCKS5 only for approved hosts", async () => {
 		await proxy.close();
 		await new Promise<void>((resolve) => upstream.close(() => resolve()));
 	}
+});
+
+test("proxy close destroys established tunnels before awaiting server close", async () => {
+	const upstreamSockets = new Set<import("node:net").Socket>();
+	const upstream = createServer((socket) => {
+		upstreamSockets.add(socket);
+		socket.once("close", () => upstreamSockets.delete(socket));
+	});
+	await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+	const address = upstream.address();
+	assert(address && typeof address !== "string");
+	const proxy = await startNativeNetworkProxy(["127.0.0.1"]);
+	const client = connect(proxy.port, "127.0.0.1");
+	try {
+		await onceConnected(client);
+		client.write(`CONNECT 127.0.0.1:${address.port} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n`);
+		assert.match((await readBytes(client, 39)).toString("utf8"), /^HTTP\/1\.1 200/);
+		await Promise.race([
+			proxy.close(),
+			new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("proxy close timed out")), 500)),
+		]);
+		assert.equal(client.destroyed, true);
+	} finally {
+		client.destroy();
+		for (const socket of upstreamSockets) socket.destroy();
+		await proxy.close();
+		await new Promise<void>((resolve) => upstream.close(() => resolve()));
+	}
+});
+
+test("proxy close finalizes partial handshakes, listeners, sockets, and its temp directory", async () => {
+	const proxy = await startNativeNetworkProxy(["127.0.0.1"]);
+	const socket = connect(proxy.port, "127.0.0.1");
+	await onceConnected(socket);
+	socket.write(Buffer.from([0x05]));
+	const directory = dirname(proxy.socketPath);
+	await proxy.close();
+	assert.equal(socket.destroyed, true);
+	await assert.rejects(stat(proxy.socketPath), /ENOENT/);
+	await assert.rejects(stat(directory), /ENOENT/);
+	assert.equal(socket.listenerCount("data"), 0);
+	assert.equal(socket.listenerCount("error"), 0);
 });
 
 function proxyRequest(port: number, request: string): Promise<string> {

@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { Effect, type Fiber } from "effect";
 import { NotificationCoalescer, osc9Sequence, preview } from "./lib/notification-core.ts";
 type Condition = "always" | "unfocused" | "never";
 type NotificationType =
@@ -60,35 +61,51 @@ export default function (pi: ExtensionAPI) {
   let terminalFocused = true;
   let focusTail = "";
   const queue = new NotificationCoalescer<PendingNotification>();
-  let flushTimer: NodeJS.Timeout | undefined;
+  let flushFiber: Fiber.Fiber<void, never> | undefined;
   let focusReporting = false;
 
   const shouldPost = (type: NotificationType) =>
     config.types.includes(type) && config.condition !== "never" &&
     (config.condition === "always" || !terminalFocused);
 
-  const post = async ({ title, message }: PendingNotification) => {
+  const post = Effect.fn("Notifications.post")(function* ({ title, message }: PendingNotification) {
     if ((config.method === "auto" && supportsOsc9()) || config.method === "osc9") {
-      process.stdout.write(osc9Sequence(message, Boolean(process.env.TMUX)));
+      yield* Effect.sync(() => process.stdout.write(osc9Sequence(message, Boolean(process.env.TMUX))));
     } else if (config.method === "bel") {
-      process.stdout.write("\u0007");
+      yield* Effect.sync(() => process.stdout.write("\u0007"));
     } else if (process.platform === "darwin") {
-      await pi.exec("terminal-notifier", ["-title", title, "-message", preview(message), "-group", "pi", "-activate", "com.mitchellh.ghostty"]).catch(() => undefined);
+      yield* Effect.tryPromise({
+        try: () => pi.exec("terminal-notifier", ["-title", title, "-message", preview(message), "-group", "pi", "-activate", "com.mitchellh.ghostty"]),
+        catch: () => undefined,
+      }).pipe(Effect.ignore);
     } else if (process.platform === "linux") {
-      await pi.exec("notify-send", ["--app-name=Pi", title, preview(message)]).catch(() => undefined);
+      yield* Effect.tryPromise({
+        try: () => pi.exec("notify-send", ["--app-name=Pi", title, preview(message)]),
+        catch: () => undefined,
+      }).pipe(Effect.ignore);
     }
-  };
+  });
 
-  const flush = () => {
-    flushTimer = undefined;
-    const next = queue.take();
-    if (next && shouldPost(next.type)) void post(next);
-  };
+  const flush = Effect.fn("Notifications.flush")(function* () {
+    while (true) {
+      const next = yield* Effect.sync(() => queue.take());
+      if (!next) return;
+      if (shouldPost(next.type)) yield* post(next);
+    }
+  });
 
   const enqueue = (next: PendingNotification) => {
     if (!shouldPost(next.type)) return;
     queue.push(next);
-    if (!flushTimer) flushTimer = setTimeout(flush, 75);
+    if (flushFiber) return;
+    flushFiber = Effect.runFork(
+      Effect.sleep(75).pipe(
+        Effect.andThen(flush()),
+        Effect.ensuring(Effect.sync(() => {
+          flushFiber = undefined;
+        })),
+      ),
+    );
   };
 
   const onInput = (chunk: Buffer | string) => {
@@ -138,7 +155,8 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_shutdown", () => {
     unsubscribeApproval();
     unsubscribeFeedback();
-    if (flushTimer) clearTimeout(flushTimer);
+    flushFiber?.interruptUnsafe();
+    flushFiber = undefined;
     if (focusReporting) {
       process.stdin.off("data", onInput);
       process.stdout.write("\u001b[?1004l");

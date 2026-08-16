@@ -62,8 +62,8 @@ const attempt = <A>(path: string, message: string, operation: () => Promise<A>) 
     try: operation,
     catch: (cause) => new ProjectToolLoadError({ path, message, cause }),
   });
-export const loadManifest = (directory: string) =>
-  Effect.gen(function*() {
+export const loadManifest = Effect.fn("ProjectTools.loadManifest")(
+  function* (directory: string) {
     const manifestPath = resolve(directory, "tool.json");
     const manifestStat = yield* attempt(manifestPath, "could not read manifest metadata", () => lstat(manifestPath));
     if (!manifestStat.isFile() || manifestStat.isSymbolicLink()) {
@@ -120,4 +120,5 @@ export const loadManifest = (directory: string) =>
       parametersValidator,
       resultValidator,
     } satisfies LoadedManifest;
-  });
+  },
+);

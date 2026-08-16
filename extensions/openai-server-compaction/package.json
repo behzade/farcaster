@@ -9,7 +9,7 @@
     "extensions": ["./src/index.ts"]
   },
   "dependencies": {
-    "effect": "3.21.4",
+    "effect": "4.0.0-beta.107",
     "ws": "^8.18.0"
   }
 }

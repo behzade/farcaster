@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { describe, it } from "node:test";
-import { Effect } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 import {
   executeContinuationCompaction,
   responsesCompactionStreamLayer,
   type ContinuationCompactionStream,
 } from "../src/continuation-compaction.ts";
+import {
+  callRemoteCompactionEndpoint,
+  RemoteCompactionError,
+  type ResponseItem,
+} from "../src/remote-compaction.ts";
+import { OpenAIWebSocketManager } from "../src/openai-ws-connection.ts";
 import {
   mergeProviderHeaders,
   resolveProviderHeaders,
@@ -28,7 +35,7 @@ const usage = {
 };
 
 function runWith(stream: ContinuationCompactionStream, params: {
-  explicitPromptInput?: Array<Record<string, unknown>>;
+  explicitPromptInput?: ResponseItem[];
   requestShape?: Record<string, unknown>;
 } = {}) {
   return Effect.runPromise(executeContinuationCompaction({
@@ -125,6 +132,104 @@ describe("executeContinuationCompaction", () => {
     })();
 
     await assert.rejects(runWith(stream), /expected one compaction output item/);
+  });
+
+  it("closes the provider iterator when compaction is interrupted", async () => {
+    let released = false;
+    let startedResolve!: () => void;
+    const started = new Promise<void>((resolve) => {
+      startedResolve = resolve;
+    });
+    const stream: ContinuationCompactionStream = (_model, _context, options) => {
+      (options.onPayload as (body: unknown) => unknown)({ input: [] });
+      return {
+        [Symbol.asyncIterator]() {
+          return {
+            next() {
+              startedResolve();
+              return new Promise<IteratorResult<Record<string, unknown>>>(() => undefined);
+            },
+            async return() {
+              released = true;
+              return { done: true, value: undefined };
+            },
+          };
+        },
+      };
+    };
+    const controller = new AbortController();
+    const running = Effect.runPromise(executeContinuationCompaction({
+      model: { id: "gpt-5.6-sol" },
+      context: { systemPrompt: "system", messages: [] },
+      streamOptions: { transport: "websocket-cached" },
+    }).pipe(Effect.provide(responsesCompactionStreamLayer(stream))), {
+      signal: controller.signal,
+    });
+    await started;
+    controller.abort();
+
+    await assert.rejects(running);
+    assert.equal(released, true);
+  });
+});
+
+describe("remote compaction effects", () => {
+  it("reports unsupported models as a typed failure rather than a defect", async () => {
+    const exit = await Effect.runPromiseExit(callRemoteCompactionEndpoint({
+      model: { provider: "other", api: "other", id: "other" } as never,
+      apiKey: "unused",
+      input: [],
+      tools: [],
+      parallelToolCalls: true,
+    }));
+
+    assert.ok(Exit.isFailure(exit));
+    const error = Cause.findErrorOption(exit.cause);
+    assert.ok(Option.isSome(error));
+    assert.ok(error.value instanceof RemoteCompactionError);
+    assert.match(error.value.message, /only enabled for supported/);
+    assert.equal(Cause.hasDies(exit.cause), false);
+  });
+});
+
+describe("WebSocket acquisition cancellation", () => {
+  it("terminates a socket created after async acquisition is canceled", async () => {
+    class DelayedWebSocket extends EventEmitter {
+      readyState = 0;
+      terminateCalls = 0;
+      send(): void {}
+      close(): void { this.readyState = 3; }
+      terminate(): void {
+        this.terminateCalls++;
+        this.readyState = 3;
+      }
+    }
+
+    const socket = new DelayedWebSocket();
+    let resolveSocket!: (socket: DelayedWebSocket) => void;
+    let startedResolve!: () => void;
+    const started = new Promise<void>((resolve) => {
+      startedResolve = resolve;
+    });
+    const manager = new OpenAIWebSocketManager({
+      socketFactory: () => new Promise((resolve) => {
+        resolveSocket = resolve;
+        startedResolve();
+      }),
+    });
+    const settled = manager.connect("key").then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+
+    await started;
+    manager.close();
+    resolveSocket(socket);
+    const failure = await settled;
+    assert.ok(failure instanceof Error);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    assert.equal(socket.terminateCalls, 1);
+    assert.equal(socket.listenerCount("message"), 0);
   });
 });
 

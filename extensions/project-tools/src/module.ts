@@ -32,8 +32,8 @@ const jiti = createJiti(import.meta.url, {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
-export const loadProjectToolModule = (loaded: LoadedManifest) =>
-  Effect.tryPromise({
+export const loadProjectToolModule = Effect.fn("ProjectTools.loadProjectToolModule")(
+  (loaded: LoadedManifest) => Effect.tryPromise({
     try: async () => {
       const imported = await jiti.import<unknown>(loaded.entrypoint);
       if (!isRecord(imported) || typeof imported.execute !== "function") {
@@ -53,6 +53,18 @@ export const loadProjectToolModule = (loaded: LoadedManifest) =>
     catch: (cause) => cause instanceof ProjectToolLoadError
       ? cause
       : new ProjectToolLoadError({ path: loaded.entrypoint, message: "could not import project tool", cause }),
+  }),
+);
+
+const interruptOnAbort = (signal: AbortSignal): Effect.Effect<never> =>
+  Effect.callback<never>((resume) => {
+    if (signal.aborted) {
+      resume(Effect.interrupt);
+      return;
+    }
+    const onAbort = () => resume(Effect.interrupt);
+    signal.addEventListener("abort", onAbort, { once: true });
+    return Effect.sync(() => signal.removeEventListener("abort", onAbort));
   });
 
 function formatFailure(cause: Cause.Cause<unknown>): string {
@@ -71,12 +83,12 @@ function formatFailure(cause: Cause.Cause<unknown>): string {
   return Cause.pretty(cause);
 }
 
-export const executeProjectTool = (
-  tool: LoadedProjectTool,
-  arguments_: unknown,
-  context: ProjectToolContext,
-) =>
-  Effect.gen(function*() {
+export const executeProjectTool = Effect.fn("ProjectTools.executeProjectTool")(
+  function* (
+    tool: LoadedProjectTool,
+    arguments_: unknown,
+    context: ProjectToolContext,
+  ) {
     if (!tool.parametersValidator.Check(arguments_)) {
       return yield* new ProjectToolRunError({
         toolName: tool.manifest.name,
@@ -99,12 +111,13 @@ export const executeProjectTool = (
       });
     }
 
-    const runnable = tool.module.dependencies === undefined
+    const provided = tool.module.dependencies === undefined
       ? effect
       : Effect.provide(effect, tool.module.dependencies);
-    const exit = yield* Effect.promise(() => Effect.runPromiseExit(runnable as Effect.Effect<unknown, unknown>, {
-      signal: context.signal,
-    }));
+    const runnable = context.signal === undefined
+      ? provided
+      : Effect.raceFirst(provided, interruptOnAbort(context.signal));
+    const exit = yield* Effect.exit(runnable as Effect.Effect<unknown, unknown>);
     if (Exit.isFailure(exit)) {
       return yield* new ProjectToolRunError({
         toolName: tool.manifest.name,
@@ -119,7 +132,8 @@ export const executeProjectTool = (
       });
     }
     return exit.value;
-  });
+  },
+);
 
 export function formatProjectToolResult(value: unknown): string {
   if (typeof value === "string") return value;

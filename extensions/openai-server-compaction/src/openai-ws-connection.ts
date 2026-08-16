@@ -1,10 +1,12 @@
 /**
  * Thin OpenAI Responses WebSocket client.
  *
- * Handles connection lifecycle, message dispatch, reconnect scheduling, and the
- * latest `previous_response_id` learned from completed responses.
+ * Socket acquisition, listener ownership, reconnect delay, and shutdown are
+ * represented as Effect resources. The class/EventEmitter and Promise methods
+ * are retained only as compatibility adapters for Pi and focused fakes.
  */
 import { EventEmitter } from "node:events";
+import { Cause, Deferred, Effect, Exit, Fiber, Queue, Schema, Scope } from "effect";
 
 export interface ResponseObject {
   id: string;
@@ -162,24 +164,59 @@ const BACKOFF_DELAYS_MS = [1000, 2000, 4000, 8000, 16000] as const;
 const WS_OPEN = 1;
 const WS_CONNECTING = 0;
 
+type WebSocketLike = EventEmitter & {
+  readyState: number;
+  send(data: string): void;
+  close(code?: number, reason?: string): void;
+  terminate?: () => void;
+};
+
+type SocketFactory = (url: string, options: { headers: Record<string, string> }) => WebSocketLike | Promise<WebSocketLike>;
+
 export interface OpenAIWebSocketManagerOptions {
   url?: string;
   maxRetries?: number;
   backoffDelaysMs?: readonly number[];
   headers?: Record<string, string>;
+  /** Test/adapter seam; production dynamically imports `ws`. */
+  socketFactory?: SocketFactory;
 }
 
+export class OpenAIWebSocketTransportError extends Schema.TaggedError<OpenAIWebSocketTransportError>()(
+  "OpenAIWebSocketTransportError",
+  {
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
+const transportError = (cause: unknown, prefix?: string) => new OpenAIWebSocketTransportError({
+  message: prefix
+    ? `${prefix}: ${cause instanceof Error ? cause.message : String(cause)}`
+    : cause instanceof Error ? cause.message : String(cause),
+  cause,
+});
+
+type SocketSignal =
+  | { readonly type: "open" }
+  | { readonly type: "error"; readonly error: Error }
+  | { readonly type: "close"; readonly code: number; readonly reason: string }
+  | { readonly type: "message"; readonly data: unknown };
+
 export class OpenAIWebSocketManager extends EventEmitter {
-  private ws: any = null;
+  private ws: WebSocketLike | null = null;
   private apiKey: string | null = null;
   private retryCount = 0;
-  private retryTimer: NodeJS.Timeout | null = null;
   private closed = false;
   private _previousResponseId: string | null = null;
   private readonly wsUrl: string;
   private readonly maxRetries: number;
   private readonly backoffDelaysMs: readonly number[];
   private readonly headers: Record<string, string>;
+  private readonly socketFactory?: SocketFactory;
+  private scope: Scope.Closeable = Scope.makeUnsafe();
+  private supervisor: Fiber.Fiber<void, never> | undefined;
+  private initialConnection: Deferred.Deferred<void, OpenAIWebSocketTransportError> | undefined;
 
   constructor(options: OpenAIWebSocketManagerOptions = {}) {
     super();
@@ -187,26 +224,51 @@ export class OpenAIWebSocketManager extends EventEmitter {
     this.maxRetries = options.maxRetries ?? MAX_RETRIES;
     this.backoffDelaysMs = options.backoffDelaysMs ?? BACKOFF_DELAYS_MS;
     this.headers = options.headers ?? {};
+    this.socketFactory = options.socketFactory;
   }
 
   get previousResponseId(): string | null {
     return this._previousResponseId;
   }
 
-  async connect(apiKey: string): Promise<void> {
+  readonly connectEffect = Effect.fn("OpenAIWebSocketManager.connect")(function* (
+    this: OpenAIWebSocketManager,
+    apiKey: string,
+  ) {
+    if (this.supervisor) yield* this.closeEffect();
+    if (this.closed) this.scope = Scope.makeUnsafe();
     this.apiKey = apiKey;
     this.closed = false;
     this.retryCount = 0;
-    await this.openConnection();
+    const initial = yield* Deferred.make<void, OpenAIWebSocketTransportError>();
+    this.initialConnection = initial;
+    this.supervisor = yield* Effect.forkIn(this.supervise(initial), this.scope);
+    return yield* Deferred.await(initial).pipe(Effect.ensuring(Effect.sync(() => {
+      if (this.initialConnection === initial) this.initialConnection = undefined;
+    })));
+  });
+
+  /** Promise boundary retained for existing WebSocket-manager callers. */
+  connect(apiKey: string): Promise<void> {
+    return Effect.runPromise(this.connectEffect(apiKey));
   }
 
+  readonly sendEffect = Effect.fn("OpenAIWebSocketManager.send")((event: ClientEvent) =>
+    Effect.try({
+      try: () => {
+        if (!this.ws || this.ws.readyState !== WS_OPEN) {
+          throw new Error(
+            `OpenAIWebSocketManager: cannot send; connection not open (readyState=${this.ws?.readyState ?? "none"})`,
+          );
+        }
+        this.ws.send(JSON.stringify(event));
+      },
+      catch: (cause) => transportError(cause),
+    }),
+  );
+
   send(event: ClientEvent): void {
-    if (!this.ws || this.ws.readyState !== WS_OPEN) {
-      throw new Error(
-        `OpenAIWebSocketManager: cannot send; connection not open (readyState=${this.ws?.readyState ?? "none"})`,
-      );
-    }
-    this.ws.send(JSON.stringify(event));
+    Effect.runSync(this.sendEffect(event));
   }
 
   onMessage(handler: (event: OpenAIWebSocketEvent) => void): () => void {
@@ -218,175 +280,223 @@ export class OpenAIWebSocketManager extends EventEmitter {
     return this.ws !== null && this.ws.readyState === WS_OPEN;
   }
 
-  close(): void {
+  readonly closeEffect = Effect.fn("OpenAIWebSocketManager.close")(function* (this: OpenAIWebSocketManager) {
+    if (this.closed) return;
     this.closed = true;
-    this.cancelRetryTimer();
-    if (!this.ws) return;
-    this.ws.removeAllListeners?.();
-    try {
-      if (this.ws.readyState === WS_OPEN) {
-        this.ws.close(1000, "Client closed");
-      } else if (this.ws.readyState === WS_CONNECTING) {
-        this.ws.terminate?.();
-      }
-    } catch {
-      // ignore
+    const initial = this.initialConnection;
+    this.initialConnection = undefined;
+    if (initial && !Deferred.isDoneUnsafe(initial)) {
+      Deferred.doneUnsafe(initial, Effect.fail(new OpenAIWebSocketTransportError({
+        message: "OpenAIWebSocketManager: connection closed",
+      })));
     }
+    const socket = this.ws;
     this.ws = null;
+    if (socket) {
+      yield* Effect.sync(() => {
+        try {
+          if (socket.readyState === WS_OPEN) socket.close(1000, "Client closed");
+          else if (socket.readyState === WS_CONNECTING) socket.terminate?.();
+        } catch {
+          // Shutdown is best effort; scope finalizers still remove owned listeners.
+        }
+      });
+    }
+    yield* Scope.close(this.scope, Exit.void);
+    this.supervisor = undefined;
+  });
+
+  close(): void {
+    Effect.runSync(this.closeEffect());
   }
+
+  readonly warmUpEffect = Effect.fn("OpenAIWebSocketManager.warmUp")((params: {
+    model: string;
+    tools?: FunctionToolDefinition[];
+    instructions?: string;
+  }) => this.sendEffect({
+    type: "response.create",
+    generate: false,
+    model: params.model,
+    ...(params.tools ? { tools: params.tools } : {}),
+    ...(params.instructions ? { instructions: params.instructions } : {}),
+  }));
 
   warmUp(params: { model: string; tools?: FunctionToolDefinition[]; instructions?: string }): void {
-    this.send({
-      type: "response.create",
-      generate: false,
-      model: params.model,
-      ...(params.tools ? { tools: params.tools } : {}),
-      ...(params.instructions ? { instructions: params.instructions } : {}),
-    });
+    Effect.runSync(this.warmUpEffect(params));
   }
 
-  private async createSocket(): Promise<any> {
-    if (!this.apiKey) throw new Error("OpenAIWebSocketManager: apiKey is required.");
-    const wsModule = await import("ws");
-    const WebSocketCtor = (wsModule.default ?? wsModule) as any;
-    return new WebSocketCtor(this.wsUrl, {
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        "OpenAI-Beta": "responses_websockets=2026-02-06",
-        ...this.headers,
+  private readonly createSocket = Effect.fn("OpenAIWebSocketManager.createSocket")(function* (this: OpenAIWebSocketManager) {
+    if (!this.apiKey) return yield* Effect.fail(transportError("OpenAIWebSocketManager: apiKey is required."));
+    const headers = {
+      Authorization: `Bearer ${this.apiKey}`,
+      "OpenAI-Beta": "responses_websockets=2026-02-06",
+      ...this.headers,
+    };
+    if (this.socketFactory) {
+      const socket = yield* Effect.try({
+        try: () => this.socketFactory!(this.wsUrl, { headers }),
+        catch: (cause) => transportError(cause, "OpenAIWebSocketManager: socket creation failed"),
+      });
+      if ("then" in socket && typeof socket.then === "function") {
+        return yield* Effect.tryPromise({
+          try: (signal) => socket.then((created) => {
+            if (!signal.aborted) return created;
+            created.terminate?.();
+            throw new Error("OpenAIWebSocketManager: socket creation aborted");
+          }),
+          catch: (cause) => transportError(cause, "OpenAIWebSocketManager: socket creation failed"),
+        });
+      }
+      return socket;
+    }
+    return yield* Effect.tryPromise({
+      try: async (signal) => {
+        const wsModule = await import("ws");
+        if (signal.aborted) throw new Error("OpenAIWebSocketManager: socket creation aborted");
+        const WebSocketCtor = (wsModule.default ?? wsModule) as unknown as new (
+          url: string,
+          options: { headers: Record<string, string> },
+        ) => WebSocketLike;
+        return new WebSocketCtor(this.wsUrl, { headers });
       },
+      catch: (cause) => transportError(cause, "OpenAIWebSocketManager: socket creation failed"),
     });
-  }
+  });
 
-  private async openConnection(): Promise<void> {
-    this.cancelRetryTimer();
-    return await new Promise<void>(async (resolve, reject) => {
-      let socket: any;
-      try {
-        socket = await this.createSocket();
-      } catch (error) {
-        reject(error instanceof Error ? error : new Error(String(error)));
+  private readonly supervise = Effect.fn("OpenAIWebSocketManager.supervise")(function* (
+    this: OpenAIWebSocketManager,
+    initial: Deferred.Deferred<void, OpenAIWebSocketTransportError>,
+  ) {
+    let firstAttempt = true;
+    while (!this.closed) {
+      const exit = yield* Effect.exit(this.runSocket(firstAttempt ? initial : undefined));
+      if (firstAttempt) {
+        firstAttempt = false;
+        if (Exit.isFailure(exit) && !Deferred.isDoneUnsafe(initial)) {
+          Deferred.doneUnsafe(initial, Effect.fail(transportError(
+            Cause.squash(exit.cause),
+            "OpenAIWebSocketManager: connection failed",
+          )));
+        }
+      }
+      if (this.closed) return;
+      if (this.retryCount >= this.maxRetries) {
+        this.emitError(new OpenAIWebSocketTransportError({
+          message: `OpenAIWebSocketManager: max reconnect retries (${this.maxRetries}) exceeded.`,
+        }));
         return;
       }
+      const delayMs =
+        this.backoffDelaysMs[Math.min(this.retryCount, this.backoffDelaysMs.length - 1)] ?? 1000;
+      this.retryCount++;
+      yield* Effect.sleep(delayMs);
+    }
+  });
 
-      this.ws = socket;
-      let settled = false;
-
-      const cleanup = () => {
-        socket.off?.("open", onOpen);
-        socket.off?.("error", onError);
-        socket.off?.("close", onClose);
-        socket.off?.("message", onMessage);
-      };
-
-      const finishResolve = () => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        socket.on?.("error", onError);
-        socket.on?.("close", onClose);
-        socket.on?.("message", onMessage);
-        resolve();
-      };
-
-      const finishReject = (error: Error) => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        reject(error);
-      };
-
-      const onOpen = () => {
-        this.retryCount = 0;
-        this.cancelRetryTimer();
-        finishResolve();
-        this.emit("open");
-      };
-
-      const onError = (error: Error) => {
-        if (this.listenerCount("error") > 0) this.emit("error", error);
-        finishReject(error);
-      };
-
-      const onClose = (code: number, reason: Buffer | string) => {
-        if (this.ws === socket) this.ws = null;
-        const text = typeof reason === "string" ? reason : reason.toString();
-        this.emit("close", code, text);
-        if (!settled) {
-          finishReject(new Error(`OpenAIWebSocketManager: connection closed before open (code=${code}, reason=${text || "unknown"})`));
-          return;
-        }
-        if (!this.closed) this.scheduleReconnect();
-      };
-
-      const onMessage = (data: unknown) => {
-        this.handleMessage(data);
-      };
-
-      socket.once?.("open", onOpen);
-      socket.once?.("error", onError);
-      socket.once?.("close", onClose);
-      socket.on?.("message", onMessage);
+  private readonly runSocketUnscoped = Effect.fn("OpenAIWebSocketManager.runSocket")(function* (
+    this: OpenAIWebSocketManager,
+    initial?: Deferred.Deferred<void, OpenAIWebSocketTransportError>,
+  ) {
+    const socket = yield* this.createSocket();
+    const signals = yield* Queue.unbounded<SocketSignal>();
+    let opened = false;
+    const offer = (signal: SocketSignal) => {
+      if (!Queue.offerUnsafe(signals, signal) && !this.closed) {
+        this.emitError(new OpenAIWebSocketTransportError({
+          message: "OpenAIWebSocketManager: internal unbounded socket queue was unexpectedly unavailable.",
+        }));
+      }
+    };
+    const onOpen = () => offer({ type: "open" });
+    const onError = (error: Error) => offer({ type: "error", error });
+    const onClose = (code: number, reason: Buffer | string) => offer({
+      type: "close",
+      code,
+      reason: typeof reason === "string" ? reason : reason.toString(),
     });
-  }
+    const onMessage = (data: unknown) => offer({ type: "message", data });
 
-  private scheduleReconnect(): void {
-    if (this.closed || this.retryTimer) return;
-    if (this.retryCount >= this.maxRetries) {
-      if (this.listenerCount("error") > 0) {
-        this.emit(
-          "error",
-          new Error(`OpenAIWebSocketManager: max reconnect retries (${this.maxRetries}) exceeded.`),
-        );
+    yield* Effect.acquireRelease(
+      Effect.sync(() => {
+        this.ws = socket;
+        socket.once("open", onOpen);
+        socket.on("error", onError);
+        socket.once("close", onClose);
+        socket.on("message", onMessage);
+      }),
+      () => Effect.sync(() => {
+        socket.off("open", onOpen);
+        socket.off("error", onError);
+        socket.off("close", onClose);
+        socket.off("message", onMessage);
+        if (this.ws === socket) this.ws = null;
+        if (socket.readyState === WS_CONNECTING) socket.terminate?.();
+      }).pipe(Effect.andThen(Queue.shutdown(signals))),
+    );
+
+    while (!this.closed) {
+      const signal = yield* Queue.take(signals);
+      if (signal.type === "open") {
+        opened = true;
+        this.retryCount = 0;
+        if (initial && !Deferred.isDoneUnsafe(initial)) Deferred.doneUnsafe(initial, Effect.void);
+        this.emit("open");
+        continue;
+      }
+      if (signal.type === "message") {
+        this.handleMessage(signal.data);
+        continue;
+      }
+      if (signal.type === "error") {
+        const error = transportError(signal.error);
+        this.emitError(error);
+        if (!opened) {
+          if (initial && !Deferred.isDoneUnsafe(initial)) Deferred.doneUnsafe(initial, Effect.fail(error));
+          return yield* Effect.fail(error);
+        }
+        continue;
+      }
+
+      if (this.ws === socket) this.ws = null;
+      this.emit("close", signal.code, signal.reason);
+      if (!opened) {
+        const error = new OpenAIWebSocketTransportError({
+          message: `OpenAIWebSocketManager: connection closed before open (code=${signal.code}, reason=${signal.reason || "unknown"})`,
+        });
+        if (initial && !Deferred.isDoneUnsafe(initial)) Deferred.doneUnsafe(initial, Effect.fail(error));
+        return yield* Effect.fail(error);
       }
       return;
     }
+  });
 
-    const delayMs =
-      this.backoffDelaysMs[Math.min(this.retryCount, this.backoffDelaysMs.length - 1)] ?? 1000;
-    this.retryCount++;
-    this.retryTimer = setTimeout(() => {
-      this.retryTimer = null;
-      if (this.closed) return;
-      this.openConnection().catch(() => {});
-    }, delayMs);
+  private runSocket(initial?: Deferred.Deferred<void, OpenAIWebSocketTransportError>) {
+    return this.runSocketUnscoped(initial).pipe(Effect.scoped);
   }
 
-  private cancelRetryTimer(): void {
-    if (!this.retryTimer) return;
-    clearTimeout(this.retryTimer);
-    this.retryTimer = null;
+  private emitError(error: Error): void {
+    if (this.listenerCount("error") > 0) this.emit("error", error);
   }
 
   private handleMessage(data: unknown): void {
     let text: string;
-    if (typeof data === "string") {
-      text = data;
-    } else if (Buffer.isBuffer(data)) {
-      text = data.toString("utf8");
-    } else if (data instanceof ArrayBuffer) {
-      text = Buffer.from(data).toString("utf8");
-    } else {
-      text = String(data);
-    }
+    if (typeof data === "string") text = data;
+    else if (Buffer.isBuffer(data)) text = data.toString("utf8");
+    else if (data instanceof ArrayBuffer) text = Buffer.from(data).toString("utf8");
+    else text = String(data);
 
     let parsed: unknown;
     try {
       parsed = JSON.parse(text);
-    } catch {
-      if (this.listenerCount("error") > 0) {
-        this.emit("error", new Error(`OpenAIWebSocketManager: failed to parse message: ${text.slice(0, 200)}`));
-      }
+    } catch (cause) {
+      this.emitError(transportError(cause, `OpenAIWebSocketManager: failed to parse message: ${text.slice(0, 200)}`));
       return;
     }
-
     if (!parsed || typeof parsed !== "object" || !("type" in parsed)) {
-      if (this.listenerCount("error") > 0) {
-        this.emit(
-          "error",
-          new Error(`OpenAIWebSocketManager: unexpected message shape: ${text.slice(0, 200)}`),
-        );
-      }
+      this.emitError(new OpenAIWebSocketTransportError({
+        message: `OpenAIWebSocketManager: unexpected message shape: ${text.slice(0, 200)}`,
+      }));
       return;
     }
 

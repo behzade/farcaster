@@ -1,6 +1,7 @@
 {
   fetchurl,
   git,
+  importNpmLock,
   lib,
   makeWrapper,
   nodejs,
@@ -12,19 +13,25 @@ let
     url = "https://esm.sh/@pierre/diffs@1.3.0-rc.1/es2022/diffs.bundle.mjs";
     hash = "sha256-hAR/hp8BordM+efFthA3dvG5Z4JpJJb2GCP8EXjCjC0=";
   };
+  source = ../extensions/dense-tools;
+  nodeModules = importNpmLock.buildNodeModules {
+    npmRoot = source;
+    inherit nodejs;
+  };
 in
 stdenvNoCC.mkDerivation {
   pname = "pi-dense-tools-extension";
   version = "0.4.0";
 
-  src = ../extensions/dense-tools;
+  src = source;
 
   nativeBuildInputs = [ makeWrapper ];
 
   installPhase = ''
     runHook preInstall
     mkdir -p "$out/themes"
-    cp index.ts pierre-edit.ts pierre-renderer.ts theme-selection.ts tui-only.ts terminal-text.ts pi-diff.ts package.json NOTICE.md "$out/"
+    cp index.ts pierre-edit.ts pierre-renderer.ts theme-selection.ts tui-only.ts terminal-text.ts pi-diff.ts package.json package-lock.json NOTICE.md "$out/"
+    cp -R ${nodeModules}/node_modules "$out/"
     cp ${../themes/gruvbox-dark-hard.json} $out/themes/gruvbox-dark-hard.json
     cp ${pierreDiffs} $out/diffs.bundle.mjs
     substituteInPlace $out/diffs.bundle.mjs \

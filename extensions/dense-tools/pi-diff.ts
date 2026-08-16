@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, relative, resolve } from "node:path";
+import { Effect, Schema } from "effect";
 
 const configuredGit = "@PI_DIFF_GIT@";
 const git = process.env.PI_DIFF_GIT || (configuredGit.startsWith("@") ? "git" : configuredGit);
@@ -153,46 +154,64 @@ function commonParent(left: string, right: string): string {
   return parent;
 }
 
-const { left, right, width } = parseArguments(process.argv.slice(2));
-const cwd = commonParent(left, right);
-const leftArg = relative(cwd, left) || basename(left);
-const rightArg = relative(cwd, right) || basename(right);
-const result = spawnSync(
-  git,
-  [
-    "diff",
-    "--no-index",
-    "--no-ext-diff",
-    "--no-color",
-    "--src-prefix=a/",
-    "--dst-prefix=b/",
-    "--",
-    leftArg,
-    rightArg,
-  ],
-  {
-    cwd,
-    encoding: "utf8",
-    maxBuffer: 256 * 1024 * 1024,
-  },
+class PiDiffError extends Schema.TaggedError<PiDiffError>()("PiDiffError", {
+  message: Schema.String,
+}) {}
+
+const run = Effect.fn("PiDiff.run")(function* (args: string[]) {
+  const { left, right, width } = yield* Effect.try({
+    try: () => parseArguments(args),
+    catch: (cause) => new PiDiffError({
+      message: cause instanceof Error ? cause.message : String(cause),
+    }),
+  });
+  const cwd = commonParent(left, right);
+  const leftArg = relative(cwd, left) || basename(left);
+  const rightArg = relative(cwd, right) || basename(right);
+  const result = yield* Effect.sync(() => spawnSync(
+    git,
+    [
+      "diff",
+      "--no-index",
+      "--no-ext-diff",
+      "--no-color",
+      "--src-prefix=a/",
+      "--dst-prefix=b/",
+      "--",
+      leftArg,
+      rightArg,
+    ],
+    {
+      cwd,
+      encoding: "utf8",
+      maxBuffer: 256 * 1024 * 1024,
+    },
+  ));
+
+  if (result.error) return yield* new PiDiffError({ message: result.error.message });
+  if (result.status !== 0 && result.status !== 1) {
+    const detail = result.stderr.trim();
+    return yield* new PiDiffError({ message: detail || `git diff exited with status ${result.status}` });
+  }
+  if (result.status === 0 || !result.stdout) return "";
+
+  const path = cachePath(result.stdout, width);
+  const cached = yield* Effect.sync(() => readCache(path));
+  if (cached !== undefined) return cached;
+
+  const { renderPatch } = yield* Effect.tryPromise({
+    try: () => import("./pierre-renderer.ts"),
+    catch: (cause) => new PiDiffError({
+      message: cause instanceof Error ? cause.message : String(cause),
+    }),
+  });
+  const lines = renderPatch(result.stdout, width, theme, [leftArg.replaceAll("\\", "/"), rightArg.replaceAll("\\", "/")]);
+  const output = lines.length ? `${lines.join("\n")}\n` : "";
+  yield* Effect.sync(() => writeCache(path, output));
+  return output;
+});
+
+Effect.runPromise(run(process.argv.slice(2))).then(
+  (output) => process.stdout.write(output),
+  (error) => fail(error instanceof Error ? error.message : String(error)),
 );
-
-if (result.error) fail(result.error.message);
-if (result.status !== 0 && result.status !== 1) {
-  const detail = result.stderr.trim();
-  fail(detail || `git diff exited with status ${result.status}`);
-}
-if (result.status === 0 || !result.stdout) process.exit(0);
-
-const path = cachePath(result.stdout, width);
-const cached = readCache(path);
-if (cached !== undefined) {
-  process.stdout.write(cached);
-  process.exit(0);
-}
-
-const { renderPatch } = await import("./pierre-renderer.ts");
-const lines = renderPatch(result.stdout, width, theme, [leftArg.replaceAll("\\", "/"), rightArg.replaceAll("\\", "/")]);
-const output = lines.length ? `${lines.join("\n")}\n` : "";
-writeCache(path, output);
-process.stdout.write(output);

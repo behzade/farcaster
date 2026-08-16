@@ -252,6 +252,59 @@ process.stdin.on("data", chunk => {
 	await client.shutdown();
 });
 
+test("readiness failure finalizes the spawned broker", async () => {
+	const directory = mkdtempSync(join(tmpdir(), "pi-fake-broker-readiness-failure-"));
+	const broker = join(directory, "broker");
+	const pidFile = join(directory, "pid");
+	writeFileSync(
+		broker,
+		`#!/usr/bin/env node
+const fs = require("node:fs");
+fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+const body = Buffer.from(JSON.stringify({ type: "ready", version: 999, platform: "macos", backend: "seatbelt", can_exec: true, max_frame_bytes: ${MAX_BROKER_FRAME_BYTES} }));
+const frame = Buffer.alloc(body.length + 4); frame.writeUInt32BE(body.length, 0); body.copy(frame, 4); process.stdout.write(frame);
+setInterval(() => {}, 1000);
+`,
+	);
+	chmodSync(broker, 0o700);
+	await assert.rejects(SandboxBrokerClient.start(broker, "darwin"), /Unsupported sandbox broker/);
+	const pid = Number(await import("node:fs/promises").then((fs) => fs.readFile(pidFile, "utf8")));
+	await assert.rejects(async () => {
+		for (let attempt = 0; attempt < 50; attempt += 1) {
+			try { process.kill(pid, 0); } catch { throw new Error("finalized"); }
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+	}, /finalized/);
+});
+
+test("command abort emits exactly one cancel and removes its abort listener", async () => {
+	const directory = mkdtempSync(join(tmpdir(), "pi-fake-broker-abort-"));
+	const broker = join(directory, "broker");
+	const log = join(directory, "messages");
+	writeFileSync(
+		broker,
+		`#!/usr/bin/env node
+const fs = require("node:fs");
+const encode = value => { const body = Buffer.from(JSON.stringify(value)); const frame = Buffer.alloc(body.length + 4); frame.writeUInt32BE(body.length, 0); body.copy(frame, 4); process.stdout.write(frame); };
+encode({ type: "ready", version: 4, platform: "linux", backend: "bubblewrap", can_exec: true, max_frame_bytes: ${MAX_BROKER_FRAME_BYTES} });
+let pending = Buffer.alloc(0);
+process.stdin.on("data", chunk => { pending = Buffer.concat([pending, chunk]); while (pending.length >= 4) { const size = pending.readUInt32BE(0); if (pending.length < size + 4) return; const message = JSON.parse(pending.subarray(4, size + 4)); pending = pending.subarray(size + 4); fs.appendFileSync(${JSON.stringify(log)}, message.type + "\\n"); if (message.type === "exec") encode({ type: "started", id: message.id, pid: process.pid }); else if (message.type === "cancel") encode({ type: "exit", id: message.id, code: null, signal: 15, timed_out: false, cancelled: true, output_truncated: false }); else if (message.type === "shutdown") process.exit(0); } });
+`,
+	);
+	chmodSync(broker, 0o700);
+	const client = await SandboxBrokerClient.start(broker, "linux");
+	const controller = new AbortController();
+	const executing = client.exec(request(directory), () => {}, controller.signal);
+	await new Promise((resolve) => setTimeout(resolve, 20));
+	controller.abort();
+	controller.abort();
+	await assert.rejects(executing, /aborted|interrupt/i);
+	await client.shutdown();
+	const messages = await import("node:fs/promises").then((fs) => fs.readFile(log, "utf8"));
+	assert.equal(messages.split("\n").filter((line) => line === "exec").length, 1);
+	assert.equal(messages.split("\n").filter((line) => line === "cancel").length, 1);
+});
+
 test("client requires denial hints before a started command exits", async () => {
 	const directory = mkdtempSync(join(tmpdir(), "pi-fake-broker-denials-"));
 	const broker = join(directory, "broker");

@@ -8,7 +8,7 @@
  */
 import type { ResponseItem, RemoteCompactionUsageSnapshot } from "./remote-compaction.ts";
 import { isRecord } from "./config.ts";
-import { Context, Data, Effect, Layer, Stream } from "effect";
+import { Context, Effect, Layer, Schema, Stream } from "effect";
 
 export const RESPONSE_OUTPUT_ITEM_HOOK_VERSION = 1;
 
@@ -46,18 +46,23 @@ export interface ResponsesCompactionStreamShape {
   readonly run: ContinuationCompactionStream;
 }
 
-export class ResponsesCompactionStream extends Context.Tag(
-  "pi-openai-server-compaction/ResponsesCompactionStream",
-)<ResponsesCompactionStream, ResponsesCompactionStreamShape>() {}
+export class ResponsesCompactionStream extends Context.Service<
+  ResponsesCompactionStream,
+  ResponsesCompactionStreamShape
+>()("pi-openai-server-compaction/ResponsesCompactionStream") {}
 
 export const responsesCompactionStreamLayer = (
   run: ContinuationCompactionStream,
 ): Layer.Layer<ResponsesCompactionStream> =>
   Layer.succeed(ResponsesCompactionStream, { run });
 
-export class ContinuationCompactionError extends Data.TaggedError(
+export class ContinuationCompactionError extends Schema.TaggedError<ContinuationCompactionError>()(
   "ContinuationCompactionError",
-)<{ readonly message: string; readonly cause?: unknown }> {}
+  {
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
 
 export type ContinuationCompactionResult = {
   compactionItem: ResponseItem;
@@ -93,18 +98,15 @@ function isCompactionItem(value: unknown): value is ResponseItem {
   return isRecord(value) && value.type === "compaction" && typeof value.encrypted_content === "string";
 }
 
-export const executeContinuationCompaction = (params: {
+export const executeContinuationCompaction = Effect.fn(
+  "OpenAICompaction.executeContinuationCompaction",
+)(function* (params: {
   model: unknown;
   context: unknown;
   streamOptions: Record<string, unknown>;
   explicitPromptInput?: readonly ResponseItem[];
   requestShape?: CompactionRequestShape;
-}): Effect.Effect<
-  ContinuationCompactionResult,
-  ContinuationCompactionError,
-  ResponsesCompactionStream
-> =>
-  Effect.gen(function* () {
+}) {
     const streamService = yield* ResponsesCompactionStream;
     const compactionItems: ResponseItem[] = [];
     let promptInput: ResponseItem[] | undefined;

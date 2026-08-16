@@ -26,6 +26,7 @@ import {
   type Usage,
 } from "@earendil-works/pi-ai";
 import { complete } from "@earendil-works/pi-ai/compat";
+import { Effect, Schema } from "effect";
 import { isRecord } from "./config.ts";
 import {
   hostnameFromBaseUrl,
@@ -674,50 +675,68 @@ export function buildToolsPayload(
   return allTools.filter((tool) => active.has(tool.name)).map(toolInfoToResponseTool);
 }
 
-export async function generatePortableSummary(params: {
-  messages: AgentMessage[];
-  model: Model<any>;
-  apiKey: string;
-  headers?: ProviderHeaders;
-  customInstructions?: string;
-  signal?: AbortSignal;
-  firstKeptEntryId: string;
-  tokensBefore: number;
-}): Promise<CompactionResult> {
-  const conversation = serializeConversation(convertToLlm(params.messages));
-  const response = await complete(
-    params.model,
-    {
-      messages: [
+export class LocalCompactionError extends Schema.TaggedError<LocalCompactionError>()(
+  "LocalCompactionError",
+  {
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
+export const generatePortableSummary = Effect.fn("OpenAICompaction.generatePortableSummary")(
+  (params: {
+    messages: AgentMessage[];
+    model: Model<any>;
+    apiKey: string;
+    headers?: ProviderHeaders;
+    customInstructions?: string;
+    signal?: AbortSignal;
+    firstKeptEntryId: string;
+    tokensBefore: number;
+  }) => Effect.tryPromise({
+    try: async (signal) => {
+      const conversation = serializeConversation(convertToLlm(params.messages));
+      const response = await complete(
+        params.model,
         {
-          role: "user",
-          content: [{ type: "text", text: buildPortableSummaryPrompt(conversation, params.customInstructions) }],
-          timestamp: Date.now(),
+          messages: [
+            {
+              role: "user",
+              content: [{ type: "text", text: buildPortableSummaryPrompt(conversation, params.customInstructions) }],
+              timestamp: Date.now(),
+            },
+          ],
         },
-      ],
+        {
+          apiKey: params.apiKey,
+          headers: params.headers,
+          maxTokens: 4096,
+          signal: params.signal ?? signal,
+        },
+      );
+
+      const summary = response.content
+        .filter((item): item is { type: "text"; text: string } => item.type === "text")
+        .map((item) => item.text)
+        .join("\n")
+        .trim();
+
+      return {
+        summary: summary || buildCompactionSummaryText(params.model),
+        firstKeptEntryId: params.firstKeptEntryId,
+        tokensBefore: params.tokensBefore,
+      } satisfies CompactionResult;
     },
-    {
-      apiKey: params.apiKey,
-      headers: params.headers,
-      maxTokens: 4096,
-      signal: params.signal,
-    },
-  );
+    catch: (cause) => new LocalCompactionError({
+      message: cause instanceof Error ? cause.message : String(cause),
+      cause,
+    }),
+  }),
+);
 
-  const summary = response.content
-    .filter((item): item is { type: "text"; text: string } => item.type === "text")
-    .map((item) => item.text)
-    .join("\n")
-    .trim();
-
-  return {
-    summary: summary || buildCompactionSummaryText(params.model),
-    firstKeptEntryId: params.firstKeptEntryId,
-    tokensBefore: params.tokensBefore,
-  };
-}
-
-export async function generateBestEffortLocalSummary(params: {
+export const generateBestEffortLocalSummary = Effect.fn(
+  "OpenAICompaction.generateBestEffortLocalSummary",
+)((params: {
   preparation: CompactionPreparation;
   messages: AgentMessage[];
   model: Model<any>;
@@ -728,21 +747,23 @@ export async function generateBestEffortLocalSummary(params: {
   thinkingLevel?: ThinkingLevel;
   firstKeptEntryId: string;
   tokensBefore: number;
-}): Promise<CompactionResult> {
-  try {
-    return await generatePortableSummary(params);
-  } catch {
-    return await compact(
+}) => generatePortableSummary(params).pipe(
+  Effect.catch(() => Effect.tryPromise({
+    try: (signal) => compact(
       params.preparation,
       params.model,
       params.apiKey,
-      params.headers,
+      params.headers ? resolveProviderHeaders(params.headers) : undefined,
       params.customInstructions,
-      params.signal,
+      params.signal ?? signal,
       params.thinkingLevel,
-    );
-  }
-}
+    ),
+    catch: (cause) => new LocalCompactionError({
+      message: cause instanceof Error ? cause.message : String(cause),
+      cause,
+    }),
+  })),
+));
 
 function extractCacheWriteTokens(value: unknown): number {
   if (!isRecord(value)) return 0;
@@ -913,7 +934,17 @@ export function parseRemoteCompactionV2Events(events: unknown[]): RemoteCompacti
   return { compactionItem: compactionItems[0], usage };
 }
 
-export async function callRemoteCompactionEndpoint(params: {
+export class RemoteCompactionError extends Schema.TaggedError<RemoteCompactionError>()(
+  "RemoteCompactionError",
+  {
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
+export const callRemoteCompactionEndpoint = Effect.fn(
+  "OpenAICompaction.callRemoteCompactionEndpoint",
+)((params: {
   model: Model<any>;
   apiKey: string;
   headers?: ProviderHeaders;
@@ -925,44 +956,54 @@ export async function callRemoteCompactionEndpoint(params: {
   reasoning?: ResponsesReasoningConfig;
   text?: ResponsesTextConfig;
   signal?: AbortSignal;
-}): Promise<RemoteCompactionResult> {
+}) => {
   if (!supportsRemoteCompactionModel(params.model)) {
-    throw new Error("Remote compaction v2 is currently only enabled for supported OpenAI-compatible Responses models.");
+    return Effect.fail(new RemoteCompactionError({
+      message: "Remote compaction v2 is currently only enabled for supported OpenAI-compatible Responses models.",
+    }));
   }
 
-  const response = await fetch(remoteCompactionV2EndpointUrl(params.model), {
-    method: "POST",
-    headers: buildRemoteCompactionHeaders({
-      model: params.model,
-      apiKey: params.apiKey,
-      headers: params.headers,
-      sessionId: params.sessionId,
+  return Effect.tryPromise({
+    try: async (signal) => {
+      const response = await fetch(remoteCompactionV2EndpointUrl(params.model), {
+        method: "POST",
+        headers: buildRemoteCompactionHeaders({
+          model: params.model,
+          apiKey: params.apiKey,
+          headers: params.headers,
+          sessionId: params.sessionId,
+        }),
+        body: JSON.stringify(buildRemoteCompactionRequestBody({
+          model: params.model,
+          input: params.input,
+          instructions: params.instructions,
+          tools: params.tools,
+          parallelToolCalls: params.parallelToolCalls,
+          reasoning: params.reasoning,
+          text: params.text,
+          sessionId: params.sessionId,
+        })),
+        signal: params.signal ?? signal,
+      });
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        throw new Error(`OpenAI remote compaction v2 failed (${response.status}): ${text || response.statusText}`);
+      }
+
+      const responseText = await response.text();
+      const parsed = parseRemoteCompactionV2Events(parseSseData(responseText));
+      return {
+        output: buildRemoteCompactionV2History(params.input, parsed.compactionItem),
+        usage: extractRemoteCompactionUsage(params.model, parsed.usage),
+      } satisfies RemoteCompactionResult;
+    },
+    catch: (cause) => new RemoteCompactionError({
+      message: cause instanceof Error ? cause.message : String(cause),
+      cause,
     }),
-    body: JSON.stringify(buildRemoteCompactionRequestBody({
-      model: params.model,
-      input: params.input,
-      instructions: params.instructions,
-      tools: params.tools,
-      parallelToolCalls: params.parallelToolCalls,
-      reasoning: params.reasoning,
-      text: params.text,
-      sessionId: params.sessionId,
-    })),
-    signal: params.signal,
   });
-
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(`OpenAI remote compaction v2 failed (${response.status}): ${text || response.statusText}`);
-  }
-
-  const responseText = await response.text();
-  const parsed = parseRemoteCompactionV2Events(parseSseData(responseText));
-  return {
-    output: buildRemoteCompactionV2History(params.input, parsed.compactionItem),
-    usage: extractRemoteCompactionUsage(params.model, parsed.usage),
-  };
-}
+});
 
 export function buildRemoteCompactionDetails(
   model: Model<any>,

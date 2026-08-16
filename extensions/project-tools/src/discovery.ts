@@ -23,8 +23,8 @@ const attempt = <A>(path: string, message: string, operation: () => Promise<A>) 
     try: operation,
     catch: (cause) => new ProjectToolLoadError({ path, message, cause }),
   });
-export const discoverProjectTools = (projectRoot: string) =>
-  Effect.gen(function*() {
+export const discoverProjectTools = Effect.fn("ProjectTools.discoverProjectTools")(
+  function* (projectRoot: string) {
     const canonicalRoot = yield* attempt(projectRoot, "could not resolve project root", () => realpath(projectRoot));
     const toolsRoot = join(canonicalRoot, ".pi", "project-tools");
     const rootStat = yield* Effect.result(attempt(toolsRoot, "could not read project tools directory", () => lstat(toolsRoot)));
@@ -65,4 +65,5 @@ export const discoverProjectTools = (projectRoot: string) =>
       }
     }
     return { projectRoot: canonicalRoot, tools, diagnostics } satisfies ProjectToolDiscovery;
-  });
+  },
+);

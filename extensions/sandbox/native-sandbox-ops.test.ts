@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -100,6 +100,41 @@ test("network-only and mixed denial hints stay grouped with three total examples
 	assert.equal((text.match(/  example:/g) ?? []).length, 3);
 	assert.doesNotMatch(text, /\/dev\/null/);
 	assert.equal(broker.requests.length, 1);
+});
+
+test("interruption closes the command-scoped network proxy", async () => {
+	let request: BrokerExecRequest | undefined;
+	let startedResolve!: () => void;
+	const started = new Promise<void>((resolve) => {
+		startedResolve = resolve;
+	});
+	const broker: NativeBroker = {
+		exec(next, _onData, signal) {
+			request = next;
+			startedResolve();
+			return new Promise((_resolve, reject) => {
+				signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+			});
+		},
+	};
+	const controller = new AbortController();
+	const running = createNativeSandboxOps(
+		broker,
+		DEFAULT_CONFIG,
+		[],
+		["example.com"],
+		"interrupt-cleanup",
+	).exec("sleep", tmpdir(), {
+		onData() {},
+		signal: controller.signal,
+	});
+	await started;
+	controller.abort();
+	await assert.rejects(running);
+
+	assert.equal(request?.policy.network.mode, "proxy");
+	if (request?.policy.network.mode !== "proxy") throw new Error("proxy request missing");
+	assert.equal(existsSync(request.policy.network.unix_socket), false);
 });
 
 test("filesystem grants are revalidated immediately before the broker request", async () => {

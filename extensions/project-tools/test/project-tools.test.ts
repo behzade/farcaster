@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -160,6 +160,35 @@ test("cancels the Effect when Pi aborts the tool call", async (t) => {
   }));
   controller.abort();
   await assert.rejects(running, /execution cancelled/);
+});
+
+test("aborting a project tool releases its dependency Layer", async (t) => {
+  const project = await makeProject();
+  t.after(project.cleanup);
+  const releasedPath = join(project.root, "released.txt");
+  await writeFile(join(project.root, ".pi", "project-tools", "example", "main.ts"), [
+    'import { Context, Effect, Layer } from "effect";',
+    'import { writeFile } from "node:fs/promises";',
+    'const Resource = Context.Service<{ ready: true }>("Test/Resource");',
+    "export const dependencies = Layer.effect(Resource,",
+    "  Effect.acquireRelease(",
+    "    Effect.succeed({ ready: true as const }),",
+    `    () => Effect.promise(() => writeFile(${JSON.stringify(releasedPath)}, "released")),`,
+    "  ),",
+    ");",
+    "export const execute = () => Effect.never;",
+  ].join("\n"));
+
+  const tool = await discoverOne(project.root);
+  const controller = new AbortController();
+  const running = Effect.runPromise(executeProjectTool(tool, { input: "ok" }, {
+    toolCallId: "call-finalizer",
+    projectRoot: project.root,
+    signal: controller.signal,
+  }));
+  controller.abort();
+  await assert.rejects(running, /execution cancelled/);
+  assert.equal(await readFile(releasedPath, "utf8"), "released");
 });
 
 test("accepts a plain string only when the result schema accepts a string", async (t) => {
