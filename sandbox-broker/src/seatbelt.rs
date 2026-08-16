@@ -52,7 +52,10 @@ impl HardPolicy {
         let broker = std::env::current_exe()
             .map_err(|error| format!("cannot locate broker executable: {error}"))?;
         let broker = normalize_existing(&broker)?;
+        Self::from_paths(&home, &broker)
+    }
 
+    fn from_paths(home: &Path, broker: &Path) -> Result<Self, String> {
         let mut denies = Vec::new();
         for (access, path, scope) in [
             (DeniedAccess::ReadWrite, home.join(".ssh"), DenyScope::Tree),
@@ -79,7 +82,11 @@ impl HardPolicy {
             ),
             (DeniedAccess::Write, home.join(".pi"), DenyScope::Tree),
             (DeniedAccess::Write, home.join(".codex"), DenyScope::Tree),
-            (DeniedAccess::ReadWrite, broker, DenyScope::File),
+            (
+                DeniedAccess::ReadWrite,
+                broker.to_path_buf(),
+                DenyScope::File,
+            ),
         ] {
             push_path_denies(&mut denies, access, &path, scope);
         }
@@ -625,9 +632,9 @@ mod tests {
 
     #[test]
     fn hard_policy_scopes_key_reads_to_home_but_blocks_all_key_writes() {
-        let hard = HardPolicy::from_host().expect("hard policy");
-        let home =
-            normalize_existing(Path::new(&std::env::var_os("HOME").expect("HOME"))).expect("home");
+        let home = temp_root("hard-policy-home");
+        let broker = std::env::current_exe().expect("broker fixture");
+        let hard = HardPolicy::from_paths(&home, &broker).expect("hard policy");
         assert!(hard.denies.iter().any(|deny| {
             deny.access == DeniedAccess::Read
                 && deny.pattern == format!("{}/**/*.key", home.display())
@@ -642,6 +649,7 @@ mod tests {
                 deny.access == DeniedAccess::ReadWrite && deny.pattern == "/**/*.key"
             })
         );
+        fs::remove_dir_all(home).expect("remove hard policy home");
     }
 
     #[test]
