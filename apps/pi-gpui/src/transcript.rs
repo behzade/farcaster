@@ -1,5 +1,7 @@
 //! Selectable, compact transcript projection.
 
+use std::sync::Arc;
+
 use gpui::{
     AnyElement, FontWeight, InteractiveElement as _, IntoElement as _, ListSizingBehavior,
     ListState, Overflow, ParentElement as _, StyleRefinement, Styled as _, WeakEntity, div, list,
@@ -19,49 +21,220 @@ use crate::{
     theme::{READING_FONT_FAMILY, THEME},
 };
 
+const MARKDOWN_CHUNK_TARGET_BYTES: usize = 2 * 1024;
+const MARKDOWN_CHUNK_HARD_BYTES: usize = 8 * 1024;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TranscriptRow {
-    Item { index: usize },
-    ReadGroup { start: usize, len: usize },
+    Item {
+        index: usize,
+        revision: usize,
+    },
+    MessageChunk {
+        index: usize,
+        start: usize,
+        end: usize,
+        block: usize,
+        revision: usize,
+        first: bool,
+        last: bool,
+    },
+    ReadGroup {
+        start: usize,
+        len: usize,
+        revision: usize,
+    },
 }
 
 impl TranscriptRow {
     pub(crate) fn key(&self) -> usize {
+        self.item_start()
+    }
+
+    fn item_start(&self) -> usize {
         match self {
-            Self::Item { index } => *index,
+            Self::Item { index, .. } | Self::MessageChunk { index, .. } => *index,
             Self::ReadGroup { start, .. } => *start,
+        }
+    }
+
+    fn item_end(&self) -> usize {
+        match self {
+            Self::Item { index, .. } | Self::MessageChunk { index, .. } => index + 1,
+            Self::ReadGroup { start, len, .. } => start + len,
         }
     }
 }
 
-pub(crate) fn project_rows(items: &[TranscriptItem]) -> Vec<TranscriptRow> {
+pub(crate) fn project_rows(items: &[Arc<TranscriptItem>]) -> Vec<TranscriptRow> {
+    project_rows_from(items, 0)
+}
+
+pub(crate) fn update_rows(
+    previous_rows: &[TranscriptRow],
+    previous_items: &[Arc<TranscriptItem>],
+    items: &[Arc<TranscriptItem>],
+) -> Vec<TranscriptRow> {
+    let unchanged_items = previous_items
+        .iter()
+        .zip(items)
+        .take_while(|(previous, next)| Arc::ptr_eq(previous, next))
+        .count();
+    if unchanged_items == previous_items.len()
+        && unchanged_items == items.len()
+        && (items.is_empty() || !previous_rows.is_empty())
+    {
+        return previous_rows.to_vec();
+    }
+
+    let mut keep_rows = previous_rows
+        .iter()
+        .take_while(|row| row.item_end() <= unchanged_items)
+        .count();
+    let mut project_from = previous_rows
+        .get(keep_rows)
+        .map_or(unchanged_items, TranscriptRow::item_start);
+    if project_from == unchanged_items
+        && unchanged_items < items.len()
+        && is_read(&items[unchanged_items])
+        && let Some(TranscriptRow::ReadGroup { start, len, .. }) = keep_rows
+            .checked_sub(1)
+            .and_then(|index| previous_rows.get(index))
+        && start + len == unchanged_items
+    {
+        keep_rows -= 1;
+        project_from = *start;
+    }
+
+    let mut rows = previous_rows[..keep_rows].to_vec();
+    rows.extend(project_rows_from(items, project_from));
+    rows
+}
+
+fn project_rows_from(items: &[Arc<TranscriptItem>], mut index: usize) -> Vec<TranscriptRow> {
     let mut rows = Vec::new();
-    let mut index = 0;
     while index < items.len() {
-        if items[index].kind == TranscriptKind::Tool && items[index].label == "Read" {
+        if is_read(&items[index]) {
             let start = index;
-            while index < items.len()
-                && items[index].kind == TranscriptKind::Tool
-                && items[index].label == "Read"
-            {
+            while index < items.len() && is_read(&items[index]) {
                 index += 1;
             }
             rows.push(TranscriptRow::ReadGroup {
                 start,
                 len: index - start,
+                revision: item_revision(&items[start..index]),
             });
             continue;
         }
-        rows.push(TranscriptRow::Item { index });
+        if items[index].kind == TranscriptKind::Assistant
+            && items[index].text.len() > MARKDOWN_CHUNK_HARD_BYTES
+        {
+            let chunks = markdown_chunk_ranges(&items[index].text);
+            let last_block = chunks.len().saturating_sub(1);
+            rows.extend(chunks.into_iter().enumerate().map(|(block, (start, end))| {
+                TranscriptRow::MessageChunk {
+                    index,
+                    start,
+                    end,
+                    block,
+                    revision: item_revision(std::slice::from_ref(&items[index])),
+                    first: block == 0,
+                    last: block == last_block,
+                }
+            }));
+        } else {
+            rows.push(TranscriptRow::Item {
+                index,
+                revision: item_revision(std::slice::from_ref(&items[index])),
+            });
+        }
         index += 1;
     }
     rows
 }
 
-fn expanded_by_default(row: TranscriptRow, items: &[TranscriptItem]) -> bool {
+fn item_revision(items: &[Arc<TranscriptItem>]) -> usize {
+    items.iter().fold(0, |revision, item| {
+        revision.rotate_left(5) ^ Arc::as_ptr(item) as usize
+    })
+}
+
+fn is_read(item: &TranscriptItem) -> bool {
+    item.kind == TranscriptKind::Tool && item.label == "Read"
+}
+
+fn markdown_chunk_ranges(text: &str) -> Vec<(usize, usize)> {
+    if text.len() <= MARKDOWN_CHUNK_HARD_BYTES {
+        return vec![(0, text.len())];
+    }
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    let mut end = 0;
+    let mut fence = None;
+    let mut protected_chunk = false;
+    for line in text.split_inclusive('\n') {
+        end += line.len();
+        let mut closed_fence = false;
+        if let Some(marker) = markdown_fence_marker(line) {
+            if fence == Some(marker) {
+                fence = None;
+                closed_fence = true;
+            } else if fence.is_none() {
+                fence = Some(marker);
+                protected_chunk = true;
+            }
+        }
+        if closed_fence {
+            chunks.push((start, end));
+            start = end;
+            protected_chunk = false;
+            continue;
+        }
+        while fence.is_none() && !protected_chunk && end - start >= MARKDOWN_CHUNK_HARD_BYTES {
+            let split = hard_markdown_break(text, start, start + MARKDOWN_CHUNK_HARD_BYTES);
+            chunks.push((start, split));
+            start = split;
+        }
+        let preferred_break = end - start >= MARKDOWN_CHUNK_TARGET_BYTES && line.trim().is_empty();
+        if fence.is_none() && (preferred_break || end - start >= MARKDOWN_CHUNK_HARD_BYTES) {
+            chunks.push((start, end));
+            start = end;
+            protected_chunk = false;
+        }
+    }
+    if start < text.len() {
+        chunks.push((start, text.len()));
+    }
+    if chunks.is_empty() {
+        chunks.push((0, text.len()));
+    }
+    chunks
+}
+
+fn hard_markdown_break(text: &str, start: usize, mut limit: usize) -> usize {
+    while !text.is_char_boundary(limit) {
+        limit -= 1;
+    }
+    let minimum = start + MARKDOWN_CHUNK_TARGET_BYTES;
+    text[start..limit]
+        .char_indices()
+        .rev()
+        .find(|(offset, char)| start + offset >= minimum && char.is_whitespace())
+        .map_or(limit, |(offset, char)| start + offset + char.len_utf8())
+}
+
+fn markdown_fence_marker(line: &str) -> Option<char> {
+    let trimmed = line.trim_start();
+    let marker = trimmed.chars().next()?;
+    ((marker == '`' || marker == '~')
+        && trimmed.chars().take_while(|char| *char == marker).count() >= 3)
+        .then_some(marker)
+}
+
+fn expanded_by_default(row: TranscriptRow, items: &[Arc<TranscriptItem>]) -> bool {
     matches!(
         row,
-        TranscriptRow::Item { index } if items[index].tool_presentation.is_some()
+        TranscriptRow::Item { index, .. } if items[index].tool_presentation.is_some()
     )
 }
 
@@ -161,22 +334,38 @@ pub(crate) fn render(
 
 fn render_row(
     row: TranscriptRow,
-    items: &[TranscriptItem],
+    items: &[Arc<TranscriptItem>],
     expanded: bool,
     entity: WeakEntity<PiApp>,
 ) -> AnyElement {
     let key = row.key();
     match row {
-        TranscriptRow::ReadGroup { start, len } => {
+        TranscriptRow::ReadGroup { start, len, .. } => {
             render_read_group(key, &items[start..start + len], expanded, entity)
         }
-        TranscriptRow::Item { index } if items[index].kind == TranscriptKind::Tool => {
+        TranscriptRow::MessageChunk {
+            index,
+            start,
+            end,
+            block,
+            first,
+            last,
+            ..
+        } => render_message_chunk(
+            key,
+            block,
+            &items[index],
+            &items[index].text[start..end],
+            first,
+            last,
+        ),
+        TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Tool => {
             render_tool(key, &items[index], expanded, entity)
         }
-        TranscriptRow::Item { index } if items[index].kind == TranscriptKind::Thinking => {
+        TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Thinking => {
             render_thinking(key, &items[index], expanded, entity)
         }
-        TranscriptRow::Item { index } => render_message(key, &items[index]),
+        TranscriptRow::Item { index, .. } => render_message(key, &items[index]),
     }
 }
 
@@ -199,6 +388,28 @@ fn render_message(key: usize, item: &TranscriptItem) -> AnyElement {
                 .when(item.kind == TranscriptKind::User, |text| {
                     text.font_weight(FontWeight::MEDIUM)
                 }),
+        )
+        .into_any_element()
+}
+
+fn render_message_chunk(
+    key: usize,
+    block: usize,
+    item: &TranscriptItem,
+    text: &str,
+    first: bool,
+    last: bool,
+) -> AnyElement {
+    div()
+        .id(format!("transcript-row-{key}-{block}"))
+        .w_full()
+        .px(THEME.space.md)
+        .when(first, |row| row.pt(THEME.space.sm))
+        .when(!first, |row| row.pt(THEME.space.xs))
+        .when(last, |row| row.pb(THEME.space.sm))
+        .child(
+            selectable_text(format!("transcript-text-{key}-{block}"), text)
+                .text_color(item_color(item)),
         )
         .into_any_element()
 }
@@ -241,7 +452,7 @@ fn render_thinking(
 
 fn render_read_group(
     key: usize,
-    items: &[TranscriptItem],
+    items: &[Arc<TranscriptItem>],
     expanded: bool,
     entity: WeakEntity<PiApp>,
 ) -> AnyElement {
@@ -505,8 +716,8 @@ fn item_color(item: &TranscriptItem) -> gpui::Rgba {
 mod tests {
     use super::*;
 
-    fn item(kind: TranscriptKind, label: &str, text: &str) -> TranscriptItem {
-        TranscriptItem {
+    fn item(kind: TranscriptKind, label: &str, text: &str) -> Arc<TranscriptItem> {
+        Arc::new(TranscriptItem {
             kind,
             label: label.into(),
             text: text.into(),
@@ -515,7 +726,7 @@ mod tests {
             tool_call_id: None,
             tool_output: String::new(),
             tool_presentation: None,
-        }
+        })
     }
 
     #[test]
@@ -531,12 +742,119 @@ mod tests {
     }
 
     #[test]
+    fn long_assistant_messages_become_independently_virtualized_rows() {
+        let text = format!(
+            "{}\n\n{}\n\n{}",
+            "first ".repeat(600),
+            "second ".repeat(600),
+            "third ".repeat(600)
+        );
+        let assistant = item(TranscriptKind::Assistant, "", &text);
+        let rows = project_rows(std::slice::from_ref(&assistant));
+
+        assert!(rows.len() >= 3);
+        let reconstructed = rows
+            .iter()
+            .map(|row| match row {
+                TranscriptRow::MessageChunk { start, end, .. } => &text[*start..*end],
+                _ => panic!("expected only message chunks"),
+            })
+            .collect::<String>();
+        assert_eq!(reconstructed, text);
+    }
+
+    #[test]
+    fn a_giant_plain_paragraph_is_split_at_word_boundaries() {
+        let text = "word ".repeat(5_000);
+        let chunks = markdown_chunk_ranges(&text);
+
+        assert!(chunks.len() > 1);
+        assert_eq!(
+            chunks
+                .iter()
+                .map(|(start, end)| &text[*start..*end])
+                .collect::<String>(),
+            text
+        );
+    }
+
+    #[test]
+    fn fenced_code_is_never_split_inside_the_fence() {
+        let code = "let value = 1;\n".repeat(1_000);
+        let text = format!("before\n\n```rust\n{code}```\n\nafter");
+        let closing_end = text.find("```\n\n").expect("closing fence") + 4;
+        let chunks = markdown_chunk_ranges(&text);
+
+        assert!(chunks.iter().any(|(_, end)| *end == closing_end));
+        assert!(
+            !chunks
+                .iter()
+                .any(|(_, end)| text[..*end].ends_with("let value = 1;\n"))
+        );
+    }
+
+    #[test]
+    fn row_updates_reproject_only_the_changed_shared_item_suffix() {
+        let first = item(TranscriptKind::Assistant, "", "unchanged");
+        let second = item(TranscriptKind::Assistant, "", "short");
+        let previous_items = vec![first.clone(), second];
+        let previous_rows = project_rows(&previous_items);
+        let long = item(
+            TranscriptKind::Assistant,
+            "",
+            &format!(
+                "section\n\n{}\n\n{}",
+                "updated ".repeat(700),
+                "tail ".repeat(700)
+            ),
+        );
+        let items = vec![first, long];
+
+        let rows = update_rows(&previous_rows, &previous_items, &items);
+
+        assert_eq!(rows[0], previous_rows[0]);
+        assert!(matches!(
+            rows[1],
+            TranscriptRow::MessageChunk { index: 1, .. }
+        ));
+    }
+
+    #[test]
+    fn changed_item_revision_invalidates_an_equal_length_row() {
+        let previous_items = vec![item(TranscriptKind::Assistant, "", "old")];
+        let previous_rows = project_rows(&previous_items);
+        let items = vec![item(TranscriptKind::Assistant, "", "new")];
+
+        let rows = update_rows(&previous_rows, &previous_items, &items);
+
+        assert_ne!(rows, previous_rows);
+    }
+
+    #[test]
+    fn appended_reads_merge_with_the_existing_read_group() {
+        let previous_items = vec![item(TranscriptKind::Tool, "Read", "Path: one")];
+        let previous_rows = project_rows(&previous_items);
+        let items = vec![
+            previous_items[0].clone(),
+            item(TranscriptKind::Tool, "Read", "Path: two"),
+        ];
+
+        let rows = update_rows(&previous_rows, &previous_items, &items);
+
+        assert!(matches!(
+            rows.as_slice(),
+            [TranscriptRow::ReadGroup { len: 2, .. }]
+        ));
+    }
+
+    #[test]
     fn mutation_tools_are_expanded_by_default() {
         let mut edit = item(TranscriptKind::Tool, "Edit", "Path: src/main.rs");
-        edit.tool_presentation = Some(crate::conversation::ToolPresentation::Edit {
-            path: "src/main.rs".into(),
-            diff: Some("- old\n+ new".into()),
-        });
+        Arc::make_mut(&mut edit).tool_presentation =
+            Some(crate::conversation::ToolPresentation::Edit {
+                path: "src/main.rs".into(),
+                diff: Some("- old\n+ new".into()),
+            });
         let items = vec![edit, item(TranscriptKind::Tool, "Bash", "Command: true")];
         let rows = project_rows(&items);
 
@@ -547,11 +865,11 @@ mod tests {
     #[test]
     fn successful_mutation_output_is_hidden_but_errors_remain_visible() {
         let mut write = item(TranscriptKind::Tool, "Write", "Path: src/main.rs");
-        write.tool_output = "Successfully wrote 42 bytes".into();
+        Arc::make_mut(&mut write).tool_output = "Successfully wrote 42 bytes".into();
         assert_eq!(visible_mutation_output(&write), None);
 
-        write.is_error = true;
-        write.tool_output = "Permission denied".into();
+        Arc::make_mut(&mut write).is_error = true;
+        Arc::make_mut(&mut write).tool_output = "Permission denied".into();
         assert_eq!(visible_mutation_output(&write), Some("Permission denied"));
     }
 

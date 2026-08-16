@@ -8,6 +8,17 @@ use super::{PiApp, transcript_splice};
 use crate::{conversation::TranscriptKind, transcript::TranscriptRow};
 
 impl PiApp {
+    pub(super) fn project_transcript_rows(
+        &self,
+        snapshot: &crate::runtime::RuntimeSnapshot,
+    ) -> Vec<TranscriptRow> {
+        crate::transcript::update_rows(
+            &self.transcript_rows,
+            &self.snapshot.conversation.items,
+            &snapshot.conversation.items,
+        )
+    }
+
     pub(crate) fn jump_to_latest(&mut self, cx: &mut Context<Self>) {
         self.transcript_following = true;
         self.transcript_unseen = 0;

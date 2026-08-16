@@ -1,5 +1,17 @@
+use std::sync::Arc;
+
 use super::*;
 use serde_json::json;
+
+#[test]
+fn cloned_conversations_share_unchanged_transcript_items() {
+    let mut state = ConversationState::default();
+    state.push_local_user("a long message".repeat(1_000), 0);
+
+    let cloned = state.clone();
+
+    assert!(Arc::ptr_eq(&state.items[0], &cloned.items[0]));
+}
 
 #[test]
 fn assembles_ordered_text_thinking_and_tool_arguments_by_index() {

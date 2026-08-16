@@ -1,6 +1,9 @@
 //! Pure transcript and live-run reducer.
 
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 
 use serde_json::Value;
 
@@ -43,7 +46,7 @@ pub(crate) struct QueueState {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct ConversationState {
-    pub items: Vec<TranscriptItem>,
+    pub items: Vec<Arc<TranscriptItem>>,
     pub queue: QueueState,
     pub running: bool,
     pub settled: bool,
@@ -85,7 +88,7 @@ impl ConversationState {
         }) {
             return;
         }
-        self.items.push(TranscriptItem {
+        self.items.push(Arc::new(TranscriptItem {
             kind: TranscriptKind::User,
             label: String::new(),
             text: display,
@@ -94,7 +97,7 @@ impl ConversationState {
             tool_call_id: None,
             tool_output: String::new(),
             tool_presentation: None,
-        });
+        }));
     }
 
     pub(crate) fn replace_history(&mut self, messages: &[Value]) {
@@ -122,7 +125,7 @@ impl ConversationState {
                     item.kind == TranscriptKind::Tool && item.tool_call_id.as_deref() == Some(id)
                 })
             {
-                apply_tool_result(item, message, true);
+                apply_tool_result(Arc::make_mut(item), message, true);
                 return;
             }
         }
@@ -132,7 +135,7 @@ impl ConversationState {
                 item.tool_output = std::mem::take(&mut item.text);
             }
         }
-        self.items.extend(projected);
+        self.items.extend(projected.into_iter().map(Arc::new));
     }
 
     pub(crate) fn reduce(&mut self, event: &Value) {
@@ -202,7 +205,7 @@ impl ConversationState {
 
     pub(crate) fn push_transport_error(&mut self, message: String) {
         self.running = false;
-        self.items.push(TranscriptItem {
+        self.items.push(Arc::new(TranscriptItem {
             kind: TranscriptKind::Error,
             label: "Connection error".into(),
             text: message,
@@ -211,11 +214,11 @@ impl ConversationState {
             tool_call_id: None,
             tool_output: String::new(),
             tool_presentation: None,
-        });
+        }));
     }
 
     pub(crate) fn push_extension_error(&mut self, message: String) {
-        self.items.push(TranscriptItem {
+        self.items.push(Arc::new(TranscriptItem {
             kind: TranscriptKind::Error,
             label: "Extension error".into(),
             text: message,
@@ -224,11 +227,11 @@ impl ConversationState {
             tool_call_id: None,
             tool_output: String::new(),
             tool_presentation: None,
-        });
+        }));
     }
 
     pub(crate) fn push_local_error(&mut self, label: &str, message: String) {
-        self.items.push(TranscriptItem {
+        self.items.push(Arc::new(TranscriptItem {
             kind: TranscriptKind::Error,
             label: label.into(),
             text: message,
@@ -237,7 +240,7 @@ impl ConversationState {
             tool_call_id: None,
             tool_output: String::new(),
             tool_presentation: None,
-        });
+        }));
     }
 
     fn start_message(&mut self, message: Option<&Value>) {
@@ -272,13 +275,13 @@ impl ConversationState {
             })
         {
             let start = self.items.len().saturating_sub(1);
-            self.items[start] = projected.remove(0);
+            self.items[start] = Arc::new(projected.remove(0));
             self.live_message = Some(LiveMessage { start, len: 1 });
             return;
         }
         let start = self.items.len();
         let len = projected.len();
-        self.items.extend(projected);
+        self.items.extend(projected.into_iter().map(Arc::new));
         self.live_message = Some(LiveMessage { start, len });
     }
 
@@ -352,6 +355,7 @@ impl ConversationState {
                 tool_output: String::new(),
                 tool_presentation: None,
             })
+            .map(Arc::new)
             .collect::<Vec<_>>();
         let len = projected.len();
         self.items
@@ -378,12 +382,15 @@ impl ConversationState {
             if let Some(item) = self.items.iter_mut().rev().find(|item| {
                 item.kind == TranscriptKind::Tool && item.tool_call_id.as_deref() == Some(id)
             }) {
-                apply_tool_result(item, message, true);
+                apply_tool_result(Arc::make_mut(item), message, true);
                 self.content.clear();
                 return;
             }
         }
-        let final_items = project_message_items(message);
+        let final_items = project_message_items(message)
+            .into_iter()
+            .map(Arc::new)
+            .collect::<Vec<_>>();
         if let Some(live) = self.live_message.take() {
             self.items
                 .splice(live.start..live.start + live.len, final_items);
@@ -402,7 +409,7 @@ impl ConversationState {
         if let Some(index) = self.items.iter().rposition(|item| {
             item.kind == TranscriptKind::Tool && item.tool_call_id.as_deref() == Some(id.as_str())
         }) {
-            if let Some(item) = self.items.get_mut(index) {
+            if let Some(item) = self.items.get_mut(index).map(Arc::make_mut) {
                 item.label = display_tool_name(&name);
                 item.text = args;
                 item.tool_presentation = presentation;
@@ -411,7 +418,7 @@ impl ConversationState {
             self.tools.insert(id, index);
             return;
         }
-        self.items.push(TranscriptItem {
+        self.items.push(Arc::new(TranscriptItem {
             kind: TranscriptKind::Tool,
             label: display_tool_name(&name),
             text: args,
@@ -420,14 +427,14 @@ impl ConversationState {
             tool_call_id: Some(id.clone()),
             tool_output: String::new(),
             tool_presentation: presentation,
-        });
+        }));
         self.tools.insert(id, self.items.len() - 1);
     }
 
     fn update_tool(&mut self, event: &Value) {
         let id = text_field(event, "toolCallId");
         if let Some(index) = self.tools.get(&id).copied()
-            && let Some(item) = self.items.get_mut(index)
+            && let Some(item) = self.items.get_mut(index).map(Arc::make_mut)
         {
             item.tool_output = event
                 .get("partialResult")
@@ -443,7 +450,7 @@ impl ConversationState {
             .and_then(Value::as_bool)
             .unwrap_or(false);
         if let Some(index) = self.tools.remove(&id)
-            && let Some(item) = self.items.get_mut(index)
+            && let Some(item) = self.items.get_mut(index).map(Arc::make_mut)
         {
             if let Some(result) = event.get("result") {
                 apply_tool_result(item, result, false);
@@ -454,7 +461,7 @@ impl ConversationState {
     }
 
     fn notice(&mut self, text: String) {
-        self.items.push(TranscriptItem {
+        self.items.push(Arc::new(TranscriptItem {
             kind: TranscriptKind::Notice,
             label: "Run".into(),
             text,
@@ -463,7 +470,7 @@ impl ConversationState {
             tool_call_id: None,
             tool_output: String::new(),
             tool_presentation: None,
-        });
+        }));
     }
 
     fn diagnostic(&mut self, text: String) {

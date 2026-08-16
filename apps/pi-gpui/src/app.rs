@@ -283,7 +283,7 @@ impl PiApp {
                     if generation > self.runtime_generation {
                         self.reset_session_ui(generation, false);
                     }
-                    let next_rows = crate::transcript::project_rows(&snapshot.conversation.items);
+                    let next_rows = self.project_transcript_rows(&snapshot);
                     let count = next_rows.len();
                     if count > self.last_transcript_count && !self.transcript_following {
                         self.transcript_unseen = self
