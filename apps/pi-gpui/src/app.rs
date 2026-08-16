@@ -1,6 +1,8 @@
 //! Top-level GPUI composition for the active root session.
 
+mod change_modal;
 mod composer_images;
+mod drafts;
 mod submissions;
 mod transcript_ui;
 mod views;
@@ -50,8 +52,7 @@ pub(crate) struct PiApp {
     projects: Vec<PathBuf>,
     drafts: Vec<projects::DraftSession>,
     selected_draft: Option<String>,
-    live_draft: Option<String>,
-    live_draft_submitted: bool,
+    submitted_drafts: HashMap<String, Option<PathBuf>>,
     sessions_error: Option<String>,
     session_generation: u64,
     runtime_generation: u64,
@@ -82,6 +83,7 @@ pub(crate) struct PiApp {
     pending_submission: Option<PendingSubmission>,
     pending_submission_result: Option<(String, bool)>,
     pending_session_reset: bool,
+    change_modal: Option<crate::tool_changes::ChangeModal>,
     extension_errors: Vec<String>,
     sessions_sheet: bool,
     run_sheet: bool,
@@ -118,6 +120,7 @@ impl PiApp {
         if project_registry_error.is_none() {
             project_registry_error = composer_error;
         }
+        let submitted_drafts = drafts::submitted_draft_associations(&registry.drafts);
         let runtime = RuntimeHandle::spawn(project.clone(), selected_draft.clone());
         let composer = cx.new(|cx| {
             TextareaState::new(window, cx)
@@ -154,7 +157,7 @@ impl PiApp {
                 InputEvent::PressEnter { shift: false, .. } => {
                     let value = state.read(cx).value().trim().to_owned();
                     if !value.is_empty() || this.has_composer_images() {
-                        this.submit(value, this.enter_mode(), cx);
+                        this.submit(value, this.enter_mode(), _window, cx);
                     }
                 }
                 InputEvent::PressEnter { .. } | InputEvent::Focus => {}
@@ -217,9 +220,8 @@ impl PiApp {
             recent_completions: HashMap::new(),
             projects: registry.projects,
             drafts: registry.drafts,
-            selected_draft: Some(selected_draft.clone()),
-            live_draft: Some(selected_draft),
-            live_draft_submitted: false,
+            selected_draft: Some(selected_draft),
+            submitted_drafts,
             sessions_error: project_registry_error,
             session_generation: 0,
             runtime_generation: 0,
@@ -250,6 +252,7 @@ impl PiApp {
             pending_submission: None,
             pending_submission_result: None,
             pending_session_reset: false,
+            change_modal: None,
             extension_errors: Vec::new(),
             sessions_sheet: false,
             run_sheet: false,
@@ -301,7 +304,7 @@ impl PiApp {
                     self.last_transcript_count = count;
                     self.snapshot = snapshot;
                     self.sync_composer_history();
-                    self.reconcile_live_draft(cx);
+                    self.reconcile_submitted_drafts(cx);
                 }
                 RuntimeEvent::SessionReset {
                     generation,
@@ -324,7 +327,7 @@ impl PiApp {
                     }
                     self.sessions = sessions;
                     self.sessions_error = None;
-                    self.reconcile_live_draft(cx);
+                    self.reconcile_submitted_drafts(cx);
                 }
                 RuntimeEvent::SessionsFailed {
                     generation,
@@ -347,15 +350,9 @@ impl PiApp {
                     generation,
                     target,
                     accepted,
+                    session,
                 } if generation == self.runtime_generation => {
-                    if accepted
-                        && self
-                            .live_draft
-                            .as_deref()
-                            .is_some_and(|id| target == draft_target(id))
-                    {
-                        self.live_draft_submitted = true;
-                    }
+                    self.record_draft_submission(&target, accepted, session);
                     if self
                         .pending_submission
                         .as_ref()
@@ -363,20 +360,15 @@ impl PiApp {
                     {
                         self.pending_submission_result = Some((target, accepted));
                     }
+                    self.reconcile_submitted_drafts(cx);
                 }
                 RuntimeEvent::SessionStatus {
                     target,
                     session,
                     status,
                 } => {
-                    let recent = self.record_run_status(target, status.clone(), false);
-                    if let Some(path) = session {
-                        self.record_run_status(
-                            format!("session:{}", path.display()),
-                            status,
-                            recent,
-                        );
-                    }
+                    self.record_session_status(target, session, status);
+                    self.reconcile_submitted_drafts(cx);
                 }
                 RuntimeEvent::Stopped => {
                     Arc::make_mut(&mut self.snapshot).status = "Stopped".into()
@@ -437,6 +429,7 @@ impl PiApp {
         self.pending_title = Some((generation, "Pi".into()));
         self.pending_editor_text = None;
         self.pending_session_reset = true;
+        self.change_modal = None;
         self.dialog_return_focus = None;
         self.sessions_sheet = false;
         self.run_sheet = false;
@@ -498,8 +491,6 @@ impl PiApp {
         let draft = projects::DraftSession::new(project.clone());
         let draft_key = draft_target(&draft.id);
         self.selected_draft = Some(draft.id.clone());
-        self.live_draft = Some(draft.id.clone());
-        self.live_draft_submitted = false;
         self.drafts.insert(0, draft);
         self.save_project_registry();
         self.send(RuntimeCommand::NewSession {
@@ -524,12 +515,7 @@ impl PiApp {
         if self.selected_draft.as_deref() == Some(id.as_str()) && !self.snapshot.history_preview {
             return;
         }
-        let is_live = self.live_draft.as_deref() == Some(id.as_str());
         self.selected_draft = Some(id.clone());
-        if !is_live {
-            self.live_draft = Some(id.clone());
-            self.live_draft_submitted = false;
-        }
         self.project = project.clone();
         self.switch_composer_target(draft_target(&id), window, cx);
         self.send(RuntimeCommand::ResumeDraft { id, project });
@@ -593,10 +579,9 @@ impl PiApp {
         let target = draft_target(id);
         self.composer_images.remove(&target);
         self.drafts.retain(|draft| draft.id != id);
-        if self.live_draft.as_deref() == Some(id) {
-            self.live_draft = None;
-            self.live_draft_submitted = false;
-        }
+        self.submitted_drafts.remove(id);
+        self.run_statuses.remove(&target);
+        self.recent_completions.remove(&target);
         if was_selected {
             self.selected_draft = None;
             if let Some(session) = self.sessions.first().cloned() {
@@ -633,51 +618,6 @@ impl PiApp {
         }
         self.send(RuntimeCommand::SetSettled { path, settled });
         cx.notify();
-    }
-
-    fn remove_live_draft(&mut self, path: &std::path::Path, cx: &mut Context<Self>) {
-        let Some(id) = self.live_draft.take() else {
-            return;
-        };
-        self.capture_composer_session(cx);
-        let draft_key = draft_target(&id);
-        let session_key = session_target(path);
-        self.composer_sessions
-            .promote(&draft_key, session_key.clone());
-        if let Some(images) = self.composer_images.remove(&draft_key) {
-            self.composer_images
-                .entry(session_key.clone())
-                .or_default()
-                .extend(images);
-        }
-        if let Some(pending) = self.pending_submission.as_mut()
-            && pending.target == draft_key
-        {
-            pending.target = session_key.clone();
-        }
-        if let Some((target, _)) = self.pending_submission_result.as_mut()
-            && *target == draft_key
-        {
-            *target = session_key;
-        }
-        self.drafts.retain(|draft| draft.id != id);
-        if self.selected_draft.as_deref() == Some(id.as_str()) {
-            self.selected_draft = None;
-        }
-        self.live_draft_submitted = false;
-        self.save_project_registry();
-    }
-
-    fn reconcile_live_draft(&mut self, cx: &mut Context<Self>) {
-        if !self.live_draft_submitted {
-            return;
-        }
-        let Some(path) = self.snapshot.live_session.clone() else {
-            return;
-        };
-        if self.sessions.iter().any(|session| session.path == path) {
-            self.remove_live_draft(&path, cx);
-        }
     }
 
     fn switch_composer_target(
@@ -831,7 +771,9 @@ impl PiApp {
     }
 
     fn dismiss_surface(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.extension.dialog.is_some() {
+        if self.change_modal.is_some() {
+            self.close_change_modal(window, cx);
+        } else if self.extension.dialog.is_some() {
             self.cancel_dialog(window, cx);
         } else if self.sessions_sheet || self.run_sheet {
             self.close_sheet(window, cx);

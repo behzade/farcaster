@@ -16,6 +16,10 @@ pub(crate) struct DraftSession {
     pub id: String,
     pub project: PathBuf,
     pub created_ms: u64,
+    #[serde(default)]
+    pub submitted: bool,
+    #[serde(default)]
+    pub session_path: Option<PathBuf>,
 }
 
 impl DraftSession {
@@ -28,6 +32,8 @@ impl DraftSession {
             id: format!("draft-{}-{}", elapsed.as_nanos(), std::process::id()),
             project,
             created_ms,
+            submitted: false,
+            session_path: None,
         }
     }
 }
@@ -106,6 +112,12 @@ fn load_from(path: &Path) -> Result<Registry, String> {
         .into_iter()
         .filter_map(|mut draft| {
             draft.project = draft.project.canonicalize().ok()?;
+            draft.session_path = draft
+                .session_path
+                .map(|path| crate::sessions::normalize_session_path(&path));
+            if draft.session_path.is_none() {
+                draft.submitted = false;
+            }
             (draft.project.is_dir() && seen_drafts.insert(draft.id.clone())).then_some(draft)
         })
         .collect();
@@ -155,6 +167,8 @@ mod tests {
                     id: "draft-one".into(),
                     project: first.clone(),
                     created_ms: 1,
+                    submitted: true,
+                    session_path: Some(second.clone()),
                 }],
             },
         )?;
@@ -167,6 +181,8 @@ mod tests {
                     id: "draft-one".into(),
                     project: first.canonicalize()?,
                     created_ms: 1,
+                    submitted: true,
+                    session_path: Some(second.canonicalize()?),
                 }],
             }
         );
@@ -185,11 +201,35 @@ mod tests {
                     id: "gone".into(),
                     project: temp.path().join("gone"),
                     created_ms: 1,
+                    submitted: false,
+                    session_path: None,
                 }],
             },
         )?;
 
         assert_eq!(load_from(&path)?, Registry::default());
+        Ok(())
+    }
+
+    #[test]
+    fn old_registry_drafts_decode_as_unsubmitted() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempdir()?;
+        let project = temp.path().join("project");
+        fs::create_dir(&project)?;
+        let path = temp.path().join("projects.json");
+        fs::write(
+            &path,
+            serde_json::json!({
+                "projects": [project.clone()],
+                "drafts": [{"id": "legacy", "project": project, "created_ms": 3}]
+            })
+            .to_string(),
+        )?;
+
+        let registry = load_from(&path)?;
+        assert_eq!(registry.drafts.len(), 1);
+        assert!(!registry.drafts[0].submitted);
+        assert_eq!(registry.drafts[0].session_path, None);
         Ok(())
     }
 }

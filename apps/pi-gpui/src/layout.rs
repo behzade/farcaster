@@ -23,6 +23,14 @@ pub(crate) fn layout_mode(width: Pixels) -> LayoutMode {
     }
 }
 
+pub(crate) const fn shows_inline_sidebars(mode: LayoutMode) -> bool {
+    !matches!(mode, LayoutMode::Narrow)
+}
+
+pub(crate) const fn shows_sheet_buttons(mode: LayoutMode) -> bool {
+    matches!(mode, LayoutMode::Narrow)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -34,5 +42,16 @@ mod tests {
         assert_eq!(layout_mode(px(960.0)), LayoutMode::Compact);
         assert_eq!(layout_mode(px(1_319.0)), LayoutMode::Compact);
         assert_eq!(layout_mode(px(1_320.0)), LayoutMode::Wide);
+    }
+
+    #[test]
+    fn desktop_modes_keep_both_sidebars_and_only_narrow_uses_sheets() {
+        for mode in [LayoutMode::Wide, LayoutMode::Compact] {
+            assert!(shows_inline_sidebars(mode));
+            assert!(!shows_sheet_buttons(mode));
+        }
+        assert!(!shows_inline_sidebars(LayoutMode::Narrow));
+        assert!(shows_sheet_buttons(LayoutMode::Narrow));
+        assert!(shows_inline_sidebars(layout_mode(px(1_240.0))));
     }
 }

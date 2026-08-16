@@ -53,9 +53,11 @@ impl RuntimeOwner {
             }
         };
         self.pending_prompt_target = Some(target);
-        self.snapshot
-            .conversation
-            .push_local_user(message.clone(), images.len());
+        self.pending_prompt_item = Some(
+            self.snapshot
+                .conversation
+                .push_local_user(message.clone(), images.len()),
+        );
         self.snapshot.conversation.running = true;
         self.snapshot.status = "Working".into();
         self.publish();
@@ -67,9 +69,11 @@ impl RuntimeOwner {
         self.snapshot.project = self.project.clone();
         self.snapshot.selected_session = prompt.session.clone();
         self.pending_prompt_target = Some(prompt.target);
-        self.snapshot
-            .conversation
-            .push_local_user(prompt.message.clone(), prompt.images.len());
+        self.pending_prompt_item = Some(
+            self.snapshot
+                .conversation
+                .push_local_user(prompt.message.clone(), prompt.images.len()),
+        );
         self.snapshot.conversation.running = true;
         self.snapshot.status = "Working".into();
         self.publish();
@@ -106,11 +110,36 @@ impl RuntimeOwner {
             self.start_process(self.snapshot.selected_session.clone());
             return;
         }
+        if !self.startup_state_loaded || !self.startup_history_loaded {
+            self.pending_outbox_id = outbox_id;
+            self.deferred_prompt = Some(DeferredPrompt {
+                mode,
+                message,
+                images,
+                outbox_id,
+            });
+            return;
+        }
+        if self.active_session.is_none() {
+            const ERROR: &str = "Pi did not provide a session path";
+            let was_running = self
+                .active_snapshot()
+                .session
+                .as_ref()
+                .is_some_and(|state| state.is_streaming);
+            self.mark_outbox_failed(ERROR);
+            let target = self.pending_prompt_target.take().unwrap_or_default();
+            self.rollback_pending_prompt();
+            self.active_snapshot_mut().conversation.running = was_running;
+            self.reject_prompt(&target, ERROR.into());
+            return;
+        }
         if let Some(id) = outbox_id
             && let Some(state) = &self.state
             && let Err(error) = state.begin_prompt(id)
         {
             let target = self.pending_prompt_target.take().unwrap_or_default();
+            self.rollback_pending_prompt();
             self.reject_prompt(&target, error);
             return;
         }
@@ -145,10 +174,13 @@ impl RuntimeOwner {
     }
 
     pub(super) fn emit_prompt_result(&self, target: &str, accepted: bool) {
+        let session = self.active_session.clone();
+        let accepted = accepted && session.is_some();
         let _ = self.event_tx.send(RuntimeEvent::PromptResult {
             generation: self.process_generation,
             target: target.to_owned(),
             accepted,
+            session,
         });
     }
 
@@ -157,10 +189,14 @@ impl RuntimeOwner {
             return;
         }
         if let Some(prompt) = self.deferred_prompt.take() {
+            if self.pending_prompt_item.is_none() {
+                let optimistic = self
+                    .active_snapshot_mut()
+                    .conversation
+                    .push_local_user(prompt.message.clone(), prompt.images.len());
+                self.pending_prompt_item = Some(optimistic);
+            }
             let snapshot = self.active_snapshot_mut();
-            snapshot
-                .conversation
-                .push_local_user(prompt.message.clone(), prompt.images.len());
             snapshot.conversation.running = true;
             snapshot.status = "Working".into();
             if self.snapshot.history_preview

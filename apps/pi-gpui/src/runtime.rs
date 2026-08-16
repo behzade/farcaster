@@ -13,7 +13,7 @@ use std::{
 use serde_json::{Value, json};
 
 use crate::{
-    conversation::{ConversationState, TranscriptKind},
+    conversation::{ConversationState, TranscriptItem, TranscriptKind},
     protocol::{ExtensionUiResponse, Model, PromptImage, PromptMode, SessionState, command},
     rpc_process::{ProcessCommand, ProcessItem, RpcProcess},
     sessions::{SessionSummary, discover, load_history},
@@ -55,6 +55,7 @@ pub(crate) enum RuntimeCommand {
         settled: bool,
     },
     LoadSessions(String),
+    RefreshSessions,
     Shutdown,
 }
 
@@ -87,6 +88,7 @@ pub(crate) enum RuntimeEvent {
         generation: u64,
         target: String,
         accepted: bool,
+        session: Option<PathBuf>,
     },
     SessionStatus {
         target: String,
@@ -297,31 +299,30 @@ fn run_supervisor(
                         let _ = event_tx.send(RuntimeEvent::HistoryReset { generation });
                     }
                     RuntimeEvent::PromptResult {
-                        target, accepted, ..
+                        target,
+                        accepted,
+                        session,
+                        ..
                     } => {
                         let _ = event_tx.send(RuntimeEvent::PromptResult {
                             generation,
                             target,
                             accepted,
+                            session,
                         });
                     }
-                    RuntimeEvent::Sessions {
-                        generation: session_generation,
-                        sessions,
-                    } => {
-                        let _ = event_tx.send(RuntimeEvent::Sessions {
-                            generation: session_generation,
-                            sessions,
-                        });
-                    }
-                    RuntimeEvent::SessionsFailed {
-                        generation: session_generation,
-                        message,
-                    } => {
-                        let _ = event_tx.send(RuntimeEvent::SessionsFailed {
-                            generation: session_generation,
-                            message,
-                        });
+                    event @ (RuntimeEvent::Sessions { .. }
+                    | RuntimeEvent::SessionsFailed { .. }) => {
+                        match route_session_discovery(&key, &catalog_key, event) {
+                            SupervisorSessionAction::Publish(event) => {
+                                let _ = event_tx.send(event);
+                            }
+                            SupervisorSessionAction::RefreshCatalog => {
+                                if let Some(catalog) = actors.get(&catalog_key) {
+                                    catalog.send(RuntimeCommand::RefreshSessions);
+                                }
+                            }
+                        }
                     }
                     RuntimeEvent::Stopped
                     | RuntimeEvent::SessionStatus { .. }
@@ -399,7 +400,9 @@ fn run_supervisor(
                 } else {
                     let target = if matches!(
                         &command,
-                        RuntimeCommand::LoadSessions(_) | RuntimeCommand::SetSettled { .. }
+                        RuntimeCommand::LoadSessions(_)
+                            | RuntimeCommand::RefreshSessions
+                            | RuntimeCommand::SetSettled { .. }
                     ) {
                         &catalog_key
                     } else {
@@ -418,6 +421,24 @@ fn run_supervisor(
         actor.send(RuntimeCommand::Shutdown);
     }
     let _ = event_tx.send(RuntimeEvent::Stopped);
+}
+
+#[derive(Debug)]
+enum SupervisorSessionAction {
+    Publish(RuntimeEvent),
+    RefreshCatalog,
+}
+
+fn route_session_discovery(
+    actor_key: &str,
+    catalog_key: &str,
+    event: RuntimeEvent,
+) -> SupervisorSessionAction {
+    if actor_key == catalog_key {
+        SupervisorSessionAction::Publish(event)
+    } else {
+        SupervisorSessionAction::RefreshCatalog
+    }
 }
 
 fn command_target(command: &RuntimeCommand) -> Option<(String, PathBuf)> {
@@ -519,6 +540,7 @@ struct RuntimeOwner {
     process_generation: u64,
     pending_prompt_id: Option<String>,
     pending_prompt_target: Option<String>,
+    pending_prompt_item: Option<Arc<TranscriptItem>>,
     pending_outbox_id: Option<i64>,
     event_tx: mpsc::Sender<RuntimeEvent>,
     discovery_tx: mpsc::Sender<DiscoveryResult>,
@@ -572,6 +594,7 @@ fn run(
         process_generation: 0,
         pending_prompt_id: None,
         pending_prompt_target: None,
+        pending_prompt_item: None,
         pending_outbox_id: None,
         event_tx,
         discovery_tx,
@@ -636,6 +659,7 @@ impl RuntimeOwner {
         self.startup_state_loaded = false;
         self.startup_history_loaded = false;
         self.pending_prompt_id = None;
+        self.pending_prompt_item = None;
         let status = session.as_ref().map_or_else(
             || "Starting new session".into(),
             |_| "Resuming session".into(),
@@ -726,6 +750,7 @@ impl RuntimeOwner {
                 self.load_sessions(self.session_query.clone());
             }
             RuntimeCommand::LoadSessions(query) => self.load_sessions(query),
+            RuntimeCommand::RefreshSessions => self.refresh_sessions(),
             RuntimeCommand::Shutdown => {}
         }
     }
@@ -774,7 +799,7 @@ impl RuntimeOwner {
                 if settled {
                     self.send(command("get_state"));
                     self.send(command("get_session_stats"));
-                    self.load_sessions(String::new());
+                    self.refresh_sessions();
                 }
                 should_publish
             }
@@ -933,6 +958,11 @@ impl RuntimeOwner {
                         .unwrap_or("Pi rejected the prompt"),
                 );
             }
+            if response.success {
+                self.pending_prompt_item = None;
+            } else {
+                self.rollback_pending_prompt();
+            }
             if let Some(target) = self.pending_prompt_target.take() {
                 self.emit_prompt_result(&target, response.success);
             }
@@ -951,6 +981,7 @@ impl RuntimeOwner {
             );
             snapshot.status = "Command failed".into();
             if blocks_resume {
+                self.rollback_pending_prompt();
                 self.deferred_prompt = None;
                 if let Some(target) = self.pending_prompt_target.take() {
                     self.emit_prompt_result(&target, false);
@@ -972,6 +1003,7 @@ impl RuntimeOwner {
                         .session_file
                         .as_ref()
                         .map(PathBuf::from)
+                        .map(|path| crate::sessions::normalize_session_path(&path))
                         .or_else(|| self.active_session.clone());
                     self.active_session = selected_session.clone();
                     let snapshot = self.active_snapshot_mut();
@@ -981,7 +1013,7 @@ impl RuntimeOwner {
                     snapshot.status = "Ready".into();
                     self.startup_state_loaded = true;
                     if self.active_session.is_some() && self.active_session != previous_session {
-                        self.load_sessions(String::new());
+                        self.refresh_sessions();
                     }
                 }
                 Err(error) => {
@@ -1060,7 +1092,7 @@ impl RuntimeOwner {
                 });
                 self.publish();
                 self.send_startup_queries();
-                self.load_sessions(String::new());
+                self.refresh_sessions();
             }
             "prompt" | "steer" | "follow_up" => {
                 self.active_snapshot_mut().status = "Accepted".into();
@@ -1081,9 +1113,9 @@ impl RuntimeOwner {
     }
 
     fn load_sessions(&mut self, query: String) {
-        self.session_query = query.clone();
+        self.session_query = query;
         if let Some(state) = &self.state {
-            match state.cached_sessions(&query) {
+            match state.cached_sessions(&self.session_query) {
                 Ok(sessions) => {
                     let _ = self.event_tx.send(RuntimeEvent::Sessions {
                         generation: self.session_generation,
@@ -1098,9 +1130,12 @@ impl RuntimeOwner {
                 }
             }
         }
-        if !query.is_empty() {
-            return;
+        if self.session_query.is_empty() {
+            self.refresh_sessions();
         }
+    }
+
+    fn refresh_sessions(&mut self) {
         self.session_generation = self.session_generation.saturating_add(1);
         let generation = self.session_generation;
         let sender = self.discovery_tx.clone();
@@ -1136,7 +1171,15 @@ impl RuntimeOwner {
                         }
                     }
                 } else {
-                    sessions
+                    let needle = self.session_query.to_lowercase();
+                    if needle.is_empty() {
+                        sessions
+                    } else {
+                        sessions
+                            .into_iter()
+                            .filter(|session| session.search_text().contains(&needle))
+                            .collect()
+                    }
                 };
                 RuntimeEvent::Sessions {
                     generation: result.generation,
@@ -1151,9 +1194,18 @@ impl RuntimeOwner {
         let _ = self.event_tx.send(event);
     }
 
+    fn rollback_pending_prompt(&mut self) {
+        if let Some(optimistic) = self.pending_prompt_item.take() {
+            self.active_snapshot_mut()
+                .conversation
+                .rollback_local_user(&optimistic);
+        }
+    }
+
     fn fail(&mut self, error: String) {
         self.pending_prompt_id = None;
         self.deferred_prompt = None;
+        self.rollback_pending_prompt();
         if let Some(target) = self.pending_prompt_target.take() {
             self.emit_prompt_result(&target, false);
         }
@@ -1259,8 +1311,8 @@ fn session_badge_status(conversation: &ConversationState) -> &'static str {
 mod tests {
     use std::{
         fs,
-        os::unix::fs::PermissionsExt as _,
-        time::{Duration, Instant},
+        os::unix::fs::{PermissionsExt as _, symlink},
+        time::{Duration, Instant, SystemTime},
     };
 
     use tempfile::tempdir;
@@ -1296,6 +1348,7 @@ mod tests {
                 process_generation: 1,
                 pending_prompt_id: None,
                 pending_prompt_target: None,
+                pending_prompt_item: None,
                 pending_outbox_id: None,
                 event_tx,
                 discovery_tx,
@@ -1404,11 +1457,143 @@ mod tests {
     }
 
     #[test]
+    fn non_catalog_discovery_refreshes_catalog_without_publishing_local_results() {
+        let action = route_session_discovery(
+            "draft:a",
+            "catalog",
+            RuntimeEvent::Sessions {
+                generation: 99,
+                sessions: Vec::new(),
+            },
+        );
+
+        assert!(matches!(action, SupervisorSessionAction::RefreshCatalog));
+    }
+
+    #[test]
+    fn catalog_discovery_is_the_authoritative_generation_namespace() {
+        let action = route_session_discovery(
+            "catalog",
+            "catalog",
+            RuntimeEvent::Sessions {
+                generation: 7,
+                sessions: Vec::new(),
+            },
+        );
+
+        assert!(matches!(
+            action,
+            SupervisorSessionAction::Publish(RuntimeEvent::Sessions { generation: 7, .. })
+        ));
+    }
+
+    #[test]
+    fn non_catalog_discovery_failures_also_refresh_instead_of_publishing() {
+        let action = route_session_discovery(
+            "session:/one",
+            "catalog",
+            RuntimeEvent::SessionsFailed {
+                generation: 41,
+                message: "local failure".into(),
+            },
+        );
+
+        assert!(matches!(action, SupervisorSessionAction::RefreshCatalog));
+    }
+
+    #[test]
     fn streaming_accepts_only_steer_and_follow_up_composer_modes() {
         assert!(!can_send_prompt(PromptMode::Normal, true));
         assert!(can_send_prompt(PromptMode::Steer, true));
         assert!(can_send_prompt(PromptMode::FollowUp, true));
         assert!(can_send_prompt(PromptMode::Normal, false));
+    }
+
+    #[test]
+    fn deferred_prompt_is_rejected_when_startup_state_has_no_session_path()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempdir()?;
+        let script = temp.path().join("fake-pi.sh");
+        fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))?;
+        let mut permissions = fs::metadata(&script)?.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script, permissions)?;
+        let process = RpcProcess::spawn(
+            &ProcessCommand {
+                program: script,
+                prefix_args: vec!["quiet".into()],
+                direnv_program: None,
+            },
+            temp.path(),
+            None,
+        )?;
+        let (mut owner, events, _discovery) = owner_without_process(temp.path().to_path_buf());
+        owner.process = Some(process);
+        owner.state = Some(StateStore::open_at(&temp.path().join("gui-state.sqlite3"))?);
+
+        owner.send_prompt(
+            "draft:a".into(),
+            PromptMode::Normal,
+            "hello".into(),
+            Vec::new(),
+        );
+
+        assert!(owner.deferred_prompt.is_some());
+        assert!(
+            events
+                .try_iter()
+                .all(|event| !matches!(event, RuntimeEvent::PromptResult { .. }))
+        );
+
+        owner.startup_state_loaded = true;
+        owner.startup_history_loaded = true;
+        owner.maybe_send_deferred_prompt();
+
+        assert!(owner.deferred_prompt.is_none());
+        assert!(owner.pending_prompt_item.is_none());
+        assert!(!owner.snapshot.conversation.running);
+        assert!(
+            owner
+                .state
+                .as_ref()
+                .expect("state")
+                .queued_prompts()?
+                .is_empty()
+        );
+        assert!(events.try_iter().any(|event| matches!(
+            event,
+            RuntimeEvent::PromptResult {
+                target,
+                accepted: false,
+                session: None,
+                ..
+            } if target == "draft:a"
+        )));
+        Ok(())
+    }
+
+    #[test]
+    fn accepted_prompt_result_has_the_normalized_active_session_path()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempdir()?;
+        let session = temp.path().join("session.jsonl");
+        let link = temp.path().join("link.jsonl");
+        fs::write(&session, "{}")?;
+        symlink(&session, &link)?;
+        let (mut owner, events, _discovery) = owner_without_process(temp.path().to_path_buf());
+        owner.active_session = Some(crate::sessions::normalize_session_path(&link));
+
+        owner.emit_prompt_result("draft:a", true);
+
+        assert!(events.try_iter().any(|event| matches!(
+            event,
+            RuntimeEvent::PromptResult {
+                accepted: true,
+                session: Some(path),
+                ..
+            } if path == session.canonicalize().expect("canonical session")
+        )));
+        Ok(())
     }
 
     #[test]
@@ -1427,6 +1612,77 @@ mod tests {
         assert_eq!(owner.snapshot.project, new_project.path());
         assert_eq!(owner.active_session, None);
         assert_eq!(owner.process_generation, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn background_catalog_refresh_preserves_search_until_user_clears_it()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempdir()?;
+        let project = temp.path().join("project");
+        fs::create_dir(&project)?;
+        let alpha_path = temp.path().join("alpha.jsonl");
+        let beta_path = temp.path().join("beta.jsonl");
+        fs::write(&alpha_path, "{}")?;
+        fs::write(&beta_path, "{}")?;
+        let summary = |id: &str, path: PathBuf, search: &str| {
+            SessionSummary::from_cached(
+                id.into(),
+                path,
+                project.clone(),
+                id.into(),
+                String::new(),
+                String::new(),
+                None,
+                SystemTime::now(),
+                0,
+                crate::sessions::UsageSummary::default(),
+                false,
+                search.into(),
+            )
+        };
+        let sessions = vec![
+            summary("alpha", alpha_path.canonicalize()?, "alpha"),
+            summary("beta", beta_path.canonicalize()?, "beta"),
+        ];
+        let (mut owner, events, _discovery) = owner_without_process(project);
+        owner.state = Some(StateStore::open_at(&temp.path().join("gui-state.sqlite3"))?);
+        owner
+            .state
+            .as_mut()
+            .expect("state")
+            .replace_sessions(&sessions)?;
+
+        owner.load_sessions("alpha".into());
+        let searched = events.try_iter().collect::<Vec<_>>();
+        assert!(searched.iter().any(|event| matches!(
+            event,
+            RuntimeEvent::Sessions { sessions, .. }
+                if sessions.len() == 1 && sessions[0].id == "alpha"
+        )));
+
+        owner.refresh_sessions();
+        let refresh_generation = owner.session_generation;
+        assert_eq!(owner.session_query, "alpha");
+        owner.apply_discovery(DiscoveryResult {
+            generation: refresh_generation,
+            result: Ok(sessions),
+        });
+        let refreshed = events.try_iter().collect::<Vec<_>>();
+        assert!(refreshed.iter().any(|event| matches!(
+            event,
+            RuntimeEvent::Sessions { sessions, .. }
+                if sessions.len() == 1 && sessions[0].id == "alpha"
+        )));
+        assert_eq!(owner.session_query, "alpha");
+
+        owner.load_sessions(String::new());
+        let cleared = events.try_iter().collect::<Vec<_>>();
+        assert!(cleared.iter().any(|event| matches!(
+            event,
+            RuntimeEvent::Sessions { sessions, .. } if sessions.len() == 2
+        )));
+        assert!(owner.session_query.is_empty());
         Ok(())
     }
 
@@ -1457,6 +1713,43 @@ mod tests {
 
         assert_eq!(owner.active_session, Some(session));
         assert_eq!(owner.session_generation, 1);
+    }
+
+    #[test]
+    fn get_state_canonicalizes_a_symlinked_session_path() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let temp = tempdir()?;
+        let session = temp.path().join("session.jsonl");
+        let link = temp.path().join("linked.jsonl");
+        fs::write(&session, "{}")?;
+        symlink(&session, &link)?;
+        let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
+
+        owner.apply_response(crate::protocol::RpcResponse {
+            id: Some("state".into()),
+            command: "get_state".into(),
+            success: true,
+            data: json!({
+                "model": null,
+                "thinkingLevel": "off",
+                "isStreaming": false,
+                "isCompacting": false,
+                "sessionFile": link,
+                "sessionId": "session",
+                "sessionName": null,
+                "autoCompactionEnabled": true,
+                "messageCount": 0,
+                "pendingMessageCount": 0
+            }),
+            error: None,
+        });
+
+        assert_eq!(owner.active_session, Some(session.canonicalize()?));
+        assert_eq!(
+            owner.snapshot.selected_session,
+            Some(session.canonicalize()?)
+        );
+        Ok(())
     }
 
     #[test]
@@ -1581,6 +1874,7 @@ mod tests {
             process_generation: 4,
             pending_prompt_id: None,
             pending_prompt_target: None,
+            pending_prompt_item: None,
             pending_outbox_id: None,
             event_tx,
             discovery_tx,
@@ -1673,6 +1967,7 @@ mod tests {
             process_generation: 3,
             pending_prompt_id: None,
             pending_prompt_target: None,
+            pending_prompt_item: None,
             pending_outbox_id: None,
             event_tx,
             discovery_tx,
@@ -1818,6 +2113,7 @@ mod tests {
             process_generation: 7,
             pending_prompt_id: Some("pending-prompt".into()),
             pending_prompt_target: Some(format!("session:{}", active_path.display())),
+            pending_prompt_item: None,
             pending_outbox_id: None,
             event_tx,
             discovery_tx,

@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use gpui::{
     AnyElement, FontWeight, HighlightStyle, InteractiveElement as _, IntoElement as _,
-    ListSizingBehavior, ListState, Overflow, ParentElement as _, StyleRefinement, Styled as _,
-    WeakEntity, div, list, prelude::FluentBuilder as _, px, rems,
+    ListSizingBehavior, ListState, Overflow, ParentElement as _, Pixels, StyleRefinement,
+    Styled as _, WeakEntity, div, list, prelude::FluentBuilder as _, px, rems,
 };
 use gpui_component::{
     Sizable as _, Size,
@@ -23,6 +23,17 @@ use crate::{
 
 const MARKDOWN_CHUNK_TARGET_BYTES: usize = 2 * 1024;
 const MARKDOWN_CHUNK_HARD_BYTES: usize = 8 * 1024;
+
+pub(crate) fn tail_reserve(viewport_height: Pixels) -> Pixels {
+    px((f32::from(viewport_height) * 0.32).clamp(72.0, 280.0))
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct TranscriptViewport {
+    pub(crate) following: bool,
+    pub(crate) unseen: usize,
+    pub(crate) tail_reserve: Pixels,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TranscriptRow {
@@ -240,8 +251,7 @@ fn expanded_by_default(row: TranscriptRow, items: &[Arc<TranscriptItem>]) -> boo
 
 pub(crate) fn render(
     list_state: &ListState,
-    following: bool,
-    unseen: usize,
+    viewport: TranscriptViewport,
     rows: std::sync::Arc<Vec<TranscriptRow>>,
     snapshot: std::sync::Arc<crate::runtime::RuntimeSnapshot>,
     disclosure_overrides: std::collections::HashSet<usize>,
@@ -271,10 +281,13 @@ pub(crate) fn render(
         };
         let expanded = expanded_by_default(row, &snapshot.conversation.items)
             != disclosure_overrides.contains(&row.key());
+        let reserves_tail = index + 1 == rows.len()
+            && latest_allows_tail_reserve(row, &snapshot.conversation.items, expanded);
         div()
             .w_full()
             .flex()
             .justify_center()
+            .when(reserves_tail, |row| row.pb(viewport.tail_reserve))
             .child(
                 div()
                     .w_full()
@@ -306,7 +319,7 @@ pub(crate) fn render(
                 .bg(THEME.colors.canvas)
                 .child(view),
         )
-        .when(!following, |root| {
+        .when(!viewport.following, |root| {
             root.child(
                 div()
                     .flex_none()
@@ -316,10 +329,10 @@ pub(crate) fn render(
                     .py(THEME.space.xs)
                     .child(button(
                         "jump-to-latest",
-                        if unseen == 0 {
+                        if viewport.unseen == 0 {
                             "Jump to latest".to_owned()
                         } else {
-                            format!("Jump to latest · {unseen} new")
+                            format!("Jump to latest · {} new", viewport.unseen)
                         },
                         ButtonTone::Accent,
                         true,
@@ -330,6 +343,24 @@ pub(crate) fn render(
             )
         })
         .into_any_element()
+}
+
+fn latest_allows_tail_reserve(
+    row: TranscriptRow,
+    items: &[Arc<TranscriptItem>],
+    expanded: bool,
+) -> bool {
+    match row {
+        TranscriptRow::MessageChunk { .. } => true,
+        TranscriptRow::Item { index, .. } => {
+            !expanded
+                || !matches!(
+                    items[index].kind,
+                    TranscriptKind::Tool | TranscriptKind::Thinking
+                )
+        }
+        TranscriptRow::ReadGroup { .. } => !expanded,
+    }
 }
 
 fn render_row(
@@ -481,7 +512,7 @@ fn render_read_group(
                     expanded,
                     "Read details",
                     key,
-                    entity,
+                    entity.clone(),
                 ))
                 .child(
                     selectable_text(("read-summary", key), format!("{summary}{state}"))
@@ -505,7 +536,11 @@ fn render_read_group(
                     .flex_col()
                     .gap(THEME.space.xs)
                     .children(items.iter().enumerate().map(|(index, item)| {
-                        expanded_tool_body(format!("read-detail-{key}-{index}"), item)
+                        expanded_tool_body(
+                            format!("read-detail-{key}-{index}"),
+                            item,
+                            entity.clone(),
+                        )
                     })),
             )
         })
@@ -545,7 +580,7 @@ fn render_tool(
                         "Tool details"
                     },
                     key,
-                    entity,
+                    entity.clone(),
                 ))
                 .child(
                     selectable_text(("tool-summary", key), summary)
@@ -567,13 +602,17 @@ fn render_tool(
                 div()
                     .ml(px(22.0))
                     .mt(THEME.space.xs)
-                    .child(expanded_tool_body(("tool-detail", key), item)),
+                    .child(expanded_tool_body(("tool-detail", key), item, entity)),
             )
         })
         .into_any_element()
 }
 
-fn expanded_tool_body(id: impl Into<gpui::ElementId>, item: &TranscriptItem) -> AnyElement {
+fn expanded_tool_body(
+    id: impl Into<gpui::ElementId>,
+    item: &TranscriptItem,
+    entity: WeakEntity<PiApp>,
+) -> AnyElement {
     if let Some(presentation) = &item.tool_presentation {
         let output = visible_mutation_output(item).map(|output| {
             selectable_text(id, output)
@@ -589,7 +628,9 @@ fn expanded_tool_body(id: impl Into<gpui::ElementId>, item: &TranscriptItem) -> 
             .gap(THEME.space.xs)
             .child(crate::tool_changes::render(
                 presentation,
+                item.tool_call_id.as_deref(),
                 item.tool_call_id.as_ref().map_or(0, |id| stable_key(id)),
+                entity,
             ))
             .children(output)
             .into_any_element();
@@ -735,6 +776,13 @@ mod tests {
     }
 
     #[test]
+    fn tail_reserve_is_responsive_but_bounded() {
+        assert_eq!(tail_reserve(px(100.0)), px(72.0));
+        assert_eq!(tail_reserve(px(500.0)), px(160.0));
+        assert_eq!(tail_reserve(px(2_000.0)), px(280.0));
+    }
+
+    #[test]
     fn markdown_inline_code_uses_the_reading_palette() {
         let style = transcript_markdown_style();
 
@@ -870,6 +918,7 @@ mod tests {
             Some(crate::conversation::ToolPresentation::Edit {
                 path: "src/main.rs".into(),
                 diff: Some("- old\n+ new".into()),
+                format: crate::conversation::EditDiffFormat::Unnumbered,
             });
         let items = vec![edit, item(TranscriptKind::Tool, "Bash", "Command: true")];
         let rows = project_rows(&items);

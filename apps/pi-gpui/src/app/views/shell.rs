@@ -17,7 +17,7 @@ use gpui_component::{
 use super::super::PiApp;
 use crate::{
     assets::AppIcon,
-    layout::LayoutMode,
+    layout::{LayoutMode, shows_sheet_buttons},
     primitives::{ButtonTone, FeedbackTone, button, feedback, icon_button, panel, section_heading},
     projects::DraftSession,
     sessions::{
@@ -91,7 +91,7 @@ impl PiApp {
                     .flex()
                     .items_center()
                     .gap(THEME.space.xs)
-                    .when(mode != LayoutMode::Wide, |actions| {
+                    .when(shows_sheet_buttons(mode), |actions| {
                         actions.child(button(
                             "open-sessions",
                             "Sessions",
@@ -103,7 +103,7 @@ impl PiApp {
                             },
                         ))
                     })
-                    .when(mode != LayoutMode::Wide, |actions| {
+                    .when(shows_sheet_buttons(mode), |actions| {
                         actions.child(button(
                             "open-run",
                             "Session",
@@ -140,8 +140,7 @@ impl PiApp {
         }
         let drafts = self.drafts.clone();
         let selected_draft = self.selected_draft.clone();
-        let live_draft = self.live_draft.clone();
-        let live_draft_submitted = self.live_draft_submitted;
+        let submitted_drafts = self.submitted_drafts.clone();
         let selected_root =
             root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
                 .map(|session| session.id.clone());
@@ -159,23 +158,15 @@ impl PiApp {
                 .filter_map(|index| {
                     if let Some(draft) = drafts.get(index) {
                         let selected = selected_draft.as_deref() == Some(draft.id.as_str());
-                        let target = format!("draft:{}", draft.id);
-                        let status = run_statuses.get(&target).map_or_else(
-                            || {
-                                if live_draft.as_deref() == Some(draft.id.as_str())
-                                    && live_draft_submitted
-                                {
-                                    "Working"
-                                } else {
-                                    "Draft"
-                                }
-                            },
-                            String::as_str,
+                        let status = crate::app::drafts::resolved_draft_status(
+                            &draft.id,
+                            &submitted_drafts,
+                            &run_statuses,
                         );
                         return Some(draft_session_row(
                             draft,
                             selected,
-                            status,
+                            &status,
                             row_entity.clone(),
                         ));
                     }

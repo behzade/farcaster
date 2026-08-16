@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use gpui::{Context, Window};
 
-use super::PiApp;
+use super::{ComposerImage, PiApp};
 use crate::{
     composer_sessions::ComposerSnapshot,
     protocol::{PromptImage, PromptMode},
@@ -15,21 +15,28 @@ use crate::{
 pub(super) struct PendingSubmission {
     pub(super) target: String,
     pub(super) text: String,
-    pub(super) images: Vec<PromptImage>,
+    pub(super) images: Vec<ComposerImage>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SubmissionResolution {
-    ClearEditor,
-    KeepEditor,
+    Accepted,
+    Rollback,
     Ignore,
 }
 
 impl PiApp {
-    pub(crate) fn submit(&mut self, value: String, mode: PromptMode, cx: &mut Context<Self>) {
+    pub(crate) fn submit(
+        &mut self,
+        value: String,
+        mode: PromptMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !self.can_submit() {
             return;
         }
+        self.capture_composer_session(cx);
         let target = self.composer_sessions.current_target().to_owned();
         let editor_text = self.composer.read(cx).value().to_string();
         let images = self
@@ -38,20 +45,28 @@ impl PiApp {
             .into_iter()
             .flatten()
             .map(|image| image.prompt.clone())
-            .collect::<Vec<_>>();
+            .collect::<Vec<PromptImage>>();
         match self.runtime.send(RuntimeCommand::Prompt {
             target: target.clone(),
             mode,
             message: value.clone(),
-            images: images.clone(),
+            images,
         }) {
             Ok(()) => {
                 self.composer_sessions.record_submission(&target, &value);
+                let pending_images = self.composer_images.remove(&target).unwrap_or_default();
                 self.pending_submission = Some(PendingSubmission {
-                    target,
-                    text: editor_text,
-                    images,
+                    target: target.clone(),
+                    text: editor_text.clone(),
+                    images: pending_images,
                 });
+                if self
+                    .composer_sessions
+                    .clear_submitted_text(&target, &editor_text)
+                    && self.composer_sessions.current_target() == target
+                {
+                    self.apply_composer_snapshot(ComposerSnapshot::default(), window, cx);
+                }
                 self.jump_to_latest(cx);
             }
             Err(error) => {
@@ -72,10 +87,10 @@ impl PiApp {
         prompt_mode_for_enter(self.snapshot.conversation.running)
     }
 
-    pub(crate) fn submit_follow_up(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn submit_follow_up(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let value = self.composer.read(cx).value().trim().to_owned();
         if !value.is_empty() || self.has_composer_images() {
-            self.submit(value, PromptMode::FollowUp, cx);
+            self.submit(value, PromptMode::FollowUp, window, cx);
         }
     }
 
@@ -87,40 +102,32 @@ impl PiApp {
         let Some((target, accepted)) = self.pending_submission_result.take() else {
             return;
         };
-        let current = self.composer_sessions.snapshot_for(&target).text;
-        let resolution = submission_resolution(
-            self.pending_submission.as_ref(),
-            &target,
-            accepted,
-            &current,
-        );
+        let resolution = submission_resolution(self.pending_submission.as_ref(), &target, accepted);
         if resolution == SubmissionResolution::Ignore {
             return;
         }
         let Some(pending) = self.pending_submission.take() else {
             return;
         };
-        if accepted
-            && self
-                .composer_images
-                .get(&pending.target)
-                .map(|images| {
-                    images
-                        .iter()
-                        .map(|image| &image.prompt)
-                        .eq(pending.images.iter())
-                })
-                .unwrap_or(pending.images.is_empty())
-        {
-            self.composer_images.remove(&pending.target);
+        if resolution == SubmissionResolution::Accepted {
+            return;
         }
-        if resolution == SubmissionResolution::ClearEditor {
-            let cleared = self
-                .composer_sessions
-                .clear_submitted_text(&pending.target, &pending.text);
-            if cleared && self.composer_sessions.current_target() == pending.target {
-                self.apply_composer_snapshot(ComposerSnapshot::default(), window, cx);
-            }
+
+        let restored = self
+            .composer_sessions
+            .prepend_failed_submission(&pending.target, &pending.text);
+        if !pending.images.is_empty() {
+            let new_images = self
+                .composer_images
+                .remove(&pending.target)
+                .unwrap_or_default();
+            let mut restored_images = pending.images;
+            restored_images.extend(new_images);
+            self.composer_images
+                .insert(pending.target.clone(), restored_images);
+        }
+        if self.composer_sessions.current_target() == pending.target {
+            self.apply_composer_snapshot(restored, window, cx);
         }
     }
 }
@@ -129,15 +136,14 @@ fn submission_resolution(
     pending: Option<&PendingSubmission>,
     target: &str,
     accepted: bool,
-    current_text: &str,
 ) -> SubmissionResolution {
-    let Some(pending) = pending.filter(|pending| pending.target == target) else {
+    let Some(_) = pending.filter(|pending| pending.target == target) else {
         return SubmissionResolution::Ignore;
     };
-    if accepted && current_text == pending.text {
-        SubmissionResolution::ClearEditor
+    if accepted {
+        SubmissionResolution::Accepted
     } else {
-        SubmissionResolution::KeepEditor
+        SubmissionResolution::Rollback
     }
 }
 
@@ -162,27 +168,23 @@ mod tests {
     }
 
     #[test]
-    fn accepted_submission_clears_only_the_unchanged_editor() {
+    fn accepted_submission_stays_cleared_and_rejection_rolls_back() {
         let pending = pending();
         assert_eq!(
-            submission_resolution(Some(&pending), "session:test", true, "submitted"),
-            SubmissionResolution::ClearEditor
+            submission_resolution(Some(&pending), "session:test", true),
+            SubmissionResolution::Accepted
         );
         assert_eq!(
-            submission_resolution(Some(&pending), "session:test", true, "new draft"),
-            SubmissionResolution::KeepEditor
+            submission_resolution(Some(&pending), "session:test", false),
+            SubmissionResolution::Rollback
         );
     }
 
     #[test]
-    fn rejected_or_stale_submission_never_clears_the_editor() {
+    fn stale_submission_result_is_ignored() {
         let pending = pending();
         assert_eq!(
-            submission_resolution(Some(&pending), "session:test", false, "submitted"),
-            SubmissionResolution::KeepEditor
-        );
-        assert_eq!(
-            submission_resolution(Some(&pending), "session:other", true, "submitted"),
+            submission_resolution(Some(&pending), "session:other", false),
             SubmissionResolution::Ignore
         );
     }

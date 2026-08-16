@@ -4,6 +4,18 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn optimistic_user_item_rolls_back_by_identity_only() {
+    let mut state = ConversationState::default();
+    state.push_local_user("same text".into(), 0);
+    let optimistic = state.push_local_user("same text".into(), 0);
+
+    assert!(state.rollback_local_user(&optimistic));
+    assert_eq!(state.items.len(), 1);
+    assert_eq!(state.items[0].text, "same text");
+    assert!(!state.rollback_local_user(&optimistic));
+}
+
+#[test]
 fn cloned_conversations_share_unchanged_transcript_items() {
     let mut state = ConversationState::default();
     state.push_local_user("a long message".repeat(1_000), 0);
@@ -156,6 +168,27 @@ fn edit_results_keep_the_structured_diff_for_native_rendering() {
         Some(ToolPresentation::Edit {
             path: "src/main.rs".into(),
             diff: Some("- 1 old\n+ 1 new".into()),
+            format: EditDiffFormat::Numbered,
+        })
+    );
+}
+
+#[test]
+fn edit_argument_previews_are_explicitly_unnumbered() {
+    let mut state = ConversationState::default();
+    state.replace_history(&[json!({"role":"assistant","content":[{
+        "type":"toolCall",
+        "id":"edit-1",
+        "name":"edit",
+        "arguments":{"path":"src/lib.rs","oldText":"123 source","newText":"456 source"}
+    }]})]);
+
+    assert_eq!(
+        state.items[0].tool_presentation,
+        Some(ToolPresentation::Edit {
+            path: "src/lib.rs".into(),
+            diff: Some("- 123 source\n+ 456 source".into()),
+            format: EditDiffFormat::Unnumbered,
         })
     );
 }

@@ -20,10 +20,23 @@ pub(crate) enum TranscriptKind {
     Custom,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum EditDiffFormat {
+    Unnumbered,
+    Numbered,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ToolPresentation {
-    Edit { path: String, diff: Option<String> },
-    Write { path: String, content: String },
+    Edit {
+        path: String,
+        diff: Option<String>,
+        format: EditDiffFormat,
+    },
+    Write {
+        path: String,
+        content: String,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -81,23 +94,35 @@ enum PartialKind {
 }
 
 impl ConversationState {
-    pub(crate) fn push_local_user(&mut self, message: String, image_count: usize) {
-        let display = user_message_text(&message, image_count);
-        if self.items.last().is_some_and(|item| {
-            item.kind == TranscriptKind::User && item.text == display && !item.is_error
-        }) {
-            return;
-        }
-        self.items.push(Arc::new(TranscriptItem {
+    pub(crate) fn push_local_user(
+        &mut self,
+        message: String,
+        image_count: usize,
+    ) -> Arc<TranscriptItem> {
+        let item = Arc::new(TranscriptItem {
             kind: TranscriptKind::User,
             label: String::new(),
-            text: display,
+            text: user_message_text(&message, image_count),
             streaming: false,
             is_error: false,
             tool_call_id: None,
             tool_output: String::new(),
             tool_presentation: None,
-        }));
+        });
+        self.items.push(item.clone());
+        item
+    }
+
+    pub(crate) fn rollback_local_user(&mut self, optimistic: &Arc<TranscriptItem>) -> bool {
+        let Some(index) = self
+            .items
+            .iter()
+            .rposition(|item| Arc::ptr_eq(item, optimistic))
+        else {
+            return false;
+        };
+        self.items.remove(index);
+        true
     }
 
     pub(crate) fn replace_history(&mut self, messages: &[Value]) {
@@ -690,6 +715,7 @@ fn tool_presentation(name: &str, arguments: &Value) -> Option<ToolPresentation> 
         "edit" => Some(ToolPresentation::Edit {
             path,
             diff: preview_edit_diff(arguments),
+            format: EditDiffFormat::Unnumbered,
         }),
         "write" => arguments
             .get("content")
@@ -756,10 +782,13 @@ fn apply_tool_result(item: &mut TranscriptItem, result: &Value, message: bool) {
         .and_then(Value::as_str)
         .filter(|diff| !diff.is_empty())
         && let Some(ToolPresentation::Edit {
-            diff: item_diff, ..
+            diff: item_diff,
+            format,
+            ..
         }) = item.tool_presentation.as_mut()
     {
         *item_diff = Some(diff.to_owned());
+        *format = EditDiffFormat::Numbered;
     }
 }
 

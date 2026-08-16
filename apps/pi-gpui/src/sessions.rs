@@ -531,10 +531,7 @@ fn parse_candidate(path: &Path) -> Result<Option<SessionSummary>, String> {
     append_bounded(&mut search, &project.to_string_lossy());
     Ok(Some(SessionSummary {
         id,
-        path: path
-            .canonicalize()
-            .map(|path| normalize_lexical(&path))
-            .map_err(|error| format!("resolve session {}: {error}", path.display()))?,
+        path: normalize_session_path(path),
         project,
         title,
         first_user_message,
@@ -674,6 +671,12 @@ fn normalize_existing(path: &Path) -> Result<PathBuf, String> {
     path.canonicalize()
         .map(|path| normalize_lexical(&path))
         .map_err(|error| format!("resolve project {}: {error}", path.display()))
+}
+
+pub(crate) fn normalize_session_path(path: &Path) -> PathBuf {
+    path.canonicalize()
+        .map(|canonical| normalize_lexical(&canonical))
+        .unwrap_or_else(|_| normalize_lexical(path))
 }
 
 pub(crate) fn normalize_lexical(path: &Path) -> PathBuf {

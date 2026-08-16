@@ -15,7 +15,7 @@ use crate::{
     sessions::{SessionSummary, UsageSummary},
 };
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(crate) struct StateStore {
@@ -140,9 +140,18 @@ impl StateStore {
             1 => migration
                 .execute_batch(
                     "ALTER TABLE outbox ADD COLUMN images_json TEXT NOT NULL DEFAULT '[]';
-                     UPDATE meta SET value='2' WHERE key='schema_version';",
+                     ALTER TABLE drafts ADD COLUMN submitted INTEGER NOT NULL DEFAULT 0;
+                     ALTER TABLE drafts ADD COLUMN session_path TEXT;
+                     UPDATE meta SET value='3' WHERE key='schema_version';",
                 )
-                .map_err(|error| format!("migrate GUI state schema to 2: {error}"))?,
+                .map_err(|error| format!("migrate GUI state schema to 3: {error}"))?,
+            2 => migration
+                .execute_batch(
+                    "ALTER TABLE drafts ADD COLUMN submitted INTEGER NOT NULL DEFAULT 0;
+                     ALTER TABLE drafts ADD COLUMN session_path TEXT;
+                     UPDATE meta SET value='3' WHERE key='schema_version';",
+                )
+                .map_err(|error| format!("migrate GUI state schema to 3: {error}"))?,
             SCHEMA_VERSION => {}
             _ => {
                 return Err(format!(
@@ -150,6 +159,12 @@ impl StateStore {
                 ));
             }
         }
+        migration
+            .execute(
+                "UPDATE drafts SET submitted=0 WHERE submitted != 0 AND session_path IS NULL",
+                [],
+            )
+            .map_err(|error| format!("repair submitted drafts without session paths: {error}"))?;
         migration
             .commit()
             .map_err(|error| format!("commit GUI state schema migration: {error}"))?;
@@ -173,7 +188,10 @@ impl StateStore {
         let mut drafts = Vec::new();
         let mut statement = self
             .connection
-            .prepare("SELECT id, project, created_ms FROM drafts ORDER BY created_ms DESC")
+            .prepare(
+                "SELECT id, project, created_ms, submitted, session_path
+                   FROM drafts ORDER BY created_ms DESC",
+            )
             .map_err(|error| format!("read drafts: {error}"))?;
         let rows = statement
             .query_map([], |row| {
@@ -181,16 +199,23 @@ impl StateStore {
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, u64>(2)?,
+                    row.get::<_, bool>(3)?,
+                    row.get::<_, Option<String>>(4)?,
                 ))
             })
             .map_err(|error| format!("query drafts: {error}"))?;
         for row in rows {
-            let (id, project, created_ms) = row.map_err(|error| error.to_string())?;
+            let (id, project, created_ms, submitted, session_path) =
+                row.map_err(|error| error.to_string())?;
             if let Some(project) = existing_directory(&project) {
                 drafts.push(DraftSession {
                     id,
                     project,
                     created_ms,
+                    submitted,
+                    session_path: session_path
+                        .map(PathBuf::from)
+                        .map(|path| crate::sessions::normalize_session_path(&path)),
                 });
             }
         }
@@ -198,6 +223,16 @@ impl StateStore {
     }
 
     pub(crate) fn save_registry(&mut self, registry: &Registry) -> Result<(), String> {
+        if let Some(draft) = registry
+            .drafts
+            .iter()
+            .find(|draft| draft.submitted && draft.session_path.is_none())
+        {
+            return Err(format!(
+                "save draft {}: submitted draft has no session path",
+                draft.id
+            ));
+        }
         let transaction = self
             .connection
             .transaction()
@@ -218,10 +253,21 @@ impl StateStore {
                 .map_err(|error| format!("save project {}: {error}", project.display()))?;
         }
         for draft in &registry.drafts {
+            let session_path = draft
+                .session_path
+                .as_ref()
+                .map(|path| crate::sessions::normalize_session_path(path));
             transaction
                 .execute(
-                    "INSERT INTO drafts(id, project, created_ms) VALUES(?1, ?2, ?3)",
-                    params![draft.id, draft.project.to_string_lossy(), draft.created_ms],
+                    "INSERT INTO drafts(id, project, created_ms, submitted, session_path)
+                     VALUES(?1, ?2, ?3, ?4, ?5)",
+                    params![
+                        draft.id,
+                        draft.project.to_string_lossy(),
+                        draft.created_ms,
+                        draft.submitted,
+                        session_path.as_ref().map(|path| path.to_string_lossy())
+                    ],
                 )
                 .map_err(|error| format!("save draft {}: {error}", draft.id))?;
         }

@@ -115,12 +115,12 @@ impl PiApp {
                                 },
                                 ButtonTone::Accent,
                                 self.can_submit(),
-                                move |_window, cx| {
+                                move |window, cx| {
                                     let _ = send_entity.update(cx, |this, cx| {
                                         let value =
                                             this.composer.read(cx).value().trim().to_owned();
                                         if !value.is_empty() || this.has_composer_images() {
-                                            this.submit(value, this.enter_mode(), cx);
+                                            this.submit(value, this.enter_mode(), window, cx);
                                         }
                                     });
                                 },

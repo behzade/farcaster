@@ -147,6 +147,7 @@ impl ComposerSessions {
         &self.current_target
     }
 
+    #[cfg(test)]
     pub(crate) fn snapshot_for(&self, target: &str) -> ComposerSnapshot {
         self.sessions
             .get(target)
@@ -231,6 +232,35 @@ impl ComposerSessions {
         session.history_draft = None;
         self.persistence.save(session.record(target.to_owned()));
         true
+    }
+
+    pub(crate) fn prepend_failed_submission(
+        &mut self,
+        target: &str,
+        failed_text: &str,
+    ) -> ComposerSnapshot {
+        let session = self.sessions.entry(target.to_owned()).or_default();
+        if failed_text.is_empty() {
+            return session.composer.clone();
+        }
+        let separator = if session.composer.text.is_empty() {
+            ""
+        } else {
+            "\n\n"
+        };
+        let prefix = format!("{failed_text}{separator}");
+        let offset = prefix.len();
+        let current = &session.composer;
+        session.composer = ComposerSnapshot::new(
+            format!("{prefix}{}", current.text),
+            current.cursor.saturating_add(offset),
+            current.selection.start.saturating_add(offset)
+                ..current.selection.end.saturating_add(offset),
+        );
+        session.history_index = None;
+        session.history_draft = None;
+        self.persistence.save(session.record(target.to_owned()));
+        session.composer.clone()
     }
 
     pub(crate) fn sync_history(&mut self, target: &str, messages: &[String]) {
