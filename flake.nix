@@ -168,10 +168,29 @@
             craneLib = crane.mkLib pkgs;
             inherit piTerminal;
           };
+          permissionSystem = pkgs.callPackage ./nix/pi-permission-system.nix { };
           subagents = pkgs.callPackage ./nix/pi-subagents.nix { };
           webAccess = pkgs.callPackage ./nix/pi-web-access.nix { };
+          agent = pkgs.callPackage ./nix/pi-agent.nix {
+            inherit
+              coreExtensions
+              denseTools
+              openaiServerCompaction
+              permissionSystem
+              piTerminal
+              projectTools
+              sandbox
+              subagents
+              webAccess
+              ;
+          };
         in
         {
+          agent-extension-layout = pkgs.runCommand "pi-agent-extension-layout-test" { } ''
+            test -f ${agent}/extensions/node_modules/effect/package.json
+            test "$(readlink ${agent}/extensions/node_modules)" = ${coreExtensions}/node_modules
+            touch "$out"
+          '';
           core-extensions = pkgs.runCommand "pi-core-extensions-test" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
             cp -R ${coreExtensions}/* .
             chmod -R u+w node_modules
@@ -249,7 +268,7 @@
             test ! -s empty
             touch "$out"
           '';
-          permission-system = pkgs.callPackage ./nix/pi-permission-system.nix { };
+          permission-system = permissionSystem;
           pi-terminal = pkgs.runCommand "pi-terminal-test" { nativeBuildInputs = [ piTerminal ]; } ''
             test "$(pi --version)" = "0.84.2"
             touch "$out"

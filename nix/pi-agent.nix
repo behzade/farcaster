@@ -34,6 +34,7 @@ stdenvNoCC.mkDerivation {
     ln -s ${subagents} "$out/extensions/subagent"
     ln -s ${webAccess} "$out/extensions/web-access"
     ln -s ${coreExtensions}/lib "$out/extensions/lib"
+    ln -s ${coreExtensions}/node_modules "$out/extensions/node_modules"
     ln -s ${coreExtensions}/agent-feedback.ts "$out/extensions/agent-feedback.ts"
     ln -s ${coreExtensions}/notifications.ts "$out/extensions/notifications.ts"
     ln -s ${coreExtensions}/prompt-inspector.ts "$out/extensions/prompt-inspector.ts"
