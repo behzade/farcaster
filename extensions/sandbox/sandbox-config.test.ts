@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
 	DEFAULT_CONFIG,
-	applyProjectRestrictions,
 	buildShellEnvironment,
 	mergeGlobalConfig,
 	normalizeConfig,
@@ -32,6 +31,17 @@ test("normalizes exact hosts and rejects broad command grants", () => {
 		() => normalizeConfig({ network: { allowedDomains: ["*"] } }),
 		/exact hostnames or IPs/,
 	);
+	assert.deepEqual(
+		normalizeConfig({ network: { deniedDomains: ["*", "**.Example.COM.", "api.example.com"] } }).network?.deniedDomains,
+		["*", "**.example.com", "api.example.com"],
+	);
+	for (const pattern of ["api.*.example.com", "foo*", "***.example.com", "example.*", "*example.com", "*.127.0.0.1"]) {
+		assert.throws(
+			() => normalizeConfig({ network: { deniedDomains: [pattern] } }),
+			/exact hosts, \*, \*\.domain, or \*\*\.domain/,
+			pattern,
+		);
+	}
 });
 
 test("global config extends defaults without dropping hard rules", () => {
@@ -47,34 +57,6 @@ test("global config extends defaults without dropping hard rules", () => {
 	assert(result.filesystem?.denyRead?.includes("~/.ssh"));
 	assert(result.filesystem?.denyRead?.includes("**/private.json"));
 	assert.deepEqual(result.network?.allowedDomains, ["grafana.example.com"]);
-});
-
-test("a trusted project can only tighten global policy", () => {
-	const base = mergeGlobalConfig(
-		DEFAULT_CONFIG,
-		normalizeConfig({
-			network: { allowedDomains: ["grafana.example.com"] },
-			filesystem: { allowWrite: ["/state"] },
-			shellEnvironment: { inherit: "all", set: { SAFE_VALUE: "yes" } },
-		}),
-	);
-	const result = applyProjectRestrictions(
-		base,
-		normalizeConfig({
-			enabled: false,
-			network: { enabled: false, allowedDomains: ["evil.example"] },
-			filesystem: { allowWrite: ["/other"], denyWrite: ["**/*.lock"] },
-			shellEnvironment: { inherit: "none", set: { INJECTED: "no" } },
-		}),
-	);
-	assert.equal(result.enabled, true);
-	assert.equal(result.network?.enabled, false);
-	assert.deepEqual(result.network?.allowedDomains, ["grafana.example.com"]);
-	assert(result.filesystem?.allowWrite?.includes("/state"));
-	assert(!result.filesystem?.allowWrite?.includes("/other"));
-	assert(result.filesystem?.denyWrite?.includes("**/*.lock"));
-	assert.equal(result.shellEnvironment?.inherit, "none");
-	assert.deepEqual(result.shellEnvironment?.set, { SAFE_VALUE: "yes" });
 });
 
 test("shell environment keeps core values and removes secret names", () => {

@@ -5,8 +5,8 @@ extensions, prompts, skills, and theme so I get the same setup on macOS and
 Linux.
 
 Most of the work in this repo is around shell execution. Commands run in a
-native OS sandbox, extra file access goes through a user approval, and a broken
-or unavailable backend fails closed.
+native OS sandbox, durable project access is approved through one host tool,
+and a broken or unavailable backend fails closed.
 
 This is a personal setup, not a turnkey Pi distribution. Machine-specific
 paths, network policy, MCP servers, and notification settings live in my
@@ -15,8 +15,8 @@ separate `nix-config` repo.
 ## What is included
 
 - A native sandbox broker using Seatbelt on macOS and Bubblewrap on Linux.
-- Shell write approvals derived from sandbox denials; the model cannot declare
-  filesystem rights.
+- Portable, checked-in project access policy with explicit host approval and no
+  automatic command retries.
 - Async subagents with steering, timeouts, review prompts, and parent-visible
   approval requests.
 - Web search, page extraction, and video tools, with OpenAI used first when the
@@ -164,23 +164,32 @@ and workspace secrets protected. The command environment is filtered, and
 common package-manager caches are redirected under
 `~/.cache/pi-sandbox`.
 
-File tools ask before accessing a path outside their current rights. Shell
-commands run once under the OS sandbox; when the backend reports a safe,
-specific denied path, Pi can ask for that right and retry within the same tool
-call. The model sees only the final attempt in its tool history. Saved rights
-are scoped to the real workspace path.
+Shell commands and background-job starts carry no permission declarations.
+Each call runs exactly once with the active policy. A denied command returns a
+bounded grouped diagnostic with at most three example paths and is never
+retried. Built-in file tools also deny without prompting and point the agent to
+`request_access`.
+
+`request_access` batches portable filesystem, exact-host, local-network, and
+managed development-cache adapter entries. It shows one bounded exact diff of
+only the net-new semantic entries, with **Add to project policy** and **Deny**
+choices. Approval conditionally writes and activates that policy for later
+commands; a concurrent/manual edit aborts rather than being overwritten, and
+the agent must explicitly rerun a command. Existing background jobs
+keep the immutable policy captured at start. Trusted project `.pi/project-tools`
+remain host tools and do not go through the command broker.
 
 Native execution is deliberately narrow:
 
 - Each broker supports one command at a time. The session owns one foreground
   broker and each background job owns a separate broker.
-- Network access starts blocked. A user may grant one exact hostname or IP for
-  one command or save it for the workspace. A host-owned proxy enforces that
-  set; the OS sandbox blocks direct bypass. A host grant applies to all ports on
-  that host. A separate command-only `network_local` grant lets tests bind and
-  connect to localhost ports. Linux keeps those ports in the command's private
-  network namespace; macOS uses the host loopback interface.
-- macOS denial hints are best effort; Linux has no structured denial source.
+- Network access starts blocked. Project policy may grant one exact hostname or
+  IP, enforced by a host-owned proxy, or `network_local` for test ports. A host
+  grant applies to all ports on that exact host. Linux keeps local ports in the
+  command's private network namespace; macOS uses the host loopback interface.
+- When macOS denial hints are available, summaries are grouped and best effort;
+  Linux has no structured denial source. Hints are diagnostics only and never
+  prompt or grant access.
 - Background jobs support bounded output, status, input, stop, and session
   cleanup. They do not provide a PTY.
 
@@ -189,26 +198,38 @@ The Linux broker is in use on x86-64, but its ignored host release test,
 including the new network bridge checks, still needs a Linux run before this
 change can claim Linux network parity.
 
-Global sandbox configuration lives at
-`~/.pi/agent/extensions/sandbox.json`. A project may add stricter rules in
-`.pi/sandbox.json`, but project config cannot add rights, replace the broker,
-or disable the sandbox.
-
-The development cache is extensible without changing the extension:
+Global machine hard policy lives at
+`~/.pi/agent/extensions/sandbox.json`. A trusted project's portable access
+policy is checked in at `.pi/sandbox.json`:
 
 ```json
 {
+  "version": 1,
+  "rights": [
+    { "kind": "filesystem", "access": "write", "path": ".git", "scope": "tree" },
+    { "kind": "network_host", "host": "registry.npmjs.org" },
+    { "kind": "network_local" }
+  ],
   "developmentCache": {
-    "root": "~/.cache/pi-sandbox",
-    "environment": {
-      "CUSTOM_TOOL_CACHE": "custom-tool"
-    }
+    "environment": { "CUSTOM_TOOL_CACHE": "custom-tool" }
   }
 }
 ```
 
-Cache paths must stay beneath the configured root. The cache is shared by
-sandboxed commands across workspaces, so projects that do not trust each other
+Relative filesystem paths resolve from the project root and `~/` paths resolve
+from the current user's home. Checked-in absolute paths are rejected;
+`request_access` converts absolute denial paths beneath the workspace or home to
+portable form and rejects all others. Machine denies, broker hard rules,
+secrets, project `.pi` writes, and any filesystem right crossing an existing
+symlink always lose. Grant paths are revalidated immediately before every
+broker request, so a missing approved path cannot later retarget through a
+symlink. Direct policy-file edits are loaded only on a later session; explicitly
+approved `request_access` updates activate immediately.
+
+Development caches share one managed namespace under the machine-configured
+root (by default `~/.cache/pi-sandbox`). Projects may add safe environment
+mappings with relative targets beneath that root, but cannot relocate it. The
+cache is shared across workspaces, so projects that do not trust each other
 should use separate users or disposable homes.
 
 The broker details are documented in:

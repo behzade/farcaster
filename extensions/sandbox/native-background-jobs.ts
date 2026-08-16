@@ -3,9 +3,12 @@ import {
 	type BrokerExecRequest,
 	type BrokerExecResult,
 } from "./broker-client.ts";
-import { buildBrokerExecRequest } from "./broker-policy.ts";
+import {
+	buildBrokerExecRequest,
+	type NativeFilePermission,
+} from "./broker-policy.ts";
+import { formatDenialSummary } from "./denial-summary.ts";
 import type { NativeSandboxConfig } from "./sandbox-config.ts";
-import type { NativeFilePermission } from "./native-denials.ts";
 import { startNativeNetworkProxy, type NativeNetworkProxy } from "./native-network-proxy.ts";
 
 const MAX_RETAINED_BYTES = 2 * 1024 * 1024;
@@ -37,6 +40,7 @@ export class NativeBackgroundJobs {
 		cwd: string;
 		config: NativeSandboxConfig;
 		permissions: readonly NativeFilePermission[];
+		revalidatePermissions?: () => readonly NativeFilePermission[];
 		networkHosts: readonly string[];
 		allowLocalBinding?: boolean;
 	}): Promise<string> {
@@ -62,13 +66,14 @@ export class NativeBackgroundJobs {
 		});
 		let request: BrokerExecRequest;
 		try {
+			const currentPermissions = options.revalidatePermissions?.() ?? options.permissions;
 			request = buildBrokerExecRequest(
 				`background/${options.name}`,
 				options.command,
 				options.cwd,
 				undefined,
 				options.config,
-				options.permissions,
+				currentPermissions,
 				options.networkHosts,
 				proxy ? { port: proxy.port, socketPath: proxy.socketPath } : undefined,
 				options.allowLocalBinding ?? false,
@@ -105,6 +110,15 @@ export class NativeBackgroundJobs {
 			)
 			.then((result) => {
 				job.result = result;
+				if (result.exitCode !== 0) {
+					const summary = formatDenialSummary(result.denials, result.denialsComplete);
+					if (summary) {
+						job.output = Buffer.concat([job.output, Buffer.from(summary)]);
+						if (job.output.length > MAX_RETAINED_BYTES) {
+							job.output = job.output.subarray(job.output.length - MAX_RETAINED_BYTES);
+						}
+					}
+				}
 			})
 			.catch((error: unknown) => {
 				job.error = error instanceof Error ? error.message : String(error);

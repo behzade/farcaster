@@ -167,14 +167,15 @@
               ${self}/extensions/sandbox/broker-policy.test.ts \
               ${self}/extensions/sandbox/native-background-jobs.test.ts \
               ${self}/extensions/sandbox/native-network-proxy.test.ts \
+              ${self}/extensions/sandbox/network-policy.test.ts \
               ${self}/extensions/sandbox/sandbox-config.test.ts \
               ${self}/extensions/sandbox/development-caches.test.ts \
+              ${self}/extensions/sandbox/extension-schema.test.ts \
               ${self}/extensions/sandbox/io-permissions.test.ts \
               ${self}/extensions/sandbox/io-policy.test.ts \
-              ${self}/extensions/sandbox/native-denials.test.ts \
               ${self}/extensions/sandbox/native-sandbox-ops.test.ts \
-              ${self}/extensions/sandbox/permission-system-approval.test.ts \
-              ${self}/extensions/sandbox/sandbox-failures.test.ts
+              ${self}/extensions/sandbox/project-policy.test.ts \
+              ${self}/extensions/sandbox/permission-system-approval.test.ts
             touch "$out"
           '';
 

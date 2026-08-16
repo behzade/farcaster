@@ -8,6 +8,7 @@ const pierreEditPath = new URL("../extensions/dense-tools/pierre-edit.ts", impor
 const pierreRendererPath = new URL("../extensions/dense-tools/pierre-renderer.ts", import.meta.url);
 const piDiffPath = new URL("../extensions/dense-tools/pi-diff.ts", import.meta.url);
 const sandboxPath = new URL("../extensions/sandbox/index.ts", import.meta.url);
+const sandboxSchemasPath = new URL("../extensions/sandbox/tool-schemas.ts", import.meta.url);
 
 const requiredColors = [
   "accent", "border", "borderAccent", "borderMuted", "success", "error", "warning",
@@ -76,19 +77,21 @@ test("dense tools leave bash to the sandbox", async () => {
   assert.match(sandbox, /renderShell:\s*["']self["']/);
 });
 
-test("sandbox prompts rejected path tool calls without exposing a model tool", async () => {
+test("sandboxed file tools deny with an explicit request_access path", async () => {
   const sandbox = await readFile(sandboxPath, "utf8");
-  assert.doesNotMatch(sandbox, /name:\s*["']request_io_permission["']/);
-  assert.match(sandbox, /promptForToolPermission/);
-  assert.match(sandbox, /await promptForToolPermission\(permission, event, ctx\)/);
+  assert.match(sandbox, /name:\s*["']request_access["']/);
+  assert.match(sandbox, /Use request_access for the smallest file or tree right/);
+  assert.doesNotMatch(sandbox, /promptForToolPermission|request_network_permission/);
 });
 
-test("one-time network rights stay on one command", async () => {
+test("bash and background jobs carry no per-command permission schema", async () => {
   const sandbox = await readFile(sandboxPath, "utf8");
-  assert.match(sandbox, /kind:\s*Type\.Literal\(["']network_host["']\)/);
-  assert.match(sandbox, /kind:\s*Type\.Literal\(["']network_local["']\)/);
-  assert.match(sandbox, /declaredNetworkPermissions/);
-  assert.doesNotMatch(sandbox, /oneShotNetworkPermissions/);
+  const schemas = await readFile(sandboxSchemasPath, "utf8");
+  assert.match(schemas, /kind:\s*Type\.Literal\(["']network_host["']\)/);
+  assert.match(schemas, /kind:\s*Type\.Literal\(["']network_local["']\)/);
+  assert.match(schemas, /kind:\s*Type\.Literal\(["']development_cache["']\)/);
+  assert.match(schemas, /const RequestAccessParams/);
+  assert.doesNotMatch(`${sandbox}\n${schemas}`, /DeclaredNetworkPermission|declaredNetworkPermissions|permissions:\s*Type\.Optional/);
 });
 
 test("dense reads keep group state and hide follower rows", async () => {

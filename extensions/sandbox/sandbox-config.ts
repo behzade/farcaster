@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import { dirname } from "node:path";
 import {
 	DEFAULT_DEVELOPMENT_CACHE_CONFIG,
@@ -32,12 +33,6 @@ export interface NativeSandboxShellEnvironmentConfig {
 	exclude?: string[];
 	includeOnly?: string[];
 	set?: Record<string, string>;
-}
-
-export interface NativeSandboxGrants {
-	read?: readonly string[];
-	write?: readonly string[];
-	networkHosts?: readonly string[];
 }
 
 export interface NativeSandboxConfig {
@@ -125,19 +120,24 @@ function nonEmptyStrings(value: unknown, field: string): string[] | undefined {
 
 function domainPatterns(value: unknown, field: string): string[] | undefined {
 	const entries = nonEmptyStrings(value, field);
-	if (
-		entries?.some(
-			(entry) =>
-				entry !== "*" &&
-				(entry.includes("://") ||
-					/:\d+$/.test(entry) ||
-					entry.startsWith("[") ||
-					entry.includes("/")),
-		)
-	) {
-		throw new Error(`${field} accepts host patterns without schemes, paths, or ports`);
+	if (!entries) return undefined;
+	try {
+		return unique(entries.map((entry) => {
+			if (entry === "*") return entry;
+			const prefix = entry.startsWith("**.") ? "**." : entry.startsWith("*.") ? "*." : "";
+			const host = prefix ? entry.slice(prefix.length) : entry;
+			if (host.includes("*")) throw new Error("wildcards are allowed only as *. or **. prefixes");
+			const normalizedHost = normalizeNetworkHost(host);
+			if (prefix && isIP(normalizedHost)) throw new Error("wildcard prefixes require a domain name");
+			return `${prefix}${normalizedHost}`;
+		}));
+	} catch (error) {
+		throw new Error(
+			`${field} accepts only exact hosts, *, *.domain, or **.domain: ${
+				error instanceof Error ? error.message : error
+			}`,
+		);
 	}
-	return entries;
 }
 
 function exactNetworkHosts(value: unknown, field: string): string[] | undefined {
@@ -384,84 +384,6 @@ export function mergeGlobalConfig(
 				...(defaults.shellEnvironment?.set ?? {}),
 				...(override.shellEnvironment?.set ?? {}),
 			},
-		},
-	};
-}
-
-function stricterInheritance(
-	base: ShellEnvironmentInheritance | undefined,
-	project: ShellEnvironmentInheritance | undefined,
-): ShellEnvironmentInheritance | undefined {
-	const rank: Record<ShellEnvironmentInheritance, number> = {
-		all: 0,
-		core: 1,
-		none: 2,
-	};
-	if (!base) return project;
-	if (!project) return base;
-	return rank[project] > rank[base] ? project : base;
-}
-
-export function applyProjectRestrictions(
-	base: NativeSandboxConfig,
-	project: NativeSandboxConfig,
-): NativeSandboxConfig {
-	return {
-		...base,
-		// A project file may tighten the active profile, but it may not turn off
-		// the host sandbox or add rights.
-		enabled: base.enabled,
-		// A project cannot relocate the cache, add environment values, or
-		// otherwise expand the implicit write namespace.
-		developmentCache: base.developmentCache,
-		network: {
-			...base.network,
-			enabled:
-				base.network?.enabled === false || project.network?.enabled === false
-					? false
-					: base.network?.enabled,
-				allowedDomains: base.network?.allowedDomains,
-				deniedDomains: unique([
-				...(base.network?.deniedDomains ?? []),
-				...(project.network?.deniedDomains ?? []),
-			]),
-			allowUnixSockets: base.network?.allowUnixSockets,
-			allowAllUnixSockets: base.network?.allowAllUnixSockets,
-		},
-		filesystem: {
-			...base.filesystem,
-			allowRead: base.filesystem?.allowRead,
-			allowWrite: base.filesystem?.allowWrite,
-			denyRead: unique([
-				...(base.filesystem?.denyRead ?? []),
-				...(project.filesystem?.denyRead ?? []),
-			]),
-			denyWrite: unique([
-				...(base.filesystem?.denyWrite ?? []),
-				...(project.filesystem?.denyWrite ?? []),
-			]),
-		},
-		shellEnvironment: {
-			...base.shellEnvironment,
-			inherit: stricterInheritance(
-				base.shellEnvironment?.inherit,
-				project.shellEnvironment?.inherit,
-			),
-			ignoreDefaultExcludes:
-				base.shellEnvironment?.ignoreDefaultExcludes === false ||
-				project.shellEnvironment?.ignoreDefaultExcludes === false
-					? false
-					: base.shellEnvironment?.ignoreDefaultExcludes,
-			exclude: unique([
-				...(base.shellEnvironment?.exclude ?? []),
-				...(project.shellEnvironment?.exclude ?? []),
-			]),
-			includeOnly:
-				(base.shellEnvironment?.includeOnly?.length ?? 0) > 0
-					? base.shellEnvironment?.includeOnly
-					: project.shellEnvironment?.includeOnly,
-			// A project cannot inject environment values.
-			set: base.shellEnvironment?.set,
 		},
 	};
 }

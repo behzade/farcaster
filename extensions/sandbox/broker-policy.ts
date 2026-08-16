@@ -21,7 +21,7 @@ import {
 
 const OUTPUT_LIMIT_BYTES = 10 * 1024 * 1024;
 
-type FilePermission = Extract<IoPermission, { kind: "read" | "write" }>;
+export type NativeFilePermission = IoPermission;
 
 export function buildBrokerExecRequest(
 	id: string,
@@ -29,7 +29,7 @@ export function buildBrokerExecRequest(
 	cwd: string,
 	timeoutSeconds: number | undefined,
 	config: NativeSandboxConfig,
-	permissions: readonly FilePermission[],
+	permissions: readonly NativeFilePermission[],
 	networkHosts: readonly string[],
 	proxy?: { port: number; socketPath: string },
 	allowLocalBinding = false,
@@ -170,7 +170,7 @@ function configRight(
 	};
 }
 
-function permissionRight(permission: FilePermission): BrokerFilesystemRight {
+function permissionRight(permission: NativeFilePermission): BrokerFilesystemRight {
 	return {
 		access: permission.kind,
 		path: permission.path,

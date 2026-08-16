@@ -39,7 +39,7 @@ pub struct CommandSpec {
 #[serde(deny_unknown_fields)]
 pub struct SandboxPolicy {
     pub base_rights: Vec<FilesystemRight>,
-    /// Rights approved for this command. They do not carry to another command ID.
+    /// Validated rights from the immutable active project-policy snapshot for this command.
     pub grants: Vec<FilesystemRight>,
     pub denies: Vec<FilesystemDeny>,
     pub network: NetworkPolicy,

@@ -17,11 +17,8 @@ import { after, before, test } from "node:test";
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
 import { NativeBackgroundJobs } from "./native-background-jobs.ts";
 import { SandboxBrokerClient } from "./broker-client.ts";
-import {
-	createApprovingNativeSandboxOps,
-	createNativeSandboxOps,
-} from "./native-sandbox-ops.ts";
-import type { NativeFilePermission } from "./native-denials.ts";
+import { createNativeSandboxOps } from "./native-sandbox-ops.ts";
+import type { NativeFilePermission } from "./broker-policy.ts";
 import { DEFAULT_CONFIG } from "./sandbox-config.ts";
 
 const defaultBrokerPath = fileURLToPath(
@@ -52,71 +49,34 @@ after(async () => {
 	rmSync(fixture, { recursive: true, force: true });
 });
 
-test("single-file approval retries the real sandbox with the exact file", { skip }, async () => {
+test("a denied command runs once and does not mutate the target", { skip }, async () => {
+	const target = makeFixture("denied.txt");
+	const attempts = join(workspace, "denied-attempts.txt");
+	const ops = createNativeSandboxOps(client, DEFAULT_CONFIG, [], [], "e2e-denied-once");
+	const result = await run(ops, `printf x >> ${quote(attempts)}; printf denied > ${quote(target)}`);
+
+	assert.notEqual(result.exitCode, 0, result.output);
+	assert.equal(readFileSync(target, "utf8"), "before");
+	assert.equal(readFileSync(attempts, "utf8"), "x");
+});
+
+test("an active exact-file project grant reaches the real sandbox", { skip }, async () => {
 	const target = makeFixture("single.txt");
-	const approvals: NativeFilePermission[][] = [];
-	const ops = approvingOps("e2e-single", approvals);
-	const result = await run(ops, `printf single > ${quote(target)}`);
+	const grants: NativeFilePermission[] = [{ kind: "write", path: target, directory: false }];
+	const result = await run(createNativeSandboxOps(client, DEFAULT_CONFIG, grants, [], "e2e-file-grant"), `printf single > ${quote(target)}`);
 
 	assert.equal(result.exitCode, 0, result.output);
 	assert.equal(readFileSync(target, "utf8"), "single");
-	assert.deepEqual(flattenPaths(approvals), [target]);
 });
 
-test("multi-file approval retains every exact path", { skip }, async () => {
-	const targets = [makeFixture("multi/one.txt"), makeFixture("multi/two.txt")];
-	const approvals: NativeFilePermission[][] = [];
-	const ops = approvingOps("e2e-multi", approvals);
-	const result = await run(
-		ops,
-		targets.map((path, index) => `printf value-${index} > ${quote(path)}`).join("; "),
-	);
-
-	assert.equal(result.exitCode, 0, result.output);
-	assert.deepEqual(targets.map((path) => readFileSync(path, "utf8")), ["value-0", "value-1"]);
-	assert.deepEqual(flattenPaths(approvals), targets);
-});
-
-test("grouped sibling denials offer a folder but exact approval stays exact", { skip }, async () => {
-	const targets = Array.from({ length: 4 }, (_, index) => makeFixture(`siblings/file-${index}.txt`));
-	const approvals: NativeFilePermission[][] = [];
-	const folderAlternatives: NativeFilePermission[] = [];
-	const ops = createApprovingNativeSandboxOps({
-		client,
-		config: DEFAULT_CONFIG,
-		initialPermissions: [],
-		toolCallId: "e2e-siblings",
-		blockedPaths: [],
-		approve: async (request) => {
-			approvals.push([...request.permissions]);
-			if (request.folderAlternative) folderAlternatives.push(request.folderAlternative);
-			return request.permissions;
-		},
-	});
-	const result = await run(
-		ops,
-		targets.map((path, index) => `printf sibling-${index} > ${quote(path)}`).join("; "),
-	);
-
-	assert.equal(result.exitCode, 0, result.output);
-	assert.deepEqual(flattenPaths(approvals), targets);
-	assert.ok(
-		folderAlternatives.some(
-			(permission) => permission.directory && permission.path === dirname(targets[0]),
-		),
-		"expected an exact sibling folder alternative",
-	);
-});
-
-test("deep nested paths keep every slash and space through approval", { skip }, async () => {
+test("an active tree project grant covers nested paths", { skip }, async () => {
 	const target = makeFixture("deep/a path/with/many/levels/value.txt");
-	const approvals: NativeFilePermission[][] = [];
-	const ops = approvingOps("e2e-nested", approvals);
-	const result = await run(ops, `printf nested > ${quote(target)}`);
+	const root = join(fixture, "deep");
+	const grants: NativeFilePermission[] = [{ kind: "write", path: root, directory: true }];
+	const result = await run(createNativeSandboxOps(client, DEFAULT_CONFIG, grants, [], "e2e-tree-grant"), `printf nested > ${quote(target)}`);
 
 	assert.equal(result.exitCode, 0, result.output);
 	assert.equal(readFileSync(target, "utf8"), "nested");
-	assert.deepEqual(flattenPaths(approvals), [target]);
 });
 
 test(
@@ -248,7 +208,7 @@ test("an unapproved host, direct bypass, and blocked network all fail", { skip }
 	});
 });
 
-test("a command-only local network grant can bind and query an ephemeral port", { skip }, async () => {
+test("an active network_local project right can bind and query an ephemeral port", { skip }, async () => {
 	const ops = createNativeSandboxOps(
 		client,
 		DEFAULT_CONFIG,
@@ -293,20 +253,6 @@ test("native background jobs accept input, retain output, stop, and clean up", {
 	}
 });
 
-function approvingOps(id: string, approvals: NativeFilePermission[][]): BashOperations {
-	return createApprovingNativeSandboxOps({
-		client,
-		config: DEFAULT_CONFIG,
-		initialPermissions: [],
-		toolCallId: id,
-		blockedPaths: [],
-		approve: async (request) => {
-			approvals.push([...request.permissions]);
-			return request.permissions;
-		},
-	});
-}
-
 async function run(
 	ops: BashOperations,
 	command: string,
@@ -323,10 +269,6 @@ function makeFixture(relative: string): string {
 	mkdirSync(dirname(path), { recursive: true });
 	writeFileSync(path, "before");
 	return path;
-}
-
-function flattenPaths(approvals: readonly NativeFilePermission[][]): string[] {
-	return [...new Set(approvals.flat().map((permission) => permission.path))].sort();
 }
 
 function quote(value: string): string {

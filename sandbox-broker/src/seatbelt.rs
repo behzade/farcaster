@@ -195,7 +195,15 @@ fn normalize_right(right: &FilesystemRight, approved: bool) -> Result<Normalized
         }
         _ => {}
     }
-    let path = normalize_path(Path::new(&right.path), right.missing_path)?;
+    let requested_path = Path::new(&right.path);
+    let path = normalize_path(requested_path, right.missing_path)?;
+    if approved && path != requested_path {
+        return Err(format!(
+            "approved right changed during broker normalization: {} -> {}",
+            requested_path.display(),
+            path.display()
+        ));
+    }
     if path.exists() {
         let metadata = std::fs::metadata(&path)
             .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
@@ -660,6 +668,39 @@ mod tests {
             })
         );
         fs::remove_dir_all(home).expect("remove hard policy home");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn approved_missing_path_replaced_by_symlink_is_rejected() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_root("approved-symlink-race")
+            .canonicalize()
+            .expect("canonicalize test root");
+        let target = root.join("target");
+        fs::create_dir(&target).expect("create symlink target");
+        let approved_path = root.join("approved-missing");
+        assert!(!approved_path.exists());
+        symlink(&target, &approved_path).expect("replace approved missing path with symlink");
+        let policy = SandboxPolicy {
+            base_rights: vec![],
+            grants: vec![FilesystemRight {
+                access: Access::Write,
+                path: approved_path.to_string_lossy().into_owned(),
+                scope: PathScope::Tree,
+                missing_path: MissingPathBehavior::CreateTree,
+            }],
+            denies: vec![],
+            network: crate::protocol::NetworkPolicy::Blocked,
+            unix_socket_roots: vec![],
+            output_limit_bytes: 1_024,
+        };
+
+        let error = normalize_policy(&policy, &HardPolicy { denies: vec![] })
+            .expect_err("broker must reject a changed approved path");
+        assert!(error.contains("approved right changed during broker normalization"));
+        fs::remove_dir_all(root).expect("remove test root");
     }
 
     #[test]

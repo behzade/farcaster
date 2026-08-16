@@ -34,7 +34,7 @@ interface PermissionSystemService {
 /**
  * Shows an approval locally or delegates it to pi-permission-system when this
  * session is a headless child. The service owns only prompt transport; the
- * sandbox remains responsible for policy, grants, persistence, and retries.
+ * sandbox remains responsible for policy validation, atomic persistence, and activation.
  */
 export async function requestUserApproval(
 	ctx: Pick<ExtensionContext, "hasUI" | "ui">,

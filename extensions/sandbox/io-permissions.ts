@@ -1,12 +1,8 @@
 import {
 	existsSync,
 	lstatSync,
-	mkdirSync,
-	readFileSync,
 	realpathSync,
-	renameSync,
 	statSync,
-	writeFileSync,
 } from "node:fs";
 import { isIP } from "node:net";
 import { homedir, tmpdir } from "node:os";
@@ -17,29 +13,11 @@ import {
 	type DevelopmentCacheConfig,
 } from "./development-caches.ts";
 
-export type IoPermission =
-	| {
-			kind: "read" | "write";
-			path: string;
-			directory: boolean;
-	  }
-	| {
-			kind: "network_host";
-			host: string;
-	  };
-
-export interface RuntimeIoGrants {
-	read: string[];
-	write: string[];
-	networkHosts: string[];
+export interface IoPermission {
+	kind: "read" | "write";
+	path: string;
+	directory: boolean;
 }
-
-interface PermissionFile {
-	version: 2;
-	workspaces: Record<string, IoPermission[]>;
-}
-
-const EMPTY_FILE: PermissionFile = { version: 2, workspaces: {} };
 const protectedHomeRoots = [".ssh", ".aws", ".gnupg"];
 const protectedSystemRoots = ["/dev"];
 const protectedWriteRoots = [".pi", ".codex"];
@@ -211,65 +189,10 @@ export function normalizeNetworkHost(input: string): string {
 	return ascii;
 }
 
-export function normalizePermission(
-	input:
-		| { kind: "read" | "write"; path: string; targetType?: "file" | "folder" }
-		| { kind: "network_host"; host: string },
-	cwd: string,
-): IoPermission {
-	if (input.kind === "network_host") {
-		return { kind: "network_host", host: normalizeNetworkHost(input.host) };
-	}
-	const lexicalPath = expandPermissionPath(input.path, cwd);
-	if (
-		isProtectedPath(lexicalPath) ||
-		(input.kind === "write" && isProtectedWritePath(lexicalPath))
-	) {
-		throw new Error(`Protected secret or control path cannot be granted: ${lexicalPath}`);
-	}
-	const path = resolvePermissionPath(input.path, cwd);
-	if (
-		isProtectedPath(path) ||
-		(input.kind === "write" && isProtectedWritePath(path))
-	) {
-		throw new Error(`Protected secret or control path cannot be granted: ${path}`);
-	}
-	const directory =
-		input.targetType === "folder" ||
-		(input.targetType === undefined && existsSync(path) && statSync(path).isDirectory());
-	return { kind: input.kind, path, directory };
-}
-
 export function permissionCoversPath(permission: IoPermission, path: string): boolean {
-	if (permission.kind === "network_host") return false;
 	const root = canonicalize(permission.path);
 	const target = canonicalize(path);
 	return permission.directory ? isInside(root, target) : root === target;
-}
-
-export function grantsToRuntime(permissions: readonly IoPermission[]): RuntimeIoGrants {
-	const read = new Set<string>();
-	const write = new Set<string>();
-	const networkHosts = new Set<string>();
-	for (const permission of permissions) {
-		if (permission.kind === "read" && !isProtectedPath(permission.path)) {
-			read.add(canonicalize(permission.path));
-		}
-		if (
-			permission.kind === "write" &&
-			!isProtectedPath(permission.path) &&
-			!isProtectedWritePath(permission.path) &&
-			!isControlRootSymlink(permission.path)
-		) {
-			write.add(canonicalize(permission.path));
-		}
-		if (permission.kind === "network_host") networkHosts.add(permission.host);
-	}
-	return {
-		read: [...read].sort(),
-		write: [...write].sort(),
-		networkHosts: [...networkHosts].sort(),
-	};
 }
 
 export function isDefaultWritePath(
@@ -283,85 +206,5 @@ export function isDefaultWritePath(
 		[canonicalize(cwd), canonicalize("/tmp"), canonicalize(tmpdir())].some((root) =>
 			isInside(root, actual),
 		)
-	);
-}
-
-export function permissionLabel(permission: IoPermission): string {
-	if (permission.kind === "network_host") return `network host ${permission.host}`;
-	if (permission.kind === "write" && permission.directory && basename(permission.path) === ".pi") {
-		return `write Pi project control folder ${permission.path} (code there can run on reload)`;
-	}
-	return `${permission.kind} ${permission.directory ? "folder" : "file"} ${permission.path}`;
-}
-
-export function loadWorkspacePermissions(filePath: string, cwd: string): IoPermission[] {
-	const file = readPermissionFile(filePath);
-	const workspace = canonicalize(cwd);
-	return [...(file.workspaces[workspace] ?? [])];
-}
-
-export function saveWorkspacePermission(
-	filePath: string,
-	cwd: string,
-	permission: IoPermission,
-): void {
-	const file = readPermissionFile(filePath);
-	const workspace = canonicalize(cwd);
-	const existing = file.workspaces[workspace] ?? [];
-	const key = JSON.stringify(permission);
-	if (!existing.some((entry) => JSON.stringify(entry) === key)) {
-		file.workspaces[workspace] = [...existing, permission];
-	}
-	mkdirSync(dirname(filePath), { recursive: true, mode: 0o700 });
-	const temporary = `${filePath}.${process.pid}.tmp`;
-	writeFileSync(temporary, `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 });
-	renameSync(temporary, filePath);
-}
-
-function readPermissionFile(filePath: string): PermissionFile {
-	if (!existsSync(filePath)) return structuredClone(EMPTY_FILE);
-	try {
-		const value: unknown = JSON.parse(readFileSync(filePath, "utf8"));
-		if (!value || typeof value !== "object" || Array.isArray(value)) return structuredClone(EMPTY_FILE);
-		const record = value as Record<string, unknown>;
-		if (
-			(record.version !== 1 && record.version !== 2) ||
-			!record.workspaces ||
-			typeof record.workspaces !== "object"
-		) {
-			return structuredClone(EMPTY_FILE);
-		}
-		const workspaces: Record<string, IoPermission[]> = {};
-		for (const [workspace, entries] of Object.entries(record.workspaces as Record<string, unknown>)) {
-			if (!Array.isArray(entries)) continue;
-			workspaces[workspace] = entries.filter(isIoPermission);
-		}
-		return { version: 2, workspaces };
-	} catch {
-		return structuredClone(EMPTY_FILE);
-	}
-}
-
-function isIoPermission(value: unknown): value is IoPermission {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-	const record = value as Record<string, unknown>;
-	if (record.kind === "network_host") {
-		if (
-			!Object.keys(record).every((key) => key === "kind" || key === "host") ||
-			typeof record.host !== "string"
-		) {
-			return false;
-		}
-		try {
-			return normalizeNetworkHost(record.host) === record.host;
-		} catch {
-			return false;
-		}
-	}
-	return (
-		(record.kind === "read" || record.kind === "write") &&
-		typeof record.path === "string" &&
-		isAbsolute(record.path) &&
-		typeof record.directory === "boolean"
 	);
 }

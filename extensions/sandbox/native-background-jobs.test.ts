@@ -47,6 +47,7 @@ process.stdin.on("data", chunk => {
 	);
 	chmodSync(broker, 0o700);
 	const jobs = new NativeBackgroundJobs(broker);
+	let revalidated = 0;
 	try {
 		assert.equal(
 			await jobs.start({
@@ -55,10 +56,15 @@ process.stdin.on("data", chunk => {
 				cwd: directory,
 				config: DEFAULT_CONFIG,
 				permissions: [],
+				revalidatePermissions: () => {
+					revalidated += 1;
+					return [];
+				},
 				networkHosts: [],
 			}),
 			"started pi-test",
 		);
+		assert.equal(revalidated, 1);
 		assert.match(jobs.status("pi-test"), /state=running/);
 		await new Promise((resolve) => setTimeout(resolve, 20));
 		assert.match(jobs.read("pi-test", 20), /ready/);

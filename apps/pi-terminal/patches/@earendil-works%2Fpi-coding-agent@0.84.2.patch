@@ -134,3 +134,15 @@ index 9d24886..d879956 100644
  
  Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):
  - Main documentation: ${readmePath}
+diff --git a/dist/core/trust-manager.js b/dist/core/trust-manager.js
+index 6f1ab9b..7dbed91 100644
+--- a/dist/core/trust-manager.js
++++ b/dist/core/trust-manager.js
+@@ -7,5 +7,7 @@
+ const TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES = [
+     "settings.json",
++    "sandbox.json",
++    "project-tools",
+     "extensions",
+     "skills",
+     "prompts",
