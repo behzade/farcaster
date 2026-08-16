@@ -85,6 +85,7 @@ pub(crate) struct PiApp {
     pending_session_reset: bool,
     extension_errors: Vec<String>,
     sessions_sheet: bool,
+    archived_sessions_expanded: bool,
     run_sheet: bool,
     _composer_subscription: Subscription,
     _search_subscription: Subscription,
@@ -253,6 +254,7 @@ impl PiApp {
             pending_session_reset: false,
             extension_errors: Vec::new(),
             sessions_sheet: false,
+            archived_sessions_expanded: false,
             run_sheet: false,
             _composer_subscription: composer_subscription,
             _search_subscription: search_subscription,
@@ -618,6 +620,9 @@ impl PiApp {
             .find(|session| session.path == path)
         {
             session.settled = settled;
+        }
+        if !self.sessions.iter().any(|session| session.settled) {
+            self.archived_sessions_expanded = false;
         }
         self.send(RuntimeCommand::SetSettled { path, settled });
         cx.notify();

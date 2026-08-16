@@ -2,11 +2,13 @@
 
 use std::sync::Arc;
 
-use gpui::{Context, Window};
+use gpui::{ClipboardItem, Context, Window};
 
 use super::{ComposerImage, PiApp, slash_commands};
 use crate::{
+    app::slash_commands::{BuiltinInvocation, BuiltinSlashCommand},
     composer_sessions::ComposerSnapshot,
+    conversation::TranscriptKind,
     protocol::{PromptImage, PromptMode},
     runtime::RuntimeCommand,
 };
@@ -34,6 +36,10 @@ impl PiApp {
         cx: &mut Context<Self>,
     ) {
         if !self.can_submit() {
+            return;
+        }
+        if let Some(invocation) = slash_commands::builtin_invocation(&value) {
+            self.submit_builtin(&value, invocation, window, cx);
             return;
         }
         self.capture_composer_session(cx);
@@ -85,6 +91,163 @@ impl PiApp {
                 cx.notify();
             }
         }
+    }
+
+    fn submit_builtin(
+        &mut self,
+        value: &str,
+        invocation: BuiltinInvocation<'_>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(invocation.command, BuiltinSlashCommand::Reload) && self.session_is_busy() {
+            self.push_builtin_error(
+                "Reload not started",
+                "Wait for the current response to finish before reloading.",
+                cx,
+            );
+            return;
+        }
+
+        self.consume_composer_command(value, window, cx);
+        match invocation.command {
+            BuiltinSlashCommand::Model => {
+                if let Some(reference) = invocation.arguments {
+                    let model = self.snapshot.models.iter().find(|model| {
+                        format!("{}/{}", model.provider, model.id) == reference
+                            || model.id == reference
+                    });
+                    if let Some(model) = model.cloned() {
+                        self.select_model(&model, cx);
+                    } else {
+                        self.push_builtin_error(
+                            "Model not changed",
+                            &format!("No available model exactly matches {reference}."),
+                            cx,
+                        );
+                    }
+                } else {
+                    self.open_run_sheet(window, cx);
+                }
+            }
+            BuiltinSlashCommand::Export => {
+                if invocation
+                    .arguments
+                    .is_some_and(|path| path.ends_with(".jsonl"))
+                {
+                    self.push_builtin_error(
+                        "Export unavailable",
+                        "Pi’s public RPC supports HTML export, not JSONL export.",
+                        cx,
+                    );
+                } else {
+                    self.send(RuntimeCommand::ExportHtml {
+                        output_path: invocation.arguments.map(str::to_owned),
+                    });
+                }
+            }
+            BuiltinSlashCommand::Copy => {
+                let mut parts = self
+                    .snapshot
+                    .conversation
+                    .items
+                    .iter()
+                    .rev()
+                    .take_while(|item| item.kind != TranscriptKind::User)
+                    .filter(|item| item.kind == TranscriptKind::Assistant && !item.text.is_empty())
+                    .map(|item| item.text.clone())
+                    .collect::<Vec<_>>();
+                parts.reverse();
+                let text = parts.join("\n\n");
+                if !text.is_empty() {
+                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                    Arc::make_mut(&mut self.snapshot).status = "Copied last response".into();
+                    cx.notify();
+                } else {
+                    self.push_builtin_error(
+                        "Nothing copied",
+                        "This session has no assistant response.",
+                        cx,
+                    );
+                }
+            }
+            BuiltinSlashCommand::Name => {
+                if let Some(name) = invocation.arguments {
+                    self.send(RuntimeCommand::SetSessionName(name.to_owned()));
+                } else {
+                    self.push_builtin_error(
+                        "Name not changed",
+                        "Use /name <session name> in GPUI.",
+                        cx,
+                    );
+                }
+            }
+            BuiltinSlashCommand::Session => self.open_run_sheet(window, cx),
+            BuiltinSlashCommand::New => self.new_session(self.project.clone(), window, cx),
+            BuiltinSlashCommand::Compact => self.send(RuntimeCommand::Compact {
+                custom_instructions: invocation.arguments.map(str::to_owned),
+            }),
+            BuiltinSlashCommand::Resume => self.open_sessions_sheet(window, cx),
+            BuiltinSlashCommand::Reload => self.send(RuntimeCommand::Reload),
+            BuiltinSlashCommand::Quit => cx.quit(),
+            BuiltinSlashCommand::Settings
+            | BuiltinSlashCommand::ScopedModels
+            | BuiltinSlashCommand::Import
+            | BuiltinSlashCommand::Share
+            | BuiltinSlashCommand::Changelog
+            | BuiltinSlashCommand::Hotkeys
+            | BuiltinSlashCommand::Fork
+            | BuiltinSlashCommand::Clone
+            | BuiltinSlashCommand::Tree
+            | BuiltinSlashCommand::Trust
+            | BuiltinSlashCommand::Login
+            | BuiltinSlashCommand::Logout => self.push_builtin_error(
+                "Command unavailable",
+                &format!(
+                    "/{} is not available in GPUI and was not sent as a prompt.",
+                    invocation.name
+                ),
+                cx,
+            ),
+        }
+    }
+
+    fn session_is_busy(&self) -> bool {
+        self.snapshot.conversation.running
+            || self.snapshot.conversation.compacting
+            || matches!(
+                self.snapshot.live_status.as_str(),
+                "Working" | "Compacting" | "Retrying"
+            )
+    }
+
+    fn consume_composer_command(
+        &mut self,
+        value: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.capture_composer_session(cx);
+        let target = self.composer_sessions.current_target().to_owned();
+        let editor_text = self.composer.read(cx).value().to_string();
+        self.composer_sessions.record_submission(&target, value);
+        if self
+            .composer_sessions
+            .clear_submitted_text(&target, &editor_text)
+            && self.composer_sessions.current_target() == target
+        {
+            self.apply_composer_snapshot(ComposerSnapshot::default(), window, cx);
+        }
+    }
+
+    fn push_builtin_error(&mut self, label: &str, message: &str, cx: &mut Context<Self>) {
+        let snapshot = Arc::make_mut(&mut self.snapshot);
+        let index = snapshot.conversation.items.len();
+        snapshot
+            .conversation
+            .push_local_error(label, message.to_owned());
+        self.transcript_list.splice(index..index, 1);
+        cx.notify();
     }
 
     pub(crate) fn can_submit(&self) -> bool {

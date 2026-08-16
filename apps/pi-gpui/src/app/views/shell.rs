@@ -6,7 +6,7 @@ use std::{
 use gpui::{
     Anchor, AnyElement, CursorStyle, FontWeight, InteractiveElement as _, IntoElement,
     KeyDownEvent, ParentElement as _, Role, StatefulInteractiveElement as _, Styled as _,
-    WeakEntity, div, prelude::FluentBuilder as _, px, uniform_list,
+    WeakEntity, div, prelude::FluentBuilder as _, px, relative, uniform_list,
 };
 use gpui_component::{
     Icon, Sizable as _, Size,
@@ -147,13 +147,19 @@ impl PiApp {
         let live_root =
             root_session_for_path(&self.sessions, self.snapshot.live_session.as_deref())
                 .map(|session| session.id.clone());
-        let rows = session_rail_items(&self.sessions, !drafts.is_empty());
+        let groups = session_rail_items(&self.sessions);
+        let active_rows = groups.active;
+        let archived_rows = groups.archived;
         let draft_count = drafts.len();
-        let row_count = rows.len() + draft_count;
-        let row_entity = entity.clone();
-        let selected_live_status = self.snapshot.live_status.clone();
-        let run_statuses = self.run_statuses.clone();
-        let session_list = uniform_list("session-list", row_count, move |range, _, _| {
+        let active_count = active_rows.len() + draft_count;
+        let archived_count = archived_rows.len();
+        let row_count = active_count + archived_count;
+        let active_row_entity = entity.clone();
+        let active_selected_root = selected_root.clone();
+        let active_live_root = live_root.clone();
+        let active_live_status = self.snapshot.live_status.clone();
+        let active_run_statuses = self.run_statuses.clone();
+        let active_list = uniform_list("active-session-list", active_count, move |range, _, _| {
             range
                 .filter_map(|index| {
                     if let Some(draft) = drafts.get(index) {
@@ -161,32 +167,70 @@ impl PiApp {
                         let status = crate::app::drafts::resolved_draft_status(
                             &draft.id,
                             &submitted_drafts,
-                            &run_statuses,
+                            &active_run_statuses,
                         );
                         return Some(draft_session_row(
                             draft,
                             selected,
                             &status,
-                            row_entity.clone(),
+                            active_row_entity.clone(),
                         ));
                     }
-                    let stored_index = index.saturating_sub(draft_count);
-                    let item = rows.get(stored_index)?;
-                    let selected = selected_root.as_deref() == Some(item.session.id.as_str());
+                    let item = active_rows.get(index.saturating_sub(draft_count))?;
+                    let selected =
+                        active_selected_root.as_deref() == Some(item.session.id.as_str());
                     let target = format!("session:{}", item.session.path.display());
-                    let badge = run_statuses.get(&target).cloned().or_else(|| {
+                    let badge = active_run_statuses.get(&target).cloned().or_else(|| {
                         session_badge(
                             item.kind,
                             &item.session.id,
-                            live_root.as_deref(),
-                            &selected_live_status,
+                            active_live_root.as_deref(),
+                            &active_live_status,
                         )
                     });
-                    Some(session_row(item, selected, badge, row_entity.clone()))
+                    Some(session_row(
+                        item,
+                        selected,
+                        badge,
+                        active_row_entity.clone(),
+                    ))
                 })
                 .collect::<Vec<_>>()
         })
         .size_full();
+        let archived_row_entity = entity.clone();
+        let archived_live_status = self.snapshot.live_status.clone();
+        let archived_run_statuses = self.run_statuses.clone();
+        let archived_list = uniform_list(
+            "archived-session-list",
+            archived_count,
+            move |range, _, _| {
+                range
+                    .filter_map(|index| {
+                        let item = archived_rows.get(index)?;
+                        let selected = selected_root.as_deref() == Some(item.session.id.as_str());
+                        let target = format!("session:{}", item.session.path.display());
+                        let badge = archived_run_statuses.get(&target).cloned().or_else(|| {
+                            session_badge(
+                                item.kind,
+                                &item.session.id,
+                                live_root.as_deref(),
+                                &archived_live_status,
+                            )
+                        });
+                        Some(session_row(
+                            item,
+                            selected,
+                            badge,
+                            archived_row_entity.clone(),
+                        ))
+                    })
+                    .collect::<Vec<_>>()
+            },
+        )
+        .size_full();
+        let archived_expanded = self.archived_sessions_expanded && archived_count > 0;
+        let archive_toggle_entity = entity.clone();
         div()
             .size_full()
             .flex()
@@ -289,8 +333,75 @@ impl PiApp {
                     .id("session-list-scroll")
                     .flex_1()
                     .min_h_0()
+                    .flex()
+                    .flex_col()
                     .overflow_y_hidden()
-                    .child(session_list),
+                    .when(!archived_expanded, |lists| {
+                        lists.child(
+                            div()
+                                .flex_1()
+                                .min_h_0()
+                                .overflow_y_hidden()
+                                .child(active_list),
+                        )
+                    })
+                    .when(archived_count > 0, |lists| {
+                        lists.child(
+                            div()
+                                .id("archived-sessions")
+                                .min_h_0()
+                                .flex()
+                                .flex_col()
+                                .when(archived_expanded, |archived| archived.flex_1())
+                                .when(!archived_expanded, |archived| {
+                                    archived
+                                        .flex_grow_0()
+                                        .flex_shrink_0()
+                                        .flex_basis(relative(0.333))
+                                        .pt(THEME.space.md)
+                                })
+                                .child(
+                                    div()
+                                        .h(px(32.0))
+                                        .flex_none()
+                                        .flex()
+                                        .items_center()
+                                        .justify_between()
+                                        .px(THEME.space.md)
+                                        .border_t(THEME.border)
+                                        .border_color(THEME.colors.border)
+                                        .text_size(THEME.type_scale.caption)
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(THEME.colors.muted)
+                                        .child(format!("Archived · {archived_count}"))
+                                        .child(button(
+                                            "toggle-archived-sessions",
+                                            if archived_expanded {
+                                                "Collapse"
+                                            } else {
+                                                "Expand"
+                                            },
+                                            ButtonTone::Quiet,
+                                            true,
+                                            move |_, cx| {
+                                                let _ =
+                                                    archive_toggle_entity.update(cx, |this, cx| {
+                                                        this.archived_sessions_expanded =
+                                                            !this.archived_sessions_expanded;
+                                                        cx.notify();
+                                                    });
+                                            },
+                                        )),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_h_0()
+                                        .overflow_y_hidden()
+                                        .child(archived_list),
+                                ),
+                        )
+                    }),
             )
             .when(row_count == 0 && self.sessions_error.is_none(), |rail| {
                 rail.child(
@@ -424,39 +535,28 @@ enum SessionRailKind {
 struct SessionRailItem {
     session: SessionSummary,
     kind: SessionRailKind,
-    starts_section: bool,
-    starts_settled: bool,
 }
 
-fn session_rail_items(sessions: &[SessionSummary], has_drafts: bool) -> Vec<SessionRailItem> {
-    let mut current = Vec::new();
-    let mut settled = Vec::new();
+#[derive(Clone, Debug, Default)]
+struct SessionRailGroups {
+    active: Vec<SessionRailItem>,
+    archived: Vec<SessionRailItem>,
+}
+
+fn session_rail_items(sessions: &[SessionSummary]) -> SessionRailGroups {
+    let mut groups = SessionRailGroups::default();
     for session in root_sessions(sessions) {
-        if !session.settled {
-            current.push(SessionRailItem {
-                session: session.clone(),
-                kind: SessionRailKind::Project,
-                starts_section: false,
-                starts_settled: false,
-            });
+        let (kind, destination) = if session.settled {
+            (SessionRailKind::Settled, &mut groups.archived)
         } else {
-            settled.push(SessionRailItem {
-                session: session.clone(),
-                kind: SessionRailKind::Settled,
-                starts_section: false,
-                starts_settled: false,
-            });
-        }
+            (SessionRailKind::Project, &mut groups.active)
+        };
+        destination.push(SessionRailItem {
+            session: session.clone(),
+            kind,
+        });
     }
-    if let Some(first) = current.first_mut() {
-        first.starts_section = has_drafts;
-    }
-    if let Some(first) = settled.first_mut() {
-        first.starts_section = has_drafts || !current.is_empty();
-        first.starts_settled = true;
-    }
-    current.extend(settled);
-    current
+    groups
 }
 
 fn draft_session_row(
@@ -622,11 +722,7 @@ fn session_row(
     let keyboard_settle_entity = settle_entity.clone();
     let age = relative_age(session.modified);
     let is_settled = item.kind == SessionRailKind::Settled;
-    let metadata = if item.starts_settled {
-        format!("Archived · {project_name}")
-    } else {
-        project_name
-    };
+    let metadata = project_name;
     let icon = if is_settled {
         AppIcon::ChatCircle
     } else {
@@ -653,9 +749,7 @@ fn session_row(
         .gap(THEME.space.xs)
         .px(THEME.space.sm)
         .rounded(THEME.radius)
-        .when(item.starts_section, |row| {
-            row.border_t(THEME.border).border_color(THEME.colors.border)
-        })
+        .group(format!("session-actions-{}", session.id))
         .bg(if selected {
             THEME.colors.surface
         } else {
@@ -710,11 +804,6 @@ fn session_row(
                                         .whitespace_nowrap()
                                         .text_ellipsis()
                                         .text_size(THEME.type_scale.caption)
-                                        .font_weight(if item.starts_settled {
-                                            FontWeight::SEMIBOLD
-                                        } else {
-                                            FontWeight::NORMAL
-                                        })
                                         .child(metadata),
                                 ),
                         )
@@ -765,6 +854,11 @@ fn session_row(
                                 .border(THEME.border)
                                 .border_color(THEME.colors.border)
                                 .rounded(THEME.radius)
+                                .opacity(0.0)
+                                .group_hover(format!("session-actions-{}", session.id), |button| {
+                                    button.opacity(1.0)
+                                })
+                                .focus(|button| button.opacity(1.0))
                                 .text_size(THEME.type_scale.caption)
                                 .text_color(if is_settled {
                                     THEME.colors.success

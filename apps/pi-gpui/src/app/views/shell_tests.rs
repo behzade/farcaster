@@ -54,7 +54,7 @@ fn session_badges_show_only_meaningful_live_state() {
 }
 
 #[test]
-fn session_groups_mark_only_boundaries_after_a_preceding_group() {
+fn session_groups_keep_active_and_archived_roots_separate() {
     let sessions = vec![
         session("settled-one", true),
         session("active-one", false),
@@ -62,23 +62,23 @@ fn session_groups_mark_only_boundaries_after_a_preceding_group() {
         session("active-two", false),
     ];
 
-    let all_groups = session_rail_items(&sessions, true);
-    assert_eq!(all_groups[0].kind, SessionRailKind::Project);
-    assert!(all_groups[0].starts_section);
-    assert!(!all_groups[1].starts_section);
-    assert_eq!(all_groups[2].kind, SessionRailKind::Settled);
-    assert!(all_groups[2].starts_section);
-    assert!(!all_groups[3].starts_section);
-
-    let without_drafts = session_rail_items(&sessions, false);
-    assert!(!without_drafts[0].starts_section);
-    assert!(without_drafts[2].starts_section);
-
-    let settled_only = session_rail_items(&sessions[..1], false);
-    assert!(!settled_only[0].starts_section);
-
-    let draft_then_settled = session_rail_items(&sessions[..1], true);
-    assert!(draft_then_settled[0].starts_section);
+    let groups = session_rail_items(&sessions);
+    assert_eq!(groups.active.len(), 2);
+    assert_eq!(groups.archived.len(), 2);
+    assert!(
+        groups
+            .active
+            .iter()
+            .all(|item| item.kind == SessionRailKind::Project)
+    );
+    assert!(
+        groups
+            .archived
+            .iter()
+            .all(|item| item.kind == SessionRailKind::Settled)
+    );
+    assert_eq!(groups.active[0].session.id, "active-one");
+    assert_eq!(groups.archived[0].session.id, "settled-one");
 }
 
 fn session(id: &str, settled: bool) -> SessionSummary {

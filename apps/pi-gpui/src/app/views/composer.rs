@@ -10,9 +10,10 @@ use gpui_component::input::{Paste, Textarea};
 
 use super::super::{PiApp, slash_commands};
 use crate::{
+    app::slash_commands::SlashCommandSuggestion,
     composer_sessions::ComposerSnapshot,
     primitives::{ButtonTone, button},
-    protocol::{ExtensionUiRequest, SlashCommand},
+    protocol::ExtensionUiRequest,
     runtime::RuntimeCommand,
     theme::{READING_FONT_FAMILY, THEME},
 };
@@ -27,10 +28,8 @@ impl PiApp {
             slash_commands::suggestions(&composer_value, &self.snapshot.commands)
                 .into_iter()
                 .take(8)
-                .cloned()
                 .collect::<Vec<_>>();
-        let exact_command =
-            slash_commands::exact(&composer_value, &self.snapshot.commands).is_some();
+        let exact_command = slash_commands::is_exact(&composer_value, &self.snapshot.commands);
         let widgets_above = widget_region("above", &self.extension.above_widgets);
         let widgets_below = widget_region("below", &self.extension.below_widgets);
         let send_entity = entity.clone();
@@ -339,7 +338,10 @@ impl PiApp {
     }
 }
 
-fn slash_command_menu(commands: Vec<SlashCommand>, entity: WeakEntity<PiApp>) -> AnyElement {
+fn slash_command_menu(
+    commands: Vec<SlashCommandSuggestion>,
+    entity: WeakEntity<PiApp>,
+) -> AnyElement {
     let mut menu = div()
         .id("slash-command-menu")
         .role(Role::Group)

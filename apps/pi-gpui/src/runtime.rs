@@ -36,6 +36,14 @@ pub(crate) enum RuntimeCommand {
         allow_while_running: bool,
     },
     Abort,
+    Reload,
+    Compact {
+        custom_instructions: Option<String>,
+    },
+    ExportHtml {
+        output_path: Option<String>,
+    },
+    SetSessionName(String),
     NewSession {
         id: String,
         project: PathBuf,
@@ -766,6 +774,22 @@ impl RuntimeOwner {
             } => self.send_prompt(target, mode, message, images, allow_while_running),
             RuntimeCommand::DeliverQueued(prompt) => self.deliver_queued(prompt),
             RuntimeCommand::Abort => self.send(command("abort")),
+            RuntimeCommand::Reload => self.reload(),
+            RuntimeCommand::Compact {
+                custom_instructions,
+            } => self.send(optional_string_command(
+                "compact",
+                "customInstructions",
+                custom_instructions,
+            )),
+            RuntimeCommand::ExportHtml { output_path } => self.send(optional_string_command(
+                "export_html",
+                "outputPath",
+                output_path,
+            )),
+            RuntimeCommand::SetSessionName(name) => {
+                self.send(json!({"type": "set_session_name", "name": name}))
+            }
             RuntimeCommand::NewSession { project, .. } => {
                 self.preview_draft(project);
             }
@@ -799,6 +823,26 @@ impl RuntimeOwner {
             RuntimeCommand::RefreshSessions => self.refresh_sessions(),
             RuntimeCommand::Shutdown => {}
         }
+    }
+
+    fn reload(&mut self) {
+        let active = self.active_snapshot();
+        if active.conversation.running || active.conversation.compacting {
+            let snapshot = self.active_snapshot_mut();
+            snapshot.conversation.push_local_error(
+                "Reload not started",
+                "Wait for the current response to finish before reloading.".into(),
+            );
+            snapshot.status = "Reload not started".into();
+            self.publish();
+            return;
+        }
+        let session = if self.snapshot.history_preview {
+            self.snapshot.selected_session.clone()
+        } else {
+            self.active_session.clone()
+        };
+        self.start_process(session);
     }
 
     fn send(&mut self, command: Value) {
@@ -1152,6 +1196,21 @@ impl RuntimeOwner {
             "compact" | "set_auto_compaction" | "set_auto_retry" | "abort_retry" => {
                 self.send(command("get_state"))
             }
+            "set_session_name" => {
+                self.active_snapshot_mut().status = "Session named".into();
+                self.send(command("get_state"));
+                self.refresh_sessions();
+            }
+            "export_html" => {
+                self.active_snapshot_mut().status = response
+                    .data
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .map_or_else(
+                        || "Session exported".into(),
+                        |path| format!("Exported to {path}"),
+                    );
+            }
             _ => {}
         }
         if matches!(response_command.as_str(), "get_state" | "get_messages") {
@@ -1367,6 +1426,14 @@ fn reset_snapshot_for_live_session(snapshot: &mut RuntimeSnapshot, status: Strin
         auto_retry,
         ..RuntimeSnapshot::default()
     };
+}
+
+fn optional_string_command(kind: &str, field: &str, value: Option<String>) -> Value {
+    let mut command = serde_json::Map::from_iter([("type".into(), Value::String(kind.into()))]);
+    if let Some(value) = value {
+        command.insert(field.into(), Value::String(value));
+    }
+    Value::Object(command)
 }
 
 const fn can_send_prompt(mode: PromptMode, running: bool, allow_while_running: bool) -> bool {
@@ -1619,12 +1686,86 @@ mod tests {
     }
 
     #[test]
+    fn optional_builtin_rpc_arguments_are_omitted_when_absent() {
+        assert_eq!(
+            optional_string_command("compact", "customInstructions", None),
+            json!({"type":"compact"})
+        );
+        assert_eq!(
+            optional_string_command(
+                "compact",
+                "customInstructions",
+                Some("focus on code".into()),
+            ),
+            json!({"type":"compact","customInstructions":"focus on code"})
+        );
+        assert_eq!(
+            optional_string_command("export_html", "outputPath", Some("out.html".into())),
+            json!({"type":"export_html","outputPath":"out.html"})
+        );
+    }
+
+    #[test]
     fn streaming_accepts_queued_messages_and_exact_extension_commands() {
         assert!(!can_send_prompt(PromptMode::Normal, true, false));
         assert!(can_send_prompt(PromptMode::Steer, true, false));
         assert!(can_send_prompt(PromptMode::FollowUp, true, false));
         assert!(can_send_prompt(PromptMode::Normal, false, false));
         assert!(can_send_prompt(PromptMode::Normal, true, true));
+    }
+
+    #[test]
+    fn reload_is_rejected_while_the_session_is_running() {
+        let (mut owner, _events, _discovery) = owner_without_process(std::env::temp_dir());
+        owner
+            .snapshot
+            .conversation
+            .reduce(&json!({"type":"agent_start"}));
+        let generation = owner.process_generation;
+
+        owner.apply_command(RuntimeCommand::Reload);
+
+        assert_eq!(owner.process_generation, generation);
+        assert_eq!(owner.snapshot.status, "Reload not started");
+        assert!(
+            owner
+                .snapshot
+                .conversation
+                .items
+                .iter()
+                .any(|item| item.text.contains("Wait for the current response"))
+        );
+    }
+
+    #[test]
+    fn reload_restarts_the_idle_session_process() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempdir()?;
+        let script = temp.path().join("fake-pi.sh");
+        fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))?;
+        let mut permissions = fs::metadata(&script)?.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script, permissions)?;
+        let session = temp.path().join("session.jsonl");
+        let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
+        owner.process_command = ProcessCommand {
+            program: script,
+            prefix_args: vec!["quiet".into()],
+            direnv_program: None,
+        };
+        owner.active_session = Some(session.clone());
+        owner.snapshot.selected_session = Some(session.clone());
+        let generation = owner.process_generation;
+
+        owner.apply_command(RuntimeCommand::Reload);
+
+        assert!(owner.process.is_some());
+        assert_eq!(owner.process_generation, generation + 1);
+        assert_eq!(owner.snapshot.selected_session, Some(session));
+        assert!(owner.snapshot.connected);
+        if let Some(mut process) = owner.process.take() {
+            process.terminate()?;
+        }
+        Ok(())
     }
 
     #[test]
