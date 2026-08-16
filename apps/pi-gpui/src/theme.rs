@@ -6,6 +6,8 @@ use gpui_component::{
     theme::{Theme as ComponentTheme, ThemeMode, ThemeTokens},
 };
 
+pub(crate) const READING_FONT_FAMILY: &str = "Lilex";
+
 #[derive(Clone, Copy)]
 pub(crate) struct Theme {
     pub colors: Colors,
@@ -115,7 +117,7 @@ pub(crate) const THEME: Theme = Theme {
         body_small: px(13.0),
         body: px(14.0),
         heading: px(17.0),
-        line_body: px(18.0),
+        line_body: px(20.0),
     },
     radius: px(6.0),
     border: px(1.0),
@@ -142,8 +144,8 @@ pub(crate) fn install_component_theme(cx: &mut App) {
     let theme = ComponentTheme::global_mut(cx);
     theme.mode = ThemeMode::Dark;
     theme.font_size = THEME.type_scale.body;
-    theme.mono_font_family = "monospace".into();
-    theme.mono_font_size = THEME.type_scale.body;
+    theme.mono_font_family = READING_FONT_FAMILY.into();
+    theme.mono_font_size = THEME.type_scale.body_small;
     theme.highlight_theme = HighlightTheme::default_dark();
     theme.radius = THEME.radius;
     theme.radius_lg = THEME.radius;

@@ -5,7 +5,7 @@ mod prompts;
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
-    sync::mpsc,
+    sync::{Arc, mpsc},
     thread,
     time::Duration,
 };
@@ -13,7 +13,7 @@ use std::{
 use serde_json::{Value, json};
 
 use crate::{
-    conversation::ConversationState,
+    conversation::{ConversationState, TranscriptKind},
     protocol::{ExtensionUiResponse, Model, PromptImage, PromptMode, SessionState, command},
     rpc_process::{ProcessCommand, ProcessItem, RpcProcess},
     sessions::{SessionSummary, discover, load_history},
@@ -62,7 +62,7 @@ pub(crate) enum RuntimeCommand {
 pub(crate) enum RuntimeEvent {
     Snapshot {
         generation: u64,
-        snapshot: Box<RuntimeSnapshot>,
+        snapshot: Arc<RuntimeSnapshot>,
     },
     SessionReset {
         generation: u64,
@@ -196,7 +196,7 @@ fn run_supervisor(
     ]);
     let mut selected = initial_key.clone();
     let mut generation = 0_u64;
-    let mut latest = HashMap::<String, RuntimeSnapshot>::new();
+    let mut latest = HashMap::<String, Arc<RuntimeSnapshot>>::new();
     let mut pending_extensions = HashMap::<String, Vec<crate::protocol::ExtensionUiRequest>>::new();
     let mut active_dialogs = HashMap::<String, Vec<crate::protocol::ExtensionUiRequest>>::new();
     let mut needs_input = HashSet::<String>::new();
@@ -228,7 +228,6 @@ fn run_supervisor(
                 last_touch.insert(key.clone(), clock);
                 match event {
                     RuntimeEvent::Snapshot { snapshot, .. } => {
-                        let snapshot = *snapshot;
                         if snapshot.conversation.settled {
                             needs_input.remove(&key);
                             active_dialogs.remove(&key);
@@ -250,7 +249,7 @@ fn run_supervisor(
                         if key == selected {
                             let _ = event_tx.send(RuntimeEvent::Snapshot {
                                 generation,
-                                snapshot: Box::new(snapshot),
+                                snapshot,
                             });
                         }
                     }
@@ -378,7 +377,7 @@ fn run_supervisor(
                     if let Some(snapshot) = latest.get(&key).cloned() {
                         let _ = event_tx.send(RuntimeEvent::Snapshot {
                             generation,
-                            snapshot: Box::new(snapshot),
+                            snapshot,
                         });
                     }
                     if let Some(requests) = pending_extensions.remove(&key) {
@@ -437,7 +436,7 @@ fn command_target(command: &RuntimeCommand) -> Option<(String, PathBuf)> {
 fn actor_key_for_command(
     command: &RuntimeCommand,
     requested_key: &str,
-    latest: &HashMap<String, RuntimeSnapshot>,
+    latest: &HashMap<String, Arc<RuntimeSnapshot>>,
 ) -> String {
     let RuntimeCommand::Resume { path, .. } = command else {
         return requested_key.to_owned();
@@ -452,17 +451,22 @@ fn actor_key_for_command(
 }
 
 fn semantic_status(snapshot: &RuntimeSnapshot) -> &'static str {
+    if snapshot.history_preview {
+        return if snapshot.selected_session.is_none() {
+            "Draft"
+        } else {
+            "Done"
+        };
+    }
     if snapshot.conversation.running {
         "Working"
     } else if snapshot
         .conversation
         .items
         .last()
-        .is_some_and(|item| item.is_error)
+        .is_some_and(|item| item.kind == TranscriptKind::Error)
     {
         "Failed"
-    } else if snapshot.history_preview && snapshot.selected_session.is_none() {
-        "Draft"
     } else {
         "Done"
     }
@@ -470,7 +474,7 @@ fn semantic_status(snapshot: &RuntimeSnapshot) -> &'static str {
 
 fn evict_idle_actors(
     actors: &mut HashMap<String, SessionRuntimeHandle>,
-    latest: &mut HashMap<String, RuntimeSnapshot>,
+    latest: &mut HashMap<String, Arc<RuntimeSnapshot>>,
     last_touch: &mut HashMap<String, u64>,
     selected: &str,
 ) {
@@ -599,8 +603,12 @@ fn run(
         while let Ok(result) = history_rx.try_recv() {
             owner.apply_history(result);
         }
+        let mut process_snapshot_changed = false;
         while let Some(item) = owner.process.as_mut().and_then(RpcProcess::try_next) {
-            owner.apply_process_item(item);
+            process_snapshot_changed |= owner.apply_process_item(item);
+        }
+        if process_snapshot_changed {
+            owner.publish();
         }
         match command_rx.recv_timeout(Duration::from_millis(12)) {
             Ok(RuntimeCommand::Shutdown) => running = false,
@@ -739,14 +747,18 @@ impl RuntimeOwner {
         }
     }
 
-    fn apply_process_item(&mut self, item: ProcessItem) {
+    fn apply_process_item(&mut self, item: ProcessItem) -> bool {
         match item {
-            ProcessItem::Response(response) => self.apply_response(response),
+            ProcessItem::Response(response) => {
+                self.apply_response(response);
+                false
+            }
             ProcessItem::ExtensionUi(request) => {
                 let _ = self.event_tx.send(RuntimeEvent::ExtensionUi {
                     generation: self.process_generation,
                     request,
                 });
+                false
             }
             ProcessItem::Event(event) => {
                 let settled = event.get("type").and_then(Value::as_str) == Some("agent_settled");
@@ -758,14 +770,13 @@ impl RuntimeOwner {
                 snapshot.status = run_status(&snapshot.conversation).to_owned();
                 let live_status_changed = previous_live_status
                     .is_some_and(|status| status != session_badge_status(&snapshot.conversation));
-                if !previewing || live_status_changed {
-                    self.publish();
-                }
+                let should_publish = !previewing || live_status_changed;
                 if settled {
                     self.send(command("get_state"));
                     self.send(command("get_session_stats"));
                     self.load_sessions(String::new());
                 }
+                should_publish
             }
             ProcessItem::Stderr(chunk) => {
                 let previewing = self.parked_snapshot.is_some();
@@ -774,11 +785,12 @@ impl RuntimeOwner {
                 if snapshot.stderr.len() > 32 * 1024 {
                     snapshot.stderr.drain(..16 * 1024);
                 }
-                if !previewing {
-                    self.publish();
-                }
+                !previewing
             }
-            ProcessItem::Failure(error) => self.fail(error),
+            ProcessItem::Failure(error) => {
+                self.fail(error);
+                false
+            }
         }
     }
 
@@ -886,7 +898,7 @@ impl RuntimeOwner {
         conversation.replace_history(&messages);
         self.snapshot = RuntimeSnapshot {
             connected: true,
-            status: "History preview · Pi loads when you send".into(),
+            status: "Ready".into(),
             project: result.project,
             selected_session: Some(result.path),
             conversation,
@@ -1180,7 +1192,7 @@ impl RuntimeOwner {
         snapshot.live_status = session_badge_status(&active_snapshot.conversation).into();
         let _ = self.event_tx.send(RuntimeEvent::Snapshot {
             generation: self.process_generation,
-            snapshot: Box::new(snapshot),
+            snapshot: Arc::new(snapshot),
         });
     }
 }
@@ -1303,6 +1315,64 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_event_clones_share_transcript_storage() {
+        let event = RuntimeEvent::Snapshot {
+            generation: 1,
+            snapshot: Arc::new(RuntimeSnapshot::default()),
+        };
+        let cloned = event.clone();
+        let RuntimeEvent::Snapshot { snapshot: left, .. } = &event else {
+            panic!("expected snapshot event");
+        };
+        let RuntimeEvent::Snapshot {
+            snapshot: right, ..
+        } = &cloned
+        else {
+            panic!("expected cloned snapshot event");
+        };
+
+        assert!(Arc::ptr_eq(left, right));
+    }
+
+    #[test]
+    fn failed_tool_does_not_mark_the_whole_session_failed() {
+        let mut conversation = ConversationState::default();
+        conversation.replace_history(&[
+            json!({"role":"assistant","content":[{
+                "type":"toolCall","id":"read-1","name":"read","arguments":{"path":"x"}
+            }]}),
+            json!({
+                "role":"toolResult","toolCallId":"read-1","toolName":"read",
+                "content":[{"type":"text","text":"not found"}],"isError":true
+            }),
+        ]);
+        assert!(conversation.items[0].is_error);
+        assert_eq!(conversation.items[0].kind, TranscriptKind::Tool);
+        assert_eq!(
+            semantic_status(&RuntimeSnapshot {
+                conversation,
+                ..RuntimeSnapshot::default()
+            }),
+            "Done"
+        );
+    }
+
+    #[test]
+    fn history_preview_does_not_claim_to_know_an_external_run_failed() {
+        let mut conversation = ConversationState::default();
+        conversation.push_local_error("Previous error", "stale".into());
+        assert_eq!(
+            semantic_status(&RuntimeSnapshot {
+                selected_session: Some(PathBuf::from("session.jsonl")),
+                conversation,
+                history_preview: true,
+                ..RuntimeSnapshot::default()
+            }),
+            "Done"
+        );
+    }
+
+    #[test]
     fn agent_end_does_not_report_ready_until_settled() {
         let mut conversation = ConversationState::default();
         conversation.reduce(&json!({"type":"agent_start"}));
@@ -1321,10 +1391,10 @@ mod tests {
         };
         let latest = HashMap::from([(
             "draft:one".into(),
-            RuntimeSnapshot {
+            Arc::new(RuntimeSnapshot {
                 live_session: Some(path.clone()),
                 ..RuntimeSnapshot::default()
-            },
+            }),
         )]);
 
         assert_eq!(
@@ -1535,7 +1605,7 @@ mod tests {
         let snapshots = event_rx
             .try_iter()
             .filter_map(|event| match event {
-                RuntimeEvent::Snapshot { snapshot, .. } => Some(*snapshot),
+                RuntimeEvent::Snapshot { snapshot, .. } => Some(snapshot),
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -1793,13 +1863,13 @@ mod tests {
         assert_eq!(visible.live_status, "Working");
         assert_eq!(visible.conversation.items[0].text, "history message");
 
-        owner.apply_process_item(ProcessItem::Event(json!({
+        assert!(!owner.apply_process_item(ProcessItem::Event(json!({
             "type": "message_start",
             "message": {
                 "role": "assistant",
                 "content": [{"type": "text", "text": "active output"}]
             }
-        })));
+        }))));
 
         assert_eq!(owner.snapshot.conversation.items[0].text, "history message");
         assert!(owner.parked_snapshot.as_ref().is_some_and(|snapshot| {
@@ -1815,10 +1885,12 @@ mod tests {
                 .all(|event| !matches!(event, RuntimeEvent::Snapshot { .. }))
         );
 
-        owner.apply_process_item(ProcessItem::Event(json!({
+        let changed = owner.apply_process_item(ProcessItem::Event(json!({
             "type": "compaction_start",
             "reason": "test"
         })));
+        assert!(changed);
+        owner.publish();
         let visible = event_rx
             .try_iter()
             .filter_map(|event| match event {

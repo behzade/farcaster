@@ -2,6 +2,7 @@
 
 mod composer_images;
 mod submissions;
+mod transcript_ui;
 mod views;
 pub(crate) use composer_images::ComposerImage;
 use submissions::PendingSubmission;
@@ -11,6 +12,7 @@ use std::{
     collections::{HashMap, HashSet},
     ops::Range,
     path::PathBuf,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -26,7 +28,6 @@ use crate::{
         ComposerSessions, ComposerSnapshot, HistoryNavigation, draft_target, project_target,
         session_target,
     },
-    conversation::TranscriptKind,
     extension_ui::{ExtensionEffect, ExtensionUiState},
     projects,
     protocol::{ExtensionUiRequest, Model},
@@ -42,7 +43,7 @@ actions!(pi_gpui, [DismissSurface, QuitApplication, SubmitFollowUp]);
 pub(crate) struct PiApp {
     project: PathBuf,
     runtime: RuntimeHandle,
-    pub(crate) snapshot: RuntimeSnapshot,
+    pub(crate) snapshot: Arc<RuntimeSnapshot>,
     sessions: Vec<SessionSummary>,
     run_statuses: HashMap<String, String>,
     recent_completions: HashMap<String, Instant>,
@@ -56,6 +57,7 @@ pub(crate) struct PiApp {
     runtime_generation: u64,
     composer: Entity<InputState>,
     composer_sessions: ComposerSessions,
+    composer_history_marker: Option<(String, usize, String)>,
     composer_images: HashMap<String, Vec<ComposerImage>>,
     search: Entity<InputState>,
     dialog_input: Entity<InputState>,
@@ -66,6 +68,7 @@ pub(crate) struct PiApp {
     sheet_return_focus: Option<FocusHandle>,
     pending_sheet_setup: bool,
     transcript_list: ListState,
+    transcript_rows: Arc<Vec<crate::transcript::TranscriptRow>>,
     transcript_following: bool,
     transcript_unseen: usize,
     pub(crate) transcript_disclosure_overrides: HashSet<usize>,
@@ -206,11 +209,11 @@ impl PiApp {
         Self {
             project: project.clone(),
             runtime,
-            snapshot: RuntimeSnapshot {
+            snapshot: Arc::new(RuntimeSnapshot {
                 status: "Starting".into(),
                 project: project.clone(),
                 ..RuntimeSnapshot::default()
-            },
+            }),
             sessions: Vec::new(),
             run_statuses: HashMap::new(),
             recent_completions: HashMap::new(),
@@ -224,6 +227,7 @@ impl PiApp {
             runtime_generation: 0,
             composer,
             composer_sessions,
+            composer_history_marker: None,
             composer_images: HashMap::new(),
             search,
             dialog_input,
@@ -234,6 +238,7 @@ impl PiApp {
             sheet_return_focus: None,
             pending_sheet_setup: false,
             transcript_list,
+            transcript_rows: Arc::new(Vec::new()),
             transcript_following: true,
             transcript_unseen: 0,
             transcript_disclosure_overrides: HashSet::new(),
@@ -258,8 +263,9 @@ impl PiApp {
 
     fn send(&mut self, command: RuntimeCommand) {
         if let Err(error) = self.runtime.send(command) {
-            let index = self.snapshot.conversation.items.len();
-            self.snapshot.conversation.push_transport_error(error);
+            let snapshot = Arc::make_mut(&mut self.snapshot);
+            let index = snapshot.conversation.items.len();
+            snapshot.conversation.push_transport_error(error);
             self.mark_transcript_changed(index, index == 0);
         }
     }
@@ -277,7 +283,8 @@ impl PiApp {
                     if generation > self.runtime_generation {
                         self.reset_session_ui(generation, false);
                     }
-                    let count = crate::transcript::project_rows(&snapshot.conversation.items).len();
+                    let next_rows = crate::transcript::project_rows(&snapshot.conversation.items);
+                    let count = next_rows.len();
                     if count > self.last_transcript_count && !self.transcript_following {
                         self.transcript_unseen = self
                             .transcript_unseen
@@ -292,19 +299,10 @@ impl PiApp {
                         self.pending_dialog_setup = self.extension.dialog.is_some();
                         self.dialog_return_focus = None;
                     }
-                    self.sync_transcript_list(&snapshot.conversation.items);
+                    self.sync_transcript_rows(next_rows);
                     self.last_transcript_count = count;
-                    self.snapshot = *snapshot;
-                    let history = self
-                        .snapshot
-                        .conversation
-                        .items
-                        .iter()
-                        .filter(|item| item.kind == TranscriptKind::User && !item.is_error)
-                        .map(|item| item.text.clone())
-                        .collect::<Vec<_>>();
-                    let target = self.composer_sessions.current_target().to_owned();
-                    self.composer_sessions.sync_history(&target, &history);
+                    self.snapshot = snapshot;
+                    self.sync_composer_history();
                     self.reconcile_live_draft(cx);
                 }
                 RuntimeEvent::SessionReset {
@@ -382,7 +380,9 @@ impl PiApp {
                         );
                     }
                 }
-                RuntimeEvent::Stopped => self.snapshot.status = "Stopped".into(),
+                RuntimeEvent::Stopped => {
+                    Arc::make_mut(&mut self.snapshot).status = "Stopped".into()
+                }
                 RuntimeEvent::Snapshot { .. }
                 | RuntimeEvent::SessionReset { .. }
                 | RuntimeEvent::HistoryReset { .. }
@@ -463,16 +463,17 @@ impl PiApp {
                     self.extension_errors.remove(0);
                 }
             }
-            ExtensionEffect::Diagnostic(message) => {
-                self.snapshot.conversation.diagnostics.push(message)
-            }
+            ExtensionEffect::Diagnostic(message) => Arc::make_mut(&mut self.snapshot)
+                .conversation
+                .diagnostics
+                .push(message),
             ExtensionEffect::None => {}
         }
     }
 
     fn reset_transcript_ui(&mut self) {
-        self.snapshot.conversation.items.clear();
         self.transcript_list.reset(0);
+        self.transcript_rows = Arc::new(Vec::new());
         self.transcript_list.set_follow_mode(FollowMode::Tail);
         self.transcript_disclosure_overrides.clear();
         self.transcript_following = true;
@@ -837,39 +838,6 @@ impl PiApp {
         } else if self.sessions_sheet || self.run_sheet {
             self.close_sheet(window, cx);
         }
-    }
-
-    pub(crate) fn jump_to_latest(&mut self, cx: &mut Context<Self>) {
-        self.transcript_following = true;
-        self.transcript_unseen = 0;
-        self.transcript_list.set_follow_mode(FollowMode::Tail);
-        self.transcript_list.scroll_to_end();
-        cx.notify();
-    }
-
-    pub(crate) fn toggle_transcript_item(&mut self, key: usize, cx: &mut Context<Self>) {
-        if !self.transcript_disclosure_overrides.remove(&key) {
-            self.transcript_disclosure_overrides.insert(key);
-        }
-        let rows = crate::transcript::project_rows(&self.snapshot.conversation.items);
-        if let Some(index) = rows.iter().position(|row| row.key() == key) {
-            self.transcript_list
-                .remeasure_items(index..index.saturating_add(1));
-        }
-        cx.notify();
-    }
-
-    fn sync_transcript_list(&mut self, next: &[crate::conversation::TranscriptItem]) {
-        let current_rows = crate::transcript::project_rows(&self.snapshot.conversation.items);
-        let next_rows = crate::transcript::project_rows(next);
-        if let Some((old_range, new_count)) = transcript_splice(&current_rows, &next_rows) {
-            self.transcript_list.splice(old_range, new_count);
-        }
-    }
-
-    fn mark_transcript_changed(&mut self, _index: usize, _was_empty: bool) {
-        let row_count = crate::transcript::project_rows(&self.snapshot.conversation.items).len();
-        self.transcript_list.reset(row_count);
     }
 }
 

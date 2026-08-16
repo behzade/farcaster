@@ -4,7 +4,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicU8, Ordering},
     },
 };
 
@@ -29,6 +29,8 @@ pub(crate) enum LaunchError {
     },
     #[error("project path is not a directory: {0}")]
     NotDirectory(PathBuf),
+    #[error("the bundled Lilex fonts could not be loaded")]
+    BundledFonts,
     #[error("the native Pi window could not open")]
     NativeWindow,
 }
@@ -52,12 +54,20 @@ pub(crate) fn resolve_project(path: Option<PathBuf>) -> Result<PathBuf, LaunchEr
 }
 
 pub(crate) fn run(project: PathBuf) -> Result<(), LaunchError> {
-    let failed = Arc::new(AtomicBool::new(false));
-    let failed_in_app = failed.clone();
+    const FONT_FAILURE: u8 = 1;
+    const WINDOW_FAILURE: u8 = 2;
+
+    let failure = Arc::new(AtomicU8::new(0));
+    let failure_in_app = failure.clone();
     gpui_platform::application()
         .with_assets(AppAssets)
         .run(move |cx: &mut App| {
             gpui_component::init(cx);
+            if AppAssets.load_fonts(cx).is_err() {
+                failure_in_app.store(FONT_FAILURE, Ordering::Release);
+                cx.quit();
+                return;
+            }
             install_component_theme(cx);
             cx.on_action(quit);
             cx.bind_keys([
@@ -96,16 +106,16 @@ pub(crate) fn run(project: PathBuf) -> Result<(), LaunchError> {
                 },
             );
             if result.is_err() {
-                failed_in_app.store(true, Ordering::Release);
+                failure_in_app.store(WINDOW_FAILURE, Ordering::Release);
                 cx.quit();
                 return;
             }
             cx.activate(true);
         });
-    if failed.load(Ordering::Acquire) {
-        Err(LaunchError::NativeWindow)
-    } else {
-        Ok(())
+    match failure.load(Ordering::Acquire) {
+        FONT_FAILURE => Err(LaunchError::BundledFonts),
+        WINDOW_FAILURE => Err(LaunchError::NativeWindow),
+        _ => Ok(()),
     }
 }
 

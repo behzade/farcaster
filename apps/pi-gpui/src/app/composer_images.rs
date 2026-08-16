@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use base64::Engine as _;
-use gpui::{ClipboardEntry, Context, Image};
+use gpui::{ClipboardEntry, ClipboardItem, Context, Image};
 
 use super::PiApp;
 use crate::protocol::PromptImage;
@@ -33,23 +33,7 @@ impl PiApp {
         let Some(clipboard) = cx.read_from_clipboard() else {
             return false;
         };
-        let images = clipboard
-            .entries()
-            .iter()
-            .filter_map(|entry| match entry {
-                ClipboardEntry::Image(image) if !image.bytes().is_empty() => Some(ComposerImage {
-                    prompt: PromptImage::new(
-                        base64::engine::general_purpose::STANDARD.encode(image.bytes()),
-                        image.format().mime_type().into(),
-                    ),
-                    preview: Arc::new(image.clone()),
-                    byte_len: image.bytes().len(),
-                }),
-                ClipboardEntry::String(_)
-                | ClipboardEntry::ExternalPaths(_)
-                | ClipboardEntry::Image(_) => None,
-            })
-            .collect::<Vec<_>>();
+        let images = composer_images(&clipboard);
         if images.is_empty() {
             return false;
         }
@@ -73,5 +57,47 @@ impl PiApp {
             }
             cx.notify();
         }
+    }
+}
+
+fn composer_images(clipboard: &ClipboardItem) -> Vec<ComposerImage> {
+    clipboard
+        .entries()
+        .iter()
+        .filter_map(|entry| match entry {
+            ClipboardEntry::Image(image) if !image.bytes().is_empty() => Some(ComposerImage {
+                prompt: PromptImage::new(
+                    base64::engine::general_purpose::STANDARD.encode(image.bytes()),
+                    image.format().mime_type().into(),
+                ),
+                preview: Arc::new(image.clone()),
+                byte_len: image.bytes().len(),
+            }),
+            ClipboardEntry::String(_)
+            | ClipboardEntry::ExternalPaths(_)
+            | ClipboardEntry::Image(_) => None,
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{ClipboardItem, Image, ImageFormat};
+
+    use super::composer_images;
+
+    #[test]
+    fn clipboard_images_become_prompt_attachments() {
+        let clipboard = ClipboardItem::new_image(&Image {
+            format: ImageFormat::Png,
+            bytes: vec![1, 2, 3],
+            id: 7,
+        });
+
+        let images = composer_images(&clipboard);
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].prompt.mime_type, "image/png");
+        assert_eq!(images[0].prompt.data, "AQID");
+        assert_eq!(images[0].byte_len, 3);
     }
 }

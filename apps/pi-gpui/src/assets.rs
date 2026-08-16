@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use gpui::{AssetSource, Result, SharedString};
+use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
@@ -15,6 +15,17 @@ const ICON_PATHS: [&str; 7] = [
 ];
 
 pub(crate) struct AppAssets;
+
+impl AppAssets {
+    pub(crate) fn load_fonts(&self, cx: &App) -> Result<()> {
+        cx.text_system().add_fonts(vec![
+            Cow::Borrowed(include_bytes!("../assets/lilex/Lilex-Regular.ttf")),
+            Cow::Borrowed(include_bytes!("../assets/lilex/Lilex-Bold.ttf")),
+            Cow::Borrowed(include_bytes!("../assets/lilex/Lilex-Italic.ttf")),
+            Cow::Borrowed(include_bytes!("../assets/lilex/Lilex-BoldItalic.ttf")),
+        ])
+    }
+}
 
 impl AssetSource for AppAssets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
@@ -88,6 +99,18 @@ mod tests {
     use gpui_component::IconNamed as _;
 
     use super::{AppAssets, AppIcon};
+
+    #[test]
+    fn bundled_lilex_fonts_have_true_type_headers() {
+        for bytes in [
+            include_bytes!("../assets/lilex/Lilex-Regular.ttf").as_slice(),
+            include_bytes!("../assets/lilex/Lilex-Bold.ttf").as_slice(),
+            include_bytes!("../assets/lilex/Lilex-Italic.ttf").as_slice(),
+            include_bytes!("../assets/lilex/Lilex-BoldItalic.ttf").as_slice(),
+        ] {
+            assert!(matches!(&bytes[..4], b"\0\x01\0\0" | b"OTTO"));
+        }
+    }
 
     #[test]
     fn phosphor_icons_are_embedded_and_themeable() {

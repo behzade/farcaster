@@ -10,7 +10,7 @@ use gpui_component::{
 };
 
 use super::super::PiApp;
-use crate::theme::THEME;
+use crate::theme::{READING_FONT_FAMILY, THEME};
 
 pub(super) fn render(app: &PiApp, entity: WeakEntity<PiApp>) -> Option<AnyElement> {
     let images = app.current_composer_images();
@@ -45,7 +45,7 @@ pub(super) fn render(app: &PiApp, entity: WeakEntity<PiApp>) -> Option<AnyElemen
                     .border(THEME.border)
                     .border_color(THEME.colors.border)
                     .bg(THEME.colors.surface)
-                    .font_family("monospace")
+                    .font_family(READING_FONT_FAMILY)
                     .text_size(THEME.type_scale.caption)
                     .text_color(THEME.colors.muted)
                     .child(

@@ -1,17 +1,21 @@
 //! Native, selectable presentations for file mutation tools.
 
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use gpui::{
-    AnyElement, InteractiveElement as _, IntoElement as _, Overflow, ParentElement as _,
-    StyleRefinement, Styled as _, div, prelude::FluentBuilder as _, px, rems, transparent_black,
+    AnyElement, InteractiveElement as _, IntoElement as _, ListHorizontalSizingBehavior,
+    ListSizingBehavior, Overflow, ParentElement as _, StyleRefinement, Styled as _, div,
+    prelude::FluentBuilder as _, px, rems, transparent_black, uniform_list,
 };
 use gpui_component::{
     highlighter::HighlightTheme,
     text::{TextView, TextViewStyle},
 };
 
-use crate::{conversation::ToolPresentation, theme::THEME};
+use crate::{
+    conversation::ToolPresentation,
+    theme::{READING_FONT_FAMILY, THEME},
+};
 
 const MAX_RENDERED_LINES: usize = 600;
 
@@ -71,15 +75,32 @@ fn render_change(path: &str, rows: Vec<ChangeLine>, key: usize) -> AnyElement {
         path.to_owned()
     };
     let truncated = rows.len() > MAX_RENDERED_LINES;
-    let displayed = rows.into_iter().take(MAX_RENDERED_LINES);
-    let mut body = div().w_full().max_h(px(420.0));
-    body.style().overflow.x = Some(Overflow::Scroll);
-    body.style().overflow.y = Some(Overflow::Scroll);
-    let body = body.flex().flex_col().children(
-        displayed
-            .enumerate()
-            .map(|(index, row)| render_line(row, &language, key, index)),
+    let displayed = Arc::new(
+        rows.into_iter()
+            .take(MAX_RENDERED_LINES)
+            .collect::<Vec<_>>(),
     );
+    let widest = displayed
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, row)| row.content.len())
+        .map(|(index, _)| index);
+    let row_count = displayed.len();
+    let list_rows = displayed;
+    let body = uniform_list(("tool-change-lines", key), row_count, move |range, _, _| {
+        range
+            .filter_map(|index| {
+                list_rows
+                    .get(index)
+                    .map(|row| render_line(row, &language, key, index))
+            })
+            .collect::<Vec<_>>()
+    })
+    .with_width_from_item(widest)
+    .with_sizing_behavior(ListSizingBehavior::Infer)
+    .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
+    .w_full()
+    .max_h(px(420.0));
     div()
         .id(("tool-change", key))
         .w_full()
@@ -99,8 +120,8 @@ fn render_change(path: &str, rows: Vec<ChangeLine>, key: usize) -> AnyElement {
                 .border_b(THEME.border)
                 .border_color(THEME.colors.border)
                 .bg(THEME.colors.surface)
-                .font_family("monospace")
-                .text_size(THEME.type_scale.caption)
+                .font_family(READING_FONT_FAMILY)
+                .text_size(THEME.type_scale.body_small)
                 .text_color(THEME.colors.text)
                 .child(title),
         )
@@ -120,12 +141,7 @@ fn render_change(path: &str, rows: Vec<ChangeLine>, key: usize) -> AnyElement {
         .into_any_element()
 }
 
-fn render_line(
-    row: ChangeLine,
-    language: &str,
-    key: usize,
-    index: usize,
-) -> impl gpui::IntoElement {
+fn render_line(row: &ChangeLine, language: &str, key: usize, index: usize) -> AnyElement {
     let (marker, background, foreground) = match row.kind {
         ChangeKind::Context => (" ", THEME.colors.canvas, THEME.colors.text),
         ChangeKind::Addition => ("+", THEME.colors.diff_added, THEME.colors.success),
@@ -139,8 +155,8 @@ fn render_line(
         .flex()
         .items_start()
         .bg(background)
-        .font_family("monospace")
-        .text_size(THEME.type_scale.caption)
+        .font_family(READING_FONT_FAMILY)
+        .text_size(THEME.type_scale.body_small)
         .line_height(px(20.0))
         .child(
             div()
@@ -174,6 +190,7 @@ fn render_line(
                     language,
                 )),
         )
+        .into_any_element()
 }
 
 fn code_line(id: impl Into<gpui::ElementId>, content: &str, language: &str) -> TextView {
@@ -182,8 +199,8 @@ fn code_line(id: impl Into<gpui::ElementId>, content: &str, language: &str) -> T
         .selectable(true)
         .w_full()
         .min_w_0()
-        .text_size(THEME.type_scale.caption)
-        .line_height(px(20.0))
+        .text_size(THEME.type_scale.body_small)
+        .line_height(THEME.type_scale.line_body)
 }
 
 fn code_line_style() -> TextViewStyle {
@@ -194,7 +211,7 @@ fn code_line_style() -> TextViewStyle {
     code_block.overflow.x = Some(Overflow::Visible);
     TextViewStyle {
         paragraph_gap: rems(0.0),
-        heading_base_font_size: THEME.type_scale.caption,
+        heading_base_font_size: THEME.type_scale.body_small,
         highlight_theme: HighlightTheme::default_dark(),
         code_block,
         is_dark: true,

@@ -6,14 +6,14 @@ use gpui::{
     StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div,
     prelude::FluentBuilder as _, px,
 };
-use gpui_component::input::Input;
+use gpui_component::input::{Input, Paste};
 
 use super::super::PiApp;
 use crate::{
     primitives::{ButtonTone, button},
     protocol::ExtensionUiRequest,
     runtime::RuntimeCommand,
-    theme::THEME,
+    theme::{READING_FONT_FAMILY, THEME},
 };
 
 impl PiApp {
@@ -48,18 +48,19 @@ impl PiApp {
                 div()
                     .id("composer-input")
                     .key_context(super::super::COMPOSER_KEY_CONTEXT)
+                    .font_family(READING_FONT_FAMILY)
+                    .text_size(THEME.type_scale.body)
+                    .line_height(THEME.type_scale.line_body)
                     .px(THEME.space.sm)
-                    .on_key_down(move |event: &KeyDownEvent, window, cx| {
-                        if event.keystroke.key == "v"
-                            && event.keystroke.modifiers.secondary()
-                            && paste_entity
-                                .update(cx, |this, cx| this.paste_composer_image(cx))
-                                .unwrap_or(false)
+                    .capture_action(move |_: &Paste, _, cx| {
+                        if paste_entity
+                            .update(cx, |this, cx| this.paste_composer_image(cx))
+                            .unwrap_or(false)
                         {
-                            window.prevent_default();
                             cx.stop_propagation();
-                            return;
                         }
+                    })
+                    .on_key_down(move |event: &KeyDownEvent, window, cx| {
                         let handled = history_entity
                             .update(cx, |this, cx| {
                                 this.handle_composer_history_key(
@@ -256,7 +257,11 @@ impl PiApp {
                                     .child(hint),
                             )
                         })
-                        .child(Input::new(&self.dialog_input).w_full())
+                        .child(
+                            div()
+                                .font_family(READING_FONT_FAMILY)
+                                .child(Input::new(&self.dialog_input).w_full()),
+                        )
                         .child(div().flex().justify_end().child(button(
                             "dialog-submit",
                             "Continue",
@@ -484,7 +489,7 @@ fn widget_region(
                     .px(THEME.space.sm)
                     .py(THEME.space.xs)
                     .bg(THEME.colors.surface)
-                    .font_family("monospace")
+                    .font_family(READING_FONT_FAMILY)
                     .text_size(THEME.type_scale.caption)
                     .children(lines.iter().cloned().map(|line| div().child(line)))
             }))

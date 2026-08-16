@@ -1,5 +1,7 @@
 //! Composer submission lifecycle, including image attachment ownership.
 
+use std::sync::Arc;
+
 use gpui::{Context, Window};
 
 use super::PiApp;
@@ -53,8 +55,9 @@ impl PiApp {
                 self.jump_to_latest(cx);
             }
             Err(error) => {
-                let index = self.snapshot.conversation.items.len();
-                self.snapshot.conversation.push_transport_error(error);
+                let snapshot = Arc::make_mut(&mut self.snapshot);
+                let index = snapshot.conversation.items.len();
+                snapshot.conversation.push_transport_error(error);
                 self.transcript_list.splice(index..index, 1);
                 cx.notify();
             }

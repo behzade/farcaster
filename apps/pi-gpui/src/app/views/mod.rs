@@ -77,7 +77,6 @@ impl Render for PiApp {
         }
         let mode = layout_mode(window.viewport_size().width);
         let entity = cx.entity().downgrade();
-        let transcript_rows = transcript::project_rows(&self.snapshot.conversation.items);
         let main = div()
             .relative()
             .flex_1()
@@ -90,7 +89,8 @@ impl Render for PiApp {
                 &self.transcript_list,
                 self.transcript_following,
                 self.transcript_unseen,
-                transcript_rows,
+                self.transcript_rows.clone(),
+                self.snapshot.clone(),
                 self.transcript_disclosure_overrides.clone(),
                 entity.clone(),
             )))

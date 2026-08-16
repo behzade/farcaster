@@ -1,4 +1,9 @@
-use std::{fs, time::SystemTime};
+use std::{
+    fs,
+    sync::{Arc, Barrier},
+    thread,
+    time::SystemTime,
+};
 
 use tempfile::tempdir;
 
@@ -92,5 +97,33 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
     assert!(store.queued_prompts()?.is_empty());
     store.delete_composer_session("draft:draft-one")?;
     assert!(store.load_composer_sessions()?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn concurrent_state_store_open_waits_for_schema_writers() -> Result<(), Box<dyn std::error::Error>>
+{
+    const OPENERS: usize = 8;
+
+    let temp = tempdir()?;
+    let database = Arc::new(temp.path().join("state/gui.sqlite3"));
+    let barrier = Arc::new(Barrier::new(OPENERS));
+    let handles = (0..OPENERS)
+        .map(|_| {
+            let database = database.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                StateStore::open_at(&database).map(drop)
+            })
+        })
+        .collect::<Vec<_>>();
+
+    for handle in handles {
+        handle
+            .join()
+            .map_err(|_| std::io::Error::other("state opener panicked"))?
+            .map_err(std::io::Error::other)?;
+    }
     Ok(())
 }

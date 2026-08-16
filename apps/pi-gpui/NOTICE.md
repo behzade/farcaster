@@ -18,6 +18,13 @@ was replaced with a project-scoped Pi subprocess and transcript.
 The Pi RPC protocol is consumed as a public subprocess interface. No Pi source
 or extension code is included or modified by this module.
 
+Lilex font binaries were copied from Zed commit
+`ce6f3af5f7ae2bbdb002c8ce5cc38e96179de811`, which uses Lilex for its
+`.ZedMono` alias. Lilex is copyright Mikhael Khrustik and contributors, based
+on IBM Plex Mono, and is distributed under the SIL Open Font License 1.1. The
+font license is included at `assets/lilex/OFL.txt`; the font files remain under
+that license. Upstream: <https://github.com/mishamyrt/Lilex>.
+
 The pinned `gpui-component-assets` dependency embeds Longbridge GPUI Component
 assets at runtime. Longbridge distributes that crate under Apache-2.0; the
 exact `LICENSE-APACHE` from pinned commit

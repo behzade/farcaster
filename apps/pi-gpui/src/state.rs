@@ -3,10 +3,11 @@
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    thread,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, ErrorCode, TransactionBehavior, params};
 
 use crate::{
     projects::{DraftSession, Registry},
@@ -15,6 +16,7 @@ use crate::{
 };
 
 const SCHEMA_VERSION: i64 = 2;
+const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(crate) struct StateStore {
     connection: Connection,
@@ -52,17 +54,18 @@ impl StateStore {
             .ok_or_else(|| format!("state database has no parent: {}", path.display()))?;
         std::fs::create_dir_all(parent)
             .map_err(|error| format!("create {}: {error}", parent.display()))?;
-        let connection =
+        let mut connection =
             Connection::open(path).map_err(|error| format!("open {}: {error}", path.display()))?;
         connection
-            .pragma_update(None, "journal_mode", "WAL")
-            .map_err(|error| format!("enable WAL: {error}"))?;
+            .busy_timeout(DATABASE_BUSY_TIMEOUT)
+            .map_err(|error| format!("configure database lock wait: {error}"))?;
+        enable_wal(&connection)?;
         connection
             .pragma_update(None, "foreign_keys", true)
             .map_err(|error| format!("enable foreign keys: {error}"))?;
         connection
             .execute_batch(
-                "BEGIN;
+                "BEGIN IMMEDIATE;
                  CREATE TABLE IF NOT EXISTS meta (
                    key TEXT PRIMARY KEY,
                    value TEXT NOT NULL
@@ -123,7 +126,10 @@ impl StateStore {
                  COMMIT;",
             )
             .map_err(|error| format!("create GUI state schema: {error}"))?;
-        let schema_version = connection
+        let migration = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| format!("start GUI state schema migration: {error}"))?;
+        let schema_version = migration
             .query_row(
                 "SELECT CAST(value AS INTEGER) FROM meta WHERE key='schema_version'",
                 [],
@@ -131,12 +137,10 @@ impl StateStore {
             )
             .map_err(|error| format!("read GUI state schema version: {error}"))?;
         match schema_version {
-            1 => connection
+            1 => migration
                 .execute_batch(
-                    "BEGIN;
-                     ALTER TABLE outbox ADD COLUMN images_json TEXT NOT NULL DEFAULT '[]';
-                     UPDATE meta SET value='2' WHERE key='schema_version';
-                     COMMIT;",
+                    "ALTER TABLE outbox ADD COLUMN images_json TEXT NOT NULL DEFAULT '[]';
+                     UPDATE meta SET value='2' WHERE key='schema_version';",
                 )
                 .map_err(|error| format!("migrate GUI state schema to 2: {error}"))?,
             SCHEMA_VERSION => {}
@@ -146,6 +150,9 @@ impl StateStore {
                 ));
             }
         }
+        migration
+            .commit()
+            .map_err(|error| format!("commit GUI state schema migration: {error}"))?;
         Ok(Self { connection })
     }
 
@@ -524,6 +531,24 @@ pub(crate) fn state_path() -> Result<PathBuf, String> {
             .join(root)
     };
     Ok(root.join("gui-state.sqlite3"))
+}
+
+fn enable_wal(connection: &Connection) -> Result<(), String> {
+    let started = Instant::now();
+    loop {
+        match connection.pragma_update(None, "journal_mode", "WAL") {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if matches!(
+                    error.sqlite_error_code(),
+                    Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked)
+                ) && started.elapsed() < DATABASE_BUSY_TIMEOUT =>
+            {
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(format!("enable WAL: {error}")),
+        }
+    }
 }
 
 fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary> {

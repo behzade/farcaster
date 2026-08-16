@@ -16,40 +16,21 @@ use crate::{
     app::PiApp,
     conversation::{TranscriptItem, TranscriptKind},
     primitives::{ButtonTone, button},
-    theme::THEME,
+    theme::{READING_FONT_FAMILY, THEME},
 };
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TranscriptRow {
-    Item {
-        index: usize,
-        item: TranscriptItem,
-    },
-    ReadGroup {
-        start: usize,
-        items: Vec<TranscriptItem>,
-    },
+    Item { index: usize },
+    ReadGroup { start: usize, len: usize },
 }
 
 impl TranscriptRow {
     pub(crate) fn key(&self) -> usize {
         match self {
-            Self::Item { index, .. } => *index,
+            Self::Item { index } => *index,
             Self::ReadGroup { start, .. } => *start,
         }
-    }
-
-    fn expanded_by_default(&self) -> bool {
-        matches!(
-            self,
-            Self::Item {
-                item: TranscriptItem {
-                    tool_presentation: Some(_),
-                    ..
-                },
-                ..
-            }
-        )
     }
 }
 
@@ -59,34 +40,37 @@ pub(crate) fn project_rows(items: &[TranscriptItem]) -> Vec<TranscriptRow> {
     while index < items.len() {
         if items[index].kind == TranscriptKind::Tool && items[index].label == "Read" {
             let start = index;
-            let mut reads = Vec::new();
             while index < items.len()
                 && items[index].kind == TranscriptKind::Tool
                 && items[index].label == "Read"
             {
-                reads.push(items[index].clone());
                 index += 1;
             }
             rows.push(TranscriptRow::ReadGroup {
                 start,
-                items: reads,
+                len: index - start,
             });
             continue;
         }
-        rows.push(TranscriptRow::Item {
-            index,
-            item: items[index].clone(),
-        });
+        rows.push(TranscriptRow::Item { index });
         index += 1;
     }
     rows
+}
+
+fn expanded_by_default(row: TranscriptRow, items: &[TranscriptItem]) -> bool {
+    matches!(
+        row,
+        TranscriptRow::Item { index } if items[index].tool_presentation.is_some()
+    )
 }
 
 pub(crate) fn render(
     list_state: &ListState,
     following: bool,
     unseen: usize,
-    rows: Vec<TranscriptRow>,
+    rows: std::sync::Arc<Vec<TranscriptRow>>,
+    snapshot: std::sync::Arc<crate::runtime::RuntimeSnapshot>,
     disclosure_overrides: std::collections::HashSet<usize>,
     entity: WeakEntity<PiApp>,
 ) -> AnyElement {
@@ -108,17 +92,31 @@ pub(crate) fn render(
 
     let jump = entity.clone();
     let row_entity = entity;
-    let rows = std::sync::Arc::new(rows);
     let view = list(list_state.clone(), move |index, _, _| {
-        let Some(row) = rows.get(index).cloned() else {
+        let Some(row) = rows.get(index).copied() else {
             return div().into_any_element();
         };
-        let expanded = row.expanded_by_default() != disclosure_overrides.contains(&row.key());
-        render_row(row, expanded, row_entity.clone())
+        let expanded = expanded_by_default(row, &snapshot.conversation.items)
+            != disclosure_overrides.contains(&row.key());
+        div()
+            .w_full()
+            .flex()
+            .justify_center()
+            .child(
+                div()
+                    .w_full()
+                    .max_w(THEME.layout.transcript_max)
+                    .child(render_row(
+                        row,
+                        &snapshot.conversation.items,
+                        expanded,
+                        row_entity.clone(),
+                    )),
+            )
+            .into_any_element()
     })
     .with_sizing_behavior(ListSizingBehavior::Auto)
     .w_full()
-    .max_w(THEME.layout.transcript_max)
     .flex_grow_1();
 
     div()
@@ -161,17 +159,24 @@ pub(crate) fn render(
         .into_any_element()
 }
 
-fn render_row(row: TranscriptRow, expanded: bool, entity: WeakEntity<PiApp>) -> AnyElement {
+fn render_row(
+    row: TranscriptRow,
+    items: &[TranscriptItem],
+    expanded: bool,
+    entity: WeakEntity<PiApp>,
+) -> AnyElement {
     let key = row.key();
     match row {
-        TranscriptRow::ReadGroup { items, .. } => render_read_group(key, &items, expanded, entity),
-        TranscriptRow::Item { item, .. } if item.kind == TranscriptKind::Tool => {
-            render_tool(key, &item, expanded, entity)
+        TranscriptRow::ReadGroup { start, len } => {
+            render_read_group(key, &items[start..start + len], expanded, entity)
         }
-        TranscriptRow::Item { item, .. } if item.kind == TranscriptKind::Thinking => {
-            render_thinking(key, &item, expanded, entity)
+        TranscriptRow::Item { index } if items[index].kind == TranscriptKind::Tool => {
+            render_tool(key, &items[index], expanded, entity)
         }
-        TranscriptRow::Item { item, .. } => render_message(key, &item),
+        TranscriptRow::Item { index } if items[index].kind == TranscriptKind::Thinking => {
+            render_thinking(key, &items[index], expanded, entity)
+        }
+        TranscriptRow::Item { index } => render_message(key, &items[index]),
     }
 }
 
@@ -271,12 +276,12 @@ fn render_read_group(
                     selectable_text(("read-summary", key), format!("{summary}{state}"))
                         .flex_1()
                         .min_w_0()
-                        .font_family("monospace")
-                        .text_size(THEME.type_scale.caption)
+                        .font_family(READING_FONT_FAMILY)
+                        .text_size(THEME.type_scale.body_small)
                         .text_color(if failed > 0 {
                             THEME.colors.error
                         } else {
-                            THEME.colors.subtle
+                            THEME.colors.muted
                         }),
                 ),
         )
@@ -335,14 +340,14 @@ fn render_tool(
                     selectable_text(("tool-summary", key), summary)
                         .flex_1()
                         .min_w_0()
-                        .font_family("monospace")
-                        .text_size(THEME.type_scale.caption)
+                        .font_family(READING_FONT_FAMILY)
+                        .text_size(THEME.type_scale.body_small)
                         .text_color(if item.is_error {
                             THEME.colors.error
                         } else if item.streaming {
                             THEME.colors.warning
                         } else {
-                            THEME.colors.subtle
+                            THEME.colors.muted
                         }),
                 ),
         )
@@ -359,15 +364,11 @@ fn render_tool(
 
 fn expanded_tool_body(id: impl Into<gpui::ElementId>, item: &TranscriptItem) -> AnyElement {
     if let Some(presentation) = &item.tool_presentation {
-        let output = (!item.tool_output.is_empty()).then(|| {
-            selectable_text(id, &item.tool_output)
-                .font_family("monospace")
-                .text_size(THEME.type_scale.caption)
-                .text_color(if item.is_error {
-                    THEME.colors.error
-                } else {
-                    THEME.colors.subtle
-                })
+        let output = visible_mutation_output(item).map(|output| {
+            selectable_text(id, output)
+                .font_family(READING_FONT_FAMILY)
+                .text_size(THEME.type_scale.body_small)
+                .text_color(THEME.colors.error)
         });
         return div()
             .w_full()
@@ -393,8 +394,8 @@ fn expanded_tool_body(id: impl Into<gpui::ElementId>, item: &TranscriptItem) -> 
         detail.push_str(&item.tool_output);
     }
     selectable_text(id, fenced_text(&detail))
-        .font_family("monospace")
-        .text_size(THEME.type_scale.caption)
+        .font_family(READING_FONT_FAMILY)
+        .text_size(THEME.type_scale.body_small)
         .text_color(if item.is_error {
             THEME.colors.error
         } else {
@@ -429,7 +430,8 @@ fn selectable_text(
         .selectable(true)
         .w_full()
         .min_w_0()
-        .text_size(THEME.type_scale.body_small)
+        .font_family(READING_FONT_FAMILY)
+        .text_size(THEME.type_scale.body)
         .line_height(THEME.type_scale.line_body)
 }
 
@@ -452,6 +454,10 @@ fn fenced_text(text: &str) -> String {
         return "No output".into();
     }
     format!("```text\n{}\n```", text.replace("```", "``\\`"))
+}
+
+fn visible_mutation_output(item: &TranscriptItem) -> Option<&str> {
+    (item.is_error && !item.tool_output.is_empty()).then_some(item.tool_output.as_str())
 }
 
 fn tool_target(arguments: &str) -> String {
@@ -521,10 +527,7 @@ mod tests {
             item(TranscriptKind::Tool, "Bash", "Command: true"),
         ]);
         assert_eq!(rows.len(), 3);
-        assert!(matches!(
-            &rows[1],
-            TranscriptRow::ReadGroup { items, .. } if items.len() == 2
-        ));
+        assert!(matches!(&rows[1], TranscriptRow::ReadGroup { len: 2, .. }));
     }
 
     #[test]
@@ -534,10 +537,22 @@ mod tests {
             path: "src/main.rs".into(),
             diff: Some("- old\n+ new".into()),
         });
-        let rows = project_rows(&[edit, item(TranscriptKind::Tool, "Bash", "Command: true")]);
+        let items = vec![edit, item(TranscriptKind::Tool, "Bash", "Command: true")];
+        let rows = project_rows(&items);
 
-        assert!(rows[0].expanded_by_default());
-        assert!(!rows[1].expanded_by_default());
+        assert!(expanded_by_default(rows[0], &items));
+        assert!(!expanded_by_default(rows[1], &items));
+    }
+
+    #[test]
+    fn successful_mutation_output_is_hidden_but_errors_remain_visible() {
+        let mut write = item(TranscriptKind::Tool, "Write", "Path: src/main.rs");
+        write.tool_output = "Successfully wrote 42 bytes".into();
+        assert_eq!(visible_mutation_output(&write), None);
+
+        write.is_error = true;
+        write.tool_output = "Permission denied".into();
+        assert_eq!(visible_mutation_output(&write), Some("Permission denied"));
     }
 
     #[test]
