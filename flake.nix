@@ -30,7 +30,7 @@
             inherit mcpCli sandboxBroker;
           };
           denseTools = pkgs.callPackage ./nix/pi-dense-tools.nix { };
-          subagents = pkgs.callPackage ./nix/pi-subagents.nix { };
+          subagents = pkgs.callPackage ./nix/pi-subagents.nix { inherit coreExtensions; };
           webAccess = pkgs.callPackage ./nix/pi-web-access.nix { };
           openaiServerCompaction = pkgs.callPackage ./nix/pi-openai-server-compaction.nix { };
           projectTools = pkgs.callPackage ./nix/pi-project-tools.nix { };
@@ -169,7 +169,7 @@
             inherit piTerminal;
           };
           permissionSystem = pkgs.callPackage ./nix/pi-permission-system.nix { };
-          subagents = pkgs.callPackage ./nix/pi-subagents.nix { };
+          subagents = pkgs.callPackage ./nix/pi-subagents.nix { inherit coreExtensions; };
           webAccess = pkgs.callPackage ./nix/pi-web-access.nix { };
           agent = pkgs.callPackage ./nix/pi-agent.nix {
             inherit
@@ -316,6 +316,8 @@
           } ''
             test -f ${subagents}/agent-feedback/index.ts
             test -f ${subagents}/agent-feedback/lib/agent-feedback.ts
+            test -f ${subagents}/agent-feedback/node_modules/effect/package.json
+            test "$(readlink ${subagents}/agent-feedback/node_modules)" = ${coreExtensions}/node_modules
             for agent in ${subagents}/agents/*.md; do
               grep -F 'report_pi_feedback' "$agent"
               grep -Fx 'extensions:' "$agent"

@@ -1,5 +1,6 @@
 {
   buildNpmPackage,
+  coreExtensions,
   fetchFromGitHub,
   lib,
 }:
@@ -41,6 +42,7 @@ buildNpmPackage {
     install -Dm644 ${./pi-subagents-config.json} "$out/config.json"
 
     mkdir -p "$out/agent-feedback/lib"
+    ln -s ${coreExtensions}/node_modules "$out/agent-feedback/node_modules"
     install -Dm644 ${../extensions/agent-feedback.ts} "$out/agent-feedback/index.ts"
     install -Dm644 ${../extensions/lib/agent-feedback.ts} "$out/agent-feedback/lib/agent-feedback.ts"
     for agent in "$out"/agents/*.md; do
