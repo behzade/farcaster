@@ -1,6 +1,10 @@
 //! Top-level GPUI composition for the active root session.
 
+mod composer_images;
+mod submissions;
 mod views;
+pub(crate) use composer_images::ComposerImage;
+use submissions::PendingSubmission;
 pub(crate) use views::OVERLAY_KEY_CONTEXT;
 
 use std::{
@@ -25,7 +29,7 @@ use crate::{
     conversation::TranscriptKind,
     extension_ui::{ExtensionEffect, ExtensionUiState},
     projects,
-    protocol::{ExtensionUiRequest, Model, PromptMode},
+    protocol::{ExtensionUiRequest, Model},
     runtime::{RuntimeCommand, RuntimeEvent, RuntimeHandle, RuntimeSnapshot},
     sessions::SessionSummary,
 };
@@ -33,19 +37,6 @@ use crate::{
 const MAX_EXTENSION_ERRORS: usize = 16;
 const RECENT_COMPLETION_LIFETIME: Duration = Duration::from_secs(10 * 60);
 pub(crate) const COMPOSER_KEY_CONTEXT: &str = "PiComposer";
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct PendingSubmission {
-    target: String,
-    text: String,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SubmissionResolution {
-    ClearEditor,
-    KeepEditor,
-    Ignore,
-}
-
 actions!(pi_gpui, [DismissSurface, QuitApplication, SubmitFollowUp]);
 
 pub(crate) struct PiApp {
@@ -65,6 +56,7 @@ pub(crate) struct PiApp {
     runtime_generation: u64,
     composer: Entity<InputState>,
     composer_sessions: ComposerSessions,
+    composer_images: HashMap<String, Vec<ComposerImage>>,
     search: Entity<InputState>,
     dialog_input: Entity<InputState>,
     composer_focus: FocusHandle,
@@ -76,7 +68,7 @@ pub(crate) struct PiApp {
     transcript_list: ListState,
     transcript_following: bool,
     transcript_unseen: usize,
-    pub(crate) expanded_transcript_items: HashSet<usize>,
+    pub(crate) transcript_disclosure_overrides: HashSet<usize>,
     last_transcript_count: usize,
     fps_monitor: Option<Entity<FpsMonitor>>,
     extension: ExtensionUiState,
@@ -160,7 +152,7 @@ impl PiApp {
                 }
                 InputEvent::PressEnter { shift: false, .. } => {
                     let value = state.read(cx).value().trim().to_owned();
-                    if !value.is_empty() {
+                    if !value.is_empty() || this.has_composer_images() {
                         this.submit(value, this.enter_mode(), cx);
                     }
                 }
@@ -232,6 +224,7 @@ impl PiApp {
             runtime_generation: 0,
             composer,
             composer_sessions,
+            composer_images: HashMap::new(),
             search,
             dialog_input,
             composer_focus,
@@ -243,7 +236,7 @@ impl PiApp {
             transcript_list,
             transcript_following: true,
             transcript_unseen: 0,
-            expanded_transcript_items: HashSet::new(),
+            transcript_disclosure_overrides: HashSet::new(),
             last_transcript_count: 0,
             fps_monitor,
             extension: ExtensionUiState::default(),
@@ -268,49 +261,6 @@ impl PiApp {
             let index = self.snapshot.conversation.items.len();
             self.snapshot.conversation.push_transport_error(error);
             self.mark_transcript_changed(index, index == 0);
-        }
-    }
-
-    fn submit(&mut self, value: String, mode: PromptMode, cx: &mut Context<Self>) {
-        if !self.can_submit() {
-            return;
-        }
-        let target = self.composer_sessions.current_target().to_owned();
-        let editor_text = self.composer.read(cx).value().to_string();
-        match self.runtime.send(RuntimeCommand::Prompt {
-            target: target.clone(),
-            mode,
-            message: value.clone(),
-        }) {
-            Ok(()) => {
-                self.composer_sessions.record_submission(&target, &value);
-                self.pending_submission = Some(PendingSubmission {
-                    target,
-                    text: editor_text,
-                });
-                self.jump_to_latest(cx);
-            }
-            Err(error) => {
-                let index = self.snapshot.conversation.items.len();
-                self.snapshot.conversation.push_transport_error(error);
-                self.transcript_list.splice(index..index, 1);
-                cx.notify();
-            }
-        }
-    }
-
-    fn can_submit(&self) -> bool {
-        self.pending_submission.is_none()
-    }
-
-    fn enter_mode(&self) -> PromptMode {
-        prompt_mode_for_enter(self.snapshot.conversation.running)
-    }
-
-    fn submit_follow_up(&mut self, cx: &mut Context<Self>) {
-        let value = self.composer.read(cx).value().trim().to_owned();
-        if !value.is_empty() {
-            self.submit(value, PromptMode::FollowUp, cx);
         }
     }
 
@@ -524,7 +474,7 @@ impl PiApp {
         self.snapshot.conversation.items.clear();
         self.transcript_list.reset(0);
         self.transcript_list.set_follow_mode(FollowMode::Tail);
-        self.expanded_transcript_items.clear();
+        self.transcript_disclosure_overrides.clear();
         self.transcript_following = true;
         self.transcript_unseen = 0;
         self.last_transcript_count = 0;
@@ -642,6 +592,7 @@ impl PiApp {
     fn discard_draft(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         let was_selected = self.selected_draft.as_deref() == Some(id);
         let target = draft_target(id);
+        self.composer_images.remove(&target);
         self.drafts.retain(|draft| draft.id != id);
         if self.live_draft.as_deref() == Some(id) {
             self.live_draft = None;
@@ -694,6 +645,12 @@ impl PiApp {
         let session_key = session_target(path);
         self.composer_sessions
             .promote(&draft_key, session_key.clone());
+        if let Some(images) = self.composer_images.remove(&draft_key) {
+            self.composer_images
+                .entry(session_key.clone())
+                .or_default()
+                .extend(images);
+        }
         if let Some(pending) = self.pending_submission.as_mut()
             && pending.target == draft_key
         {
@@ -891,8 +848,8 @@ impl PiApp {
     }
 
     pub(crate) fn toggle_transcript_item(&mut self, key: usize, cx: &mut Context<Self>) {
-        if !self.expanded_transcript_items.remove(&key) {
-            self.expanded_transcript_items.insert(key);
+        if !self.transcript_disclosure_overrides.remove(&key) {
+            self.transcript_disclosure_overrides.insert(key);
         }
         let rows = crate::transcript::project_rows(&self.snapshot.conversation.items);
         if let Some(index) = rows.iter().position(|row| row.key() == key) {
@@ -913,33 +870,6 @@ impl PiApp {
     fn mark_transcript_changed(&mut self, _index: usize, _was_empty: bool) {
         let row_count = crate::transcript::project_rows(&self.snapshot.conversation.items).len();
         self.transcript_list.reset(row_count);
-    }
-
-    fn resolve_pending_submission(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((target, accepted)) = self.pending_submission_result.take() else {
-            return;
-        };
-        let current = self.composer_sessions.snapshot_for(&target).text;
-        match submission_resolution(
-            self.pending_submission.as_ref(),
-            &target,
-            accepted,
-            &current,
-        ) {
-            SubmissionResolution::ClearEditor => {
-                let Some(pending) = self.pending_submission.take() else {
-                    return;
-                };
-                let cleared = self
-                    .composer_sessions
-                    .clear_submitted_text(&pending.target, &pending.text);
-                if cleared && self.composer_sessions.current_target() == pending.target {
-                    self.apply_composer_snapshot(ComposerSnapshot::default(), window, cx);
-                }
-            }
-            SubmissionResolution::KeepEditor => self.pending_submission = None,
-            SubmissionResolution::Ignore => {}
-        }
     }
 }
 
@@ -983,30 +913,6 @@ fn restore_extension_surface(
     }
 }
 
-fn submission_resolution(
-    pending: Option<&PendingSubmission>,
-    target: &str,
-    accepted: bool,
-    current_text: &str,
-) -> SubmissionResolution {
-    let Some(pending) = pending.filter(|pending| pending.target == target) else {
-        return SubmissionResolution::Ignore;
-    };
-    if accepted && current_text == pending.text {
-        SubmissionResolution::ClearEditor
-    } else {
-        SubmissionResolution::KeepEditor
-    }
-}
-
-fn prompt_mode_for_enter(running: bool) -> PromptMode {
-    if running {
-        PromptMode::Steer
-    } else {
-        PromptMode::Normal
-    }
-}
-
 fn starts_recent_completion(previous: Option<&str>, next: &str, force: bool) -> bool {
     next == "Done" && (force || previous.is_some_and(|status| status != "Done"))
 }
@@ -1030,13 +936,6 @@ mod tests {
     use super::*;
     use crate::conversation::{TranscriptItem, TranscriptKind};
 
-    fn pending() -> PendingSubmission {
-        PendingSubmission {
-            target: "session:test".into(),
-            text: "submitted".into(),
-        }
-    }
-
     fn item(text: &str) -> TranscriptItem {
         TranscriptItem {
             kind: TranscriptKind::Assistant,
@@ -1046,39 +945,8 @@ mod tests {
             is_error: false,
             tool_call_id: None,
             tool_output: String::new(),
+            tool_presentation: None,
         }
-    }
-
-    #[test]
-    fn accepted_submission_clears_only_the_unchanged_editor() {
-        let pending = pending();
-        assert_eq!(
-            submission_resolution(Some(&pending), "session:test", true, "submitted"),
-            SubmissionResolution::ClearEditor
-        );
-        assert_eq!(
-            submission_resolution(Some(&pending), "session:test", true, "newer edit"),
-            SubmissionResolution::KeepEditor
-        );
-    }
-
-    #[test]
-    fn rejected_or_stale_submission_never_clears_the_editor() {
-        let pending = pending();
-        assert_eq!(
-            submission_resolution(Some(&pending), "session:test", false, "submitted"),
-            SubmissionResolution::KeepEditor
-        );
-        assert_eq!(
-            submission_resolution(Some(&pending), "session:other", true, "submitted"),
-            SubmissionResolution::Ignore
-        );
-    }
-
-    #[test]
-    fn enter_prompts_when_idle_and_steers_while_running() {
-        assert_eq!(prompt_mode_for_enter(false), PromptMode::Normal);
-        assert_eq!(prompt_mode_for_enter(true), PromptMode::Steer);
     }
 
     #[test]

@@ -10,11 +10,11 @@ use rusqlite::{Connection, params};
 
 use crate::{
     projects::{DraftSession, Registry},
-    protocol::PromptMode,
+    protocol::{PromptImage, PromptMode},
     sessions::{SessionSummary, UsageSummary},
 };
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 pub(crate) struct StateStore {
     connection: Connection,
@@ -28,6 +28,7 @@ pub(crate) struct QueuedPrompt {
     pub session: Option<PathBuf>,
     pub mode: PromptMode,
     pub message: String,
+    pub images: Vec<PromptImage>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -129,10 +130,21 @@ impl StateStore {
                 |row| row.get::<_, i64>(0),
             )
             .map_err(|error| format!("read GUI state schema version: {error}"))?;
-        if schema_version != SCHEMA_VERSION {
-            return Err(format!(
-                "GUI state schema {schema_version} is not supported by this build"
-            ));
+        match schema_version {
+            1 => connection
+                .execute_batch(
+                    "BEGIN;
+                     ALTER TABLE outbox ADD COLUMN images_json TEXT NOT NULL DEFAULT '[]';
+                     UPDATE meta SET value='2' WHERE key='schema_version';
+                     COMMIT;",
+                )
+                .map_err(|error| format!("migrate GUI state schema to 2: {error}"))?,
+            SCHEMA_VERSION => {}
+            _ => {
+                return Err(format!(
+                    "GUI state schema {schema_version} is not supported by this build"
+                ));
+            }
         }
         Ok(Self { connection })
     }
@@ -337,17 +349,22 @@ impl StateStore {
         session: Option<&Path>,
         mode: PromptMode,
         message: &str,
+        images: &[PromptImage],
     ) -> Result<i64, String> {
+        let images_json = serde_json::to_string(images)
+            .map_err(|error| format!("encode prompt images: {error}"))?;
         self.connection
             .execute(
-                "INSERT INTO outbox(target, project, session_path, mode, message, created_ms)
-                 VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO outbox(
+                   target, project, session_path, mode, message, images_json, created_ms
+                 ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
                     target,
                     project.to_string_lossy(),
                     session.map(|path| path.to_string_lossy()),
                     prompt_mode(mode),
                     message,
+                    images_json,
                     now_ms(),
                 ],
             )
@@ -359,13 +376,21 @@ impl StateStore {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT id, target, project, session_path, mode, message
+                "SELECT id, target, project, session_path, mode, message, images_json
                    FROM outbox WHERE state='queued' ORDER BY id",
             )
             .map_err(|error| format!("prepare prompt queue: {error}"))?;
         statement
             .query_map([], |row| {
                 let mode = row.get::<_, String>(4)?;
+                let images_json = row.get::<_, String>(6)?;
+                let images = serde_json::from_str(&images_json).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        6,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })?;
                 Ok(QueuedPrompt {
                     id: row.get(0)?,
                     target: row.get(1)?,
@@ -373,6 +398,7 @@ impl StateStore {
                     session: row.get::<_, Option<String>>(3)?.map(PathBuf::from),
                     mode: parse_prompt_mode(&mode),
                     message: row.get(5)?,
+                    images,
                 })
             })
             .map_err(|error| format!("query prompt queue: {error}"))?

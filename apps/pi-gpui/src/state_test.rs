@@ -4,7 +4,7 @@ use tempfile::tempdir;
 
 use crate::{
     projects::{DraftSession, Registry},
-    protocol::PromptMode,
+    protocol::{PromptImage, PromptMode},
     sessions::{SessionSummary, UsageSummary},
     state::{ComposerRecord, StateStore},
 };
@@ -32,6 +32,7 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
             None,
             PromptMode::Normal,
             "hello",
+            &[PromptImage::new("aGVsbG8=".into(), "image/png".into())],
         )?;
         store.save_composer_session(&ComposerRecord {
             target: "draft:draft-one".into(),
@@ -70,6 +71,10 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
     let queued = store.queued_prompts()?;
     assert_eq!(queued.len(), 1);
     assert_eq!(queued[0].message, "hello");
+    assert_eq!(
+        queued[0].images,
+        vec![PromptImage::new("aGVsbG8=".into(), "image/png".into())]
+    );
     assert_eq!(
         store.load_composer_sessions()?,
         vec![ComposerRecord {

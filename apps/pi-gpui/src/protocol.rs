@@ -47,6 +47,19 @@ pub(crate) enum PromptMode {
     FollowUp,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename = "image", rename_all = "camelCase", tag = "type")]
+pub(crate) struct PromptImage {
+    pub data: String,
+    pub mime_type: String,
+}
+
+impl PromptImage {
+    pub(crate) fn new(data: String, mime_type: String) -> Self {
+        Self { data, mime_type }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum WireMessage {
     Response(RpcResponse),
@@ -151,12 +164,16 @@ pub(crate) fn command(command_type: &str) -> Value {
     json!({ "type": command_type })
 }
 
-pub(crate) fn prompt_command(mode: PromptMode, message: String) -> Value {
-    match mode {
+pub(crate) fn prompt_command(mode: PromptMode, message: String, images: Vec<PromptImage>) -> Value {
+    let mut command = match mode {
         PromptMode::Normal => json!({"type":"prompt", "message":message}),
         PromptMode::Steer => json!({"type":"steer", "message":message}),
         PromptMode::FollowUp => json!({"type":"follow_up", "message":message}),
+    };
+    if !images.is_empty() {
+        command["images"] = json!(images);
     }
+    command
 }
 
 pub(crate) fn parse_frame(frame: &[u8]) -> Result<WireMessage, String> {
@@ -407,16 +424,28 @@ mod tests {
     #[test]
     fn composer_commands_match_the_rpc_contract() {
         assert_eq!(
-            prompt_command(PromptMode::Normal, "n".into()),
+            prompt_command(PromptMode::Normal, "n".into(), Vec::new()),
             json!({"type":"prompt","message":"n"})
         );
         assert_eq!(
-            prompt_command(PromptMode::Steer, "s".into()),
+            prompt_command(PromptMode::Steer, "s".into(), Vec::new()),
             json!({"type":"steer","message":"s"})
         );
         assert_eq!(
-            prompt_command(PromptMode::FollowUp, "f".into()),
+            prompt_command(PromptMode::FollowUp, "f".into(), Vec::new()),
             json!({"type":"follow_up","message":"f"})
+        );
+        assert_eq!(
+            prompt_command(
+                PromptMode::Normal,
+                "image".into(),
+                vec![PromptImage::new("aGVsbG8=".into(), "image/png".into())],
+            ),
+            json!({
+                "type":"prompt",
+                "message":"image",
+                "images":[{"type":"image","data":"aGVsbG8=","mimeType":"image/png"}]
+            })
         );
         for kind in [
             "abort",

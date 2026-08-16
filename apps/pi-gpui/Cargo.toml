@@ -7,8 +7,9 @@ license = "GPL-3.0-or-later"
 description = "Native GPUI client for Pi RPC"
 
 [dependencies]
+base64 = "0.22.1"
 gpui = { git = "https://github.com/zed-industries/zed" }
-gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "bc174a7ec4534b2a4174fddde314b38d30d69093" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "bc174a7ec4534b2a4174fddde314b38d30d69093", features = ["tree-sitter-languages"] }
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "bc174a7ec4534b2a4174fddde314b38d30d69093" }
 gpui-fps = { git = "https://github.com/longbridge/gpui-component", rev = "41bee9c280b6708d3671b5e9b137a78f49394568" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit", "wayland", "x11"] }

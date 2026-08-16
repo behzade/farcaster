@@ -18,6 +18,7 @@ mod state;
 #[cfg(test)]
 mod state_test;
 mod theme;
+mod tool_changes;
 mod transcript;
 
 fn main() -> Result<(), launch::LaunchError> {

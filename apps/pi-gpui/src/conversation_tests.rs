@@ -76,6 +76,19 @@ fn assistant_usage_without_prompt_tokens_clears_the_cache_hit_rate() {
 }
 
 #[test]
+fn user_images_are_visible_even_without_prompt_text() {
+    let mut state = ConversationState::default();
+    state.replace_history(&[json!({
+        "role":"user",
+        "content":[{"type":"image","data":"a","mimeType":"image/png"}]
+    })]);
+    assert_eq!(state.items[0].text, "Attached image");
+
+    state.push_local_user("look".into(), 2);
+    assert_eq!(state.items[1].text, "look\n\nAttached 2 images");
+}
+
+#[test]
 fn history_preserves_assistant_block_roles() {
     let mut state = ConversationState::default();
     state.replace_history(&[json!({"role":"assistant","content":[
@@ -105,6 +118,53 @@ fn tool_updates_replace_snapshots_and_correlate() {
     assert_eq!(state.items[0].tool_output, "done");
     assert_eq!(state.items[0].label, "Bash");
     assert!(!state.items[0].streaming);
+}
+
+#[test]
+fn edit_results_keep_the_structured_diff_for_native_rendering() {
+    let mut state = ConversationState::default();
+    state.replace_history(&[
+        json!({"role":"assistant","content":[{
+            "type":"toolCall",
+            "id":"edit-1",
+            "name":"edit",
+            "arguments":{"path":"src/main.rs","edits":[{"oldText":"old","newText":"new"}]}
+        }]}),
+        json!({
+            "role":"toolResult",
+            "toolCallId":"edit-1",
+            "toolName":"edit",
+            "content":[{"type":"text","text":"done"}],
+            "details":{"diff":"- 1 old\n+ 1 new"}
+        }),
+    ]);
+
+    assert_eq!(
+        state.items[0].tool_presentation,
+        Some(ToolPresentation::Edit {
+            path: "src/main.rs".into(),
+            diff: Some("- 1 old\n+ 1 new".into()),
+        })
+    );
+}
+
+#[test]
+fn write_calls_keep_content_for_native_rendering() {
+    let mut state = ConversationState::default();
+    state.replace_history(&[json!({"role":"assistant","content":[{
+        "type":"toolCall",
+        "id":"write-1",
+        "name":"write",
+        "arguments":{"path":"src/lib.rs","content":"fn main() {}"}
+    }]})]);
+
+    assert_eq!(
+        state.items[0].tool_presentation,
+        Some(ToolPresentation::Write {
+            path: "src/lib.rs".into(),
+            content: "fn main() {}".into(),
+        })
+    );
 }
 
 #[test]

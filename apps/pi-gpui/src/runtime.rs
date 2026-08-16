@@ -1,5 +1,7 @@
 //! UI-neutral application runtime and active-session ownership.
 
+mod prompts;
+
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
@@ -12,7 +14,7 @@ use serde_json::{Value, json};
 
 use crate::{
     conversation::ConversationState,
-    protocol::{ExtensionUiResponse, Model, PromptMode, SessionState, command, prompt_command},
+    protocol::{ExtensionUiResponse, Model, PromptImage, PromptMode, SessionState, command},
     rpc_process::{ProcessCommand, ProcessItem, RpcProcess},
     sessions::{SessionSummary, discover, load_history},
     state::StateStore,
@@ -26,6 +28,7 @@ pub(crate) enum RuntimeCommand {
         target: String,
         mode: PromptMode,
         message: String,
+        images: Vec<PromptImage>,
     },
     Abort,
     NewSession {
@@ -148,6 +151,8 @@ impl RuntimeHandle {
         self.events.try_recv()
     }
 }
+
+use prompts::DeferredPrompt;
 
 struct SessionRuntimeHandle {
     commands: mpsc::Sender<RuntimeCommand>,
@@ -517,7 +522,7 @@ struct RuntimeOwner {
     history_generation: u64,
     active_session: Option<PathBuf>,
     parked_snapshot: Option<RuntimeSnapshot>,
-    deferred_prompt: Option<(PromptMode, String, Option<i64>)>,
+    deferred_prompt: Option<DeferredPrompt>,
     startup_state_loaded: bool,
     startup_history_loaded: bool,
     state: Option<StateStore>,
@@ -679,7 +684,8 @@ impl RuntimeOwner {
                 target,
                 mode,
                 message,
-            } => self.send_prompt(target, mode, message),
+                images,
+            } => self.send_prompt(target, mode, message, images),
             RuntimeCommand::DeliverQueued(prompt) => self.deliver_queued(prompt),
             RuntimeCommand::Abort => self.send(command("abort")),
             RuntimeCommand::NewSession { project, .. } => {
@@ -731,117 +737,6 @@ impl RuntimeOwner {
             Some(Err(error)) => self.fail(error),
             None => self.fail(format!("Cannot send {command_name}: Pi is not connected")),
         }
-    }
-
-    fn send_prompt(&mut self, target: String, mode: PromptMode, message: String) {
-        if self.pending_prompt_id.is_some() || self.pending_prompt_target.is_some() {
-            self.reject_prompt(&target, "Another message is still being sent".into());
-            return;
-        }
-        let was_running = self.active_snapshot().conversation.running;
-        if !can_send_prompt(mode, was_running) {
-            self.reject_prompt(&target, "Pi is already working on this session".into());
-            return;
-        }
-        let outbox_id = match self.state.as_ref() {
-            Some(state) => match state.enqueue_prompt(
-                &target,
-                &self.project,
-                self.snapshot.selected_session.as_deref(),
-                mode,
-                &message,
-            ) {
-                Ok(id) => Some(id),
-                Err(error) => {
-                    self.reject_prompt(&target, error);
-                    return;
-                }
-            },
-            None => {
-                self.reject_prompt(&target, "Couldn’t save the message".into());
-                return;
-            }
-        };
-        self.pending_prompt_target = Some(target);
-        self.snapshot.conversation.push_local_user(message.clone());
-        self.snapshot.conversation.running = true;
-        self.snapshot.status = "Working".into();
-        self.publish();
-        self.dispatch_prompt(mode, message, outbox_id);
-    }
-
-    fn deliver_queued(&mut self, prompt: crate::state::QueuedPrompt) {
-        self.project = prompt.project;
-        self.snapshot.project = self.project.clone();
-        self.snapshot.selected_session = prompt.session.clone();
-        self.pending_prompt_target = Some(prompt.target);
-        self.snapshot
-            .conversation
-            .push_local_user(prompt.message.clone());
-        self.snapshot.conversation.running = true;
-        self.snapshot.status = "Working".into();
-        self.publish();
-        self.dispatch_prompt(prompt.mode, prompt.message, Some(prompt.id));
-    }
-
-    fn dispatch_prompt(&mut self, mode: PromptMode, message: String, outbox_id: Option<i64>) {
-        if self.snapshot.history_preview {
-            let path = self.snapshot.selected_session.clone();
-            self.pending_outbox_id = outbox_id;
-            self.deferred_prompt = Some((mode, message, outbox_id));
-            self.start_process(path);
-            return;
-        }
-        if self.process.is_none() {
-            self.pending_outbox_id = outbox_id;
-            self.deferred_prompt = Some((mode, message, outbox_id));
-            self.start_process(self.snapshot.selected_session.clone());
-            return;
-        }
-        if let Some(id) = outbox_id
-            && let Some(state) = &self.state
-            && let Err(error) = state.begin_prompt(id)
-        {
-            let target = self.pending_prompt_target.take().unwrap_or_default();
-            self.reject_prompt(&target, error);
-            return;
-        }
-        let command = prompt_command(mode, message);
-        match self
-            .process
-            .as_mut()
-            .map(|process| process.send_command(command))
-        {
-            Some(Ok(id)) => {
-                self.pending_prompt_id = Some(id);
-                self.pending_outbox_id = outbox_id;
-            }
-            Some(Err(error)) => {
-                self.mark_outbox_failed(error.as_str());
-                self.fail(error);
-            }
-            None => {
-                self.mark_outbox_failed("Pi is not connected");
-                self.fail("Cannot send prompt: Pi is not connected".into());
-            }
-        }
-    }
-
-    fn reject_prompt(&mut self, target: &str, message: String) {
-        self.snapshot
-            .conversation
-            .push_local_error("Prompt not sent", message);
-        self.snapshot.status = "Prompt not sent".into();
-        self.emit_prompt_result(target, false);
-        self.publish();
-    }
-
-    fn emit_prompt_result(&self, target: &str, accepted: bool) {
-        let _ = self.event_tx.send(RuntimeEvent::PromptResult {
-            generation: self.process_generation,
-            target: target.to_owned(),
-            accepted,
-        });
     }
 
     fn apply_process_item(&mut self, item: ProcessItem) {
@@ -1170,24 +1065,6 @@ impl RuntimeOwner {
         }
         if self.parked_snapshot.is_none() {
             self.publish();
-        }
-    }
-
-    fn maybe_send_deferred_prompt(&mut self) {
-        if !self.startup_state_loaded || !self.startup_history_loaded {
-            return;
-        }
-        if let Some((mode, message, outbox_id)) = self.deferred_prompt.take() {
-            let snapshot = self.active_snapshot_mut();
-            snapshot.conversation.push_local_user(message.clone());
-            snapshot.conversation.running = true;
-            snapshot.status = "Working".into();
-            if self.snapshot.history_preview
-                && let Some(snapshot) = self.parked_snapshot.take()
-            {
-                self.snapshot = snapshot;
-            }
-            self.dispatch_prompt(mode, message, outbox_id);
         }
     }
 
@@ -1770,6 +1647,7 @@ mod tests {
             format!("session:{}", new_path.display()),
             PromptMode::Normal,
             "continue".into(),
+            Vec::new(),
         );
         assert!(owner.snapshot.history_preview);
         assert_eq!(owner.snapshot.conversation.items[0].text, "previewed");

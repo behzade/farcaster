@@ -31,6 +31,8 @@ pub(crate) struct Colors {
     pub warning: Rgba,
     pub error: Rgba,
     pub success: Rgba,
+    pub diff_added: Rgba,
+    pub diff_deleted: Rgba,
     pub backdrop: Rgba,
 }
 
@@ -99,6 +101,8 @@ pub(crate) const THEME: Theme = Theme {
         warning: rgb(0xfabd2f),
         error: rgb(0xfb4934),
         success: rgb(0xb8bb26),
+        diff_added: rgba(0xb8bb2626),
+        diff_deleted: rgba(0xfb493426),
         backdrop: rgba(0x000000b3),
     },
     space: Space {

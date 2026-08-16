@@ -2,13 +2,14 @@
 
 use gpui::{
     AnyElement, FontWeight, InteractiveElement as _, IntoElement as _, ListSizingBehavior,
-    ListState, ParentElement as _, Styled as _, WeakEntity, div, list, prelude::FluentBuilder as _,
-    px,
+    ListState, Overflow, ParentElement as _, StyleRefinement, Styled as _, WeakEntity, div, list,
+    prelude::FluentBuilder as _, px, rems,
 };
 use gpui_component::{
     Sizable as _, Size,
     button::{Button, ButtonVariants as _},
-    text::TextView,
+    highlighter::HighlightTheme,
+    text::{TextView, TextViewStyle},
 };
 
 use crate::{
@@ -36,6 +37,19 @@ impl TranscriptRow {
             Self::Item { index, .. } => *index,
             Self::ReadGroup { start, .. } => *start,
         }
+    }
+
+    fn expanded_by_default(&self) -> bool {
+        matches!(
+            self,
+            Self::Item {
+                item: TranscriptItem {
+                    tool_presentation: Some(_),
+                    ..
+                },
+                ..
+            }
+        )
     }
 }
 
@@ -73,7 +87,7 @@ pub(crate) fn render(
     following: bool,
     unseen: usize,
     rows: Vec<TranscriptRow>,
-    expanded: std::collections::HashSet<usize>,
+    disclosure_overrides: std::collections::HashSet<usize>,
     entity: WeakEntity<PiApp>,
 ) -> AnyElement {
     if rows.is_empty() {
@@ -99,11 +113,8 @@ pub(crate) fn render(
         let Some(row) = rows.get(index).cloned() else {
             return div().into_any_element();
         };
-        render_row(
-            row,
-            expanded.contains(&rows[index].key()),
-            row_entity.clone(),
-        )
+        let expanded = row.expanded_by_default() != disclosure_overrides.contains(&row.key());
+        render_row(row, expanded, row_entity.clone())
     })
     .with_sizing_behavior(ListSizingBehavior::Auto)
     .w_full()
@@ -312,7 +323,11 @@ fn render_tool(
                 .child(disclosure_button(
                     ("tool-toggle", key),
                     expanded,
-                    "Tool details",
+                    if item.tool_presentation.is_some() {
+                        "File change"
+                    } else {
+                        "Tool details"
+                    },
                     key,
                     entity,
                 ))
@@ -343,6 +358,30 @@ fn render_tool(
 }
 
 fn expanded_tool_body(id: impl Into<gpui::ElementId>, item: &TranscriptItem) -> AnyElement {
+    if let Some(presentation) = &item.tool_presentation {
+        let output = (!item.tool_output.is_empty()).then(|| {
+            selectable_text(id, &item.tool_output)
+                .font_family("monospace")
+                .text_size(THEME.type_scale.caption)
+                .text_color(if item.is_error {
+                    THEME.colors.error
+                } else {
+                    THEME.colors.subtle
+                })
+        });
+        return div()
+            .w_full()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .gap(THEME.space.xs)
+            .child(crate::tool_changes::render(
+                presentation,
+                item.tool_call_id.as_ref().map_or(0, |id| stable_key(id)),
+            ))
+            .children(output)
+            .into_any_element();
+    }
     let mut detail = String::new();
     if !item.text.is_empty() {
         detail.push_str(&item.text);
@@ -386,10 +425,26 @@ fn selectable_text(
     text: impl Into<gpui::SharedString>,
 ) -> TextView {
     TextView::markdown(id, text)
+        .style(transcript_markdown_style())
         .selectable(true)
         .w_full()
+        .min_w_0()
         .text_size(THEME.type_scale.body_small)
         .line_height(THEME.type_scale.line_body)
+}
+
+fn transcript_markdown_style() -> TextViewStyle {
+    let mut code_block = StyleRefinement::default();
+    code_block.overflow.x = Some(Overflow::Scroll);
+    code_block.restrict_scroll_to_axis = Some(true);
+    TextViewStyle {
+        paragraph_gap: rems(0.5),
+        heading_base_font_size: THEME.type_scale.body,
+        highlight_theme: HighlightTheme::default_dark(),
+        code_block,
+        is_dark: true,
+        ..TextViewStyle::default()
+    }
 }
 
 fn fenced_text(text: &str) -> String {
@@ -409,6 +464,12 @@ fn tool_target(arguments: &str) -> String {
         .chars()
         .take(96)
         .collect()
+}
+
+fn stable_key(value: &str) -> usize {
+    value.bytes().fold(0_usize, |hash, byte| {
+        hash.wrapping_mul(16777619).wrapping_add(usize::from(byte))
+    })
 }
 
 fn tool_state_suffix(running: bool, failed: usize) -> String {
@@ -447,6 +508,7 @@ mod tests {
             is_error: false,
             tool_call_id: None,
             tool_output: String::new(),
+            tool_presentation: None,
         }
     }
 
@@ -463,6 +525,19 @@ mod tests {
             &rows[1],
             TranscriptRow::ReadGroup { items, .. } if items.len() == 2
         ));
+    }
+
+    #[test]
+    fn mutation_tools_are_expanded_by_default() {
+        let mut edit = item(TranscriptKind::Tool, "Edit", "Path: src/main.rs");
+        edit.tool_presentation = Some(crate::conversation::ToolPresentation::Edit {
+            path: "src/main.rs".into(),
+            diff: Some("- old\n+ new".into()),
+        });
+        let rows = project_rows(&[edit, item(TranscriptKind::Tool, "Bash", "Command: true")]);
+
+        assert!(rows[0].expanded_by_default());
+        assert!(!rows[1].expanded_by_default());
     }
 
     #[test]

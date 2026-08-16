@@ -25,7 +25,9 @@ impl PiApp {
         let widgets_below = widget_region("below", &self.extension.below_widgets);
         let send_entity = entity.clone();
         let history_entity = entity.clone();
+        let paste_entity = entity.clone();
         let cursor_entity = entity.clone();
+        let attachments_entity = entity.clone();
         let abort_entity = entity;
         div()
             .flex_none()
@@ -38,12 +40,26 @@ impl PiApp {
             .when_some(composer_status(self), |composer, status| {
                 composer.child(status)
             })
+            .when_some(
+                super::attachments::render(self, attachments_entity),
+                |composer, attachments| composer.child(attachments),
+            )
             .child(
                 div()
                     .id("composer-input")
                     .key_context(super::super::COMPOSER_KEY_CONTEXT)
                     .px(THEME.space.sm)
                     .on_key_down(move |event: &KeyDownEvent, window, cx| {
+                        if event.keystroke.key == "v"
+                            && event.keystroke.modifiers.secondary()
+                            && paste_entity
+                                .update(cx, |this, cx| this.paste_composer_image(cx))
+                                .unwrap_or(false)
+                        {
+                            window.prevent_default();
+                            cx.stop_propagation();
+                            return;
+                        }
                         let handled = history_entity
                             .update(cx, |this, cx| {
                                 this.handle_composer_history_key(
@@ -102,7 +118,7 @@ impl PiApp {
                                     let _ = send_entity.update(cx, |this, cx| {
                                         let value =
                                             this.composer.read(cx).value().trim().to_owned();
-                                        if !value.is_empty() {
+                                        if !value.is_empty() || this.has_composer_images() {
                                             this.submit(value, this.enter_mode(), cx);
                                         }
                                     });
@@ -413,7 +429,7 @@ fn dialog_choice(
         )
 }
 
-fn dialog_copy(value: &str) -> (SharedString, Option<SharedString>) {
+pub(super) fn dialog_copy(value: &str) -> (SharedString, Option<SharedString>) {
     let mut lines = value.lines();
     let heading = match lines.next().unwrap_or_default().trim() {
         "Tool requests an IO right" | "Tool requests grouped IO rights" => "File access request",
@@ -431,7 +447,7 @@ fn dialog_copy(value: &str) -> (SharedString, Option<SharedString>) {
     )
 }
 
-fn choice_copy(value: &str) -> (SharedString, Option<SharedString>) {
+pub(super) fn choice_copy(value: &str) -> (SharedString, Option<SharedString>) {
     let (title, detail) = match value {
         "Allow once and retry" => ("Allow once", Some("Retry this command")),
         "Always allow in this workspace and retry" => (
@@ -474,36 +490,4 @@ fn widget_region(
             }))
             .into_any_element(),
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{choice_copy, dialog_copy};
-
-    #[test]
-    fn permission_dialog_copy_is_short_and_keeps_the_target() {
-        let (heading, prompt) =
-            dialog_copy("Tool requests an IO right\nAllow bash to access write file /work/file?");
-        assert_eq!(heading.as_ref(), "File access request");
-        assert_eq!(
-            prompt.as_ref().map(AsRef::as_ref),
-            Some("Allow bash to write to /work/file?")
-        );
-    }
-
-    #[test]
-    fn permission_choices_use_short_labels_with_clear_scope() {
-        let (label, detail) = choice_copy("Always allow in this workspace and retry");
-        assert_eq!(label.as_ref(), "Always allow");
-        assert_eq!(
-            detail.as_ref().map(AsRef::as_ref),
-            Some("Remember for this workspace and retry")
-        );
-        let (label, detail) = choice_copy("No, with comment");
-        assert_eq!(label.as_ref(), "Deny with note");
-        assert_eq!(
-            detail.as_ref().map(AsRef::as_ref),
-            Some("Tell Pi what to do instead")
-        );
-    }
 }

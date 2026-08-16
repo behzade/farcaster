@@ -1,4 +1,7 @@
+mod attachments;
 mod composer;
+#[cfg(test)]
+mod composer_tests;
 mod models;
 mod shell;
 
@@ -88,7 +91,7 @@ impl Render for PiApp {
                 self.transcript_following,
                 self.transcript_unseen,
                 transcript_rows,
-                self.expanded_transcript_items.clone(),
+                self.transcript_disclosure_overrides.clone(),
                 entity.clone(),
             )))
             .child(self.render_composer(entity.clone()));

@@ -18,6 +18,12 @@ pub(crate) enum TranscriptKind {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ToolPresentation {
+    Edit { path: String, diff: Option<String> },
+    Write { path: String, content: String },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TranscriptItem {
     pub kind: TranscriptKind,
     pub label: String,
@@ -26,6 +32,7 @@ pub(crate) struct TranscriptItem {
     pub is_error: bool,
     pub tool_call_id: Option<String>,
     pub tool_output: String,
+    pub tool_presentation: Option<ToolPresentation>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -71,20 +78,22 @@ enum PartialKind {
 }
 
 impl ConversationState {
-    pub(crate) fn push_local_user(&mut self, message: String) {
+    pub(crate) fn push_local_user(&mut self, message: String, image_count: usize) {
+        let display = user_message_text(&message, image_count);
         if self.items.last().is_some_and(|item| {
-            item.kind == TranscriptKind::User && item.text == message && !item.is_error
+            item.kind == TranscriptKind::User && item.text == display && !item.is_error
         }) {
             return;
         }
         self.items.push(TranscriptItem {
             kind: TranscriptKind::User,
             label: String::new(),
-            text: message,
+            text: display,
             streaming: false,
             is_error: false,
             tool_call_id: None,
             tool_output: String::new(),
+            tool_presentation: None,
         });
     }
 
@@ -113,12 +122,7 @@ impl ConversationState {
                     item.kind == TranscriptKind::Tool && item.tool_call_id.as_deref() == Some(id)
                 })
             {
-                item.tool_output = message_text(message);
-                item.is_error = message
-                    .get("isError")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
-                item.streaming = false;
+                apply_tool_result(item, message, true);
                 return;
             }
         }
@@ -206,6 +210,7 @@ impl ConversationState {
             is_error: true,
             tool_call_id: None,
             tool_output: String::new(),
+            tool_presentation: None,
         });
     }
 
@@ -218,6 +223,7 @@ impl ConversationState {
             is_error: true,
             tool_call_id: None,
             tool_output: String::new(),
+            tool_presentation: None,
         });
     }
 
@@ -230,6 +236,7 @@ impl ConversationState {
             is_error: true,
             tool_call_id: None,
             tool_output: String::new(),
+            tool_presentation: None,
         });
     }
 
@@ -343,6 +350,7 @@ impl ConversationState {
                 is_error: false,
                 tool_call_id: None,
                 tool_output: String::new(),
+                tool_presentation: None,
             })
             .collect::<Vec<_>>();
         let len = projected.len();
@@ -370,12 +378,7 @@ impl ConversationState {
             if let Some(item) = self.items.iter_mut().rev().find(|item| {
                 item.kind == TranscriptKind::Tool && item.tool_call_id.as_deref() == Some(id)
             }) {
-                item.tool_output = message_text(message);
-                item.is_error = message
-                    .get("isError")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
-                item.streaming = false;
+                apply_tool_result(item, message, true);
                 self.content.clear();
                 return;
             }
@@ -393,13 +396,16 @@ impl ConversationState {
     fn start_tool(&mut self, event: &Value) {
         let id = text_field(event, "toolCallId");
         let name = text_field(event, "toolName");
-        let args = event.get("args").map(readable_json).unwrap_or_default();
+        let args_value = event.get("args");
+        let presentation = args_value.and_then(|args| tool_presentation(&name, args));
+        let args = args_value.map(readable_json).unwrap_or_default();
         if let Some(index) = self.items.iter().rposition(|item| {
             item.kind == TranscriptKind::Tool && item.tool_call_id.as_deref() == Some(id.as_str())
         }) {
             if let Some(item) = self.items.get_mut(index) {
                 item.label = display_tool_name(&name);
                 item.text = args;
+                item.tool_presentation = presentation;
                 item.streaming = true;
             }
             self.tools.insert(id, index);
@@ -413,6 +419,7 @@ impl ConversationState {
             is_error: false,
             tool_call_id: Some(id.clone()),
             tool_output: String::new(),
+            tool_presentation: presentation,
         });
         self.tools.insert(id, self.items.len() - 1);
     }
@@ -438,7 +445,9 @@ impl ConversationState {
         if let Some(index) = self.tools.remove(&id)
             && let Some(item) = self.items.get_mut(index)
         {
-            item.tool_output = event.get("result").map(result_text).unwrap_or_default();
+            if let Some(result) = event.get("result") {
+                apply_tool_result(item, result, false);
+            }
             item.streaming = false;
             item.is_error = is_error;
         }
@@ -453,6 +462,7 @@ impl ConversationState {
             is_error: false,
             tool_call_id: None,
             tool_output: String::new(),
+            tool_presentation: None,
         });
     }
 
@@ -548,6 +558,11 @@ fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
                                 .and_then(Value::as_str)
                                 .map(str::to_owned),
                             tool_output: String::new(),
+                            tool_presentation: tool_name(block).and_then(|name| {
+                                block
+                                    .get("arguments")
+                                    .and_then(|arguments| tool_presentation(name, arguments))
+                            }),
                         })
                     })
                     .collect()
@@ -595,6 +610,7 @@ fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
             .and_then(Value::as_str)
             .map(str::to_owned),
         tool_output: String::new(),
+        tool_presentation: None,
     }]
 }
 
@@ -604,19 +620,19 @@ fn message_text(message: &Value) -> String {
     {
         return text.to_owned();
     }
-    if let Some(text) = message
-        .get("content")
-        .and_then(Value::as_array)
-        .map(|blocks| {
-            blocks
-                .iter()
-                .filter_map(|block| block.get("text").and_then(Value::as_str))
-                .collect::<Vec<_>>()
-                .join("\n")
-        })
-        .filter(|text| !text.is_empty())
-    {
-        return text;
+    if let Some(blocks) = message.get("content").and_then(Value::as_array) {
+        let text = blocks
+            .iter()
+            .filter_map(|block| block.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let image_count = blocks
+            .iter()
+            .filter(|block| block.get("type").and_then(Value::as_str) == Some("image"))
+            .count();
+        if !text.is_empty() || image_count > 0 {
+            return user_message_text(&text, image_count);
+        }
     }
     message
         .get("summary")
@@ -624,6 +640,22 @@ fn message_text(message: &Value) -> String {
         .or_else(|| message.get("output").and_then(Value::as_str))
         .unwrap_or_default()
         .to_owned()
+}
+
+fn user_message_text(message: &str, image_count: usize) -> String {
+    if image_count == 0 {
+        return message.to_owned();
+    }
+    let attachment = if image_count == 1 {
+        "Attached image".to_owned()
+    } else {
+        format!("Attached {image_count} images")
+    };
+    if message.is_empty() {
+        attachment
+    } else {
+        format!("{message}\n\n{attachment}")
+    }
 }
 
 fn tool_name(value: &Value) -> Option<&str> {
@@ -638,6 +670,90 @@ fn tool_arguments(value: &Value) -> String {
         .get("arguments")
         .map(readable_json)
         .unwrap_or_default()
+}
+
+fn tool_presentation(name: &str, arguments: &Value) -> Option<ToolPresentation> {
+    let path = arguments
+        .get("path")
+        .or_else(|| arguments.get("file_path"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    match name.trim().to_ascii_lowercase().as_str() {
+        "edit" => Some(ToolPresentation::Edit {
+            path,
+            diff: preview_edit_diff(arguments),
+        }),
+        "write" => arguments
+            .get("content")
+            .and_then(Value::as_str)
+            .map(|content| ToolPresentation::Write {
+                path,
+                content: content.to_owned(),
+            }),
+        _ => None,
+    }
+}
+
+fn preview_edit_diff(arguments: &Value) -> Option<String> {
+    let edits = arguments.get("edits").and_then(Value::as_array);
+    let legacy = arguments
+        .get("oldText")
+        .and_then(Value::as_str)
+        .zip(arguments.get("newText").and_then(Value::as_str));
+    let pairs = edits
+        .map(|edits| {
+            edits
+                .iter()
+                .filter_map(|edit| {
+                    edit.get("oldText")
+                        .and_then(Value::as_str)
+                        .zip(edit.get("newText").and_then(Value::as_str))
+                })
+                .collect::<Vec<_>>()
+        })
+        .or_else(|| legacy.map(|pair| vec![pair]))?;
+    let mut diff = String::new();
+    for (index, (old, new)) in pairs.into_iter().enumerate() {
+        if index > 0 {
+            diff.push_str("     ...\n");
+        }
+        for line in old.lines() {
+            diff.push_str("- ");
+            diff.push_str(line);
+            diff.push('\n');
+        }
+        for line in new.lines() {
+            diff.push_str("+ ");
+            diff.push_str(line);
+            diff.push('\n');
+        }
+    }
+    (!diff.is_empty()).then(|| diff.trim_end().to_owned())
+}
+
+fn apply_tool_result(item: &mut TranscriptItem, result: &Value, message: bool) {
+    item.tool_output = if message {
+        message_text(result)
+    } else {
+        result_text(result)
+    };
+    item.is_error = result
+        .get("isError")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    item.streaming = false;
+    if let Some(diff) = result
+        .get("details")
+        .and_then(|details| details.get("diff"))
+        .and_then(Value::as_str)
+        .filter(|diff| !diff.is_empty())
+        && let Some(ToolPresentation::Edit {
+            diff: item_diff, ..
+        }) = item.tool_presentation.as_mut()
+    {
+        *item_diff = Some(diff.to_owned());
+    }
 }
 
 pub(crate) fn display_tool_name(name: &str) -> String {
