@@ -3,9 +3,9 @@
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, FontWeight, InteractiveElement as _, IntoElement as _, ListSizingBehavior,
-    ListState, Overflow, ParentElement as _, StyleRefinement, Styled as _, WeakEntity, div, list,
-    prelude::FluentBuilder as _, px, rems,
+    AnyElement, FontWeight, HighlightStyle, InteractiveElement as _, IntoElement as _,
+    ListSizingBehavior, ListState, Overflow, ParentElement as _, StyleRefinement, Styled as _,
+    WeakEntity, div, list, prelude::FluentBuilder as _, px, rems,
 };
 use gpui_component::{
     Sizable as _, Size,
@@ -655,6 +655,11 @@ fn transcript_markdown_style() -> TextViewStyle {
         heading_base_font_size: THEME.type_scale.body,
         highlight_theme: HighlightTheme::default_dark(),
         code_block,
+        inline_code: HighlightStyle {
+            color: Some(THEME.colors.code.into()),
+            background_color: Some(THEME.colors.panel.into()),
+            ..HighlightStyle::default()
+        },
         is_dark: true,
         ..TextViewStyle::default()
     }
@@ -727,6 +732,17 @@ mod tests {
             tool_output: String::new(),
             tool_presentation: None,
         })
+    }
+
+    #[test]
+    fn markdown_inline_code_uses_the_reading_palette() {
+        let style = transcript_markdown_style();
+
+        assert_eq!(style.inline_code.color, Some(THEME.colors.code.into()));
+        assert_eq!(
+            style.inline_code.background_color,
+            Some(THEME.colors.panel.into())
+        );
     }
 
     #[test]

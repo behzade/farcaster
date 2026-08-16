@@ -30,6 +30,8 @@ pub(crate) struct Colors {
     pub muted: Rgba,
     pub subtle: Rgba,
     pub accent: Rgba,
+    pub link: Rgba,
+    pub code: Rgba,
     pub warning: Rgba,
     pub error: Rgba,
     pub success: Rgba,
@@ -96,10 +98,12 @@ pub(crate) const THEME: Theme = Theme {
         hover: rgb(0x504945),
         selection: rgba(0x8ec07c33),
         border: rgb(0x665c54),
-        text: rgb(0xebdbb2),
+        text: rgb(0xd5c4a1),
         muted: rgb(0xa89984),
         subtle: rgb(0x928374),
         accent: rgb(0x8ec07c),
+        link: rgb(0x83a598),
+        code: rgb(0xd79921),
         warning: rgb(0xfabd2f),
         error: rgb(0xfb4934),
         success: rgb(0xb8bb26),
@@ -141,8 +145,8 @@ pub(crate) const THEME: Theme = Theme {
 };
 
 pub(crate) fn install_component_theme(cx: &mut App) {
+    ComponentTheme::change(ThemeMode::Dark, None, cx);
     let theme = ComponentTheme::global_mut(cx);
-    theme.mode = ThemeMode::Dark;
     theme.font_size = THEME.type_scale.body;
     theme.mono_font_family = READING_FONT_FAMILY.into();
     theme.mono_font_size = THEME.type_scale.body_small;
@@ -153,6 +157,11 @@ pub(crate) fn install_component_theme(cx: &mut App) {
     let colors = &mut theme.colors;
     colors.background = THEME.colors.canvas.into();
     colors.foreground = THEME.colors.text.into();
+    colors.accent = THEME.colors.surface.into();
+    colors.accent_foreground = THEME.colors.text.into();
+    colors.link = THEME.colors.link.into();
+    colors.link_active = THEME.colors.link.into();
+    colors.link_hover = THEME.colors.link.into();
     colors.border = THEME.colors.border.into();
     colors.input = THEME.colors.border.into();
     colors.muted = THEME.colors.panel.into();
