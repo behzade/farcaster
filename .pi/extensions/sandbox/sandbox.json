@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "rights": [
+    {
+      "kind": "filesystem",
+      "access": "write",
+      "path": ".git",
+      "scope": "tree"
+    },
+    {
+      "kind": "network_local"
+    }
+  ]
+}

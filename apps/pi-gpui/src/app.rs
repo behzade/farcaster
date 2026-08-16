@@ -1,8 +1,8 @@
 //! Top-level GPUI composition for the active root session.
 
-mod change_modal;
 mod composer_images;
 mod drafts;
+mod slash_commands;
 mod submissions;
 mod transcript_ui;
 mod views;
@@ -83,7 +83,6 @@ pub(crate) struct PiApp {
     pending_submission: Option<PendingSubmission>,
     pending_submission_result: Option<(String, bool)>,
     pending_session_reset: bool,
-    change_modal: Option<crate::tool_changes::ChangeModal>,
     extension_errors: Vec<String>,
     sessions_sheet: bool,
     run_sheet: bool,
@@ -252,7 +251,6 @@ impl PiApp {
             pending_submission: None,
             pending_submission_result: None,
             pending_session_reset: false,
-            change_modal: None,
             extension_errors: Vec::new(),
             sessions_sheet: false,
             run_sheet: false,
@@ -320,6 +318,7 @@ impl PiApp {
                 RuntimeEvent::Sessions {
                     generation,
                     sessions,
+                    ..
                 } if generation >= self.session_generation => {
                     self.session_generation = generation;
                     for session in &sessions {
@@ -374,6 +373,7 @@ impl PiApp {
                     Arc::make_mut(&mut self.snapshot).status = "Stopped".into()
                 }
                 RuntimeEvent::Snapshot { .. }
+                | RuntimeEvent::RefreshCatalog
                 | RuntimeEvent::SessionReset { .. }
                 | RuntimeEvent::HistoryReset { .. }
                 | RuntimeEvent::ExtensionUi { .. }
@@ -429,7 +429,6 @@ impl PiApp {
         self.pending_title = Some((generation, "Pi".into()));
         self.pending_editor_text = None;
         self.pending_session_reset = true;
-        self.change_modal = None;
         self.dialog_return_focus = None;
         self.sessions_sheet = false;
         self.run_sheet = false;
@@ -518,7 +517,11 @@ impl PiApp {
         self.selected_draft = Some(id.clone());
         self.project = project.clone();
         self.switch_composer_target(draft_target(&id), window, cx);
-        self.send(RuntimeCommand::ResumeDraft { id, project });
+        if let Some(Some(path)) = self.submitted_drafts.get(&id).cloned() {
+            self.send(RuntimeCommand::Resume { path, project });
+        } else {
+            self.send(RuntimeCommand::ResumeDraft { id, project });
+        }
         self.sessions_sheet = false;
         cx.notify();
     }
@@ -771,9 +774,7 @@ impl PiApp {
     }
 
     fn dismiss_surface(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.change_modal.is_some() {
-            self.close_change_modal(window, cx);
-        } else if self.extension.dialog.is_some() {
+        if self.extension.dialog.is_some() {
             self.cancel_dialog(window, cx);
         } else if self.sessions_sheet || self.run_sheet {
             self.close_sheet(window, cx);

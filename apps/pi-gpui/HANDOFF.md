@@ -464,33 +464,19 @@ Write behavior tests before or with implementation for:
 6. Layout
    - exact wide/compact/narrow boundaries
 
-Run, in order:
+The root `.envrc` supplies Cargo and the native GPUI build environment. Do not
+nest `nix develop`, search for system executables, or create another target
+directory. Run the shared check target:
 
 ```sh
-cargo fmt --manifest-path apps/pi-gpui/Cargo.toml --check
-cargo test --manifest-path apps/pi-gpui/Cargo.toml
-cargo check --manifest-path apps/pi-gpui/Cargo.toml
-cargo clippy --manifest-path apps/pi-gpui/Cargo.toml --all-targets -- -D warnings
+make check-gpui
 ```
 
-Cargo is not on the ordinary PATH in the current shell. A GPUI-capable shell is
-available from the Issues reference:
-
-```sh
-nix develop /mnt/fast/Projects/issues -c <command>
-```
-
-`/home` has only about 19 GiB free; `/mnt/fast` has about 92 GiB free. For local
-checks use an untracked external target directory:
-
-```sh
-CARGO_TARGET_DIR=/mnt/fast/Projects/pi-gpui-target
-```
-
-Do not add that machine-specific path to repository config. Do not modify
-`/mnt/fast/Projects/issues/target`. If dependencies require network, request
-only the exact host needed or report the blocker. Never claim build/test success
-without command output.
+For a focused check, invoke Cargo directly with
+`CARGO_TARGET_DIR="$PWD/target"`. If the active environment lacks a required tool
+or build variable, report that setup defect instead of constructing a second
+environment. If dependencies require network, request only the exact host needed
+or report the blocker. Never claim build/test success without command output.
 
 Also run:
 

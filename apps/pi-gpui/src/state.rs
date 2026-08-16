@@ -15,7 +15,7 @@ use crate::{
     sessions::{SessionSummary, UsageSummary},
 };
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(crate) struct StateStore {
@@ -142,16 +142,24 @@ impl StateStore {
                     "ALTER TABLE outbox ADD COLUMN images_json TEXT NOT NULL DEFAULT '[]';
                      ALTER TABLE drafts ADD COLUMN submitted INTEGER NOT NULL DEFAULT 0;
                      ALTER TABLE drafts ADD COLUMN session_path TEXT;
-                     UPDATE meta SET value='3' WHERE key='schema_version';",
+                     ALTER TABLE sessions ADD COLUMN is_running INTEGER NOT NULL DEFAULT 0;
+                     UPDATE meta SET value='4' WHERE key='schema_version';",
                 )
-                .map_err(|error| format!("migrate GUI state schema to 3: {error}"))?,
+                .map_err(|error| format!("migrate GUI state schema to 4: {error}"))?,
             2 => migration
                 .execute_batch(
                     "ALTER TABLE drafts ADD COLUMN submitted INTEGER NOT NULL DEFAULT 0;
                      ALTER TABLE drafts ADD COLUMN session_path TEXT;
-                     UPDATE meta SET value='3' WHERE key='schema_version';",
+                     ALTER TABLE sessions ADD COLUMN is_running INTEGER NOT NULL DEFAULT 0;
+                     UPDATE meta SET value='4' WHERE key='schema_version';",
                 )
-                .map_err(|error| format!("migrate GUI state schema to 3: {error}"))?,
+                .map_err(|error| format!("migrate GUI state schema to 4: {error}"))?,
+            3 => migration
+                .execute_batch(
+                    "ALTER TABLE sessions ADD COLUMN is_running INTEGER NOT NULL DEFAULT 0;
+                     UPDATE meta SET value='4' WHERE key='schema_version';",
+                )
+                .map_err(|error| format!("migrate GUI state schema to 4: {error}"))?,
             SCHEMA_VERSION => {}
             _ => {
                 return Err(format!(
@@ -289,7 +297,8 @@ impl StateStore {
                 "SELECT id, path, project, title, first_user_message, timestamp,
                         parent_session, modified_ms, message_count, input_tokens,
                         output_tokens, cache_read_tokens, cache_write_tokens,
-                        total_tokens, cost_micros, search_text, settled_ms IS NOT NULL
+                        total_tokens, cost_micros, search_text, settled_ms IS NOT NULL,
+                        is_running
                    FROM sessions
                   WHERE ?1 = '%%' OR search_text LIKE ?1 ESCAPE '\\'
                   ORDER BY modified_ms DESC, timestamp DESC",
@@ -302,7 +311,16 @@ impl StateStore {
             .collect()
     }
 
+    #[cfg(test)]
     pub(crate) fn replace_sessions(&mut self, sessions: &[SessionSummary]) -> Result<(), String> {
+        self.index_sessions(sessions, true)
+    }
+
+    pub(crate) fn index_sessions(
+        &mut self,
+        sessions: &[SessionSummary],
+        prune_missing: bool,
+    ) -> Result<(), String> {
         let transaction = self
             .connection
             .transaction()
@@ -318,10 +336,11 @@ impl StateStore {
                        path, id, project, title, first_user_message, timestamp,
                        parent_session, modified_ms, file_size, message_count,
                        input_tokens, output_tokens, cache_read_tokens,
-                       cache_write_tokens, total_tokens, cost_micros, search_text
+                       cache_write_tokens, total_tokens, cost_micros, search_text,
+                       is_running
                      ) VALUES(
                        ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
-                       ?11, ?12, ?13, ?14, ?15, ?16, ?17
+                       ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18
                      ) ON CONFLICT(path) DO UPDATE SET
                        id=excluded.id, project=excluded.project, title=excluded.title,
                        first_user_message=excluded.first_user_message,
@@ -332,7 +351,7 @@ impl StateStore {
                        cache_read_tokens=excluded.cache_read_tokens,
                        cache_write_tokens=excluded.cache_write_tokens,
                        total_tokens=excluded.total_tokens, cost_micros=excluded.cost_micros,
-                       search_text=excluded.search_text",
+                       search_text=excluded.search_text, is_running=excluded.is_running",
                 )
                 .map_err(|error| format!("prepare session index update: {error}"))?;
             for session in sessions {
@@ -358,24 +377,27 @@ impl StateStore {
                         session.usage.total,
                         session.usage.cost_micros,
                         session.search_text(),
+                        session.is_running,
                     ])
                     .map_err(|error| {
                         format!("index session {}: {error}", session.path.display())
                     })?;
             }
         }
-        let mut paths = transaction
-            .prepare("SELECT path FROM sessions")
-            .map_err(|error| format!("read indexed paths: {error}"))?
-            .query_map([], |row| row.get::<_, String>(0))
-            .map_err(|error| format!("query indexed paths: {error}"))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("decode indexed paths: {error}"))?;
-        paths.retain(|path| !known.contains(path));
-        for path in paths {
-            transaction
-                .execute("DELETE FROM sessions WHERE path=?1", [path])
-                .map_err(|error| format!("remove stale session: {error}"))?;
+        if prune_missing {
+            let mut paths = transaction
+                .prepare("SELECT path FROM sessions")
+                .map_err(|error| format!("read indexed paths: {error}"))?
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|error| format!("query indexed paths: {error}"))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| format!("decode indexed paths: {error}"))?;
+            paths.retain(|path| !known.contains(path));
+            for path in paths {
+                transaction
+                    .execute("DELETE FROM sessions WHERE path=?1", [path])
+                    .map_err(|error| format!("remove stale session: {error}"))?;
+            }
         }
         transaction
             .commit()
@@ -459,11 +481,35 @@ impl StateStore {
             .collect()
     }
 
-    pub(crate) fn complete_prompt(&self, id: i64) -> Result<(), String> {
-        self.connection
+    pub(crate) fn complete_prompt(
+        &mut self,
+        id: i64,
+        target: &str,
+        session: Option<&Path>,
+    ) -> Result<(), String> {
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(|error| format!("start queued prompt completion {id}: {error}"))?;
+        if let Some(draft_id) = target.strip_prefix("draft:").filter(|id| !id.is_empty())
+            && let Some(session) = session
+        {
+            let session = crate::sessions::normalize_session_path(session);
+            transaction
+                .execute(
+                    "UPDATE drafts SET submitted=1, session_path=?2 WHERE id=?1",
+                    params![draft_id, session.to_string_lossy()],
+                )
+                .map_err(|error| {
+                    format!("associate queued prompt {id} with its session: {error}")
+                })?;
+        }
+        transaction
             .execute("DELETE FROM outbox WHERE id=?1", [id])
-            .map(|_| ())
-            .map_err(|error| format!("complete queued prompt {id}: {error}"))
+            .map_err(|error| format!("complete queued prompt {id}: {error}"))?;
+        transaction
+            .commit()
+            .map_err(|error| format!("commit queued prompt completion {id}: {error}"))
     }
 
     pub(crate) fn begin_prompt(&self, id: i64) -> Result<(), String> {
@@ -617,6 +663,7 @@ fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary> {
             cost_micros: row.get(14)?,
         },
         row.get(16)?,
+        row.get(17)?,
         row.get(15)?,
     ))
 }

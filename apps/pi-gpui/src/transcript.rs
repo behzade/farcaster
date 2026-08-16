@@ -536,11 +536,7 @@ fn render_read_group(
                     .flex_col()
                     .gap(THEME.space.xs)
                     .children(items.iter().enumerate().map(|(index, item)| {
-                        expanded_tool_body(
-                            format!("read-detail-{key}-{index}"),
-                            item,
-                            entity.clone(),
-                        )
+                        expanded_tool_body(format!("read-detail-{key}-{index}"), item)
                     })),
             )
         })
@@ -602,17 +598,13 @@ fn render_tool(
                 div()
                     .ml(px(22.0))
                     .mt(THEME.space.xs)
-                    .child(expanded_tool_body(("tool-detail", key), item, entity)),
+                    .child(expanded_tool_body(("tool-detail", key), item)),
             )
         })
         .into_any_element()
 }
 
-fn expanded_tool_body(
-    id: impl Into<gpui::ElementId>,
-    item: &TranscriptItem,
-    entity: WeakEntity<PiApp>,
-) -> AnyElement {
+fn expanded_tool_body(id: impl Into<gpui::ElementId>, item: &TranscriptItem) -> AnyElement {
     if let Some(presentation) = &item.tool_presentation {
         let output = visible_mutation_output(item).map(|output| {
             selectable_text(id, output)
@@ -628,9 +620,7 @@ fn expanded_tool_body(
             .gap(THEME.space.xs)
             .child(crate::tool_changes::render(
                 presentation,
-                item.tool_call_id.as_deref(),
                 item.tool_call_id.as_ref().map_or(0, |id| stable_key(id)),
-                entity,
             ))
             .children(output)
             .into_any_element();

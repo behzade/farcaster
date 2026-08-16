@@ -8,19 +8,29 @@ use gpui::{
 };
 use gpui_component::input::{Paste, Textarea};
 
-use super::super::PiApp;
+use super::super::{PiApp, slash_commands};
 use crate::{
+    composer_sessions::ComposerSnapshot,
     primitives::{ButtonTone, button},
-    protocol::ExtensionUiRequest,
+    protocol::{ExtensionUiRequest, SlashCommand},
     runtime::RuntimeCommand,
     theme::{READING_FONT_FAMILY, THEME},
 };
 
 impl PiApp {
-    pub(super) fn render_composer(&self, entity: WeakEntity<Self>) -> AnyElement {
+    pub(super) fn render_composer(&self, entity: WeakEntity<Self>, cx: &App) -> AnyElement {
         if self.extension.dialog.is_some() {
             return self.render_composer_request(entity);
         }
+        let composer_value = self.composer.read(cx).value().trim().to_owned();
+        let command_suggestions =
+            slash_commands::suggestions(&composer_value, &self.snapshot.commands)
+                .into_iter()
+                .take(8)
+                .cloned()
+                .collect::<Vec<_>>();
+        let exact_command =
+            slash_commands::exact(&composer_value, &self.snapshot.commands).is_some();
         let widgets_above = widget_region("above", &self.extension.above_widgets);
         let widgets_below = widget_region("below", &self.extension.below_widgets);
         let send_entity = entity.clone();
@@ -28,6 +38,7 @@ impl PiApp {
         let paste_entity = entity.clone();
         let cursor_entity = entity.clone();
         let attachments_entity = entity.clone();
+        let command_entity = entity.clone();
         let abort_entity = entity;
         div()
             .flex_none()
@@ -44,6 +55,9 @@ impl PiApp {
                 super::attachments::render(self, attachments_entity),
                 |composer, attachments| composer.child(attachments),
             )
+            .when(!command_suggestions.is_empty(), |composer| {
+                composer.child(slash_command_menu(command_suggestions, command_entity))
+            })
             .child(
                 div()
                     .id("composer-input")
@@ -108,7 +122,9 @@ impl PiApp {
                             })
                             .child(button(
                                 "send",
-                                if self.snapshot.conversation.running {
+                                if exact_command {
+                                    "Run"
+                                } else if self.snapshot.conversation.running {
                                     "Steer"
                                 } else {
                                     "Send"
@@ -321,6 +337,92 @@ impl PiApp {
             .on_mouse_down(MouseButton::Left, move |_, _, cx| cx.stop_propagation())
             .into_any_element()
     }
+}
+
+fn slash_command_menu(commands: Vec<SlashCommand>, entity: WeakEntity<PiApp>) -> AnyElement {
+    let mut menu = div()
+        .id("slash-command-menu")
+        .role(Role::Group)
+        .aria_label("Slash commands")
+        .max_h(px(220.0))
+        .overflow_y_scroll()
+        .mb(THEME.space.sm)
+        .border(THEME.border)
+        .border_color(THEME.colors.border)
+        .rounded(THEME.radius)
+        .bg(THEME.colors.surface)
+        .p(THEME.space.xs);
+    for (index, command) in commands.into_iter().enumerate() {
+        let name = command.name;
+        let keyboard_name = name.clone();
+        let keyboard_entity = entity.clone();
+        let click_entity = entity.clone();
+        menu = menu.child(
+            div()
+                .id(("slash-command", index))
+                .role(Role::Button)
+                .aria_label(format!("Use /{name}"))
+                .tab_index(0)
+                .flex()
+                .items_center()
+                .gap(THEME.space.sm)
+                .px(THEME.space.sm)
+                .py(THEME.space.xs)
+                .rounded(THEME.radius)
+                .hover(|row| row.bg(THEME.colors.hover))
+                .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
+                .cursor_pointer()
+                .child(
+                    div()
+                        .flex_none()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(THEME.colors.accent)
+                        .child(format!("/{name}")),
+                )
+                .when_some(command.description, |row, description| {
+                    row.child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_size(THEME.type_scale.caption)
+                            .text_color(THEME.colors.muted)
+                            .child(description),
+                    )
+                })
+                .on_key_down(move |event: &KeyDownEvent, window, cx| {
+                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                        window.prevent_default();
+                        cx.stop_propagation();
+                        fill_slash_command(
+                            keyboard_entity.clone(),
+                            keyboard_name.clone(),
+                            window,
+                            cx,
+                        );
+                    }
+                })
+                .on_click(move |_, window, cx| {
+                    fill_slash_command(click_entity.clone(), name.clone(), window, cx);
+                }),
+        );
+    }
+    menu.into_any_element()
+}
+
+fn fill_slash_command(entity: WeakEntity<PiApp>, name: String, window: &mut Window, cx: &mut App) {
+    let _ = entity.update(cx, |this, cx| {
+        let text = format!("/{name} ");
+        let cursor = text.len();
+        this.apply_composer_snapshot(
+            ComposerSnapshot::new(text, cursor, cursor..cursor),
+            window,
+            cx,
+        );
+        this.composer_focus.focus(window, cx);
+    });
 }
 
 fn composer_status(app: &PiApp) -> Option<AnyElement> {

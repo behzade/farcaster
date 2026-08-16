@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use gpui::{Context, Window};
 
-use super::{ComposerImage, PiApp};
+use super::{ComposerImage, PiApp, slash_commands};
 use crate::{
     composer_sessions::ComposerSnapshot,
     protocol::{PromptImage, PromptMode},
@@ -39,6 +39,13 @@ impl PiApp {
         self.capture_composer_session(cx);
         let target = self.composer_sessions.current_target().to_owned();
         let editor_text = self.composer.read(cx).value().to_string();
+        let allow_while_running =
+            slash_commands::is_immediate_extension(&value, &self.snapshot.commands);
+        let mode = if allow_while_running {
+            PromptMode::Normal
+        } else {
+            mode
+        };
         let images = self
             .composer_images
             .get(&target)
@@ -51,6 +58,7 @@ impl PiApp {
             mode,
             message: value.clone(),
             images,
+            allow_while_running,
         }) {
             Ok(()) => {
                 self.composer_sessions.record_submission(&target, &value);

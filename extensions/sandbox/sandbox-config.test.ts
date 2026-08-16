@@ -59,21 +59,31 @@ test("global config extends defaults without dropping hard rules", () => {
 	assert.deepEqual(result.network?.allowedDomains, ["grafana.example.com"]);
 });
 
-test("shell environment keeps core values and removes secret names", () => {
+test("shell environment preserves the active development shell and removes secret names", () => {
 	const environment = buildShellEnvironment(
 		DEFAULT_CONFIG,
 		{
 			PATH: "/bin",
 			HOME: "/home/test",
-			LANG: "en_US.UTF-8",
+			SDKROOT: "/nix/store/sdk",
+			NIX_LDFLAGS: "-L/nix/store/lib",
+			BINDGEN_EXTRA_CLANG_ARGS: "-isystem /nix/store/include",
 			API_TOKEN: "secret",
+			DATABASE_PASSWORD: "secret",
 			UNRELATED: "drop",
 		},
 		"",
 	);
 	assert.equal(environment.PATH, "/bin");
 	assert.equal(environment.HOME, "/home/test");
+	assert.equal(environment.SDKROOT, "/nix/store/sdk");
+	assert.equal(environment.NIX_LDFLAGS, "-L/nix/store/lib");
+	assert.equal(
+		environment.BINDGEN_EXTRA_CLANG_ARGS,
+		"-isystem /nix/store/include",
+	);
 	assert.equal(environment.API_TOKEN, undefined);
+	assert.equal(environment.DATABASE_PASSWORD, undefined);
 	assert.equal(environment.UNRELATED, undefined);
 });
 

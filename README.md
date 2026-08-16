@@ -103,20 +103,16 @@ make run
 make run PROJECT=/path/to/project
 ```
 
-The Rust/GPUI development shell is available with either `nix develop` or
-`nix develop .#pi-gpui`; it is the default dev shell so the root `.envrc` can
-use `use flake` without building the Pi agent packages.
+The root `.envrc` enters the default Rust/GPUI development shell. Once it is
+active, run project tools directly; do not nest another `nix develop`.
 
-The main checks can also be run directly:
+The main checks can be run directly:
 
 ```sh
 npm run check --prefix extensions/sandbox
 npm run check --prefix extensions/project-tools
 cargo test --manifest-path sandbox-broker/Cargo.toml
-CARGO_TARGET_DIR="$PWD/target" nix develop .#pi-gpui -c \
-  cargo test --manifest-path apps/pi-gpui/Cargo.toml
-CARGO_TARGET_DIR="$PWD/target" nix develop .#pi-gpui -c \
-  cargo check --manifest-path apps/pi-gpui/Cargo.toml
+make check-gpui
 node --test \
   tests/governance.test.ts \
   tests/output-bounds.test.ts \

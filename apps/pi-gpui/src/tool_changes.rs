@@ -1,35 +1,23 @@
 //! Native, selectable presentations for file mutation tools.
 
-use std::sync::Arc;
+use std::path::Path;
 
 use gpui::{
-    AnyElement, CursorStyle, FocusHandle, InteractiveElement as _, IntoElement, KeyDownEvent,
-    Overflow, ParentElement as _, Role, StatefulInteractiveElement as _, StyleRefinement,
-    Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px, rems, transparent_black,
+    AnyElement, InteractiveElement as _, IntoElement, Overflow, ParentElement as _,
+    StyleRefinement, Styled as _, div, prelude::FluentBuilder as _, px, rems, transparent_black,
 };
 use gpui_component::{
-    FocusTrapElement as _,
     highlighter::HighlightTheme,
     text::{TextView, TextViewStyle},
 };
 
 use crate::{
-    app::{OVERLAY_KEY_CONTEXT, PiApp},
-    conversation::{EditDiffFormat, ToolPresentation, TranscriptItem},
-    primitives::{ButtonTone, button, dialog_backdrop, dialog_surface},
+    conversation::{EditDiffFormat, ToolPresentation},
     theme::{READING_FONT_FAMILY, THEME},
 };
 
-const INLINE_PREVIEW_LINES: usize = 4;
-const MAX_MODAL_LINES: usize = 600;
+const MAX_DIFF_LINES: usize = 600;
 const SOFT_WRAP_COLUMNS: usize = 12;
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ChangeModal {
-    pub(crate) presentation: ToolPresentation,
-    pub(crate) tool_call_id: Option<String>,
-    pub(crate) key: usize,
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ChangeKind {
@@ -59,140 +47,23 @@ struct PairedLine {
     new: Option<SideLine>,
 }
 
-pub(crate) fn render(
-    presentation: &ToolPresentation,
-    tool_call_id: Option<&str>,
-    key: usize,
-    entity: WeakEntity<PiApp>,
-) -> AnyElement {
+pub(crate) fn render(presentation: &ToolPresentation, key: usize) -> AnyElement {
     let (path, rows) = presentation_rows(presentation);
-    let title = change_title(path);
-    let (displayed, remaining) = preview_rows(&rows);
-    let keyboard_presentation = presentation.clone();
-    let click_presentation = presentation.clone();
-    let keyboard_tool_call_id = tool_call_id.map(str::to_owned);
-    let click_tool_call_id = keyboard_tool_call_id.clone();
-    let keyboard_entity = entity.clone();
+    let language = language_for_path(path);
+    let body = match presentation {
+        ToolPresentation::Edit { .. } => render_edit_diff(&rows, &language, key),
+        ToolPresentation::Write { .. } => render_write_diff(&rows, &language, key),
+    };
     div()
         .id(("tool-change", key))
-        .role(Role::Button)
-        .aria_label(format!("Open file change preview for {title}"))
-        .tab_index(0)
         .w_full()
         .min_w_0()
         .overflow_hidden()
-        .rounded(THEME.radius)
-        .border(THEME.border)
+        .border_y(THEME.border)
         .border_color(THEME.colors.border)
         .bg(THEME.colors.canvas)
-        .hover(|preview| preview.border_color(THEME.colors.accent))
-        .focus(|preview| preview.border_color(THEME.colors.accent))
-        .cursor(CursorStyle::PointingHand)
-        .on_key_down(move |event: &KeyDownEvent, window, cx| {
-            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                window.prevent_default();
-                let presentation = keyboard_presentation.clone();
-                let _ = keyboard_entity.update(cx, |this, cx| {
-                    this.open_change_modal(
-                        presentation,
-                        keyboard_tool_call_id.clone(),
-                        key,
-                        window,
-                        cx,
-                    );
-                });
-            }
-        })
-        .on_click(move |_, window, cx| {
-            let presentation = click_presentation.clone();
-            let _ = entity.update(cx, |this, cx| {
-                this.open_change_modal(presentation, click_tool_call_id.clone(), key, window, cx);
-            });
-        })
-        .child(change_header(title, false, None))
-        .children(
-            displayed
-                .iter()
-                .enumerate()
-                .map(|(index, row)| render_preview_line(row, key, index)),
-        )
-        .when(remaining > 0, |preview| {
-            preview.child(
-                div()
-                    .px(THEME.space.sm)
-                    .py(THEME.space.xs)
-                    .border_t(THEME.border)
-                    .border_color(THEME.colors.border)
-                    .text_size(THEME.type_scale.caption)
-                    .text_color(THEME.colors.muted)
-                    .child(format!("+{remaining} more lines · Open full diff")),
-            )
-        })
+        .child(body)
         .into_any_element()
-}
-
-pub(crate) fn modal_presentation<'a>(
-    modal: &'a ChangeModal,
-    items: &'a [Arc<TranscriptItem>],
-) -> &'a ToolPresentation {
-    modal
-        .tool_call_id
-        .as_deref()
-        .and_then(|tool_call_id| {
-            items.iter().rev().find_map(|item| {
-                (item.tool_call_id.as_deref() == Some(tool_call_id))
-                    .then_some(item.tool_presentation.as_ref())
-                    .flatten()
-            })
-        })
-        .unwrap_or(&modal.presentation)
-}
-
-pub(crate) fn render_modal(
-    modal: &ChangeModal,
-    presentation: &ToolPresentation,
-    focus: &FocusHandle,
-    entity: WeakEntity<PiApp>,
-) -> AnyElement {
-    let (path, rows) = presentation_rows(presentation);
-    let title = change_title(path);
-    let key = modal.key;
-    let close_backdrop = entity.clone();
-    let close_button = entity;
-    let body = match presentation {
-        ToolPresentation::Edit { .. } => render_edit_modal(&rows, key),
-        ToolPresentation::Write { .. } => render_write_modal(&rows, key),
-    };
-    dialog_backdrop(("change-modal-backdrop", key), move |window, cx| {
-        let _ = close_backdrop.update(cx, |this, cx| this.close_change_modal(window, cx));
-    })
-    .child(
-        dialog_surface(("change-modal", key), format!("File change: {title}"))
-            .track_focus(focus)
-            .key_context(OVERLAY_KEY_CONTEXT)
-            .w(px(1_040.0))
-            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-            .child(change_header(
-                title,
-                true,
-                Some(
-                    button(
-                        ("close-change-modal", key),
-                        "Close",
-                        ButtonTone::Quiet,
-                        true,
-                        move |window, cx| {
-                            let _ = close_button
-                                .update(cx, |this, cx| this.close_change_modal(window, cx));
-                        },
-                    )
-                    .into_any_element(),
-                ),
-            ))
-            .child(body)
-            .focus_trap(("change-modal-focus-trap", key), focus),
-    )
-    .into_any_element()
 }
 
 fn presentation_rows(presentation: &ToolPresentation) -> (&str, Vec<ChangeLine>) {
@@ -226,152 +97,33 @@ fn presentation_rows(presentation: &ToolPresentation) -> (&str, Vec<ChangeLine>)
     }
 }
 
-fn change_title(path: &str) -> String {
-    if path.is_empty() {
-        "Changed file".into()
-    } else {
-        path.into()
-    }
-}
-
-fn change_header(title: String, modal: bool, close: Option<AnyElement>) -> impl IntoElement {
-    div()
-        .min_h(if modal { px(44.0) } else { px(28.0) })
-        .w_full()
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap(THEME.space.sm)
-        .px(if modal {
-            THEME.space.md
-        } else {
-            THEME.space.sm
-        })
-        .border_b(THEME.border)
-        .border_color(THEME.colors.border)
-        .bg(THEME.colors.surface)
-        .font_family(READING_FONT_FAMILY)
-        .text_size(if modal {
-            THEME.type_scale.body
-        } else {
-            THEME.type_scale.body_small
-        })
-        .text_color(THEME.colors.text)
-        .child(
-            div()
-                .min_w_0()
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .child(title),
-        )
-        .children(close)
-}
-
-fn preview_rows(rows: &[ChangeLine]) -> (Vec<ChangeLine>, usize) {
-    (
-        rows.iter().take(INLINE_PREVIEW_LINES).cloned().collect(),
-        rows.len().saturating_sub(INLINE_PREVIEW_LINES),
-    )
-}
-
-fn render_preview_line(row: &ChangeLine, key: usize, index: usize) -> AnyElement {
-    let (marker, background, foreground) = line_colors(row.kind);
-    div()
-        .id(format!("tool-change-preview-{key}-{index}"))
-        .w_full()
-        .min_w_0()
-        .h(px(24.0))
-        .flex()
-        .items_center()
-        .overflow_hidden()
-        .bg(background)
-        .font_family(READING_FONT_FAMILY)
-        .text_size(THEME.type_scale.body_small)
-        .child(
-            div()
-                .w(px(52.0))
-                .flex_none()
-                .flex()
-                .justify_end()
-                .gap(THEME.space.xs)
-                .pr(THEME.space.xs)
-                .border_r(THEME.border)
-                .border_color(THEME.colors.border)
-                .text_color(THEME.colors.subtle)
-                .child(
-                    row.number
-                        .map_or_else(String::new, |number| number.to_string()),
-                )
-                .child(div().w(px(8.0)).text_center().child(marker)),
-        )
-        .child(
-            div()
-                .min_w_0()
-                .flex_1()
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .px(THEME.space.xs)
-                .text_color(foreground)
-                .child(row.content.clone()),
-        )
-        .into_any_element()
-}
-
-fn render_edit_modal(rows: &[ChangeLine], key: usize) -> AnyElement {
+fn render_edit_diff(rows: &[ChangeLine], language: &str, key: usize) -> AnyElement {
     let paired = pair_edit_rows(rows);
-    let truncated = paired.len() > MAX_MODAL_LINES;
+    let truncated = paired.len() > MAX_DIFF_LINES;
     div()
         .w_full()
         .min_w_0()
-        .child(
-            div()
-                .w_full()
-                .flex()
-                .border_b(THEME.border)
-                .border_color(THEME.colors.border)
-                .font_family(READING_FONT_FAMILY)
-                .text_size(THEME.type_scale.caption)
-                .text_color(THEME.colors.muted)
-                .child(
-                    div()
-                        .w_1_2()
-                        .px(THEME.space.sm)
-                        .py(THEME.space.xs)
-                        .child("OLD / DELETED"),
-                )
-                .child(
-                    div()
-                        .w_1_2()
-                        .px(THEME.space.sm)
-                        .py(THEME.space.xs)
-                        .border_l(THEME.border)
-                        .border_color(THEME.colors.border)
-                        .child("NEW / ADDED"),
-                ),
-        )
         .children(
             paired
                 .iter()
-                .take(MAX_MODAL_LINES)
+                .take(MAX_DIFF_LINES)
                 .enumerate()
-                .map(|(index, row)| render_paired_line(row, key, index)),
+                .map(|(index, row)| render_paired_line(row, language, key, index)),
         )
         .when(truncated, |body| {
-            body.child(modal_limit_hint(paired.len() - MAX_MODAL_LINES))
+            body.child(modal_limit_hint(paired.len() - MAX_DIFF_LINES))
         })
         .into_any_element()
 }
 
-fn render_write_modal(rows: &[ChangeLine], key: usize) -> AnyElement {
-    let truncated = rows.len() > MAX_MODAL_LINES;
+fn render_write_diff(rows: &[ChangeLine], language: &str, key: usize) -> AnyElement {
+    let truncated = rows.len() > MAX_DIFF_LINES;
     div()
         .w_full()
         .min_w_0()
         .children(
             rows.iter()
-                .take(MAX_MODAL_LINES)
+                .take(MAX_DIFF_LINES)
                 .enumerate()
                 .map(|(index, row)| {
                     let side = SideLine {
@@ -379,11 +131,11 @@ fn render_write_modal(rows: &[ChangeLine], key: usize) -> AnyElement {
                         number: row.number,
                         content: row.content.clone(),
                     };
-                    render_modal_side(Some(&side), key, index, "write")
+                    render_diff_side(Some(&side), language, key, index, "write")
                 }),
         )
         .when(truncated, |body| {
-            body.child(modal_limit_hint(rows.len() - MAX_MODAL_LINES))
+            body.child(modal_limit_hint(rows.len() - MAX_DIFF_LINES))
         })
         .into_any_element()
 }
@@ -399,16 +151,15 @@ fn modal_limit_hint(remaining: usize) -> impl IntoElement {
         .child(format!("{remaining} additional lines omitted"))
 }
 
-fn render_paired_line(row: &PairedLine, key: usize, index: usize) -> AnyElement {
+fn render_paired_line(row: &PairedLine, language: &str, key: usize, index: usize) -> AnyElement {
     div()
         .w_full()
         .min_w_0()
         .flex()
         .items_stretch()
-        .border_b(THEME.border)
-        .border_color(THEME.colors.border)
-        .child(div().w_1_2().min_w_0().child(render_modal_side(
+        .child(div().w_1_2().min_w_0().child(render_diff_side(
             row.old.as_ref(),
+            language,
             key,
             index,
             "old",
@@ -419,13 +170,20 @@ fn render_paired_line(row: &PairedLine, key: usize, index: usize) -> AnyElement 
                 .min_w_0()
                 .border_l(THEME.border)
                 .border_color(THEME.colors.border)
-                .child(render_modal_side(row.new.as_ref(), key, index, "new")),
+                .child(render_diff_side(
+                    row.new.as_ref(),
+                    language,
+                    key,
+                    index,
+                    "new",
+                )),
         )
         .into_any_element()
 }
 
-fn render_modal_side(
+fn render_diff_side(
     line: Option<&SideLine>,
+    language: &str,
     key: usize,
     index: usize,
     side: &'static str,
@@ -438,6 +196,13 @@ fn render_modal_side(
             .into_any_element();
     };
     let (marker, background, foreground) = line_colors(line.kind);
+    let line_number = line.number.map_or_else(String::new, |number| {
+        if marker.is_empty() || marker == " " {
+            number.to_string()
+        } else {
+            format!("{marker}{number}")
+        }
+    });
     div()
         .w_full()
         .min_w_0()
@@ -451,17 +216,15 @@ fn render_modal_side(
             div()
                 .w(px(48.0))
                 .flex_none()
-                .flex()
-                .justify_end()
-                .gap(THEME.space.xs)
                 .px(THEME.space.xs)
                 .py(THEME.space.xs)
-                .text_color(THEME.colors.subtle)
-                .child(
-                    line.number
-                        .map_or_else(String::new, |number| number.to_string()),
-                )
-                .child(div().w(px(8.0)).text_center().child(marker)),
+                .text_align(gpui::TextAlign::Right)
+                .text_color(if line.kind == ChangeKind::Context {
+                    THEME.colors.subtle
+                } else {
+                    foreground
+                })
+                .child(line_number),
         )
         .child(
             div()
@@ -472,9 +235,9 @@ fn render_modal_side(
                 .py(px(2.0))
                 .text_color(foreground)
                 .child(code_line(
-                    format!("change-modal-{key}-{index}-{side}"),
-                    &soft_wrap_source(&line.content),
-                    "text",
+                    format!("change-diff-{key}-{index}-{side}"),
+                    &soft_wrap_source(&replace_tabs(&line.content)),
+                    language,
                     true,
                 )),
         )
@@ -630,6 +393,28 @@ fn soft_wrap_source(content: &str) -> String {
     wrapped
 }
 
+fn replace_tabs(content: &str) -> String {
+    content.replace('\t', "   ")
+}
+
+fn language_for_path(path: &str) -> String {
+    let path = Path::new(path);
+    match path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("")
+    {
+        "Dockerfile" => "dockerfile".into(),
+        "Makefile" | "GNUmakefile" => "make".into(),
+        _ => path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .filter(|extension| !extension.is_empty())
+            .unwrap_or("text")
+            .to_ascii_lowercase(),
+    }
+}
+
 fn fenced_line(content: &str, language: &str) -> String {
     let fence_len = content
         .split(|character| character != '`')
@@ -695,18 +480,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn inline_preview_is_fixed_at_four_rows_with_a_remaining_count() {
-        let rows = parse_display_diff(
-            "- one\n+ two\n three\n four\n+ five\n+ six",
-            EditDiffFormat::Unnumbered,
-        );
-        let (preview, remaining) = preview_rows(&rows);
-
-        assert_eq!(preview.len(), 4);
-        assert_eq!(remaining, 2);
-    }
-
-    #[test]
     fn edit_rows_pair_deletions_and_additions_with_independent_numbers() {
         let rows = parse_display_diff(
             " 10 context\n- 11 old one\n- 12 old two\n+ 11 new one\n 13 tail",
@@ -746,7 +519,20 @@ mod tests {
     }
 
     #[test]
-    fn modal_source_inserts_soft_wrap_opportunities_without_changing_source() {
+    fn diff_source_matches_terminal_tab_width() {
+        assert_eq!(replace_tabs("before\tafter"), "before   after");
+    }
+
+    #[test]
+    fn file_paths_select_the_syntax_language() {
+        assert_eq!(language_for_path("src/main.ts"), "ts");
+        assert_eq!(language_for_path("Dockerfile"), "dockerfile");
+        assert_eq!(language_for_path("Makefile"), "make");
+        assert_eq!(language_for_path("LICENSE"), "text");
+    }
+
+    #[test]
+    fn diff_source_inserts_soft_wrap_opportunities_without_changing_source() {
         let source = format!(
             "{} short words {}",
             "x".repeat(SOFT_WRAP_COLUMNS * 2 + 1),
@@ -800,37 +586,6 @@ mod tests {
                 content: "123 source".into(),
             }
         );
-    }
-
-    #[test]
-    fn open_modal_resolves_authoritative_tool_presentation_by_call_id() {
-        let preview = ToolPresentation::Edit {
-            path: "src/lib.rs".into(),
-            diff: Some("- old\n+ new".into()),
-            format: EditDiffFormat::Unnumbered,
-        };
-        let authoritative = ToolPresentation::Edit {
-            path: "src/lib.rs".into(),
-            diff: Some("- 9 old\n+ 9 new".into()),
-            format: EditDiffFormat::Numbered,
-        };
-        let modal = ChangeModal {
-            presentation: preview,
-            tool_call_id: Some("edit-1".into()),
-            key: 1,
-        };
-        let items = vec![Arc::new(TranscriptItem {
-            kind: crate::conversation::TranscriptKind::Tool,
-            label: "Edit".into(),
-            text: String::new(),
-            streaming: false,
-            is_error: false,
-            tool_call_id: Some("edit-1".into()),
-            tool_output: String::new(),
-            tool_presentation: Some(authoritative.clone()),
-        })];
-
-        assert_eq!(modal_presentation(&modal, &items), &authoritative);
     }
 
     #[test]

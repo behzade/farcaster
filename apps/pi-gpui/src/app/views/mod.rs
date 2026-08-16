@@ -41,28 +41,23 @@ impl Render for PiApp {
             if self.dialog_return_focus.is_none() {
                 self.dialog_return_focus = window.focused(cx);
             }
-            if self.change_modal.is_some() {
-                let focus = self.dialog_focus.clone();
-                cx.defer_in(window, move |_, window, cx| focus.focus(window, cx));
+            let (prefill, uses_input) = match self.extension.dialog.as_ref() {
+                Some(ExtensionUiRequest::Editor { prefill, .. }) => {
+                    (prefill.clone().unwrap_or_default(), true)
+                }
+                Some(ExtensionUiRequest::Input { .. }) => (String::new(), true),
+                _ => (String::new(), false),
+            };
+            let input = self.dialog_input.clone();
+            let focus = if uses_input {
+                input.read(cx).focus_handle(cx)
             } else {
-                let (prefill, uses_input) = match self.extension.dialog.as_ref() {
-                    Some(ExtensionUiRequest::Editor { prefill, .. }) => {
-                        (prefill.clone().unwrap_or_default(), true)
-                    }
-                    Some(ExtensionUiRequest::Input { .. }) => (String::new(), true),
-                    _ => (String::new(), false),
-                };
-                let input = self.dialog_input.clone();
-                let focus = if uses_input {
-                    input.read(cx).focus_handle(cx)
-                } else {
-                    self.dialog_focus.clone()
-                };
-                cx.defer_in(window, move |_, window, cx| {
-                    input.update(cx, |state, cx| state.set_value(prefill, window, cx));
-                    focus.focus(window, cx);
-                });
-            }
+                self.dialog_focus.clone()
+            };
+            cx.defer_in(window, move |_, window, cx| {
+                input.update(cx, |state, cx| state.set_value(prefill, window, cx));
+                focus.focus(window, cx);
+            });
         }
         if let Some((generation, title)) = self.pending_title.take() {
             cx.defer_in(window, move |this, window, _| {
@@ -104,7 +99,7 @@ impl Render for PiApp {
                 self.transcript_disclosure_overrides.clone(),
                 entity.clone(),
             )))
-            .child(self.render_composer(entity.clone()));
+            .child(self.render_composer(entity.clone(), cx));
         div()
             .relative()
             .size_full()
@@ -176,19 +171,6 @@ impl Render for PiApp {
                             .focus_trap("run-sheet-trap", &self.sheet_focus),
                     ),
                 )
-            })
-            .when_some(self.change_modal.clone(), |root, modal| {
-                let presentation = crate::tool_changes::modal_presentation(
-                    &modal,
-                    &self.snapshot.conversation.items,
-                )
-                .clone();
-                root.child(crate::tool_changes::render_modal(
-                    &modal,
-                    &presentation,
-                    &self.dialog_focus,
-                    entity.clone(),
-                ))
             })
             .when(!self.extension.notifications.is_empty(), |root| {
                 root.child(

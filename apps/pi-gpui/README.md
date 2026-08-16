@@ -16,16 +16,20 @@ make run PROJECT=/path/to/project
 ```
 
 The project defaults to the repository directory. `pi` must be available on
-`PATH`. The root `nix develop .#pi-gpui` shell supplies the native GPUI build
-dependencies without rebuilding the Home Manager configuration.
+`PATH`. The root `.envrc` supplies the native GPUI build environment. Commands
+below assume that environment is already active; do not nest `nix develop`.
 
 ## Check
 
 ```sh
-CARGO_TARGET_DIR="$PWD/target" nix develop .#pi-gpui -c cargo fmt --manifest-path apps/pi-gpui/Cargo.toml --check
-CARGO_TARGET_DIR="$PWD/target" nix develop .#pi-gpui -c cargo test --manifest-path apps/pi-gpui/Cargo.toml
-CARGO_TARGET_DIR="$PWD/target" nix develop .#pi-gpui -c cargo check --manifest-path apps/pi-gpui/Cargo.toml
-CARGO_TARGET_DIR="$PWD/target" nix develop .#pi-gpui -c cargo clippy --manifest-path apps/pi-gpui/Cargo.toml --all-targets -- -D warnings
+make check-gpui
+```
+
+For a focused check, invoke Cargo directly and keep build output in the shared
+repository target:
+
+```sh
+CARGO_TARGET_DIR="$PWD/target" cargo test --manifest-path apps/pi-gpui/Cargo.toml
 ```
 
 See `NOTICE.md` for adapted-code attribution.

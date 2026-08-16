@@ -15,4 +15,6 @@ test("static prompt sources stay compact and opt into active tool guidance once"
   assert.ok(systemPrompt.length <= 1_200, `SYSTEM.md is ${systemPrompt.length} chars; limit is 1200`);
   assert.ok(appendSystemPrompt.length <= 3_200, `APPEND_SYSTEM.md is ${appendSystemPrompt.length} chars; limit is 3200`);
   assert.equal(systemPrompt.split(marker).length - 1, 1, "SYSTEM.md must contain exactly one active-guidance marker");
+  assert.match(systemPrompt, /Do not run nested `nix develop` commands/);
+  assert.match(systemPrompt, /report the environment defect/);
 });

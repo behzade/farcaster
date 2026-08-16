@@ -40,6 +40,22 @@ pub(crate) struct Model {
     pub reasoning: bool,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+pub(crate) struct SlashCommand {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub source: SlashCommandSource,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum SlashCommandSource {
+    Extension,
+    Prompt,
+    Skill,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PromptMode {
     Normal,
@@ -419,6 +435,25 @@ mod tests {
             json!({"type":"extension_ui_response","id":"3","cancelled":true})
         );
         Ok(())
+    }
+
+    #[test]
+    fn slash_commands_decode_without_depending_on_source_metadata_shape() {
+        let command = serde_json::from_value::<SlashCommand>(json!({
+            "name": "reload",
+            "description": "Reload extensions",
+            "source": "extension",
+            "sourceInfo": {"scope": "project"}
+        }))
+        .expect("slash command should decode");
+        assert_eq!(
+            command,
+            SlashCommand {
+                name: "reload".into(),
+                description: Some("Reload extensions".into()),
+                source: SlashCommandSource::Extension,
+            }
+        );
     }
 
     #[test]

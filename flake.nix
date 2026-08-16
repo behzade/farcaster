@@ -129,6 +129,9 @@
               cargo
               clippy
               git
+              nix
+              nixfmt-tree
+              nodejs
               pkg-config
               rust-analyzer
               rustc
@@ -136,6 +139,7 @@
               rustPlatform.bindgenHook
             ];
             shellHook = ''
+              export CARGO_TARGET_DIR="$PWD/target"
               ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
                 export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath nativeRuntimeLibraries}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
                 export NIX_LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath nativeRuntimeLibraries}''${NIX_LD_LIBRARY_PATH:+:$NIX_LD_LIBRARY_PATH}"

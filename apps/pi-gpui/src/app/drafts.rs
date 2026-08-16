@@ -366,6 +366,7 @@ mod tests {
                 1,
                 UsageSummary::default(),
                 false,
+                false,
                 "session a hello".into(),
             )])?;
         }

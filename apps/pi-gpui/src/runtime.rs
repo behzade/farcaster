@@ -7,20 +7,24 @@ use std::{
     path::PathBuf,
     sync::{Arc, mpsc},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use serde_json::{Value, json};
 
 use crate::{
     conversation::{ConversationState, TranscriptItem, TranscriptKind},
-    protocol::{ExtensionUiResponse, Model, PromptImage, PromptMode, SessionState, command},
+    protocol::{
+        ExtensionUiResponse, Model, PromptImage, PromptMode, SessionState, SlashCommand, command,
+    },
     rpc_process::{ProcessCommand, ProcessItem, RpcProcess},
-    sessions::{SessionSummary, discover, load_history},
+    sessions::{SessionDiscovery, SessionSummary, discover, load_history},
     state::StateStore,
 };
 
 const MAX_IDLE_PI_ACTORS: usize = 4;
+const ACTIVE_ROOT_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
+const ACTIVE_DESCENDANT_REFRESH_INTERVAL: Duration = Duration::from_secs(3);
 
 #[derive(Clone, Debug)]
 pub(crate) enum RuntimeCommand {
@@ -29,6 +33,7 @@ pub(crate) enum RuntimeCommand {
         mode: PromptMode,
         message: String,
         images: Vec<PromptImage>,
+        allow_while_running: bool,
     },
     Abort,
     NewSession {
@@ -75,11 +80,13 @@ pub(crate) enum RuntimeEvent {
     Sessions {
         generation: u64,
         sessions: Vec<SessionSummary>,
+        has_running_descendants: bool,
     },
     SessionsFailed {
         generation: u64,
         message: String,
     },
+    RefreshCatalog,
     ExtensionUi {
         generation: u64,
         request: crate::protocol::ExtensionUiRequest,
@@ -111,7 +118,7 @@ pub(crate) struct RuntimeSnapshot {
     pub models: Vec<Model>,
     pub thinking_levels: Vec<String>,
     pub stats: Value,
-    pub commands: Vec<Value>,
+    pub commands: Vec<SlashCommand>,
     pub stderr: String,
     pub auto_retry: bool,
     pub history_preview: bool,
@@ -204,6 +211,8 @@ fn run_supervisor(
     let mut needs_input = HashSet::<String>::new();
     let mut clock = 0_u64;
     let mut last_touch = HashMap::from([(initial_key.clone(), clock)]);
+    let mut catalog_has_running_descendants = false;
+    let mut last_catalog_refresh = Instant::now();
     if let Ok(state) = StateStore::open()
         && let Ok(prompts) = state.queued_prompts()
     {
@@ -311,15 +320,29 @@ fn run_supervisor(
                             session,
                         });
                     }
+                    RuntimeEvent::RefreshCatalog => {
+                        if let Some(catalog) = actors.get(&catalog_key) {
+                            catalog.send(RuntimeCommand::RefreshSessions);
+                            last_catalog_refresh = Instant::now();
+                        }
+                    }
                     event @ (RuntimeEvent::Sessions { .. }
                     | RuntimeEvent::SessionsFailed { .. }) => {
                         match route_session_discovery(&key, &catalog_key, event) {
                             SupervisorSessionAction::Publish(event) => {
+                                if let RuntimeEvent::Sessions {
+                                    has_running_descendants,
+                                    ..
+                                } = &event
+                                {
+                                    catalog_has_running_descendants = *has_running_descendants;
+                                }
                                 let _ = event_tx.send(event);
                             }
                             SupervisorSessionAction::RefreshCatalog => {
                                 if let Some(catalog) = actors.get(&catalog_key) {
                                     catalog.send(RuntimeCommand::RefreshSessions);
+                                    last_catalog_refresh = Instant::now();
                                 }
                             }
                         }
@@ -332,6 +355,22 @@ fn run_supervisor(
             }
         }
         evict_idle_actors(&mut actors, &mut latest, &mut last_touch, &selected);
+        let has_running_root = latest
+            .values()
+            .any(|snapshot| snapshot.conversation.running);
+        let refresh_interval = if has_running_root {
+            Some(ACTIVE_ROOT_REFRESH_INTERVAL)
+        } else if catalog_has_running_descendants {
+            Some(ACTIVE_DESCENDANT_REFRESH_INTERVAL)
+        } else {
+            None
+        };
+        if refresh_interval.is_some_and(|interval| last_catalog_refresh.elapsed() >= interval)
+            && let Some(catalog) = actors.get(&catalog_key)
+        {
+            catalog.send(RuntimeCommand::RefreshSessions);
+            last_catalog_refresh = Instant::now();
+        }
         match command_rx.recv_timeout(Duration::from_millis(12)) {
             Ok(RuntimeCommand::Shutdown) => running = false,
             Ok(command) => {
@@ -536,7 +575,10 @@ struct RuntimeOwner {
     process_command: ProcessCommand,
     process: Option<RpcProcess>,
     snapshot: RuntimeSnapshot,
+    owns_session_catalog: bool,
     session_generation: u64,
+    session_discovery_in_flight: bool,
+    session_refresh_pending: bool,
     process_generation: u64,
     pending_prompt_id: Option<String>,
     pending_prompt_target: Option<String>,
@@ -557,7 +599,7 @@ struct RuntimeOwner {
 
 struct DiscoveryResult {
     generation: u64,
-    result: Result<Vec<SessionSummary>, String>,
+    result: Result<SessionDiscovery, String>,
 }
 
 struct HistoryResult {
@@ -590,7 +632,10 @@ fn run(
             auto_retry: true,
             ..RuntimeSnapshot::default()
         },
+        owns_session_catalog: load_catalog,
         session_generation: 0,
+        session_discovery_in_flight: false,
+        session_refresh_pending: false,
         process_generation: 0,
         pending_prompt_id: None,
         pending_prompt_target: None,
@@ -717,7 +762,8 @@ impl RuntimeOwner {
                 mode,
                 message,
                 images,
-            } => self.send_prompt(target, mode, message, images),
+                allow_while_running,
+            } => self.send_prompt(target, mode, message, images, allow_while_running),
             RuntimeCommand::DeliverQueued(prompt) => self.deliver_queued(prompt),
             RuntimeCommand::Abort => self.send(command("abort")),
             RuntimeCommand::NewSession { project, .. } => {
@@ -945,10 +991,12 @@ impl RuntimeOwner {
         if is_prompt_response {
             self.pending_prompt_id = None;
             if response.success {
+                let target = self.pending_prompt_target.clone().unwrap_or_default();
+                let session = self.active_session.clone();
                 if let Some(id) = self.pending_outbox_id.take()
-                    && let Some(state) = &self.state
+                    && let Some(state) = self.state.as_mut()
                 {
-                    let _ = state.complete_prompt(id);
+                    let _ = state.complete_prompt(id, &target, session.as_deref());
                 }
             } else {
                 self.mark_outbox_failed(
@@ -1061,8 +1109,10 @@ impl RuntimeOwner {
                     .data
                     .get("commands")
                     .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|command| serde_json::from_value(command.clone()).ok())
+                    .collect()
             }
             "set_model" => {
                 if let Ok(model) = serde_json::from_value::<Model>(response.data)
@@ -1117,9 +1167,13 @@ impl RuntimeOwner {
         if let Some(state) = &self.state {
             match state.cached_sessions(&self.session_query) {
                 Ok(sessions) => {
+                    let has_running_descendants = state
+                        .cached_sessions("")
+                        .is_ok_and(|sessions| has_running_descendant(&sessions));
                     let _ = self.event_tx.send(RuntimeEvent::Sessions {
                         generation: self.session_generation,
                         sessions,
+                        has_running_descendants,
                     });
                 }
                 Err(error) => {
@@ -1136,10 +1190,19 @@ impl RuntimeOwner {
     }
 
     fn refresh_sessions(&mut self) {
+        if !self.owns_session_catalog {
+            let _ = self.event_tx.send(RuntimeEvent::RefreshCatalog);
+            return;
+        }
+        if self.session_discovery_in_flight {
+            self.session_refresh_pending = true;
+            return;
+        }
         self.session_generation = self.session_generation.saturating_add(1);
+        self.session_discovery_in_flight = true;
         let generation = self.session_generation;
         let sender = self.discovery_tx.clone();
-        thread::Builder::new()
+        if let Err(error) = thread::Builder::new()
             .name("pi-gpui-sessions".into())
             .spawn(move || {
                 let _ = sender.send(DiscoveryResult {
@@ -1147,21 +1210,46 @@ impl RuntimeOwner {
                     result: discover(""),
                 });
             })
-            .ok();
+        {
+            self.session_discovery_in_flight = false;
+            let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
+                generation,
+                message: format!("start session discovery: {error}"),
+            });
+        }
     }
 
     fn apply_discovery(&mut self, result: DiscoveryResult) {
         if result.generation != self.session_generation {
             return;
         }
+        self.session_discovery_in_flight = false;
         let event = match result.result {
-            Ok(sessions) => {
+            Ok(discovery) => {
+                let sessions = discovery.sessions;
+                let mut has_running_descendants = has_running_descendant(&sessions);
                 let sessions = if let Some(state) = self.state.as_mut() {
-                    match state
-                        .replace_sessions(&sessions)
-                        .and_then(|()| state.cached_sessions(&self.session_query))
-                    {
-                        Ok(indexed) => indexed,
+                    let indexed = state
+                        .index_sessions(&sessions, discovery.exhaustive)
+                        .and_then(|()| state.cached_sessions(""));
+                    match indexed {
+                        Ok(all_sessions) => {
+                            has_running_descendants = has_running_descendant(&all_sessions);
+                            if self.session_query.is_empty() {
+                                all_sessions
+                            } else {
+                                match state.cached_sessions(&self.session_query) {
+                                    Ok(filtered) => filtered,
+                                    Err(error) => {
+                                        let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
+                                            generation: result.generation,
+                                            message: error,
+                                        });
+                                        all_sessions
+                                    }
+                                }
+                            }
+                        }
                         Err(error) => {
                             let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
                                 generation: result.generation,
@@ -1184,6 +1272,7 @@ impl RuntimeOwner {
                 RuntimeEvent::Sessions {
                     generation: result.generation,
                     sessions,
+                    has_running_descendants,
                 }
             }
             Err(message) => RuntimeEvent::SessionsFailed {
@@ -1192,6 +1281,9 @@ impl RuntimeOwner {
             },
         };
         let _ = self.event_tx.send(event);
+        if std::mem::take(&mut self.session_refresh_pending) {
+            self.refresh_sessions();
+        }
     }
 
     fn rollback_pending_prompt(&mut self) {
@@ -1277,8 +1369,8 @@ fn reset_snapshot_for_live_session(snapshot: &mut RuntimeSnapshot, status: Strin
     };
 }
 
-const fn can_send_prompt(mode: PromptMode, running: bool) -> bool {
-    !running || !matches!(mode, PromptMode::Normal)
+const fn can_send_prompt(mode: PromptMode, running: bool, allow_while_running: bool) -> bool {
+    allow_while_running || !running || !matches!(mode, PromptMode::Normal)
 }
 
 fn run_status(conversation: &ConversationState) -> &'static str {
@@ -1293,6 +1385,12 @@ fn run_status(conversation: &ConversationState) -> &'static str {
     } else {
         "Idle"
     }
+}
+
+fn has_running_descendant(sessions: &[SessionSummary]) -> bool {
+    sessions
+        .iter()
+        .any(|session| session.parent_session.is_some() && session.is_running)
 }
 
 fn session_badge_status(conversation: &ConversationState) -> &'static str {
@@ -1344,7 +1442,10 @@ mod tests {
                     project,
                     ..RuntimeSnapshot::default()
                 },
+                owns_session_catalog: true,
                 session_generation: 0,
+                session_discovery_in_flight: false,
+                session_refresh_pending: false,
                 process_generation: 1,
                 pending_prompt_id: None,
                 pending_prompt_target: None,
@@ -1464,6 +1565,7 @@ mod tests {
             RuntimeEvent::Sessions {
                 generation: 99,
                 sessions: Vec::new(),
+                has_running_descendants: false,
             },
         );
 
@@ -1478,6 +1580,7 @@ mod tests {
             RuntimeEvent::Sessions {
                 generation: 7,
                 sessions: Vec::new(),
+                has_running_descendants: false,
             },
         );
 
@@ -1502,11 +1605,26 @@ mod tests {
     }
 
     #[test]
-    fn streaming_accepts_only_steer_and_follow_up_composer_modes() {
-        assert!(!can_send_prompt(PromptMode::Normal, true));
-        assert!(can_send_prompt(PromptMode::Steer, true));
-        assert!(can_send_prompt(PromptMode::FollowUp, true));
-        assert!(can_send_prompt(PromptMode::Normal, false));
+    fn non_catalog_actors_request_one_authoritative_refresh_without_scanning() {
+        let (mut owner, events, _discovery) = owner_without_process(std::env::temp_dir());
+        owner.owns_session_catalog = false;
+
+        owner.refresh_sessions();
+
+        assert_eq!(owner.session_generation, 0);
+        assert!(matches!(
+            events.try_recv(),
+            Ok(RuntimeEvent::RefreshCatalog)
+        ));
+    }
+
+    #[test]
+    fn streaming_accepts_queued_messages_and_exact_extension_commands() {
+        assert!(!can_send_prompt(PromptMode::Normal, true, false));
+        assert!(can_send_prompt(PromptMode::Steer, true, false));
+        assert!(can_send_prompt(PromptMode::FollowUp, true, false));
+        assert!(can_send_prompt(PromptMode::Normal, false, false));
+        assert!(can_send_prompt(PromptMode::Normal, true, true));
     }
 
     #[test]
@@ -1536,6 +1654,7 @@ mod tests {
             PromptMode::Normal,
             "hello".into(),
             Vec::new(),
+            false,
         );
 
         assert!(owner.deferred_prompt.is_some());
@@ -1638,6 +1757,7 @@ mod tests {
                 0,
                 crate::sessions::UsageSummary::default(),
                 false,
+                false,
                 search.into(),
             )
         };
@@ -1666,7 +1786,10 @@ mod tests {
         assert_eq!(owner.session_query, "alpha");
         owner.apply_discovery(DiscoveryResult {
             generation: refresh_generation,
-            result: Ok(sessions),
+            result: Ok(SessionDiscovery {
+                sessions,
+                exhaustive: true,
+            }),
         });
         let refreshed = events.try_iter().collect::<Vec<_>>();
         assert!(refreshed.iter().any(|event| matches!(
@@ -1683,6 +1806,61 @@ mod tests {
             RuntimeEvent::Sessions { sessions, .. } if sessions.len() == 2
         )));
         assert!(owner.session_query.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn partial_catalog_refresh_keeps_omitted_running_children_in_polling_state()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempdir()?;
+        let project = temp.path().join("project");
+        fs::create_dir(&project)?;
+        let root_path = temp.path().join("root.jsonl");
+        let child_path = temp.path().join("child.jsonl");
+        fs::write(&root_path, "{}")?;
+        fs::write(&child_path, "{}")?;
+        let summary = |id: &str, path: PathBuf, parent: Option<&str>, is_running: bool| {
+            SessionSummary::from_cached(
+                id.into(),
+                path,
+                project.clone(),
+                id.into(),
+                String::new(),
+                String::new(),
+                parent.map(str::to_owned),
+                SystemTime::now(),
+                0,
+                crate::sessions::UsageSummary::default(),
+                false,
+                is_running,
+                id.into(),
+            )
+        };
+        let root = summary("root", root_path.canonicalize()?, None, false);
+        let child = summary("child", child_path.canonicalize()?, Some("root"), true);
+        let (mut owner, events, _discovery) = owner_without_process(project);
+        owner.state = Some(StateStore::open_at(&temp.path().join("gui-state.sqlite3"))?);
+        owner
+            .state
+            .as_mut()
+            .expect("state")
+            .replace_sessions(&[root.clone(), child])?;
+
+        owner.apply_discovery(DiscoveryResult {
+            generation: 0,
+            result: Ok(SessionDiscovery {
+                sessions: vec![root],
+                exhaustive: false,
+            }),
+        });
+
+        assert!(events.try_iter().any(|event| matches!(
+            event,
+            RuntimeEvent::Sessions {
+                has_running_descendants: true,
+                ..
+            }
+        )));
         Ok(())
     }
 
@@ -1805,7 +1983,11 @@ mod tests {
             }],
             thinking_levels: vec!["high".into()],
             stats: json!({"tokens": 10}),
-            commands: vec![json!({"name": "old"})],
+            commands: vec![SlashCommand {
+                name: "old".into(),
+                description: None,
+                source: crate::protocol::SlashCommandSource::Extension,
+            }],
             stderr: "old stderr".into(),
             auto_retry: false,
             ..RuntimeSnapshot::default()
@@ -1865,12 +2047,19 @@ mod tests {
                 }],
                 thinking_levels: vec!["high".into()],
                 stats: json!({"old": true}),
-                commands: vec![json!({"name": "old"})],
+                commands: vec![SlashCommand {
+                    name: "old".into(),
+                    description: None,
+                    source: crate::protocol::SlashCommandSource::Extension,
+                }],
                 stderr: "old stderr".into(),
                 auto_retry: true,
                 ..RuntimeSnapshot::default()
             },
+            owns_session_catalog: false,
             session_generation: 0,
+            session_discovery_in_flight: false,
+            session_refresh_pending: false,
             process_generation: 4,
             pending_prompt_id: None,
             pending_prompt_target: None,
@@ -1963,7 +2152,10 @@ mod tests {
                 selected_session: Some(old_path.clone()),
                 ..RuntimeSnapshot::default()
             },
+            owns_session_catalog: false,
             session_generation: 0,
+            session_discovery_in_flight: false,
+            session_refresh_pending: false,
             process_generation: 3,
             pending_prompt_id: None,
             pending_prompt_target: None,
@@ -2016,6 +2208,7 @@ mod tests {
             PromptMode::Normal,
             "continue".into(),
             Vec::new(),
+            false,
         );
         assert!(owner.snapshot.history_preview);
         assert_eq!(owner.snapshot.conversation.items[0].text, "previewed");
@@ -2109,7 +2302,10 @@ mod tests {
                 selected_session: Some(active_path.clone()),
                 ..RuntimeSnapshot::default()
             },
+            owns_session_catalog: false,
             session_generation: 0,
+            session_discovery_in_flight: false,
+            session_refresh_pending: false,
             process_generation: 7,
             pending_prompt_id: Some("pending-prompt".into()),
             pending_prompt_target: Some(format!("session:{}", active_path.display())),

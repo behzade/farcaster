@@ -66,11 +66,12 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
             1,
             UsageSummary::default(),
             false,
+            true,
             "literal_100% hello".into(),
         )])?;
         store.set_settled(&catalog_session_path.canonicalize()?, true)?;
     }
-    let store = StateStore::open_at(&database)?;
+    let mut store = StateStore::open_at(&database)?;
     assert_eq!(
         store.load_registry()?.drafts,
         vec![DraftSession {
@@ -99,7 +100,13 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
     );
     assert_eq!(store.cached_sessions("literal_100%")?.len(), 1);
     assert!(store.cached_sessions("")?[0].settled);
+    assert!(store.cached_sessions("")?[0].is_running);
     store.begin_prompt(queued[0].id)?;
+    store.complete_prompt(
+        queued[0].id,
+        "draft:draft-one",
+        Some(&session_path.canonicalize()?),
+    )?;
     assert!(store.queued_prompts()?.is_empty());
     store.delete_composer_session("draft:draft-one")?;
     assert!(store.load_composer_sessions()?.is_empty());
@@ -107,7 +114,80 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
 }
 
 #[test]
-fn schema_v1_migrates_to_v3_with_defaults_and_outbox_preserved()
+fn prompt_completion_persists_draft_session_association_atomically()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let project = temp.path().join("project");
+    fs::create_dir(&project)?;
+    let session = temp.path().join("session.jsonl");
+    fs::write(&session, "{}")?;
+    let mut store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;
+    store.save_registry(&Registry {
+        projects: vec![project.clone()],
+        drafts: vec![DraftSession {
+            id: "pending".into(),
+            project: project.clone(),
+            created_ms: 1,
+            submitted: false,
+            session_path: None,
+        }],
+    })?;
+    let outbox = store.enqueue_prompt(
+        "draft:pending",
+        &project,
+        None,
+        PromptMode::Normal,
+        "hello",
+        &[],
+    )?;
+    store.begin_prompt(outbox)?;
+    store.complete_prompt(outbox, "draft:pending", Some(&session))?;
+
+    assert!(store.queued_prompts()?.is_empty());
+    let draft = &store.load_registry()?.drafts[0];
+    assert!(draft.submitted);
+    assert_eq!(draft.session_path, Some(session.canonicalize()?));
+    Ok(())
+}
+
+#[test]
+fn partial_session_index_updates_do_not_delete_omitted_rows()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let project = temp.path().join("project");
+    fs::create_dir(&project)?;
+    let paths = [temp.path().join("one.jsonl"), temp.path().join("two.jsonl")];
+    for path in &paths {
+        fs::write(path, "{}")?;
+    }
+    let summary = |id: &str, path: &std::path::Path| {
+        SessionSummary::from_cached(
+            id.into(),
+            path.canonicalize().expect("session path"),
+            project.canonicalize().expect("project path"),
+            id.into(),
+            String::new(),
+            String::new(),
+            None,
+            SystemTime::now(),
+            0,
+            UsageSummary::default(),
+            false,
+            false,
+            id.into(),
+        )
+    };
+    let sessions = [summary("one", &paths[0]), summary("two", &paths[1])];
+    let mut store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;
+    store.replace_sessions(&sessions)?;
+    store.index_sessions(&sessions[..1], false)?;
+
+    assert_eq!(store.cached_sessions("")?.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn schema_v1_migrates_to_v4_with_defaults_and_outbox_preserved()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
@@ -132,12 +212,12 @@ fn schema_v1_migrates_to_v3_with_defaults_and_outbox_preserved()
     assert!(queued[0].images.is_empty());
     drop(store);
 
-    assert_eq!(database_schema_version(&database)?, 3);
+    assert_eq!(database_schema_version(&database)?, 4);
     Ok(())
 }
 
 #[test]
-fn schema_v2_migrates_to_v3_with_defaults_and_outbox_preserved()
+fn schema_v2_migrates_to_v4_with_defaults_and_outbox_preserved()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
@@ -165,7 +245,26 @@ fn schema_v2_migrates_to_v3_with_defaults_and_outbox_preserved()
     );
     drop(store);
 
-    assert_eq!(database_schema_version(&database)?, 3);
+    assert_eq!(database_schema_version(&database)?, 4);
+    Ok(())
+}
+
+#[test]
+fn schema_v3_migrates_to_v4_with_running_default() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let project = temp.path().join("project");
+    fs::create_dir(&project)?;
+    let database = temp.path().join("gui.sqlite3");
+    seed_legacy_database(&database, 2, &project)?;
+    Connection::open(&database)?.execute_batch(
+        "ALTER TABLE drafts ADD COLUMN submitted INTEGER NOT NULL DEFAULT 0;
+         ALTER TABLE drafts ADD COLUMN session_path TEXT;
+         UPDATE meta SET value='3' WHERE key='schema_version';",
+    )?;
+
+    let store = StateStore::open_at(&database)?;
+    assert_eq!(database_schema_version(&database)?, 4);
+    assert!(store.cached_sessions("")?.is_empty());
     Ok(())
 }
 
@@ -207,6 +306,26 @@ fn seed_legacy_database(
            id TEXT PRIMARY KEY,
            project TEXT NOT NULL,
            created_ms INTEGER NOT NULL
+         );
+         CREATE TABLE sessions (
+           path TEXT PRIMARY KEY,
+           id TEXT NOT NULL,
+           project TEXT NOT NULL,
+           title TEXT NOT NULL,
+           first_user_message TEXT NOT NULL,
+           timestamp TEXT NOT NULL,
+           parent_session TEXT,
+           modified_ms INTEGER NOT NULL,
+           file_size INTEGER NOT NULL,
+           message_count INTEGER NOT NULL,
+           input_tokens INTEGER NOT NULL,
+           output_tokens INTEGER NOT NULL,
+           cache_read_tokens INTEGER NOT NULL,
+           cache_write_tokens INTEGER NOT NULL,
+           total_tokens INTEGER NOT NULL,
+           cost_micros INTEGER NOT NULL,
+           search_text TEXT NOT NULL,
+           settled_ms INTEGER
          );",
     )?;
     connection.execute(

@@ -22,13 +22,14 @@ impl RuntimeOwner {
         mode: PromptMode,
         message: String,
         images: Vec<PromptImage>,
+        allow_while_running: bool,
     ) {
         if self.pending_prompt_id.is_some() || self.pending_prompt_target.is_some() {
             self.reject_prompt(&target, "Another message is still being sent".into());
             return;
         }
         let was_running = self.active_snapshot().conversation.running;
-        if !can_send_prompt(mode, was_running) {
+        if !can_send_prompt(mode, was_running, allow_while_running) {
             self.reject_prompt(&target, "Pi is already working on this session".into());
             return;
         }

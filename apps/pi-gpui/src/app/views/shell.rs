@@ -147,7 +147,7 @@ impl PiApp {
         let live_root =
             root_session_for_path(&self.sessions, self.snapshot.live_session.as_deref())
                 .map(|session| session.id.clone());
-        let rows = session_rail_items(&self.sessions);
+        let rows = session_rail_items(&self.sessions, !drafts.is_empty());
         let draft_count = drafts.len();
         let row_count = rows.len() + draft_count;
         let row_entity = entity.clone();
@@ -319,11 +319,20 @@ impl PiApp {
         }
         let mut agent_rows = Vec::new();
         if let Some(root) = root {
+            let root_status = if self.snapshot.live_session.as_deref() == Some(root.path.as_path())
+            {
+                normalized_agent_status(&self.snapshot.live_status)
+            } else if root.is_running {
+                "Active"
+            } else {
+                "Done"
+            };
             agent_rows.push((
                 root.clone(),
                 0,
                 "Main".into(),
                 self.snapshot.selected_session.as_deref() == Some(root.path.as_path()),
+                root_status.to_owned(),
             ));
             agent_rows.extend(descendants.into_iter().map(|(session, depth)| {
                 (
@@ -331,6 +340,7 @@ impl PiApp {
                     depth,
                     compact_subagent_label(&session.title),
                     self.snapshot.selected_session.as_deref() == Some(session.path.as_path()),
+                    if session.is_running { "Active" } else { "Done" }.into(),
                 )
             }));
         }
@@ -341,12 +351,13 @@ impl PiApp {
         let agent_list = uniform_list("agent-session-list", agent_count, move |range, _, _| {
             range
                 .filter_map(|index| agent_rows.get(index))
-                .map(|(session, depth, label, selected)| {
+                .map(|(session, depth, label, selected, status)| {
                     agent_session_row(
                         session,
                         *depth,
                         label.clone(),
                         *selected,
+                        status.clone(),
                         agent_entity.clone(),
                     )
                 })
@@ -413,10 +424,11 @@ enum SessionRailKind {
 struct SessionRailItem {
     session: SessionSummary,
     kind: SessionRailKind,
+    starts_section: bool,
     starts_settled: bool,
 }
 
-fn session_rail_items(sessions: &[SessionSummary]) -> Vec<SessionRailItem> {
+fn session_rail_items(sessions: &[SessionSummary], has_drafts: bool) -> Vec<SessionRailItem> {
     let mut current = Vec::new();
     let mut settled = Vec::new();
     for session in root_sessions(sessions) {
@@ -424,17 +436,23 @@ fn session_rail_items(sessions: &[SessionSummary]) -> Vec<SessionRailItem> {
             current.push(SessionRailItem {
                 session: session.clone(),
                 kind: SessionRailKind::Project,
+                starts_section: false,
                 starts_settled: false,
             });
         } else {
             settled.push(SessionRailItem {
                 session: session.clone(),
                 kind: SessionRailKind::Settled,
+                starts_section: false,
                 starts_settled: false,
             });
         }
     }
+    if let Some(first) = current.first_mut() {
+        first.starts_section = has_drafts;
+    }
     if let Some(first) = settled.first_mut() {
+        first.starts_section = has_drafts || !current.is_empty();
         first.starts_settled = true;
     }
     current.extend(settled);
@@ -614,6 +632,13 @@ fn session_row(
     } else {
         AppIcon::Folder
     };
+    let status_color = match status.as_deref() {
+        Some("Done") => THEME.colors.success,
+        Some(_) => THEME.colors.accent,
+        None => THEME.colors.subtle,
+    };
+    let status_text = status.unwrap_or(age);
+    let settle_label = if is_settled { "Restore" } else { "Settle" };
     let row = div()
         .id(format!("session-{}", session.id))
         .role(Role::Button)
@@ -628,6 +653,9 @@ fn session_row(
         .gap(THEME.space.xs)
         .px(THEME.space.sm)
         .rounded(THEME.radius)
+        .when(item.starts_section, |row| {
+            row.border_t(THEME.border).border_color(THEME.colors.border)
+        })
         .bg(if selected {
             THEME.colors.surface
         } else {
@@ -654,97 +682,123 @@ fn session_row(
                 .w_full()
                 .flex()
                 .items_center()
-                .gap(THEME.space.xs)
-                .text_color(if is_settled {
-                    THEME.colors.subtle
-                } else {
-                    THEME.colors.muted
-                })
-                .child(Icon::new(icon).with_size(Size::Small))
+                .gap(THEME.space.sm)
                 .child(
                     div()
                         .min_w_0()
                         .flex_1()
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .text_size(THEME.type_scale.caption)
-                        .font_weight(if item.starts_settled {
-                            FontWeight::SEMIBOLD
-                        } else {
-                            FontWeight::NORMAL
-                        })
-                        .child(metadata),
+                        .flex()
+                        .flex_col()
+                        .gap(THEME.space.xs)
+                        .child(
+                            div()
+                                .w_full()
+                                .flex()
+                                .items_center()
+                                .gap(THEME.space.xs)
+                                .text_color(if is_settled {
+                                    THEME.colors.subtle
+                                } else {
+                                    THEME.colors.muted
+                                })
+                                .child(Icon::new(icon).with_size(Size::Small))
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .flex_1()
+                                        .overflow_hidden()
+                                        .whitespace_nowrap()
+                                        .text_ellipsis()
+                                        .text_size(THEME.type_scale.caption)
+                                        .font_weight(if item.starts_settled {
+                                            FontWeight::SEMIBOLD
+                                        } else {
+                                            FontWeight::NORMAL
+                                        })
+                                        .child(metadata),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .w_full()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .text_size(THEME.type_scale.body)
+                                .font_weight(if selected || !is_settled {
+                                    FontWeight::SEMIBOLD
+                                } else {
+                                    FontWeight::NORMAL
+                                })
+                                .text_color(if is_settled && !selected {
+                                    THEME.colors.muted
+                                } else {
+                                    THEME.colors.text
+                                })
+                                .child(session.title.clone()),
+                        ),
                 )
                 .child(
                     div()
                         .flex_none()
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(match status.as_deref() {
-                            Some("Done") => THEME.colors.success,
-                            Some(_) => THEME.colors.accent,
-                            None => THEME.colors.subtle,
-                        })
-                        .child(status.unwrap_or(age)),
-                )
-                .child(
-                    div()
-                        .id(format!("settle-{}", session.id))
-                        .role(Role::Button)
-                        .aria_label(if is_settled {
-                            "Restore session"
-                        } else {
-                            "Archive session"
-                        })
-                        .tab_index(0)
-                        .p(THEME.space.xs)
-                        .rounded(THEME.radius)
-                        .text_color(if is_settled {
-                            THEME.colors.success
-                        } else {
-                            THEME.colors.subtle
-                        })
-                        .hover(|button| button.bg(THEME.colors.hover))
-                        .child(Icon::new(AppIcon::CheckCircle).with_size(Size::Small))
-                        .on_key_down(move |event: &KeyDownEvent, window, cx| {
-                            cx.stop_propagation();
-                            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                                window.prevent_default();
-                                let _ = keyboard_settle_entity.update(cx, |this, cx| {
-                                    this.set_session_settled(
-                                        keyboard_settle_path.clone(),
-                                        !is_settled,
-                                        cx,
-                                    );
-                                });
-                            }
-                        })
-                        .on_click(move |_, _, cx| {
-                            cx.stop_propagation();
-                            let _ = settle_entity.update(cx, |this, cx| {
-                                this.set_session_settled(settle_path.clone(), !is_settled, cx);
-                            });
-                        }),
+                        .flex()
+                        .flex_col()
+                        .items_end()
+                        .gap(THEME.space.xs)
+                        .child(
+                            div()
+                                .text_size(THEME.type_scale.caption)
+                                .text_color(status_color)
+                                .child(status_text),
+                        )
+                        .child(
+                            div()
+                                .id(format!("settle-{}", session.id))
+                                .role(Role::Button)
+                                .aria_label(format!("{settle_label} session"))
+                                .tab_index(0)
+                                .flex()
+                                .items_center()
+                                .gap(THEME.space.xs)
+                                .px(THEME.space.xs)
+                                .py(px(2.0))
+                                .border(THEME.border)
+                                .border_color(THEME.colors.border)
+                                .rounded(THEME.radius)
+                                .text_size(THEME.type_scale.caption)
+                                .text_color(if is_settled {
+                                    THEME.colors.success
+                                } else {
+                                    THEME.colors.muted
+                                })
+                                .hover(|button| button.bg(THEME.colors.hover))
+                                .child(Icon::new(AppIcon::CheckCircle).with_size(Size::Small))
+                                .child(settle_label)
+                                .on_key_down(move |event: &KeyDownEvent, window, cx| {
+                                    cx.stop_propagation();
+                                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                        window.prevent_default();
+                                        let _ = keyboard_settle_entity.update(cx, |this, cx| {
+                                            this.set_session_settled(
+                                                keyboard_settle_path.clone(),
+                                                !is_settled,
+                                                cx,
+                                            );
+                                        });
+                                    }
+                                })
+                                .on_click(move |_, _, cx| {
+                                    cx.stop_propagation();
+                                    let _ = settle_entity.update(cx, |this, cx| {
+                                        this.set_session_settled(
+                                            settle_path.clone(),
+                                            !is_settled,
+                                            cx,
+                                        );
+                                    });
+                                }),
+                        ),
                 ),
-        )
-        .child(
-            div()
-                .w_full()
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .text_size(THEME.type_scale.body)
-                .font_weight(if selected || !is_settled {
-                    FontWeight::SEMIBOLD
-                } else {
-                    FontWeight::NORMAL
-                })
-                .text_color(if is_settled && !selected {
-                    THEME.colors.muted
-                } else {
-                    THEME.colors.text
-                })
-                .child(session.title.clone()),
         );
     div()
         .h(THEME.layout.session_row_height)
@@ -782,6 +836,7 @@ fn agent_session_row(
     depth: usize,
     label: String,
     selected: bool,
+    status: String,
     entity: WeakEntity<PiApp>,
 ) -> AnyElement {
     let path = session.path.clone();
@@ -790,11 +845,12 @@ fn agent_session_row(
     let keyboard_project = project.clone();
     let keyboard_entity = entity.clone();
     let title = session.title.clone();
-    let tokens = compact_number(session.usage.total);
+    let details = format!("{status} · {}", compact_number(session.usage.total));
+    let status_is_active = status != "Done";
     div()
         .id(format!("agent-session-{}", session.id))
         .role(Role::Button)
-        .aria_label(format!("Open agent session: {title}"))
+        .aria_label(format!("Open agent session: {title} ({status})"))
         .aria_selected(selected)
         .tab_index(0)
         .flex()
@@ -836,8 +892,12 @@ fn agent_session_row(
             div()
                 .flex_none()
                 .text_size(THEME.type_scale.caption)
-                .text_color(THEME.colors.subtle)
-                .child(tokens),
+                .text_color(if status_is_active {
+                    THEME.colors.accent
+                } else {
+                    THEME.colors.subtle
+                })
+                .child(details),
         )
         .into_any_element()
 }
@@ -952,6 +1012,14 @@ fn bounded_label(value: &str, max: usize) -> String {
         label.push('…');
     }
     label
+}
+
+fn normalized_agent_status(status: &str) -> &str {
+    if matches!(status, "" | "Done" | "Idle" | "Ready") {
+        "Done"
+    } else {
+        status
+    }
 }
 
 fn compact_subagent_label(value: &str) -> String {

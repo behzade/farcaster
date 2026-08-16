@@ -91,7 +91,15 @@ export const DEFAULT_CONFIG: Required<
 };
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const UNIX_CORE_ENV_VARS = [
+const DEFAULT_SECRET_ENV_PATTERNS = [
+	"*KEY*",
+	"*SECRET*",
+	"*TOKEN*",
+	"*PASSWORD*",
+	"*PASSWD*",
+	"*CREDENTIAL*",
+] as const;
+const SHELL_CORE_ENV_PATTERNS = [
 	"PATH",
 	"SHELL",
 	"TMPDIR",
@@ -104,6 +112,55 @@ const UNIX_CORE_ENV_VARS = [
 	"LOGNAME",
 	"USER",
 	"SHLVL",
+	"AR",
+	"AS",
+	"BASH",
+	"BINDGEN_EXTRA_CLANG_ARGS",
+	"CARGO_*",
+	"CC",
+	"CONFIG_SHELL",
+	"CPATH",
+	"CPLUS_INCLUDE_PATH",
+	"C_INCLUDE_PATH",
+	"CXX",
+	"DEVELOPER_DIR",
+	"HOST_PATH",
+	"IN_NIX_SHELL",
+	"LD",
+	"LD_DYLD_PATH",
+	"LD_LIBRARY_PATH",
+	"LIBCLANG_PATH",
+	"LIBRARY_PATH",
+	"MACOSX_DEPLOYMENT_TARGET",
+	"NIX_APPLE_SDK_VERSION",
+	"NIX_BINTOOLS",
+	"NIX_BINTOOLS_WRAPPER_*",
+	"NIX_BUILD_CORES",
+	"NIX_CC",
+	"NIX_CC_WRAPPER_*",
+	"NIX_CFLAGS_COMPILE",
+	"NIX_DONT_SET_RPATH",
+	"NIX_DONT_SET_RPATH_FOR_BUILD",
+	"NIX_ENFORCE_NO_NATIVE",
+	"NIX_HARDENING_ENABLE",
+	"NIX_IGNORE_LD_THROUGH_GCC",
+	"NIX_LDFLAGS",
+	"NIX_LD_LIBRARY_PATH",
+	"NIX_NO_SELF_RPATH",
+	"NIX_PKG_CONFIG_WRAPPER_*",
+	"NIX_STORE",
+	"NM",
+	"OBJCOPY",
+	"OBJDUMP",
+	"PKG_CONFIG*",
+	"RANLIB",
+	"RUST*",
+	"SDKROOT",
+	"SIZE",
+	"SOURCE_DATE_EPOCH",
+	"STRINGS",
+	"STRIP",
+	"ZERO_AR_DATE",
 ] as const;
 
 function unique(values: readonly string[]): string[] {
@@ -435,18 +492,14 @@ export function buildShellEnvironment(
 			? []
 			: policy.inherit === "core"
 				? sourceEntries.filter(([name]) =>
-						UNIX_CORE_ENV_VARS.some((allowed) =>
-							allowed.toLowerCase() === name.toLowerCase(),
-						),
+						matchesAny(name, SHELL_CORE_ENV_PATTERNS),
 					)
 				: sourceEntries;
 	const environment = Object.fromEntries(inherited);
 
 	if (!policy.ignoreDefaultExcludes) {
 		for (const name of Object.keys(environment)) {
-			if (matchesAny(name, ["*KEY*", "*SECRET*", "*TOKEN*"])) {
-				delete environment[name];
-			}
+			if (matchesAny(name, DEFAULT_SECRET_ENV_PATTERNS)) delete environment[name];
 		}
 	}
 	for (const name of Object.keys(environment)) {

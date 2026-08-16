@@ -1,7 +1,8 @@
 //! Read-only, bounded discovery of Pi v3 session metadata.
 
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    cmp::Reverse,
+    collections::{BinaryHeap, HashMap, HashSet, VecDeque},
     fs::{self, File},
     io::{BufRead as _, BufReader},
     path::{Component, Path, PathBuf},
@@ -15,6 +16,7 @@ const MAX_DIRECTORIES: usize = 2_000;
 const MAX_DEPTH: usize = 6;
 const MAX_LINES_PER_FILE: usize = 10_000;
 const MAX_SEARCH_BYTES: usize = 64 * 1024;
+const RUNNING_ACTIVITY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct UsageSummary {
@@ -50,6 +52,7 @@ pub(crate) struct SessionSummary {
     pub message_count: usize,
     pub usage: UsageSummary,
     pub settled: bool,
+    pub is_running: bool,
     search: String,
 }
 
@@ -67,8 +70,10 @@ impl SessionSummary {
         message_count: usize,
         usage: UsageSummary,
         settled: bool,
+        is_running: bool,
         search: String,
     ) -> Self {
+        let is_running = recently_running(is_running, modified, SystemTime::now());
         Self {
             id,
             path,
@@ -81,6 +86,7 @@ impl SessionSummary {
             message_count,
             usage,
             settled,
+            is_running,
             search,
         }
     }
@@ -197,8 +203,14 @@ fn session_root_from_at(
     })
 }
 
-pub(crate) fn discover(query: &str) -> Result<Vec<SessionSummary>, String> {
-    discover_in(&configured_session_root()?, query)
+#[derive(Clone, Debug)]
+pub(crate) struct SessionDiscovery {
+    pub sessions: Vec<SessionSummary>,
+    pub exhaustive: bool,
+}
+
+pub(crate) fn discover(query: &str) -> Result<SessionDiscovery, String> {
+    discover_in_with_status(&configured_session_root()?, query)
 }
 
 /// Read the visible, active branch of a session without starting Pi.
@@ -325,15 +337,25 @@ fn json_object<const N: usize>(fields: [(&str, Value); N]) -> Value {
     )
 }
 
+#[cfg(test)]
 pub(crate) fn discover_in(root: &Path, query: &str) -> Result<Vec<SessionSummary>, String> {
+    discover_in_with_status(root, query).map(|discovery| discovery.sessions)
+}
+
+fn discover_in_with_status(root: &Path, query: &str) -> Result<SessionDiscovery, String> {
     if !root.exists() {
-        return Ok(Vec::new());
+        return Ok(SessionDiscovery {
+            sessions: Vec::new(),
+            exhaustive: true,
+        });
     }
-    let mut candidates = Vec::new();
+    let mut candidates = BinaryHeap::<Reverse<(SystemTime, PathBuf)>>::new();
+    let mut exhaustive = true;
     let mut directories_seen = 0_usize;
     let mut queue = VecDeque::from([(root.to_path_buf(), 0_usize)]);
     while let Some((directory, depth)) = queue.pop_front() {
         if directories_seen >= MAX_DIRECTORIES {
+            exhaustive = false;
             break;
         }
         directories_seen = directories_seen.saturating_add(1);
@@ -342,19 +364,34 @@ pub(crate) fn discover_in(root: &Path, query: &str) -> Result<Vec<SessionSummary
             Err(_) => continue,
         };
         for entry in entries.flatten() {
-            if candidates.len() >= MAX_CANDIDATES {
-                break;
-            }
             let path = entry.path();
-            if path.is_dir() && depth < MAX_DEPTH {
-                queue.push_back((path, depth + 1));
+            if path.is_dir() {
+                if depth < MAX_DEPTH {
+                    queue.push_back((path, depth + 1));
+                } else {
+                    exhaustive = false;
+                }
             } else if path.extension().and_then(|value| value.to_str()) == Some("jsonl") {
-                candidates.push(path);
+                let modified = entry
+                    .metadata()
+                    .and_then(|metadata| metadata.modified())
+                    .unwrap_or(SystemTime::UNIX_EPOCH);
+                let candidate = (modified, path);
+                if candidates.len() < MAX_CANDIDATES {
+                    candidates.push(Reverse(candidate));
+                } else {
+                    exhaustive = false;
+                    if candidates.peek().is_some_and(|oldest| candidate > oldest.0) {
+                        candidates.pop();
+                        candidates.push(Reverse(candidate));
+                    }
+                }
             }
         }
     }
     let mut sessions = candidates
         .into_iter()
+        .map(|Reverse((_, path))| path)
         .filter_map(|path| parse_candidate(&path).ok().flatten())
         .collect::<Vec<_>>();
     let needle = query.to_lowercase();
@@ -420,7 +457,10 @@ pub(crate) fn discover_in(root: &Path, query: &str) -> Result<Vec<SessionSummary
             .cmp(&left.modified)
             .then_with(|| right.timestamp.cmp(&left.timestamp))
     });
-    Ok(sessions)
+    Ok(SessionDiscovery {
+        sessions,
+        exhaustive,
+    })
 }
 
 fn parse_candidate(path: &Path) -> Result<Option<SessionSummary>, String> {
@@ -477,6 +517,7 @@ fn parse_candidate(path: &Path) -> Result<Option<SessionSummary>, String> {
     let mut first_user_message = None;
     let mut message_count = 0_usize;
     let mut usage = UsageSummary::default();
+    let mut is_running = false;
     let mut search = String::new();
     for _ in 0..MAX_LINES_PER_FILE {
         line.clear();
@@ -499,6 +540,7 @@ fn parse_candidate(path: &Path) -> Result<Option<SessionSummary>, String> {
                 message_count = message_count.saturating_add(1);
                 if let Some(message) = entry.get("message") {
                     usage.add(message_usage(message));
+                    is_running = message_keeps_session_running(message);
                     let text = visible_user_text(message);
                     if !text.is_empty()
                         && message.get("role").and_then(Value::as_str) == Some("user")
@@ -523,6 +565,7 @@ fn parse_candidate(path: &Path) -> Result<Option<SessionSummary>, String> {
             _ => {}
         }
     }
+    let is_running = recently_running(is_running, modified, SystemTime::now());
     let first_user_message = first_user_message.unwrap_or_default();
     let title = name
         .filter(|value| !value.trim().is_empty())
@@ -541,8 +584,21 @@ fn parse_candidate(path: &Path) -> Result<Option<SessionSummary>, String> {
         message_count,
         usage,
         settled: false,
+        is_running,
         search: search.to_lowercase(),
     }))
+}
+
+fn recently_running(incomplete: bool, modified: SystemTime, now: SystemTime) -> bool {
+    incomplete && now.duration_since(modified).unwrap_or_default() <= RUNNING_ACTIVITY_TIMEOUT
+}
+
+fn message_keeps_session_running(message: &Value) -> bool {
+    match message.get("role").and_then(Value::as_str) {
+        Some("user" | "toolResult") => true,
+        Some("assistant") => message.get("stopReason").and_then(Value::as_str) == Some("toolUse"),
+        _ => false,
+    }
 }
 
 fn message_usage(message: &Value) -> UsageSummary {
@@ -696,7 +752,7 @@ pub(crate) fn normalize_lexical(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{error::Error, fs};
+    use std::{error::Error, fs, io::Write as _};
     use tempfile::tempdir;
 
     type TestResult = Result<(), Box<dyn Error>>;
@@ -854,6 +910,76 @@ mod tests {
     }
 
     #[test]
+    fn stale_incomplete_children_are_not_reported_as_running_forever() {
+        let now = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(10_000);
+        assert!(recently_running(
+            true,
+            now - std::time::Duration::from_secs(30),
+            now
+        ));
+        assert!(!recently_running(
+            true,
+            now - RUNNING_ACTIVITY_TIMEOUT - std::time::Duration::from_secs(1),
+            now
+        ));
+        assert!(!recently_running(false, now, now));
+    }
+
+    #[test]
+    fn discovery_tracks_running_children_from_the_last_message_lifecycle() -> TestResult {
+        let root = tempdir()?;
+        let project = tempdir()?;
+        session(root.path(), "running", project.path(), None, "Question")?;
+        session(root.path(), "done", project.path(), None, "Question")?;
+        let directory = root.path().join("custom/nested");
+        fs::OpenOptions::new()
+            .append(true)
+            .open(directory.join("running.jsonl"))?
+            .write_all(
+                format!(
+                    "\n{}\n{}",
+                    serde_json::json!({
+                        "type": "message",
+                        "message": {"role": "assistant", "stopReason": "toolUse"}
+                    }),
+                    serde_json::json!({
+                        "type": "message",
+                        "message": {"role": "toolResult"}
+                    })
+                )
+                .as_bytes(),
+            )?;
+        fs::OpenOptions::new()
+            .append(true)
+            .open(directory.join("done.jsonl"))?
+            .write_all(
+                format!(
+                    "\n{}",
+                    serde_json::json!({
+                        "type": "message",
+                        "message": {"role": "assistant", "stopReason": "stop"}
+                    })
+                )
+                .as_bytes(),
+            )?;
+
+        let sessions = discover_in(root.path(), "")?;
+        assert!(
+            sessions
+                .iter()
+                .find(|session| session.id == "running")
+                .is_some_and(|session| session.is_running)
+        );
+        assert!(
+            !sessions
+                .iter()
+                .find(|session| session.id == "done")
+                .is_some_and(|session| session.is_running)
+        );
+        Ok(())
+    }
+
+    #[test]
     fn discovery_sums_token_and_cost_usage_from_assistant_messages() -> TestResult {
         let root = tempdir()?;
         let project = tempdir()?;
@@ -962,6 +1088,34 @@ mod tests {
                 .map(|(session, depth)| (session.id.as_str(), *depth))
                 .collect::<Vec<_>>(),
             vec![("child", 1), ("grandchild", 2)]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_discovery_keeps_the_newest_candidates_and_reports_partial_results() -> TestResult {
+        let root = tempdir()?;
+        let project = tempdir()?;
+        for index in 0..MAX_CANDIDATES {
+            session(
+                root.path(),
+                &format!("old-{index:04}"),
+                project.path(),
+                None,
+                "old",
+            )?;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        session(root.path(), "newest-child", project.path(), None, "new")?;
+
+        let discovery = discover_in_with_status(root.path(), "")?;
+        assert!(!discovery.exhaustive);
+        assert_eq!(discovery.sessions.len(), MAX_CANDIDATES);
+        assert!(
+            discovery
+                .sessions
+                .iter()
+                .any(|session| session.id == "newest-child")
         );
         Ok(())
     }
