@@ -6,7 +6,7 @@ use gpui::{
     StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div,
     prelude::FluentBuilder as _, px,
 };
-use gpui_component::input::{Input, Paste};
+use gpui_component::input::{Paste, Textarea};
 
 use super::super::PiApp;
 use crate::{
@@ -79,7 +79,7 @@ impl PiApp {
                     .on_mouse_up(MouseButton::Left, move |_, _, cx| {
                         capture_after_input(cursor_entity.clone(), cx);
                     })
-                    .child(Input::new(&self.composer).w_full().appearance(false)),
+                    .child(Textarea::new(&self.composer).w_full().appearance(false)),
             )
             .when_some(widgets_below, |composer, widgets| composer.child(widgets))
             .child(
@@ -260,7 +260,7 @@ impl PiApp {
                         .child(
                             div()
                                 .font_family(READING_FONT_FAMILY)
-                                .child(Input::new(&self.dialog_input).w_full()),
+                                .child(Textarea::new(&self.dialog_input).w_full()),
                         )
                         .child(div().flex().justify_end().child(button(
                             "dialog-submit",

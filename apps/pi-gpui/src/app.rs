@@ -20,7 +20,7 @@ use gpui::{
     AppContext as _, Context, Entity, FocusHandle, Focusable as _, FollowMode, ListAlignment,
     ListState, PathPromptOptions, Subscription, Task, Window, actions,
 };
-use gpui_component::input::{InputEvent, InputState};
+use gpui_component::input::{InputEvent, InputState, TextareaState};
 use gpui_fps::FpsMonitor;
 
 use crate::{
@@ -55,12 +55,12 @@ pub(crate) struct PiApp {
     sessions_error: Option<String>,
     session_generation: u64,
     runtime_generation: u64,
-    composer: Entity<InputState>,
+    composer: Entity<TextareaState>,
     composer_sessions: ComposerSessions,
     composer_history_marker: Option<(String, usize, String)>,
     composer_images: HashMap<String, Vec<ComposerImage>>,
     search: Entity<InputState>,
-    dialog_input: Entity<InputState>,
+    dialog_input: Entity<TextareaState>,
     composer_focus: FocusHandle,
     dialog_focus: FocusHandle,
     dialog_return_focus: Option<FocusHandle>,
@@ -120,8 +120,7 @@ impl PiApp {
         }
         let runtime = RuntimeHandle::spawn(project.clone(), selected_draft.clone());
         let composer = cx.new(|cx| {
-            InputState::new(window, cx)
-                .multi_line(true)
+            TextareaState::new(window, cx)
                 .auto_grow(2, 8)
                 .submit_on_enter(true)
                 .placeholder("Ask Pi")
@@ -133,8 +132,7 @@ impl PiApp {
         });
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search sessions"));
         let dialog_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .multi_line(true)
+            TextareaState::new(window, cx)
                 .auto_grow(2, 12)
                 .submit_on_enter(false)
         });
@@ -841,7 +839,7 @@ impl PiApp {
     }
 }
 
-fn input_snapshot(input: &InputState) -> ComposerSnapshot {
+fn input_snapshot(input: &TextareaState) -> ComposerSnapshot {
     ComposerSnapshot::new(
         input.value().to_string(),
         input.cursor(),

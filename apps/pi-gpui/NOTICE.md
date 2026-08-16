@@ -25,11 +25,19 @@ on IBM Plex Mono, and is distributed under the SIL Open Font License 1.1. The
 font license is included at `assets/lilex/OFL.txt`; the font files remain under
 that license. Upstream: <https://github.com/mishamyrt/Lilex>.
 
-The pinned `gpui-component-assets` dependency embeds Longbridge GPUI Component
-assets at runtime. Longbridge distributes that crate under Apache-2.0; the
-exact `LICENSE-APACHE` from pinned commit
-`bc174a7ec4534b2a4174fddde314b38d30d69093` is included at
+The direct Longbridge GPUI Component dependencies `gpui-component`,
+`gpui-component-assets`, and `gpui-fps` are pinned to commit
+`bd833291311289f3468479d31b629d3de279d3d4` and distributed under Apache-2.0.
+The `gpui-component-assets` crate embeds Longbridge assets at runtime. The exact
+upstream `LICENSE-APACHE` is included at
 `THIRD_PARTY_LICENSES/GPUI_COMPONENT_ASSETS_APACHE-2.0.txt`.
+
+The GPUI framework and its narrow Zed package closure are included from Zed
+commit `cc053a4a6fa2fd0e8793201ed9099466af1be0b1` under
+`third_party/zed-gpui-cc053a4`. The included packages declare Apache-2.0 or
+GPL-3.0-or-later licensing. Exact upstream license texts and detailed source
+provenance are included in that directory as `LICENSE-APACHE`, `LICENSE-GPL`,
+and `README.md`.
 
 The embedded SVG icon set identifies itself as Lucide and includes work derived
 from Feather. Its ISC and Feather MIT terms and notices are included at

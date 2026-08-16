@@ -42,26 +42,32 @@
 let
   pname = "pi-gpui";
   version = "0.1.0";
-  src = lib.cleanSource ../apps/pi-gpui;
+  src = lib.cleanSourceWith {
+    src = ../apps/pi-gpui;
+    filter = path: type:
+      lib.cleanSourceFilter path type
+      && !(type == "directory" && builtins.baseNameOf path == "target");
+  };
 
   commonArgs = {
     inherit pname src version;
+    # Crane's generated dependency-only source cannot model GPUI as a local
+    # path library, so build once from the real narrow source tree.
+    cargoArtifacts = null;
     cargoLock = ../apps/pi-gpui/Cargo.lock;
     outputHashes = {
-      "git+https://github.com/longbridge/gpui-component?rev=41bee9c280b6708d3671b5e9b137a78f49394568#41bee9c280b6708d3671b5e9b137a78f49394568" =
-        "sha256-NCnWBTvRMXB/2TLv70gaTwj0+666K1PBbDyABRQ/pwA=";
-      "git+https://github.com/longbridge/gpui-component?rev=bc174a7ec4534b2a4174fddde314b38d30d69093#bc174a7ec4534b2a4174fddde314b38d30d69093" =
-        "sha256-yum6KO/dD7lWUKuxBcCyNWDQvg5im74VHMK4mioKo+w=";
+      "git+https://github.com/longbridge/gpui-component?rev=bd833291311289f3468479d31b629d3de279d3d4#bd833291311289f3468479d31b629d3de279d3d4" =
+        "sha256-5ZUdqetzhirAFdIr4oZLzovndZNDcbNc4arYAHZ0kRM=";
       "git+https://github.com/zed-industries/font-kit?rev=94b0f28166665e8fd2f53ff6d268a14955c82269#94b0f28166665e8fd2f53ff6d268a14955c82269" =
         "sha256-KXygi0olNQi5yM8eaJVykNDtbPMDjT+cWPBF8UrtXR4=";
       "git+https://github.com/zed-industries/reqwest.git?rev=c15662463bda39148ba154100dd44d3fba5873a4#c15662463bda39148ba154100dd44d3fba5873a4" =
         "sha256-p4SiUrOrbTlk/3bBrzN/mq/t+1Gzy2ot4nso6w6S+F8=";
       "git+https://github.com/zed-industries/scap?rev=4afea48c3b002197176fb19cd0f9b180dd36eaac#4afea48c3b002197176fb19cd0f9b180dd36eaac" =
         "sha256-BihiQHlal/eRsktyf0GI3aSWsUCW7WcICMsC2Xvb7kw=";
+      "git+https://github.com/zed-industries/wasm_thread?rev=0cf96c7708dfb97ccf3da50347e25edcf75d6937#0cf96c7708dfb97ccf3da50347e25edcf75d6937" =
+        "sha256-+lRLCIk0S6Y5ORYjDKsYYHia2FtoSoh+rWkQh7mnPBE=";
       "git+https://github.com/zed-industries/xim-rs.git?rev=16f35a2c881b815a2b6cdfd6687988e84f8447d8#16f35a2c881b815a2b6cdfd6687988e84f8447d8" =
         "sha256-pRT4Sz1JU9ros47/7pmIW9kosWOGMOItcnNd+VrvnpE=";
-      "git+https://github.com/zed-industries/zed#90b15493109a2e1267cd3a6bc4c24cc0106ad5dc" =
-        "sha256-ExK9u6S/fXBPOFgEaCjDsCXpL9c8Ey4RhYaIEANLvaQ=";
     };
     strictDeps = true;
 
@@ -104,14 +110,10 @@ let
       wayland
     ];
   };
-
-  cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 in
 craneLib.buildPackage (
   commonArgs
   // {
-    inherit cargoArtifacts;
-
     postInstall = ''
       ln -s "$out/bin/pi-gpui" "$out/bin/pi-gui"
     ''
