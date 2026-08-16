@@ -249,18 +249,6 @@ fn expanded_by_default(row: TranscriptRow, items: &[Arc<TranscriptItem>]) -> boo
     )
 }
 
-fn row_uses_available_width(
-    row: TranscriptRow,
-    items: &[Arc<TranscriptItem>],
-    expanded: bool,
-) -> bool {
-    expanded
-        && matches!(
-            row,
-            TranscriptRow::Item { index, .. } if items[index].tool_presentation.is_some()
-        )
-}
-
 pub(crate) fn render(
     list_state: &ListState,
     viewport: TranscriptViewport,
@@ -293,28 +281,17 @@ pub(crate) fn render(
         };
         let expanded = expanded_by_default(row, &snapshot.conversation.items)
             != disclosure_overrides.contains(&row.key());
-        let uses_available_width =
-            row_uses_available_width(row, &snapshot.conversation.items, expanded);
         let reserves_tail = index + 1 == rows.len()
             && latest_allows_tail_reserve(row, &snapshot.conversation.items, expanded);
         div()
             .w_full()
-            .flex()
-            .justify_center()
             .when(reserves_tail, |row| row.pb(viewport.tail_reserve))
-            .child(
-                div()
-                    .w_full()
-                    .when(!uses_available_width, |content| {
-                        content.max_w(THEME.layout.transcript_max)
-                    })
-                    .child(render_row(
-                        row,
-                        &snapshot.conversation.items,
-                        expanded,
-                        row_entity.clone(),
-                    )),
-            )
+            .child(render_row(
+                row,
+                &snapshot.conversation.items,
+                expanded,
+                row_entity.clone(),
+            ))
             .into_any_element()
     })
     .with_sizing_behavior(ListSizingBehavior::Auto)
@@ -331,7 +308,6 @@ pub(crate) fn render(
                 .min_h_0()
                 .overflow_y_hidden()
                 .flex()
-                .justify_center()
                 .bg(THEME.colors.canvas)
                 .child(view),
         )
@@ -931,9 +907,6 @@ mod tests {
 
         assert!(expanded_by_default(rows[0], &items));
         assert!(!expanded_by_default(rows[1], &items));
-        assert!(row_uses_available_width(rows[0], &items, true));
-        assert!(!row_uses_available_width(rows[0], &items, false));
-        assert!(!row_uses_available_width(rows[1], &items, true));
     }
 
     #[test]

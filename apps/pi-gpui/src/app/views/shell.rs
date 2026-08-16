@@ -258,7 +258,7 @@ impl PiApp {
                             .child(
                                 icon_button(
                                     "new-session",
-                                    AppIcon::Plus,
+                                    AppIcon::ChatCircleDots,
                                     "New session",
                                     ButtonTone::Quiet,
                                     !available_projects.is_empty(),
@@ -374,12 +374,17 @@ impl PiApp {
                                         .font_weight(FontWeight::SEMIBOLD)
                                         .text_color(THEME.colors.muted)
                                         .child(format!("Archived · {archived_count}"))
-                                        .child(button(
+                                        .child(icon_button(
                                             "toggle-archived-sessions",
                                             if archived_expanded {
-                                                "Collapse"
+                                                AppIcon::Minus
                                             } else {
-                                                "Expand"
+                                                AppIcon::Plus
+                                            },
+                                            if archived_expanded {
+                                                "Collapse archived sessions"
+                                            } else {
+                                                "Expand archived sessions"
                                             },
                                             ButtonTone::Quiet,
                                             true,
@@ -735,6 +740,11 @@ fn session_row(
     };
     let status_text = status.unwrap_or(age);
     let settle_label = if is_settled { "Restore" } else { "Settle" };
+    let settle_icon = if is_settled {
+        AppIcon::ArrowCounterClockwise
+    } else {
+        AppIcon::Archive
+    };
     let row = div()
         .id(format!("session-{}", session.id))
         .role(Role::Button)
@@ -866,7 +876,7 @@ fn session_row(
                                     THEME.colors.muted
                                 })
                                 .hover(|button| button.bg(THEME.colors.hover))
-                                .child(Icon::new(AppIcon::CheckCircle).with_size(Size::Small))
+                                .child(Icon::new(settle_icon).with_size(Size::Small))
                                 .child(settle_label)
                                 .on_key_down(move |event: &KeyDownEvent, window, cx| {
                                     cx.stop_propagation();
