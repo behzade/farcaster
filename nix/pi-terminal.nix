@@ -22,11 +22,21 @@ let
     };
   }.${dependencySystem};
 
+  dependencyFiles = lib.fileset.unions [
+    ../apps/pi-terminal/bun.lock
+    ../apps/pi-terminal/package.json
+    (../apps/pi-terminal/patches + "/@earendil-works%2Fpi-ai@0.84.2.patch")
+  ];
+
+  dependencySource = lib.fileset.toSource {
+    root = ../apps/pi-terminal;
+    fileset = dependencyFiles;
+  };
+
   source = lib.fileset.toSource {
     root = ../apps/pi-terminal;
     fileset = lib.fileset.unions [
-      ../apps/pi-terminal/bun.lock
-      ../apps/pi-terminal/package.json
+      dependencyFiles
       ../apps/pi-terminal/patches
       ../apps/pi-terminal/test
     ];
@@ -35,7 +45,7 @@ let
   bunDeps = stdenvNoCC.mkDerivation {
     pname = "pi-terminal-bun-deps";
     version = "0.84.2";
-    src = source;
+    src = dependencySource;
 
     nativeBuildInputs = [
       bun
