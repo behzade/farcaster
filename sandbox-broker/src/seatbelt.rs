@@ -364,10 +364,28 @@ pub fn build_args_with_network(
     );
     let deny_policy = build_explicit_deny_policy(denies)?;
     let socket_policy = build_unix_socket_policy(unix_socket_roots, &mut params);
+    let local_network_policy = || {
+        [
+            "(allow network-bind (local ip \"localhost:*\"))",
+            "(allow network-inbound (local ip \"localhost:*\"))",
+            "(allow network-outbound (remote ip \"localhost:*\"))",
+        ]
+        .join("\n")
+    };
     let network_policy = match network {
         crate::validation::ValidatedNetworkPolicy::Blocked => String::new(),
-        crate::validation::ValidatedNetworkPolicy::Proxy { tcp_port, .. } => {
-            format!("(allow network-outbound (remote ip \"localhost:{tcp_port}\"))")
+        crate::validation::ValidatedNetworkPolicy::Loopback => local_network_policy(),
+        crate::validation::ValidatedNetworkPolicy::Proxy {
+            tcp_port,
+            allow_local_binding,
+            ..
+        } => {
+            let proxy = format!("(allow network-outbound (remote ip \"localhost:{tcp_port}\"))");
+            if *allow_local_binding {
+                format!("{}\n{proxy}", local_network_policy())
+            } else {
+                proxy
+            }
         }
     };
     let policy = [
@@ -717,12 +735,32 @@ mod tests {
             &crate::validation::ValidatedNetworkPolicy::Proxy {
                 tcp_port: 43_127,
                 unix_socket: PathBuf::from("/tmp/proxy.sock"),
+                allow_local_binding: false,
             },
         )
         .expect("policy");
         let policy = &args[1];
         assert!(policy.contains("(allow network-outbound (remote ip \"localhost:43127\"))"));
         assert!(!policy.contains("(remote ip \"localhost:*\")"));
+        assert!(!policy.contains("\n(allow network-outbound)\n"));
+    }
+
+    #[test]
+    fn loopback_network_allows_local_servers_without_broad_outbound_access() {
+        let args = build_args_with_network(
+            &["/usr/bin/true".to_owned()],
+            Path::new("/work"),
+            &[],
+            &[],
+            &[],
+            &crate::validation::ValidatedNetworkPolicy::Loopback,
+        )
+        .expect("policy");
+        let policy = &args[1];
+        assert!(policy.contains("(allow network-bind (local ip \"localhost:*\"))"));
+        assert!(policy.contains("(allow network-inbound (local ip \"localhost:*\"))"));
+        assert!(policy.contains("(allow network-outbound (remote ip \"localhost:*\"))"));
+        assert!(!policy.contains("(remote ip \"*:*\")"));
         assert!(!policy.contains("\n(allow network-outbound)\n"));
     }
 

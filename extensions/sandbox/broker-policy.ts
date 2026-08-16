@@ -32,6 +32,7 @@ export function buildBrokerExecRequest(
 	permissions: readonly FilePermission[],
 	networkHosts: readonly string[],
 	proxy?: { port: number; socketPath: string },
+	allowLocalBinding = false,
 ): BrokerExecRequest {
 	const effective = mergeGlobalConfig(DEFAULT_CONFIG, config);
 	if ((networkHosts.length > 0) !== (proxy !== undefined)) {
@@ -67,8 +68,15 @@ export function buildBrokerExecRequest(
 			grants: permissions.map(permissionRight),
 			denies: denyRules(effective, actualCwd),
 			network: proxy
-				? { mode: "proxy", tcp_port: proxy.port, unix_socket: proxy.socketPath }
-				: { mode: "blocked" },
+				? {
+						mode: "proxy",
+						tcp_port: proxy.port,
+						unix_socket: proxy.socketPath,
+						allow_local_binding: allowLocalBinding,
+					}
+				: allowLocalBinding
+					? { mode: "loopback" }
+					: { mode: "blocked" },
 			unix_socket_roots: unixSocketRoots(effective),
 			output_limit_bytes: OUTPUT_LIMIT_BYTES,
 		},

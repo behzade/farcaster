@@ -177,7 +177,9 @@ Native execution is deliberately narrow:
 - Network access starts blocked. A user may grant one exact hostname or IP for
   one command or save it for the workspace. A host-owned proxy enforces that
   set; the OS sandbox blocks direct bypass. A host grant applies to all ports on
-  that host.
+  that host. A separate command-only `network_local` grant lets tests bind and
+  connect to localhost ports. Linux keeps those ports in the command's private
+  network namespace; macOS uses the host loopback interface.
 - macOS denial hints are best effort; Linux has no structured denial source.
 - Background jobs support bounded output, status, input, stop, and session
   cleanup. They do not provide a PTY.

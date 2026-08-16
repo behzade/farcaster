@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -108,7 +108,12 @@ pub enum MissingPathBehavior {
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 pub enum NetworkPolicy {
     Blocked,
-    Proxy { tcp_port: u16, unix_socket: String },
+    Loopback,
+    Proxy {
+        tcp_port: u16,
+        unix_socket: String,
+        allow_local_binding: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -235,14 +240,20 @@ mod tests {
     }
 
     #[test]
-    fn protocol_v3_has_narrow_network_proxy_grant() {
-        let with_proxy = br#"{"mode":"proxy","tcp_port":1234,"unix_socket":"/tmp/proxy.sock"}"#;
+    fn protocol_v4_has_narrow_proxy_and_loopback_grants() {
+        let with_proxy = br#"{"mode":"proxy","tcp_port":1234,"unix_socket":"/tmp/proxy.sock","allow_local_binding":true}"#;
         assert_eq!(
             serde_json::from_slice::<NetworkPolicy>(with_proxy).expect("proxy policy"),
             NetworkPolicy::Proxy {
                 tcp_port: 1234,
                 unix_socket: "/tmp/proxy.sock".to_owned(),
+                allow_local_binding: true,
             }
+        );
+        assert_eq!(
+            serde_json::from_slice::<NetworkPolicy>(br#"{"mode":"loopback"}"#)
+                .expect("loopback policy"),
+            NetworkPolicy::Loopback,
         );
     }
 }

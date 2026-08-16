@@ -20,7 +20,7 @@ const encode = value => {
   process.stdout.write(frame);
 };
 const mac = process.platform === "darwin";
-encode({ type: "ready", version: 3, platform: mac ? "macos" : "linux", backend: mac ? "seatbelt" : "bubblewrap", can_exec: true, max_frame_bytes: 1048576 });
+encode({ type: "ready", version: 4, platform: mac ? "macos" : "linux", backend: mac ? "seatbelt" : "bubblewrap", can_exec: true, max_frame_bytes: 1048576 });
 let pending = Buffer.alloc(0);
 let active;
 let sequence = 0;

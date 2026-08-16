@@ -203,6 +203,36 @@ test("native preview maps approved hosts to one command-scoped proxy", () => {
 		mode: "proxy",
 		tcp_port: 43127,
 		unix_socket: "/tmp/pi-proxy.sock",
+		allow_local_binding: false,
+	});
+	const local = buildBrokerExecRequest(
+		"local",
+		"true",
+		cwd,
+		undefined,
+		DEFAULT_CONFIG,
+		[],
+		[],
+		undefined,
+		true,
+	);
+	assert.deepEqual(local.policy.network, { mode: "loopback" });
+	const localAndProxy = buildBrokerExecRequest(
+		"local-and-proxy",
+		"true",
+		cwd,
+		undefined,
+		DEFAULT_CONFIG,
+		[],
+		["example.com"],
+		{ port: 43127, socketPath: "/tmp/pi-proxy.sock" },
+		true,
+	);
+	assert.deepEqual(localAndProxy.policy.network, {
+		mode: "proxy",
+		tcp_port: 43127,
+		unix_socket: "/tmp/pi-proxy.sock",
+		allow_local_binding: true,
 	});
 	const request = buildBrokerExecRequest(
 		"one",

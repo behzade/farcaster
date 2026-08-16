@@ -69,6 +69,25 @@ fn linux_runtime_release_gate() {
         String::from_utf8_lossy(&network.output)
     );
 
+    let mut loopback = request(
+		"loopback-allowed",
+		&workspace,
+		"python3 -c 'import socket; s=socket.socket(); s.bind((\"127.0.0.1\",0)); s.listen(); c=socket.create_connection(s.getsockname()); a,_=s.accept(); c.sendall(b\"ok\"); print(a.recv(2).decode(),end=\"\")'".to_owned(),
+		vec![],
+		vec![],
+		Some(5_000),
+		64 * 1024,
+	);
+    loopback.policy.network = NetworkPolicy::Loopback;
+    let loopback = broker.exec(loopback);
+    assert_eq!(
+        loopback.code,
+        Some(0),
+        "loopback probe failed:\n{}",
+        String::from_utf8_lossy(&loopback.output)
+    );
+    assert_eq!(loopback.output, b"ok");
+
     let socket_path = root.0.join("host.sock");
     let _listener = UnixListener::bind(&socket_path).expect("host Unix socket fixture");
     let unix_socket = broker.exec(probe_request(
@@ -105,6 +124,7 @@ fn linux_runtime_release_gate() {
     proxied.policy.network = NetworkPolicy::Proxy {
         tcp_port: 40_000,
         unix_socket: proxy_path.to_string_lossy().into_owned(),
+        allow_local_binding: false,
     };
     let proxied = broker.exec(proxied);
     assert_eq!(
@@ -127,6 +147,7 @@ fn linux_runtime_release_gate() {
     direct_socket.policy.network = NetworkPolicy::Proxy {
         tcp_port: 40_001,
         unix_socket: direct_socket_path.to_string_lossy().into_owned(),
+        allow_local_binding: false,
     };
     let direct_socket = broker.exec(direct_socket);
     assert_eq!(

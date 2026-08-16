@@ -86,6 +86,7 @@ test("sandbox prompts rejected path tool calls without exposing a model tool", a
 test("one-time network rights stay on one command", async () => {
   const sandbox = await readFile(sandboxPath, "utf8");
   assert.match(sandbox, /kind:\s*Type\.Literal\(["']network_host["']\)/);
+  assert.match(sandbox, /kind:\s*Type\.Literal\(["']network_local["']\)/);
   assert.match(sandbox, /declaredNetworkPermissions/);
   assert.doesNotMatch(sandbox, /oneShotNetworkPermissions/);
 });

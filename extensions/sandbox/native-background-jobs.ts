@@ -38,6 +38,7 @@ export class NativeBackgroundJobs {
 		config: NativeSandboxConfig;
 		permissions: readonly NativeFilePermission[];
 		networkHosts: readonly string[];
+		allowLocalBinding?: boolean;
 	}): Promise<string> {
 		if (this.#jobs.has(options.name)) throw new Error(`job already exists: ${options.name}`);
 		if (this.#jobs.size >= MAX_JOBS) {
@@ -70,6 +71,7 @@ export class NativeBackgroundJobs {
 				options.permissions,
 				options.networkHosts,
 				proxy ? { port: proxy.port, socketPath: proxy.socketPath } : undefined,
+				options.allowLocalBinding ?? false,
 			);
 		} catch (error) {
 			await proxy?.close();

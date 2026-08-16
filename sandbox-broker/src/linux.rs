@@ -90,7 +90,7 @@ pub fn prepare(request: &ValidatedExec, command: &[String]) -> Result<PreparedLa
             && right.scope == PathScope::Tree
             && right.path == Path::new("/")
     }) {
-        return Err("Linux protocol v3 requires an explicit read right for /".to_owned());
+        return Err("Linux protocol v4 requires an explicit read right for /".to_owned());
     }
     if command.is_empty() {
         return Err("command is empty".to_owned());
@@ -119,14 +119,18 @@ pub fn prepare(request: &ValidatedExec, command: &[String]) -> Result<PreparedLa
         !deny.path.is_dir() && matches!(deny.access, DeniedAccess::Read | DeniedAccess::ReadWrite)
     });
     let hidden_file = needs_hidden_file.then(hidden_file_source).transpose()?;
-    let proxy_socket = match &request.network {
-        ValidatedNetworkPolicy::Blocked => None,
-        ValidatedNetworkPolicy::Proxy { unix_socket, .. } => Some(unix_socket.clone()),
+    let (network_enabled, proxy_socket, allow_local_binding) = match &request.network {
+        ValidatedNetworkPolicy::Blocked => (false, None, false),
+        ValidatedNetworkPolicy::Loopback => (true, None, true),
+        ValidatedNetworkPolicy::Proxy {
+            unix_socket,
+            allow_local_binding,
+            ..
+        } => (true, Some(unix_socket.clone()), *allow_local_binding),
     };
-    let seccomp = proxy_socket.is_none().then(seccomp_file).transpose()?;
-    let launcher = proxy_socket
-        .as_ref()
-        .map(|_| {
+    let seccomp = (!network_enabled).then(seccomp_file).transpose()?;
+    let launcher = network_enabled
+        .then(|| {
             let file = File::open(std::env::current_exe().map_err(|error| error.to_string())?)
                 .map_err(|error| format!("cannot open network launcher: {error}"))?;
             make_inheritable(&file, "network launcher")?;
@@ -184,11 +188,18 @@ pub fn prepare(request: &ValidatedExec, command: &[String]) -> Result<PreparedLa
     args.push("--chdir".to_owned());
     args.push(path_string(&request.cwd));
     args.push("--".to_owned());
-    if let Some(socket) = proxy_socket {
+    if network_enabled {
         args.extend([
             PROXY_LAUNCHER_PATH.to_owned(),
             "__linux_proxy_launch".to_owned(),
-            path_string(&socket),
+            proxy_socket
+                .as_ref()
+                .map_or_else(|| "-".to_owned(), |socket| path_string(socket)),
+            if allow_local_binding {
+                "allow-local-binding".to_owned()
+            } else {
+                "deny-local-binding".to_owned()
+            },
             "--".to_owned(),
         ]);
     }
@@ -547,7 +558,7 @@ fn glob_scan_roots(pattern: &str, cwd: &Path) -> Result<BTreeSet<PathBuf>, Strin
         return Ok(BTreeSet::from([static_root.to_path_buf()]));
     }
 
-    // Root-wide startup scans are both costly and misleading. Protocol v3
+    // Root-wide startup scans are both costly and misleading. Protocol v4
     // applies filename-pattern denies to the active workspace; fixed hard
     // denies separately protect SSH, cloud, auth, and control paths in HOME.
     Ok(BTreeSet::from([cwd.to_path_buf()]))
@@ -792,49 +803,60 @@ fn seccomp_file() -> Result<File, String> {
     Ok(file)
 }
 
-/// Runs inside a fresh Bubblewrap network namespace. The bridge itself may
-/// connect to the one host proxy socket. The user command receives a seccomp
-/// filter that blocks AF_UNIX, so it cannot reuse this launcher to reach other
-/// host services. AF_INET stays inside the isolated namespace and can reach
-/// only this loopback listener.
+/// Runs inside a fresh Bubblewrap network namespace. In proxy mode, the bridge
+/// itself may connect to the one host proxy socket. The user command receives a
+/// seccomp filter that blocks AF_UNIX, so it cannot reuse this launcher to reach
+/// other host services. AF_INET stays inside the isolated namespace.
 pub fn run_proxy_launcher(arguments: &[String]) -> Result<i32, String> {
     let separator = arguments
         .iter()
         .position(|argument| argument == "--")
         .ok_or("network launcher command separator is missing")?;
-    if separator != 1 || arguments.len() <= 2 {
+    if separator != 2 || arguments.len() <= 3 {
         return Err("network launcher arguments are invalid".to_owned());
     }
-    let socket_path = PathBuf::from(&arguments[0]);
-    if !socket_path.is_absolute()
-        || !socket_path
-            .metadata()
-            .is_ok_and(|item| item.file_type().is_socket())
-    {
+    let socket_path = (arguments[0] != "-").then(|| PathBuf::from(&arguments[0]));
+    if socket_path.as_ref().is_some_and(|path| {
+        !path.is_absolute()
+            || !path
+                .metadata()
+                .is_ok_and(|item| item.file_type().is_socket())
+    }) {
         return Err("network launcher proxy socket is invalid".to_owned());
     }
+    let allow_local_binding = match arguments[1].as_str() {
+        "allow-local-binding" => true,
+        "deny-local-binding" => false,
+        _ => return Err("network launcher local binding mode is invalid".to_owned()),
+    };
+    if socket_path.is_none() && !allow_local_binding {
+        return Err("network launcher needs a proxy or local binding".to_owned());
+    }
     ensure_loopback_up()?;
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, PROXY_LOOPBACK_PORT))
-        .map_err(|error| format!("cannot bind sandbox proxy loopback: {error}"))?;
-    let bridge_socket = socket_path.clone();
-    std::thread::spawn(move || {
-        for incoming in listener.incoming() {
-            let Ok(tcp) = incoming else { break };
-            let socket = bridge_socket.clone();
-            std::thread::spawn(move || {
-                let Ok(unix) = UnixStream::connect(socket) else {
-                    return;
-                };
-                let _ = proxy_bidirectional(tcp, unix);
-            });
-        }
-    });
+    if let Some(bridge_socket) = socket_path {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, PROXY_LOOPBACK_PORT))
+            .map_err(|error| format!("cannot bind sandbox proxy loopback: {error}"))?;
+        std::thread::spawn(move || {
+            for incoming in listener.incoming() {
+                let Ok(tcp) = incoming else { break };
+                let socket = bridge_socket.clone();
+                std::thread::spawn(move || {
+                    let Ok(unix) = UnixStream::connect(socket) else {
+                        return;
+                    };
+                    let _ = proxy_bidirectional(tcp, unix);
+                });
+            }
+        });
+    }
 
     let mut child = Command::new(&arguments[separator + 1]);
     child.args(&arguments[separator + 2..]);
     // SAFETY: this closure runs after fork and calls only libc before exec.
     unsafe {
-        child.pre_exec(|| install_proxy_user_seccomp().map_err(std::io::Error::other));
+        child.pre_exec(move || {
+            install_proxy_user_seccomp(allow_local_binding).map_err(std::io::Error::other)
+        });
     }
     let status = child
         .status()
@@ -878,7 +900,7 @@ fn ensure_loopback_up() -> Result<(), String> {
     Ok(())
 }
 
-fn install_proxy_user_seccomp() -> Result<(), String> {
+fn install_proxy_user_seccomp(allow_local_binding: bool) -> Result<(), String> {
     let errno = SECCOMP_RET_ERRNO | u32::try_from(libc::EPERM).expect("EPERM is positive");
     let mut program = vec![
         statement(BPF_LD_W_ABS, SECCOMP_DATA_ARCH_OFFSET),
@@ -905,6 +927,21 @@ fn install_proxy_user_seccomp() -> Result<(), String> {
             1,
         ));
         program.push(statement(BPF_RET_K, errno));
+    }
+    if !allow_local_binding {
+        for syscall in [
+            libc::SYS_accept,
+            libc::SYS_accept4,
+            libc::SYS_bind,
+            libc::SYS_listen,
+        ] {
+            program.push(jump(
+                u32::try_from(syscall).expect("syscall fits u32"),
+                0,
+                1,
+            ));
+            program.push(statement(BPF_RET_K, errno));
+        }
     }
     for syscall in [libc::SYS_socket, libc::SYS_socketpair] {
         program.push(jump(

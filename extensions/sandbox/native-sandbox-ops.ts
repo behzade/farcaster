@@ -74,6 +74,7 @@ export function createNativeSandboxOps(
 	permissions: readonly NativeFilePermission[],
 	networkHosts: readonly string[],
 	commandId: string,
+	allowLocalBinding = false,
 ): BashOperations {
 	return {
 		async exec(command, cwd, { onData, signal, timeout }) {
@@ -90,6 +91,7 @@ export function createNativeSandboxOps(
 					permissions,
 					networkHosts,
 					proxy ? { port: proxy.port, socketPath: proxy.socketPath } : undefined,
+					allowLocalBinding,
 				);
 				return await client.exec(request, onData, signal);
 			} finally {
@@ -104,6 +106,7 @@ export function createApprovingNativeSandboxOps(options: {
 	config: NativeSandboxConfig;
 	initialPermissions: readonly NativeFilePermission[];
 	initialNetworkHosts?: readonly string[];
+	initialAllowLocalBinding?: boolean;
 	toolCallId: string;
 	blockedPaths: readonly string[];
 	approve: (
@@ -114,6 +117,7 @@ export function createApprovingNativeSandboxOps(options: {
 	return {
 		async exec(command, cwd, execOptions) {
 			const networkHosts = options.initialNetworkHosts ?? [];
+			const allowLocalBinding = options.initialAllowLocalBinding ?? false;
 			const proxy = networkHosts.length > 0
 				? await startNativeNetworkProxy(networkHosts)
 				: undefined;
@@ -138,6 +142,7 @@ export function createApprovingNativeSandboxOps(options: {
 					permissions,
 					networkHosts,
 					proxy ? { port: proxy.port, socketPath: proxy.socketPath } : undefined,
+					allowLocalBinding,
 				);
 				lastResult = await options.client.exec(
 					request,

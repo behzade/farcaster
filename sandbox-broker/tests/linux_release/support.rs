@@ -104,7 +104,7 @@ impl Broker {
             matches!(
                 ready,
                 ServerEvent::Ready {
-                    version: 3,
+                    version: 4,
                     ref platform,
                     ref backend,
                     can_exec: true,

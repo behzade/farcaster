@@ -80,7 +80,7 @@ impl Broker {
             matches!(
                 ready,
                 ServerEvent::Ready {
-                    version: 3,
+                    version: 4,
                     ref platform,
                     ref backend,
                     can_exec: true,
@@ -497,6 +497,19 @@ fn native_broker_release_gate() {
         1024,
     ));
     assert_ne!(socket.code, Some(0));
+
+    let mut loopback = request(
+        "loopback-allowed",
+        &workspace,
+        "/usr/bin/python3 -c 'import socket; s=socket.socket(); s.bind((\"127.0.0.1\",0)); s.listen(); c=socket.create_connection(s.getsockname()); a,_=s.accept(); c.sendall(b\"ok\"); print(a.recv(2).decode(),end=\"\")'".to_owned(),
+        vec![],
+        None,
+        1024,
+    );
+    loopback.policy.network = NetworkPolicy::Loopback;
+    let loopback = broker.exec(loopback);
+    assert_eq!(loopback.code, Some(0));
+    assert!(loopback.output.ends_with(b"ok"));
 
     let outbound = broker.exec(request(
         "outbound-blocked",

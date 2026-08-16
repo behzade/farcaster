@@ -248,6 +248,26 @@ test("an unapproved host, direct bypass, and blocked network all fail", { skip }
 	});
 });
 
+test("a command-only local network grant can bind and query an ephemeral port", { skip }, async () => {
+	const ops = createNativeSandboxOps(
+		client,
+		DEFAULT_CONFIG,
+		[],
+		[],
+		"e2e-network-local",
+		true,
+	);
+	const command =
+		`python3 -c ${quote(
+			"import socket; s=socket.socket(); s.bind(('127.0.0.1',0)); s.listen(); " +
+				"c=socket.create_connection(s.getsockname()); a,_=s.accept(); " +
+				"c.sendall(b'local-ok'); print(a.recv(8).decode(),end='')",
+		)}`;
+	const result = await run(ops, command);
+	assert.equal(result.exitCode, 0, result.output);
+	assert.equal(result.output, "local-ok");
+});
+
 test("native background jobs accept input, retain output, stop, and clean up", { skip }, async () => {
 	const jobs = new NativeBackgroundJobs(brokerPath);
 	try {

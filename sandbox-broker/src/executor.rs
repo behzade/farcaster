@@ -99,7 +99,7 @@ impl Runtime {
         send_event(&self.writer, event)
     }
 
-    /// Starts one command. Protocol v3 permits no parallel command per broker.
+    /// Starts one command. Protocol v4 permits no parallel command per broker.
     ///
     /// # Errors
     ///
@@ -130,7 +130,7 @@ impl Runtime {
                 } else {
                     (
                         ErrorCode::InvalidRequest,
-                        "protocol v3 permits one active command per broker".to_owned(),
+                        "protocol v4 permits one active command per broker".to_owned(),
                     )
                 });
             }
@@ -325,7 +325,12 @@ fn run_command(
     };
     let mut environment = request.env.clone();
     strip_proxy_environment(&mut environment);
-    if let ValidatedNetworkPolicy::Proxy { tcp_port, .. } = &request.network {
+    if let ValidatedNetworkPolicy::Proxy {
+        tcp_port,
+        allow_local_binding,
+        ..
+    } = &request.network
+    {
         #[cfg(target_os = "linux")]
         let proxy_port = {
             let _ = tcp_port;
@@ -349,8 +354,13 @@ fn run_command(
         for name in ["ALL_PROXY", "all_proxy"] {
             environment.insert(name.to_owned(), socks_proxy.clone());
         }
-        environment.insert("NO_PROXY".to_owned(), String::new());
-        environment.insert("no_proxy".to_owned(), String::new());
+        let no_proxy = if *allow_local_binding {
+            "localhost,127.0.0.1,::1"
+        } else {
+            ""
+        };
+        environment.insert("NO_PROXY".to_owned(), no_proxy.to_owned());
+        environment.insert("no_proxy".to_owned(), no_proxy.to_owned());
     }
     let mut process = Command::new(program);
     process

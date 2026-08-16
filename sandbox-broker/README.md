@@ -21,11 +21,12 @@ policy, and owns command cleanup.
 
 Both backends support one foreground command, command-scoped file and tree
 rights, hard denies, filtered environments, bounded output, timeouts,
-cancellation, interactive stdin, and shutdown cleanup. Protocol v3 can route a
-command through one host-owned proxy. macOS limits outbound traffic to that
-proxy's loopback port. Linux exposes only a private loopback bridge and blocks
-the user command from opening host Unix sockets. macOS may also receive a small
-set of trusted exact Unix socket paths; Linux rejects those general paths.
+cancellation, interactive stdin, and shutdown cleanup. Protocol v4 can grant a
+command local test ports, route it through one host-owned proxy, or do both.
+macOS adds only the requested loopback rules. Linux keeps local ports in a
+private network namespace and blocks the user command from opening host Unix
+sockets. macOS may also receive a small set of trusted exact Unix socket paths;
+Linux rejects those general paths.
 
 The extension calls this sole and default backend `native-preview`. It starts a
 separate broker for each background job so one-time file and network rights stay
@@ -55,8 +56,8 @@ cargo test --manifest-path sandbox-broker/Cargo.toml --test linux_release -- --i
 ```
 
 The extension also has a real-broker gate for approval retry, exact nested
-paths, Bun optional-file handling, the macOS Seatbelt backstop, the host
-allowlist proxy, bypass denial, and background jobs:
+paths, Bun optional-file handling, the macOS Seatbelt backstop, local test
+ports, the host allowlist proxy, bypass denial, and background jobs:
 
 ```sh
 cargo build --manifest-path sandbox-broker/Cargo.toml

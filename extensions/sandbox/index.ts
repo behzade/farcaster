@@ -105,11 +105,16 @@ type SandboxState =
 
 type NetworkPermission = Extract<IoPermission, { kind: "network_host" }>;
 type FilePermission = Extract<IoPermission, { kind: "read" | "write" }>;
-type DeclaredNetworkPermission = {
-	kind: "network_host";
-	host: string;
-	reason: string;
-};
+type DeclaredNetworkPermission =
+	| {
+			kind: "network_host";
+			host: string;
+			reason: string;
+	  }
+	| {
+			kind: "network_local";
+			reason: string;
+	  };
 
 function isSafeSavedFilePermission(permission: IoPermission): permission is FilePermission {
 	return (
@@ -127,16 +132,27 @@ const NetworkPermissionParams = Type.Object({
 	reason: Type.String({ description: "Why this host is needed" }),
 });
 
-const DeclaredNetworkPermissionParams = Type.Object(
-	{
-		kind: Type.Literal("network_host"),
-		host: Type.String({
-			description: "One exact hostname or IP, with no scheme, port, path, or wildcard",
-		}),
-		reason: Type.String({ description: "Why this command needs the host" }),
-	},
-	{ additionalProperties: false },
-);
+const DeclaredNetworkPermissionParams = Type.Union([
+	Type.Object(
+		{
+			kind: Type.Literal("network_host"),
+			host: Type.String({
+				description: "One exact hostname or IP, with no scheme, port, path, or wildcard",
+			}),
+			reason: Type.String({ description: "Why this command needs the host" }),
+		},
+		{ additionalProperties: false },
+	),
+	Type.Object(
+		{
+			kind: Type.Literal("network_local"),
+			reason: Type.String({
+				description: "Why this command must bind or connect to a local test port",
+			}),
+		},
+		{ additionalProperties: false },
+	),
+]);
 
 const BashParams = Type.Object({
 	command: Type.String({ description: "Bash command to execute" }),
@@ -399,12 +415,62 @@ export default function (pi: ExtensionAPI) {
 		tool: { toolName: string; toolCallId: string },
 		ctx: ExtensionContext,
 		config: NativeSandboxConfig,
-	): Promise<NetworkPermission[]> => {
+	): Promise<{ permissions: NetworkPermission[]; allowLocalBinding: boolean }> => {
 		if ((declarations?.length ?? 0) > 16) {
-			throw new Error("A command may declare at most 16 network hosts");
+			throw new Error("A command may declare at most 16 network rights");
 		}
 		const grants = new Map<string, NetworkPermission>();
+		let allowLocalBinding = false;
 		for (const declaration of declarations ?? []) {
+			if (declaration.kind === "network_local") {
+				if (config.network?.enabled === false) {
+					throw new Error("Network access is disabled by the sandbox policy");
+				}
+				if (!allowLocalBinding) {
+					pi.events.emit("approval:requested", {
+						kind: "io-permission",
+						title: "Tool requests local test ports",
+						summary: `${tool.toolName} requests command-only local bind and connect access\nReason: ${declaration.reason}`,
+						toolName: tool.toolName,
+						toolCallId: tool.toolCallId,
+						sessionId: ctx.sessionManager.getSessionId(),
+						cwd: ctx.cwd,
+					});
+					const result = await requestUserApproval(ctx, {
+						requestId: tool.toolCallId,
+						title: "Tool requests local test ports",
+						message:
+							`Allow ${tool.toolName} to bind and connect to localhost ports for this command?` +
+							`\n\nReason: ${declaration.reason}`,
+						source: "tool_call",
+						surface: "network_local",
+						value: "localhost",
+						choices: [
+							{ id: "allow-once", label: "Allow once" },
+							{ id: "deny", label: "No" },
+							{ id: "deny-with-comment", label: "No, with comment", requestReason: true },
+						],
+						reasonTitle: "Tell the agent what to do instead",
+						reasonPlaceholder: "Short note",
+					});
+					const allowed = result.choiceId === "allow-once";
+					pi.events.emit("approval:resolved", {
+						kind: "io-permission",
+						toolName: tool.toolName,
+						toolCallId: tool.toolCallId,
+						decision: allowed ? "allowed" : "denied",
+					});
+					if (!allowed) {
+						throw new Error(
+							result.reason
+								? `Permission denied. User comment: ${result.reason}`
+								: (result.unavailableReason ?? "Permission denied by user"),
+						);
+					}
+					allowLocalBinding = true;
+				}
+				continue;
+			}
 			const permission = normalizePermission(
 				{ kind: "network_host", host: declaration.host },
 				ctx.cwd,
@@ -435,7 +501,7 @@ export default function (pi: ExtensionAPI) {
 			}
 			grants.set(permission.host, permission);
 		}
-		return [...grants.values()];
+		return { permissions: [...grants.values()], allowLocalBinding };
 	};
 
 	pi.registerTool({
@@ -532,7 +598,7 @@ export default function (pi: ExtensionAPI) {
 		name: "background_job",
 		label: "Background job",
 		description:
-			"Start, list, inspect, interact with, or stop a session-scoped long-running command. Each job runs in its own native OS sandbox with job-scoped filesystem and exact-host network rights. Names must start with pi- and use only letters, digits, dots, underscores, or hyphens.",
+			"Start, list, inspect, interact with, or stop a session-scoped long-running command. Each job runs in its own native OS sandbox with job-scoped filesystem, exact-host network rights, and optional command-only localhost bind rights. Names must start with pi- and use only letters, digits, dots, underscores, or hyphens.",
 		promptSnippet:
 			"Use background_job for long-running servers, watchers, builds, and tests. Stop jobs created for the current task when they are no longer needed.",
 		parameters: BackgroundJobParams,
@@ -567,7 +633,7 @@ export default function (pi: ExtensionAPI) {
 						sandboxState.config,
 					);
 					const grants = runtimeGrants();
-					const declaredGrants = grantsToRuntime(declared);
+					const declaredGrants = grantsToRuntime(declared.permissions);
 					output = await backgroundJobs.start({
 						name: params.name,
 						command: params.command,
@@ -575,6 +641,7 @@ export default function (pi: ExtensionAPI) {
 						config: sandboxState.config,
 						permissions: persistentPermissions.filter(isSafeSavedFilePermission),
 						networkHosts: [...(grants.networkHosts ?? []), ...declaredGrants.networkHosts],
+						allowLocalBinding: declared.allowLocalBinding,
 					});
 				} else if (params.action === "list") {
 					output = backgroundJobs.list();
@@ -608,9 +675,9 @@ export default function (pi: ExtensionAPI) {
 		...localBash,
 		label: "bash (OS sandbox)",
 		description:
-			"Execute a bash command in the OS sandbox. Filesystem access is inferred from sandbox denials; do not predict or declare filesystem rights. The current workspace, temp folders, and the sandbox-owned development-cache namespace already have their needed rights. Only exact network_host rights may be declared in permissions.",
+			"Execute a bash command in the OS sandbox. Filesystem access is inferred from sandbox denials; do not predict or declare filesystem rights. The current workspace, temp folders, and the sandbox-owned development-cache namespace already have their needed rights. Declare network_host for an exact remote or host service, and network_local when this command must bind or connect to localhost test ports.",
 		promptSnippet:
-			"Do not declare filesystem permissions. Run the command and let the sandbox identify any denied write. Use permissions only for exact network hosts. Treat time blocked on permission approval as permission wait; never report it as no stall if the command did not start.",
+			"Do not declare filesystem permissions. Run the command and let the sandbox identify any denied write. Use network_host for exact remote or host services and network_local for local test servers. Treat time blocked on permission approval as permission wait; never report it as no stall if the command did not start.",
 		parameters: BashParams,
 		executionMode: "sequential",
 		renderShell: "self",
@@ -632,7 +699,7 @@ export default function (pi: ExtensionAPI) {
 				sandboxState.config,
 			);
 			const grants = runtimeGrants();
-			const declaredGrants = grantsToRuntime(declaredNetworkPermissions);
+			const declaredGrants = grantsToRuntime(declaredNetworkPermissions.permissions);
 			grants.networkHosts = [
 				...(grants.networkHosts ?? []),
 				...declaredGrants.networkHosts,
@@ -644,6 +711,7 @@ export default function (pi: ExtensionAPI) {
 				config: sandboxState.config,
 				initialPermissions: filePermissions,
 				initialNetworkHosts: grants.networkHosts,
+				initialAllowLocalBinding: declaredNetworkPermissions.allowLocalBinding,
 				toolCallId: id,
 				blockedPaths: [
 					sandboxState.config.brokerPath ?? PACKAGED_BROKER_PATH,

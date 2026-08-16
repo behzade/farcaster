@@ -30,7 +30,12 @@ pub struct ValidatedExec {
 #[derive(Debug, Clone)]
 pub enum ValidatedNetworkPolicy {
     Blocked,
-    Proxy { tcp_port: u16, unix_socket: PathBuf },
+    Loopback,
+    Proxy {
+        tcp_port: u16,
+        unix_socket: PathBuf,
+        allow_local_binding: bool,
+    },
 }
 
 /// Validates a complete request before the broker starts a child.
@@ -90,9 +95,11 @@ pub fn validate_exec(request: ExecRequest, hard: &HardPolicy) -> Result<Validate
     let unix_socket_roots = normalize_unix_socket_roots(&request.policy.unix_socket_roots)?;
     let network = match &request.policy.network {
         NetworkPolicy::Blocked => ValidatedNetworkPolicy::Blocked,
+        NetworkPolicy::Loopback => ValidatedNetworkPolicy::Loopback,
         NetworkPolicy::Proxy {
             tcp_port,
             unix_socket,
+            allow_local_binding,
         } => {
             if *tcp_port == 0 {
                 return Err("network proxy port must be positive".to_owned());
@@ -101,6 +108,7 @@ pub fn validate_exec(request: ExecRequest, hard: &HardPolicy) -> Result<Validate
             ValidatedNetworkPolicy::Proxy {
                 tcp_port: *tcp_port,
                 unix_socket,
+                allow_local_binding: *allow_local_binding,
             }
         }
     };
