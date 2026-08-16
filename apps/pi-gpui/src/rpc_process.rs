@@ -21,15 +21,23 @@ use crate::{
 pub(crate) struct ProcessCommand {
     pub program: PathBuf,
     pub prefix_args: Vec<String>,
+    pub direnv_program: Option<PathBuf>,
 }
 
 impl Default for ProcessCommand {
     fn default() -> Self {
         Self {
-            program: PathBuf::from("pi"),
+            program: pi_program(std::env::var_os("PI_GUI_PI_PATH")),
             prefix_args: Vec::new(),
+            direnv_program: Some(PathBuf::from("direnv")),
         }
     }
+}
+
+fn pi_program(packaged_path: Option<std::ffi::OsString>) -> PathBuf {
+    packaged_path
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("pi"))
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -64,7 +72,17 @@ impl RpcProcess {
         project: &Path,
         session: Option<&Path>,
     ) -> Result<Self, String> {
-        let mut process = Command::new(&command.program);
+        let mut process = if let Some(direnv) = &command.direnv_program {
+            let mut process = Command::new(direnv);
+            process
+                .args(["exec"])
+                .arg(project)
+                .arg(&command.program)
+                .env("DIRENV_LOG_FORMAT", "");
+            process
+        } else {
+            Command::new(&command.program)
+        };
         process.args(&command.prefix_args).args(["--mode", "rpc"]);
         if let Some(session) = session {
             process.arg("--session").arg(session);
@@ -75,7 +93,14 @@ impl RpcProcess {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|error| format!("start {}: {error}", command.program.display()))?;
+            .map_err(|error| {
+                let launcher = command.direnv_program.as_ref().unwrap_or(&command.program);
+                format!(
+                    "start {} for {}: {error}",
+                    launcher.display(),
+                    project.display()
+                )
+            })?;
         let stdin = child
             .stdin
             .take()
@@ -439,8 +464,49 @@ mod tests {
             ProcessCommand {
                 program: script,
                 prefix_args: vec![case.into()],
+                direnv_program: None,
             },
         ))
+    }
+
+    #[test]
+    fn direnv_loads_the_environment_for_the_project_directory() -> TestResult {
+        let (temp, mut command) = fake("direnv")?;
+        let direnv = temp.path().join("fake-direnv.sh");
+        fs::write(
+            &direnv,
+            r#"#!/bin/sh
+set -eu
+test "$1" = "exec"
+test -d "$2"
+project=$2
+printf '%s' "$project" > "$project/direnv-project"
+shift 2
+export PI_GUI_DIRENV_MARKER=loaded
+exec "$@"
+"#,
+        )?;
+        let mut permissions = fs::metadata(&direnv)?.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&direnv, permissions)?;
+        command.direnv_program = Some(direnv);
+
+        let mut rpc = RpcProcess::spawn(&command, temp.path(), None)?;
+        assert_eq!(
+            fs::read_to_string(temp.path().join("direnv-project"))?,
+            temp.path().display().to_string(),
+        );
+        rpc.terminate()?;
+        Ok(())
+    }
+
+    #[test]
+    fn packaged_pi_path_wins_over_the_project_environment() {
+        assert_eq!(
+            pi_program(Some("/nix/store/pi/bin/pi".into())),
+            PathBuf::from("/nix/store/pi/bin/pi")
+        );
+        assert_eq!(pi_program(None), PathBuf::from("pi"));
     }
 
     #[test]

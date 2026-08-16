@@ -65,13 +65,21 @@ export function matchesPathRule(rule: string, path: string, cwd: string): boolea
 	if (!containsGlob(rule)) {
 		return isInside(resolveRulePath(rule, cwd), path);
 	}
-	const normalizedPath = path.split(sep).join("/");
-	const relativePath = relative(cwd, path).split(sep).join("/");
-	const pattern = globRegex(rule.split(sep).join("/"));
+	const actualPath = canonicalize(path);
+	const normalizedPath = actualPath.split(sep).join("/");
+	const expandedRule = rule.startsWith("~/")
+		? `${homedir()}/${rule.slice(2)}`
+		: rule;
+	const normalizedRule = expandedRule.split(sep).join("/");
+	if (isAbsolute(expandedRule)) {
+		return globRegex(normalizedRule).test(normalizedPath);
+	}
+	const relativePath = relative(canonicalize(cwd), actualPath).split(sep).join("/");
+	if (relativePath === ".." || relativePath.startsWith("../")) return false;
+	const pattern = globRegex(normalizedRule);
 	return (
-		pattern.test(normalizedPath) ||
 		pattern.test(relativePath) ||
-		pattern.test(basename(path))
+		(!normalizedRule.includes("/") && pattern.test(basename(actualPath)))
 	);
 }
 
@@ -102,8 +110,13 @@ function globRegex(glob: string): RegExp {
 	for (let index = 0; index < glob.length; index += 1) {
 		const char = glob[index] ?? "";
 		if (char === "*" && glob[index + 1] === "*") {
-			pattern += ".*";
-			index += 1;
+			if (glob[index + 2] === "/") {
+				pattern += "(?:.*/)?";
+				index += 2;
+			} else {
+				pattern += ".*";
+				index += 1;
+			}
 		} else if (char === "*") {
 			pattern += "[^/]*";
 		} else if (char === "?") {

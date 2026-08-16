@@ -1271,6 +1271,7 @@ mod tests {
                 process_command: ProcessCommand {
                     program: PathBuf::from("/definitely/missing/pi-gpui-test-command"),
                     prefix_args: Vec::new(),
+                    direnv_program: None,
                 },
                 process: None,
                 snapshot: RuntimeSnapshot {
@@ -1486,6 +1487,7 @@ mod tests {
             process_command: ProcessCommand {
                 program: PathBuf::from("/definitely/missing/pi-gpui-test-command"),
                 prefix_args: Vec::new(),
+                direnv_program: None,
             },
             process: None,
             snapshot: RuntimeSnapshot {
@@ -1575,6 +1577,7 @@ mod tests {
         let process_command = ProcessCommand {
             program: script,
             prefix_args: vec!["quiet".into()],
+            direnv_program: None,
         };
         let process = RpcProcess::spawn(&process_command, temp.path(), None)?;
         let (event_tx, event_rx) = mpsc::channel();

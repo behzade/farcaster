@@ -2,6 +2,10 @@
 set -eu
 case_name=$1
 
+if [ "$case_name" = "direnv" ]; then
+  test "${PI_GUI_DIRENV_MARKER:-}" = "loaded"
+fi
+
 if [ "$case_name" = "ignore-term" ]; then
   trap '' TERM
 fi

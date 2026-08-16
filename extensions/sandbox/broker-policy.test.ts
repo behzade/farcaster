@@ -13,6 +13,7 @@ import { canonicalize } from "./io-permissions.ts";
 
 test("maps current base rights and command-local folder grants", () => {
 	const cwd = mkdtempSync(join(tmpdir(), "pi-broker-policy-"));
+	const canonicalCwd = canonicalize(cwd);
 	const state = join(homedir(), ".local", "share", `issues-fixture-${process.pid}`);
 	const request = buildBrokerExecRequest(
 		"one",
@@ -70,14 +71,15 @@ test("maps current base rights and command-local folder grants", () => {
 	]);
 	assert.ok(
 		request.policy.denies.some(
-			(rule) => rule.access === "read_write" && rule.pattern === `${cwd}/**/*.key`,
+			(rule) =>
+				rule.access === "read_write" && rule.pattern === `${canonicalCwd}/**/*.key`,
 		),
 	);
 	assert.ok(
 		request.policy.denies.some(
 			(rule) =>
 				rule.access === "read_write" &&
-				rule.pattern === `${cwd}/**/.env` &&
+				rule.pattern === `${canonicalCwd}/**/.env` &&
 				rule.scope === "glob",
 		),
 	);

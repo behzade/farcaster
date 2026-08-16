@@ -47,6 +47,7 @@ buildNpmPackage {
       toolLine="$(grep -m1 '^tools:' "$agent")"
       substituteInPlace "$agent" \
         --replace-fail "$toolLine" "$toolLine, report_pi_feedback
+extensions:
 subagentOnlyExtensions: $out/agent-feedback/index.ts"
     done
 

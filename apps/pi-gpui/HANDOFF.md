@@ -67,9 +67,10 @@ Deliver a usable root-session client with:
 8. Responsive, accessible GPUI presentation adapted from Issues.
 
 The binary accepts an optional project path and defaults to the current working
-directory. Spawn Pi normally in that directory so global/project settings,
-context, skills, prompt templates, packages, and extensions load exactly as
-they do in the terminal client. Do not inject product prompts or bypass Pi.
+directory. Spawn Pi through `direnv exec` for that directory so its environment,
+global/project settings, context, skills, prompt templates, packages, and
+extensions match the terminal client. Do not inject product prompts or bypass
+Pi.
 
 ## Explicit non-goals for this checkpoint
 

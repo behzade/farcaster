@@ -87,9 +87,14 @@ impl HardPolicy {
         for helper in crate::conceal::helper_paths()? {
             push_path_denies(&mut denies, DeniedAccess::Write, &helper, DenyScope::File);
         }
-        for pattern in ["/**/*.env", "/**/.env.*", "/**/*.key"] {
+        for pattern in ["/**/*.env", "/**/.env.*"] {
             denies.push(glob_deny(DeniedAccess::ReadWrite, pattern));
         }
+        denies.push(glob_deny(
+            DeniedAccess::Read,
+            &format!("{}/**/*.key", home.display()),
+        ));
+        denies.push(glob_deny(DeniedAccess::Write, "/**/*.key"));
         denies.push(glob_deny(DeniedAccess::Write, "/**/*.pem"));
         Ok(Self { denies })
     }
@@ -598,6 +603,27 @@ mod tests {
             std::env::temp_dir().join(format!("pi-broker-{label}-{}-{nonce}", std::process::id()));
         fs::create_dir_all(&path).expect("create test root");
         path
+    }
+
+    #[test]
+    fn hard_policy_scopes_key_reads_to_home_but_blocks_all_key_writes() {
+        let hard = HardPolicy::from_host().expect("hard policy");
+        let home =
+            normalize_existing(Path::new(&std::env::var_os("HOME").expect("HOME"))).expect("home");
+        assert!(hard.denies.iter().any(|deny| {
+            deny.access == DeniedAccess::Read
+                && deny.pattern == format!("{}/**/*.key", home.display())
+        }));
+        assert!(
+            hard.denies
+                .iter()
+                .any(|deny| { deny.access == DeniedAccess::Write && deny.pattern == "/**/*.key" })
+        );
+        assert!(
+            !hard.denies.iter().any(|deny| {
+                deny.access == DeniedAccess::ReadWrite && deny.pattern == "/**/*.key"
+            })
+        );
     }
 
     #[test]

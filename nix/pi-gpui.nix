@@ -1,5 +1,6 @@
 {
   craneLib,
+  direnv,
   lib,
   makeWrapper,
   piTerminal,
@@ -126,7 +127,8 @@ craneLib.buildPackage (
 
     postFixup = ''
       wrapProgram "$out/bin/pi-gpui" \
-        --prefix PATH : ${lib.makeBinPath [ piTerminal ]}
+        --set PI_GUI_PI_PATH ${piTerminal}/bin/pi \
+        --prefix PATH : ${lib.makeBinPath [ direnv piTerminal ]}
     '';
 
     meta = {

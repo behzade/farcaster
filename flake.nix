@@ -245,13 +245,17 @@
             PI_SUBAGENTS_PACKAGE=${subagents} node --test ${self}/tests/permission-system-resolution.test.ts
             touch "$out"
           '';
-          subagent-feedback = pkgs.runCommand "pi-subagent-feedback-test" { } ''
+          subagent-feedback = pkgs.runCommand "pi-subagent-feedback-test" {
+            nativeBuildInputs = [ pkgs.nodejs ];
+          } ''
             test -f ${subagents}/agent-feedback/index.ts
             test -f ${subagents}/agent-feedback/lib/agent-feedback.ts
             for agent in ${subagents}/agents/*.md; do
               grep -F 'report_pi_feedback' "$agent"
+              grep -Fx 'extensions:' "$agent"
               grep -F 'subagentOnlyExtensions: ${subagents}/agent-feedback/index.ts' "$agent"
             done
+            PI_SUBAGENTS_PACKAGE=${subagents} node --test ${self}/tests/agent-feedback.test.ts
             touch "$out"
           '';
           web-access = webAccess;

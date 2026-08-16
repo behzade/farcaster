@@ -96,12 +96,27 @@ test("secret file rules cover top-level and nested paths", () => {
 	}
 });
 
-test("PEM certificate bundles remain readable but not writable", () => {
+test("relative secret globs do not hide public keys outside the workspace", () => {
+	const workspace = canonicalize("/tmp/project");
+	const publicRootKey = canonicalize("/nix/store/nixpkgs-source/root.key");
+
+	assert.equal(isDeniedByConfig(publicRootKey, "read", DEFAULT_CONFIG, workspace), false);
+	assert.equal(
+		isDeniedByConfig(join(workspace, "root.key"), "read", DEFAULT_CONFIG, workspace),
+		true,
+	);
+});
+
+test("relative PEM rules stay scoped to the workspace", () => {
 	const workspace = canonicalize("/tmp/project");
 	const systemBundle = canonicalize("/etc/ssl/cert.pem");
 
 	assert.equal(isDeniedByConfig(systemBundle, "read", DEFAULT_CONFIG, workspace), false);
-	assert.equal(isDeniedByConfig(systemBundle, "write", DEFAULT_CONFIG, workspace), true);
+	assert.equal(isDeniedByConfig(systemBundle, "write", DEFAULT_CONFIG, workspace), false);
+	assert.equal(
+		isDeniedByConfig(join(workspace, "cert.pem"), "write", DEFAULT_CONFIG, workspace),
+		true,
+	);
 });
 
 test("path globs match names without widening sibling prefixes", () => {
