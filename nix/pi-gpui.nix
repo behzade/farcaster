@@ -51,9 +51,6 @@ let
 
   commonArgs = {
     inherit pname src version;
-    # Crane's generated dependency-only source cannot model GPUI as a local
-    # path library, so build once from the real narrow source tree.
-    cargoArtifacts = null;
     cargoLock = ../apps/pi-gpui/Cargo.lock;
     outputHashes = {
       "git+https://github.com/longbridge/gpui-component?rev=bd833291311289f3468479d31b629d3de279d3d4#bd833291311289f3468479d31b629d3de279d3d4" =
@@ -110,10 +107,14 @@ let
       wayland
     ];
   };
+
+  cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 in
 craneLib.buildPackage (
   commonArgs
   // {
+    inherit cargoArtifacts;
+
     postInstall = ''
       ln -s "$out/bin/pi-gpui" "$out/bin/pi-gui"
     ''
