@@ -42,11 +42,29 @@
 let
   pname = "pi-gpui";
   version = "0.1.0";
+  sourceRoot = ../apps/pi-gpui;
   src = lib.cleanSourceWith {
-    src = ../apps/pi-gpui;
+    src = sourceRoot;
     filter = path: type:
       lib.cleanSourceFilter path type
       && !(type == "directory" && builtins.baseNameOf path == "target");
+  };
+  gpuiPathSources = lib.cleanSourceWith {
+    src = sourceRoot;
+    filter = path: _type:
+      let
+        relative = lib.removePrefix "${toString sourceRoot}/" (toString path);
+      in
+      relative == "third_party"
+      || lib.hasPrefix "third_party/zed-gpui-cc053a4" relative;
+  };
+  dummySrc = craneLib.mkDummySrc {
+    inherit src;
+    cargoLock = ../apps/pi-gpui/Cargo.lock;
+    extraDummyScript = ''
+      rm -rf "$out/third_party"
+      cp -r ${gpuiPathSources}/third_party "$out/third_party"
+    '';
   };
 
   commonArgs = {
@@ -108,7 +126,12 @@ let
     ];
   };
 
-  cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+  cargoArtifacts = craneLib.buildDepsOnly (
+    commonArgs
+    // {
+      inherit dummySrc;
+    }
+  );
 in
 craneLib.buildPackage (
   commonArgs
