@@ -4755,6 +4755,7 @@ dependencies = [
  "gpui-component-assets",
  "gpui-fps",
  "gpui_platform",
+ "ropey",
  "rusqlite",
  "serde",
  "serde_json",

@@ -13,6 +13,7 @@ use gpui_component::{
 
 use crate::{
     conversation::{EditDiffFormat, ToolPresentation},
+    syntax_highlight::{HighlightedText, highlight, language_for_path},
     theme::{MONO_FONT_FAMILY, THEME},
 };
 
@@ -42,10 +43,11 @@ pub(crate) struct ChangeLine {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct SideLine {
+pub(crate) struct SideLine {
     kind: ChangeKind,
     number: Option<u64>,
     content: String,
+    syntax: HighlightedText,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -57,7 +59,7 @@ pub(crate) struct PairedLine {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum PreparedToolChange {
     Edit(Vec<PairedLine>),
-    Write(Vec<ChangeLine>),
+    Write(Vec<SideLine>),
 }
 
 pub(crate) fn render(
@@ -78,7 +80,7 @@ pub(crate) fn render(
                 let rows = diff
                     .as_deref()
                     .map_or_else(preparing_rows, |diff| parse_display_diff(diff, *format));
-                PreparedToolChange::Edit(pair_edit_rows(&rows))
+                PreparedToolChange::Edit(pair_edit_rows(&rows, &language_for_path(path)))
             }),
         ),
         ToolPresentation::Write {
@@ -87,17 +89,20 @@ pub(crate) fn render(
             prepared,
         } => (
             path,
-            prepared.get_or_init(|| PreparedToolChange::Write(write_rows(content))),
+            prepared.get_or_init(|| {
+                PreparedToolChange::Write(write_rows(content, &language_for_path(path)))
+            }),
         ),
     };
+    let language = language_for_path(path);
     let mode = match prepared {
         PreparedToolChange::Edit(_) => requested_mode,
         PreparedToolChange::Write(_) => EmbeddedDiffMode::Unified,
     };
     let metadata = diff_metadata(path, prepared, mode);
     let body = match prepared {
-        PreparedToolChange::Edit(rows) => render_edit_diff(rows, key, mode),
-        PreparedToolChange::Write(rows) => render_write_diff(rows, key),
+        PreparedToolChange::Edit(rows) => render_edit_diff(rows, &language, key, mode),
+        PreparedToolChange::Write(rows) => render_write_diff(rows, &language, key),
     };
     div()
         .id(("tool-change", key))
@@ -226,23 +231,32 @@ fn preparing_rows() -> Vec<ChangeLine> {
     }]
 }
 
-fn write_rows(content: &str) -> Vec<ChangeLine> {
+fn write_rows(content: &str, language: &str) -> Vec<SideLine> {
     content
         .lines()
         .enumerate()
-        .map(|(index, line)| ChangeLine {
-            kind: ChangeKind::Addition,
-            number: u64::try_from(index)
-                .ok()
-                .and_then(|value| value.checked_add(1)),
-            content: line.to_owned(),
+        .map(|(index, line)| {
+            let content = replace_tabs(line);
+            SideLine {
+                kind: ChangeKind::Addition,
+                number: u64::try_from(index)
+                    .ok()
+                    .and_then(|value| value.checked_add(1)),
+                syntax: highlight(content.clone(), language),
+                content,
+            }
         })
         .collect()
 }
 
-fn render_edit_diff(paired: &[PairedLine], key: usize, mode: EmbeddedDiffMode) -> AnyElement {
+fn render_edit_diff(
+    paired: &[PairedLine],
+    language: &str,
+    key: usize,
+    mode: EmbeddedDiffMode,
+) -> AnyElement {
     if mode == EmbeddedDiffMode::Unified {
-        return render_unified_edit_diff(paired, key);
+        return render_unified_edit_diff(paired, language, key);
     }
     let truncated = paired.len() > MAX_DIFF_LINES;
     div()
@@ -254,7 +268,7 @@ fn render_edit_diff(paired: &[PairedLine], key: usize, mode: EmbeddedDiffMode) -
                 .iter()
                 .take(MAX_DIFF_LINES)
                 .enumerate()
-                .map(|(index, row)| render_paired_line(row, key, index)),
+                .map(|(index, row)| render_paired_line(row, language, key, index)),
         )
         .when(truncated, |body| {
             body.child(modal_limit_hint(paired.len() - MAX_DIFF_LINES))
@@ -262,7 +276,7 @@ fn render_edit_diff(paired: &[PairedLine], key: usize, mode: EmbeddedDiffMode) -
         .into_any_element()
 }
 
-fn render_unified_edit_diff(paired: &[PairedLine], key: usize) -> AnyElement {
+fn render_unified_edit_diff(paired: &[PairedLine], language: &str, key: usize) -> AnyElement {
     let rows = unified_edit_rows(paired);
     let truncated = rows.len() > MAX_DIFF_LINES;
     div()
@@ -273,7 +287,7 @@ fn render_unified_edit_diff(paired: &[PairedLine], key: usize) -> AnyElement {
             rows.iter()
                 .take(MAX_DIFF_LINES)
                 .enumerate()
-                .map(|(index, row)| render_diff_side(Some(row), key, index, "unified")),
+                .map(|(index, row)| render_diff_side(Some(row), language, key, index, "unified")),
         )
         .when(truncated, |body| {
             body.child(modal_limit_hint(rows.len() - MAX_DIFF_LINES))
@@ -303,7 +317,7 @@ fn unified_edit_rows(paired: &[PairedLine]) -> Vec<SideLine> {
     rows
 }
 
-fn render_write_diff(rows: &[ChangeLine], key: usize) -> AnyElement {
+fn render_write_diff(rows: &[SideLine], language: &str, key: usize) -> AnyElement {
     let truncated = rows.len() > MAX_DIFF_LINES;
     div()
         .id(("write-diff-body", key))
@@ -313,14 +327,7 @@ fn render_write_diff(rows: &[ChangeLine], key: usize) -> AnyElement {
             rows.iter()
                 .take(MAX_DIFF_LINES)
                 .enumerate()
-                .map(|(index, row)| {
-                    let side = SideLine {
-                        kind: row.kind,
-                        number: row.number,
-                        content: row.content.clone(),
-                    };
-                    render_diff_side(Some(&side), key, index, "write")
-                }),
+                .map(|(index, row)| render_diff_side(Some(row), language, key, index, "write")),
         )
         .when(truncated, |body| {
             body.child(modal_limit_hint(rows.len() - MAX_DIFF_LINES))
@@ -339,31 +346,39 @@ fn modal_limit_hint(remaining: usize) -> impl IntoElement {
         .child(format!("{remaining} additional lines omitted"))
 }
 
-fn render_paired_line(row: &PairedLine, key: usize, index: usize) -> AnyElement {
+fn render_paired_line(row: &PairedLine, language: &str, key: usize, index: usize) -> AnyElement {
     div()
         .w_full()
         .min_w_0()
         .flex()
         .items_stretch()
-        .child(
-            div()
-                .w_1_2()
-                .min_w_0()
-                .child(render_diff_side(row.old.as_ref(), key, index, "old")),
-        )
+        .child(div().w_1_2().min_w_0().child(render_diff_side(
+            row.old.as_ref(),
+            language,
+            key,
+            index,
+            "old",
+        )))
         .child(
             div()
                 .w_1_2()
                 .min_w_0()
                 .border_l(THEME.border)
                 .border_color(THEME.colors.border)
-                .child(render_diff_side(row.new.as_ref(), key, index, "new")),
+                .child(render_diff_side(
+                    row.new.as_ref(),
+                    language,
+                    key,
+                    index,
+                    "new",
+                )),
         )
         .into_any_element()
 }
 
 fn render_diff_side(
     line: Option<&SideLine>,
+    _language: &str,
     key: usize,
     index: usize,
     side: &'static str,
@@ -411,7 +426,7 @@ fn render_diff_side(
                 .py(px(2.0))
                 .line_height(THEME.type_scale.line_body)
                 .text_color(foreground)
-                .child(replace_tabs(&line.content)),
+                .child(line.syntax.element()),
         )
         .into_any_element()
 }
@@ -433,7 +448,7 @@ fn line_colors(kind: ChangeKind) -> (&'static str, gpui::Rgba, gpui::Rgba) {
     }
 }
 
-fn pair_edit_rows(rows: &[ChangeLine]) -> Vec<PairedLine> {
+fn pair_edit_rows(rows: &[ChangeLine], language: &str) -> Vec<PairedLine> {
     let mut paired = Vec::new();
     let mut deletions = Vec::new();
     let mut additions = Vec::new();
@@ -444,26 +459,28 @@ fn pair_edit_rows(rows: &[ChangeLine]) -> Vec<PairedLine> {
     for row in rows {
         match row.kind {
             ChangeKind::Deletion => {
-                deletions.push(numbered_side(row, &mut old_number));
+                deletions.push(numbered_side(row, &mut old_number, language));
                 line_delta = line_delta.saturating_sub(1);
             }
             ChangeKind::Addition => {
-                additions.push(numbered_side(row, &mut new_number));
+                additions.push(numbered_side(row, &mut new_number, language));
                 line_delta = line_delta.saturating_add(1);
             }
             ChangeKind::Context => {
                 flush_changes(&mut paired, &mut deletions, &mut additions);
-                let old = numbered_side(row, &mut old_number);
+                let old = numbered_side(row, &mut old_number, language);
                 let new = if let Some(number) = row.number {
                     let number = apply_line_delta(number, line_delta);
                     new_number = number.saturating_add(1);
+                    let content = replace_tabs(&row.content);
                     SideLine {
                         kind: row.kind,
                         number: Some(number),
-                        content: row.content.clone(),
+                        syntax: highlight(content.clone(), language),
+                        content,
                     }
                 } else {
-                    numbered_side(row, &mut new_number)
+                    numbered_side(row, &mut new_number, language)
                 };
                 paired.push(PairedLine {
                     old: Some(old),
@@ -472,10 +489,12 @@ fn pair_edit_rows(rows: &[ChangeLine]) -> Vec<PairedLine> {
             }
             ChangeKind::Ellipsis => {
                 flush_changes(&mut paired, &mut deletions, &mut additions);
+                let content = replace_tabs(&row.content);
                 let side = SideLine {
                     kind: ChangeKind::Ellipsis,
                     number: None,
-                    content: row.content.clone(),
+                    syntax: HighlightedText::plain(content.clone()),
+                    content,
                 };
                 paired.push(PairedLine {
                     old: Some(side.clone()),
@@ -496,13 +515,15 @@ fn apply_line_delta(number: u64, delta: i64) -> u64 {
     }
 }
 
-fn numbered_side(row: &ChangeLine, next: &mut u64) -> SideLine {
+fn numbered_side(row: &ChangeLine, next: &mut u64, language: &str) -> SideLine {
     let number = row.number.unwrap_or(*next);
     *next = number.saturating_add(1);
+    let content = replace_tabs(&row.content);
     SideLine {
         kind: row.kind,
         number: Some(number),
-        content: row.content.clone(),
+        syntax: highlight(content.clone(), language),
+        content,
     }
 }
 
@@ -610,7 +631,7 @@ mod tests {
             " 10 context\n- 11 old one\n- 12 old two\n+ 11 new one\n 13 tail",
             EditDiffFormat::Numbered,
         );
-        let paired = pair_edit_rows(&rows);
+        let paired = pair_edit_rows(&rows, "rs");
 
         assert_eq!(
             paired[0].old.as_ref().and_then(|line| line.number),
@@ -654,7 +675,7 @@ mod tests {
             " same\n- old one\n- old two\n+ new one",
             EditDiffFormat::Unnumbered,
         );
-        let prepared = PreparedToolChange::Edit(pair_edit_rows(&rows));
+        let prepared = PreparedToolChange::Edit(pair_edit_rows(&rows, "rs"));
 
         assert_eq!(
             diff_metadata("src/main.rs", &prepared, EmbeddedDiffMode::Unified),
@@ -670,7 +691,7 @@ mod tests {
     #[test]
     fn unified_rows_preserve_change_order_without_duplicating_context() {
         let rows = parse_display_diff(" before\n- old\n+ new\n after", EditDiffFormat::Unnumbered);
-        let unified = unified_edit_rows(&pair_edit_rows(&rows));
+        let unified = unified_edit_rows(&pair_edit_rows(&rows, "rs"));
 
         assert_eq!(unified.len(), 4);
         assert_eq!(unified[0].kind, ChangeKind::Context);

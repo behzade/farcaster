@@ -22,6 +22,7 @@ mod shell_environment;
 mod state;
 #[cfg(test)]
 mod state_test;
+mod syntax_highlight;
 mod theme;
 mod tool_changes;
 mod transcript;

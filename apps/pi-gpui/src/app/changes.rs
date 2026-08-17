@@ -15,6 +15,7 @@ use crate::{
     conversation::{EditDiffFormat, ToolPresentation},
     session_changes::{self, ChangeSet, FileChange, FullDiff},
     sessions::{descendant_sessions, root_session_for_path},
+    syntax_highlight::HighlightedDiff,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -84,6 +85,7 @@ pub(crate) struct ChangesState {
     refresh: RefreshGate,
     pub row_focus: HashMap<PathBuf, FocusHandle>,
     pub diff: Option<DiffSurface>,
+    pub diff_syntax: Option<HighlightedDiff>,
     diff_generation: u64,
     pub diff_scroll: ScrollHandle,
     pub diff_focus: FocusHandle,
@@ -98,6 +100,7 @@ impl ChangesState {
             refresh: RefreshGate::default(),
             row_focus: HashMap::new(),
             diff: None,
+            diff_syntax: None,
             diff_generation: 0,
             diff_scroll: ScrollHandle::new(),
             diff_focus: cx.focus_handle(),
@@ -119,6 +122,7 @@ impl PiApp {
             self.changes.row_focus.clear();
             self.changes.diff_generation = self.changes.diff_generation.saturating_add(1);
             self.changes.diff = None;
+            self.changes.diff_syntax = None;
             self.changes.return_focus = None;
             self.changes.pending_diff_setup = false;
         }
@@ -194,6 +198,10 @@ impl PiApp {
         self.changes.return_focus = Some(opener);
         self.changes.diff_generation = self.changes.diff_generation.saturating_add(1);
         self.changes.diff_scroll.set_offset(point(px(0.0), px(0.0)));
+        self.changes.diff_syntax = Some(HighlightedDiff::new(
+            &file.path.to_string_lossy(),
+            &file.diff.patch,
+        ));
         self.changes.diff = Some(DiffSurface::Ready(file.clone(), file.diff.clone()));
         self.changes.pending_diff_setup = true;
         cx.notify();
@@ -222,7 +230,10 @@ impl PiApp {
         self.changes.return_focus = Some(focus);
         self.changes.diff_generation = self.changes.diff_generation.saturating_add(1);
         self.changes.diff_scroll.set_offset(point(px(0.0), px(0.0)));
-        self.changes.diff = Some(load_tool_diff_surface(path, presentation));
+        let surface = load_tool_diff_surface(path, presentation);
+        self.changes.diff_syntax = surface_diff(&surface)
+            .map(|(path, patch)| HighlightedDiff::new(&path.to_string_lossy(), patch));
+        self.changes.diff = Some(surface);
         self.changes.pending_diff_setup = true;
         cx.notify();
     }
@@ -230,6 +241,7 @@ impl PiApp {
     pub(crate) fn close_file_diff(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.changes.diff_generation = self.changes.diff_generation.saturating_add(1);
         self.changes.diff = None;
+        self.changes.diff_syntax = None;
         self.changes.pending_diff_setup = false;
         self.changes
             .return_focus
@@ -237,6 +249,15 @@ impl PiApp {
             .unwrap_or_else(|| self.composer_focus.clone())
             .focus(window, cx);
         cx.notify();
+    }
+}
+
+fn surface_diff(surface: &DiffSurface) -> Option<(&std::path::Path, &str)> {
+    match surface {
+        DiffSurface::Ready(file, diff) | DiffSurface::Preview(file, diff, _) => {
+            Some((&file.path, &diff.patch))
+        }
+        DiffSurface::Error(_, _) => None,
     }
 }
 
