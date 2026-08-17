@@ -138,13 +138,23 @@ pub(crate) struct RuntimeHandle {
 }
 
 impl RuntimeHandle {
-    pub(crate) fn spawn(project: PathBuf, draft_id: String) -> Self {
-        Self::spawn_with(project, draft_id, ProcessCommand::default())
+    pub(crate) fn spawn(
+        project: PathBuf,
+        draft_id: String,
+        initial_session: Option<PathBuf>,
+    ) -> Self {
+        Self::spawn_with(
+            project,
+            draft_id,
+            initial_session,
+            ProcessCommand::default(),
+        )
     }
 
     pub(crate) fn spawn_with(
         project: PathBuf,
         draft_id: String,
+        initial_session: Option<PathBuf>,
         process_command: ProcessCommand,
     ) -> Self {
         let (commands, command_rx) = mpsc::channel();
@@ -152,7 +162,14 @@ impl RuntimeHandle {
         thread::Builder::new()
             .name("pi-gpui-supervisor".into())
             .spawn(move || {
-                run_supervisor(project, draft_id, process_command, command_rx, event_tx);
+                run_supervisor(
+                    project,
+                    draft_id,
+                    initial_session,
+                    process_command,
+                    command_rx,
+                    event_tx,
+                );
             })
             .ok();
         Self { commands, events }
@@ -195,12 +212,14 @@ impl SessionRuntimeHandle {
 fn run_supervisor(
     project: PathBuf,
     draft_id: String,
+    initial_session: Option<PathBuf>,
     process_command: ProcessCommand,
     command_rx: mpsc::Receiver<RuntimeCommand>,
     event_tx: mpsc::Sender<RuntimeEvent>,
 ) {
     let initial_key = format!("draft:{draft_id}");
     let catalog_key = "catalog".to_owned();
+    let initial_project = project.clone();
     let mut actors = HashMap::from([
         (
             catalog_key.clone(),
@@ -211,6 +230,13 @@ fn run_supervisor(
             SessionRuntimeHandle::spawn(project, process_command.clone(), false),
         ),
     ]);
+    if let Some(actor) = actors.get(&initial_key) {
+        actor.send(initial_draft_command(
+            draft_id,
+            initial_project,
+            initial_session,
+        ));
+    }
     let mut selected = initial_key.clone();
     let mut generation = 0_u64;
     let mut latest = HashMap::<String, Arc<RuntimeSnapshot>>::new();
@@ -468,6 +494,16 @@ fn run_supervisor(
         actor.send(RuntimeCommand::Shutdown);
     }
     let _ = event_tx.send(RuntimeEvent::Stopped);
+}
+
+fn initial_draft_command(id: String, project: PathBuf, session: Option<PathBuf>) -> RuntimeCommand {
+    session.map_or(
+        RuntimeCommand::ResumeDraft {
+            id,
+            project: project.clone(),
+        },
+        |path| RuntimeCommand::Resume { path, project },
+    )
 }
 
 #[derive(Debug)]
@@ -791,7 +827,8 @@ impl RuntimeOwner {
                 self.send(json!({"type": "set_session_name", "name": name}))
             }
             RuntimeCommand::NewSession { project, .. } => {
-                self.preview_draft(project);
+                self.project = project;
+                self.start_process(None);
             }
             RuntimeCommand::ResumeDraft { project, .. } => self.resume_draft(project),
             RuntimeCommand::Resume { path, project } => self.preview_history(path, project),
@@ -950,6 +987,14 @@ impl RuntimeOwner {
     }
 
     fn resume_draft(&mut self, project: PathBuf) {
+        let already_active = self.process.is_some()
+            && self.parked_snapshot.is_none()
+            && !self.snapshot.history_preview
+            && self.project == project;
+        if already_active {
+            self.publish();
+            return;
+        }
         let can_restore = self.active_session.is_none()
             && self
                 .parked_snapshot
@@ -964,26 +1009,8 @@ impl RuntimeOwner {
             self.publish();
             return;
         }
-        self.preview_draft(project);
-    }
-
-    fn preview_draft(&mut self, project: PathBuf) {
-        self.history_generation = self.history_generation.saturating_add(1);
-        if self.parked_snapshot.is_none() && self.process.is_some() {
-            self.parked_snapshot = Some(std::mem::take(&mut self.snapshot));
-        }
-        self.project = project.clone();
-        self.snapshot = RuntimeSnapshot {
-            status: "Draft".into(),
-            project,
-            auto_retry: true,
-            history_preview: true,
-            ..RuntimeSnapshot::default()
-        };
-        let _ = self.event_tx.send(RuntimeEvent::HistoryReset {
-            generation: self.process_generation,
-        });
-        self.publish();
+        self.project = project;
+        self.start_process(None);
     }
 
     fn apply_history(&mut self, result: HistoryResult) {
@@ -1536,6 +1563,22 @@ mod tests {
     }
 
     #[test]
+    fn persisted_submitted_draft_resumes_its_session() {
+        let project = PathBuf::from("/project");
+        let session = PathBuf::from("/sessions/submitted.jsonl");
+        assert!(matches!(
+            initial_draft_command("draft".into(), project.clone(), Some(session.clone())),
+            RuntimeCommand::Resume { path, project: resumed_project }
+                if path == session && resumed_project == project
+        ));
+        assert!(matches!(
+            initial_draft_command("draft".into(), project.clone(), None),
+            RuntimeCommand::ResumeDraft { id, project: draft_project }
+                if id == "draft" && draft_project == project
+        ));
+    }
+
+    #[test]
     fn snapshot_event_clones_share_transcript_storage() {
         let event = RuntimeEvent::Snapshot {
             generation: 1,
@@ -1857,11 +1900,21 @@ mod tests {
     }
 
     #[test]
-    fn new_session_starts_pi_in_the_selected_project() -> Result<(), Box<dyn std::error::Error>> {
+    fn new_session_starts_pi_before_the_first_prompt() -> Result<(), Box<dyn std::error::Error>> {
         let old_project = tempdir()?;
         let new_project = tempdir()?;
+        let script = old_project.path().join("fake-pi.sh");
+        fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))?;
+        let mut permissions = fs::metadata(&script)?.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script, permissions)?;
         let (mut owner, _events, _discovery) =
             owner_without_process(old_project.path().to_path_buf());
+        owner.process_command = ProcessCommand {
+            program: script,
+            prefix_args: vec!["quiet".into()],
+            direnv_program: None,
+        };
 
         owner.apply_command(RuntimeCommand::NewSession {
             id: "draft-new".into(),
@@ -1871,7 +1924,12 @@ mod tests {
         assert_eq!(owner.project, new_project.path());
         assert_eq!(owner.snapshot.project, new_project.path());
         assert_eq!(owner.active_session, None);
-        assert_eq!(owner.process_generation, 1);
+        assert_eq!(owner.process_generation, 2);
+        assert!(owner.process.is_some());
+        assert!(owner.snapshot.connected);
+        if let Some(mut process) = owner.process.take() {
+            process.terminate()?;
+        }
         Ok(())
     }
 

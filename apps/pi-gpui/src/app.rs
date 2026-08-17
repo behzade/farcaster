@@ -81,7 +81,7 @@ pub(crate) struct PiApp {
     pending_title: Option<(u64, String)>,
     pending_editor_text: Option<(u64, String)>,
     pending_submission: Option<PendingSubmission>,
-    pending_submission_result: Option<(String, bool)>,
+    pending_submission_result: Option<(String, bool, Option<PathBuf>)>,
     pending_session_reset: bool,
     extension_errors: Vec<String>,
     sessions_sheet: bool,
@@ -99,17 +99,7 @@ impl PiApp {
             Err(error) => (projects::Registry::default(), Some(error)),
         };
         projects::add_unique(&mut registry.projects, project.clone());
-        let selected_draft = registry
-            .drafts
-            .iter()
-            .find(|draft| draft.project == project)
-            .map(|draft| draft.id.clone())
-            .unwrap_or_else(|| {
-                let draft = projects::DraftSession::new(project.clone());
-                let id = draft.id.clone();
-                registry.drafts.insert(0, draft);
-                id
-            });
+        let selected_draft = projects::DraftSession::new(project.clone()).id;
         if project_registry_error.is_none()
             && let Err(error) = projects::save(&registry)
         {
@@ -121,7 +111,7 @@ impl PiApp {
             project_registry_error = composer_error;
         }
         let submitted_drafts = drafts::submitted_draft_associations(&registry.drafts);
-        let runtime = RuntimeHandle::spawn(project.clone(), selected_draft.clone());
+        let runtime = RuntimeHandle::spawn(project.clone(), selected_draft.clone(), None);
         let composer = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .auto_grow(2, 8)
@@ -353,13 +343,13 @@ impl PiApp {
                     accepted,
                     session,
                 } if generation == self.runtime_generation => {
-                    self.record_draft_submission(&target, accepted, session);
+                    self.record_draft_submission(&target, accepted, session.clone());
                     if self
                         .pending_submission
                         .as_ref()
                         .is_some_and(|pending| pending.target == target)
                     {
-                        self.pending_submission_result = Some((target, accepted));
+                        self.pending_submission_result = Some((target, accepted, session));
                     }
                     self.reconcile_submitted_drafts(cx);
                 }
@@ -480,9 +470,9 @@ impl PiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.switch_composer_target(session_target(&path), window, cx);
         self.selected_draft = None;
         self.project = project.clone();
-        self.switch_composer_target(session_target(&path), window, cx);
         self.send(RuntimeCommand::Resume { path, project });
         self.sessions_sheet = false;
         cx.notify();
@@ -491,15 +481,13 @@ impl PiApp {
     fn new_session(&mut self, project: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         let draft = projects::DraftSession::new(project.clone());
         let draft_key = draft_target(&draft.id);
+        self.switch_composer_target(draft_key, window, cx);
         self.selected_draft = Some(draft.id.clone());
-        self.drafts.insert(0, draft);
-        self.save_project_registry();
         self.send(RuntimeCommand::NewSession {
-            id: self.selected_draft.clone().unwrap_or_default(),
+            id: draft.id,
             project: project.clone(),
         });
         self.project = project;
-        self.switch_composer_target(draft_key, window, cx);
         self.search
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.sessions_sheet = false;
@@ -516,9 +504,9 @@ impl PiApp {
         if self.selected_draft.as_deref() == Some(id.as_str()) && !self.snapshot.history_preview {
             return;
         }
+        self.switch_composer_target(draft_target(&id), window, cx);
         self.selected_draft = Some(id.clone());
         self.project = project.clone();
-        self.switch_composer_target(draft_target(&id), window, cx);
         if let Some(Some(path)) = self.submitted_drafts.get(&id).cloned() {
             self.send(RuntimeCommand::Resume { path, project });
         } else {
@@ -635,7 +623,14 @@ impl PiApp {
         cx: &mut Context<Self>,
     ) {
         let current = input_snapshot(self.composer.read(cx));
-        let snapshot = self.composer_sessions.switch_to(target, current);
+        let current_target = self.composer_sessions.current_target().to_owned();
+        let discard = self.sync_current_draft(&current, &current_target);
+        let snapshot = if discard {
+            self.composer_sessions
+                .discard_and_switch(&current_target, target)
+        } else {
+            self.composer_sessions.switch_to(target, current)
+        };
         self.apply_composer_snapshot(snapshot, window, cx);
     }
 

@@ -27,14 +27,36 @@ impl DraftSession {
         let elapsed = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default();
+        Self::with_id(
+            format!("draft-{}-{}", elapsed.as_nanos(), std::process::id()),
+            project,
+        )
+    }
+
+    pub(crate) fn with_id(id: String, project: PathBuf) -> Self {
+        let elapsed = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
         let created_ms = elapsed.as_millis().try_into().unwrap_or(u64::MAX);
         Self {
-            id: format!("draft-{}-{}", elapsed.as_nanos(), std::process::id()),
+            id,
             project,
             created_ms,
             submitted: false,
             session_path: None,
         }
+    }
+
+    pub(crate) const fn can_change_project(&self) -> bool {
+        !self.submitted && self.session_path.is_none()
+    }
+
+    pub(crate) fn change_project(&mut self, project: PathBuf) -> bool {
+        if !self.can_change_project() || self.project == project {
+            return false;
+        }
+        self.project = project;
+        true
     }
 }
 
@@ -209,6 +231,18 @@ mod tests {
 
         assert_eq!(load_from(&path)?, Registry::default());
         Ok(())
+    }
+
+    #[test]
+    fn only_unsubmitted_drafts_can_change_project() {
+        let mut draft = DraftSession::new(PathBuf::from("/first"));
+        assert!(draft.change_project(PathBuf::from("/second")));
+        assert_eq!(draft.project, PathBuf::from("/second"));
+        assert!(!draft.change_project(PathBuf::from("/second")));
+
+        draft.submitted = true;
+        assert!(!draft.change_project(PathBuf::from("/third")));
+        assert_eq!(draft.project, PathBuf::from("/second"));
     }
 
     #[test]

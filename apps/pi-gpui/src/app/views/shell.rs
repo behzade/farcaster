@@ -4,15 +4,11 @@ use std::{
 };
 
 use gpui::{
-    Anchor, AnyElement, CursorStyle, FontWeight, InteractiveElement as _, IntoElement,
-    KeyDownEvent, ParentElement as _, Role, StatefulInteractiveElement as _, Styled as _,
-    WeakEntity, div, prelude::FluentBuilder as _, px, relative, uniform_list,
+    AnyElement, CursorStyle, FontWeight, InteractiveElement as _, IntoElement, KeyDownEvent,
+    ParentElement as _, Role, StatefulInteractiveElement as _, Styled as _, WeakEntity, div,
+    prelude::FluentBuilder as _, px, relative, uniform_list,
 };
-use gpui_component::{
-    Icon, Sizable as _, Size,
-    input::Input,
-    menu::{DropdownMenu as _, PopupMenuItem},
-};
+use gpui_component::{Icon, Sizable as _, Size, input::Input};
 
 use super::super::PiApp;
 use crate::{
@@ -121,23 +117,7 @@ impl PiApp {
     pub(super) fn render_sessions(&self, entity: WeakEntity<Self>) -> impl IntoElement {
         let new_entity = entity.clone();
         let add_project_entity = entity.clone();
-        let current_project = if self.snapshot.project.as_os_str().is_empty() {
-            self.project.clone()
-        } else {
-            self.snapshot.project.clone()
-        };
-        let mut available_projects = self.projects.clone();
-        for session in &self.sessions {
-            if !available_projects.contains(&session.project) {
-                available_projects.push(session.project.clone());
-            }
-        }
-        if let Some(index) = available_projects
-            .iter()
-            .position(|project| project == &current_project)
-        {
-            available_projects.swap(0, index);
-        }
+        let latest_project = self.project.clone();
         let drafts = self.drafts.clone();
         let selected_draft = self.selected_draft.clone();
         let submitted_drafts = self.submitted_drafts.clone();
@@ -255,42 +235,18 @@ impl PiApp {
                             .flex()
                             .items_center()
                             .gap(THEME.space.xs)
-                            .child(
-                                icon_button(
-                                    "new-session",
-                                    AppIcon::ChatCircleDots,
-                                    "New session",
-                                    ButtonTone::Quiet,
-                                    !available_projects.is_empty(),
-                                    |_, _| {},
-                                )
-                                .dropdown_menu_with_anchor(
-                                    Anchor::TopRight,
-                                    move |menu, _, _| {
-                                        let mut menu = menu
-                                            .min_w(px(220.0))
-                                            .max_h(px(420.0))
-                                            .label("New session in");
-                                        for project in &available_projects {
-                                            let label = project_label(project);
-                                            let target = project.clone();
-                                            let entity = new_entity.clone();
-                                            menu = menu.item(PopupMenuItem::new(label).on_click(
-                                                move |_, window, cx| {
-                                                    let _ = entity.update(cx, |this, cx| {
-                                                        this.new_session(
-                                                            target.clone(),
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    });
-                                                },
-                                            ));
-                                        }
-                                        menu
-                                    },
-                                ),
-                            )
+                            .child(icon_button(
+                                "new-session",
+                                AppIcon::ChatCircleDots,
+                                "New session",
+                                ButtonTone::Quiet,
+                                true,
+                                move |window, cx| {
+                                    let _ = new_entity.update(cx, |this, cx| {
+                                        this.new_session(latest_project.clone(), window, cx);
+                                    });
+                                },
+                            ))
                             .child(icon_button(
                                 "add-project",
                                 AppIcon::FolderPlus,
@@ -493,10 +449,6 @@ impl PiApp {
             .overflow_y_scroll()
             .child(section_heading("Status"))
             .child(metric_row("State", self.snapshot.status.clone()))
-            .when(!self.snapshot.history_preview, |run| {
-                run.child(section_heading("Model"))
-                    .child(self.render_model_controls(entity.clone()))
-            })
             .when_some(self.fps_monitor.clone(), |run, monitor| run.child(monitor))
             .child(section_heading("Usage"))
             .child(usage_metrics(

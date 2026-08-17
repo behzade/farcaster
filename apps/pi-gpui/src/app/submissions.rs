@@ -1,16 +1,17 @@
 //! Composer submission lifecycle, including image attachment ownership.
 
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use gpui::{ClipboardItem, Context, Window};
 
 use super::{ComposerImage, PiApp, slash_commands};
 use crate::{
     app::slash_commands::{BuiltinInvocation, BuiltinSlashCommand},
-    composer_sessions::ComposerSnapshot,
+    composer_sessions::{ComposerSnapshot, session_target},
     conversation::TranscriptKind,
     protocol::{PromptImage, PromptMode},
     runtime::RuntimeCommand,
+    sessions::normalize_session_path,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -23,7 +24,7 @@ pub(super) struct PendingSubmission {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SubmissionResolution {
     Accepted,
-    Rollback,
+    Rejected,
     Ignore,
 }
 
@@ -68,19 +69,16 @@ impl PiApp {
         }) {
             Ok(()) => {
                 self.composer_sessions.record_submission(&target, &value);
-                let pending_images = self.composer_images.remove(&target).unwrap_or_default();
+                let pending_images = self
+                    .composer_images
+                    .get(&target)
+                    .cloned()
+                    .unwrap_or_default();
                 self.pending_submission = Some(PendingSubmission {
-                    target: target.clone(),
-                    text: editor_text.clone(),
+                    target,
+                    text: editor_text,
                     images: pending_images,
                 });
-                if self
-                    .composer_sessions
-                    .clear_submitted_text(&target, &editor_text)
-                    && self.composer_sessions.current_target() == target
-                {
-                    self.apply_composer_snapshot(ComposerSnapshot::default(), window, cx);
-                }
                 self.jump_to_latest(cx);
             }
             Err(error) => {
@@ -127,7 +125,9 @@ impl PiApp {
                         );
                     }
                 } else {
-                    self.open_run_sheet(window, cx);
+                    Arc::make_mut(&mut self.snapshot).status = "Choose a model below".into();
+                    self.composer_focus.focus(window, cx);
+                    cx.notify();
                 }
             }
             BuiltinSlashCommand::Export => {
@@ -270,7 +270,7 @@ impl PiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((target, accepted)) = self.pending_submission_result.take() else {
+        let Some((target, accepted, session)) = self.pending_submission_result.take() else {
             return;
         };
         let resolution = submission_resolution(self.pending_submission.as_ref(), &target, accepted);
@@ -281,26 +281,44 @@ impl PiApp {
             return;
         };
         if resolution == SubmissionResolution::Accepted {
-            return;
-        }
-
-        let restored = self
-            .composer_sessions
-            .prepend_failed_submission(&pending.target, &pending.text);
-        if !pending.images.is_empty() {
-            let new_images = self
+            let cleared = self
+                .composer_sessions
+                .clear_submitted_text(&pending.target, &pending.text);
+            if self
                 .composer_images
-                .remove(&pending.target)
-                .unwrap_or_default();
-            let mut restored_images = pending.images;
-            restored_images.extend(new_images);
-            self.composer_images
-                .insert(pending.target.clone(), restored_images);
-        }
-        if self.composer_sessions.current_target() == pending.target {
-            self.apply_composer_snapshot(restored, window, cx);
+                .get(&pending.target)
+                .is_some_and(|images| images == &pending.images)
+            {
+                self.composer_images.remove(&pending.target);
+            }
+            if cleared && self.composer_sessions.current_target() == pending.target {
+                self.apply_composer_snapshot(ComposerSnapshot::default(), window, cx);
+            }
+        } else if let Some(session_key) = rejected_attachment_target(
+            &pending.text,
+            !pending.images.is_empty(),
+            &pending.target,
+            self.composer_sessions.current_target(),
+            session.as_deref(),
+        ) {
+            self.composer_sessions
+                .promote(&pending.target, session_key.clone());
+            self.promote_composer_images(&pending.target, &session_key);
         }
     }
+}
+
+fn rejected_attachment_target(
+    text: &str,
+    has_images: bool,
+    pending_target: &str,
+    current_target: &str,
+    session: Option<&Path>,
+) -> Option<String> {
+    (text.trim().is_empty() && has_images && current_target != pending_target)
+        .then(|| session.map(normalize_session_path))
+        .flatten()
+        .map(|path| session_target(&path))
 }
 
 fn submission_resolution(
@@ -314,7 +332,7 @@ fn submission_resolution(
     if accepted {
         SubmissionResolution::Accepted
     } else {
-        SubmissionResolution::Rollback
+        SubmissionResolution::Rejected
     }
 }
 
@@ -339,7 +357,7 @@ mod tests {
     }
 
     #[test]
-    fn accepted_submission_stays_cleared_and_rejection_rolls_back() {
+    fn submission_results_distinguish_acceptance_and_rejection() {
         let pending = pending();
         assert_eq!(
             submission_resolution(Some(&pending), "session:test", true),
@@ -347,7 +365,24 @@ mod tests {
         );
         assert_eq!(
             submission_resolution(Some(&pending), "session:test", false),
-            SubmissionResolution::Rollback
+            SubmissionResolution::Rejected
+        );
+    }
+
+    #[test]
+    fn rejected_attachment_only_submission_moves_to_its_real_session_after_navigation() {
+        let session = Path::new("/sessions/one.jsonl");
+        assert_eq!(
+            rejected_attachment_target("", true, "draft:one", "session:other", Some(session),),
+            Some(session_target(session))
+        );
+        assert_eq!(
+            rejected_attachment_target("typed", true, "draft:one", "session:other", Some(session),),
+            None
+        );
+        assert_eq!(
+            rejected_attachment_target("", true, "draft:one", "draft:one", Some(session)),
+            None
         );
     }
 

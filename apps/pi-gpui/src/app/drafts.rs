@@ -7,11 +7,97 @@ use gpui::Context;
 use super::PiApp;
 use crate::{
     composer_sessions::{draft_target, session_target},
-    projects::DraftSession,
+    projects::{self, DraftSession},
+    runtime::RuntimeCommand,
     sessions::normalize_session_path,
 };
 
 impl PiApp {
+    pub(super) fn available_projects(&self) -> Vec<PathBuf> {
+        let current = &self.project;
+        let mut available = self.projects.clone();
+        for session in &self.sessions {
+            projects::add_unique(&mut available, session.project.clone());
+        }
+        projects::add_unique(&mut available, current.clone());
+        if let Some(index) = available.iter().position(|project| project == current) {
+            available.swap(0, index);
+        }
+        available
+    }
+
+    pub(super) fn editable_draft_project(&self) -> Option<PathBuf> {
+        let id = self.selected_draft.as_deref()?;
+        let target = draft_target(id);
+        if self.composer_sessions.current_target() != target
+            || self.submitted_drafts.contains_key(id)
+            || self
+                .pending_submission
+                .as_ref()
+                .is_some_and(|pending| pending.target == target)
+        {
+            return None;
+        }
+        self.drafts.iter().find(|draft| draft.id == id).map_or_else(
+            || Some(self.project.clone()),
+            |draft| draft.can_change_project().then(|| draft.project.clone()),
+        )
+    }
+
+    pub(super) fn change_draft_project(&mut self, project: PathBuf, cx: &mut Context<Self>) {
+        let Some(id) = self.selected_draft.clone() else {
+            return;
+        };
+        let target = draft_target(&id);
+        if self.submitted_drafts.contains_key(&id)
+            || self
+                .pending_submission
+                .as_ref()
+                .is_some_and(|pending| pending.target == target)
+        {
+            return;
+        }
+        let changed = if let Some(draft) = self.drafts.iter_mut().find(|draft| draft.id == id) {
+            draft.change_project(project.clone())
+        } else {
+            self.composer_sessions.current_target() == target && self.project != project
+        };
+        if !changed {
+            return;
+        }
+        projects::add_unique(&mut self.projects, project.clone());
+        self.project = project.clone();
+        self.save_project_registry();
+        self.send(RuntimeCommand::NewSession { id, project });
+        cx.notify();
+    }
+
+    pub(super) fn sync_current_draft(
+        &mut self,
+        composer: &crate::composer_sessions::ComposerSnapshot,
+        target: &str,
+    ) -> bool {
+        let Some(id) = self.selected_draft.as_deref() else {
+            return false;
+        };
+        if target != draft_target(id) || self.submitted_drafts.contains_key(id) {
+            return false;
+        }
+        let has_content = draft_has_content(composer);
+        let changed = sync_materialized_draft(&mut self.drafts, id, &self.project, has_content);
+        if changed {
+            self.save_project_registry();
+        }
+        let submission_pending = self
+            .pending_submission
+            .as_ref()
+            .is_some_and(|pending| pending.target == target);
+        if !has_content && !submission_pending {
+            self.composer_images.remove(target);
+        }
+        !has_content
+    }
+
     pub(super) fn record_draft_submission(
         &mut self,
         target: &str,
@@ -67,7 +153,6 @@ impl PiApp {
 
     pub(super) fn reconcile_submitted_drafts(&mut self, cx: &mut Context<Self>) {
         let promotions = reconciliation_candidates(
-            self.drafts.iter().map(|draft| draft.id.as_str()),
             &self.submitted_drafts,
             self.sessions.iter().map(|session| session.path.as_path()),
         );
@@ -82,18 +167,13 @@ impl PiApp {
         let session_key = session_target(path);
         self.composer_sessions
             .promote(&draft_key, session_key.clone());
-        if let Some(images) = self.composer_images.remove(&draft_key) {
-            self.composer_images
-                .entry(session_key.clone())
-                .or_default()
-                .extend(images);
-        }
+        self.promote_composer_images(&draft_key, &session_key);
         if let Some(pending) = self.pending_submission.as_mut()
             && pending.target == draft_key
         {
             pending.target = session_key.clone();
         }
-        if let Some((target, _)) = self.pending_submission_result.as_mut()
+        if let Some((target, _, _)) = self.pending_submission_result.as_mut()
             && *target == draft_key
         {
             *target = session_key.clone();
@@ -103,6 +183,15 @@ impl PiApp {
         self.drafts.retain(|draft| draft.id != id);
         clear_promoted_selection(&mut self.selected_draft, id);
         self.save_project_registry();
+    }
+
+    pub(super) fn promote_composer_images(&mut self, from: &str, to: &str) {
+        if let Some(images) = self.composer_images.remove(from) {
+            self.composer_images
+                .entry(to.to_owned())
+                .or_default()
+                .extend(images);
+        }
     }
 
     fn canonicalize_draft_status(&mut self, id: &str, path: &std::path::Path) {
@@ -158,6 +247,33 @@ fn fill_session_association(
         *association = session.map(std::path::Path::to_path_buf);
     }
     association.clone()
+}
+
+fn draft_has_content(composer: &crate::composer_sessions::ComposerSnapshot) -> bool {
+    !composer.text.trim().is_empty()
+}
+
+fn sync_materialized_draft(
+    drafts: &mut Vec<DraftSession>,
+    id: &str,
+    project: &std::path::Path,
+    has_content: bool,
+) -> bool {
+    let existing = drafts.iter().position(|draft| draft.id == id);
+    match (existing, has_content) {
+        (None, true) => {
+            drafts.insert(
+                0,
+                DraftSession::with_id(id.to_owned(), project.to_path_buf()),
+            );
+            true
+        }
+        (Some(index), false) => {
+            drafts.remove(index);
+            true
+        }
+        _ => false,
+    }
 }
 
 fn update_persisted_submission(
@@ -232,17 +348,17 @@ pub(super) fn resolved_draft_status(
 }
 
 fn reconciliation_candidates<'a>(
-    draft_ids: impl Iterator<Item = &'a str>,
     submitted_drafts: &HashMap<String, Option<PathBuf>>,
     discovered_paths: impl Iterator<Item = &'a std::path::Path>,
 ) -> Vec<(String, PathBuf)> {
     let discovered_paths = discovered_paths.collect::<Vec<_>>();
-    draft_ids
-        .filter_map(|id| {
-            let path = submitted_drafts.get(id)?.as_ref()?;
+    submitted_drafts
+        .iter()
+        .filter_map(|(id, path)| {
+            let path = path.as_ref()?;
             discovered_paths
                 .contains(&path.as_path())
-                .then(|| (id.to_owned(), path.clone()))
+                .then(|| (id.clone(), path.clone()))
         })
         .collect()
 }
@@ -250,6 +366,50 @@ fn reconciliation_candidates<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn drafts_materialize_only_when_leaving_a_composer_with_content() {
+        let project = PathBuf::from("/project");
+        let mut drafts = Vec::new();
+
+        assert!(!draft_has_content(
+            &crate::composer_sessions::ComposerSnapshot::default()
+        ));
+        assert!(!draft_has_content(
+            &crate::composer_sessions::ComposerSnapshot::new("   ".into(), 3, 3..3)
+        ));
+        assert!(draft_has_content(
+            &crate::composer_sessions::ComposerSnapshot::new("work".into(), 4, 4..4)
+        ));
+        assert!(!sync_materialized_draft(
+            &mut drafts,
+            "ephemeral",
+            &project,
+            false,
+        ));
+        assert!(drafts.is_empty());
+        assert!(sync_materialized_draft(
+            &mut drafts,
+            "ephemeral",
+            &project,
+            true,
+        ));
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].id, "ephemeral");
+        assert!(!sync_materialized_draft(
+            &mut drafts,
+            "ephemeral",
+            &project,
+            true,
+        ));
+        assert!(sync_materialized_draft(
+            &mut drafts,
+            "ephemeral",
+            &project,
+            false,
+        ));
+        assert!(drafts.is_empty());
+    }
 
     #[test]
     fn submitted_a_and_selected_empty_b_keep_distinct_identity() {
@@ -378,7 +538,6 @@ mod tests {
 
         assert_eq!(
             reconciliation_candidates(
-                restarted.drafts.iter().map(|draft| draft.id.as_str()),
                 &restarted_submitted,
                 catalog.iter().map(|summary| summary.path.as_path()),
             ),
@@ -414,11 +573,7 @@ mod tests {
         let mut selected_draft = Some("b".to_owned());
 
         assert_eq!(
-            reconciliation_candidates(
-                ["a", "b"].into_iter(),
-                &submitted,
-                [path.as_path()].into_iter(),
-            ),
+            reconciliation_candidates(&submitted, [path.as_path()].into_iter()),
             vec![("a".into(), path)]
         );
         clear_promoted_selection(&mut selected_draft, "a");
@@ -447,7 +602,7 @@ mod tests {
     }
 
     #[test]
-    fn reconciliation_requires_exact_draft_id_and_discovered_path() {
+    fn reconciliation_requires_an_exact_discovered_path() {
         let path = PathBuf::from("/sessions/a.jsonl");
         let submitted = HashMap::from([
             ("a".into(), Some(path)),
@@ -456,15 +611,6 @@ mod tests {
 
         assert!(
             reconciliation_candidates(
-                ["other"].into_iter(),
-                &submitted,
-                [std::path::Path::new("/sessions/a.jsonl")].into_iter(),
-            )
-            .is_empty()
-        );
-        assert!(
-            reconciliation_candidates(
-                ["a", "b"].into_iter(),
                 &submitted,
                 [std::path::Path::new("/sessions/other.jsonl")].into_iter(),
             )

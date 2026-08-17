@@ -38,6 +38,7 @@ impl PiApp {
         let cursor_entity = entity.clone();
         let attachments_entity = entity.clone();
         let command_entity = entity.clone();
+        let controls_entity = entity.clone();
         let abort_entity = entity;
         div()
             .flex_none()
@@ -101,10 +102,12 @@ impl PiApp {
                     .flex()
                     .flex_wrap()
                     .items_center()
-                    .justify_end()
+                    .justify_between()
                     .gap(THEME.space.sm)
+                    .child(self.render_composer_controls(controls_entity))
                     .child(
                         div()
+                            .flex_none()
                             .flex()
                             .gap(THEME.space.xs)
                             .when(self.snapshot.conversation.running, |actions| {

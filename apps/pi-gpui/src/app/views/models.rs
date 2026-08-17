@@ -1,12 +1,10 @@
+use std::path::Path;
+
 use gpui::{
-    Anchor, AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _, Role,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
+    Anchor, AnyElement, IntoElement as _, ParentElement as _, Styled as _, WeakEntity, div,
+    prelude::FluentBuilder as _, px,
 };
-use gpui_component::{
-    Selectable as _, Sizable as _, Size,
-    button::{Button, ButtonVariants as _},
-    menu::{DropdownMenu as _, PopupMenuItem},
-};
+use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
 
 use super::super::PiApp;
 use crate::{
@@ -15,7 +13,7 @@ use crate::{
 };
 
 impl PiApp {
-    pub(super) fn render_model_controls(&self, entity: WeakEntity<Self>) -> AnyElement {
+    pub(super) fn render_composer_controls(&self, entity: WeakEntity<Self>) -> AnyElement {
         let selected_model = self
             .snapshot
             .session
@@ -33,7 +31,7 @@ impl PiApp {
             .unwrap_or_else(|| "Provider".into());
         let model_label = selected_model
             .as_ref()
-            .map(|model| bounded_label(&model.name, 28))
+            .map(|model| bounded_label(&model.name, 24))
             .unwrap_or_else(|| "Model".into());
         let mut providers = self
             .snapshot
@@ -43,6 +41,14 @@ impl PiApp {
             .collect::<Vec<_>>();
         providers.sort();
         providers.dedup();
+        let provider_button_label = if providers.is_empty() {
+            "Provider".into()
+        } else {
+            format!("Provider: {}", bounded_label(&selected_provider, 14))
+        };
+        let model_button_label = selected_model
+            .as_ref()
+            .map_or_else(|| "Model".into(), |_| format!("Model: {model_label}"));
         let provider_models = self
             .snapshot
             .models
@@ -50,144 +56,149 @@ impl PiApp {
             .filter(|model| model.provider == selected_provider)
             .cloned()
             .collect::<Vec<_>>();
-        let thinking = self
+        let effort = self
             .snapshot
             .session
             .as_ref()
-            .map(|state| state.thinking_level.clone())
-            .unwrap_or_else(|| "off".into());
+            .map(|state| state.thinking_level.clone());
+        let effort_button_label = effort.as_deref().map_or_else(
+            || "Effort".into(),
+            |level| format!("Effort: {}", effort_label(level)),
+        );
+        let efforts = self.snapshot.thinking_levels.clone();
+        let projects = self.available_projects();
+        let project_entity = entity.clone();
         let provider_entity = entity.clone();
         let model_entity = entity.clone();
+        let effort_entity = entity;
 
         div()
+            .min_w_0()
+            .flex_1()
             .flex()
-            .flex_col()
-            .gap(THEME.space.sm)
-            .child(
-                div()
-                    .flex()
-                    .gap(THEME.space.xs)
-                    .child(
-                        button(
-                            "select-provider",
-                            bounded_label(&selected_provider, 14),
-                            ButtonTone::Neutral,
-                            !providers.is_empty(),
-                            |_, _| {},
-                        )
-                        .flex_1()
-                        .dropdown_menu_with_anchor(
-                            Anchor::TopRight,
-                            move |menu, _, _| {
-                                let mut menu =
-                                    menu.min_w(px(180.0)).max_h(px(420.0)).label("Provider");
-                                for provider in &providers {
-                                    let target = provider.clone();
-                                    let entity = provider_entity.clone();
-                                    menu =
-                                        menu.item(PopupMenuItem::new(provider.clone()).on_click(
-                                            move |_, _, cx| {
-                                                let _ = entity.update(cx, |this, cx| {
-                                                    this.select_provider(&target, cx);
-                                                });
-                                            },
-                                        ));
-                                }
-                                menu
-                            },
-                        ),
+            .flex_wrap()
+            .items_center()
+            .gap(THEME.space.xs)
+            .when_some(self.editable_draft_project(), |controls, project| {
+                controls.child(
+                    button(
+                        "select-project",
+                        format!("Project: {}", bounded_label(&project_label(&project), 18)),
+                        ButtonTone::Neutral,
+                        !projects.is_empty(),
+                        |_, _| {},
                     )
-                    .child(
-                        button(
-                            "select-model",
-                            model_label,
-                            ButtonTone::Neutral,
-                            !provider_models.is_empty(),
-                            |_, _| {},
-                        )
-                        .flex_1()
-                        .dropdown_menu_with_anchor(
-                            Anchor::TopRight,
-                            move |menu, _, _| {
-                                let mut menu =
-                                    menu.min_w(px(260.0)).max_h(px(480.0)).label("Model");
-                                for model in &provider_models {
-                                    let target = model.clone();
-                                    let entity = model_entity.clone();
-                                    menu =
-                                        menu.item(PopupMenuItem::new(model.name.clone()).on_click(
-                                            move |_, _, cx| {
-                                                let _ = entity.update(cx, |this, cx| {
-                                                    this.select_model(&target, cx);
-                                                });
-                                            },
-                                        ));
-                                }
-                                menu
-                            },
-                        ),
+                    .dropdown_menu_with_anchor(
+                        Anchor::TopRight,
+                        move |menu, _, _| {
+                            let mut menu = menu.min_w(px(220.0)).max_h(px(420.0)).label("Project");
+                            for project in &projects {
+                                let target = project.clone();
+                                let entity = project_entity.clone();
+                                menu =
+                                    menu.item(PopupMenuItem::new(project_label(project)).on_click(
+                                        move |_, _, cx| {
+                                            let _ = entity.update(cx, |this, cx| {
+                                                this.change_draft_project(target.clone(), cx);
+                                            });
+                                        },
+                                    ));
+                            }
+                            menu
+                        },
                     ),
+                )
+            })
+            .child(
+                button(
+                    "select-provider",
+                    provider_button_label,
+                    ButtonTone::Neutral,
+                    !providers.is_empty(),
+                    |_, _| {},
+                )
+                .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+                    let mut menu = menu.min_w(px(180.0)).max_h(px(420.0)).label("Provider");
+                    for provider in &providers {
+                        let target = provider.clone();
+                        let entity = provider_entity.clone();
+                        menu = menu.item(PopupMenuItem::new(provider.clone()).on_click(
+                            move |_, _, cx| {
+                                let _ = entity.update(cx, |this, cx| {
+                                    this.select_provider(&target, cx);
+                                });
+                            },
+                        ));
+                    }
+                    menu
+                }),
             )
-            .child(thinking_track(
-                &self.snapshot.thinking_levels,
-                &thinking,
-                entity,
-            ))
+            .child(
+                button(
+                    "select-model",
+                    model_button_label,
+                    ButtonTone::Neutral,
+                    !provider_models.is_empty(),
+                    |_, _| {},
+                )
+                .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+                    let mut menu = menu.min_w(px(260.0)).max_h(px(480.0)).label("Model");
+                    for model in &provider_models {
+                        let target = model.clone();
+                        let entity = model_entity.clone();
+                        menu = menu.item(PopupMenuItem::new(model.name.clone()).on_click(
+                            move |_, _, cx| {
+                                let _ = entity.update(cx, |this, cx| {
+                                    this.select_model(&target, cx);
+                                });
+                            },
+                        ));
+                    }
+                    menu
+                }),
+            )
+            .child(
+                button(
+                    "select-effort",
+                    effort_button_label,
+                    ButtonTone::Neutral,
+                    !efforts.is_empty(),
+                    |_, _| {},
+                )
+                .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+                    let mut menu = menu.min_w(px(140.0)).max_h(px(360.0)).label("Effort");
+                    for effort in &efforts {
+                        let target = effort.clone();
+                        let entity = effort_entity.clone();
+                        menu = menu.item(PopupMenuItem::new(effort_label(effort)).on_click(
+                            move |_, _, cx| {
+                                let _ = entity.update(cx, |this, cx| {
+                                    this.set_thinking_level(target.clone(), cx);
+                                });
+                            },
+                        ));
+                    }
+                    menu
+                }),
+            )
             .into_any_element()
     }
 }
 
-fn thinking_track(levels: &[String], current: &str, entity: WeakEntity<PiApp>) -> AnyElement {
-    div()
-        .id("thinking-track")
-        .role(Role::Group)
-        .aria_label(format!("Thinking: {current}"))
-        .flex()
-        .flex_col()
-        .gap(THEME.space.xs)
-        .child(
-            div()
-                .text_size(THEME.type_scale.caption)
-                .text_color(THEME.colors.subtle)
-                .child("Thinking"),
-        )
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(1.0))
-                .children(levels.iter().enumerate().map(|(index, level)| {
-                    let target = level.clone();
-                    let selected = target == current;
-                    let entity = entity.clone();
-                    Button::new(("thinking-level", index))
-                        .label(thinking_abbreviation(level))
-                        .tooltip(format!("Thinking: {level}"))
-                        .with_size(Size::XSmall)
-                        .selected(selected)
-                        .when(selected, |button| button.primary())
-                        .when(!selected, |button| button.ghost())
-                        .on_click(move |_, _, cx| {
-                            let _ = entity.update(cx, |this, cx| {
-                                this.set_thinking_level(target.clone(), cx);
-                            });
-                        })
-                })),
-        )
-        .into_any_element()
+fn effort_label(level: &str) -> String {
+    let mut characters = level.chars();
+    match characters.next() {
+        Some(first) => first.to_uppercase().chain(characters).collect(),
+        None => "Off".into(),
+    }
 }
 
-fn thinking_abbreviation(level: &str) -> &'static str {
-    match level {
-        "off" => "Off",
-        "minimal" => "Min",
-        "low" => "Low",
-        "medium" => "Med",
-        "high" => "High",
-        "xhigh" => "X",
-        "max" => "Max",
-        _ => "?",
-    }
+fn project_label(project: &Path) -> String {
+    project
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .map_or_else(|| project.display().to_string(), str::to_owned)
 }
 
 fn bounded_label(value: &str, max: usize) -> String {

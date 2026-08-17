@@ -106,21 +106,6 @@ fn an_accepted_prompt_only_clears_its_unchanged_session() {
 }
 
 #[test]
-fn rejected_submission_is_restored_before_a_new_draft() {
-    let mut sessions = sessions("session:one");
-    sessions.capture_current(ComposerSnapshot::new("new draft".into(), 3, 1..3));
-
-    let restored = sessions.prepend_failed_submission("session:one", "failed prompt");
-
-    assert_eq!(restored.text, "failed prompt\n\nnew draft");
-    assert_eq!(restored.cursor, "failed prompt\n\n".len() + 3);
-    assert_eq!(
-        restored.selection,
-        "failed prompt\n\n".len() + 1.."failed prompt\n\n".len() + 3
-    );
-}
-
-#[test]
 fn saving_a_draft_promotes_its_full_composer_state() {
     let mut sessions = sessions("draft:one");
     sessions.record_submission("draft:one", "first prompt");
