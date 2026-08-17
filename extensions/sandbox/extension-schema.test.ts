@@ -3,9 +3,16 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import registerSandbox from "./index.ts";
+import { BackgroundJobParams } from "./tool-schemas.ts";
 
 const indexSource = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
 const schemaSource = readFileSync(new URL("./tool-schemas.ts", import.meta.url), "utf8");
+
+test("background jobs expose an OpenAI-compatible object root", () => {
+	const schema = BackgroundJobParams as { type?: unknown; anyOf?: unknown };
+	assert.equal(schema.type, "object");
+	assert.ok(Array.isArray(schema.anyOf));
+});
 
 test("bash and background jobs cannot request per-command permissions", () => {
 	const bashStart = schemaSource.indexOf("export const BashParams");

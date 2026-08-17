@@ -72,4 +72,4 @@ export const BackgroundJobParams = Type.Union([
 		keys: Type.Array(Type.String(), { minItems: 1, maxItems: 20 }),
 	}, { additionalProperties: false }),
 	Type.Object({ action: Type.Literal("stop"), name: Type.String() }, { additionalProperties: false }),
-]);
+], { type: "object" });

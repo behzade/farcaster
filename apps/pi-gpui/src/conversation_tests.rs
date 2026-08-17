@@ -84,6 +84,31 @@ fn cache_hit_rate_matches_the_latest_assistant_prompt_usage() {
 }
 
 #[test]
+fn assistant_error_without_content_is_visible_live_and_in_history() {
+    let message = json!({
+        "role":"assistant",
+        "content":[],
+        "stopReason":"error",
+        "errorMessage":"400: invalid tool schema"
+    });
+
+    let mut live = ConversationState::default();
+    live.reduce(&json!({"type":"message_start","message":{"role":"assistant","content":[]}}));
+    live.reduce(&json!({"type":"message_end","message":message.clone()}));
+
+    let mut history = ConversationState::default();
+    history.replace_history(&[message]);
+
+    for state in [live, history] {
+        assert_eq!(state.items.len(), 1);
+        assert_eq!(state.items[0].kind, TranscriptKind::Error);
+        assert_eq!(state.items[0].text, "400: invalid tool schema");
+        assert!(state.items[0].is_error);
+        assert!(!state.items[0].streaming);
+    }
+}
+
+#[test]
 fn assistant_usage_without_prompt_tokens_clears_the_cache_hit_rate() {
     let mut state = ConversationState::default();
     state.replace_history(&[json!({

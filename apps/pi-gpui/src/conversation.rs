@@ -579,7 +579,7 @@ fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
         .unwrap_or(false)
         || message.get("stopReason").and_then(Value::as_str) == Some("error");
     if role == "assistant" {
-        return message
+        let mut items: Vec<TranscriptItem> = message
             .get("content")
             .and_then(Value::as_array)
             .map(|blocks| {
@@ -631,6 +631,25 @@ fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
                     .collect()
             })
             .unwrap_or_default();
+        if items.is_empty()
+            && is_error
+            && let Some(error) = message
+                .get("errorMessage")
+                .and_then(Value::as_str)
+                .filter(|error| !error.is_empty())
+        {
+            items.push(TranscriptItem {
+                kind: TranscriptKind::Error,
+                label: "Model error".into(),
+                text: error.to_owned(),
+                streaming: false,
+                is_error: true,
+                tool_call_id: None,
+                tool_output: String::new(),
+                tool_presentation: None,
+            });
+        }
+        return items;
     }
     let (kind, label, display) = match role {
         "user" => (TranscriptKind::User, String::new(), true),
