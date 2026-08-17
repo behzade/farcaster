@@ -36,6 +36,8 @@ pub(crate) struct Model {
     pub id: String,
     pub name: String,
     pub provider: String,
+    #[serde(default, rename = "contextWindow")]
+    pub context_window: u64,
     #[serde(default)]
     pub reasoning: bool,
 }

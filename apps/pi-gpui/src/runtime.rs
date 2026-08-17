@@ -578,7 +578,12 @@ struct SessionControls {
 fn prefill_session_controls(snapshot: &mut RuntimeSnapshot, controls: &mut SessionControls) {
     if let Some(session) = &snapshot.session {
         if let Some(model) = &session.model {
-            controls.model = Some(model.clone());
+            controls.model = snapshot
+                .models
+                .iter()
+                .find(|candidate| candidate.id == model.id && candidate.provider == model.provider)
+                .cloned()
+                .or_else(|| Some(model.clone()));
         }
         controls.thinking_level = Some(session.thinking_level.clone());
     } else {
@@ -599,6 +604,113 @@ fn prefill_session_controls(snapshot: &mut RuntimeSnapshot, controls: &mut Sessi
             .thinking_levels
             .clone_from(&snapshot.thinking_levels);
     }
+}
+
+fn stable_session_stats(previous: &Value, next: Value, running: bool) -> Value {
+    if !running || context_usage_is_meaningful(&next) {
+        return next;
+    }
+    let mut next = match next {
+        Value::Object(next) => next,
+        other => return other,
+    };
+    if let Some(context) = previous
+        .get("contextUsage")
+        .filter(|_| context_usage_is_meaningful(previous))
+    {
+        next.insert("contextUsage".into(), context.clone());
+    } else {
+        next.remove("contextUsage");
+    }
+    Value::Object(next)
+}
+
+fn context_usage_is_meaningful(stats: &Value) -> bool {
+    let Some(context) = stats.get("contextUsage") else {
+        return false;
+    };
+    context
+        .get("tokens")
+        .and_then(Value::as_u64)
+        .is_some_and(|tokens| tokens > 0)
+        || context
+            .get("percent")
+            .and_then(Value::as_f64)
+            .is_some_and(|percent| percent.is_finite() && percent > 0.0)
+}
+
+fn historical_context_stats(messages: &[Value], models: &[Model]) -> Value {
+    let Some(message) = messages.iter().rev().find(|message| {
+        message.get("role").and_then(Value::as_str) == Some("assistant")
+            && !matches!(
+                message.get("stopReason").and_then(Value::as_str),
+                Some("aborted" | "error")
+            )
+    }) else {
+        return Value::Null;
+    };
+    let Some(usage) = message.get("usage") else {
+        return Value::Null;
+    };
+    let tokens = usage
+        .get("totalTokens")
+        .and_then(Value::as_u64)
+        .filter(|tokens| *tokens > 0)
+        .or_else(|| {
+            ["input", "output", "cacheRead", "cacheWrite"]
+                .iter()
+                .try_fold(0_u64, |total, key| {
+                    total.checked_add(usage.get(*key)?.as_u64()?)
+                })
+                .filter(|tokens| *tokens > 0)
+        });
+    let Some(tokens) = tokens else {
+        return Value::Null;
+    };
+    let provider = message.get("provider").and_then(Value::as_str);
+    let model_id = message.get("model").and_then(Value::as_str);
+    let context_window = models
+        .iter()
+        .find(|model| {
+            Some(model.provider.as_str()) == provider && Some(model.id.as_str()) == model_id
+        })
+        .map(|model| model.context_window)
+        .filter(|window| *window > 0);
+    let mut context = json!({"tokens": tokens});
+    if let Some(context_window) = context_window {
+        context["contextWindow"] = context_window.into();
+        context["percent"] = (tokens as f64 * 100.0 / context_window as f64).into();
+    }
+    json!({"contextUsage": context})
+}
+
+fn update_context_from_event(stats: &mut Value, event: &Value) {
+    let usage = event
+        .get("usage")
+        .or_else(|| event.pointer("/message/usage"));
+    let Some(usage) = usage else { return };
+    let tokens = usage
+        .get("totalTokens")
+        .and_then(Value::as_u64)
+        .filter(|tokens| *tokens > 0)
+        .or_else(|| {
+            ["input", "output", "cacheRead", "cacheWrite"]
+                .iter()
+                .try_fold(0_u64, |total, key| {
+                    total.checked_add(usage.get(*key)?.as_u64()?)
+                })
+                .filter(|tokens| *tokens > 0)
+        });
+    let Some(tokens) = tokens else { return };
+    let Some(context_window) = stats
+        .pointer("/contextUsage/contextWindow")
+        .and_then(Value::as_u64)
+        .filter(|window| *window > 0)
+    else {
+        return;
+    };
+    stats["contextUsage"]["tokens"] = tokens.into();
+    stats["contextUsage"]["percent"] = (tokens as f64 * 100.0 / context_window as f64).into();
 }
 
 fn semantic_status(snapshot: &RuntimeSnapshot) -> &'static str {
@@ -969,6 +1081,7 @@ impl RuntimeOwner {
                     previewing.then(|| session_badge_status(&self.active_snapshot().conversation));
                 let snapshot = self.active_snapshot_mut();
                 snapshot.conversation.reduce(&event);
+                update_context_from_event(&mut snapshot.stats, &event);
                 snapshot.status = run_status(&snapshot.conversation).to_owned();
                 let live_status_changed = previous_live_status
                     .is_some_and(|status| status != session_badge_status(&snapshot.conversation));
@@ -1082,10 +1195,12 @@ impl RuntimeOwner {
             self.parked_snapshot = Some(std::mem::take(&mut self.snapshot));
         }
         self.project = result.project.clone();
-        let auto_retry = self
-            .parked_snapshot
-            .as_ref()
-            .is_some_and(|snapshot| snapshot.auto_retry);
+        let parked = self.parked_snapshot.as_ref();
+        let auto_retry = parked.is_some_and(|snapshot| snapshot.auto_retry);
+        let models = parked
+            .map(|snapshot| snapshot.models.clone())
+            .unwrap_or_default();
+        let stats = historical_context_stats(&messages, &models);
         let mut conversation = ConversationState::default();
         conversation.replace_history(&messages);
         self.snapshot = RuntimeSnapshot {
@@ -1094,6 +1209,8 @@ impl RuntimeOwner {
             project: result.project,
             selected_session: Some(result.path),
             conversation,
+            models,
+            stats,
             auto_retry,
             history_preview: true,
             ..RuntimeSnapshot::default()
@@ -1224,7 +1341,12 @@ impl RuntimeOwner {
                     })
                     .unwrap_or_default();
             }
-            "get_session_stats" => self.active_snapshot_mut().stats = response.data,
+            "get_session_stats" => {
+                let running = self.active_snapshot().conversation.running;
+                let previous = self.active_snapshot().stats.clone();
+                self.active_snapshot_mut().stats =
+                    stable_session_stats(&previous, response.data, running);
+            }
             "get_commands" => {
                 self.active_snapshot_mut().commands = response
                     .data
@@ -1526,6 +1648,34 @@ mod tests {
     }
 
     #[test]
+    fn running_stats_keep_the_last_meaningful_context_instead_of_flashing_zero() {
+        let previous = json!({
+            "contextUsage": {"tokens": 168_000, "contextWindow": 200_000, "percent": 84.0},
+            "cost": 4
+        });
+        let next = json!({
+            "contextUsage": {"tokens": 0, "contextWindow": 200_000, "percent": 0.0},
+            "cost": 5
+        });
+
+        let merged = stable_session_stats(&previous, next.clone(), true);
+        assert_eq!(merged["contextUsage"], previous["contextUsage"]);
+        assert_eq!(merged["cost"], 5);
+        assert_eq!(stable_session_stats(&previous, next.clone(), false), next);
+    }
+
+    #[test]
+    fn first_running_turn_hides_empty_context_until_real_usage_arrives() {
+        let next = json!({
+            "contextUsage": {"tokens": 0, "contextWindow": 200_000, "percent": 0.0},
+            "cost": 0
+        });
+
+        let merged = stable_session_stats(&Value::Null, next, true);
+        assert!(merged.get("contextUsage").is_none());
+    }
+
+    #[test]
     fn failed_tool_does_not_mark_the_whole_session_failed() {
         let mut conversation = ConversationState::default();
         conversation.replace_history(&[
@@ -1561,6 +1711,61 @@ mod tests {
             }),
             "Done"
         );
+    }
+
+    #[test]
+    fn history_uses_latest_assistant_usage_for_context() {
+        let messages = vec![json!({
+            "role": "assistant",
+            "provider": "test",
+            "model": "model",
+            "usage": {"input": 50, "output": 10, "cacheRead": 20, "cacheWrite": 20, "totalTokens": 100},
+            "stopReason": "stop"
+        })];
+        let models = vec![Model {
+            id: "model".into(),
+            name: "Model".into(),
+            provider: "test".into(),
+            context_window: 200,
+            reasoning: false,
+        }];
+
+        let stats = historical_context_stats(&messages, &models);
+        assert_eq!(stats["contextUsage"]["tokens"], 100);
+        assert_eq!(stats["contextUsage"]["contextWindow"], 200);
+        assert_eq!(stats["contextUsage"]["percent"], 50.0);
+    }
+
+    #[test]
+    fn streaming_usage_updates_context_before_agent_settles() {
+        let mut stats = json!({
+            "contextUsage": {"tokens": 40, "contextWindow": 200, "percent": 20.0}
+        });
+        update_context_from_event(
+            &mut stats,
+            &json!({
+                "type": "message_update",
+                "usage": {"input": 60, "output": 10, "cacheRead": 20, "cacheWrite": 10, "totalTokens": 100}
+            }),
+        );
+        assert_eq!(stats["contextUsage"]["tokens"], 100);
+        assert_eq!(stats["contextUsage"]["percent"], 50.0);
+    }
+
+    #[test]
+    fn completed_message_usage_updates_context_when_streaming_usage_is_unavailable() {
+        let mut stats = json!({
+            "contextUsage": {"tokens": 40, "contextWindow": 200, "percent": 20.0}
+        });
+        update_context_from_event(
+            &mut stats,
+            &json!({
+                "type": "message_end",
+                "message": {"usage": {"input": 50, "output": 10, "cacheRead": 20, "cacheWrite": 10}}
+            }),
+        );
+        assert_eq!(stats["contextUsage"]["tokens"], 90);
+        assert_eq!(stats["contextUsage"]["percent"], 45.0);
     }
 
     #[test]
@@ -2185,6 +2390,7 @@ mod tests {
             id: "model-1".into(),
             name: "Model One".into(),
             provider: "provider-1".into(),
+            context_window: 200_000,
             reasoning: true,
         };
         let mut controls = SessionControls::default();
@@ -2244,6 +2450,7 @@ mod tests {
                 id: "old".into(),
                 name: "Old".into(),
                 provider: "test".into(),
+                context_window: 0,
                 reasoning: false,
             }],
             thinking_levels: vec!["high".into()],
@@ -2308,6 +2515,7 @@ mod tests {
                     id: "old".into(),
                     name: "Old".into(),
                     provider: "test".into(),
+                    context_window: 0,
                     reasoning: false,
                 }],
                 thinking_levels: vec!["high".into()],
