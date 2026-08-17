@@ -18,7 +18,8 @@ impl PiApp {
             .snapshot
             .session
             .as_ref()
-            .and_then(|state| state.model.clone());
+            .and_then(|state| state.model.clone())
+            .or_else(|| self.snapshot.prefill_model.clone());
         let selected_provider = selected_model
             .as_ref()
             .map(|model| model.provider.clone())
@@ -60,7 +61,8 @@ impl PiApp {
             .snapshot
             .session
             .as_ref()
-            .map(|state| state.thinking_level.clone());
+            .map(|state| state.thinking_level.clone())
+            .or_else(|| self.snapshot.prefill_thinking_level.clone());
         let effort_button_label = effort.as_deref().map_or_else(
             || "Effort".into(),
             |level| format!("Effort: {}", effort_label(level)),

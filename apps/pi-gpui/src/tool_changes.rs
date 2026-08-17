@@ -28,7 +28,7 @@ enum ChangeKind {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct ChangeLine {
+pub(crate) struct ChangeLine {
     kind: ChangeKind,
     number: Option<u64>,
     content: String,
@@ -42,17 +42,46 @@ struct SideLine {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct PairedLine {
+pub(crate) struct PairedLine {
     old: Option<SideLine>,
     new: Option<SideLine>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum PreparedToolChange {
+    Edit(Vec<PairedLine>),
+    Write(Vec<ChangeLine>),
+}
+
 pub(crate) fn render(presentation: &ToolPresentation, key: usize) -> AnyElement {
-    let (path, rows) = presentation_rows(presentation);
+    let (path, prepared) = match presentation {
+        ToolPresentation::Edit {
+            path,
+            diff,
+            format,
+            prepared,
+        } => (
+            path,
+            prepared.get_or_init(|| {
+                let rows = diff
+                    .as_deref()
+                    .map_or_else(preparing_rows, |diff| parse_display_diff(diff, *format));
+                PreparedToolChange::Edit(pair_edit_rows(&rows))
+            }),
+        ),
+        ToolPresentation::Write {
+            path,
+            content,
+            prepared,
+        } => (
+            path,
+            prepared.get_or_init(|| PreparedToolChange::Write(write_rows(content))),
+        ),
+    };
     let language = language_for_path(path);
-    let body = match presentation {
-        ToolPresentation::Edit { .. } => render_edit_diff(&rows, &language, key),
-        ToolPresentation::Write { .. } => render_write_diff(&rows, &language, key),
+    let body = match prepared {
+        PreparedToolChange::Edit(rows) => render_edit_diff(rows, &language, key),
+        PreparedToolChange::Write(rows) => render_write_diff(rows, &language, key),
     };
     div()
         .id(("tool-change", key))
@@ -66,39 +95,29 @@ pub(crate) fn render(presentation: &ToolPresentation, key: usize) -> AnyElement 
         .into_any_element()
 }
 
-fn presentation_rows(presentation: &ToolPresentation) -> (&str, Vec<ChangeLine>) {
-    match presentation {
-        ToolPresentation::Edit { path, diff, format } => (
-            path,
-            diff.as_deref()
-                .map(|diff| parse_display_diff(diff, *format))
-                .unwrap_or_else(|| {
-                    vec![ChangeLine {
-                        kind: ChangeKind::Ellipsis,
-                        number: None,
-                        content: "Preparing diff…".into(),
-                    }]
-                }),
-        ),
-        ToolPresentation::Write { path, content } => (
-            path,
-            content
-                .lines()
-                .enumerate()
-                .map(|(index, line)| ChangeLine {
-                    kind: ChangeKind::Addition,
-                    number: u64::try_from(index)
-                        .ok()
-                        .and_then(|value| value.checked_add(1)),
-                    content: line.to_owned(),
-                })
-                .collect(),
-        ),
-    }
+fn preparing_rows() -> Vec<ChangeLine> {
+    vec![ChangeLine {
+        kind: ChangeKind::Ellipsis,
+        number: None,
+        content: "Preparing diff…".into(),
+    }]
 }
 
-fn render_edit_diff(rows: &[ChangeLine], language: &str, key: usize) -> AnyElement {
-    let paired = pair_edit_rows(rows);
+fn write_rows(content: &str) -> Vec<ChangeLine> {
+    content
+        .lines()
+        .enumerate()
+        .map(|(index, line)| ChangeLine {
+            kind: ChangeKind::Addition,
+            number: u64::try_from(index)
+                .ok()
+                .and_then(|value| value.checked_add(1)),
+            content: line.to_owned(),
+        })
+        .collect()
+}
+
+fn render_edit_diff(paired: &[PairedLine], language: &str, key: usize) -> AnyElement {
     let truncated = paired.len() > MAX_DIFF_LINES;
     div()
         .w_full()
@@ -478,6 +497,26 @@ fn parse_display_line(line: &str, format: EditDiffFormat) -> ChangeLine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn prepared_diff_rows_are_reused_across_renders() {
+        let prepared = Arc::default();
+        let presentation = ToolPresentation::Edit {
+            path: "src/main.rs".into(),
+            diff: Some("- 1 old\n+ 1 new".into()),
+            format: EditDiffFormat::Numbered,
+            prepared: Arc::clone(&prepared),
+        };
+
+        assert!(prepared.get().is_none());
+        let _ = render(&presentation, 1);
+        let first = prepared.get().expect("render should prepare the diff") as *const _;
+        let _ = render(&presentation, 1);
+        let second = prepared.get().expect("prepared diff should remain cached") as *const _;
+
+        assert_eq!(first, second);
+    }
 
     #[test]
     fn edit_rows_pair_deletions_and_additions_with_independent_numbers() {

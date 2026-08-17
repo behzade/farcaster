@@ -169,6 +169,7 @@ fn edit_results_keep_the_structured_diff_for_native_rendering() {
             path: "src/main.rs".into(),
             diff: Some("- 1 old\n+ 1 new".into()),
             format: EditDiffFormat::Numbered,
+            prepared: Default::default(),
         })
     );
 }
@@ -189,6 +190,7 @@ fn edit_argument_previews_are_explicitly_unnumbered() {
             path: "src/lib.rs".into(),
             diff: Some("- 123 source\n+ 456 source".into()),
             format: EditDiffFormat::Unnumbered,
+            prepared: Default::default(),
         })
     );
 }
@@ -208,6 +210,7 @@ fn write_calls_keep_content_for_native_rendering() {
         Some(ToolPresentation::Write {
             path: "src/lib.rs".into(),
             content: "fn main() {}".into(),
+            prepared: Default::default(),
         })
     );
 }

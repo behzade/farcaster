@@ -121,6 +121,8 @@ pub(crate) struct RuntimeSnapshot {
     pub live_session: Option<PathBuf>,
     pub live_status: String,
     pub session: Option<SessionState>,
+    pub prefill_model: Option<Model>,
+    pub prefill_thinking_level: Option<String>,
     pub selected_session: Option<PathBuf>,
     pub conversation: ConversationState,
     pub models: Vec<Model>,
@@ -247,6 +249,7 @@ fn run_supervisor(
     let mut last_touch = HashMap::from([(initial_key.clone(), clock)]);
     let mut catalog_has_running_descendants = false;
     let mut last_catalog_refresh = Instant::now();
+    let mut session_controls = SessionControls::default();
     if let Ok(state) = StateStore::open()
         && let Ok(prompts) = state.queued_prompts()
     {
@@ -273,6 +276,11 @@ fn run_supervisor(
                 last_touch.insert(key.clone(), clock);
                 match event {
                     RuntimeEvent::Snapshot { snapshot, .. } => {
+                        let mut snapshot = snapshot;
+                        prefill_session_controls(
+                            Arc::make_mut(&mut snapshot),
+                            &mut session_controls,
+                        );
                         if snapshot.conversation.settled {
                             needs_input.remove(&key);
                             active_dialogs.remove(&key);
@@ -552,6 +560,40 @@ fn actor_key_for_command(
                 || snapshot.selected_session.as_deref() == Some(path.as_path())
         })
         .map_or_else(|| requested_key.to_owned(), |(key, _)| key.clone())
+}
+
+#[derive(Default)]
+struct SessionControls {
+    model: Option<Model>,
+    thinking_level: Option<String>,
+    models: Vec<Model>,
+    thinking_levels: Vec<String>,
+}
+
+fn prefill_session_controls(snapshot: &mut RuntimeSnapshot, controls: &mut SessionControls) {
+    if let Some(session) = &snapshot.session {
+        if let Some(model) = &session.model {
+            controls.model = Some(model.clone());
+        }
+        controls.thinking_level = Some(session.thinking_level.clone());
+    } else {
+        snapshot.prefill_model = controls.model.clone();
+        snapshot.prefill_thinking_level = controls.thinking_level.clone();
+    }
+    if snapshot.models.is_empty() {
+        snapshot.models.clone_from(&controls.models);
+    } else {
+        controls.models.clone_from(&snapshot.models);
+    }
+    if snapshot.thinking_levels.is_empty() {
+        snapshot
+            .thinking_levels
+            .clone_from(&controls.thinking_levels);
+    } else {
+        controls
+            .thinking_levels
+            .clone_from(&snapshot.thinking_levels);
+    }
 }
 
 fn semantic_status(snapshot: &RuntimeSnapshot) -> &'static str {
@@ -2154,6 +2196,49 @@ mod tests {
         assert!(!owner.snapshot.history_preview);
         assert!(owner.parked_snapshot.is_none());
         assert_eq!(owner.process_generation, generation);
+    }
+
+    #[test]
+    fn starting_session_prefills_controls_from_the_last_ready_session() {
+        let model = Model {
+            id: "model-1".into(),
+            name: "Model One".into(),
+            provider: "provider-1".into(),
+            reasoning: true,
+        };
+        let mut controls = SessionControls::default();
+        let mut ready = RuntimeSnapshot {
+            session: serde_json::from_value(json!({
+                "model": {
+                    "id": "model-1",
+                    "name": "Model One",
+                    "provider": "provider-1",
+                    "reasoning": true
+                },
+                "thinkingLevel": "high",
+                "isStreaming": false,
+                "isCompacting": false,
+                "sessionFile": "/old",
+                "sessionId": "old",
+                "autoCompactionEnabled": true,
+                "messageCount": 0,
+                "pendingMessageCount": 0
+            }))
+            .ok(),
+            models: vec![model.clone()],
+            thinking_levels: vec!["off".into(), "high".into()],
+            ..RuntimeSnapshot::default()
+        };
+        prefill_session_controls(&mut ready, &mut controls);
+
+        let mut starting = RuntimeSnapshot::default();
+        prefill_session_controls(&mut starting, &mut controls);
+
+        assert_eq!(starting.prefill_model, Some(model.clone()));
+        assert_eq!(starting.prefill_thinking_level.as_deref(), Some("high"));
+        assert_eq!(starting.models, vec![model]);
+        assert_eq!(starting.thinking_levels, vec!["off", "high"]);
+        assert!(starting.session.is_none());
     }
 
     #[test]

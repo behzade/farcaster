@@ -901,6 +901,7 @@ mod tests {
                 path: "src/main.rs".into(),
                 diff: Some("- old\n+ new".into()),
                 format: crate::conversation::EditDiffFormat::Unnumbered,
+                prepared: Default::default(),
             });
         let items = vec![edit, item(TranscriptKind::Tool, "Bash", "Command: true")];
         let rows = project_rows(&items);
