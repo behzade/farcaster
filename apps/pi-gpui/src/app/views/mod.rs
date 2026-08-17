@@ -4,9 +4,12 @@ mod composer;
 mod composer_tests;
 mod models;
 mod regions;
+mod session_groups;
+mod session_rail;
 mod shell;
 
 pub(super) use regions::{ComposerView, RunPanelView, SessionRailView, TranscriptView};
+pub(super) use session_groups::session_move_allowed;
 
 use gpui::{
     Context, Focusable as _, InteractiveElement as _, IntoElement, ParentElement as _, Render,
@@ -18,7 +21,7 @@ use super::{DismissSurface, PiApp, SubmitFollowUp};
 pub(crate) const OVERLAY_KEY_CONTEXT: &str = "PiGpuiOverlay";
 
 use crate::{
-    layout::{layout_mode, shows_inline_sidebars},
+    layout::{layout_mode, shows_inline_sidebars, shows_sheet_buttons},
     primitives::{FeedbackTone, dialog_backdrop, dialog_surface, feedback},
     protocol::ExtensionUiRequest,
     theme::THEME,
@@ -86,7 +89,9 @@ impl Render for PiApp {
             .h_full()
             .flex()
             .flex_col()
-            .child(self.render_header(mode, entity.clone()))
+            .when(shows_sheet_buttons(mode), |main| {
+                main.child(self.render_narrow_navigation(entity.clone()))
+            })
             .child(
                 div().flex_1().min_h_0().child(
                     self.transcript_view
@@ -115,6 +120,8 @@ impl Render for PiApp {
                         shell.child(
                             div()
                                 .w(THEME.layout.session_rail)
+                                .min_w(THEME.layout.session_rail_min)
+                                .max_w(THEME.layout.session_rail_max)
                                 .flex_none()
                                 .border_r(THEME.border)
                                 .border_color(THEME.colors.border)
@@ -130,6 +137,8 @@ impl Render for PiApp {
                         shell.child(
                             div()
                                 .w(THEME.layout.run_panel)
+                                .min_w(THEME.layout.run_panel_min)
+                                .max_w(THEME.layout.run_panel_max)
                                 .flex_none()
                                 .border_l(THEME.border)
                                 .border_color(THEME.colors.border)

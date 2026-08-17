@@ -9,9 +9,10 @@ mod views;
 pub(crate) use composer_images::ComposerImage;
 use submissions::PendingSubmission;
 pub(crate) use views::OVERLAY_KEY_CONTEXT;
-use views::{ComposerView, RunPanelView, SessionRailView, TranscriptView};
+use views::{ComposerView, RunPanelView, SessionRailView, TranscriptView, session_move_allowed};
 
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet},
     ops::Range,
     path::PathBuf,
@@ -56,6 +57,12 @@ pub(crate) struct PiApp {
     selected_draft: Option<String>,
     submitted_drafts: HashMap<String, Option<PathBuf>>,
     sessions_error: Option<String>,
+    session_project_filter: Option<PathBuf>,
+    collapsed_projects: HashSet<PathBuf>,
+    session_list: ListState,
+    session_list_rows: RefCell<Vec<String>>,
+    archived_session_list: ListState,
+    archived_session_list_rows: RefCell<Vec<String>>,
     session_generation: u64,
     runtime_generation: u64,
     composer: Entity<TextareaState>,
@@ -67,6 +74,7 @@ pub(crate) struct PiApp {
     composer_history_marker: Option<(String, usize, String)>,
     composer_images: HashMap<String, Vec<ComposerImage>>,
     search: Entity<InputState>,
+    search_focus: FocusHandle,
     dialog_input: Entity<TextareaState>,
     composer_focus: FocusHandle,
     dialog_focus: FocusHandle,
@@ -139,6 +147,7 @@ impl PiApp {
             input.set_selected_range(initial_composer.restore_range(), cx);
         });
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search sessions"));
+        let search_focus = search.read(cx).focus_handle(cx);
         let dialog_input = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .auto_grow(2, 12)
@@ -234,6 +243,20 @@ impl PiApp {
             selected_draft: Some(selected_draft),
             submitted_drafts,
             sessions_error: project_registry_error,
+            session_project_filter: None,
+            collapsed_projects: HashSet::new(),
+            session_list: ListState::new(
+                0,
+                ListAlignment::Top,
+                crate::theme::THEME.layout.transcript_overdraw,
+            ),
+            session_list_rows: RefCell::new(Vec::new()),
+            archived_session_list: ListState::new(
+                0,
+                ListAlignment::Top,
+                crate::theme::THEME.layout.transcript_overdraw,
+            ),
+            archived_session_list_rows: RefCell::new(Vec::new()),
             session_generation: 0,
             runtime_generation: 0,
             composer,
@@ -245,6 +268,7 @@ impl PiApp {
             composer_history_marker: None,
             composer_images: HashMap::new(),
             search,
+            search_focus,
             dialog_input,
             composer_focus,
             dialog_focus,
@@ -577,7 +601,7 @@ impl PiApp {
         self.selected_draft = None;
         self.select_project(project.clone());
         self.send(RuntimeCommand::Resume { path, project });
-        self.sessions_sheet = false;
+        self.close_sessions_sheet_after_selection(window, cx);
         if previous_root != next_root {
             self.notify_session_rail(cx);
         }
@@ -601,7 +625,7 @@ impl PiApp {
         self.select_project(project);
         self.search
             .update(cx, |input, cx| input.set_value("", window, cx));
-        self.sessions_sheet = false;
+        self.close_sessions_sheet_after_selection(window, cx);
         self.notify_session_rail(cx);
         self.notify_transcript(cx);
         self.notify_composer(cx);
@@ -617,6 +641,7 @@ impl PiApp {
         cx: &mut Context<Self>,
     ) {
         if self.selected_draft.as_deref() == Some(id.as_str()) && !self.snapshot.history_preview {
+            self.close_sessions_sheet_after_selection(window, cx);
             return;
         }
         self.switch_composer_target(draft_target(&id), window, cx);
@@ -627,7 +652,7 @@ impl PiApp {
         } else {
             self.send(RuntimeCommand::ResumeDraft { id, project });
         }
-        self.sessions_sheet = false;
+        self.close_sessions_sheet_after_selection(window, cx);
         self.notify_session_rail(cx);
         self.notify_transcript(cx);
         self.notify_composer(cx);
@@ -681,7 +706,9 @@ impl PiApp {
     }
 
     pub(crate) fn move_session_to(&mut self, source: &str, target: &str, cx: &mut Context<Self>) {
-        if move_to(&mut self.session_order, source, target) {
+        if session_move_allowed(&self.sessions, source, target)
+            && move_to(&mut self.session_order, source, target)
+        {
             self.save_session_order();
             self.notify_session_rail(cx);
         }
@@ -905,6 +932,16 @@ impl PiApp {
         self.run_sheet = true;
         self.pending_sheet_setup = true;
         cx.notify();
+    }
+
+    fn close_sessions_sheet_after_selection(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.sessions_sheet {
+            self.close_sheet(window, cx);
+        }
     }
 
     fn close_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {

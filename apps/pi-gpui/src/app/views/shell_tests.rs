@@ -1,10 +1,7 @@
-use std::{path::PathBuf, time::SystemTime};
-
 use super::{
-    SessionRailKind, archived_run_badge, compact_number, compact_subagent_label, context_usage,
-    format_cache_hit_rate, format_cost, normalized_agent_status, session_badge, session_rail_items,
+    compact_number, compact_subagent_label, context_usage, format_cache_hit_rate, format_cost,
+    normalized_agent_status,
 };
-use crate::sessions::{SessionSummary, UsageSummary};
 
 #[test]
 fn subagent_labels_keep_the_role_and_drop_generated_ids() {
@@ -35,80 +32,4 @@ fn usage_values_are_compact_and_context_is_main_only() {
         })),
         "60k / 200k · 30%"
     );
-}
-
-#[test]
-fn session_badges_show_only_meaningful_live_state() {
-    assert_eq!(
-        session_badge(SessionRailKind::Project, "other", Some("live"), "Working"),
-        None
-    );
-    assert_eq!(
-        session_badge(SessionRailKind::Settled, "live", Some("live"), "Working"),
-        Some("Working".into())
-    );
-    assert_eq!(
-        session_badge(SessionRailKind::Project, "live", Some("live"), "Done"),
-        None
-    );
-}
-
-#[test]
-fn archived_session_badges_hide_completed_run_status() {
-    assert_eq!(archived_run_badge(Some("Done")), None);
-    assert_eq!(archived_run_badge(Some("Working")), Some("Working".into()));
-}
-
-#[test]
-fn session_groups_keep_active_and_archived_roots_separate() {
-    let sessions = vec![
-        session("settled-one", true),
-        session("active-one", false),
-        session("settled-two", true),
-        session("active-two", false),
-    ];
-
-    let groups = session_rail_items(
-        &sessions,
-        &[
-            "active-two".into(),
-            "settled-two".into(),
-            "active-one".into(),
-            "settled-one".into(),
-        ],
-    );
-    assert_eq!(groups.active.len(), 2);
-    assert_eq!(groups.archived.len(), 2);
-    assert!(
-        groups
-            .active
-            .iter()
-            .all(|item| item.kind == SessionRailKind::Project)
-    );
-    assert!(
-        groups
-            .archived
-            .iter()
-            .all(|item| item.kind == SessionRailKind::Settled)
-    );
-    assert_eq!(groups.active[0].session.id, "active-two");
-    assert_eq!(groups.archived[0].session.id, "settled-two");
-}
-
-fn session(id: &str, settled: bool) -> SessionSummary {
-    SessionSummary::from_cached(
-        id.into(),
-        PathBuf::from(format!("/{id}.jsonl")),
-        PathBuf::from("/project"),
-        id.into(),
-        String::new(),
-        String::new(),
-        None,
-        SystemTime::UNIX_EPOCH,
-        0,
-        UsageSummary::default(),
-        settled,
-        false,
-        String::new(),
-    )
 }

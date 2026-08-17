@@ -51,16 +51,18 @@ pub(crate) struct TypeScale {
     pub caption: Pixels,
     pub body_small: Pixels,
     pub body: Pixels,
-    pub heading: Pixels,
     pub line_body: Pixels,
 }
 #[derive(Clone, Copy)]
 pub(crate) struct Layout {
     pub window_width: Pixels,
     pub window_height: Pixels,
-    pub header_height: Pixels,
     pub session_rail: Pixels,
+    pub session_rail_min: Pixels,
+    pub session_rail_max: Pixels,
     pub run_panel: Pixels,
+    pub run_panel_min: Pixels,
+    pub run_panel_max: Pixels,
     pub transcript_overdraw: Pixels,
     pub composer_min: Pixels,
     pub dialog_width: Pixels,
@@ -119,7 +121,6 @@ pub(crate) const THEME: Theme = Theme {
         caption: px(12.0),
         body_small: px(13.0),
         body: px(14.0),
-        heading: px(17.0),
         line_body: px(20.0),
     },
     radius: px(6.0),
@@ -127,9 +128,12 @@ pub(crate) const THEME: Theme = Theme {
     layout: Layout {
         window_width: px(1240.0),
         window_height: px(820.0),
-        header_height: px(52.0),
-        session_rail: px(288.0),
-        run_panel: px(260.0),
+        session_rail: px(272.0),
+        session_rail_min: px(248.0),
+        session_rail_max: px(304.0),
+        run_panel: px(312.0),
+        run_panel_min: px(288.0),
+        run_panel_max: px(344.0),
         transcript_overdraw: px(160.0),
         composer_min: px(80.0),
         dialog_width: px(560.0),
@@ -192,4 +196,19 @@ pub(crate) fn install_component_theme(cx: &mut App) {
     colors.caret = THEME.colors.text.into();
     colors.selection = THEME.colors.selection.into();
     theme.tokens = ThemeTokens::from(theme.colors);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::THEME;
+
+    #[test]
+    fn sidebar_widths_match_the_design_bounds() {
+        assert_eq!(f32::from(THEME.layout.session_rail), 272.0);
+        assert_eq!(f32::from(THEME.layout.session_rail_min), 248.0);
+        assert_eq!(f32::from(THEME.layout.session_rail_max), 304.0);
+        assert_eq!(f32::from(THEME.layout.run_panel), 312.0);
+        assert_eq!(f32::from(THEME.layout.run_panel_min), 288.0);
+        assert_eq!(f32::from(THEME.layout.run_panel_max), 344.0);
+    }
 }
