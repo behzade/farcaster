@@ -80,21 +80,11 @@ schemas remain separate. `/prompt-report` shows model-hidden size estimates and
 fingerprints, while `/prompt-report full` opens the exact prompt and pre-provider
 active definitions in a disposable viewer.
 
-## Build and test
+## Develop and test
 
-The flake currently targets Apple Silicon macOS and x86-64 Linux.
-
-Build the complete agent:
-
-```sh
-nix build
-```
-
-Run the full flake checks:
-
-```sh
-nix flake check
-```
+The project shell already provides Cargo, Node.js, and the other development
+tools. Use them directly. Routine development and validation must not run Nix;
+run a Nix command only when the user asks for that exact check.
 
 Run the native Pi client without rebuilding the Home Manager configuration:
 
@@ -103,10 +93,12 @@ make run
 make run PROJECT=/path/to/project
 ```
 
-The root `.envrc` enters the default Rust/GPUI development shell. Once it is
-active, run project tools directly; do not nest another `nix develop`.
+The root `.envrc` enters the default Rust/GPUI development shell and sets the
+shared Cargo target directory. Do not create another development shell, Cargo
+target directory, cache, or dependency folder.
 
-The main checks can be run directly:
+Choose only the checks that cover the changed area. Start with an exact test or
+package check; do not run this whole list for every change:
 
 ```sh
 npm run check --prefix extensions/sandbox
@@ -128,22 +120,6 @@ must observe real OS denials and bind local network fixtures:
 ```sh
 cargo build --manifest-path sandbox-broker/Cargo.toml
 npm run check:e2e --prefix extensions/sandbox
-```
-
-Individual packages are available for focused work:
-
-```sh
-nix build .#core-extensions
-nix build .#sandbox
-nix build .#sandbox-broker
-nix build .#dense-tools
-nix build .#mcp-cli
-nix build .#subagents
-nix build .#openai-server-compaction
-nix build .#permission-system
-nix build .#project-tools
-nix build .#pi-terminal
-nix build .#web-access
 ```
 
 My Home Manager configuration consumes the default flake package and deploys

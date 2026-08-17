@@ -28,6 +28,7 @@
 
 - Test behavior, invariant, contract, boundary, or real regression. No source-copied expectations or mocks proving setup.
 - Prompt text test only when exact text is contract; prefer behavior, fixtures, structured output, or consumer boundary.
+- Never run a Nix command unless the user asks for that exact check. The project environment already provides Cargo and other build tools; use them directly and keep the shared build directories.
 - Run narrow checks first, then broader checks by risk. Report unrelated failures; do not fix them.
 
 ## Conduct
