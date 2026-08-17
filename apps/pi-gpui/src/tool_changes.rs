@@ -1,17 +1,14 @@
 //! Native, selectable presentations for file mutation tools.
 
-use std::{path::Path, rc::Rc};
+use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, InteractiveElement as _, IntoElement, ParentElement as _,
-    StatefulInteractiveElement as _, StyleRefinement, Styled as _, Window, div,
-    prelude::FluentBuilder as _, px, rems, transparent_black,
+    AnyElement, App, InteractiveElement as _, IntoElement, ParentElement as _, Styled as _, Window,
+    div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
     Sizable as _, Size,
     button::{Button, ButtonVariants as _},
-    highlighter::HighlightTheme,
-    text::{TextView, TextViewStyle},
 };
 
 use crate::{
@@ -93,15 +90,14 @@ pub(crate) fn render(
             prepared.get_or_init(|| PreparedToolChange::Write(write_rows(content))),
         ),
     };
-    let language = language_for_path(path);
     let mode = match prepared {
         PreparedToolChange::Edit(_) => requested_mode,
         PreparedToolChange::Write(_) => EmbeddedDiffMode::Unified,
     };
     let metadata = diff_metadata(path, prepared, mode);
     let body = match prepared {
-        PreparedToolChange::Edit(rows) => render_edit_diff(rows, &language, key, mode),
-        PreparedToolChange::Write(rows) => render_write_diff(rows, &language, key),
+        PreparedToolChange::Edit(rows) => render_edit_diff(rows, key, mode),
+        PreparedToolChange::Write(rows) => render_write_diff(rows, key),
     };
     div()
         .id(("tool-change", key))
@@ -244,28 +240,21 @@ fn write_rows(content: &str) -> Vec<ChangeLine> {
         .collect()
 }
 
-fn render_edit_diff(
-    paired: &[PairedLine],
-    language: &str,
-    key: usize,
-    mode: EmbeddedDiffMode,
-) -> AnyElement {
+fn render_edit_diff(paired: &[PairedLine], key: usize, mode: EmbeddedDiffMode) -> AnyElement {
     if mode == EmbeddedDiffMode::Unified {
-        return render_unified_edit_diff(paired, language, key);
+        return render_unified_edit_diff(paired, key);
     }
     let truncated = paired.len() > MAX_DIFF_LINES;
     div()
         .id(("split-diff-body", key))
         .w_full()
         .min_w_0()
-        .max_h(px(360.0))
-        .overflow_scroll()
         .children(
             paired
                 .iter()
                 .take(MAX_DIFF_LINES)
                 .enumerate()
-                .map(|(index, row)| render_paired_line(row, language, key, index)),
+                .map(|(index, row)| render_paired_line(row, key, index)),
         )
         .when(truncated, |body| {
             body.child(modal_limit_hint(paired.len() - MAX_DIFF_LINES))
@@ -273,20 +262,18 @@ fn render_edit_diff(
         .into_any_element()
 }
 
-fn render_unified_edit_diff(paired: &[PairedLine], language: &str, key: usize) -> AnyElement {
+fn render_unified_edit_diff(paired: &[PairedLine], key: usize) -> AnyElement {
     let rows = unified_edit_rows(paired);
     let truncated = rows.len() > MAX_DIFF_LINES;
     div()
         .id(("unified-diff-body", key))
         .w_full()
         .min_w_0()
-        .max_h(px(360.0))
-        .overflow_scroll()
         .children(
             rows.iter()
                 .take(MAX_DIFF_LINES)
                 .enumerate()
-                .map(|(index, row)| render_diff_side(Some(row), language, key, index, "unified")),
+                .map(|(index, row)| render_diff_side(Some(row), key, index, "unified")),
         )
         .when(truncated, |body| {
             body.child(modal_limit_hint(rows.len() - MAX_DIFF_LINES))
@@ -316,14 +303,12 @@ fn unified_edit_rows(paired: &[PairedLine]) -> Vec<SideLine> {
     rows
 }
 
-fn render_write_diff(rows: &[ChangeLine], language: &str, key: usize) -> AnyElement {
+fn render_write_diff(rows: &[ChangeLine], key: usize) -> AnyElement {
     let truncated = rows.len() > MAX_DIFF_LINES;
     div()
         .id(("write-diff-body", key))
         .w_full()
         .min_w_0()
-        .max_h(px(360.0))
-        .overflow_scroll()
         .children(
             rows.iter()
                 .take(MAX_DIFF_LINES)
@@ -334,7 +319,7 @@ fn render_write_diff(rows: &[ChangeLine], language: &str, key: usize) -> AnyElem
                         number: row.number,
                         content: row.content.clone(),
                     };
-                    render_diff_side(Some(&side), language, key, index, "write")
+                    render_diff_side(Some(&side), key, index, "write")
                 }),
         )
         .when(truncated, |body| {
@@ -354,39 +339,31 @@ fn modal_limit_hint(remaining: usize) -> impl IntoElement {
         .child(format!("{remaining} additional lines omitted"))
 }
 
-fn render_paired_line(row: &PairedLine, language: &str, key: usize, index: usize) -> AnyElement {
+fn render_paired_line(row: &PairedLine, key: usize, index: usize) -> AnyElement {
     div()
         .w_full()
         .min_w_0()
         .flex()
         .items_stretch()
-        .child(div().w_1_2().min_w_0().child(render_diff_side(
-            row.old.as_ref(),
-            language,
-            key,
-            index,
-            "old",
-        )))
+        .child(
+            div()
+                .w_1_2()
+                .min_w_0()
+                .child(render_diff_side(row.old.as_ref(), key, index, "old")),
+        )
         .child(
             div()
                 .w_1_2()
                 .min_w_0()
                 .border_l(THEME.border)
                 .border_color(THEME.colors.border)
-                .child(render_diff_side(
-                    row.new.as_ref(),
-                    language,
-                    key,
-                    index,
-                    "new",
-                )),
+                .child(render_diff_side(row.new.as_ref(), key, index, "new")),
         )
         .into_any_element()
 }
 
 fn render_diff_side(
     line: Option<&SideLine>,
-    language: &str,
     key: usize,
     index: usize,
     side: &'static str,
@@ -425,16 +402,16 @@ fn render_diff_side(
         )
         .child(
             div()
+                .id(format!("change-diff-{key}-{index}-{side}"))
                 .min_w_0()
                 .flex_1()
+                .overflow_hidden()
+                .whitespace_normal()
                 .px(THEME.space.xs)
                 .py(px(2.0))
+                .line_height(THEME.type_scale.line_body)
                 .text_color(foreground)
-                .child(code_line(
-                    format!("change-diff-{key}-{index}-{side}"),
-                    &replace_tabs(&line.content),
-                    language,
-                )),
+                .child(replace_tabs(&line.content)),
         )
         .into_any_element()
 }
@@ -453,32 +430,6 @@ fn line_colors(kind: ChangeKind) -> (&'static str, gpui::Rgba, gpui::Rgba) {
         ChangeKind::Addition => ("+", THEME.colors.diff_added, THEME.colors.success),
         ChangeKind::Deletion => ("-", THEME.colors.diff_deleted, THEME.colors.error),
         ChangeKind::Ellipsis => ("", THEME.colors.surface, THEME.colors.subtle),
-    }
-}
-
-fn code_line(id: impl Into<gpui::ElementId>, content: &str, language: &str) -> TextView {
-    TextView::markdown(id, fenced_line(content, language))
-        .style(code_line_style())
-        .selectable(true)
-        .whitespace_nowrap()
-        .w_full()
-        .min_w_0()
-        .text_size(THEME.type_scale.body_small)
-        .line_height(THEME.type_scale.line_body)
-}
-
-fn code_line_style() -> TextViewStyle {
-    let code_block = StyleRefinement::default()
-        .p_0()
-        .rounded(px(0.0))
-        .bg(transparent_black());
-    TextViewStyle {
-        paragraph_gap: rems(0.0),
-        heading_base_font_size: THEME.type_scale.body_small,
-        highlight_theme: HighlightTheme::default_dark(),
-        code_block,
-        is_dark: true,
-        ..TextViewStyle::default()
     }
 }
 
@@ -573,36 +524,6 @@ fn flush_changes(
 
 fn replace_tabs(content: &str) -> String {
     content.replace('\t', "   ")
-}
-
-fn language_for_path(path: &str) -> String {
-    let path = Path::new(path);
-    match path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("")
-    {
-        "Dockerfile" => "dockerfile".into(),
-        "Makefile" | "GNUmakefile" => "make".into(),
-        _ => path
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .filter(|extension| !extension.is_empty())
-            .unwrap_or("text")
-            .to_ascii_lowercase(),
-    }
-}
-
-fn fenced_line(content: &str, language: &str) -> String {
-    let fence_len = content
-        .split(|character| character != '`')
-        .map(str::len)
-        .max()
-        .unwrap_or(0)
-        .saturating_add(1)
-        .max(3);
-    let fence = "`".repeat(fence_len);
-    format!("{fence}{language}\n{content}\n{fence}")
 }
 
 fn parse_display_diff(diff: &str, format: EditDiffFormat) -> Vec<ChangeLine> {
@@ -728,14 +649,6 @@ mod tests {
     }
 
     #[test]
-    fn file_paths_select_the_syntax_language() {
-        assert_eq!(language_for_path("src/main.ts"), "ts");
-        assert_eq!(language_for_path("Dockerfile"), "dockerfile");
-        assert_eq!(language_for_path("Makefile"), "make");
-        assert_eq!(language_for_path("LICENSE"), "text");
-    }
-
-    #[test]
     fn metadata_counts_changes_and_reports_the_actual_view() {
         let rows = parse_display_diff(
             " same\n- old one\n- old two\n+ new one",
@@ -813,10 +726,5 @@ mod tests {
                 content: "123 source".into(),
             }
         );
-    }
-
-    #[test]
-    fn code_fence_grows_past_content_backticks() {
-        assert!(fenced_line("```", "text").starts_with("````text\n"));
     }
 }

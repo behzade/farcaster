@@ -40,6 +40,25 @@ pub(super) struct SessionRailGroups {
     pub(super) archived: Vec<ProjectGroup<SessionRailItem>>,
 }
 
+pub(super) fn recent_archived_sessions(
+    groups: &[ProjectGroup<SessionRailItem>],
+    limit: usize,
+) -> Vec<SessionRailItem> {
+    let mut sessions = groups
+        .iter()
+        .flat_map(|group| group.items.iter().cloned())
+        .collect::<Vec<_>>();
+    sessions.sort_by(|left, right| {
+        right
+            .session
+            .modified
+            .cmp(&left.session.modified)
+            .then_with(|| left.session.id.cmp(&right.session.id))
+    });
+    sessions.truncate(limit);
+    sessions
+}
+
 pub(super) fn session_rail_groups(
     sessions: &[SessionSummary],
     drafts: &[DraftSession],

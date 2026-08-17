@@ -1,19 +1,34 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    time::SystemTime,
+    time::{Duration, SystemTime},
 };
 
 use super::{
-    SessionRailItem, SessionRailKind, is_meaningful_active_status, minimal_row_splice,
-    resolved_active_projects, selected_new_session_project, session_accessible_label,
-    session_badge, session_rail_groups,
+    ActiveRailRow, ProjectGroup, SessionRailItem, SessionRailKind, is_meaningful_active_status,
+    minimal_row_splice, recent_archived_sessions, resolved_active_projects,
+    selected_new_session_project, session_accessible_label, session_badge, session_rail_groups,
+    visible_session_shortcuts,
 };
 use crate::{
     composer_sessions::draft_target,
     projects::DraftSession,
     sessions::{SessionSummary, UsageSummary},
 };
+
+#[test]
+fn shortcuts_follow_visible_session_position_and_skip_headings() {
+    let rows = vec![
+        ActiveRailRow::Project(PathBuf::from("/project"), false),
+        ActiveRailRow::Session(item("first", "/project", SessionRailKind::Project, false)),
+        ActiveRailRow::Project(PathBuf::from("/other"), false),
+        ActiveRailRow::Session(item("second", "/other", SessionRailKind::Project, false)),
+    ];
+
+    let shortcuts = visible_session_shortcuts(&rows);
+    assert_eq!(shortcuts.get("first"), Some(&1));
+    assert_eq!(shortcuts.get("second"), Some(&2));
+}
 
 #[test]
 fn active_sessions_always_have_a_meaningful_state() {
@@ -121,6 +136,37 @@ fn only_meaningful_runtime_states_mark_a_project_active() {
     for status in ["", "Draft", "Done", "Ready", "Idle"] {
         assert!(!is_meaningful_active_status(status));
     }
+}
+
+#[test]
+fn collapsed_archive_preview_keeps_the_three_most_recent_sessions() {
+    let mut oldest = item("oldest", "/one", SessionRailKind::Settled, false);
+    oldest.session.modified = SystemTime::UNIX_EPOCH + Duration::from_secs(1);
+    let mut second = item("second", "/one", SessionRailKind::Settled, false);
+    second.session.modified = SystemTime::UNIX_EPOCH + Duration::from_secs(2);
+    let mut third = item("third", "/two", SessionRailKind::Settled, false);
+    third.session.modified = SystemTime::UNIX_EPOCH + Duration::from_secs(3);
+    let mut newest = item("newest", "/two", SessionRailKind::Settled, false);
+    newest.session.modified = SystemTime::UNIX_EPOCH + Duration::from_secs(4);
+    let groups = vec![
+        ProjectGroup {
+            project: PathBuf::from("/one"),
+            items: vec![oldest, second],
+        },
+        ProjectGroup {
+            project: PathBuf::from("/two"),
+            items: vec![third, newest],
+        },
+    ];
+
+    let preview = recent_archived_sessions(&groups, 3);
+    assert_eq!(
+        preview
+            .iter()
+            .map(|item| item.session.id.as_str())
+            .collect::<Vec<_>>(),
+        ["newest", "third", "second"]
+    );
 }
 
 #[test]

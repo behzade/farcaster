@@ -1,6 +1,20 @@
 use super::*;
 
 #[test]
+fn working_context_never_flashes_a_false_zero() {
+    let zero = serde_json::json!({
+        "contextUsage": {"tokens": 0, "contextWindow": 200_000, "percent": 0.0}
+    });
+    let known = serde_json::json!({
+        "contextUsage": {"tokens": 168_000, "contextWindow": 200_000, "percent": 84.0}
+    });
+
+    assert_eq!(visible_context_stats(&zero, true), None);
+    assert_eq!(visible_context_stats(&zero, false), Some(&zero));
+    assert_eq!(visible_context_stats(&known, true), Some(&known));
+}
+
+#[test]
 fn context_projection_prefers_explicit_percent_and_derives_remaining() {
     let summary = context_summary(
         Some(&serde_json::json!({
@@ -61,7 +75,15 @@ fn duration_and_lifecycle_labels_are_truthful() {
 }
 
 #[test]
-fn unknown_and_limited_agents_never_project_as_completed() {
+fn active_agents_are_never_hidden_by_limited_history() {
+    assert_eq!(
+        agent_section(AgentLifecycle::Working, true, true),
+        AgentSection::Active
+    );
+    assert_eq!(
+        agent_section(AgentLifecycle::NeedsInput, true, true),
+        AgentSection::Active
+    );
     assert_eq!(
         agent_section(AgentLifecycle::Unknown, true, false),
         AgentSection::Limited

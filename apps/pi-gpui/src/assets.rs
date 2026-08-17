@@ -4,16 +4,13 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 10] = [
+const ICON_PATHS: [&str; 7] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrow-counter-clockwise.svg",
-    "icons/phosphor/chat-circle.svg",
     "icons/phosphor/chat-circle-dots.svg",
     "icons/phosphor/folder.svg",
     "icons/phosphor/folder-plus.svg",
     "icons/phosphor/magnifying-glass.svg",
-    "icons/phosphor/minus.svg",
-    "icons/phosphor/plus.svg",
     "icons/phosphor/x.svg",
 ];
 
@@ -39,9 +36,6 @@ impl AssetSource for AppAssets {
             "icons/phosphor/arrow-counter-clockwise.svg" => Some(include_bytes!(
                 "../assets/phosphor-icons/arrow-counter-clockwise.svg"
             )),
-            "icons/phosphor/chat-circle.svg" => {
-                Some(include_bytes!("../assets/phosphor-icons/chat-circle.svg"))
-            }
             "icons/phosphor/chat-circle-dots.svg" => Some(include_bytes!(
                 "../assets/phosphor-icons/chat-circle-dots.svg"
             )),
@@ -54,10 +48,6 @@ impl AssetSource for AppAssets {
             "icons/phosphor/magnifying-glass.svg" => Some(include_bytes!(
                 "../assets/phosphor-icons/magnifying-glass.svg"
             )),
-            "icons/phosphor/minus.svg" => {
-                Some(include_bytes!("../assets/phosphor-icons/minus.svg"))
-            }
-            "icons/phosphor/plus.svg" => Some(include_bytes!("../assets/phosphor-icons/plus.svg")),
             "icons/phosphor/x.svg" => Some(include_bytes!("../assets/phosphor-icons/x.svg")),
             _ => None,
         };
@@ -83,14 +73,10 @@ impl AssetSource for AppAssets {
 pub(crate) enum AppIcon {
     Archive,
     ArrowCounterClockwise,
-    #[allow(dead_code)]
-    ChatCircle,
     ChatCircleDots,
     Folder,
     FolderPlus,
     MagnifyingGlass,
-    Minus,
-    Plus,
     X,
 }
 
@@ -99,13 +85,10 @@ impl IconNamed for AppIcon {
         let name = match self {
             Self::Archive => "archive",
             Self::ArrowCounterClockwise => "arrow-counter-clockwise",
-            Self::ChatCircle => "chat-circle",
             Self::ChatCircleDots => "chat-circle-dots",
             Self::Folder => "folder",
             Self::FolderPlus => "folder-plus",
             Self::MagnifyingGlass => "magnifying-glass",
-            Self::Minus => "minus",
-            Self::Plus => "plus",
             Self::X => "x",
         };
         format!("{ICON_ROOT}/{name}.svg").into()
@@ -136,13 +119,10 @@ mod tests {
         for icon in [
             AppIcon::Archive,
             AppIcon::ArrowCounterClockwise,
-            AppIcon::ChatCircle,
             AppIcon::ChatCircleDots,
             AppIcon::Folder,
             AppIcon::FolderPlus,
             AppIcon::MagnifyingGlass,
-            AppIcon::Minus,
-            AppIcon::Plus,
             AppIcon::X,
         ] {
             let path = icon.path();

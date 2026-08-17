@@ -94,9 +94,17 @@ impl PiApp {
         }
     }
 
+    pub(super) fn open_keybindings_help(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sheet_return_focus = window.focused(cx);
+        self.keybindings_help = true;
+        self.pending_sheet_setup = true;
+        cx.notify();
+    }
+
     pub(super) fn close_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sessions_sheet = false;
         self.run_sheet = false;
+        self.keybindings_help = false;
         self.pending_sheet_setup = false;
         let focus = self
             .sheet_return_focus
@@ -109,11 +117,9 @@ impl PiApp {
     pub(super) fn dismiss_surface(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.changes.diff.is_some() {
             self.close_file_diff(window, cx);
-        } else if self.agent_detail.is_some() {
-            self.close_agent_detail(window, cx);
         } else if self.extension.dialog.is_some() {
             self.cancel_dialog(window, cx);
-        } else if self.sessions_sheet || self.run_sheet {
+        } else if self.sessions_sheet || self.run_sheet || self.keybindings_help {
             self.close_sheet(window, cx);
         }
     }

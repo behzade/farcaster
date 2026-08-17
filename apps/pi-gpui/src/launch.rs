@@ -9,16 +9,12 @@ use std::{
 };
 
 use crate::{
-    app::{
-        COMPOSER_KEY_CONTEXT, DismissSurface, OVERLAY_KEY_CONTEXT, PiApp, QuitApplication,
-        SubmitFollowUp,
-    },
+    app::{PiApp, QuitApplication},
     assets::AppAssets,
+    keybindings,
     theme::{THEME, install_component_theme},
 };
-use gpui::{
-    App, AppContext as _, Bounds, KeyBinding, TitlebarOptions, WindowBounds, WindowOptions, size,
-};
+use gpui::{App, AppContext as _, Bounds, TitlebarOptions, WindowBounds, WindowOptions, size};
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum LaunchError {
@@ -70,15 +66,11 @@ pub(crate) fn run(project: PathBuf) -> Result<(), LaunchError> {
             }
             install_component_theme(cx);
             cx.on_action(quit);
-            cx.bind_keys([
-                KeyBinding::new("cmd-q", QuitApplication, None),
-                KeyBinding::new("escape", DismissSurface, Some(OVERLAY_KEY_CONTEXT)),
-                KeyBinding::new(
-                    "tab",
-                    SubmitFollowUp,
-                    Some(&format!("{COMPOSER_KEY_CONTEXT} > Input")),
-                ),
-            ]);
+            cx.bind_keys(
+                keybindings::registry()
+                    .into_iter()
+                    .map(|entry| entry.binding),
+            );
             cx.on_window_closed(|cx, _| {
                 if cx.windows().is_empty() {
                     cx.quit();

@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use gpui::{
     AnyElement, App, CursorStyle, ElementId, FontWeight, InteractiveElement as _, IntoElement,
     KeyDownEvent, MouseButton, ParentElement as _, Role, SharedString,
@@ -194,7 +192,7 @@ impl PiApp {
                                 div()
                                     .text_size(THEME.type_scale.body)
                                     .text_color(THEME.colors.muted)
-                                    .line_height(px(22.0))
+                                    .line_height(THEME.type_scale.line_composer)
                                     .child(prompt),
                             )
                         })
@@ -361,8 +359,6 @@ fn slash_command_menu(
         .p(THEME.space.xs);
     for (index, command) in commands.into_iter().enumerate() {
         let name = command.name;
-        let keyboard_name = name.clone();
-        let keyboard_entity = entity.clone();
         let click_entity = entity.clone();
         menu = menu.child(
             div()
@@ -398,18 +394,6 @@ fn slash_command_menu(
                             .text_color(THEME.colors.muted)
                             .child(description),
                     )
-                })
-                .on_key_down(move |event: &KeyDownEvent, window, cx| {
-                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                        window.prevent_default();
-                        cx.stop_propagation();
-                        fill_slash_command(
-                            keyboard_entity.clone(),
-                            keyboard_name.clone(),
-                            window,
-                            cx,
-                        );
-                    }
                 })
                 .on_click(move |_, window, cx| {
                     fill_slash_command(click_entity.clone(), name.clone(), window, cx);
@@ -479,8 +463,6 @@ fn dialog_choice(
     on_press: impl Fn(&mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     let (title, detail) = choice_copy(label);
-    let on_press = Rc::new(on_press);
-    let keyboard_press = on_press.clone();
     div()
         .id(id)
         .role(Role::Button)
@@ -508,12 +490,6 @@ fn dialog_choice(
         .hover(|choice| choice.bg(THEME.colors.hover))
         .focus(|choice| choice.border_color(THEME.colors.accent))
         .cursor(CursorStyle::PointingHand)
-        .on_key_down(move |event: &KeyDownEvent, window, cx| {
-            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                window.prevent_default();
-                keyboard_press(window, cx);
-            }
-        })
         .on_click(move |_, window, cx| on_press(window, cx))
         .child(
             div()

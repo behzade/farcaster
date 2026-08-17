@@ -11,6 +11,7 @@ pub(crate) enum LayoutMode {
 
 pub(crate) const WIDE_MIN_WIDTH: f32 = 1_180.0;
 pub(crate) const COMPACT_MIN_WIDTH: f32 = 960.0;
+pub(crate) const SPLIT_DIFF_MIN_WIDTH: f32 = 760.0;
 
 pub(crate) fn layout_mode(width: Pixels) -> LayoutMode {
     let width = f32::from(width);
@@ -21,6 +22,10 @@ pub(crate) fn layout_mode(width: Pixels) -> LayoutMode {
     } else {
         LayoutMode::Narrow
     }
+}
+
+pub(crate) fn shows_split_diff(width: Pixels) -> bool {
+    f32::from(width) >= SPLIT_DIFF_MIN_WIDTH
 }
 
 pub(crate) const fn shows_left_inline(mode: LayoutMode) -> bool {
@@ -50,6 +55,12 @@ mod tests {
         assert_eq!(layout_mode(px(960.0)), LayoutMode::Compact);
         assert_eq!(layout_mode(px(1_179.0)), LayoutMode::Compact);
         assert_eq!(layout_mode(px(1_180.0)), LayoutMode::Wide);
+    }
+
+    #[test]
+    fn diff_mode_tracks_the_space_available_to_the_diff() {
+        assert!(!shows_split_diff(px(759.0)));
+        assert!(shows_split_diff(px(760.0)));
     }
 
     #[test]

@@ -25,7 +25,7 @@ use std::{
 
 use gpui::{
     AppContext as _, Context, Entity, FocusHandle, Focusable as _, FollowMode, ListAlignment,
-    ListState, PathPromptOptions, Subscription, Task, Window, actions,
+    ListState, PathPromptOptions, ScrollHandle, Subscription, Task, Window, actions, point, px,
 };
 use gpui_component::input::{InputEvent, InputState, TextareaState};
 use gpui_fps::FpsMonitor;
@@ -46,7 +46,33 @@ use crate::{
 const MAX_EXTENSION_ERRORS: usize = 16;
 const RECENT_COMPLETION_LIFETIME: Duration = Duration::from_secs(10 * 60);
 pub(crate) const COMPOSER_KEY_CONTEXT: &str = "PiComposer";
-actions!(pi_gpui, [DismissSurface, QuitApplication, SubmitFollowUp]);
+actions!(
+    pi_gpui,
+    [
+        DismissSurface,
+        QuitApplication,
+        SubmitFollowUp,
+        SwitchSession1,
+        SwitchSession2,
+        SwitchSession3,
+        SwitchSession4,
+        SwitchSession5,
+        SwitchSession6,
+        SwitchSession7,
+        SwitchSession8,
+        SwitchSession9,
+        NewSession,
+        AddProject,
+        FocusSessionSearch,
+        FocusComposer,
+        PreviousSession,
+        NextSession,
+        ToggleArchivedSessions,
+        SubmitPrompt,
+        AbortRun,
+        ShowKeybindings
+    ]
+);
 
 pub(crate) struct PiApp {
     project: PathBuf,
@@ -78,6 +104,7 @@ pub(crate) struct PiApp {
     transcript_view: Entity<TranscriptView>,
     composer_view: Entity<ComposerView>,
     run_panel_view: Entity<RunPanelView>,
+    run_panel_scroll: ScrollHandle,
     composer_sessions: ComposerSessions,
     composer_history_marker: Option<(String, usize, String)>,
     composer_images: HashMap<String, Vec<ComposerImage>>,
@@ -109,13 +136,11 @@ pub(crate) struct PiApp {
     sessions_sheet: bool,
     archived_sessions_expanded: bool,
     run_sheet: bool,
+    keybindings_help: bool,
     context_details_expanded: bool,
     completed_agents_expanded: bool,
     limited_agents_expanded: bool,
-    agent_detail: Option<String>,
-    agent_detail_focus: FocusHandle,
-    agent_detail_return_focus: Option<FocusHandle>,
-    pending_agent_detail_setup: bool,
+    session_shortcuts_visible: bool,
     _composer_subscription: Subscription,
     _search_subscription: Subscription,
     _event_task: Task<()>,
@@ -283,6 +308,7 @@ impl PiApp {
             transcript_view,
             composer_view,
             run_panel_view,
+            run_panel_scroll: ScrollHandle::new(),
             composer_sessions,
             composer_history_marker: None,
             composer_images: HashMap::new(),
@@ -314,13 +340,11 @@ impl PiApp {
             sessions_sheet: false,
             archived_sessions_expanded: false,
             run_sheet: false,
+            keybindings_help: false,
             context_details_expanded: false,
             completed_agents_expanded: false,
             limited_agents_expanded: false,
-            agent_detail: None,
-            agent_detail_focus: cx.focus_handle(),
-            agent_detail_return_focus: None,
-            pending_agent_detail_setup: false,
+            session_shortcuts_visible: false,
             _composer_subscription: composer_subscription,
             _search_subscription: search_subscription,
             _event_task: event_task,
@@ -431,15 +455,6 @@ impl PiApp {
                         } else {
                             self.agent_activities.extend(activities);
                         }
-                    }
-                    if self
-                        .agent_detail
-                        .as_ref()
-                        .is_some_and(|id| !self.agent_activities.contains_key(id))
-                    {
-                        self.agent_detail = None;
-                        self.agent_detail_return_focus = None;
-                        self.pending_agent_detail_setup = false;
                     }
                     self.agent_row_focus
                         .retain(|id, _| self.agent_activities.contains_key(id));
@@ -624,6 +639,7 @@ impl PiApp {
         self.send(RuntimeCommand::Resume { path, project });
         self.close_sessions_sheet_after_selection(window, cx);
         if previous_root != next_root {
+            self.run_panel_scroll.set_offset(point(px(0.0), px(0.0)));
             self.notify_session_rail(cx);
         }
         self.notify_transcript(cx);
@@ -633,6 +649,7 @@ impl PiApp {
     }
 
     fn new_session(&mut self, project: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        self.run_panel_scroll.set_offset(point(px(0.0), px(0.0)));
         let draft = projects::DraftSession::new(project.clone());
         let draft_key = draft_target(&draft.id);
         self.switch_composer_target(draft_key, window, cx);
@@ -665,6 +682,7 @@ impl PiApp {
             self.close_sessions_sheet_after_selection(window, cx);
             return;
         }
+        self.run_panel_scroll.set_offset(point(px(0.0), px(0.0)));
         self.switch_composer_target(draft_target(&id), window, cx);
         self.selected_draft = Some(id.clone());
         self.select_project(project.clone());

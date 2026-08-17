@@ -150,7 +150,7 @@ fn appended_reads_merge_with_the_existing_read_group() {
 }
 
 #[test]
-fn only_active_or_failed_tools_are_expanded_by_default() {
+fn tool_rows_are_collapsed_by_default_even_while_running_or_failed() {
     let successful_mutation = item(TranscriptKind::Tool, "Edit", "Path: src/main.rs");
     let mut running = item(TranscriptKind::Tool, "Bash", "Command: sleep 1");
     Arc::make_mut(&mut running).streaming = true;
@@ -160,19 +160,19 @@ fn only_active_or_failed_tools_are_expanded_by_default() {
     let rows = project_rows(&items);
 
     assert!(!expanded_by_default(rows[0], &items));
-    assert!(expanded_by_default(rows[1], &items));
-    assert!(expanded_by_default(rows[2], &items));
+    assert!(!expanded_by_default(rows[1], &items));
+    assert!(!expanded_by_default(rows[2], &items));
 }
 
 #[test]
-fn read_groups_open_when_any_call_needs_attention() {
+fn read_groups_stay_collapsed_when_a_call_needs_attention() {
     let successful = item(TranscriptKind::Tool, "Read", "Path: one");
     let mut failed = item(TranscriptKind::Tool, "Read", "Path: two");
     Arc::make_mut(&mut failed).is_error = true;
     let items = vec![successful, failed];
     let rows = project_rows(&items);
 
-    assert!(expanded_by_default(rows[0], &items));
+    assert!(!expanded_by_default(rows[0], &items));
 }
 
 #[test]
@@ -208,8 +208,21 @@ fn explicit_disclosure_state_survives_default_changes() {
         std::slice::from_ref(&running),
         &states
     ));
-    assert_eq!(tool_state_label(false, 0, true).as_deref(), Some("✓ Done"));
-    assert_eq!(tool_state_label(false, 0, false), None);
+    assert_eq!(
+        tool_state(false, 0, true),
+        Some(ToolState {
+            glyph: "✓",
+            label: "Done"
+        })
+    );
+    assert_eq!(
+        tool_state(false, 1, true),
+        Some(ToolState {
+            glyph: "×",
+            label: "Failed"
+        })
+    );
+    assert_eq!(tool_state(false, 0, false), None);
 }
 
 #[test]

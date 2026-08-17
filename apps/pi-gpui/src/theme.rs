@@ -14,6 +14,8 @@ pub(crate) struct Theme {
     pub colors: Colors,
     pub space: Space,
     pub type_scale: TypeScale,
+    pub icons: IconScale,
+    pub controls: ControlScale,
     pub radius: Pixels,
     pub border: Pixels,
     pub layout: Layout,
@@ -31,6 +33,8 @@ pub(crate) struct Colors {
     pub muted: Rgba,
     pub subtle: Rgba,
     pub accent: Rgba,
+    pub accent_hover: Rgba,
+    pub accent_active: Rgba,
     pub link: Rgba,
     pub code: Rgba,
     pub warning: Rgba,
@@ -47,12 +51,31 @@ pub(crate) struct Space {
     pub sm: Pixels,
     pub md: Pixels,
 }
+
 #[derive(Clone, Copy)]
 pub(crate) struct TypeScale {
     pub caption: Pixels,
     pub body_small: Pixels,
     pub body: Pixels,
+    pub display: Pixels,
     pub line_body: Pixels,
+    pub line_composer: Pixels,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct IconScale {
+    pub inline: Pixels,
+    pub control: Pixels,
+    pub prominent: Pixels,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ControlScale {
+    pub icon_button: Pixels,
+    pub utility_row: Pixels,
+    pub project_row: Pixels,
+    pub archived_preview_row: Pixels,
+    pub agent_marker: Pixels,
 }
 #[derive(Clone, Copy)]
 pub(crate) struct Layout {
@@ -102,6 +125,8 @@ pub(crate) const THEME: Theme = Theme {
         muted: rgb(0xa89984),
         subtle: rgb(0x928374),
         accent: rgb(0x8ec07c),
+        accent_hover: rgb(0xb8bb26),
+        accent_active: rgb(0x689d6a),
         link: rgb(0x83a598),
         code: rgb(0xd79921),
         warning: rgb(0xfabd2f),
@@ -120,7 +145,21 @@ pub(crate) const THEME: Theme = Theme {
         caption: px(12.0),
         body_small: px(13.0),
         body: px(14.0),
+        display: px(18.0),
         line_body: px(20.0),
+        line_composer: px(22.0),
+    },
+    icons: IconScale {
+        inline: px(16.0),
+        control: px(18.0),
+        prominent: px(20.0),
+    },
+    controls: ControlScale {
+        icon_button: px(28.0),
+        utility_row: px(40.0),
+        project_row: px(36.0),
+        archived_preview_row: px(40.0),
+        agent_marker: px(20.0),
     },
     radius: px(6.0),
     border: px(1.0),
@@ -138,7 +177,7 @@ pub(crate) const THEME: Theme = Theme {
         dialog_width: px(560.0),
         dialog_max_height: px(680.0),
         tool_max_height: px(220.0),
-        session_row_height: px(68.0),
+        session_row_height: px(48.0),
         status_row_height: px(24.0),
     },
 };
@@ -181,8 +220,8 @@ pub(crate) fn install_component_theme(cx: &mut App) {
     colors.button_active = THEME.colors.hover.into();
     colors.button_foreground = THEME.colors.text.into();
     colors.button_primary = THEME.colors.accent.into();
-    colors.button_primary_hover = rgb(0xb8bb26).into();
-    colors.button_primary_active = rgb(0x689d6a).into();
+    colors.button_primary_hover = THEME.colors.accent_hover.into();
+    colors.button_primary_active = THEME.colors.accent_active.into();
     colors.button_primary_foreground = THEME.colors.canvas.into();
     colors.danger = THEME.colors.error.into();
     colors.danger_foreground = THEME.colors.canvas.into();
@@ -208,5 +247,13 @@ mod tests {
         assert_eq!(f32::from(THEME.layout.run_panel), 312.0);
         assert_eq!(f32::from(THEME.layout.run_panel_min), 288.0);
         assert_eq!(f32::from(THEME.layout.run_panel_max), 344.0);
+    }
+
+    #[test]
+    fn icon_and_control_tokens_keep_icons_optically_proportional() {
+        assert!(THEME.icons.inline >= THEME.type_scale.body);
+        assert!(THEME.icons.control > THEME.icons.inline);
+        assert!(THEME.icons.prominent >= THEME.icons.control);
+        assert!(THEME.controls.icon_button > THEME.icons.prominent);
     }
 }

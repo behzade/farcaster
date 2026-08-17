@@ -6,8 +6,10 @@ mod diff_modal;
 mod models;
 mod regions;
 mod run_panel;
+mod run_panel_changes;
 mod session_groups;
 mod session_rail;
+mod session_rows;
 mod shell;
 
 pub(super) use regions::{ComposerView, RunPanelView, SessionRailView, TranscriptView};
@@ -15,11 +17,16 @@ pub(super) use session_groups::session_move_allowed;
 
 use gpui::{
     Context, Focusable as _, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    StatefulInteractiveElement as _, Styled as _, Window, div, prelude::FluentBuilder as _,
+    Styled as _, Window, div, prelude::FluentBuilder as _,
 };
-use gpui_component::FocusTrapElement as _;
+use gpui_component::{FocusTrapElement as _, kbd::Kbd};
 
-use super::{DismissSurface, PiApp, SubmitFollowUp};
+use super::{
+    AbortRun, AddProject, DismissSurface, FocusComposer, FocusSessionSearch, NewSession,
+    NextSession, PiApp, PreviousSession, ShowKeybindings, SubmitFollowUp, SubmitPrompt,
+    SwitchSession1, SwitchSession2, SwitchSession3, SwitchSession4, SwitchSession5, SwitchSession6,
+    SwitchSession7, SwitchSession8, SwitchSession9, ToggleArchivedSessions,
+};
 pub(crate) const OVERLAY_KEY_CONTEXT: &str = "PiGpuiOverlay";
 
 use crate::{
@@ -43,11 +50,6 @@ impl Render for PiApp {
         if self.pending_sheet_setup {
             self.pending_sheet_setup = false;
             let focus = self.sheet_focus.clone();
-            cx.defer_in(window, move |_, window, cx| focus.focus(window, cx));
-        }
-        if self.pending_agent_detail_setup {
-            self.pending_agent_detail_setup = false;
-            let focus = self.agent_detail_focus.clone();
             cx.defer_in(window, move |_, window, cx| focus.focus(window, cx));
         }
         if self.changes.pending_diff_setup {
@@ -127,6 +129,78 @@ impl Render for PiApp {
             .on_action(cx.listener(|this, _: &SubmitFollowUp, window, cx| {
                 this.submit_follow_up(window, cx);
             }))
+            .on_action(cx.listener(|this, _: &NewSession, window, cx| {
+                this.new_session(this.project.clone(), window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &AddProject, window, cx| {
+                this.choose_project_folder(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &FocusSessionSearch, window, cx| {
+                this.search_focus.focus(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &FocusComposer, window, cx| {
+                this.composer_focus.focus(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &PreviousSession, window, cx| {
+                this.switch_relative_session(-1, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &NextSession, window, cx| {
+                this.switch_relative_session(1, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ToggleArchivedSessions, _, cx| {
+                this.archived_sessions_expanded = !this.archived_sessions_expanded;
+                this.notify_session_rail(cx);
+            }))
+            .on_action(cx.listener(|this, _: &SubmitPrompt, window, cx| {
+                let value = this.composer.read(cx).value().trim().to_owned();
+                if !value.is_empty() || this.has_composer_images() {
+                    this.submit(value, this.enter_mode(), window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &AbortRun, _, _| {
+                if this.snapshot.conversation.running {
+                    this.send(crate::runtime::RuntimeCommand::Abort);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &ShowKeybindings, window, cx| {
+                this.open_keybindings_help(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SwitchSession1, window, cx| {
+                this.switch_to_session_number(1, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SwitchSession2, window, cx| {
+                this.switch_to_session_number(2, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SwitchSession3, window, cx| {
+                this.switch_to_session_number(3, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SwitchSession4, window, cx| {
+                this.switch_to_session_number(4, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SwitchSession5, window, cx| {
+                this.switch_to_session_number(5, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SwitchSession6, window, cx| {
+                this.switch_to_session_number(6, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SwitchSession7, window, cx| {
+                this.switch_to_session_number(7, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SwitchSession8, window, cx| {
+                this.switch_to_session_number(8, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SwitchSession9, window, cx| {
+                this.switch_to_session_number(9, window, cx);
+            }))
+            .on_modifiers_changed(cx.listener(
+                |this, event: &gpui::ModifiersChangedEvent, _, cx| {
+                    let visible = event.modifiers.platform;
+                    if this.session_shortcuts_visible != visible {
+                        this.session_shortcuts_visible = visible;
+                        this.notify_session_rail(cx);
+                    }
+                },
+            ))
             .child(
                 div()
                     .size_full()
@@ -165,6 +239,23 @@ impl Render for PiApp {
                         )
                     }),
             )
+            .when(self.keybindings_help, |root| {
+                let close = entity.clone();
+                root.child(
+                    dialog_backdrop("keybindings-help-backdrop", move |window, cx| {
+                        let _ = close.update(cx, |this, cx| this.close_sheet(window, cx));
+                    })
+                    .child(
+                        dialog_surface("keybindings-help", "Keyboard shortcuts")
+                            .track_focus(&self.sheet_focus)
+                            .key_context(OVERLAY_KEY_CONTEXT)
+                            .w(gpui::px(520.0))
+                            .max_w_full()
+                            .child(render_keybindings_help())
+                            .focus_trap("keybindings-help-trap", &self.sheet_focus),
+                    ),
+                )
+            })
             .when(self.sessions_sheet, |root| {
                 let close = entity.clone();
                 root.child(
@@ -207,24 +298,6 @@ impl Render for PiApp {
                     ),
                 )
             })
-            .when(self.agent_detail.is_some(), |root| {
-                let close = entity.clone();
-                root.child(
-                    dialog_backdrop("agent-detail-backdrop", move |window, cx| {
-                        let _ = close.update(cx, |this, cx| this.close_agent_detail(window, cx));
-                    })
-                    .child(
-                        dialog_surface("agent-detail-dialog", "Agent")
-                            .track_focus(&self.agent_detail_focus)
-                            .key_context(OVERLAY_KEY_CONTEXT)
-                            .max_w_full()
-                            .max_h(THEME.layout.dialog_max_height)
-                            .overflow_y_scroll()
-                            .children(self.render_agent_detail(entity.clone()))
-                            .focus_trap("agent-detail-trap", &self.agent_detail_focus),
-                    ),
-                )
-            })
             .when(self.changes.diff.is_some(), |root| {
                 let close = entity.clone();
                 root.child(
@@ -240,7 +313,15 @@ impl Render for PiApp {
                             .h_full()
                             .max_h(gpui::relative(1.0))
                             .overflow_hidden()
-                            .child(self.render_diff_modal(entity.clone()))
+                            .child(self.render_diff_modal(
+                                entity.clone(),
+                                if crate::layout::shows_split_diff(viewport.width - gpui::px(64.0))
+                                {
+                                    crate::app::changes::FullDiffMode::Split
+                                } else {
+                                    crate::app::changes::FullDiffMode::Unified
+                                },
+                            ))
                             .focus_trap("full-diff-trap", &self.changes.diff_focus),
                     ),
                 )
@@ -274,4 +355,34 @@ impl Render for PiApp {
                 )
             })
     }
+}
+
+fn render_keybindings_help() -> impl IntoElement {
+    let mut content = div().flex().flex_col().gap(THEME.space.md);
+    let mut current_section = "";
+    for shortcut in crate::keybindings::registry() {
+        if shortcut.section != current_section {
+            current_section = shortcut.section;
+            content = content.child(
+                div()
+                    .pt(THEME.space.xs)
+                    .text_size(THEME.type_scale.caption)
+                    .text_color(THEME.colors.muted)
+                    .child(current_section),
+            );
+        }
+        content = content.child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(THEME.space.md)
+                .child(shortcut.label)
+                .child(Kbd::new(
+                    gpui::Keystroke::parse(shortcut.keystroke)
+                        .expect("registered shortcut must parse"),
+                )),
+        );
+    }
+    content
 }

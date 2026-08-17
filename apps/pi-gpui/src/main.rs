@@ -7,6 +7,7 @@ mod composer_sessions_test;
 mod conversation;
 mod extension_ui;
 mod framing;
+mod keybindings;
 mod launch;
 mod layout;
 mod primitives;

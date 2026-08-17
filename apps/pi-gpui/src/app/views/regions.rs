@@ -64,18 +64,27 @@ impl Render for TranscriptView {
             return gpui::div().into_any_element();
         };
         let app = app.read(cx);
+        let viewport = window.viewport_size();
+        let layout_mode = crate::layout::layout_mode(viewport.width);
+        let mut transcript_width = viewport.width;
+        if crate::layout::shows_left_inline(layout_mode) {
+            transcript_width -= crate::theme::THEME.layout.session_rail;
+        }
+        if crate::layout::shows_right_inline(layout_mode) {
+            transcript_width -= crate::theme::THEME.layout.run_panel;
+        }
+        let diff_mode = if crate::layout::shows_split_diff(transcript_width) {
+            crate::tool_changes::EmbeddedDiffMode::Split
+        } else {
+            crate::tool_changes::EmbeddedDiffMode::Unified
+        };
         transcript::render(
             &app.transcript_list,
             transcript::TranscriptViewport {
                 following: app.transcript_following,
                 unseen: app.transcript_unseen,
-                tail_reserve: transcript::tail_reserve(window.viewport_size().height),
-                diff_mode: match crate::layout::layout_mode(window.viewport_size().width) {
-                    crate::layout::LayoutMode::Wide => crate::tool_changes::EmbeddedDiffMode::Split,
-                    crate::layout::LayoutMode::Compact | crate::layout::LayoutMode::Narrow => {
-                        crate::tool_changes::EmbeddedDiffMode::Unified
-                    }
-                },
+                tail_reserve: transcript::tail_reserve(viewport.height),
+                diff_mode,
             },
             app.transcript_rows.clone(),
             app.snapshot.clone(),

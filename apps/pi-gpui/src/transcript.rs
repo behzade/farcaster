@@ -4,9 +4,8 @@ use std::{rc::Rc, sync::Arc};
 
 use gpui::{
     AnyElement, FontWeight, HighlightStyle, InteractiveElement as _, IntoElement as _,
-    KeyDownEvent, ListSizingBehavior, ListState, Overflow, ParentElement as _, Pixels, Role,
-    StatefulInteractiveElement as _, StyleRefinement, Styled as _, WeakEntity, div, list,
-    prelude::FluentBuilder as _, px, rems,
+    ListSizingBehavior, ListState, Overflow, ParentElement as _, Pixels, StyleRefinement,
+    Styled as _, WeakEntity, div, list, prelude::FluentBuilder as _, px, rems,
 };
 use gpui_component::{
     highlighter::HighlightTheme,
@@ -16,7 +15,7 @@ use gpui_component::{
 use crate::{
     app::PiApp,
     conversation::{TranscriptItem, TranscriptKind},
-    primitives::{ButtonTone, button},
+    primitives::{ButtonTone, button, disclosure_button},
     theme::{MONO_FONT_FAMILY, THEME},
     tool_changes::EmbeddedDiffMode,
 };
@@ -243,16 +242,8 @@ fn markdown_fence_marker(line: &str) -> Option<char> {
         .then_some(marker)
 }
 
-fn expanded_by_default(row: TranscriptRow, items: &[Arc<TranscriptItem>]) -> bool {
-    match row {
-        TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Tool => {
-            items[index].streaming || items[index].is_error
-        }
-        TranscriptRow::ReadGroup { start, len, .. } => items[start..start + len]
-            .iter()
-            .any(|item| item.streaming || item.is_error),
-        _ => false,
-    }
+fn expanded_by_default(_row: TranscriptRow, _items: &[Arc<TranscriptItem>]) -> bool {
+    false
 }
 
 fn resolved_expanded(
@@ -522,7 +513,7 @@ fn render_thinking(
         .gap(THEME.space.xs)
         .px(THEME.space.md)
         .py(px(2.0))
-        .child(disclosure_button(
+        .child(transcript_disclosure_button(
             ("thinking-toggle", key),
             expanded,
             "thinking details".into(),
@@ -548,6 +539,7 @@ fn render_read_group(
     let failed = items.iter().filter(|item| item.is_error).count();
     let running = items.iter().filter(|item| item.streaming).count();
     let target = (items.len() == 1).then(|| tool_target(&items[0].text));
+    let has_target = target.as_ref().is_some_and(|target| !target.is_empty());
     let summary = if items.len() == 1 {
         "Read".to_owned()
     } else {
@@ -556,8 +548,11 @@ fn render_read_group(
     let completed = items
         .iter()
         .all(|item| !item.streaming && (item.is_error || !item.tool_output.is_empty()));
-    let state = tool_state_label(running > 0, failed, completed);
-    let disclosure_label = format!("read call details for {summary}");
+    let state = tool_state(running > 0, failed, completed);
+    let disclosure_label = format!(
+        "read call details for {summary}. {}",
+        state.map_or("No result", |state| state.label)
+    );
     div()
         .id(("read-group", key))
         .w_full()
@@ -570,7 +565,7 @@ fn render_read_group(
                 .flex()
                 .items_center()
                 .gap(THEME.space.xs)
-                .child(disclosure_button(
+                .child(transcript_disclosure_button(
                     ("read-toggle", key),
                     expanded,
                     disclosure_label,
@@ -581,6 +576,7 @@ fn render_read_group(
                     div()
                         .text_size(THEME.type_scale.body_small)
                         .text_color(THEME.colors.muted)
+                        .when(!has_target, |label| label.flex_1())
                         .child(summary),
                 )
                 .children(target.filter(|target| !target.is_empty()).map(|target| {
@@ -591,15 +587,10 @@ fn render_read_group(
                 }))
                 .children(state.map(|state| {
                     div()
+                        .flex_none()
                         .text_size(THEME.type_scale.caption)
-                        .text_color(if failed > 0 {
-                            THEME.colors.error
-                        } else if running > 0 {
-                            THEME.colors.warning
-                        } else {
-                            THEME.colors.success
-                        })
-                        .child(state)
+                        .text_color(THEME.colors.subtle)
+                        .child(state.glyph)
                 })),
         )
         .when(expanded, |group| {
@@ -626,17 +617,22 @@ fn render_tool(
     entity: WeakEntity<PiApp>,
 ) -> AnyElement {
     let target = tool_target(&item.text);
-    let state = tool_state_label(
+    let state = tool_state(
         item.streaming,
         usize::from(item.is_error),
         !item.streaming && (item.is_error || !item.tool_output.is_empty()),
     );
     let presentation = item.tool_presentation.as_ref();
-    let disclosure_label = if target.is_empty() {
-        format!("{} tool call details", item.label)
-    } else {
+    let has_target = !target.is_empty();
+    let detail_label = if has_target {
         format!("{} tool call details for {target}", item.label)
+    } else {
+        format!("{} tool call details", item.label)
     };
+    let disclosure_label = format!(
+        "{detail_label}. {}",
+        state.map_or("No result", |state| state.label)
+    );
     div()
         .id(("tool-row", key))
         .w_full()
@@ -649,7 +645,7 @@ fn render_tool(
                 .flex()
                 .items_center()
                 .gap(THEME.space.xs)
-                .child(disclosure_button(
+                .child(transcript_disclosure_button(
                     ("tool-toggle", key),
                     expanded,
                     disclosure_label,
@@ -660,9 +656,10 @@ fn render_tool(
                     div()
                         .text_size(THEME.type_scale.body_small)
                         .text_color(THEME.colors.muted)
+                        .when(!has_target, |label| label.flex_1())
                         .child(item.label.clone()),
                 )
-                .when(!target.is_empty(), |row| {
+                .when(has_target, |row| {
                     row.child(
                         technical_text(("tool-target", key), target)
                             .flex_1()
@@ -672,15 +669,10 @@ fn render_tool(
                 })
                 .children(state.map(|state| {
                     div()
+                        .flex_none()
                         .text_size(THEME.type_scale.caption)
-                        .text_color(if item.is_error {
-                            THEME.colors.error
-                        } else if item.streaming {
-                            THEME.colors.warning
-                        } else {
-                            THEME.colors.success
-                        })
-                        .child(state)
+                        .text_color(THEME.colors.subtle)
+                        .child(state.glyph)
                 })),
         )
         .when(expanded, |tool| {
@@ -737,51 +729,18 @@ fn expanded_tool_body(id: impl Into<gpui::ElementId>, item: &TranscriptItem) -> 
         .into_any_element()
 }
 
-fn disclosure_button(
+fn transcript_disclosure_button(
     id: impl Into<gpui::ElementId>,
     expanded: bool,
     label: String,
     key: usize,
     entity: WeakEntity<PiApp>,
 ) -> AnyElement {
-    let accessible_label = format!("{} {label}", if expanded { "Collapse" } else { "Expand" });
-    let keyboard_entity = entity.clone();
-    div()
-        .id(id)
-        .role(Role::Button)
-        .aria_label(accessible_label)
-        .aria_expanded(expanded)
-        .tab_index(0)
-        .size(px(20.0))
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(THEME.radius)
-        .text_size(THEME.type_scale.caption)
-        .text_color(THEME.colors.muted)
-        .hover(|control| control.bg(THEME.colors.hover))
-        .focus(|control| {
-            control
-                .border(THEME.border)
-                .border_color(THEME.colors.accent)
-        })
-        .cursor_pointer()
-        .on_key_down(move |event: &KeyDownEvent, window, cx| {
-            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                window.prevent_default();
-                let _ = keyboard_entity.update(cx, |this, cx| {
-                    this.set_transcript_item_expanded(key, !expanded, cx)
-                });
-            }
-        })
-        .on_click(move |_, _, cx| {
-            let _ = entity.update(cx, |this, cx| {
-                this.set_transcript_item_expanded(key, !expanded, cx)
-            });
-        })
-        .child(if expanded { "▾" } else { "▸" })
-        .into_any_element()
+    disclosure_button(id, expanded, label, move |_, cx| {
+        let _ = entity.update(cx, |this, cx| {
+            this.set_transcript_item_expanded(key, !expanded, cx)
+        });
+    })
 }
 
 fn selectable_text(
@@ -847,17 +806,28 @@ fn stable_key(value: &str) -> usize {
     })
 }
 
-fn tool_state_label(running: bool, failed: usize, completed: bool) -> Option<String> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ToolState {
+    glyph: &'static str,
+    label: &'static str,
+}
+
+fn tool_state(running: bool, failed: usize, completed: bool) -> Option<ToolState> {
     if failed > 0 {
-        Some(if failed == 1 {
-            "Failed".into()
-        } else {
-            format!("{failed} failed")
+        Some(ToolState {
+            glyph: "×",
+            label: "Failed",
         })
     } else if running {
-        Some("Working".into())
+        Some(ToolState {
+            glyph: "…",
+            label: "Working",
+        })
     } else if completed {
-        Some("✓ Done".into())
+        Some(ToolState {
+            glyph: "✓",
+            label: "Done",
+        })
     } else {
         None
     }
