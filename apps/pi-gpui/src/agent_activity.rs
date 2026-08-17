@@ -42,6 +42,26 @@ pub(crate) struct ObservedPath {
     pub observed_at: SystemTime,
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum FileMutationKind {
+    Edit { patch: String, complete: bool },
+    Write { content: String },
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct FileMutation {
+    pub path: PathBuf,
+    pub observed_at: SystemTime,
+    pub kind: FileMutationKind,
+}
+
+#[derive(Clone, Debug)]
+struct PendingMutation {
+    path: PathBuf,
+    observed_at: Option<SystemTime>,
+    kind: FileMutationKind,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AgentActivity {
     pub session_id: String,
@@ -58,6 +78,7 @@ pub(crate) struct AgentActivity {
     pub ended: Option<SystemTime>,
     pub elapsed: Option<Duration>,
     pub changed_paths: Vec<ObservedPath>,
+    pub file_mutations: Vec<FileMutation>,
 }
 
 #[derive(Default)]
@@ -68,8 +89,9 @@ pub(crate) struct ActivityBuilder {
     tool_call_count: usize,
     outcome: Option<AgentOutcome>,
     terminal_time: Option<SystemTime>,
-    pending_mutations: HashMap<String, (PathBuf, Option<SystemTime>)>,
+    pending_mutations: HashMap<String, PendingMutation>,
     observed_paths: Vec<(PathBuf, Option<SystemTime>)>,
+    file_mutations: Vec<PendingMutation>,
 }
 
 impl ActivityBuilder {
@@ -118,11 +140,7 @@ impl ActivityBuilder {
                     .to_owned();
                 let arguments = block.get("arguments").unwrap_or(&Value::Null);
                 let target = tool_target(arguments);
-                let mutation_path = matches!(name.to_ascii_lowercase().as_str(), "edit" | "write")
-                    .then(|| arguments.get("path").and_then(Value::as_str))
-                    .flatten()
-                    .filter(|path| !path.is_empty())
-                    .map(PathBuf::from);
+                let mutation = pending_mutation(&name, arguments, observed_at);
                 let awaits_input = supervisor_wait(&name, arguments);
                 let tool = AgentToolActivity {
                     name,
@@ -132,9 +150,8 @@ impl ActivityBuilder {
                 };
                 self.tool_call_count = self.tool_call_count.saturating_add(1);
                 if !id.is_empty() {
-                    if let Some(path) = mutation_path {
-                        self.pending_mutations
-                            .insert(id.clone(), (path, observed_at));
+                    if let Some(mutation) = mutation {
+                        self.pending_mutations.insert(id.clone(), mutation);
                     }
                     self.tools.insert(id.clone(), tool);
                     self.outstanding_tool_ids.push(id);
@@ -174,10 +191,22 @@ impl ActivityBuilder {
         });
         tool.failed = failed;
         self.recent_tool = Some(tool);
-        if let Some(observed) = self.pending_mutations.remove(id)
+        if let Some(mut mutation) = self.pending_mutations.remove(id)
             && !failed
         {
-            self.observed_paths.push(observed);
+            if let FileMutationKind::Edit { patch, complete } = &mut mutation.kind
+                && let Some(result_patch) = message
+                    .pointer("/details/patch")
+                    .or_else(|| message.pointer("/details/diff"))
+                    .and_then(Value::as_str)
+                    .filter(|patch| !patch.is_empty())
+            {
+                *patch = result_patch.to_owned();
+                *complete = true;
+            }
+            self.observed_paths
+                .push((mutation.path.clone(), mutation.observed_at));
+            self.file_mutations.push(mutation);
         }
         self.outstanding_tool_ids
             .retain(|outstanding| outstanding != id);
@@ -266,6 +295,23 @@ impl ActivityBuilder {
             }
         }
         changed_paths.sort_by_key(|observed| observed.observed_at);
+        let mut file_mutations = self
+            .file_mutations
+            .into_iter()
+            .map(|mutation| {
+                let path = if mutation.path.is_absolute() {
+                    normalize_lexical(&mutation.path)
+                } else {
+                    normalize_lexical(&project.join(mutation.path))
+                };
+                FileMutation {
+                    path,
+                    observed_at: mutation.observed_at.unwrap_or(modified),
+                    kind: mutation.kind,
+                }
+            })
+            .collect::<Vec<_>>();
+        file_mutations.sort_by_key(|mutation| mutation.observed_at);
         AgentActivity {
             session_id,
             session_path,
@@ -281,8 +327,78 @@ impl ActivityBuilder {
             ended,
             elapsed,
             changed_paths,
+            file_mutations,
         }
     }
+}
+
+fn pending_mutation(
+    name: &str,
+    arguments: &Value,
+    observed_at: Option<SystemTime>,
+) -> Option<PendingMutation> {
+    let path = arguments
+        .get("path")
+        .or_else(|| arguments.get("file_path"))
+        .and_then(Value::as_str)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)?;
+    let kind = match name.trim().to_ascii_lowercase().as_str() {
+        "edit" => FileMutationKind::Edit {
+            patch: edit_preview(arguments),
+            complete: false,
+        },
+        "write" => FileMutationKind::Write {
+            content: arguments.get("content").and_then(Value::as_str)?.to_owned(),
+        },
+        _ => return None,
+    };
+    Some(PendingMutation {
+        path,
+        observed_at,
+        kind,
+    })
+}
+
+fn edit_preview(arguments: &Value) -> String {
+    let edits = arguments
+        .get("edits")
+        .and_then(Value::as_array)
+        .map(|edits| {
+            edits
+                .iter()
+                .filter_map(|edit| {
+                    edit.get("oldText")
+                        .and_then(Value::as_str)
+                        .zip(edit.get("newText").and_then(Value::as_str))
+                })
+                .collect::<Vec<_>>()
+        })
+        .or_else(|| {
+            arguments
+                .get("oldText")
+                .and_then(Value::as_str)
+                .zip(arguments.get("newText").and_then(Value::as_str))
+                .map(|edit| vec![edit])
+        })
+        .unwrap_or_default();
+    let mut patch = String::new();
+    for (index, (old, new)) in edits.into_iter().enumerate() {
+        if index > 0 {
+            patch.push_str("     ...\n");
+        }
+        for line in old.lines() {
+            patch.push_str("- ");
+            patch.push_str(line);
+            patch.push('\n');
+        }
+        for line in new.lines() {
+            patch.push_str("+ ");
+            patch.push_str(line);
+            patch.push('\n');
+        }
+    }
+    patch
 }
 
 fn entry_timestamp(entry: &Value, message: &Value) -> Option<SystemTime> {
@@ -542,13 +658,24 @@ mod tests {
             builder.observe_entry(&serde_json::json!({
                 "type":"message","timestamp":timestamp,
                 "message":{"role":"assistant","stopReason":"toolUse","content":[
-                    {"type":"toolCall","id":id,"name":name,"arguments":{"path":path}}
+                    {"type":"toolCall","id":id,"name":name,"arguments":{
+                        "path":path,
+                        "content":"created\n",
+                        "oldText":"before",
+                        "newText":"after"
+                    }}
                 ]}
             }));
         }
         for (id, failed) in [("late", false), ("failed", true), ("early", false)] {
             builder.observe_entry(&serde_json::json!({
-                "type":"message","message":{"role":"toolResult","toolCallId":id,"toolName":"edit","isError":failed}
+                "type":"message","message":{
+                    "role":"toolResult",
+                    "toolCallId":id,
+                    "toolName":"edit",
+                    "isError":failed,
+                    "details":{"patch":"@@\n-before\n+after\n"}
+                }
             }));
         }
         let activity = builder.finish(
@@ -586,6 +713,15 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![1, 3]
         );
+        assert_eq!(activity.file_mutations.len(), 2);
+        assert!(matches!(
+            &activity.file_mutations[0].kind,
+            FileMutationKind::Write { content } if content == "created\n"
+        ));
+        assert!(matches!(
+            &activity.file_mutations[1].kind,
+            FileMutationKind::Edit { patch, complete: true } if patch.contains("+after")
+        ));
     }
 
     #[test]
@@ -609,6 +745,7 @@ mod tests {
         assert!(activity.limited);
         assert!(activity.activity.ends_with('…'));
         assert_eq!(activity.changed_paths.len(), 2);
+        assert!(activity.file_mutations.is_empty());
         assert_eq!(
             activity.changed_paths[0].path,
             PathBuf::from("/project/src/lib.rs")

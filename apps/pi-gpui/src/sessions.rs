@@ -326,34 +326,7 @@ pub(crate) fn load_history(path: &Path) -> Result<Vec<Value>, String> {
 }
 
 fn project_history(entries: &[Value]) -> Vec<Value> {
-    let by_id = entries
-        .iter()
-        .filter_map(|entry| {
-            entry
-                .get("id")
-                .and_then(Value::as_str)
-                .map(|id| (id, entry))
-        })
-        .collect::<HashMap<_, _>>();
-    let Some(mut current) = entries.last() else {
-        return Vec::new();
-    };
-    let mut branch = Vec::new();
-    let mut seen = HashSet::new();
-    while let Some(id) = current.get("id").and_then(Value::as_str) {
-        if !seen.insert(id) {
-            break;
-        }
-        branch.push(current);
-        let Some(parent) = current.get("parentId").and_then(Value::as_str) else {
-            break;
-        };
-        let Some(entry) = by_id.get(parent) else {
-            break;
-        };
-        current = entry;
-    }
-    branch.reverse();
+    let branch = active_branch_entries(entries);
 
     let context = if let Some((index, compaction)) = branch
         .iter()
@@ -377,6 +350,41 @@ fn project_history(entries: &[Value]) -> Vec<Value> {
     };
 
     context.into_iter().filter_map(entry_message).collect()
+}
+
+fn active_branch_entries(entries: &[Value]) -> Vec<&Value> {
+    let by_id = entries
+        .iter()
+        .filter_map(|entry| {
+            entry
+                .get("id")
+                .and_then(Value::as_str)
+                .map(|id| (id, entry))
+        })
+        .collect::<HashMap<_, _>>();
+    let Some(mut current) = entries.last() else {
+        return Vec::new();
+    };
+    if current.get("id").and_then(Value::as_str).is_none() {
+        return entries.iter().collect();
+    }
+    let mut branch = Vec::new();
+    let mut seen = HashSet::new();
+    while let Some(id) = current.get("id").and_then(Value::as_str) {
+        if !seen.insert(id) {
+            break;
+        }
+        branch.push(current);
+        let Some(parent) = current.get("parentId").and_then(Value::as_str) else {
+            break;
+        };
+        let Some(entry) = by_id.get(parent) else {
+            break;
+        };
+        current = entry;
+    }
+    branch.reverse();
+    branch
 }
 
 fn entry_message(entry: &Value) -> Option<Value> {
@@ -656,6 +664,7 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
     let mut usage = UsageSummary::default();
     let mut is_running = false;
     let mut search = String::new();
+    let mut activity_entries = Vec::new();
     for _ in 0..MAX_LINES_PER_FILE {
         line.clear();
         if reader
@@ -670,7 +679,6 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
         let Ok(entry) = serde_json::from_slice::<Value>(&line) else {
             continue;
         };
-        activity.observe_entry(&entry);
         match entry.get("type").and_then(Value::as_str) {
             Some("session_info") => {
                 name = entry
@@ -707,6 +715,7 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
             }
             _ => {}
         }
+        activity_entries.push(entry);
     }
     if detail_limited {
         line.clear();
@@ -723,6 +732,9 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
     append_bounded(&mut search, &title);
     append_bounded(&mut search, &project.to_string_lossy());
     let session_path = normalize_session_path(path);
+    for entry in active_branch_entries(&activity_entries) {
+        activity.observe_entry(entry);
+    }
     let mut activity = activity.finish(
         id.clone(),
         session_path.clone(),

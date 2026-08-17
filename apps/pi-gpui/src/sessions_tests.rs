@@ -449,12 +449,16 @@ fn discovery_carries_transient_agent_activity_without_persisting_it() -> TestRes
         serde_json::json!({
             "type":"message",
             "message":{"role":"assistant","stopReason":"toolUse","content":[
-                {"type":"toolCall","id":"edit-1","name":"edit","arguments":{"path":"src/main.rs"}}
+                {"type":"toolCall","id":"edit-1","name":"edit","arguments":{
+                    "path":"src/main.rs","oldText":"before","newText":"after"
+                }}
             ]}
         }),
         serde_json::json!({
-            "type":"message",
-            "message":{"role":"toolResult","toolCallId":"edit-1","toolName":"edit","isError":false}
+            "type":"message","message":{
+                "role":"toolResult","toolCallId":"edit-1","toolName":"edit","isError":false,
+                "details":{"patch":"@@\n-before\n+after\n"}
+            }
         }),
         serde_json::json!({
             "type":"message",
@@ -487,6 +491,53 @@ fn discovery_carries_transient_agent_activity_without_persisting_it() -> TestRes
         activity.changed_paths[0].path,
         project.path().canonicalize()?.join("src/main.rs")
     );
+    assert_eq!(activity.file_mutations.len(), 1);
+    assert!(matches!(
+        &activity.file_mutations[0].kind,
+        crate::agent_activity::FileMutationKind::Edit { patch, complete: true }
+            if patch.contains("+after")
+    ));
+    Ok(())
+}
+
+#[test]
+fn discovery_aggregates_only_the_active_branch_from_an_external_session() -> TestResult {
+    let root = tempdir()?;
+    let project = tempdir()?;
+    let directory = root.path().join("custom/nested");
+    fs::create_dir_all(&directory)?;
+    let entries = [
+        serde_json::json!({"type":"session","version":3,"id":"external","timestamp":"2026-01-02T00:00:00Z","cwd":project.path()}),
+        serde_json::json!({"type":"message","id":"root","parentId":null,"message":{"role":"user","content":"change one branch"}}),
+        serde_json::json!({"type":"message","id":"old-call","parentId":"root","timestamp":"2026-01-02T00:00:01Z","message":{"role":"assistant","stopReason":"toolUse","content":[
+            {"type":"toolCall","id":"old-edit","name":"edit","arguments":{"path":"old.txt","oldText":"a","newText":"b"}}
+        ]}}),
+        serde_json::json!({"type":"message","id":"old-result","parentId":"old-call","message":{"role":"toolResult","toolCallId":"old-edit","toolName":"edit","isError":false,"details":{"patch":"@@\n-a\n+b\n"}}}),
+        serde_json::json!({"type":"message","id":"current-call","parentId":"root","timestamp":"2026-01-02T00:00:02Z","message":{"role":"assistant","stopReason":"toolUse","content":[
+            {"type":"toolCall","id":"current-write","name":"write","arguments":{"path":"current.txt","content":"current\n"}}
+        ]}}),
+        serde_json::json!({"type":"message","id":"current-result","parentId":"current-call","message":{"role":"toolResult","toolCallId":"current-write","toolName":"write","isError":false}}),
+    ];
+    fs::write(
+        directory.join("external.jsonl"),
+        entries
+            .into_iter()
+            .map(|entry| entry.to_string())
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )?;
+
+    let discovery = discover_in_with_status(root.path(), "")?;
+    let activity = discovery.activities.get("external").expect("activity");
+    assert_eq!(activity.file_mutations.len(), 1);
+    assert_eq!(
+        activity.file_mutations[0].path,
+        project.path().canonicalize()?.join("current.txt")
+    );
+    assert!(matches!(
+        activity.file_mutations[0].kind,
+        crate::agent_activity::FileMutationKind::Write { .. }
+    ));
     Ok(())
 }
 

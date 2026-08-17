@@ -1,4 +1,4 @@
-//! Generation-guarded application orchestration for the read-only Changes projection.
+//! Application state for changes retained in Pi session records.
 
 use std::{
     collections::HashMap,
@@ -7,12 +7,13 @@ use std::{
     time::SystemTime,
 };
 
-use gpui::{AppContext as _, Context, FocusHandle, ScrollHandle, Window};
+use gpui::{AppContext as _, Context, FocusHandle, ScrollHandle, Window, point, px};
 
 use super::PiApp;
 use crate::{
-    conversation::ToolPresentation,
-    session_changes::{self, ChangeSet, FileChange, FileChangeKind, FullDiff},
+    agent_activity::{FileMutation, FileMutationKind},
+    conversation::{EditDiffFormat, ToolPresentation},
+    session_changes::{self, ChangeSet, FileChange, FullDiff},
     sessions::{descendant_sessions, root_session_for_path},
 };
 
@@ -24,7 +25,6 @@ pub(crate) enum FullDiffMode {
 
 #[derive(Clone, Debug)]
 pub(crate) enum DiffSurface {
-    Loading(FileChange),
     Ready(FileChange, FullDiff),
     Preview(FileChange, FullDiff, String),
     Error(FileChange, String),
@@ -85,7 +85,6 @@ pub(crate) struct ChangesState {
     pub row_focus: HashMap<PathBuf, FocusHandle>,
     pub diff: Option<DiffSurface>,
     diff_generation: u64,
-    pub diff_mode: FullDiffMode,
     pub diff_scroll: ScrollHandle,
     pub diff_focus: FocusHandle,
     pub return_focus: Option<FocusHandle>,
@@ -100,7 +99,6 @@ impl ChangesState {
             row_focus: HashMap::new(),
             diff: None,
             diff_generation: 0,
-            diff_mode: FullDiffMode::Split,
             diff_scroll: ScrollHandle::new(),
             diff_focus: cx.focus_handle(),
             return_focus: None,
@@ -127,6 +125,7 @@ impl PiApp {
         let Some(root) = root else {
             return;
         };
+        let project = crate::sessions::normalize_lexical(&root.project);
         let descendants = descendant_sessions(&self.all_sessions, &root.id);
         let mut ids = vec![root.id.clone()];
         ids.extend(
@@ -134,33 +133,31 @@ impl PiApp {
                 .into_iter()
                 .map(|(session, _)| session.id.clone()),
         );
-        let mut observed = Vec::<(PathBuf, SystemTime)>::new();
+        let mut mutations = Vec::<FileMutation>::new();
+        let mut incomplete = false;
         for id in ids {
             if let Some(activity) = self.agent_activities.get(&id) {
-                observed.extend(
-                    activity
-                        .changed_paths
-                        .iter()
-                        .map(|path| (path.path.clone(), path.observed_at)),
-                );
+                incomplete |= activity.limited;
+                mutations.extend(activity.file_mutations.iter().cloned());
             }
         }
-        observed.sort_by(|left, right| left.0.cmp(&right.0));
+        mutations.retain(|mutation| is_project_change(&mutation.path, &project));
+        mutations.sort_by_key(|mutation| mutation.observed_at);
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         root.id.hash(&mut hasher);
-        for (path, time) in &observed {
-            path.hash(&mut hasher);
-            time.duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-                .hash(&mut hasher);
+        incomplete.hash(&mut hasher);
+        for mutation in &mutations {
+            mutation.hash(&mut hasher);
         }
         let fingerprint = hasher.finish();
         let Some(generation) = self.changes.refresh.request(fingerprint) else {
             return;
         };
-        let project = root.project.clone();
-        let task = cx.background_spawn(async move { session_changes::collect(&project, observed) });
+        let task = cx.background_spawn(async move {
+            let mut set = session_changes::collect(mutations);
+            set.incomplete = incomplete;
+            set
+        });
         cx.spawn(async move |weak, cx| {
             let set = task.await;
             let _ = weak.update(cx, |this, cx| {
@@ -196,40 +193,9 @@ impl PiApp {
         opener.focus(window, cx);
         self.changes.return_focus = Some(opener);
         self.changes.diff_generation = self.changes.diff_generation.saturating_add(1);
-        let generation = self.changes.diff_generation;
-        self.changes.diff = Some(DiffSurface::Loading(file.clone()));
+        self.changes.diff_scroll.set_offset(point(px(0.0), px(0.0)));
+        self.changes.diff = Some(DiffSurface::Ready(file.clone(), file.diff.clone()));
         self.changes.pending_diff_setup = true;
-        let root = self.changes.set.repo_root.clone();
-        let task = cx.background_spawn(async move {
-            root.ok_or_else(|| "Repository root is unavailable".to_owned())
-                .and_then(|root| session_changes::load_full_diff(&root, &file))
-                .map(|diff| (file, diff))
-        });
-        cx.spawn(async move |weak, cx| {
-            let result = task.await;
-            let _ = weak.update(cx, |this, cx| {
-                if generation != this.changes.diff_generation {
-                    return;
-                }
-                this.changes.diff = Some(match result {
-                    Ok((file, diff)) => DiffSurface::Ready(file, diff),
-                    Err(error) => {
-                        let file = match this.changes.diff.take() {
-                            Some(
-                                DiffSurface::Loading(file)
-                                | DiffSurface::Ready(file, _)
-                                | DiffSurface::Preview(file, _, _)
-                                | DiffSurface::Error(file, _),
-                            ) => file,
-                            None => return,
-                        };
-                        DiffSurface::Error(file, error)
-                    }
-                });
-                cx.notify();
-            });
-        })
-        .detach();
         cx.notify();
     }
 
@@ -251,27 +217,13 @@ impl PiApp {
         .unwrap_or_else(|| self.project.clone());
         let project = crate::sessions::normalize_lexical(&project);
         let path = crate::sessions::normalize_lexical(&project.join(presentation_path));
-        let loading_file = tool_file(&presentation, path.clone(), false);
         let focus = opener.unwrap_or_else(|| self.composer_focus.clone());
         focus.focus(window, cx);
         self.changes.return_focus = Some(focus);
         self.changes.diff_generation = self.changes.diff_generation.saturating_add(1);
-        let generation = self.changes.diff_generation;
-        self.changes.diff = Some(DiffSurface::Loading(loading_file));
+        self.changes.diff_scroll.set_offset(point(px(0.0), px(0.0)));
+        self.changes.diff = Some(load_tool_diff_surface(path, presentation));
         self.changes.pending_diff_setup = true;
-        let task = cx
-            .background_spawn(async move { load_tool_diff_surface(&project, path, presentation) });
-        cx.spawn(async move |weak, cx| {
-            let surface = task.await;
-            let _ = weak.update(cx, |this, cx| {
-                if generation != this.changes.diff_generation {
-                    return;
-                }
-                this.changes.diff = Some(surface);
-                cx.notify();
-            });
-        })
-        .detach();
         cx.notify();
     }
 
@@ -288,50 +240,37 @@ impl PiApp {
     }
 }
 
-fn tool_file(presentation: &ToolPresentation, path: PathBuf, exists: bool) -> FileChange {
-    let kind = match presentation {
-        ToolPresentation::Edit { .. } => FileChangeKind::Modified,
-        ToolPresentation::Write { .. } => FileChangeKind::Added,
-    };
-    FileChange {
-        path,
-        old_path: None,
-        kind,
-        additions: None,
-        deletions: None,
-        observed_at: SystemTime::now(),
-        exists,
-    }
+fn is_project_change(path: &std::path::Path, project: &std::path::Path) -> bool {
+    path.starts_with(project) && path != project
 }
 
-fn load_tool_diff_surface(
-    project: &std::path::Path,
-    path: PathBuf,
-    presentation: ToolPresentation,
-) -> DiffSurface {
-    match session_changes::load_current_path_diff(project, &path) {
-        Ok((file, diff)) => DiffSurface::Ready(file, diff),
-        Err(error) => {
-            let file = tool_file(&presentation, path.clone(), path.exists());
-            let patch = match presentation {
-                ToolPresentation::Edit { diff, .. } => diff,
-                ToolPresentation::Write { content, .. } => {
-                    Some(content.lines().map(|line| format!("+{line}\n")).collect())
-                }
-            };
-            match patch {
-                Some(patch) => DiffSurface::Preview(
-                    file,
-                    FullDiff {
-                        path,
-                        patch,
-                        binary: false,
-                    },
-                    error,
-                ),
-                None => DiffSurface::Error(file, error),
-            }
-        }
+fn load_tool_diff_surface(path: PathBuf, presentation: ToolPresentation) -> DiffSurface {
+    let kind = match presentation {
+        ToolPresentation::Edit { diff, format, .. } => FileMutationKind::Edit {
+            patch: diff.unwrap_or_default(),
+            complete: format == EditDiffFormat::Numbered,
+        },
+        ToolPresentation::Write { content, .. } => FileMutationKind::Write { content },
+    };
+    let mut set = session_changes::collect([FileMutation {
+        path,
+        observed_at: SystemTime::now(),
+        kind,
+    }]);
+    let Some(file) = set.files.pop() else {
+        unreachable!("one tool mutation produces one file change");
+    };
+    let diff = file.diff.clone();
+    if diff.patch.contains("Recorded edit has no retained diff.") {
+        DiffSurface::Error(file, "Pi did not retain a diff for this edit".into())
+    } else if diff.partial {
+        DiffSurface::Preview(
+            file,
+            diff,
+            "Pi retained the edit arguments but no completed tool-result patch".into(),
+        )
+    } else {
+        DiffSurface::Ready(file, diff)
     }
 }
 
@@ -339,9 +278,9 @@ fn load_tool_diff_surface(
 mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use super::{DiffSurface, RefreshGate, load_tool_diff_surface};
+    use super::{DiffSurface, RefreshGate, is_project_change, load_tool_diff_surface};
     use crate::conversation::{EditDiffFormat, ToolPresentation};
-    use std::{fs, path::Path, process::Command, sync::Arc};
+    use std::{path::PathBuf, sync::Arc};
 
     fn edit(path: &str, diff: Option<&str>) -> ToolPresentation {
         ToolPresentation::Edit {
@@ -352,77 +291,53 @@ mod tests {
         }
     }
 
-    fn git(repo: &Path, args: &[&str]) {
-        assert!(
-            Command::new("git")
-                .current_dir(repo)
-                .args(args)
-                .status()
-                .unwrap()
-                .success()
+    #[test]
+    fn transcript_expand_uses_the_recorded_tool_change() {
+        let surface = load_tool_diff_surface(
+            PathBuf::from("/project/file.txt"),
+            ToolPresentation::Edit {
+                path: "file.txt".into(),
+                diff: Some("@@\n-session value\n+recorded value\n".into()),
+                format: EditDiffFormat::Numbered,
+                prepared: Arc::default(),
+            },
         );
+        let DiffSurface::Ready(_, diff) = surface else {
+            panic!("completed tool result should be complete");
+        };
+        assert!(diff.patch.contains("+recorded value"));
+        assert!(!diff.patch.contains("HEAD"));
     }
 
     #[test]
-    fn transcript_expand_loads_current_diff_before_catalog_is_available() {
-        let repo = tempfile::tempdir().unwrap();
-        git(repo.path(), &["init", "-q"]);
-        fs::write(repo.path().join("file.txt"), "before\n").unwrap();
-        git(repo.path(), &["add", "file.txt"]);
-        git(
-            repo.path(),
-            &[
-                "-c",
-                "user.name=Test",
-                "-c",
-                "user.email=test@example.com",
-                "commit",
-                "-qm",
-                "initial",
-            ],
-        );
-        fs::write(repo.path().join("file.txt"), "current\n").unwrap();
-
+    fn argument_only_edit_is_truthfully_a_preview() {
         let surface = load_tool_diff_surface(
-            repo.path(),
-            repo.path().join("file.txt"),
-            edit("file.txt", Some("-retained\n+preview\n")),
-        );
-        let DiffSurface::Ready(_, diff) = surface else {
-            panic!("current repository diff should be complete");
-        };
-        assert!(diff.patch.contains("+current"));
-        assert!(!diff.patch.contains("+preview"));
-
-        let untracked = repo.path().join("untracked.txt");
-        fs::write(&untracked, "from worktree\n").unwrap();
-        let surface = load_tool_diff_surface(
-            repo.path(),
-            untracked,
-            edit("untracked.txt", Some("+retained only\n")),
-        );
-        let DiffSurface::Ready(_, diff) = surface else {
-            panic!("untracked repository diff should use the complete no-index path");
-        };
-        assert!(diff.patch.contains("+from worktree"));
-        assert!(!diff.patch.contains("+retained only"));
-    }
-
-    #[test]
-    fn non_git_transcript_expand_is_truthfully_a_preview() {
-        let project = tempfile::tempdir().unwrap();
-        let path = project.path().join("file.txt");
-        fs::write(&path, "current\n").unwrap();
-        let surface = load_tool_diff_surface(
-            project.path(),
-            path,
+            PathBuf::from("/project/file.txt"),
             edit("file.txt", Some("-old\n+retained\n")),
         );
         let DiffSurface::Preview(_, diff, reason) = surface else {
             panic!("retained inline data must be labelled as a preview");
         };
         assert!(diff.patch.contains("+retained"));
-        assert!(reason.contains("not a Git repository"));
+        assert!(reason.contains("no completed tool-result patch"));
+    }
+
+    #[test]
+    fn changes_exclude_subagent_exchange_files_outside_the_project() {
+        let project = PathBuf::from("/project");
+
+        assert!(is_project_change(
+            &PathBuf::from("/project/src/lib.rs"),
+            &project
+        ));
+        assert!(!is_project_change(
+            &PathBuf::from("/home/user/.pi/agent/sessions/project/subagent-artifacts/output.md"),
+            &project
+        ));
+        assert!(!is_project_change(
+            &PathBuf::from("/tmp/pi-subagents/async-runs/status.json"),
+            &project
+        ));
     }
 
     #[test]
