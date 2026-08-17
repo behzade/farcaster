@@ -423,7 +423,6 @@ export default function (pi: ExtensionAPI) {
 			sandboxState = { kind: "ready", config: activeProject.config, machineConfig };
 			const backendLabel = `native ${process.platform === "linux" ? "Bubblewrap" : "Seatbelt"}`;
 			ctx.ui.setStatus("sandbox", ctx.ui.theme.fg("accent", `🔒 ${backendLabel}`));
-			ctx.ui.notify(`${backendLabel} sandbox ready`, "info");
 		} catch (error) {
 			if (generation !== sessionGeneration) return;
 			const reason = `Sandbox unavailable; commands are blocked: ${errorMessage(error)}`;
