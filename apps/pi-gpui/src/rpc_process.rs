@@ -87,6 +87,10 @@ impl RpcProcess {
         if let Some(session) = session {
             process.arg("--session").arg(session);
         }
+        #[cfg(target_os = "macos")]
+        if let Some(environment) = crate::shell_environment::login_shell_environment() {
+            process.env_clear().envs(environment.iter().cloned());
+        }
         let mut child = process
             .current_dir(project)
             .stdin(Stdio::piped())
