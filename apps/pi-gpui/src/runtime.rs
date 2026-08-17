@@ -20,7 +20,7 @@ use crate::{
         ExtensionUiResponse, Model, PromptImage, PromptMode, SessionState, SlashCommand, command,
     },
     rpc_process::{ProcessCommand, ProcessItem, RpcProcess},
-    sessions::{SessionDiscovery, SessionSummary, discover, load_history},
+    sessions::{LoadedHistory, SessionDiscovery, SessionSummary, discover, load_history},
     state::StateStore,
 };
 
@@ -810,7 +810,7 @@ struct HistoryResult {
     generation: u64,
     path: PathBuf,
     project: PathBuf,
-    result: Result<Vec<Value>, String>,
+    result: Result<LoadedHistory, String>,
 }
 
 fn run(
@@ -1180,8 +1180,8 @@ impl RuntimeOwner {
         if result.generation != self.history_generation {
             return;
         }
-        let messages = match result.result {
-            Ok(messages) => messages,
+        let history = match result.result {
+            Ok(history) => history,
             Err(error) => {
                 self.snapshot.status = "Could not load history".into();
                 self.snapshot
@@ -1200,9 +1200,15 @@ impl RuntimeOwner {
         let models = parked
             .map(|snapshot| snapshot.models.clone())
             .unwrap_or_default();
-        let stats = historical_context_stats(&messages, &models);
+        let stats = historical_context_stats(&history.messages, &models);
+        let prefill_model = history.model.as_ref().and_then(|(provider, model_id)| {
+            models
+                .iter()
+                .find(|model| model.provider == *provider && model.id == *model_id)
+                .cloned()
+        });
         let mut conversation = ConversationState::default();
-        conversation.replace_history(&messages);
+        conversation.replace_history(&history.messages);
         self.snapshot = RuntimeSnapshot {
             connected: true,
             status: "Ready".into(),
@@ -1213,6 +1219,8 @@ impl RuntimeOwner {
             stats,
             auto_retry,
             history_preview: true,
+            prefill_model,
+            prefill_thinking_level: history.thinking_level,
             ..RuntimeSnapshot::default()
         };
         let _ = self.event_tx.send(RuntimeEvent::HistoryReset {
@@ -2654,14 +2662,22 @@ mod tests {
             generation: 1,
             path: new_path.clone(),
             project: new_project.clone(),
-            result: Ok(vec![json!({"role":"user","content":"previewed"})]),
+            result: Ok(crate::sessions::LoadedHistory {
+                messages: vec![json!({"role":"user","content":"previewed"})],
+                model: None,
+                thinking_level: None,
+            }),
         });
         assert!(!owner.snapshot.history_preview);
         owner.apply_history(HistoryResult {
             generation: 2,
             path: new_path.clone(),
             project: new_project.clone(),
-            result: Ok(vec![json!({"role":"user","content":"previewed"})]),
+            result: Ok(crate::sessions::LoadedHistory {
+                messages: vec![json!({"role":"user","content":"previewed"})],
+                model: None,
+                thinking_level: None,
+            }),
         });
 
         assert!(owner.process.is_some());

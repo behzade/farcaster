@@ -300,8 +300,15 @@ pub(crate) fn discover(query: &str) -> Result<SessionDiscovery, String> {
     discover_in_cached(&root, query, &mut cache)
 }
 
+#[derive(Debug)]
+pub(crate) struct LoadedHistory {
+    pub messages: Vec<Value>,
+    pub model: Option<(String, String)>,
+    pub thinking_level: Option<String>,
+}
+
 /// Read the visible, active branch of a session without starting Pi.
-pub(crate) fn load_history(path: &Path) -> Result<Vec<Value>, String> {
+pub(crate) fn load_history(path: &Path) -> Result<LoadedHistory, String> {
     let file = File::open(path).map_err(|error| format!("open {}: {error}", path.display()))?;
     let mut reader = BufReader::new(file);
     let mut line = Vec::new();
@@ -322,12 +329,31 @@ pub(crate) fn load_history(path: &Path) -> Result<Vec<Value>, String> {
             entries.push(entry);
         }
     }
-    Ok(project_history(&entries))
+    let branch = active_branch_entries(&entries);
+    let model = branch.iter().rev().find_map(|entry| {
+        (entry.get("type").and_then(Value::as_str) == Some("model_change")).then(|| {
+            Some((
+                entry.get("provider")?.as_str()?.to_owned(),
+                entry.get("modelId")?.as_str()?.to_owned(),
+            ))
+        })?
+    });
+    let thinking_level = branch.iter().rev().find_map(|entry| {
+        (entry.get("type").and_then(Value::as_str) == Some("thinking_level_change"))
+            .then(|| entry.get("thinkingLevel")?.as_str().map(str::to_owned))?
+    });
+    Ok(LoadedHistory {
+        messages: project_history_from_branch(&branch),
+        model,
+        thinking_level,
+    })
 }
 
 fn project_history(entries: &[Value]) -> Vec<Value> {
-    let branch = active_branch_entries(entries);
+    project_history_from_branch(&active_branch_entries(entries))
+}
 
+fn project_history_from_branch(branch: &[&Value]) -> Vec<Value> {
     let context = if let Some((index, compaction)) = branch
         .iter()
         .enumerate()
@@ -346,7 +372,7 @@ fn project_history(entries: &[Value]) -> Vec<Value> {
         projected.extend_from_slice(&branch[index + 1..]);
         projected
     } else {
-        branch
+        branch.to_vec()
     };
 
     context.into_iter().filter_map(entry_message).collect()

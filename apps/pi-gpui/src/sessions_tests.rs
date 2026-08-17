@@ -715,3 +715,32 @@ fn history_matches_pi_compaction_order() {
     assert_eq!(history[1]["content"], "kept");
     assert_eq!(history[2]["content"], "after");
 }
+
+#[test]
+fn loaded_history_includes_active_branch_model_and_effort() -> TestResult {
+    let directory = tempdir()?;
+    let path = directory.path().join("session.jsonl");
+    fs::write(
+        &path,
+        [
+            serde_json::json!({"type":"session","version":3,"id":"session","cwd":"/project"}),
+            serde_json::json!({"type":"model_change","id":"one","parentId":null,"provider":"openai-codex","modelId":"gpt-luna"}),
+            serde_json::json!({"type":"thinking_level_change","id":"two","parentId":"one","thinkingLevel":"high"}),
+            serde_json::json!({"type":"message","id":"three","parentId":"two","message":{"role":"user","content":"hello"}}),
+        ]
+        .into_iter()
+        .map(|entry| entry.to_string())
+        .collect::<Vec<_>>()
+        .join("\n"),
+    )?;
+
+    let history = load_history(&path)?;
+
+    assert_eq!(
+        history.model,
+        Some(("openai-codex".into(), "gpt-luna".into()))
+    );
+    assert_eq!(history.thinking_level.as_deref(), Some("high"));
+    assert_eq!(history.messages.len(), 1);
+    Ok(())
+}
