@@ -92,6 +92,19 @@ pub(crate) fn add_unique(projects: &mut Vec<PathBuf>, project: PathBuf) -> bool 
     true
 }
 
+pub(crate) fn select(projects: &mut Vec<PathBuf>, project: PathBuf) -> bool {
+    if projects.first() == Some(&project) {
+        return false;
+    }
+    projects.retain(|known| known != &project);
+    projects.insert(0, project);
+    true
+}
+
+pub(crate) fn most_recent() -> Option<PathBuf> {
+    load().ok()?.projects.into_iter().next()
+}
+
 fn registry_path() -> Result<PathBuf, String> {
     let root = if let Some(root) = std::env::var_os("PI_CODING_AGENT_DIR") {
         PathBuf::from(root)
@@ -231,6 +244,17 @@ mod tests {
 
         assert_eq!(load_from(&path)?, Registry::default());
         Ok(())
+    }
+
+    #[test]
+    fn selecting_a_project_moves_it_to_the_front() {
+        let first = PathBuf::from("/first");
+        let second = PathBuf::from("/second");
+        let mut projects = vec![first.clone(), second.clone()];
+
+        assert!(select(&mut projects, second.clone()));
+        assert_eq!(projects, vec![second.clone(), first]);
+        assert!(!select(&mut projects, second));
     }
 
     #[test]

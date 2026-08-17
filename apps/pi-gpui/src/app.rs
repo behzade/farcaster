@@ -98,7 +98,7 @@ impl PiApp {
             Ok(registry) => (registry, None),
             Err(error) => (projects::Registry::default(), Some(error)),
         };
-        projects::add_unique(&mut registry.projects, project.clone());
+        projects::select(&mut registry.projects, project.clone());
         let selected_draft = projects::DraftSession::new(project.clone()).id;
         if project_registry_error.is_none()
             && let Err(error) = projects::save(&registry)
@@ -472,7 +472,7 @@ impl PiApp {
     ) {
         self.switch_composer_target(session_target(&path), window, cx);
         self.selected_draft = None;
-        self.project = project.clone();
+        self.select_project(project.clone());
         self.send(RuntimeCommand::Resume { path, project });
         self.sessions_sheet = false;
         cx.notify();
@@ -489,7 +489,7 @@ impl PiApp {
             id: draft.id,
             project: project.clone(),
         });
-        self.project = project;
+        self.select_project(project);
         self.search
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.sessions_sheet = false;
@@ -508,7 +508,7 @@ impl PiApp {
         }
         self.switch_composer_target(draft_target(&id), window, cx);
         self.selected_draft = Some(id.clone());
-        self.project = project.clone();
+        self.select_project(project.clone());
         if let Some(Some(path)) = self.submitted_drafts.get(&id).cloned() {
             self.send(RuntimeCommand::Resume { path, project });
         } else {
@@ -560,6 +560,13 @@ impl PiApp {
         cx.notify();
     }
 
+    fn select_project(&mut self, project: PathBuf) {
+        self.project = project.clone();
+        if projects::select(&mut self.projects, project) {
+            self.save_project_registry();
+        }
+    }
+
     fn save_project_registry(&mut self) {
         if let Err(error) = projects::save(&projects::Registry {
             projects: self.projects.clone(),
@@ -580,7 +587,7 @@ impl PiApp {
         if was_selected {
             self.selected_draft = None;
             if let Some(session) = self.sessions.first().cloned() {
-                self.project = session.project.clone();
+                self.select_project(session.project.clone());
                 let snapshot = self
                     .composer_sessions
                     .discard_and_switch(&target, session_target(&session.path));
