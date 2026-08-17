@@ -7,6 +7,34 @@ import test from "node:test";
 
 const installedPackage = process.env.PI_SUBAGENTS_PACKAGE;
 
+test("packaged subagents do not treat scoped edit exclusions as review-only tasks", {
+  skip: installedPackage ? false : "PI_SUBAGENTS_PACKAGE is set by the Nix integration check",
+}, async () => {
+  const module = await import(
+    pathToFileURL(join(installedPackage!, "src", "runs", "shared", "pi-args.ts")).href
+  ) as {
+    buildPiArgs(input: {
+      baseArgs: string[];
+      task: string;
+      sessionEnabled: boolean;
+      inheritProjectContext: boolean;
+      inheritSkills: boolean;
+    }): { env: Record<string, string> };
+  };
+  const build = (task: string) => module.buildPiArgs({
+    baseArgs: [],
+    task,
+    sessionEnabled: false,
+    inheritProjectContext: true,
+    inheritSkills: true,
+  }).env.PI_SUBAGENT_READ_ONLY_TASK;
+
+  assert.equal(build("Implement and test the fix. Do not edit third_party or GPUI files."), "0");
+  assert.equal(build('Fix the classifier when a task mentions "do not edit files".'), "0");
+  assert.equal(build("Perform a read-only review of these changes."), "1");
+  assert.equal(build("Read-only review. Do not edit any files."), "1");
+});
+
 test("packaged subagents resolve the Nix permission-system extension beside its runtime state directory", {
   skip: installedPackage ? false : "PI_SUBAGENTS_PACKAGE is set by the Nix integration check",
 }, async () => {

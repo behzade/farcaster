@@ -646,7 +646,7 @@ index fc847dc..ef0b18d 100644
  	PI_CODING_AGENT_PACKAGE_ROOT_ENV,
  	getAgentDir,
  } from "../../shared/utils.ts";
-+import { taskDisallowsFileUpdates } from "../../shared/settings.ts";
++const EXPLICIT_READ_ONLY_TASK = /(?:^|[.!?;]\s*)(?:read[- ]only(?:\s+(?:audit|review|investigation|analysis|task)\b|\s*[.:;]|$)|(?:please\s+)?(?:perform|conduct|run|do)\s+(?:an?\s+)?read[- ]only\s+(?:audit|review|investigation|analysis)\b)|\b(?:do not|don't|must not|never)\s+(?:edit|modify|write(?:\s+to)?|touch)\s+(?:(?:any|the)\s+)?(?:files?|repository|workspace|codebase|project)(?:\s+(?:at all|in this task))?\s*(?:[.!;]|$)/i;
  import {
  	encodePermissionRules,
  	PERMISSION_AUDIT_PATH_ENV,
@@ -671,7 +671,7 @@ index fc847dc..ef0b18d 100644
  			: undefined;
  	env[SUBAGENT_CHILD_ENV] = "1";
  	env[SUBAGENT_FANOUT_CHILD_ENV] = toolPlan.fanoutAuthorized ? "1" : "0";
-+	env[SUBAGENT_READ_ONLY_TASK_ENV] = taskDisallowsFileUpdates(input.task) ? "1" : "0";
++	env[SUBAGENT_READ_ONLY_TASK_ENV] = EXPLICIT_READ_ONLY_TASK.test(input.task) ? "1" : "0";
  	if (input.waitToolEnabled !== undefined) {
  		env[WAIT_TOOL_ENABLED_ENV] = input.waitToolEnabled ? "true" : "false";
  	}
@@ -993,7 +993,7 @@ index 92b571e..470dfb6 100644
 +			inheritProjectContext: true, inheritSkills: true,
 +		});
 +		const normal = buildPiArgs({
-+			baseArgs: [], task: "Implement and test the fix.", sessionEnabled: false,
++			baseArgs: [], task: "Implement and test the fix. Do not edit third_party or the GPUI files.", sessionEnabled: false,
 +			inheritProjectContext: true, inheritSkills: true,
 +		});
 +		assert.equal(readOnly.env[SUBAGENT_READ_ONLY_TASK_ENV], "1");
