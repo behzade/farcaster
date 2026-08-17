@@ -14,6 +14,7 @@ pub(crate) struct Shortcut {
     pub section: &'static str,
     pub label: &'static str,
     pub keystroke: &'static str,
+    pub show_in_help: bool,
     pub binding: KeyBinding,
 }
 
@@ -23,6 +24,7 @@ macro_rules! shortcut {
             section: $section,
             label: $label,
             keystroke: $key,
+            show_in_help: true,
             binding: KeyBinding::new($key, $action, $context),
         }
     };
@@ -82,6 +84,13 @@ pub(crate) fn registry() -> Vec<Shortcut> {
             ShowKeybindings,
             None
         ),
+        Shortcut {
+            section: "Application",
+            label: "Keyboard shortcuts",
+            keystroke: "cmd-/",
+            show_in_help: false,
+            binding: KeyBinding::new("cmd-/", ShowKeybindings, None),
+        },
         shortcut!(
             "Application",
             "Close dialog",
@@ -91,4 +100,24 @@ pub(crate) fn registry() -> Vec<Shortcut> {
         ),
         shortcut!("Application", "Quit", "cmd-q", QuitApplication, None),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::registry;
+
+    #[test]
+    fn keyboard_help_has_both_question_mark_shortcuts() {
+        let shortcuts = registry();
+        assert!(
+            shortcuts
+                .iter()
+                .any(|shortcut| shortcut.keystroke == "cmd-?")
+        );
+        assert!(
+            shortcuts
+                .iter()
+                .any(|shortcut| shortcut.keystroke == "cmd-/")
+        );
+    }
 }
