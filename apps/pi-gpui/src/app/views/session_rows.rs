@@ -6,11 +6,15 @@ use std::{
 };
 
 use gpui::{
-    AnyElement, AppContext as _, CursorStyle, Empty, FontWeight, InteractiveElement as _,
-    IntoElement, ParentElement as _, Pixels, Role, StatefulInteractiveElement as _, Styled as _,
-    WeakEntity, div, prelude::FluentBuilder as _,
+    AnyElement, AppContext as _, CursorStyle, Empty, Entity, FontWeight, InteractiveElement as _,
+    IntoElement, MouseButton, ParentElement as _, Pixels, Role, StatefulInteractiveElement as _,
+    Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
 };
-use gpui_component::{kbd::Kbd, tooltip::Tooltip};
+use gpui_component::{
+    input::{Escape, Input, InputState},
+    kbd::Kbd,
+    tooltip::Tooltip,
+};
 
 use super::{
     super::PiApp,
@@ -198,6 +202,7 @@ pub(super) fn session_row(
     selected: bool,
     status: Option<String>,
     shortcut: Option<u8>,
+    title_editor: Option<Entity<InputState>>,
     entity: WeakEntity<PiApp>,
 ) -> AnyElement {
     session_row_with_height(
@@ -205,6 +210,7 @@ pub(super) fn session_row(
         selected,
         status,
         shortcut,
+        title_editor,
         THEME.layout.session_row_height,
         entity,
     )
@@ -215,12 +221,19 @@ pub(super) fn session_row_with_height(
     selected: bool,
     status: Option<String>,
     shortcut: Option<u8>,
+    title_editor: Option<Entity<InputState>>,
     row_height: Pixels,
     entity: WeakEntity<PiApp>,
 ) -> AnyElement {
     let session = &item.session;
     let path = session.path.clone();
     let project = session.project.clone();
+    let open_entity = entity.clone();
+    let edit_entity = entity.clone();
+    let cancel_entity = entity.clone();
+    let edit_path = path.clone();
+    let edit_project = project.clone();
+    let edit_title = session.title.clone();
     let drop_entity = entity.clone();
     let dragged_id = session.id.clone();
     let drop_target_id = session.id.clone();
@@ -275,10 +288,23 @@ pub(super) fn session_row_with_height(
                 this.move_session_to(&dragged.0, &drop_target_id, cx);
             });
         })
-        .on_click(move |_, window, cx| {
-            let _ = entity.update(cx, |this, cx| {
-                this.resume(path.clone(), project.clone(), window, cx)
-            });
+        .on_click(move |event, window, cx| {
+            if event.click_count() >= 2 {
+                cx.stop_propagation();
+                let _ = edit_entity.update(cx, |this, cx| {
+                    this.begin_session_title_edit(
+                        edit_path.clone(),
+                        edit_project.clone(),
+                        edit_title.clone(),
+                        window,
+                        cx,
+                    );
+                });
+            } else {
+                let _ = open_entity.update(cx, |this, cx| {
+                    this.resume(path.clone(), project.clone(), window, cx)
+                });
+            }
         })
         .child(
             div()
@@ -298,7 +324,22 @@ pub(super) fn session_row_with_height(
                             .child(status_text),
                     )
                 })
-                .child(
+                .child(if let Some(title_input) = title_editor {
+                    div()
+                        .min_w_0()
+                        .flex_1()
+                        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .on_action(move |_: &Escape, _, cx| {
+                            cx.stop_propagation();
+                            let _ = cancel_entity.update(cx, |this, cx| {
+                                this.cancel_session_title_edit(cx);
+                            });
+                        })
+                        .child(Input::new(&title_input).w_full().appearance(false))
+                        .into_any_element()
+                } else {
                     div()
                         .min_w_0()
                         .flex_1()
@@ -316,8 +357,9 @@ pub(super) fn session_row_with_height(
                         } else {
                             THEME.colors.text
                         })
-                        .child(session.title.clone()),
-                )
+                        .child(session.title.clone())
+                        .into_any_element()
+                })
                 .child(
                     div()
                         .flex_none()

@@ -192,7 +192,7 @@ Each row contains:
 - session title;
 - relative update time.
 
-The generated session-title feature will be added separately. Until then, continue using the current title source and truncation behavior.
+Generate a semantic title after the first completed exchange when the session has no explicit name. Manual inline edits always take precedence.
 
 Presentation rules:
 

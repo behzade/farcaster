@@ -34,6 +34,28 @@ impl Default for ProcessCommand {
     }
 }
 
+impl ProcessCommand {
+    pub(crate) fn command(&self, project: &Path) -> Command {
+        let mut process = if let Some(direnv) = &self.direnv_program {
+            let mut process = Command::new(direnv);
+            process
+                .args(["exec"])
+                .arg(project)
+                .arg(&self.program)
+                .env("DIRENV_LOG_FORMAT", "");
+            process
+        } else {
+            Command::new(&self.program)
+        };
+        process.args(&self.prefix_args).current_dir(project);
+        #[cfg(target_os = "macos")]
+        if let Some(environment) = crate::shell_environment::login_shell_environment() {
+            process.env_clear().envs(environment.iter().cloned());
+        }
+        process
+    }
+}
+
 fn pi_program(packaged_path: Option<std::ffi::OsString>) -> PathBuf {
     packaged_path
         .map(PathBuf::from)
@@ -72,27 +94,12 @@ impl RpcProcess {
         project: &Path,
         session: Option<&Path>,
     ) -> Result<Self, String> {
-        let mut process = if let Some(direnv) = &command.direnv_program {
-            let mut process = Command::new(direnv);
-            process
-                .args(["exec"])
-                .arg(project)
-                .arg(&command.program)
-                .env("DIRENV_LOG_FORMAT", "");
-            process
-        } else {
-            Command::new(&command.program)
-        };
-        process.args(&command.prefix_args).args(["--mode", "rpc"]);
+        let mut process = command.command(project);
+        process.args(["--mode", "rpc"]);
         if let Some(session) = session {
             process.arg("--session").arg(session);
         }
-        #[cfg(target_os = "macos")]
-        if let Some(environment) = crate::shell_environment::login_shell_environment() {
-            process.env_clear().envs(environment.iter().cloned());
-        }
         let mut child = process
-            .current_dir(project)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -154,6 +161,42 @@ impl RpcProcess {
             return Err(error);
         }
         Ok(id)
+    }
+
+    pub(crate) fn rename_session(
+        command: &ProcessCommand,
+        project: &Path,
+        session: &Path,
+        name: &str,
+    ) -> Result<(), String> {
+        let mut rpc = Self::spawn(command, project, Some(session))?;
+        let result = (|| {
+            let id = rpc.send_command(serde_json::json!({
+                "type": "set_session_name",
+                "name": name,
+            }))?;
+            let deadline = Instant::now() + Duration::from_secs(15);
+            while Instant::now() < deadline {
+                match rpc.try_next() {
+                    Some(ProcessItem::Response(response))
+                        if response.id.as_deref() == Some(&id) =>
+                    {
+                        return if response.success {
+                            Ok(())
+                        } else {
+                            Err(response
+                                .error
+                                .unwrap_or_else(|| "Pi rejected the session name".to_owned()))
+                        };
+                    }
+                    Some(ProcessItem::Failure(error)) => return Err(error),
+                    Some(_) | None => thread::sleep(Duration::from_millis(10)),
+                }
+            }
+            Err("timed out while setting the session name".to_owned())
+        })();
+        let termination = rpc.terminate();
+        result.and(termination)
     }
 
     pub(crate) fn send_extension_response(

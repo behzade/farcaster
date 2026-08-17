@@ -47,6 +47,11 @@ pub(crate) enum RuntimeCommand {
         output_path: Option<String>,
     },
     SetSessionName(String),
+    RenameSession {
+        path: PathBuf,
+        project: PathBuf,
+        name: String,
+    },
     NewSession {
         id: String,
         project: PathBuf,
@@ -443,6 +448,19 @@ fn run_supervisor(
                         status: "Working".into(),
                     });
                 }
+                if let RuntimeCommand::RenameSession { path, name, .. } = &command
+                    && let Some((key, actor)) = actors.iter().find(|(key, _)| {
+                        latest
+                            .get(*key)
+                            .and_then(|snapshot| snapshot.live_session.as_deref())
+                            == Some(path.as_path())
+                    })
+                {
+                    actor.send(RuntimeCommand::SetSessionName(name.clone()));
+                    clock = clock.saturating_add(1);
+                    last_touch.insert(key.clone(), clock);
+                    continue;
+                }
                 let next = command_target(&command);
                 if let Some((requested_key, project)) = next {
                     let key = actor_key_for_command(&command, &requested_key, &latest);
@@ -489,6 +507,7 @@ fn run_supervisor(
                         RuntimeCommand::LoadSessions(_)
                             | RuntimeCommand::RefreshSessions
                             | RuntimeCommand::SetSettled { .. }
+                            | RuntimeCommand::RenameSession { .. }
                     ) {
                         &catalog_key
                     } else {
@@ -799,6 +818,13 @@ struct RuntimeOwner {
     startup_history_loaded: bool,
     state: Option<StateStore>,
     session_query: String,
+    auto_title_attempted: Option<PathBuf>,
+    title_tx: mpsc::Sender<TitleResult>,
+}
+
+struct TitleResult {
+    path: PathBuf,
+    result: Result<String, String>,
 }
 
 struct DiscoveryResult {
@@ -822,6 +848,7 @@ fn run(
 ) {
     let (discovery_tx, discovery_rx) = mpsc::channel();
     let (history_tx, history_rx) = mpsc::channel();
+    let (title_tx, title_rx) = mpsc::channel();
     let (state, state_error) = match StateStore::open() {
         Ok(state) => (Some(state), None),
         Err(error) => (None, Some(error)),
@@ -857,6 +884,8 @@ fn run(
         startup_history_loaded: false,
         state,
         session_query: String::new(),
+        auto_title_attempted: None,
+        title_tx,
     };
     if let Some(error) = state_error {
         owner
@@ -875,6 +904,9 @@ fn run(
         }
         while let Ok(result) = history_rx.try_recv() {
             owner.apply_history(result);
+        }
+        while let Ok(result) = title_rx.try_recv() {
+            owner.apply_title_result(result);
         }
         owner.poll_deferred_session_refresh(Instant::now());
         let mut process_snapshot_changed = false;
@@ -911,6 +943,7 @@ impl RuntimeOwner {
         self.startup_history_loaded = false;
         self.pending_prompt_id = None;
         self.pending_prompt_item = None;
+        self.auto_title_attempted = None;
         let status = session.as_ref().map_or_else(
             || "Starting new session".into(),
             |_| "Resuming session".into(),
@@ -986,8 +1019,24 @@ impl RuntimeOwner {
                 output_path,
             )),
             RuntimeCommand::SetSessionName(name) => {
+                if let Some(state) = self.active_snapshot_mut().session.as_mut() {
+                    state.session_name = Some(name.clone());
+                }
                 self.send(json!({"type": "set_session_name", "name": name}))
             }
+            RuntimeCommand::RenameSession {
+                path,
+                project,
+                name,
+            } => match RpcProcess::rename_session(&self.process_command, &project, &path, &name) {
+                Ok(()) => self.load_sessions(self.session_query.clone()),
+                Err(message) => {
+                    let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
+                        generation: self.session_generation,
+                        message,
+                    });
+                }
+            },
             RuntimeCommand::NewSession { project, .. } => {
                 self.project = project;
                 self.start_process(None);
@@ -1087,6 +1136,7 @@ impl RuntimeOwner {
                     .is_some_and(|status| status != session_badge_status(&snapshot.conversation));
                 let should_publish = !previewing || live_status_changed;
                 if settled {
+                    self.maybe_generate_session_title();
                     self.send(command("get_state"));
                     self.send(command("get_session_stats"));
                     self.refresh_sessions();
@@ -1105,6 +1155,69 @@ impl RuntimeOwner {
             ProcessItem::Failure(error) => {
                 self.fail(error);
                 false
+            }
+        }
+    }
+
+    fn maybe_generate_session_title(&mut self) {
+        let snapshot = self.active_snapshot();
+        let Some(state) = snapshot.session.as_ref() else {
+            return;
+        };
+        let Some(path) = crate::title_generation::eligible_session(
+            state.session_name.as_deref(),
+            state.session_file.as_deref(),
+            self.auto_title_attempted.as_deref(),
+        ) else {
+            return;
+        };
+        let Some(context) = crate::title_generation::title_context(&snapshot.conversation) else {
+            return;
+        };
+        self.auto_title_attempted = Some(path.clone());
+        let model = crate::title_generation::configured_model();
+        let command = self.process_command.clone();
+        let project = self.project.clone();
+        let sender = self.title_tx.clone();
+        thread::Builder::new()
+            .name("pi-gpui-session-title".into())
+            .spawn(move || {
+                let result =
+                    crate::title_generation::generate(&command, &project, &model, &context);
+                let _ = sender.send(TitleResult { path, result });
+            })
+            .ok();
+    }
+
+    fn apply_title_result(&mut self, generated: TitleResult) {
+        let still_unnamed = self
+            .active_snapshot()
+            .session
+            .as_ref()
+            .is_some_and(|state| {
+                crate::title_generation::accepts_result(
+                    state.session_name.as_deref(),
+                    state.session_file.as_deref(),
+                    &generated.path,
+                )
+            });
+        match generated.result {
+            Ok(title) if still_unnamed => {
+                if let Some(state) = self.active_snapshot_mut().session.as_mut() {
+                    state.session_name = Some(title.clone());
+                }
+                self.send(json!({"type": "set_session_name", "name": title}));
+            }
+            Ok(_) => {}
+            Err(error) => {
+                let snapshot = self.active_snapshot_mut();
+                if !snapshot.stderr.is_empty() && !snapshot.stderr.ends_with('\n') {
+                    snapshot.stderr.push('\n');
+                }
+                snapshot
+                    .stderr
+                    .push_str(&format!("Automatic session title: {error}\n"));
+                self.publish();
             }
         }
     }
@@ -1613,6 +1726,8 @@ mod tests {
                 startup_history_loaded: false,
                 state: None,
                 session_query: String::new(),
+                auto_title_attempted: None,
+                title_tx: mpsc::channel().0,
             },
             event_rx,
             discovery_rx,
@@ -2558,6 +2673,8 @@ mod tests {
             startup_history_loaded: false,
             state: None,
             session_query: String::new(),
+            auto_title_attempted: None,
+            title_tx: mpsc::channel().0,
         };
         owner.snapshot.conversation.reduce(&json!({
             "type": "queue_update",
@@ -2655,6 +2772,8 @@ mod tests {
             startup_history_loaded: false,
             state: Some(StateStore::open_at(&temp.path().join("gui-state.sqlite3"))?),
             session_query: String::new(),
+            auto_title_attempted: None,
+            title_tx: mpsc::channel().0,
         };
 
         owner.preview_history(old_path.clone(), old_project);
@@ -2814,6 +2933,8 @@ mod tests {
             startup_history_loaded: true,
             state: None,
             session_query: String::new(),
+            auto_title_attempted: None,
+            title_tx: mpsc::channel().0,
         };
         owner
             .snapshot

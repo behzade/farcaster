@@ -24,6 +24,7 @@ mod state;
 mod state_test;
 mod syntax_highlight;
 mod theme;
+mod title_generation;
 mod tool_changes;
 mod transcript;
 

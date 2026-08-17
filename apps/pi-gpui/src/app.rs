@@ -5,6 +5,7 @@ mod composer_images;
 mod drafts;
 mod file_mentions;
 mod region_state;
+mod session_titles;
 mod slash_commands;
 mod submissions;
 mod surfaces;
@@ -75,6 +76,13 @@ actions!(
     ]
 );
 
+#[derive(Clone)]
+struct SessionTitleEdit {
+    path: PathBuf,
+    project: PathBuf,
+    original: String,
+}
+
 pub(crate) struct PiApp {
     project: PathBuf,
     runtime: RuntimeHandle,
@@ -113,6 +121,9 @@ pub(crate) struct PiApp {
     composer_images: HashMap<String, Vec<ComposerImage>>,
     search: Entity<InputState>,
     search_focus: FocusHandle,
+    session_title_input: Entity<InputState>,
+    editing_session_title: Option<SessionTitleEdit>,
+    pending_session_title_focus: bool,
     dialog_input: Entity<TextareaState>,
     composer_focus: FocusHandle,
     dialog_focus: FocusHandle,
@@ -146,6 +157,7 @@ pub(crate) struct PiApp {
     session_shortcuts_visible: bool,
     _composer_subscription: Subscription,
     _search_subscription: Subscription,
+    _session_title_subscription: Subscription,
     _event_task: Task<()>,
 }
 
@@ -191,6 +203,7 @@ impl PiApp {
         });
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search sessions"));
         let search_focus = search.read(cx).focus_handle(cx);
+        let session_title_input = cx.new(|cx| InputState::new(window, cx));
         let dialog_input = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .auto_grow(2, 12)
@@ -229,6 +242,16 @@ impl PiApp {
                     this.send(RuntimeCommand::LoadSessions(query));
                 }
             });
+        let session_title_subscription = cx.subscribe_in(
+            &session_title_input,
+            window,
+            |this, _, event: &InputEvent, window, cx| match event {
+                InputEvent::PressEnter { .. } | InputEvent::Blur => {
+                    this.commit_session_title_edit(window, cx);
+                }
+                InputEvent::Change | InputEvent::Focus => {}
+            },
+        );
         let event_task = cx.spawn(async move |weak, cx| {
             loop {
                 cx.background_executor()
@@ -320,6 +343,9 @@ impl PiApp {
             composer_images: HashMap::new(),
             search,
             search_focus,
+            session_title_input,
+            editing_session_title: None,
+            pending_session_title_focus: false,
             dialog_input,
             composer_focus,
             dialog_focus,
@@ -353,6 +379,7 @@ impl PiApp {
             session_shortcuts_visible: false,
             _composer_subscription: composer_subscription,
             _search_subscription: search_subscription,
+            _session_title_subscription: session_title_subscription,
             _event_task: event_task,
         }
     }

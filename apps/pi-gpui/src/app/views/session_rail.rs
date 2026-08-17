@@ -111,6 +111,11 @@ impl PiApp {
         let active_live_status = self.snapshot.live_status.clone();
         let active_run_statuses = self.run_statuses.clone();
         let active_row_entity = entity.clone();
+        let active_editing_path = self
+            .editing_session_title
+            .as_ref()
+            .map(|edit| edit.path.clone());
+        let active_title_input = self.session_title_input.clone();
         let shortcuts_visible = self.session_shortcuts_visible;
         let active_list = list(
             self.session_list.clone(),
@@ -140,7 +145,16 @@ impl PiApp {
                     let shortcut = shortcuts_visible
                         .then(|| session_shortcuts.get(&item.session.id).copied())
                         .flatten();
-                    session_row(item, selected, badge, shortcut, active_row_entity.clone())
+                    let editing =
+                        active_editing_path.as_deref() == Some(item.session.path.as_path());
+                    session_row(
+                        item,
+                        selected,
+                        badge,
+                        shortcut,
+                        editing.then(|| active_title_input.clone()),
+                        active_row_entity.clone(),
+                    )
                 }
                 None => div().into_any_element(),
             },
@@ -158,11 +172,16 @@ impl PiApp {
                     live_root.as_deref(),
                     &self.snapshot.live_status,
                 );
+                let editing = self
+                    .editing_session_title
+                    .as_ref()
+                    .is_some_and(|edit| edit.path == item.session.path);
                 session_row_with_height(
                     item,
                     selected,
                     badge,
                     None,
+                    editing.then(|| self.session_title_input.clone()),
                     THEME.controls.archived_preview_row,
                     entity.clone(),
                 )
@@ -171,6 +190,11 @@ impl PiApp {
         let archived_live_status = self.snapshot.live_status.clone();
         let archived_run_statuses = self.run_statuses.clone();
         let archived_row_entity = entity.clone();
+        let archived_editing_path = self
+            .editing_session_title
+            .as_ref()
+            .map(|edit| edit.path.clone());
+        let archived_title_input = self.session_title_input.clone();
         let archived_list =
             list(
                 self.archived_session_list.clone(),
@@ -187,7 +211,16 @@ impl PiApp {
                             live_root.as_deref(),
                             &archived_live_status,
                         );
-                        session_row(item, selected, badge, None, archived_row_entity.clone())
+                        let editing =
+                            archived_editing_path.as_deref() == Some(item.session.path.as_path());
+                        session_row(
+                            item,
+                            selected,
+                            badge,
+                            None,
+                            editing.then(|| archived_title_input.clone()),
+                            archived_row_entity.clone(),
+                        )
                     }
                     None => div().into_any_element(),
                 },

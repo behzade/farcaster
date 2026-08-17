@@ -47,6 +47,11 @@ impl Render for PiApp {
             let focus = self.composer_focus.clone();
             cx.defer_in(window, move |_, window, cx| focus.focus(window, cx));
         }
+        if self.pending_session_title_focus {
+            self.pending_session_title_focus = false;
+            let focus = self.session_title_input.read(cx).focus_handle(cx);
+            cx.defer_in(window, move |_, window, cx| focus.focus(window, cx));
+        }
         if self.pending_sheet_setup {
             self.pending_sheet_setup = false;
             let focus = self.sheet_focus.clone();
