@@ -198,6 +198,7 @@ export class SandboxBrokerClient {
 	static readonly acquire = Effect.fn("SandboxBrokerClient.acquire")(function* (
 		path: string,
 		expectedPlatform: NodeJS.Platform = process.platform,
+		developmentCacheRoot?: string,
 	) {
 		const client = yield* Effect.acquireRelease(
 			Effect.try({
@@ -205,7 +206,7 @@ export class SandboxBrokerClient {
 					accessSync(path, constants.X_OK);
 					return new SandboxBrokerClient(spawn(path, [], {
 						stdio: ["pipe", "pipe", "pipe"],
-						env: buildBrokerEnvironment(),
+						env: buildBrokerEnvironment(developmentCacheRoot),
 					}), expectedPlatform);
 				},
 				catch: brokerError,
@@ -220,10 +221,14 @@ export class SandboxBrokerClient {
 	});
 
 	/** Promise boundary adapter. The returned client owns the scope closed by shutdown(). */
-	static start(path: string, expectedPlatform: NodeJS.Platform = process.platform): Promise<SandboxBrokerClient> {
+	static start(
+		path: string,
+		expectedPlatform: NodeJS.Platform = process.platform,
+		developmentCacheRoot?: string,
+	): Promise<SandboxBrokerClient> {
 		return Effect.runPromise(Effect.gen(function* () {
 			const scope = yield* Scope.make();
-			const acquire = SandboxBrokerClient.acquire(path, expectedPlatform).pipe(Scope.provide(scope));
+			const acquire = SandboxBrokerClient.acquire(path, expectedPlatform, developmentCacheRoot).pipe(Scope.provide(scope));
 			const client = yield* acquire.pipe(Effect.onExit((exit) => Exit.isFailure(exit) ? Scope.close(scope, exit) : Effect.void));
 			client.#ownerScope = scope;
 			return client;
@@ -474,9 +479,12 @@ function isCanonicalBase64(value: string): boolean {
 	if (value.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) return false;
 	return Buffer.from(value, "base64").toString("base64") === value;
 }
-function buildBrokerEnvironment(): NodeJS.ProcessEnv {
+function buildBrokerEnvironment(developmentCacheRoot?: string): NodeJS.ProcessEnv {
 	const environment: NodeJS.ProcessEnv = {};
 	for (const name of ["HOME", "PATH", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE"]) if (process.env[name] !== undefined) environment[name] = process.env[name];
+	if (developmentCacheRoot !== undefined) {
+		environment.PI_SANDBOX_DEVELOPMENT_CACHE_ROOT = developmentCacheRoot;
+	}
 	return environment;
 }
 function asError(error: unknown): Error { return error instanceof Error ? error : new Error(String(error)); }

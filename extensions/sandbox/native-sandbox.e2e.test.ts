@@ -19,6 +19,10 @@ import { NativeBackgroundJobs } from "./native-background-jobs.ts";
 import { SandboxBrokerClient } from "./broker-client.ts";
 import { createNativeSandboxOps } from "./native-sandbox-ops.ts";
 import type { NativeFilePermission } from "./broker-policy.ts";
+import {
+	developmentCacheRoot,
+	ensureDevelopmentCacheDirectories,
+} from "./development-caches.ts";
 import { DEFAULT_CONFIG } from "./sandbox-config.ts";
 
 const defaultBrokerPath = fileURLToPath(
@@ -34,19 +38,27 @@ if (!existsSync(brokerPath)) {
 const skip = false;
 
 let workspace = "";
+let fixtureParent = "";
 let fixture = "";
 let client: SandboxBrokerClient;
 
 before(async () => {
 	workspace = mkdtempSync(join(tmpdir(), "pi-sandbox-e2e-workspace-"));
-	fixture = mkdtempSync(join(homedir(), ".pi-sandbox-e2e-files-"));
-	client = await SandboxBrokerClient.start(brokerPath);
+	fixtureParent = join(homedir(), ".pi-sandbox-e2e-files");
+	mkdirSync(fixtureParent, { recursive: true });
+	ensureDevelopmentCacheDirectories(DEFAULT_CONFIG.developmentCache);
+	fixture = mkdtempSync(join(fixtureParent, "run-"));
+	client = await SandboxBrokerClient.start(
+		brokerPath,
+		process.platform,
+		developmentCacheRoot(DEFAULT_CONFIG.developmentCache),
+	);
 });
 
 after(async () => {
 	await client.shutdown();
 	rmSync(workspace, { recursive: true, force: true });
-	rmSync(fixture, { recursive: true, force: true });
+	rmSync(fixtureParent, { recursive: true, force: true });
 });
 
 test("a denied command runs once and does not mutate the target", { skip }, async () => {
@@ -114,6 +126,26 @@ test("Seatbelt still blocks a protected read after dropping the conceal shim", {
 
 	assert.notEqual(result.exitCode, 0, result.output);
 	assert.doesNotMatch(result.output, /must-not-leak/);
+});
+
+test("managed development caches permit public repository .env files", { skip }, async () => {
+	const cacheFixture = join(
+		developmentCacheRoot(DEFAULT_CONFIG.developmentCache),
+		`e2e-public-env-${process.pid}`,
+	);
+	const publicEnv = join(cacheFixture, "checkout", ".env.toml");
+	mkdirSync(dirname(publicEnv), { recursive: true });
+	try {
+		const ops = createNativeSandboxOps(client, DEFAULT_CONFIG, [], [], "e2e-cache-public-env");
+		const result = await run(
+			ops,
+			`printf public-cache > ${quote(publicEnv)} && /bin/cat ${quote(publicEnv)}`,
+		);
+		assert.equal(result.exitCode, 0, result.output);
+		assert.equal(result.output, "public-cache");
+	} finally {
+		rmSync(cacheFixture, { recursive: true, force: true });
+	}
 });
 
 function findOnPath(name: string): string | undefined {

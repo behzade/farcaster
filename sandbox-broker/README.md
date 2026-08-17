@@ -31,7 +31,10 @@ of trusted exact Unix socket paths; Linux rejects those general paths.
 
 The extension calls this sole and default backend `native-preview`. It starts a
 separate broker for each background job so the policy snapshot captured at job
-start stays immutable.
+start stays immutable. The trusted extension passes the canonical managed-cache
+root at broker startup only when it has a non-overlapping base write right. The
+broker validates that root beneath `HOME` and exempts only environment-file
+name denies inside it.
 
 ## Documentation
 

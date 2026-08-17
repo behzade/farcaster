@@ -50,7 +50,7 @@ static void load_concealed_paths(void) {
         const char *end = strchr(cursor, ',');
         if (end == NULL) end = cursor + strlen(cursor);
         size_t encoded_length = (size_t)(end - cursor);
-        if ((kind != 'f' && kind != 't' && kind != 'g') || encoded_length % 2 != 0) break;
+        if ((kind != 'f' && kind != 't' && kind != 'g' && kind != 'x') || encoded_length % 2 != 0) break;
 
         size_t length = encoded_length / 2;
         char *path = malloc(length + 1);
@@ -180,7 +180,17 @@ static bool path_is_concealed_at(int directory, const char *path) {
     char normalized[PATH_MAX];
     if (!normalize_path_at(directory, path, normalized)) return false;
     for (size_t index = 0; index < concealed_count; index++) {
+        if (concealed[index].kind != 'x') continue;
+        const char *root = concealed[index].path;
+        size_t length = strlen(root);
+        if (strcmp(normalized, root) == 0 ||
+            (strncmp(normalized, root, length) == 0 && normalized[length] == '/')) {
+            return false;
+        }
+    }
+    for (size_t index = 0; index < concealed_count; index++) {
         const char *hidden = concealed[index].path;
+        if (concealed[index].kind == 'x') continue;
         if (concealed[index].kind == 'g' && glob_matches(hidden, normalized)) return true;
         size_t length = strlen(hidden);
         if (strcmp(normalized, hidden) == 0) return true;

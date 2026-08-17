@@ -143,7 +143,7 @@ process.stdin.on("data", chunk => {
     pending = pending.subarray(size + 4);
     if (message.type === "exec") {
       encode({ type: "started", id: message.id, pid: process.pid });
-      encode({ type: "stdout", id: message.id, sequence: 0, data_base64: Buffer.from("ok\\n").toString("base64") });
+      encode({ type: "stdout", id: message.id, sequence: 0, data_base64: Buffer.from(process.env.PI_SANDBOX_DEVELOPMENT_CACHE_ROOT + "\\n").toString("base64") });
       encode({ type: "denials", id: message.id, items: [{ operation: "file-write-create", path: "/state/file", process: "tool" }], complete: false });
       encode({ type: "exit", id: message.id, code: 0, signal: null, timed_out: false, cancelled: false, output_truncated: false });
     } else if (message.type === "shutdown") {
@@ -155,7 +155,7 @@ process.stdin.on("data", chunk => {
 	);
 	chmodSync(broker, 0o700);
 
-	const client = await SandboxBrokerClient.start(broker, "darwin");
+	const client = await SandboxBrokerClient.start(broker, "darwin", "/tmp/cache-root");
 	const output: Buffer[] = [];
 	assert.deepEqual(await client.exec(request(directory), (chunk) => output.push(chunk)), {
 		exitCode: 0,
@@ -168,7 +168,7 @@ process.stdin.on("data", chunk => {
 		],
 		denialsComplete: false,
 	});
-	assert.equal(Buffer.concat(output).toString("utf8"), "ok\n");
+	assert.equal(Buffer.concat(output).toString("utf8"), "/tmp/cache-root\n");
 	await client.shutdown();
 });
 

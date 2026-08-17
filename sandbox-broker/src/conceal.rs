@@ -7,6 +7,7 @@
 
 #![cfg(target_os = "macos")]
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::protocol::{DeniedAccess, DenyScope};
@@ -73,30 +74,43 @@ fn helper_path(value: &str, label: &str) -> Result<PathBuf, String> {
 
 fn encode_denies(denies: &[NormalizedDeny]) -> Result<String, String> {
     let mut encoded = String::new();
+    let exempt_roots = denies
+        .iter()
+        .flat_map(|deny| deny.exempt_roots.iter().cloned())
+        .collect::<BTreeSet<_>>();
+    for root in exempt_roots {
+        encode_rule(&mut encoded, 'x', &root.to_string_lossy())?;
+    }
     for deny in denies {
         if !matches!(deny.access, DeniedAccess::Read | DeniedAccess::ReadWrite) {
             continue;
         }
-        if !encoded.is_empty() {
-            encoded.push(',');
-        }
-        encoded.push(match deny.scope {
+        let kind = match deny.scope {
             DenyScope::File => 'f',
             DenyScope::Tree => 't',
             DenyScope::Glob => 'g',
-        });
-        encoded.push(':');
-        for byte in deny.pattern.as_bytes() {
-            use std::fmt::Write as _;
-            write!(encoded, "{byte:02x}").expect("writing to a String cannot fail");
-        }
-        if encoded.len() > MAX_ENCODED_BYTES {
-            return Err(format!(
-                "protected read policy exceeds {MAX_ENCODED_BYTES} encoded bytes"
-            ));
-        }
+        };
+        encode_rule(&mut encoded, kind, &deny.pattern)?;
     }
     Ok(encoded)
+}
+
+fn encode_rule(encoded: &mut String, kind: char, path: &str) -> Result<(), String> {
+    if !encoded.is_empty() {
+        encoded.push(',');
+    }
+    encoded.push(kind);
+    encoded.push(':');
+    for byte in path.as_bytes() {
+        use std::fmt::Write as _;
+        write!(encoded, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    if encoded.len() > MAX_ENCODED_BYTES {
+        return Err(format!(
+            "protected read policy exceeds {MAX_ENCODED_BYTES} encoded bytes"
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -111,29 +125,35 @@ mod tests {
                 pattern: "/work/.env".to_owned(),
                 scope: DenyScope::File,
                 path: Some(PathBuf::from("/work/.env")),
+                exempt_roots: Vec::new(),
             },
             NormalizedDeny {
                 access: DeniedAccess::ReadWrite,
                 pattern: "/home/user/.ssh".to_owned(),
                 scope: DenyScope::Tree,
                 path: Some(PathBuf::from("/home/user/.ssh")),
+                exempt_roots: Vec::new(),
             },
             NormalizedDeny {
                 access: DeniedAccess::Read,
                 pattern: "/**/.env.*".to_owned(),
                 scope: DenyScope::Glob,
                 path: None,
+                exempt_roots: vec![PathBuf::from("/home/user/.cache/pi-sandbox")],
             },
             NormalizedDeny {
                 access: DeniedAccess::Write,
                 pattern: "/work/visible.txt".to_owned(),
                 scope: DenyScope::File,
                 path: Some(PathBuf::from("/work/visible.txt")),
+                exempt_roots: Vec::new(),
             },
         ];
 
         let encoded = encode_denies(&denies).expect("encoded denies");
-        assert!(encoded.starts_with("f:2f776f726b2f2e656e76,t:"));
+        assert!(
+            encoded.starts_with("x:2f686f6d652f757365722f2e63616368652f70692d73616e64626f78,f:")
+        );
         assert!(encoded.contains(",g:2f2a2a2f2e656e762e2a"));
         assert!(!encoded.contains("76697369626c652e747874"));
         assert!(!encoded.contains("/work/.env"));

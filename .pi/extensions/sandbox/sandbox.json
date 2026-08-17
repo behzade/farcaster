@@ -8,6 +8,12 @@
       "scope": "tree"
     },
     {
+      "kind": "filesystem",
+      "access": "write",
+      "path": "~/.pi-sandbox-e2e-files",
+      "scope": "tree"
+    },
+    {
       "kind": "network_local"
     }
   ]

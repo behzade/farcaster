@@ -33,6 +33,7 @@ pub struct NormalizedDeny {
     pub pattern: String,
     pub scope: DenyScope,
     pub path: Option<PathBuf>,
+    pub exempt_roots: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -52,11 +53,18 @@ impl HardPolicy {
         let broker = std::env::current_exe()
             .map_err(|error| format!("cannot locate broker executable: {error}"))?;
         let broker = normalize_existing(&broker)?;
-        Self::from_paths(&home, &broker)
+        let development_cache = std::env::var_os("PI_SANDBOX_DEVELOPMENT_CACHE_ROOT")
+            .map(|path| normalize_development_cache_root(Path::new(&path), &home))
+            .transpose()?;
+        Self::from_paths(&home, &broker, development_cache.as_deref())
     }
 
-    fn from_paths(home: &Path, broker: &Path) -> Result<Self, String> {
-        let mut policy = Self::base_for_paths(home, broker);
+    fn from_paths(
+        home: &Path,
+        broker: &Path,
+        development_cache: Option<&Path>,
+    ) -> Result<Self, String> {
+        let mut policy = Self::base_for_paths(home, broker, development_cache);
         #[cfg(target_os = "macos")]
         for helper in crate::conceal::helper_paths()? {
             push_path_denies(
@@ -69,7 +77,7 @@ impl HardPolicy {
         Ok(policy)
     }
 
-    fn base_for_paths(home: &Path, broker: &Path) -> Self {
+    fn base_for_paths(home: &Path, broker: &Path, development_cache: Option<&Path>) -> Self {
         let mut denies = Vec::new();
         for (access, path, scope) in [
             (DeniedAccess::ReadWrite, home.join(".ssh"), DenyScope::Tree),
@@ -104,8 +112,16 @@ impl HardPolicy {
         ] {
             push_path_denies(&mut denies, access, &path, scope);
         }
+        let cache_exemptions: Vec<PathBuf> = development_cache
+            .into_iter()
+            .map(Path::to_path_buf)
+            .collect();
         for pattern in ["/**/*.env", "/**/.env.*"] {
-            denies.push(glob_deny(DeniedAccess::ReadWrite, pattern));
+            denies.push(glob_deny_with_exemptions(
+                DeniedAccess::ReadWrite,
+                pattern,
+                cache_exemptions.clone(),
+            ));
         }
         denies.push(glob_deny(
             DeniedAccess::Read,
@@ -132,15 +148,25 @@ fn push_path_denies(
         pattern: path.to_string_lossy().into_owned(),
         scope,
         path: Some(path),
+        exempt_roots: Vec::new(),
     }));
 }
 
 fn glob_deny(access: DeniedAccess, pattern: &str) -> NormalizedDeny {
+    glob_deny_with_exemptions(access, pattern, Vec::new())
+}
+
+fn glob_deny_with_exemptions(
+    access: DeniedAccess,
+    pattern: &str,
+    exempt_roots: Vec<PathBuf>,
+) -> NormalizedDeny {
     NormalizedDeny {
         access,
         pattern: pattern.to_owned(),
         scope: DenyScope::Glob,
         path: None,
+        exempt_roots,
     }
 }
 
@@ -234,6 +260,7 @@ fn normalize_deny(deny: &FilesystemDeny) -> Result<NormalizedDeny, String> {
             pattern: deny.pattern.clone(),
             scope: deny.scope,
             path: None,
+            exempt_roots: Vec::new(),
         });
     }
     let path = normalize_path(Path::new(&deny.pattern), MissingPathBehavior::CreateTree)?;
@@ -242,6 +269,7 @@ fn normalize_deny(deny: &FilesystemDeny) -> Result<NormalizedDeny, String> {
         pattern: path.to_string_lossy().into_owned(),
         scope: deny.scope,
         path: Some(path),
+        exempt_roots: Vec::new(),
     })
 }
 
@@ -277,6 +305,17 @@ fn normalize_existing(path: &Path) -> Result<PathBuf, String> {
         .map_err(|error| format!("cannot canonicalize {}: {error}", path.display()))
 }
 
+fn normalize_development_cache_root(path: &Path, home: &Path) -> Result<PathBuf, String> {
+    let path = normalize_existing(path)?;
+    if path == home || !path.starts_with(home) {
+        return Err(format!(
+            "development cache root must be beneath broker HOME: {}",
+            path.display()
+        ));
+    }
+    Ok(path)
+}
+
 fn assert_absolute_clean(path: &Path) -> Result<(), String> {
     if !path.is_absolute() {
         return Err(format!("path must be absolute: {}", path.display()));
@@ -294,6 +333,13 @@ fn assert_absolute_clean(path: &Path) -> Result<(), String> {
 }
 
 fn deny_matches_right(deny: &NormalizedDeny, right: &NormalizedRight) -> bool {
+    if deny
+        .exempt_roots
+        .iter()
+        .any(|root| right.path.starts_with(root))
+    {
+        return false;
+    }
     if !deny_applies_to(deny.access, right.access) {
         return false;
     }
@@ -480,8 +526,7 @@ fn build_network_root_requirement(
         if !deny_applies_to(deny.access, Access::Write) || deny.scope != DenyScope::Glob {
             continue;
         }
-        let pattern = seatbelt_regex_for_glob(&deny.pattern)?.replace('"', "\\\"");
-        requirements.push(format!("(require-not (regex #\"{pattern}\"))"));
+        requirements.push(format!("(require-not {})", glob_deny_matcher(deny)?));
     }
     Ok(format!("(require-all {})", requirements.join(" ")))
 }
@@ -608,10 +653,7 @@ fn build_explicit_deny_policy(denies: &[NormalizedDeny]) -> Result<String, Strin
                 format!("(literal \"{}\")", escape_sbpl(&deny.pattern)),
                 format!("(subpath \"{}\")", escape_sbpl(&deny.pattern)),
             ],
-            DenyScope::Glob => {
-                let regex = seatbelt_regex_for_glob(&deny.pattern)?.replace('"', "\\\"");
-                vec![format!("(regex #\"{regex}\")")]
-            }
+            DenyScope::Glob => vec![glob_deny_matcher(deny)?],
         };
         for matcher in matchers {
             if matches!(deny.access, DeniedAccess::Read | DeniedAccess::ReadWrite) {
@@ -623,6 +665,20 @@ fn build_explicit_deny_policy(denies: &[NormalizedDeny]) -> Result<String, Strin
         }
     }
     Ok(lines.into_iter().collect::<Vec<_>>().join("\n"))
+}
+
+fn glob_deny_matcher(deny: &NormalizedDeny) -> Result<String, String> {
+    let regex = seatbelt_regex_for_glob(&deny.pattern)?.replace('"', "\\\"");
+    if deny.exempt_roots.is_empty() {
+        return Ok(format!("(regex #\"{regex}\")"));
+    }
+    let mut requirements = vec![format!("(regex #\"{regex}\")")];
+    for root in &deny.exempt_roots {
+        let root = escape_sbpl(&root.to_string_lossy());
+        requirements.push(format!("(require-not (literal \"{root}\"))"));
+        requirements.push(format!("(require-not (subpath \"{root}\"))"));
+    }
+    Ok(format!("(require-all {})", requirements.join(" ")))
 }
 
 fn escape_sbpl(value: &str) -> String {
@@ -716,7 +772,7 @@ mod tests {
     fn hard_policy_scopes_key_reads_to_home_but_blocks_all_key_writes() {
         let home = temp_root("hard-policy-home");
         let broker = std::env::current_exe().expect("broker fixture");
-        let hard = HardPolicy::base_for_paths(&home, &broker);
+        let hard = HardPolicy::base_for_paths(&home, &broker, None);
         assert!(hard.denies.iter().any(|deny| {
             deny.access == DeniedAccess::Read
                 && deny.pattern == format!("{}/**/*.key", home.display())
@@ -731,6 +787,53 @@ mod tests {
                 deny.access == DeniedAccess::ReadWrite && deny.pattern == "/**/*.key"
             })
         );
+        fs::remove_dir_all(home).expect("remove hard policy home");
+    }
+
+    #[test]
+    fn hard_env_denies_exempt_only_the_validated_development_cache() {
+        let home = temp_root("cache-exemption-home")
+            .canonicalize()
+            .expect("canonicalize fake home");
+        let cache = home.join(".cache/pi-sandbox");
+        fs::create_dir_all(&cache).expect("create cache root");
+        let broker = std::env::current_exe().expect("broker fixture");
+        let cache = normalize_development_cache_root(&cache, &home).expect("valid cache root");
+        let hard = HardPolicy::base_for_paths(&home, &broker, Some(&cache));
+        let env_denies = hard
+            .denies
+            .iter()
+            .filter(|deny| deny.pattern == "/**/*.env" || deny.pattern == "/**/.env.*")
+            .collect::<Vec<_>>();
+        assert_eq!(env_denies.len(), 2);
+        assert!(
+            env_denies
+                .iter()
+                .all(|deny| deny.exempt_roots == [cache.clone()])
+        );
+        let matcher = glob_deny_matcher(env_denies[0]).expect("cache-aware matcher");
+        assert!(matcher.contains("require-all"));
+        assert!(matcher.contains(&format!("(require-not (subpath \"{}\"))", cache.display())));
+        let cached_env = NormalizedRight {
+            access: Access::Write,
+            path: cache.join("checkout/.env.toml"),
+            scope: PathScope::File,
+            approved: false,
+        };
+        let sibling_env = NormalizedRight {
+            path: home.join(".cache/pi-sandbox-other/.env.toml"),
+            ..cached_env.clone()
+        };
+        assert!(!deny_matches_right(env_denies[1], &cached_env));
+        assert!(deny_matches_right(env_denies[1], &sibling_env));
+        assert!(
+            hard.denies
+                .iter()
+                .filter(|deny| deny.pattern.ends_with("*.key") || deny.pattern.ends_with("*.pem"))
+                .all(|deny| deny.exempt_roots.is_empty())
+        );
+        assert!(normalize_development_cache_root(&home, &home).is_err());
+        assert!(normalize_development_cache_root(Path::new("/"), &home).is_err());
         fs::remove_dir_all(home).expect("remove hard policy home");
     }
 
@@ -929,12 +1032,14 @@ mod tests {
                 pattern: "/work/blocked.sock".to_owned(),
                 scope: DenyScope::File,
                 path: Some(PathBuf::from("/work/blocked.sock")),
+                exempt_roots: Vec::new(),
             },
             NormalizedDeny {
                 access: DeniedAccess::Write,
                 pattern: "/work/**/*.secret".to_owned(),
                 scope: DenyScope::Glob,
                 path: None,
+                exempt_roots: Vec::new(),
             },
         ];
         let args = build_args_with_network(
@@ -1066,12 +1171,14 @@ mod tests {
             pattern: "/home/user/.ssh".to_owned(),
             scope: DenyScope::Tree,
             path: Some(PathBuf::from("/home/user/.ssh")),
+            exempt_roots: Vec::new(),
         };
         let file_deny = NormalizedDeny {
             access: DeniedAccess::ReadWrite,
             pattern: "/home/user/auth.json".to_owned(),
             scope: DenyScope::File,
             path: Some(PathBuf::from("/home/user/auth.json")),
+            exempt_roots: Vec::new(),
         };
         let glob_deny = glob_deny(DeniedAccess::ReadWrite, "/**/*.key");
         let parent = NormalizedRight {
@@ -1109,6 +1216,7 @@ mod tests {
             pattern: "/secret".to_owned(),
             scope: DenyScope::Tree,
             path: Some(PathBuf::from("/secret")),
+            exempt_roots: Vec::new(),
         }];
         let policy = build_explicit_deny_policy(&denies).expect("deny policy");
         assert!(policy.contains("(deny file-read* (literal \"/secret\"))"));
@@ -1193,6 +1301,7 @@ mod tests {
             pattern: denied_root.to_string_lossy().into_owned(),
             scope: DenyScope::Tree,
             path: Some(denied_root),
+            exempt_roots: Vec::new(),
         }];
 
         let command = vec![

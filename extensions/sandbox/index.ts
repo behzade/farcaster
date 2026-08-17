@@ -21,6 +21,7 @@ import {
 } from "./background-jobs.ts";
 import {
 	developmentCacheRoot,
+	developmentCacheWriteRightsForWorkspace,
 	ensureDevelopmentCacheDirectories,
 } from "./development-caches.ts";
 import {
@@ -411,7 +412,11 @@ export default function (pi: ExtensionAPI) {
 			ensureDevelopmentCacheDirectories(activeProject.config.developmentCache);
 			if (process.platform !== "darwin" && process.platform !== "linux") throw new Error("the native sandbox supports macOS and Linux only");
 			const brokerPath = machineConfig.brokerPath ?? PACKAGED_BROKER_PATH;
-			const client = await SandboxBrokerClient.start(brokerPath);
+			const cacheRoot = developmentCacheWriteRightsForWorkspace(
+				ctx.cwd,
+				activeProject.config.developmentCache,
+			)[0]?.path;
+			const client = await SandboxBrokerClient.start(brokerPath, process.platform, cacheRoot);
 			if (generation !== sessionGeneration) { await client.shutdown(); return; }
 			brokerClient = client;
 			backgroundJobs = new NativeBackgroundJobs(brokerPath);

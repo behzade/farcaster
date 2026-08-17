@@ -391,6 +391,9 @@ fn concrete_denies(denies: &[NormalizedDeny], cwd: &Path) -> Result<Vec<Concrete
             DenyScope::Glob => expand_glob(&deny.pattern, cwd)?,
         };
         for path in paths {
+            if deny.exempt_roots.iter().any(|root| path.starts_with(root)) {
+                continue;
+            }
             let path = if path
                 .symlink_metadata()
                 .is_ok_and(|metadata| metadata.file_type().is_symlink())
@@ -428,6 +431,7 @@ fn concrete_deny_for_test(access: DeniedAccess, path: PathBuf) -> NormalizedDeny
         pattern: path.to_string_lossy().into_owned(),
         scope: DenyScope::File,
         path: Some(path),
+        exempt_roots: Vec::new(),
     }
 }
 
@@ -1087,6 +1091,31 @@ mod tests {
     }
 
     #[test]
+    fn env_glob_exemptions_skip_only_managed_cache_descendants() {
+        let root = std::env::temp_dir().join(format!(
+            "pi-linux-cache-exemption-test-{}",
+            std::process::id()
+        ));
+        let cache = root.join("pi-sandbox");
+        let sibling = root.join("pi-sandbox-other");
+        fs::create_dir_all(&cache).expect("cache fixture");
+        fs::create_dir_all(&sibling).expect("sibling fixture");
+        fs::write(cache.join(".env.toml"), "public").expect("cache env fixture");
+        fs::write(sibling.join(".env.toml"), "secret").expect("sibling env fixture");
+        let deny = NormalizedDeny {
+            access: DeniedAccess::ReadWrite,
+            pattern: format!("{}/**/.env.*", root.display()),
+            scope: DenyScope::Glob,
+            path: None,
+            exempt_roots: vec![cache.clone()],
+        };
+        let concrete = concrete_denies(&[deny], &root).expect("concrete denies");
+        assert_eq!(concrete.len(), 1);
+        assert_eq!(concrete[0].path, sibling.join(".env.toml"));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
     fn duplicate_concrete_denies_merge_to_one_strongest_mount() {
         let path = std::env::temp_dir().join(format!(
             "pi-linux-duplicate-deny-test-{}",
@@ -1215,6 +1244,7 @@ mod tests {
             pattern: "/work/missing-secret".to_owned(),
             scope: DenyScope::Tree,
             path: Some(PathBuf::from("/work/missing-secret")),
+            exempt_roots: Vec::new(),
         }];
         assert!(reject_missing_concrete_denies(&denies, &writable).is_err());
     }

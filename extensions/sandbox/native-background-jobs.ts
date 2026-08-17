@@ -5,6 +5,7 @@ import {
 	type BrokerExecResult,
 } from "./broker-client.ts";
 import { buildBrokerExecRequest, type NativeFilePermission } from "./broker-policy.ts";
+import { developmentCacheWriteRightsForWorkspace } from "./development-caches.ts";
 import { formatDenialSummary } from "./denial-summary.ts";
 import type { NativeSandboxConfig } from "./sandbox-config.ts";
 import { acquireNativeNetworkProxy, type NativeNetworkProxy } from "./native-network-proxy.ts";
@@ -62,7 +63,15 @@ export class NativeBackgroundJobs {
 		const manager = this;
 		const jobScope = yield* Scope.make();
 		const acquire = Effect.gen(function* () {
-			const client = yield* SandboxBrokerClient.acquire(manager.#brokerPath).pipe(Scope.provide(jobScope));
+			const cacheRoot = developmentCacheWriteRightsForWorkspace(
+				options.cwd,
+				options.config.developmentCache,
+			)[0]?.path;
+			const client = yield* SandboxBrokerClient.acquire(
+				manager.#brokerPath,
+				process.platform,
+				cacheRoot,
+			).pipe(Scope.provide(jobScope));
 			const proxy = options.networkHosts.length > 0
 				? yield* acquireNativeNetworkProxy(options.networkHosts).pipe(Scope.provide(jobScope))
 				: undefined;
