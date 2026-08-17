@@ -11,7 +11,7 @@ use crate::{
     conversation::TranscriptKind,
     protocol::{PromptImage, PromptMode},
     runtime::RuntimeCommand,
-    sessions::normalize_session_path,
+    sessions::{SessionSummary, normalize_session_path},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -60,6 +60,11 @@ impl PiApp {
             .flatten()
             .map(|image| image.prompt.clone())
             .collect::<Vec<PromptImage>>();
+        let archived_session = archived_session_for_target(
+            &target,
+            self.snapshot.selected_session.as_deref(),
+            &self.sessions,
+        );
         match self.runtime.send(RuntimeCommand::Prompt {
             target: target.clone(),
             mode,
@@ -68,6 +73,9 @@ impl PiApp {
             allow_while_running,
         }) {
             Ok(()) => {
+                if let Some(path) = archived_session {
+                    self.set_session_settled(path, false, cx);
+                }
                 self.composer_sessions.record_submission(&target, &value);
                 let pending_images = self
                     .composer_images
@@ -308,6 +316,22 @@ impl PiApp {
     }
 }
 
+fn archived_session_for_target(
+    target: &str,
+    selected_session: Option<&Path>,
+    sessions: &[SessionSummary],
+) -> Option<std::path::PathBuf> {
+    let selected = selected_session?;
+    (target == session_target(selected))
+        .then(|| {
+            sessions
+                .iter()
+                .find(|session| session.path == selected && session.settled)
+                .map(|session| session.path.clone())
+        })
+        .flatten()
+}
+
 fn rejected_attachment_target(
     text: &str,
     has_images: bool,
@@ -346,7 +370,28 @@ fn prompt_mode_for_enter(running: bool) -> PromptMode {
 
 #[cfg(test)]
 mod tests {
+    use std::time::SystemTime;
+
     use super::*;
+    use crate::sessions::UsageSummary;
+
+    fn session(path: &str, settled: bool) -> SessionSummary {
+        SessionSummary::from_cached(
+            "test".into(),
+            path.into(),
+            "/project".into(),
+            "Test".into(),
+            String::new(),
+            String::new(),
+            None,
+            SystemTime::UNIX_EPOCH,
+            0,
+            UsageSummary::default(),
+            settled,
+            false,
+            String::new(),
+        )
+    }
 
     fn pending() -> PendingSubmission {
         PendingSubmission {
@@ -366,6 +411,25 @@ mod tests {
         assert_eq!(
             submission_resolution(Some(&pending), "session:test", false),
             SubmissionResolution::Rejected
+        );
+    }
+
+    #[test]
+    fn archived_selected_session_is_restored_when_its_message_is_sent() {
+        let path = Path::new("/sessions/archived.jsonl");
+        let sessions = [session("/sessions/archived.jsonl", true)];
+        assert_eq!(
+            archived_session_for_target(&session_target(path), Some(path), &sessions),
+            Some(path.to_path_buf())
+        );
+        assert_eq!(
+            archived_session_for_target("session:/sessions/other.jsonl", Some(path), &sessions),
+            None
+        );
+        let active_sessions = [session("/sessions/archived.jsonl", false)];
+        assert_eq!(
+            archived_session_for_target(&session_target(path), Some(path), &active_sessions),
+            None
         );
     }
 

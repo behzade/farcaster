@@ -226,6 +226,8 @@ impl PiApp {
                             .justify_between()
                             .child(
                                 dropdown_button("session-menu", "☰", ButtonTone::Quiet, true)
+                                    .dropdown_caret(false)
+                                    .text_size(THEME.type_scale.display)
                                     .dropdown_menu_with_anchor(
                                         Anchor::TopLeft,
                                         move |menu, _, _| {
