@@ -483,6 +483,8 @@ impl PiApp {
         let draft_key = draft_target(&draft.id);
         self.switch_composer_target(draft_key, window, cx);
         self.selected_draft = Some(draft.id.clone());
+        self.drafts.push(draft.clone());
+        self.save_project_registry();
         self.send(RuntimeCommand::NewSession {
             id: draft.id,
             project: project.clone(),
