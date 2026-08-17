@@ -1,8 +1,8 @@
 use std::{path::PathBuf, time::SystemTime};
 
 use super::{
-    SessionRailKind, compact_number, compact_subagent_label, context_usage, format_cache_hit_rate,
-    format_cost, normalized_agent_status, session_badge, session_rail_items,
+    SessionRailKind, archived_run_badge, compact_number, compact_subagent_label, context_usage,
+    format_cache_hit_rate, format_cost, normalized_agent_status, session_badge, session_rail_items,
 };
 use crate::sessions::{SessionSummary, UsageSummary};
 
@@ -54,6 +54,12 @@ fn session_badges_show_only_meaningful_live_state() {
 }
 
 #[test]
+fn archived_session_badges_hide_completed_run_status() {
+    assert_eq!(archived_run_badge(Some("Done")), None);
+    assert_eq!(archived_run_badge(Some("Working")), Some("Working".into()));
+}
+
+#[test]
 fn session_groups_keep_active_and_archived_roots_separate() {
     let sessions = vec![
         session("settled-one", true),
@@ -62,7 +68,15 @@ fn session_groups_keep_active_and_archived_roots_separate() {
         session("active-two", false),
     ];
 
-    let groups = session_rail_items(&sessions);
+    let groups = session_rail_items(
+        &sessions,
+        &[
+            "active-two".into(),
+            "settled-two".into(),
+            "active-one".into(),
+            "settled-one".into(),
+        ],
+    );
     assert_eq!(groups.active.len(), 2);
     assert_eq!(groups.archived.len(), 2);
     assert!(
@@ -77,8 +91,8 @@ fn session_groups_keep_active_and_archived_roots_separate() {
             .iter()
             .all(|item| item.kind == SessionRailKind::Settled)
     );
-    assert_eq!(groups.active[0].session.id, "active-one");
-    assert_eq!(groups.archived[0].session.id, "settled-one");
+    assert_eq!(groups.active[0].session.id, "active-two");
+    assert_eq!(groups.archived[0].session.id, "settled-two");
 }
 
 fn session(id: &str, settled: bool) -> SessionSummary {

@@ -42,7 +42,7 @@ impl PiApp {
             .entry(target)
             .or_default()
             .extend(images);
-        cx.notify();
+        self.notify_composer(cx);
         true
     }
 
@@ -55,7 +55,7 @@ impl PiApp {
             if images.is_empty() {
                 self.composer_images.remove(&target);
             }
-            cx.notify();
+            self.notify_composer(cx);
         }
     }
 }

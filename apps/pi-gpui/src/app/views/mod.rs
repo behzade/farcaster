@@ -3,7 +3,10 @@ mod composer;
 #[cfg(test)]
 mod composer_tests;
 mod models;
+mod regions;
 mod shell;
+
+pub(super) use regions::{ComposerView, RunPanelView, SessionRailView, TranscriptView};
 
 use gpui::{
     Context, Focusable as _, InteractiveElement as _, IntoElement, ParentElement as _, Render,
@@ -19,12 +22,10 @@ use crate::{
     primitives::{FeedbackTone, dialog_backdrop, dialog_surface, feedback},
     protocol::ExtensionUiRequest,
     theme::THEME,
-    transcript,
 };
 
 impl Render for PiApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.capture_composer_session(cx);
         self.resolve_pending_submission(window, cx);
         if self.pending_session_reset {
             self.pending_session_reset = false;
@@ -77,7 +78,6 @@ impl Render for PiApp {
         }
         let viewport = window.viewport_size();
         let mode = layout_mode(viewport.width);
-        let tail_reserve = transcript::tail_reserve(viewport.height);
         let entity = cx.entity().downgrade();
         let main = div()
             .relative()
@@ -87,19 +87,14 @@ impl Render for PiApp {
             .flex()
             .flex_col()
             .child(self.render_header(mode, entity.clone()))
-            .child(div().flex_1().min_h_0().child(transcript::render(
-                &self.transcript_list,
-                transcript::TranscriptViewport {
-                    following: self.transcript_following,
-                    unseen: self.transcript_unseen,
-                    tail_reserve,
-                },
-                self.transcript_rows.clone(),
-                self.snapshot.clone(),
-                self.transcript_disclosure_overrides.clone(),
-                entity.clone(),
-            )))
-            .child(self.render_composer(entity.clone(), cx));
+            .child(
+                div().flex_1().min_h_0().child(
+                    self.transcript_view
+                        .clone()
+                        .cached(gpui::StyleRefinement::default().size_full()),
+                ),
+            )
+            .child(self.composer_view.clone());
         div()
             .relative()
             .size_full()
@@ -123,7 +118,11 @@ impl Render for PiApp {
                                 .flex_none()
                                 .border_r(THEME.border)
                                 .border_color(THEME.colors.border)
-                                .child(self.render_sessions(entity.clone())),
+                                .child(
+                                    self.session_rail_view
+                                        .clone()
+                                        .cached(gpui::StyleRefinement::default().size_full()),
+                                ),
                         )
                     })
                     .child(main)
@@ -134,7 +133,11 @@ impl Render for PiApp {
                                 .flex_none()
                                 .border_l(THEME.border)
                                 .border_color(THEME.colors.border)
-                                .child(self.render_run_panel(entity.clone())),
+                                .child(
+                                    self.run_panel_view
+                                        .clone()
+                                        .cached(gpui::StyleRefinement::default().size_full()),
+                                ),
                         )
                     }),
             )
@@ -150,7 +153,11 @@ impl Render for PiApp {
                             .key_context(OVERLAY_KEY_CONTEXT)
                             .h_full()
                             .max_w_full()
-                            .child(self.render_sessions(entity.clone()))
+                            .child(
+                                self.session_rail_view
+                                    .clone()
+                                    .cached(gpui::StyleRefinement::default().size_full()),
+                            )
                             .focus_trap("sessions-sheet-trap", &self.sheet_focus),
                     ),
                 )
@@ -167,7 +174,11 @@ impl Render for PiApp {
                             .key_context(OVERLAY_KEY_CONTEXT)
                             .h_full()
                             .max_w_full()
-                            .child(self.render_run_panel(entity.clone()))
+                            .child(
+                                self.run_panel_view
+                                    .clone()
+                                    .cached(gpui::StyleRefinement::default().size_full()),
+                            )
                             .focus_trap("run-sheet-trap", &self.sheet_focus),
                     ),
                 )

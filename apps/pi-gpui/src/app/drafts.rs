@@ -69,6 +69,8 @@ impl PiApp {
         self.project = project.clone();
         self.save_project_registry();
         self.send(RuntimeCommand::NewSession { id, project });
+        self.notify_session_rail(cx);
+        self.notify_composer(cx);
         cx.notify();
     }
 

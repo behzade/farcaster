@@ -9,6 +9,7 @@ mod views;
 pub(crate) use composer_images::ComposerImage;
 use submissions::PendingSubmission;
 pub(crate) use views::OVERLAY_KEY_CONTEXT;
+use views::{ComposerView, RunPanelView, SessionRailView, TranscriptView};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -34,7 +35,7 @@ use crate::{
     projects,
     protocol::{ExtensionUiRequest, Model},
     runtime::{RuntimeCommand, RuntimeEvent, RuntimeHandle, RuntimeSnapshot},
-    sessions::SessionSummary,
+    sessions::{SessionSummary, root_session_for_path},
 };
 
 const MAX_EXTENSION_ERRORS: usize = 16;
@@ -47,6 +48,7 @@ pub(crate) struct PiApp {
     runtime: RuntimeHandle,
     pub(crate) snapshot: Arc<RuntimeSnapshot>,
     sessions: Vec<SessionSummary>,
+    session_order: Vec<String>,
     run_statuses: HashMap<String, String>,
     recent_completions: HashMap<String, Instant>,
     projects: Vec<PathBuf>,
@@ -57,6 +59,10 @@ pub(crate) struct PiApp {
     session_generation: u64,
     runtime_generation: u64,
     composer: Entity<TextareaState>,
+    session_rail_view: Entity<SessionRailView>,
+    transcript_view: Entity<TranscriptView>,
+    composer_view: Entity<ComposerView>,
+    run_panel_view: Entity<RunPanelView>,
     composer_sessions: ComposerSessions,
     composer_history_marker: Option<(String, usize, String)>,
     composer_images: HashMap<String, Vec<ComposerImage>>,
@@ -99,6 +105,15 @@ impl PiApp {
             Err(error) => (projects::Registry::default(), Some(error)),
         };
         projects::select(&mut registry.projects, project.clone());
+        let session_order = match projects::load_session_order() {
+            Ok(order) => order,
+            Err(error) => {
+                if project_registry_error.is_none() {
+                    project_registry_error = Some(error);
+                }
+                Vec::new()
+            }
+        };
         let selected_draft = projects::DraftSession::new(project.clone()).id;
         if project_registry_error.is_none()
             && let Err(error) = projects::save(&registry)
@@ -139,6 +154,7 @@ impl PiApp {
                     this.composer_sessions.exit_history();
                     this.composer_sessions
                         .capture_current(input_snapshot(state.read(cx)));
+                    this.notify_composer(cx);
                 }
                 InputEvent::Blur => {
                     this.composer_sessions
@@ -184,6 +200,10 @@ impl PiApp {
             })
         });
         let app = cx.entity().downgrade();
+        let session_rail_view = cx.new(|_| SessionRailView::new(app.clone()));
+        let transcript_view = cx.new(|_| TranscriptView::new(app.clone()));
+        let composer_view = cx.new(|_| ComposerView::new(app.clone()));
+        let run_panel_view = cx.new(|_| RunPanelView::new(app.clone()));
         transcript_list.set_scroll_handler(move |event, _, cx| {
             let following = event.is_following_tail;
             let app = app.clone();
@@ -193,7 +213,7 @@ impl PiApp {
                     if following {
                         this.transcript_unseen = 0;
                     }
-                    cx.notify();
+                    this.notify_transcript(cx);
                 });
             });
         });
@@ -206,6 +226,7 @@ impl PiApp {
                 ..RuntimeSnapshot::default()
             }),
             sessions: Vec::new(),
+            session_order,
             run_statuses: HashMap::new(),
             recent_completions: HashMap::new(),
             projects: registry.projects,
@@ -216,6 +237,10 @@ impl PiApp {
             session_generation: 0,
             runtime_generation: 0,
             composer,
+            session_rail_view,
+            transcript_view,
+            composer_view,
+            run_panel_view,
             composer_sessions,
             composer_history_marker: None,
             composer_images: HashMap::new(),
@@ -252,6 +277,29 @@ impl PiApp {
         }
     }
 
+    fn notify_region<V>(region: &Entity<V>, cx: &mut Context<Self>)
+    where
+        V: gpui::Render,
+    {
+        region.update(cx, |_, cx| cx.notify());
+    }
+
+    fn notify_session_rail(&self, cx: &mut Context<Self>) {
+        Self::notify_region(&self.session_rail_view, cx);
+    }
+
+    fn notify_transcript(&self, cx: &mut Context<Self>) {
+        Self::notify_region(&self.transcript_view, cx);
+    }
+
+    fn notify_composer(&self, cx: &mut Context<Self>) {
+        Self::notify_region(&self.composer_view, cx);
+    }
+
+    fn notify_run_panel(&self, cx: &mut Context<Self>) {
+        Self::notify_region(&self.run_panel_view, cx);
+    }
+
     fn send(&mut self, command: RuntimeCommand) {
         if let Err(error) = self.runtime.send(command) {
             let snapshot = Arc::make_mut(&mut self.snapshot);
@@ -263,9 +311,44 @@ impl PiApp {
 
     fn drain_runtime(&mut self, cx: &mut Context<Self>) {
         let mut changed = self.extension.prune_notifications();
-        changed |= self.prune_recent_completions();
+        let completions_changed = self.prune_recent_completions();
+        changed |= completions_changed;
+        let mut rail_dirty = completions_changed;
+        let mut transcript_dirty = false;
+        let mut composer_dirty = false;
+        let mut run_dirty = completions_changed;
         while let Ok(event) = self.runtime.try_recv() {
             changed = true;
+            match &event {
+                RuntimeEvent::Snapshot { snapshot, .. } => {
+                    rail_dirty |=
+                        session_rail_snapshot_changed(&self.sessions, &self.snapshot, snapshot);
+                    transcript_dirty = true;
+                    composer_dirty = true;
+                    run_dirty = true;
+                }
+                RuntimeEvent::Sessions { .. } | RuntimeEvent::SessionsFailed { .. } => {
+                    rail_dirty = true;
+                    run_dirty = true;
+                }
+                RuntimeEvent::SessionStatus { .. } => {
+                    rail_dirty = true;
+                    run_dirty = true;
+                }
+                RuntimeEvent::HistoryReset { .. } => transcript_dirty = true,
+                RuntimeEvent::SessionReset { .. } => {
+                    transcript_dirty = true;
+                    composer_dirty = true;
+                    run_dirty = true;
+                }
+                RuntimeEvent::ExtensionUi { .. } => composer_dirty = true,
+                RuntimeEvent::PromptResult { .. } => {
+                    rail_dirty = true;
+                    composer_dirty = true;
+                    run_dirty = true;
+                }
+                RuntimeEvent::RefreshCatalog | RuntimeEvent::Stopped => run_dirty = true,
+            }
             match event {
                 RuntimeEvent::Snapshot {
                     generation,
@@ -316,8 +399,11 @@ impl PiApp {
                     for session in &sessions {
                         projects::add_unique(&mut self.projects, session.project.clone());
                     }
-                    self.sessions = sessions;
                     self.sessions_error = None;
+                    if add_new_sessions_to_order(&mut self.session_order, &sessions) {
+                        self.save_session_order();
+                    }
+                    self.sessions = sessions;
                     self.reconcile_submitted_drafts(cx);
                 }
                 RuntimeEvent::SessionsFailed {
@@ -373,6 +459,18 @@ impl PiApp {
                 | RuntimeEvent::Sessions { .. }
                 | RuntimeEvent::SessionsFailed { .. } => {}
             }
+        }
+        if rail_dirty {
+            self.notify_session_rail(cx);
+        }
+        if transcript_dirty {
+            self.notify_transcript(cx);
+        }
+        if composer_dirty {
+            self.notify_composer(cx);
+        }
+        if run_dirty {
+            self.notify_run_panel(cx);
         }
         if changed {
             cx.notify();
@@ -470,11 +568,22 @@ impl PiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let previous_root =
+            root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
+                .map(|session| session.id.clone());
+        let next_root =
+            root_session_for_path(&self.sessions, Some(&path)).map(|session| session.id.clone());
         self.switch_composer_target(session_target(&path), window, cx);
         self.selected_draft = None;
         self.select_project(project.clone());
         self.send(RuntimeCommand::Resume { path, project });
         self.sessions_sheet = false;
+        if previous_root != next_root {
+            self.notify_session_rail(cx);
+        }
+        self.notify_transcript(cx);
+        self.notify_composer(cx);
+        self.notify_run_panel(cx);
         cx.notify();
     }
 
@@ -493,6 +602,10 @@ impl PiApp {
         self.search
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.sessions_sheet = false;
+        self.notify_session_rail(cx);
+        self.notify_transcript(cx);
+        self.notify_composer(cx);
+        self.notify_run_panel(cx);
         cx.notify();
     }
 
@@ -515,6 +628,10 @@ impl PiApp {
             self.send(RuntimeCommand::ResumeDraft { id, project });
         }
         self.sessions_sheet = false;
+        self.notify_session_rail(cx);
+        self.notify_transcript(cx);
+        self.notify_composer(cx);
+        self.notify_run_panel(cx);
         cx.notify();
     }
 
@@ -545,11 +662,13 @@ impl PiApp {
                     "Project path is not a folder: {}",
                     project.display()
                 ));
+                self.notify_session_rail(cx);
                 cx.notify();
                 return;
             }
             Err(error) => {
                 self.sessions_error = Some(format!("Open {}: {error}", project.display()));
+                self.notify_session_rail(cx);
                 cx.notify();
                 return;
             }
@@ -557,7 +676,21 @@ impl PiApp {
         if projects::add_unique(&mut self.projects, project) {
             self.save_project_registry();
         }
+        self.notify_session_rail(cx);
         cx.notify();
+    }
+
+    pub(crate) fn move_session_to(&mut self, source: &str, target: &str, cx: &mut Context<Self>) {
+        if move_to(&mut self.session_order, source, target) {
+            self.save_session_order();
+            self.notify_session_rail(cx);
+        }
+    }
+
+    fn save_session_order(&mut self) {
+        if let Err(error) = projects::save_session_order(&self.session_order) {
+            self.sessions_error = Some(error);
+        }
     }
 
     fn select_project(&mut self, project: PathBuf) {
@@ -607,6 +740,9 @@ impl PiApp {
             let _ = self.composer_sessions.discard_and_switch(&target, current);
         }
         self.save_project_registry();
+        self.notify_session_rail(cx);
+        self.notify_composer(cx);
+        self.notify_run_panel(cx);
         cx.notify();
     }
 
@@ -622,7 +758,8 @@ impl PiApp {
             self.archived_sessions_expanded = false;
         }
         self.send(RuntimeCommand::SetSettled { path, settled });
-        cx.notify();
+        self.notify_session_rail(cx);
+        self.notify_run_panel(cx);
     }
 
     fn switch_composer_target(
@@ -791,6 +928,17 @@ impl PiApp {
     }
 }
 
+fn session_rail_snapshot_changed(
+    sessions: &[SessionSummary],
+    previous: &RuntimeSnapshot,
+    next: &RuntimeSnapshot,
+) -> bool {
+    let root_id = |path| root_session_for_path(sessions, path).map(|session| session.id.as_str());
+    root_id(previous.selected_session.as_deref()) != root_id(next.selected_session.as_deref())
+        || root_id(previous.live_session.as_deref()) != root_id(next.live_session.as_deref())
+        || previous.live_status != next.live_status
+}
+
 fn input_snapshot(input: &TextareaState) -> ComposerSnapshot {
     ComposerSnapshot::new(
         input.value().to_string(),
@@ -835,6 +983,37 @@ fn starts_recent_completion(previous: Option<&str>, next: &str, force: bool) -> 
     next == "Done" && (force || previous.is_some_and(|status| status != "Done"))
 }
 
+fn add_new_sessions_to_order(order: &mut Vec<String>, sessions: &[SessionSummary]) -> bool {
+    let known = order.iter().cloned().collect::<HashSet<_>>();
+    let mut added = sessions
+        .iter()
+        .filter(|session| session.parent_session.is_none() && !known.contains(&session.id))
+        .collect::<Vec<_>>();
+    added.sort_by(|left, right| right.timestamp.cmp(&left.timestamp));
+    if added.is_empty() {
+        return false;
+    }
+    order.splice(0..0, added.into_iter().map(|session| session.id.clone()));
+    true
+}
+
+fn move_to(order: &mut Vec<String>, source: &str, target: &str) -> bool {
+    if source == target {
+        return false;
+    }
+    let Some(source_index) = order.iter().position(|id| id == source) else {
+        return false;
+    };
+    let Some(target_index) = order.iter().position(|id| id == target) else {
+        return false;
+    };
+    let source = order.remove(source_index);
+    let target_index = target_index.saturating_sub(usize::from(source_index < target_index));
+    let insertion_index = target_index + usize::from(source_index < target_index);
+    order.insert(insertion_index, source);
+    true
+}
+
 fn debug_enabled() -> bool {
     debug_value_enabled(std::env::var("DEBUG").ok().as_deref())
 }
@@ -851,8 +1030,13 @@ impl Drop for PiApp {
 
 #[cfg(test)]
 mod tests {
+    use std::time::SystemTime;
+
     use super::*;
-    use crate::conversation::{TranscriptItem, TranscriptKind};
+    use crate::{
+        conversation::{TranscriptItem, TranscriptKind},
+        sessions::UsageSummary,
+    };
 
     fn item(text: &str) -> TranscriptItem {
         TranscriptItem {
@@ -874,6 +1058,81 @@ mod tests {
         assert!(starts_recent_completion(Some("Working"), "Done", false));
         assert!(starts_recent_completion(None, "Done", true));
         assert!(!starts_recent_completion(Some("Working"), "Failed", false));
+    }
+
+    #[test]
+    fn new_sessions_are_added_by_creation_without_resorting_existing_sessions() {
+        let session = |id: &str, timestamp: &str| {
+            SessionSummary::from_cached(
+                id.into(),
+                PathBuf::from(format!("/{id}.jsonl")),
+                PathBuf::from("/project"),
+                id.into(),
+                String::new(),
+                timestamp.into(),
+                None,
+                SystemTime::UNIX_EPOCH,
+                0,
+                UsageSummary::default(),
+                false,
+                false,
+                String::new(),
+            )
+        };
+        let mut order = vec!["manual-b".into(), "manual-a".into()];
+
+        assert!(add_new_sessions_to_order(
+            &mut order,
+            &[
+                session("manual-a", "2026-01-01"),
+                session("manual-b", "2026-01-02"),
+                session("new-old", "2026-01-03"),
+                session("new-new", "2026-01-04"),
+            ],
+        ));
+        assert_eq!(order, vec!["new-new", "new-old", "manual-b", "manual-a"]);
+    }
+
+    #[test]
+    fn selecting_a_subagent_does_not_invalidate_the_session_rail() {
+        let session = |id: &str, parent: Option<&str>| {
+            SessionSummary::from_cached(
+                id.into(),
+                PathBuf::from(format!("/{id}.jsonl")),
+                PathBuf::from("/project"),
+                id.into(),
+                String::new(),
+                String::new(),
+                parent.map(str::to_owned),
+                SystemTime::UNIX_EPOCH,
+                0,
+                UsageSummary::default(),
+                false,
+                false,
+                String::new(),
+            )
+        };
+        let sessions = vec![session("root", None), session("child", Some("root"))];
+        let previous = RuntimeSnapshot {
+            selected_session: Some(PathBuf::from("/root.jsonl")),
+            ..RuntimeSnapshot::default()
+        };
+        let next = RuntimeSnapshot {
+            selected_session: Some(PathBuf::from("/child.jsonl")),
+            ..RuntimeSnapshot::default()
+        };
+
+        assert!(!session_rail_snapshot_changed(&sessions, &previous, &next));
+    }
+
+    #[test]
+    fn manual_session_move_is_stable() {
+        let mut order = vec!["a".into(), "b".into(), "c".into()];
+        assert!(move_to(&mut order, "c", "a"));
+        assert_eq!(order, vec!["c", "a", "b"]);
+        assert!(move_to(&mut order, "c", "b"));
+        assert_eq!(order, vec!["a", "b", "c"]);
+        assert!(!move_to(&mut order, "c", "c"));
     }
 
     #[test]

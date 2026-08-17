@@ -24,7 +24,7 @@ impl PiApp {
         self.transcript_unseen = 0;
         self.transcript_list.set_follow_mode(FollowMode::Tail);
         self.transcript_list.scroll_to_end();
-        cx.notify();
+        self.notify_transcript(cx);
     }
 
     pub(crate) fn toggle_transcript_item(&mut self, key: usize, cx: &mut Context<Self>) {
@@ -35,7 +35,7 @@ impl PiApp {
             self.transcript_list
                 .remeasure_items(index..index.saturating_add(1));
         }
-        cx.notify();
+        self.notify_transcript(cx);
     }
 
     pub(super) fn sync_composer_history(&mut self) {

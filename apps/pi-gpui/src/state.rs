@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use rusqlite::{Connection, ErrorCode, TransactionBehavior, params};
+use rusqlite::{Connection, ErrorCode, OptionalExtension as _, TransactionBehavior, params};
 
 use crate::{
     projects::{DraftSession, Registry},
@@ -177,6 +177,38 @@ impl StateStore {
             .commit()
             .map_err(|error| format!("commit GUI state schema migration: {error}"))?;
         Ok(Self { connection })
+    }
+
+    pub(crate) fn load_session_order(&self) -> Result<Vec<String>, String> {
+        let stored = self
+            .connection
+            .query_row(
+                "SELECT value FROM meta WHERE key='session_order'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| format!("load session order: {error}"))?;
+        stored.map_or_else(
+            || Ok(Vec::new()),
+            |value| {
+                serde_json::from_str(&value)
+                    .map_err(|error| format!("decode session order: {error}"))
+            },
+        )
+    }
+
+    pub(crate) fn save_session_order(&self, order: &[String]) -> Result<(), String> {
+        let value = serde_json::to_string(order)
+            .map_err(|error| format!("encode session order: {error}"))?;
+        self.connection
+            .execute(
+                "INSERT INTO meta(key, value) VALUES('session_order', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                [value],
+            )
+            .map_err(|error| format!("save session order: {error}"))?;
+        Ok(())
     }
 
     pub(crate) fn load_registry(&self) -> Result<Registry, String> {

@@ -36,6 +36,7 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
             projects: vec![project.clone()],
             drafts: vec![draft.clone()],
         })?;
+        store.save_session_order(&["second".into(), "first".into()])?;
         store.enqueue_prompt(
             "draft:draft-one",
             &project,
@@ -80,6 +81,7 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
             ..draft
         }]
     );
+    assert_eq!(store.load_session_order()?, vec!["second", "first"]);
     let queued = store.queued_prompts()?;
     assert_eq!(queued.len(), 1);
     assert_eq!(queued[0].message, "hello");

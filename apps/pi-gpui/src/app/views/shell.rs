@@ -1,12 +1,13 @@
 use std::{
+    collections::HashMap,
     path::Path,
     time::{Duration, SystemTime},
 };
 
 use gpui::{
-    AnyElement, CursorStyle, FontWeight, InteractiveElement as _, IntoElement, KeyDownEvent,
-    ParentElement as _, Role, StatefulInteractiveElement as _, Styled as _, WeakEntity, div,
-    prelude::FluentBuilder as _, px, relative, uniform_list,
+    AnyElement, AppContext as _, CursorStyle, Empty, FontWeight, InteractiveElement as _,
+    IntoElement, KeyDownEvent, ParentElement as _, Role, StatefulInteractiveElement as _,
+    Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px, relative, uniform_list,
 };
 use gpui_component::{Icon, Sizable as _, Size, input::Input};
 
@@ -127,7 +128,7 @@ impl PiApp {
         let live_root =
             root_session_for_path(&self.sessions, self.snapshot.live_session.as_deref())
                 .map(|session| session.id.clone());
-        let groups = session_rail_items(&self.sessions);
+        let groups = session_rail_items(&self.sessions, &self.session_order);
         let active_rows = groups.active;
         let archived_rows = groups.archived;
         let draft_count = drafts.len();
@@ -190,7 +191,10 @@ impl PiApp {
                         let item = archived_rows.get(index)?;
                         let selected = selected_root.as_deref() == Some(item.session.id.as_str());
                         let target = format!("session:{}", item.session.path.display());
-                        let badge = archived_run_statuses.get(&target).cloned().or_else(|| {
+                        let badge = archived_run_badge(
+                            archived_run_statuses.get(&target).map(String::as_str),
+                        )
+                        .or_else(|| {
                             session_badge(
                                 item.kind,
                                 &item.session.id,
@@ -349,7 +353,7 @@ impl PiApp {
                                                     archive_toggle_entity.update(cx, |this, cx| {
                                                         this.archived_sessions_expanded =
                                                             !this.archived_sessions_expanded;
-                                                        cx.notify();
+                                                        this.notify_session_rail(cx);
                                                     });
                                             },
                                         )),
@@ -494,15 +498,29 @@ struct SessionRailItem {
     kind: SessionRailKind,
 }
 
+#[derive(Clone)]
+struct DraggedSession(String);
+
 #[derive(Clone, Debug, Default)]
 struct SessionRailGroups {
     active: Vec<SessionRailItem>,
     archived: Vec<SessionRailItem>,
 }
 
-fn session_rail_items(sessions: &[SessionSummary]) -> SessionRailGroups {
+fn session_rail_items(sessions: &[SessionSummary], order: &[String]) -> SessionRailGroups {
+    let rank = order
+        .iter()
+        .enumerate()
+        .map(|(index, id)| (id.as_str(), index))
+        .collect::<HashMap<_, _>>();
+    let mut roots = root_sessions(sessions);
+    roots.sort_by(|left, right| {
+        rank.get(left.id.as_str())
+            .cmp(&rank.get(right.id.as_str()))
+            .then_with(|| right.timestamp.cmp(&left.timestamp))
+    });
     let mut groups = SessionRailGroups::default();
-    for session in root_sessions(sessions) {
+    for session in roots {
         let (kind, destination) = if session.settled {
             (SessionRailKind::Settled, &mut groups.archived)
         } else {
@@ -647,6 +665,10 @@ fn draft_session_row(
         .into_any_element()
 }
 
+fn archived_run_badge(status: Option<&str>) -> Option<String> {
+    status.filter(|status| *status != "Done").map(str::to_owned)
+}
+
 fn session_badge(
     _kind: SessionRailKind,
     session_id: &str,
@@ -672,6 +694,9 @@ fn session_row(
     let keyboard_path = path.clone();
     let keyboard_project = project.clone();
     let keyboard_entity = entity.clone();
+    let drop_entity = entity.clone();
+    let dragged_id = session.id.clone();
+    let drop_target_id = session.id.clone();
     let project_name = project_label(&project);
     let settle_path = session.path.clone();
     let settle_entity = entity.clone();
@@ -720,6 +745,12 @@ fn session_row(
         .hover(|row| row.bg(THEME.colors.hover))
         .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
         .cursor(CursorStyle::PointingHand)
+        .on_drag(DraggedSession(dragged_id), |_, _, _, cx| cx.new(|_| Empty))
+        .on_drop(move |dragged: &DraggedSession, _, cx| {
+            let _ = drop_entity.update(cx, |this, cx| {
+                this.move_session_to(&dragged.0, &drop_target_id, cx);
+            });
+        })
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
             if matches!(event.keystroke.key.as_str(), "enter" | "space") {
                 window.prevent_default();

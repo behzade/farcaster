@@ -84,6 +84,14 @@ pub(crate) fn save(registry: &Registry) -> Result<(), String> {
     StateStore::open()?.save_registry(registry)
 }
 
+pub(crate) fn load_session_order() -> Result<Vec<String>, String> {
+    StateStore::open()?.load_session_order()
+}
+
+pub(crate) fn save_session_order(order: &[String]) -> Result<(), String> {
+    StateStore::open()?.save_session_order(order)
+}
+
 pub(crate) fn add_unique(projects: &mut Vec<PathBuf>, project: PathBuf) -> bool {
     if projects.iter().any(|known| known == &project) {
         return false;
