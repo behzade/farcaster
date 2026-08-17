@@ -9,7 +9,7 @@ pub(crate) enum LayoutMode {
     Narrow,
 }
 
-pub(crate) const WIDE_MIN_WIDTH: f32 = 1_320.0;
+pub(crate) const WIDE_MIN_WIDTH: f32 = 1_180.0;
 pub(crate) const COMPACT_MIN_WIDTH: f32 = 960.0;
 
 pub(crate) fn layout_mode(width: Pixels) -> LayoutMode {
@@ -23,12 +23,20 @@ pub(crate) fn layout_mode(width: Pixels) -> LayoutMode {
     }
 }
 
-pub(crate) const fn shows_inline_sidebars(mode: LayoutMode) -> bool {
+pub(crate) const fn shows_left_inline(mode: LayoutMode) -> bool {
     !matches!(mode, LayoutMode::Narrow)
 }
 
-pub(crate) const fn shows_sheet_buttons(mode: LayoutMode) -> bool {
+pub(crate) const fn shows_right_inline(mode: LayoutMode) -> bool {
+    matches!(mode, LayoutMode::Wide)
+}
+
+pub(crate) const fn shows_session_sheet_button(mode: LayoutMode) -> bool {
     matches!(mode, LayoutMode::Narrow)
+}
+
+pub(crate) const fn shows_run_sheet_button(mode: LayoutMode) -> bool {
+    !matches!(mode, LayoutMode::Wide)
 }
 
 #[cfg(test)]
@@ -40,18 +48,24 @@ mod tests {
     fn exact_layout_boundaries_are_stable() {
         assert_eq!(layout_mode(px(959.0)), LayoutMode::Narrow);
         assert_eq!(layout_mode(px(960.0)), LayoutMode::Compact);
-        assert_eq!(layout_mode(px(1_319.0)), LayoutMode::Compact);
-        assert_eq!(layout_mode(px(1_320.0)), LayoutMode::Wide);
+        assert_eq!(layout_mode(px(1_179.0)), LayoutMode::Compact);
+        assert_eq!(layout_mode(px(1_180.0)), LayoutMode::Wide);
     }
 
     #[test]
-    fn desktop_modes_keep_both_sidebars_and_only_narrow_uses_sheets() {
-        for mode in [LayoutMode::Wide, LayoutMode::Compact] {
-            assert!(shows_inline_sidebars(mode));
-            assert!(!shows_sheet_buttons(mode));
-        }
-        assert!(!shows_inline_sidebars(LayoutMode::Narrow));
-        assert!(shows_sheet_buttons(LayoutMode::Narrow));
-        assert!(shows_inline_sidebars(layout_mode(px(1_240.0))));
+    fn compact_moves_only_the_right_panel_and_narrow_moves_both() {
+        assert!(shows_left_inline(LayoutMode::Wide));
+        assert!(shows_right_inline(LayoutMode::Wide));
+        assert!(!shows_run_sheet_button(LayoutMode::Wide));
+
+        assert!(shows_left_inline(LayoutMode::Compact));
+        assert!(!shows_right_inline(LayoutMode::Compact));
+        assert!(!shows_session_sheet_button(LayoutMode::Compact));
+        assert!(shows_run_sheet_button(LayoutMode::Compact));
+
+        assert!(!shows_left_inline(LayoutMode::Narrow));
+        assert!(!shows_right_inline(LayoutMode::Narrow));
+        assert!(shows_session_sheet_button(LayoutMode::Narrow));
+        assert!(shows_run_sheet_button(LayoutMode::Narrow));
     }
 }

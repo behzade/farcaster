@@ -1,3 +1,4 @@
+mod agent_activity;
 mod app;
 mod assets;
 mod composer_sessions;
@@ -13,6 +14,7 @@ mod projects;
 mod protocol;
 mod rpc_process;
 mod runtime;
+mod session_changes;
 mod sessions;
 #[cfg(any(target_os = "macos", test))]
 mod shell_environment;

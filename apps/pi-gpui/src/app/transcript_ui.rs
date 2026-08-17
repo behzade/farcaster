@@ -27,10 +27,13 @@ impl PiApp {
         self.notify_transcript(cx);
     }
 
-    pub(crate) fn toggle_transcript_item(&mut self, key: usize, cx: &mut Context<Self>) {
-        if !self.transcript_disclosure_overrides.remove(&key) {
-            self.transcript_disclosure_overrides.insert(key);
-        }
+    pub(crate) fn set_transcript_item_expanded(
+        &mut self,
+        key: usize,
+        expanded: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.transcript_disclosure_states.insert(key, expanded);
         if let Some(index) = self.transcript_rows.iter().position(|row| row.key() == key) {
             self.transcript_list
                 .remeasure_items(index..index.saturating_add(1));

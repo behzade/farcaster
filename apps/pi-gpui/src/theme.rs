@@ -6,7 +6,8 @@ use gpui_component::{
     theme::{Theme as ComponentTheme, ThemeMode, ThemeTokens},
 };
 
-pub(crate) const READING_FONT_FAMILY: &str = "Lilex";
+pub(crate) const UI_FONT_FAMILY: &str = ".SystemUIFont";
+pub(crate) const MONO_FONT_FAMILY: &str = "Lilex";
 
 #[derive(Clone, Copy)]
 pub(crate) struct Theme {
@@ -69,8 +70,6 @@ pub(crate) struct Layout {
     pub dialog_max_height: Pixels,
     pub tool_max_height: Pixels,
     pub session_row_height: Pixels,
-    pub agent_row_height: Pixels,
-    pub agent_list_max_height: Pixels,
     pub status_row_height: Pixels,
 }
 
@@ -140,8 +139,6 @@ pub(crate) const THEME: Theme = Theme {
         dialog_max_height: px(680.0),
         tool_max_height: px(220.0),
         session_row_height: px(68.0),
-        agent_row_height: px(32.0),
-        agent_list_max_height: px(264.0),
         status_row_height: px(24.0),
     },
 };
@@ -149,8 +146,9 @@ pub(crate) const THEME: Theme = Theme {
 pub(crate) fn install_component_theme(cx: &mut App) {
     ComponentTheme::change(ThemeMode::Dark, None, cx);
     let theme = ComponentTheme::global_mut(cx);
+    theme.font_family = UI_FONT_FAMILY.into();
     theme.font_size = THEME.type_scale.body;
-    theme.mono_font_family = READING_FONT_FAMILY.into();
+    theme.mono_font_family = MONO_FONT_FAMILY.into();
     theme.mono_font_size = THEME.type_scale.body_small;
     theme.highlight_theme = HighlightTheme::default_dark();
     theme.radius = THEME.radius;

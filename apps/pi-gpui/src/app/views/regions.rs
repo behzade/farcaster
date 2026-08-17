@@ -70,10 +70,16 @@ impl Render for TranscriptView {
                 following: app.transcript_following,
                 unseen: app.transcript_unseen,
                 tail_reserve: transcript::tail_reserve(window.viewport_size().height),
+                diff_mode: match crate::layout::layout_mode(window.viewport_size().width) {
+                    crate::layout::LayoutMode::Wide => crate::tool_changes::EmbeddedDiffMode::Split,
+                    crate::layout::LayoutMode::Compact | crate::layout::LayoutMode::Narrow => {
+                        crate::tool_changes::EmbeddedDiffMode::Unified
+                    }
+                },
             },
             app.transcript_rows.clone(),
             app.snapshot.clone(),
-            app.transcript_disclosure_overrides.clone(),
+            app.transcript_disclosure_states.clone(),
             self.app.clone(),
         )
         .into_any_element()

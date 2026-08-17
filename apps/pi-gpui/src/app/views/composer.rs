@@ -15,7 +15,7 @@ use crate::{
     primitives::{ButtonTone, button},
     protocol::ExtensionUiRequest,
     runtime::RuntimeCommand,
-    theme::{READING_FONT_FAMILY, THEME},
+    theme::{MONO_FONT_FAMILY, THEME},
 };
 
 impl PiApp {
@@ -62,7 +62,6 @@ impl PiApp {
                 div()
                     .id("composer-input")
                     .key_context(super::super::COMPOSER_KEY_CONTEXT)
-                    .font_family(READING_FONT_FAMILY)
                     .text_size(THEME.type_scale.body)
                     .line_height(THEME.type_scale.line_body)
                     .px(THEME.space.sm)
@@ -156,6 +155,7 @@ impl PiApp {
             return div().into_any_element();
         };
         let cancel_button_entity = entity.clone();
+        let technical_editor = matches!(dialog, ExtensionUiRequest::Editor { .. });
         let (title, body) = match dialog {
             ExtensionUiRequest::Select { title, options, .. } => {
                 let choices = options
@@ -277,7 +277,9 @@ impl PiApp {
                         })
                         .child(
                             div()
-                                .font_family(READING_FONT_FAMILY)
+                                .when(technical_editor, |input| {
+                                    input.font_family(MONO_FONT_FAMILY)
+                                })
                                 .child(Textarea::new(&self.dialog_input).w_full()),
                         )
                         .child(div().flex().justify_end().child(button(
@@ -596,7 +598,7 @@ fn widget_region(
                     .px(THEME.space.sm)
                     .py(THEME.space.xs)
                     .bg(THEME.colors.surface)
-                    .font_family(READING_FONT_FAMILY)
+                    .font_family(MONO_FONT_FAMILY)
                     .text_size(THEME.type_scale.caption)
                     .children(lines.iter().cloned().map(|line| div().child(line)))
             }))

@@ -2,8 +2,10 @@ mod attachments;
 mod composer;
 #[cfg(test)]
 mod composer_tests;
+mod diff_modal;
 mod models;
 mod regions;
+mod run_panel;
 mod session_groups;
 mod session_rail;
 mod shell;
@@ -13,7 +15,7 @@ pub(super) use session_groups::session_move_allowed;
 
 use gpui::{
     Context, Focusable as _, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    Styled as _, Window, div, prelude::FluentBuilder as _,
+    StatefulInteractiveElement as _, Styled as _, Window, div, prelude::FluentBuilder as _,
 };
 use gpui_component::FocusTrapElement as _;
 
@@ -21,7 +23,10 @@ use super::{DismissSurface, PiApp, SubmitFollowUp};
 pub(crate) const OVERLAY_KEY_CONTEXT: &str = "PiGpuiOverlay";
 
 use crate::{
-    layout::{layout_mode, shows_inline_sidebars, shows_sheet_buttons},
+    layout::{
+        layout_mode, shows_left_inline, shows_right_inline, shows_run_sheet_button,
+        shows_session_sheet_button,
+    },
     primitives::{FeedbackTone, dialog_backdrop, dialog_surface, feedback},
     protocol::ExtensionUiRequest,
     theme::THEME,
@@ -38,6 +43,16 @@ impl Render for PiApp {
         if self.pending_sheet_setup {
             self.pending_sheet_setup = false;
             let focus = self.sheet_focus.clone();
+            cx.defer_in(window, move |_, window, cx| focus.focus(window, cx));
+        }
+        if self.pending_agent_detail_setup {
+            self.pending_agent_detail_setup = false;
+            let focus = self.agent_detail_focus.clone();
+            cx.defer_in(window, move |_, window, cx| focus.focus(window, cx));
+        }
+        if self.changes.pending_diff_setup {
+            self.changes.pending_diff_setup = false;
+            let focus = self.changes.diff_focus.clone();
             cx.defer_in(window, move |_, window, cx| focus.focus(window, cx));
         }
         if self.pending_dialog_setup {
@@ -89,8 +104,8 @@ impl Render for PiApp {
             .h_full()
             .flex()
             .flex_col()
-            .when(shows_sheet_buttons(mode), |main| {
-                main.child(self.render_narrow_navigation(entity.clone()))
+            .when(shows_run_sheet_button(mode), |main| {
+                main.child(self.render_navigation(shows_session_sheet_button(mode), entity.clone()))
             })
             .child(
                 div().flex_1().min_h_0().child(
@@ -116,7 +131,7 @@ impl Render for PiApp {
                 div()
                     .size_full()
                     .flex()
-                    .when(shows_inline_sidebars(mode), |shell| {
+                    .when(shows_left_inline(mode), |shell| {
                         shell.child(
                             div()
                                 .w(THEME.layout.session_rail)
@@ -133,7 +148,7 @@ impl Render for PiApp {
                         )
                     })
                     .child(main)
-                    .when(shows_inline_sidebars(mode), |shell| {
+                    .when(shows_right_inline(mode), |shell| {
                         shell.child(
                             div()
                                 .w(THEME.layout.run_panel)
@@ -189,6 +204,44 @@ impl Render for PiApp {
                                     .cached(gpui::StyleRefinement::default().size_full()),
                             )
                             .focus_trap("run-sheet-trap", &self.sheet_focus),
+                    ),
+                )
+            })
+            .when(self.agent_detail.is_some(), |root| {
+                let close = entity.clone();
+                root.child(
+                    dialog_backdrop("agent-detail-backdrop", move |window, cx| {
+                        let _ = close.update(cx, |this, cx| this.close_agent_detail(window, cx));
+                    })
+                    .child(
+                        dialog_surface("agent-detail-dialog", "Agent")
+                            .track_focus(&self.agent_detail_focus)
+                            .key_context(OVERLAY_KEY_CONTEXT)
+                            .max_w_full()
+                            .max_h(THEME.layout.dialog_max_height)
+                            .overflow_y_scroll()
+                            .children(self.render_agent_detail(entity.clone()))
+                            .focus_trap("agent-detail-trap", &self.agent_detail_focus),
+                    ),
+                )
+            })
+            .when(self.changes.diff.is_some(), |root| {
+                let close = entity.clone();
+                root.child(
+                    dialog_backdrop("full-diff-backdrop", move |window, cx| {
+                        let _ = close.update(cx, |this, cx| this.close_file_diff(window, cx));
+                    })
+                    .child(
+                        dialog_surface("full-diff-dialog", "File diff")
+                            .track_focus(&self.changes.diff_focus)
+                            .key_context(OVERLAY_KEY_CONTEXT)
+                            .w_full()
+                            .max_w_full()
+                            .h_full()
+                            .max_h(gpui::relative(1.0))
+                            .overflow_hidden()
+                            .child(self.render_diff_modal(entity.clone()))
+                            .focus_trap("full-diff-trap", &self.changes.diff_focus),
                     ),
                 )
             })

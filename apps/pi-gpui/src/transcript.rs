@@ -1,15 +1,14 @@
 //! Selectable, compact transcript projection.
 
-use std::sync::Arc;
+use std::{rc::Rc, sync::Arc};
 
 use gpui::{
     AnyElement, FontWeight, HighlightStyle, InteractiveElement as _, IntoElement as _,
-    ListSizingBehavior, ListState, Overflow, ParentElement as _, Pixels, StyleRefinement,
-    Styled as _, WeakEntity, div, list, prelude::FluentBuilder as _, px, rems,
+    KeyDownEvent, ListSizingBehavior, ListState, Overflow, ParentElement as _, Pixels, Role,
+    StatefulInteractiveElement as _, StyleRefinement, Styled as _, WeakEntity, div, list,
+    prelude::FluentBuilder as _, px, rems,
 };
 use gpui_component::{
-    Sizable as _, Size,
-    button::{Button, ButtonVariants as _},
     highlighter::HighlightTheme,
     text::{TextView, TextViewStyle},
 };
@@ -18,7 +17,8 @@ use crate::{
     app::PiApp,
     conversation::{TranscriptItem, TranscriptKind},
     primitives::{ButtonTone, button},
-    theme::{READING_FONT_FAMILY, THEME},
+    theme::{MONO_FONT_FAMILY, THEME},
+    tool_changes::EmbeddedDiffMode,
 };
 
 const MARKDOWN_CHUNK_TARGET_BYTES: usize = 2 * 1024;
@@ -33,6 +33,7 @@ pub(crate) struct TranscriptViewport {
     pub(crate) following: bool,
     pub(crate) unseen: usize,
     pub(crate) tail_reserve: Pixels,
+    pub(crate) diff_mode: EmbeddedDiffMode,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -243,10 +244,40 @@ fn markdown_fence_marker(line: &str) -> Option<char> {
 }
 
 fn expanded_by_default(row: TranscriptRow, items: &[Arc<TranscriptItem>]) -> bool {
-    matches!(
-        row,
-        TranscriptRow::Item { index, .. } if items[index].tool_presentation.is_some()
-    )
+    match row {
+        TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Tool => {
+            items[index].streaming || items[index].is_error
+        }
+        TranscriptRow::ReadGroup { start, len, .. } => items[start..start + len]
+            .iter()
+            .any(|item| item.streaming || item.is_error),
+        _ => false,
+    }
+}
+
+fn resolved_expanded(
+    row: TranscriptRow,
+    items: &[Arc<TranscriptItem>],
+    disclosure_states: &std::collections::HashMap<usize, bool>,
+) -> bool {
+    disclosure_states
+        .get(&row.key())
+        .copied()
+        .unwrap_or_else(|| expanded_by_default(row, items))
+}
+
+fn message_follows_tool(row: TranscriptRow, items: &[Arc<TranscriptItem>]) -> bool {
+    let is_first_assistant_row = match row {
+        TranscriptRow::Item { index, .. } => items[index].kind == TranscriptKind::Assistant,
+        TranscriptRow::MessageChunk { first, .. } => first,
+        TranscriptRow::ReadGroup { .. } => false,
+    };
+    is_first_assistant_row
+        && row
+            .item_start()
+            .checked_sub(1)
+            .and_then(|index| items.get(index))
+            .is_some_and(|item| item.kind == TranscriptKind::Tool)
 }
 
 pub(crate) fn render(
@@ -254,7 +285,7 @@ pub(crate) fn render(
     viewport: TranscriptViewport,
     rows: std::sync::Arc<Vec<TranscriptRow>>,
     snapshot: std::sync::Arc<crate::runtime::RuntimeSnapshot>,
-    disclosure_overrides: std::collections::HashSet<usize>,
+    disclosure_states: std::collections::HashMap<usize, bool>,
     entity: WeakEntity<PiApp>,
 ) -> AnyElement {
     if rows.is_empty() {
@@ -279,10 +310,10 @@ pub(crate) fn render(
         let Some(row) = rows.get(index).copied() else {
             return div().into_any_element();
         };
-        let expanded = expanded_by_default(row, &snapshot.conversation.items)
-            != disclosure_overrides.contains(&row.key());
+        let expanded = resolved_expanded(row, &snapshot.conversation.items, &disclosure_states);
         let reserves_tail = index + 1 == rows.len()
             && latest_allows_tail_reserve(row, &snapshot.conversation.items, expanded);
+        let follows_tool = message_follows_tool(row, &snapshot.conversation.items);
         div()
             .w_full()
             .when(reserves_tail, |row| row.pb(viewport.tail_reserve))
@@ -290,6 +321,8 @@ pub(crate) fn render(
                 row,
                 &snapshot.conversation.items,
                 expanded,
+                follows_tool,
+                viewport.diff_mode,
                 row_entity.clone(),
             ))
             .into_any_element()
@@ -359,6 +392,8 @@ fn render_row(
     row: TranscriptRow,
     items: &[Arc<TranscriptItem>],
     expanded: bool,
+    follows_tool: bool,
+    diff_mode: EmbeddedDiffMode,
     entity: WeakEntity<PiApp>,
 ) -> AnyElement {
     let key = row.key();
@@ -381,36 +416,39 @@ fn render_row(
             &items[index].text[start..end],
             first,
             last,
+            follows_tool,
         ),
         TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Tool => {
-            render_tool(key, &items[index], expanded, entity)
+            render_tool(key, &items[index], expanded, diff_mode, entity)
         }
         TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Thinking => {
             render_thinking(key, &items[index], expanded, entity)
         }
-        TranscriptRow::Item { index, .. } => render_message(key, &items[index]),
+        TranscriptRow::Item { index, .. } => render_message(key, &items[index], follows_tool),
     }
 }
 
-fn render_message(key: usize, item: &TranscriptItem) -> AnyElement {
-    let separator = item.kind == TranscriptKind::User;
+fn render_message(key: usize, item: &TranscriptItem, follows_tool: bool) -> AnyElement {
+    let user = item.kind == TranscriptKind::User;
+    let role = message_role_label(item.kind);
     div()
         .id(("transcript-row", key))
         .w_full()
         .px(THEME.space.md)
         .py(THEME.space.sm)
-        .when(separator, |row| {
+        .when(user, |row| {
             row.mt(THEME.space.sm)
-                .border_t(THEME.border)
-                .border_color(THEME.colors.border)
-                .pt(THEME.space.md)
+                .py(THEME.space.md)
+                .bg(THEME.colors.selection)
         })
+        .when(follows_tool, |row| {
+            row.mt(THEME.space.md).pt(THEME.space.sm)
+        })
+        .children(role.map(|role| message_role(role, user)))
         .child(
             selectable_text(("transcript-text", key), &item.text)
                 .text_color(item_color(item))
-                .when(item.kind == TranscriptKind::User, |text| {
-                    text.font_weight(FontWeight::MEDIUM)
-                }),
+                .when(user, |text| text.font_weight(FontWeight::MEDIUM)),
         )
         .into_any_element()
 }
@@ -422,19 +460,47 @@ fn render_message_chunk(
     text: &str,
     first: bool,
     last: bool,
+    follows_tool: bool,
 ) -> AnyElement {
     div()
         .id(format!("transcript-row-{key}-{block}"))
         .w_full()
         .px(THEME.space.md)
         .when(first, |row| row.pt(THEME.space.sm))
+        .when(first && follows_tool, |row| {
+            row.mt(THEME.space.md).pt(THEME.space.sm)
+        })
         .when(!first, |row| row.pt(THEME.space.xs))
-        .when(last, |row| row.pb(THEME.space.sm))
+        .when(last, |row| row.pb(THEME.space.md))
+        .when(first, |row| {
+            row.children(message_role_label(item.kind).map(|role| message_role(role, false)))
+        })
         .child(
             selectable_text(format!("transcript-text-{key}-{block}"), text)
                 .text_color(item_color(item)),
         )
         .into_any_element()
+}
+
+fn message_role_label(kind: TranscriptKind) -> Option<&'static str> {
+    match kind {
+        TranscriptKind::User => Some("You"),
+        TranscriptKind::Assistant => Some("Pi"),
+        _ => None,
+    }
+}
+
+fn message_role(label: &'static str, user: bool) -> impl gpui::IntoElement {
+    div()
+        .mb(THEME.space.xs)
+        .text_size(THEME.type_scale.caption)
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(if user {
+            THEME.colors.accent
+        } else {
+            THEME.colors.muted
+        })
+        .child(label)
 }
 
 fn render_thinking(
@@ -459,7 +525,7 @@ fn render_thinking(
         .child(disclosure_button(
             ("thinking-toggle", key),
             expanded,
-            "Thinking",
+            "thinking details".into(),
             key,
             entity,
         ))
@@ -481,12 +547,17 @@ fn render_read_group(
 ) -> AnyElement {
     let failed = items.iter().filter(|item| item.is_error).count();
     let running = items.iter().filter(|item| item.streaming).count();
+    let target = (items.len() == 1).then(|| tool_target(&items[0].text));
     let summary = if items.len() == 1 {
-        format!("Read {}", tool_target(&items[0].text))
+        "Read".to_owned()
     } else {
         format!("Read {} files", items.len())
     };
-    let state = tool_state_suffix(running > 0, failed);
+    let completed = items
+        .iter()
+        .all(|item| !item.streaming && (item.is_error || !item.tool_output.is_empty()));
+    let state = tool_state_label(running > 0, failed, completed);
+    let disclosure_label = format!("read call details for {summary}");
     div()
         .id(("read-group", key))
         .w_full()
@@ -502,22 +573,34 @@ fn render_read_group(
                 .child(disclosure_button(
                     ("read-toggle", key),
                     expanded,
-                    "Read details",
+                    disclosure_label,
                     key,
                     entity.clone(),
                 ))
                 .child(
-                    selectable_text(("read-summary", key), format!("{summary}{state}"))
+                    div()
+                        .text_size(THEME.type_scale.body_small)
+                        .text_color(THEME.colors.muted)
+                        .child(summary),
+                )
+                .children(target.filter(|target| !target.is_empty()).map(|target| {
+                    technical_text(("read-target", key), target)
                         .flex_1()
                         .min_w_0()
-                        .font_family(READING_FONT_FAMILY)
-                        .text_size(THEME.type_scale.body_small)
+                        .text_color(THEME.colors.text)
+                }))
+                .children(state.map(|state| {
+                    div()
+                        .text_size(THEME.type_scale.caption)
                         .text_color(if failed > 0 {
                             THEME.colors.error
+                        } else if running > 0 {
+                            THEME.colors.warning
                         } else {
-                            THEME.colors.muted
-                        }),
-                ),
+                            THEME.colors.success
+                        })
+                        .child(state)
+                })),
         )
         .when(expanded, |group| {
             group.child(
@@ -539,14 +622,21 @@ fn render_tool(
     key: usize,
     item: &TranscriptItem,
     expanded: bool,
+    diff_mode: EmbeddedDiffMode,
     entity: WeakEntity<PiApp>,
 ) -> AnyElement {
-    let summary = format!(
-        "{} {}{}",
-        item.label,
-        tool_target(&item.text),
-        tool_state_suffix(item.streaming, usize::from(item.is_error))
+    let target = tool_target(&item.text);
+    let state = tool_state_label(
+        item.streaming,
+        usize::from(item.is_error),
+        !item.streaming && (item.is_error || !item.tool_output.is_empty()),
     );
+    let presentation = item.tool_presentation.as_ref();
+    let disclosure_label = if target.is_empty() {
+        format!("{} tool call details", item.label)
+    } else {
+        format!("{} tool call details for {target}", item.label)
+    };
     div()
         .id(("tool-row", key))
         .w_full()
@@ -562,28 +652,36 @@ fn render_tool(
                 .child(disclosure_button(
                     ("tool-toggle", key),
                     expanded,
-                    if item.tool_presentation.is_some() {
-                        "File change"
-                    } else {
-                        "Tool details"
-                    },
+                    disclosure_label,
                     key,
                     entity.clone(),
                 ))
                 .child(
-                    selectable_text(("tool-summary", key), summary)
-                        .flex_1()
-                        .min_w_0()
-                        .font_family(READING_FONT_FAMILY)
+                    div()
                         .text_size(THEME.type_scale.body_small)
+                        .text_color(THEME.colors.muted)
+                        .child(item.label.clone()),
+                )
+                .when(!target.is_empty(), |row| {
+                    row.child(
+                        technical_text(("tool-target", key), target)
+                            .flex_1()
+                            .min_w_0()
+                            .text_color(THEME.colors.text),
+                    )
+                })
+                .children(state.map(|state| {
+                    div()
+                        .text_size(THEME.type_scale.caption)
                         .text_color(if item.is_error {
                             THEME.colors.error
                         } else if item.streaming {
                             THEME.colors.warning
                         } else {
-                            THEME.colors.muted
-                        }),
-                ),
+                            THEME.colors.success
+                        })
+                        .child(state)
+                })),
         )
         .when(expanded, |tool| {
             tool.child(
@@ -593,30 +691,31 @@ fn render_tool(
                     .child(expanded_tool_body(("tool-detail", key), item)),
             )
         })
+        .when_some(presentation, |tool, presentation| {
+            let source = presentation.clone();
+            let expand_entity = entity.clone();
+            let on_expand = Rc::new(move |window: &mut gpui::Window, cx: &mut gpui::App| {
+                let opener = window.focused(cx);
+                let _ = expand_entity.update(cx, |this, cx| {
+                    this.open_tool_diff(source.clone(), opener, window, cx)
+                });
+            });
+            tool.child(
+                div()
+                    .ml(px(22.0))
+                    .mt(THEME.space.xs)
+                    .child(crate::tool_changes::render(
+                        presentation,
+                        item.tool_call_id.as_ref().map_or(0, |id| stable_key(id)),
+                        diff_mode,
+                        Some(on_expand),
+                    )),
+            )
+        })
         .into_any_element()
 }
 
 fn expanded_tool_body(id: impl Into<gpui::ElementId>, item: &TranscriptItem) -> AnyElement {
-    if let Some(presentation) = &item.tool_presentation {
-        let output = visible_mutation_output(item).map(|output| {
-            selectable_text(id, output)
-                .font_family(READING_FONT_FAMILY)
-                .text_size(THEME.type_scale.body_small)
-                .text_color(THEME.colors.error)
-        });
-        return div()
-            .w_full()
-            .min_w_0()
-            .flex()
-            .flex_col()
-            .gap(THEME.space.xs)
-            .child(crate::tool_changes::render(
-                presentation,
-                item.tool_call_id.as_ref().map_or(0, |id| stable_key(id)),
-            ))
-            .children(output)
-            .into_any_element();
-    }
     let mut detail = String::new();
     if !item.text.is_empty() {
         detail.push_str(&item.text);
@@ -628,7 +727,7 @@ fn expanded_tool_body(id: impl Into<gpui::ElementId>, item: &TranscriptItem) -> 
         detail.push_str(&item.tool_output);
     }
     selectable_text(id, fenced_text(&detail))
-        .font_family(READING_FONT_FAMILY)
+        .font_family(MONO_FONT_FAMILY)
         .text_size(THEME.type_scale.body_small)
         .text_color(if item.is_error {
             THEME.colors.error
@@ -641,18 +740,48 @@ fn expanded_tool_body(id: impl Into<gpui::ElementId>, item: &TranscriptItem) -> 
 fn disclosure_button(
     id: impl Into<gpui::ElementId>,
     expanded: bool,
-    label: &'static str,
+    label: String,
     key: usize,
     entity: WeakEntity<PiApp>,
-) -> Button {
-    Button::new(id)
-        .label(if expanded { "▾" } else { "▸" })
-        .tooltip(label)
-        .with_size(Size::XSmall)
-        .ghost()
-        .on_click(move |_, _, cx| {
-            let _ = entity.update(cx, |this, cx| this.toggle_transcript_item(key, cx));
+) -> AnyElement {
+    let accessible_label = format!("{} {label}", if expanded { "Collapse" } else { "Expand" });
+    let keyboard_entity = entity.clone();
+    div()
+        .id(id)
+        .role(Role::Button)
+        .aria_label(accessible_label)
+        .aria_expanded(expanded)
+        .tab_index(0)
+        .size(px(20.0))
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(THEME.radius)
+        .text_size(THEME.type_scale.caption)
+        .text_color(THEME.colors.muted)
+        .hover(|control| control.bg(THEME.colors.hover))
+        .focus(|control| {
+            control
+                .border(THEME.border)
+                .border_color(THEME.colors.accent)
         })
+        .cursor_pointer()
+        .on_key_down(move |event: &KeyDownEvent, window, cx| {
+            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                window.prevent_default();
+                let _ = keyboard_entity.update(cx, |this, cx| {
+                    this.set_transcript_item_expanded(key, !expanded, cx)
+                });
+            }
+        })
+        .on_click(move |_, _, cx| {
+            let _ = entity.update(cx, |this, cx| {
+                this.set_transcript_item_expanded(key, !expanded, cx)
+            });
+        })
+        .child(if expanded { "▾" } else { "▸" })
+        .into_any_element()
 }
 
 fn selectable_text(
@@ -664,9 +793,14 @@ fn selectable_text(
         .selectable(true)
         .w_full()
         .min_w_0()
-        .font_family(READING_FONT_FAMILY)
         .text_size(THEME.type_scale.body)
         .line_height(THEME.type_scale.line_body)
+}
+
+fn technical_text(id: impl Into<gpui::ElementId>, text: impl Into<gpui::SharedString>) -> TextView {
+    selectable_text(id, text)
+        .font_family(MONO_FONT_FAMILY)
+        .text_size(THEME.type_scale.body_small)
 }
 
 fn transcript_markdown_style() -> TextViewStyle {
@@ -695,10 +829,6 @@ fn fenced_text(text: &str) -> String {
     format!("```text\n{}\n```", text.replace("```", "``\\`"))
 }
 
-fn visible_mutation_output(item: &TranscriptItem) -> Option<&str> {
-    (item.is_error && !item.tool_output.is_empty()).then_some(item.tool_output.as_str())
-}
-
 fn tool_target(arguments: &str) -> String {
     let first = arguments.lines().next().unwrap_or_default();
     first
@@ -717,17 +847,19 @@ fn stable_key(value: &str) -> usize {
     })
 }
 
-fn tool_state_suffix(running: bool, failed: usize) -> String {
+fn tool_state_label(running: bool, failed: usize, completed: bool) -> Option<String> {
     if failed > 0 {
-        if failed == 1 {
-            " · failed".into()
+        Some(if failed == 1 {
+            "Failed".into()
         } else {
-            format!(" · {failed} failed")
-        }
+            format!("{failed} failed")
+        })
     } else if running {
-        " · working".into()
+        Some("Working".into())
+    } else if completed {
+        Some("✓ Done".into())
     } else {
-        String::new()
+        None
     }
 }
 
@@ -741,189 +873,5 @@ fn item_color(item: &TranscriptItem) -> gpui::Rgba {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn item(kind: TranscriptKind, label: &str, text: &str) -> Arc<TranscriptItem> {
-        Arc::new(TranscriptItem {
-            kind,
-            label: label.into(),
-            text: text.into(),
-            streaming: false,
-            is_error: false,
-            tool_call_id: None,
-            tool_output: String::new(),
-            tool_presentation: None,
-        })
-    }
-
-    #[test]
-    fn tail_reserve_is_responsive_but_bounded() {
-        assert_eq!(tail_reserve(px(100.0)), px(72.0));
-        assert_eq!(tail_reserve(px(500.0)), px(160.0));
-        assert_eq!(tail_reserve(px(2_000.0)), px(280.0));
-    }
-
-    #[test]
-    fn markdown_inline_code_uses_the_reading_palette() {
-        let style = transcript_markdown_style();
-
-        assert_eq!(style.inline_code.color, Some(THEME.colors.code.into()));
-        assert_eq!(
-            style.inline_code.background_color,
-            Some(THEME.colors.panel.into())
-        );
-    }
-
-    #[test]
-    fn consecutive_reads_collapse_into_one_row() {
-        let rows = project_rows(&[
-            item(TranscriptKind::User, "", "question"),
-            item(TranscriptKind::Tool, "Read", "Path: a"),
-            item(TranscriptKind::Tool, "Read", "Path: b"),
-            item(TranscriptKind::Tool, "Bash", "Command: true"),
-        ]);
-        assert_eq!(rows.len(), 3);
-        assert!(matches!(&rows[1], TranscriptRow::ReadGroup { len: 2, .. }));
-    }
-
-    #[test]
-    fn long_assistant_messages_become_independently_virtualized_rows() {
-        let text = format!(
-            "{}\n\n{}\n\n{}",
-            "first ".repeat(600),
-            "second ".repeat(600),
-            "third ".repeat(600)
-        );
-        let assistant = item(TranscriptKind::Assistant, "", &text);
-        let rows = project_rows(std::slice::from_ref(&assistant));
-
-        assert!(rows.len() >= 3);
-        let reconstructed = rows
-            .iter()
-            .map(|row| match row {
-                TranscriptRow::MessageChunk { start, end, .. } => &text[*start..*end],
-                _ => panic!("expected only message chunks"),
-            })
-            .collect::<String>();
-        assert_eq!(reconstructed, text);
-    }
-
-    #[test]
-    fn a_giant_plain_paragraph_is_split_at_word_boundaries() {
-        let text = "word ".repeat(5_000);
-        let chunks = markdown_chunk_ranges(&text);
-
-        assert!(chunks.len() > 1);
-        assert_eq!(
-            chunks
-                .iter()
-                .map(|(start, end)| &text[*start..*end])
-                .collect::<String>(),
-            text
-        );
-    }
-
-    #[test]
-    fn fenced_code_is_never_split_inside_the_fence() {
-        let code = "let value = 1;\n".repeat(1_000);
-        let text = format!("before\n\n```rust\n{code}```\n\nafter");
-        let closing_end = text.find("```\n\n").expect("closing fence") + 4;
-        let chunks = markdown_chunk_ranges(&text);
-
-        assert!(chunks.iter().any(|(_, end)| *end == closing_end));
-        assert!(
-            !chunks
-                .iter()
-                .any(|(_, end)| text[..*end].ends_with("let value = 1;\n"))
-        );
-    }
-
-    #[test]
-    fn row_updates_reproject_only_the_changed_shared_item_suffix() {
-        let first = item(TranscriptKind::Assistant, "", "unchanged");
-        let second = item(TranscriptKind::Assistant, "", "short");
-        let previous_items = vec![first.clone(), second];
-        let previous_rows = project_rows(&previous_items);
-        let long = item(
-            TranscriptKind::Assistant,
-            "",
-            &format!(
-                "section\n\n{}\n\n{}",
-                "updated ".repeat(700),
-                "tail ".repeat(700)
-            ),
-        );
-        let items = vec![first, long];
-
-        let rows = update_rows(&previous_rows, &previous_items, &items);
-
-        assert_eq!(rows[0], previous_rows[0]);
-        assert!(matches!(
-            rows[1],
-            TranscriptRow::MessageChunk { index: 1, .. }
-        ));
-    }
-
-    #[test]
-    fn changed_item_revision_invalidates_an_equal_length_row() {
-        let previous_items = vec![item(TranscriptKind::Assistant, "", "old")];
-        let previous_rows = project_rows(&previous_items);
-        let items = vec![item(TranscriptKind::Assistant, "", "new")];
-
-        let rows = update_rows(&previous_rows, &previous_items, &items);
-
-        assert_ne!(rows, previous_rows);
-    }
-
-    #[test]
-    fn appended_reads_merge_with_the_existing_read_group() {
-        let previous_items = vec![item(TranscriptKind::Tool, "Read", "Path: one")];
-        let previous_rows = project_rows(&previous_items);
-        let items = vec![
-            previous_items[0].clone(),
-            item(TranscriptKind::Tool, "Read", "Path: two"),
-        ];
-
-        let rows = update_rows(&previous_rows, &previous_items, &items);
-
-        assert!(matches!(
-            rows.as_slice(),
-            [TranscriptRow::ReadGroup { len: 2, .. }]
-        ));
-    }
-
-    #[test]
-    fn mutation_tools_are_expanded_by_default() {
-        let mut edit = item(TranscriptKind::Tool, "Edit", "Path: src/main.rs");
-        Arc::make_mut(&mut edit).tool_presentation =
-            Some(crate::conversation::ToolPresentation::Edit {
-                path: "src/main.rs".into(),
-                diff: Some("- old\n+ new".into()),
-                format: crate::conversation::EditDiffFormat::Unnumbered,
-                prepared: Default::default(),
-            });
-        let items = vec![edit, item(TranscriptKind::Tool, "Bash", "Command: true")];
-        let rows = project_rows(&items);
-
-        assert!(expanded_by_default(rows[0], &items));
-        assert!(!expanded_by_default(rows[1], &items));
-    }
-
-    #[test]
-    fn successful_mutation_output_is_hidden_but_errors_remain_visible() {
-        let mut write = item(TranscriptKind::Tool, "Write", "Path: src/main.rs");
-        Arc::make_mut(&mut write).tool_output = "Successfully wrote 42 bytes".into();
-        assert_eq!(visible_mutation_output(&write), None);
-
-        Arc::make_mut(&mut write).is_error = true;
-        Arc::make_mut(&mut write).tool_output = "Permission denied".into();
-        assert_eq!(visible_mutation_output(&write), Some("Permission denied"));
-    }
-
-    #[test]
-    fn targets_use_the_first_readable_argument_value() {
-        assert_eq!(tool_target("Path: src/main.rs\nOffset: 2"), "src/main.rs");
-        assert_eq!(tool_target(""), "");
-    }
-}
+#[path = "transcript_tests.rs"]
+mod tests;

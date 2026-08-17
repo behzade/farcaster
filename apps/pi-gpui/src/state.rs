@@ -317,12 +317,6 @@ impl StateStore {
     }
 
     pub(crate) fn cached_sessions(&self, query: &str) -> Result<Vec<SessionSummary>, String> {
-        let escaped = query
-            .to_lowercase()
-            .replace('\\', "\\\\")
-            .replace('%', "\\%")
-            .replace('_', "\\_");
-        let needle = format!("%{escaped}%");
         let mut statement = self
             .connection
             .prepare(
@@ -332,15 +326,16 @@ impl StateStore {
                         total_tokens, cost_micros, search_text, settled_ms IS NOT NULL,
                         is_running
                    FROM sessions
-                  WHERE ?1 = '%%' OR search_text LIKE ?1 ESCAPE '\\'
                   ORDER BY modified_ms DESC, timestamp DESC",
             )
             .map_err(|error| format!("prepare cached sessions: {error}"))?;
         let rows = statement
-            .query_map([needle], row_to_session)
+            .query_map([], row_to_session)
             .map_err(|error| format!("query cached sessions: {error}"))?;
-        rows.map(|row| row.map_err(|error| format!("decode cached session: {error}")))
-            .collect()
+        let sessions = rows
+            .map(|row| row.map_err(|error| format!("decode cached session: {error}")))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(crate::sessions::filter_session_tree(sessions, query))
     }
 
     #[cfg(test)]

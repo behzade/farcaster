@@ -1,5 +1,6 @@
 //! UI-neutral application runtime and active-session ownership.
 
+mod catalog;
 mod prompts;
 
 use std::{
@@ -13,6 +14,7 @@ use std::{
 use serde_json::{Value, json};
 
 use crate::{
+    agent_activity::AgentActivity,
     conversation::{ConversationState, TranscriptItem, TranscriptKind},
     protocol::{
         ExtensionUiResponse, Model, PromptImage, PromptMode, SessionState, SlashCommand, command,
@@ -25,6 +27,7 @@ use crate::{
 const MAX_IDLE_PI_ACTORS: usize = 4;
 const ACTIVE_ROOT_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const ACTIVE_DESCENDANT_REFRESH_INTERVAL: Duration = Duration::from_secs(3);
+const COALESCED_SESSION_REFRESH_DELAY: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Debug)]
 pub(crate) enum RuntimeCommand {
@@ -88,6 +91,8 @@ pub(crate) enum RuntimeEvent {
     Sessions {
         generation: u64,
         sessions: Vec<SessionSummary>,
+        all_sessions: Vec<SessionSummary>,
+        activities: Option<(HashMap<String, AgentActivity>, bool)>,
         has_running_descendants: bool,
     },
     SessionsFailed {
@@ -665,6 +670,7 @@ struct RuntimeOwner {
     session_generation: u64,
     session_discovery_in_flight: bool,
     session_refresh_pending: bool,
+    session_refresh_due: Option<Instant>,
     process_generation: u64,
     pending_prompt_id: Option<String>,
     pending_prompt_target: Option<String>,
@@ -722,6 +728,7 @@ fn run(
         session_generation: 0,
         session_discovery_in_flight: false,
         session_refresh_pending: false,
+        session_refresh_due: None,
         process_generation: 0,
         pending_prompt_id: None,
         pending_prompt_target: None,
@@ -757,6 +764,7 @@ fn run(
         while let Ok(result) = history_rx.try_recv() {
             owner.apply_history(result);
         }
+        owner.poll_deferred_session_refresh(Instant::now());
         let mut process_snapshot_changed = false;
         while let Some(item) = owner.process.as_mut().and_then(RpcProcess::try_next) {
             process_snapshot_changed |= owner.apply_process_item(item);
@@ -1290,130 +1298,6 @@ impl RuntimeOwner {
         }
     }
 
-    fn load_sessions(&mut self, query: String) {
-        self.session_query = query;
-        if let Some(state) = &self.state {
-            match state.cached_sessions(&self.session_query) {
-                Ok(sessions) => {
-                    let has_running_descendants = state
-                        .cached_sessions("")
-                        .is_ok_and(|sessions| has_running_descendant(&sessions));
-                    let _ = self.event_tx.send(RuntimeEvent::Sessions {
-                        generation: self.session_generation,
-                        sessions,
-                        has_running_descendants,
-                    });
-                }
-                Err(error) => {
-                    let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
-                        generation: self.session_generation,
-                        message: error,
-                    });
-                }
-            }
-        }
-        if self.session_query.is_empty() {
-            self.refresh_sessions();
-        }
-    }
-
-    fn refresh_sessions(&mut self) {
-        if !self.owns_session_catalog {
-            let _ = self.event_tx.send(RuntimeEvent::RefreshCatalog);
-            return;
-        }
-        if self.session_discovery_in_flight {
-            self.session_refresh_pending = true;
-            return;
-        }
-        self.session_generation = self.session_generation.saturating_add(1);
-        self.session_discovery_in_flight = true;
-        let generation = self.session_generation;
-        let sender = self.discovery_tx.clone();
-        if let Err(error) = thread::Builder::new()
-            .name("pi-gpui-sessions".into())
-            .spawn(move || {
-                let _ = sender.send(DiscoveryResult {
-                    generation,
-                    result: discover(""),
-                });
-            })
-        {
-            self.session_discovery_in_flight = false;
-            let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
-                generation,
-                message: format!("start session discovery: {error}"),
-            });
-        }
-    }
-
-    fn apply_discovery(&mut self, result: DiscoveryResult) {
-        if result.generation != self.session_generation {
-            return;
-        }
-        self.session_discovery_in_flight = false;
-        let event = match result.result {
-            Ok(discovery) => {
-                let sessions = discovery.sessions;
-                let mut has_running_descendants = has_running_descendant(&sessions);
-                let sessions = if let Some(state) = self.state.as_mut() {
-                    let indexed = state
-                        .index_sessions(&sessions, discovery.exhaustive)
-                        .and_then(|()| state.cached_sessions(""));
-                    match indexed {
-                        Ok(all_sessions) => {
-                            has_running_descendants = has_running_descendant(&all_sessions);
-                            if self.session_query.is_empty() {
-                                all_sessions
-                            } else {
-                                match state.cached_sessions(&self.session_query) {
-                                    Ok(filtered) => filtered,
-                                    Err(error) => {
-                                        let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
-                                            generation: result.generation,
-                                            message: error,
-                                        });
-                                        all_sessions
-                                    }
-                                }
-                            }
-                        }
-                        Err(error) => {
-                            let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
-                                generation: result.generation,
-                                message: error,
-                            });
-                            sessions
-                        }
-                    }
-                } else {
-                    let needle = self.session_query.to_lowercase();
-                    if needle.is_empty() {
-                        sessions
-                    } else {
-                        sessions
-                            .into_iter()
-                            .filter(|session| session.search_text().contains(&needle))
-                            .collect()
-                    }
-                };
-                RuntimeEvent::Sessions {
-                    generation: result.generation,
-                    sessions,
-                    has_running_descendants,
-                }
-            }
-            Err(message) => RuntimeEvent::SessionsFailed {
-                generation: result.generation,
-                message,
-            },
-        };
-        let _ = self.event_tx.send(event);
-        if std::mem::take(&mut self.session_refresh_pending) {
-            self.refresh_sessions();
-        }
-    }
-
     fn rollback_pending_prompt(&mut self) {
         if let Some(optimistic) = self.pending_prompt_item.take() {
             self.active_snapshot_mut()
@@ -1582,6 +1466,7 @@ mod tests {
                 session_generation: 0,
                 session_discovery_in_flight: false,
                 session_refresh_pending: false,
+                session_refresh_due: None,
                 process_generation: 1,
                 pending_prompt_id: None,
                 pending_prompt_target: None,
@@ -1717,6 +1602,8 @@ mod tests {
             RuntimeEvent::Sessions {
                 generation: 99,
                 sessions: Vec::new(),
+                all_sessions: Vec::new(),
+                activities: None,
                 has_running_descendants: false,
             },
         );
@@ -1732,6 +1619,8 @@ mod tests {
             RuntimeEvent::Sessions {
                 generation: 7,
                 sessions: Vec::new(),
+                all_sessions: Vec::new(),
+                activities: None,
                 has_running_descendants: false,
             },
         );
@@ -2029,6 +1918,7 @@ mod tests {
             generation: refresh_generation,
             result: Ok(SessionDiscovery {
                 sessions,
+                activities: HashMap::new(),
                 exhaustive: true,
             }),
         });
@@ -2047,6 +1937,96 @@ mod tests {
             RuntimeEvent::Sessions { sessions, .. } if sessions.len() == 2
         )));
         assert!(owner.session_query.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn in_flight_catalog_refreshes_coalesce_into_one_delayed_scan() {
+        let (mut owner, _events, _discovery) = owner_without_process(std::env::temp_dir());
+        owner.session_discovery_in_flight = true;
+        owner.refresh_sessions();
+        owner.refresh_sessions();
+        assert!(owner.session_refresh_pending);
+
+        owner.apply_discovery(DiscoveryResult {
+            generation: 0,
+            result: Ok(SessionDiscovery {
+                sessions: Vec::new(),
+                activities: HashMap::new(),
+                exhaustive: true,
+            }),
+        });
+        let due = owner.session_refresh_due.expect("deferred refresh");
+        assert!(!owner.session_refresh_pending);
+        owner.refresh_sessions();
+        assert_eq!(owner.session_generation, 0);
+        owner.poll_deferred_session_refresh(due - Duration::from_millis(1));
+        assert_eq!(owner.session_generation, 0);
+
+        owner.poll_deferred_session_refresh(due);
+        assert_eq!(owner.session_generation, 1);
+        assert!(owner.session_discovery_in_flight);
+        owner.poll_deferred_session_refresh(due + Duration::from_secs(1));
+        assert_eq!(owner.session_generation, 1);
+    }
+
+    #[test]
+    fn cached_child_only_search_publishes_tree_closure_and_unfiltered_catalog()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempdir()?;
+        let project = temp.path().join("project");
+        fs::create_dir(&project)?;
+        let root_path = temp.path().join("root.jsonl");
+        let child_path = temp.path().join("child.jsonl");
+        fs::write(&root_path, "{}")?;
+        fs::write(&child_path, "{}")?;
+        let root = SessionSummary::from_cached(
+            "root".into(),
+            root_path.canonicalize()?,
+            project.clone(),
+            "Main".into(),
+            String::new(),
+            String::new(),
+            None,
+            SystemTime::now(),
+            0,
+            crate::sessions::UsageSummary::default(),
+            false,
+            false,
+            "ordinary".into(),
+        );
+        let child = SessionSummary::from_cached(
+            "child".into(),
+            child_path.canonicalize()?,
+            project.clone(),
+            "subagent-worker".into(),
+            "Needle assignment".into(),
+            String::new(),
+            Some("root".into()),
+            SystemTime::now(),
+            0,
+            crate::sessions::UsageSummary::default(),
+            false,
+            true,
+            "needle assignment".into(),
+        );
+        let (mut owner, events, _) = owner_without_process(project);
+        owner.state = Some(StateStore::open_at(&temp.path().join("gui-state.sqlite3"))?);
+        owner
+            .state
+            .as_mut()
+            .expect("state")
+            .replace_sessions(&[root, child])?;
+
+        owner.load_sessions("needle".into());
+
+        assert!(events.try_iter().any(|event| matches!(
+            event,
+            RuntimeEvent::Sessions { sessions, all_sessions, .. }
+                if sessions.iter().map(|session| session.id.as_str()).collect::<HashSet<_>>()
+                    == HashSet::from(["root", "child"])
+                    && all_sessions.len() == 2
+        )));
         Ok(())
     }
 
@@ -2091,6 +2071,7 @@ mod tests {
             generation: 0,
             result: Ok(SessionDiscovery {
                 sessions: vec![root],
+                activities: HashMap::new(),
                 exhaustive: false,
             }),
         });
@@ -2344,6 +2325,7 @@ mod tests {
             session_generation: 0,
             session_discovery_in_flight: false,
             session_refresh_pending: false,
+            session_refresh_due: None,
             process_generation: 4,
             pending_prompt_id: None,
             pending_prompt_target: None,
@@ -2440,6 +2422,7 @@ mod tests {
             session_generation: 0,
             session_discovery_in_flight: false,
             session_refresh_pending: false,
+            session_refresh_due: None,
             process_generation: 3,
             pending_prompt_id: None,
             pending_prompt_target: None,
@@ -2590,6 +2573,7 @@ mod tests {
             session_generation: 0,
             session_discovery_in_flight: false,
             session_refresh_pending: false,
+            session_refresh_due: None,
             process_generation: 7,
             pending_prompt_id: Some("pending-prompt".into()),
             pending_prompt_target: Some(format!("session:{}", active_path.display())),

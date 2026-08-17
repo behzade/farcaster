@@ -59,6 +59,9 @@ while IFS= read -r line; do
     get_available_thinking_levels)
       data='{"levels":["off"]}'
       ;;
+    get_session_stats)
+      data='{"contextUsage":{"tokens":4096,"contextWindow":8192,"percent":50}}'
+      ;;
     get_state)
       data='{"model":null,"thinkingLevel":"off","isStreaming":false,"isCompacting":false,"sessionId":"fake","autoCompactionEnabled":true,"messageCount":0,"pendingMessageCount":0}'
       ;;

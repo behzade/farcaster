@@ -1,9 +1,12 @@
 //! Top-level GPUI composition for the active root session.
 
+mod changes;
 mod composer_images;
 mod drafts;
+mod region_state;
 mod slash_commands;
 mod submissions;
+mod surfaces;
 mod transcript_ui;
 mod views;
 pub(crate) use composer_images::ComposerImage;
@@ -28,6 +31,7 @@ use gpui_component::input::{InputEvent, InputState, TextareaState};
 use gpui_fps::FpsMonitor;
 
 use crate::{
+    agent_activity::AgentActivity,
     composer_sessions::{
         ComposerSessions, ComposerSnapshot, HistoryNavigation, draft_target, project_target,
         session_target,
@@ -49,6 +53,10 @@ pub(crate) struct PiApp {
     runtime: RuntimeHandle,
     pub(crate) snapshot: Arc<RuntimeSnapshot>,
     sessions: Vec<SessionSummary>,
+    all_sessions: Vec<SessionSummary>,
+    agent_activities: HashMap<String, AgentActivity>,
+    agent_row_focus: HashMap<String, FocusHandle>,
+    changes: changes::ChangesState,
     session_order: Vec<String>,
     run_statuses: HashMap<String, String>,
     recent_completions: HashMap<String, Instant>,
@@ -86,7 +94,7 @@ pub(crate) struct PiApp {
     transcript_rows: Arc<Vec<crate::transcript::TranscriptRow>>,
     transcript_following: bool,
     transcript_unseen: usize,
-    pub(crate) transcript_disclosure_overrides: HashSet<usize>,
+    pub(crate) transcript_disclosure_states: HashMap<usize, bool>,
     last_transcript_count: usize,
     fps_monitor: Option<Entity<FpsMonitor>>,
     extension: ExtensionUiState,
@@ -101,6 +109,13 @@ pub(crate) struct PiApp {
     sessions_sheet: bool,
     archived_sessions_expanded: bool,
     run_sheet: bool,
+    context_details_expanded: bool,
+    completed_agents_expanded: bool,
+    limited_agents_expanded: bool,
+    agent_detail: Option<String>,
+    agent_detail_focus: FocusHandle,
+    agent_detail_return_focus: Option<FocusHandle>,
+    pending_agent_detail_setup: bool,
     _composer_subscription: Subscription,
     _search_subscription: Subscription,
     _event_task: Task<()>,
@@ -201,7 +216,7 @@ impl PiApp {
             crate::theme::THEME.layout.transcript_overdraw,
         );
         transcript_list.set_follow_mode(FollowMode::Tail);
-        let fps_monitor = debug_enabled().then(|| {
+        let fps_monitor = (std::env::var("DEBUG").ok().as_deref() == Some("true")).then(|| {
             cx.new(|cx| {
                 FpsMonitor::new(window, cx)
                     .continuous(true)
@@ -235,6 +250,10 @@ impl PiApp {
                 ..RuntimeSnapshot::default()
             }),
             sessions: Vec::new(),
+            all_sessions: Vec::new(),
+            agent_activities: HashMap::new(),
+            agent_row_focus: HashMap::new(),
+            changes: changes::ChangesState::new(cx),
             session_order,
             run_statuses: HashMap::new(),
             recent_completions: HashMap::new(),
@@ -280,7 +299,7 @@ impl PiApp {
             transcript_rows: Arc::new(Vec::new()),
             transcript_following: true,
             transcript_unseen: 0,
-            transcript_disclosure_overrides: HashSet::new(),
+            transcript_disclosure_states: HashMap::new(),
             last_transcript_count: 0,
             fps_monitor,
             extension: ExtensionUiState::default(),
@@ -295,41 +314,16 @@ impl PiApp {
             sessions_sheet: false,
             archived_sessions_expanded: false,
             run_sheet: false,
+            context_details_expanded: false,
+            completed_agents_expanded: false,
+            limited_agents_expanded: false,
+            agent_detail: None,
+            agent_detail_focus: cx.focus_handle(),
+            agent_detail_return_focus: None,
+            pending_agent_detail_setup: false,
             _composer_subscription: composer_subscription,
             _search_subscription: search_subscription,
             _event_task: event_task,
-        }
-    }
-
-    fn notify_region<V>(region: &Entity<V>, cx: &mut Context<Self>)
-    where
-        V: gpui::Render,
-    {
-        region.update(cx, |_, cx| cx.notify());
-    }
-
-    fn notify_session_rail(&self, cx: &mut Context<Self>) {
-        Self::notify_region(&self.session_rail_view, cx);
-    }
-
-    fn notify_transcript(&self, cx: &mut Context<Self>) {
-        Self::notify_region(&self.transcript_view, cx);
-    }
-
-    fn notify_composer(&self, cx: &mut Context<Self>) {
-        Self::notify_region(&self.composer_view, cx);
-    }
-
-    fn notify_run_panel(&self, cx: &mut Context<Self>) {
-        Self::notify_region(&self.run_panel_view, cx);
-    }
-
-    fn send(&mut self, command: RuntimeCommand) {
-        if let Err(error) = self.runtime.send(command) {
-            let snapshot = Arc::make_mut(&mut self.snapshot);
-            let index = snapshot.conversation.items.len();
-            snapshot.conversation.push_transport_error(error);
-            self.mark_transcript_changed(index, index == 0);
         }
     }
 
@@ -417,17 +411,43 @@ impl PiApp {
                 RuntimeEvent::Sessions {
                     generation,
                     sessions,
+                    all_sessions,
+                    activities,
                     ..
                 } if generation >= self.session_generation => {
                     self.session_generation = generation;
-                    for session in &sessions {
+                    for session in &all_sessions {
                         projects::add_unique(&mut self.projects, session.project.clone());
                     }
                     self.sessions_error = None;
-                    if add_new_sessions_to_order(&mut self.session_order, &sessions) {
+                    if add_new_sessions_to_order(&mut self.session_order, &all_sessions) {
                         self.save_session_order();
                     }
                     self.sessions = sessions;
+                    self.all_sessions = all_sessions;
+                    if let Some((activities, exhaustive)) = activities {
+                        if exhaustive {
+                            self.agent_activities = activities;
+                        } else {
+                            self.agent_activities.extend(activities);
+                        }
+                    }
+                    if self
+                        .agent_detail
+                        .as_ref()
+                        .is_some_and(|id| !self.agent_activities.contains_key(id))
+                    {
+                        self.agent_detail = None;
+                        self.agent_detail_return_focus = None;
+                        self.pending_agent_detail_setup = false;
+                    }
+                    self.agent_row_focus
+                        .retain(|id, _| self.agent_activities.contains_key(id));
+                    for id in self.agent_activities.keys() {
+                        self.agent_row_focus
+                            .entry(id.clone())
+                            .or_insert_with(|| cx.focus_handle());
+                    }
                     self.reconcile_submitted_drafts(cx);
                 }
                 RuntimeEvent::SessionsFailed {
@@ -495,6 +515,7 @@ impl PiApp {
         }
         if run_dirty {
             self.notify_run_panel(cx);
+            self.request_changes_refresh(cx);
         }
         if changed {
             cx.notify();
@@ -579,7 +600,7 @@ impl PiApp {
         self.transcript_list.reset(0);
         self.transcript_rows = Arc::new(Vec::new());
         self.transcript_list.set_follow_mode(FollowMode::Tail);
-        self.transcript_disclosure_overrides.clear();
+        self.transcript_disclosure_states.clear();
         self.transcript_following = true;
         self.transcript_unseen = 0;
         self.last_transcript_count = 0;
@@ -868,101 +889,6 @@ impl PiApp {
         self.send(RuntimeCommand::SetThinking(level));
         cx.notify();
     }
-
-    fn respond_value(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
-        let value = self.dialog_input.read(cx).value().to_string();
-        if let Some(response) = self.extension.respond_value(&id, value) {
-            self.send(RuntimeCommand::ExtensionResponse(response));
-            self.advance_or_restore_dialog(window, cx);
-        }
-    }
-    fn respond_confirm(
-        &mut self,
-        id: String,
-        confirmed: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(response) = self.extension.respond_confirm(&id, confirmed) {
-            self.send(RuntimeCommand::ExtensionResponse(response));
-            self.advance_or_restore_dialog(window, cx);
-        }
-    }
-    fn cancel_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(id) = self
-            .extension
-            .dialog
-            .as_ref()
-            .and_then(ExtensionUiRequest::dialog_id)
-            .map(str::to_owned)
-        else {
-            return;
-        };
-        if let Some(response) = self.extension.cancel(&id) {
-            self.send(RuntimeCommand::ExtensionResponse(response));
-            self.advance_or_restore_dialog(window, cx);
-        }
-    }
-    fn advance_or_restore_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.extension.dialog.is_some() {
-            self.pending_dialog_setup = true;
-            cx.notify();
-        } else {
-            self.restore_dialog_focus(window, cx);
-        }
-    }
-    fn restore_dialog_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let focus = self
-            .dialog_return_focus
-            .take()
-            .unwrap_or_else(|| self.composer_focus.clone());
-        focus.focus(window, cx);
-        cx.notify();
-    }
-
-    fn open_sessions_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.sheet_return_focus = window.focused(cx);
-        self.sessions_sheet = true;
-        self.pending_sheet_setup = true;
-        cx.notify();
-    }
-
-    fn open_run_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.sheet_return_focus = window.focused(cx);
-        self.run_sheet = true;
-        self.pending_sheet_setup = true;
-        cx.notify();
-    }
-
-    fn close_sessions_sheet_after_selection(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.sessions_sheet {
-            self.close_sheet(window, cx);
-        }
-    }
-
-    fn close_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.sessions_sheet = false;
-        self.run_sheet = false;
-        self.pending_sheet_setup = false;
-        let focus = self
-            .sheet_return_focus
-            .take()
-            .unwrap_or_else(|| self.composer_focus.clone());
-        focus.focus(window, cx);
-        cx.notify();
-    }
-
-    fn dismiss_surface(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.extension.dialog.is_some() {
-            self.cancel_dialog(window, cx);
-        } else if self.sessions_sheet || self.run_sheet {
-            self.close_sheet(window, cx);
-        }
-    }
 }
 
 fn session_rail_snapshot_changed(
@@ -1051,195 +977,6 @@ fn move_to(order: &mut Vec<String>, source: &str, target: &str) -> bool {
     true
 }
 
-fn debug_enabled() -> bool {
-    debug_value_enabled(std::env::var("DEBUG").ok().as_deref())
-}
-
-fn debug_value_enabled(value: Option<&str>) -> bool {
-    value == Some("true")
-}
-
-impl Drop for PiApp {
-    fn drop(&mut self) {
-        let _ = self.runtime.send(RuntimeCommand::Shutdown);
-    }
-}
-
 #[cfg(test)]
-mod tests {
-    use std::time::SystemTime;
-
-    use super::*;
-    use crate::{
-        conversation::{TranscriptItem, TranscriptKind},
-        sessions::UsageSummary,
-    };
-
-    fn item(text: &str) -> TranscriptItem {
-        TranscriptItem {
-            kind: TranscriptKind::Assistant,
-            label: "Pi".into(),
-            text: text.into(),
-            streaming: false,
-            is_error: false,
-            tool_call_id: None,
-            tool_output: String::new(),
-            tool_presentation: None,
-        }
-    }
-
-    #[test]
-    fn done_is_recent_only_after_an_active_status_transition() {
-        assert!(!starts_recent_completion(None, "Done", false));
-        assert!(!starts_recent_completion(Some("Done"), "Done", false));
-        assert!(starts_recent_completion(Some("Working"), "Done", false));
-        assert!(starts_recent_completion(None, "Done", true));
-        assert!(!starts_recent_completion(Some("Working"), "Failed", false));
-    }
-
-    #[test]
-    fn new_sessions_are_added_by_creation_without_resorting_existing_sessions() {
-        let session = |id: &str, timestamp: &str| {
-            SessionSummary::from_cached(
-                id.into(),
-                PathBuf::from(format!("/{id}.jsonl")),
-                PathBuf::from("/project"),
-                id.into(),
-                String::new(),
-                timestamp.into(),
-                None,
-                SystemTime::UNIX_EPOCH,
-                0,
-                UsageSummary::default(),
-                false,
-                false,
-                String::new(),
-            )
-        };
-        let mut order = vec!["manual-b".into(), "manual-a".into()];
-
-        assert!(add_new_sessions_to_order(
-            &mut order,
-            &[
-                session("manual-a", "2026-01-01"),
-                session("manual-b", "2026-01-02"),
-                session("new-old", "2026-01-03"),
-                session("new-new", "2026-01-04"),
-            ],
-        ));
-        assert_eq!(order, vec!["new-new", "new-old", "manual-b", "manual-a"]);
-    }
-
-    #[test]
-    fn selecting_a_subagent_does_not_invalidate_the_session_rail() {
-        let session = |id: &str, parent: Option<&str>| {
-            SessionSummary::from_cached(
-                id.into(),
-                PathBuf::from(format!("/{id}.jsonl")),
-                PathBuf::from("/project"),
-                id.into(),
-                String::new(),
-                String::new(),
-                parent.map(str::to_owned),
-                SystemTime::UNIX_EPOCH,
-                0,
-                UsageSummary::default(),
-                false,
-                false,
-                String::new(),
-            )
-        };
-        let sessions = vec![session("root", None), session("child", Some("root"))];
-        let previous = RuntimeSnapshot {
-            selected_session: Some(PathBuf::from("/root.jsonl")),
-            ..RuntimeSnapshot::default()
-        };
-        let next = RuntimeSnapshot {
-            selected_session: Some(PathBuf::from("/child.jsonl")),
-            ..RuntimeSnapshot::default()
-        };
-
-        assert!(!session_rail_snapshot_changed(&sessions, &previous, &next));
-    }
-
-    #[test]
-    fn manual_session_move_is_stable() {
-        let mut order = vec!["a".into(), "b".into(), "c".into()];
-        assert!(move_to(&mut order, "c", "a"));
-        assert_eq!(order, vec!["c", "a", "b"]);
-        assert!(move_to(&mut order, "c", "b"));
-        assert_eq!(order, vec!["a", "b", "c"]);
-        assert!(!move_to(&mut order, "c", "c"));
-    }
-
-    #[test]
-    fn fps_debug_flag_accepts_only_literal_true() {
-        assert!(super::debug_value_enabled(Some("true")));
-        assert!(!super::debug_value_enabled(Some("TRUE")));
-        assert!(!super::debug_value_enabled(Some("1")));
-        assert!(!super::debug_value_enabled(None));
-    }
-
-    #[test]
-    fn transcript_splice_keeps_unchanged_rows_out_of_the_render_path() {
-        let current = vec![item("one"), item("two"), item("three")];
-        assert_eq!(transcript_splice(&current, &current), None);
-
-        let mut updated = current.clone();
-        updated[1] = item("changed");
-        assert_eq!(transcript_splice(&current, &updated), Some((1..2, 1)));
-
-        let mut appended = current.clone();
-        appended.push(item("four"));
-        assert_eq!(transcript_splice(&current, &appended), Some((3..3, 1)));
-    }
-
-    #[test]
-    fn extension_dialog_is_parked_and_restored_with_its_session() {
-        let mut visible = ExtensionUiState::default();
-        visible.apply(ExtensionUiRequest::Confirm {
-            id: "approval".into(),
-            title: "Permission".into(),
-            message: "Allow it?".into(),
-            timeout: None,
-        });
-        let mut parked = None;
-
-        park_extension_surface(&mut visible, &mut parked);
-        assert!(visible.dialog.is_none());
-        assert_eq!(
-            parked
-                .as_ref()
-                .and_then(|session| session.dialog.as_ref())
-                .and_then(ExtensionUiRequest::dialog_id),
-            Some("approval")
-        );
-        parked
-            .as_mut()
-            .expect("live session surface should be parked")
-            .apply(ExtensionUiRequest::Input {
-                id: "follow-up".into(),
-                title: "Need a note".into(),
-                placeholder: None,
-                timeout: None,
-            });
-
-        restore_extension_surface(&mut visible, &mut parked);
-        assert!(parked.is_none());
-        assert_eq!(
-            visible
-                .dialog
-                .as_ref()
-                .and_then(ExtensionUiRequest::dialog_id),
-            Some("approval")
-        );
-        assert!(visible.respond_confirm("approval", true).is_some());
-        assert_eq!(
-            visible
-                .dialog
-                .as_ref()
-                .and_then(ExtensionUiRequest::dialog_id),
-            Some("follow-up")
-        );
-    }
-}
+#[path = "app_tests.rs"]
+mod tests;

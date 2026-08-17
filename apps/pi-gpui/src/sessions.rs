@@ -4,18 +4,22 @@ use std::{
     cmp::Reverse,
     collections::{BinaryHeap, HashMap, HashSet, VecDeque},
     fs::{self, File},
-    io::{BufRead as _, BufReader},
+    io::{BufRead as _, BufReader, Read as _},
     path::{Component, Path, PathBuf},
+    sync::{Mutex, OnceLock},
     time::SystemTime,
 };
 
 use serde_json::Value;
+
+use crate::agent_activity::{ActivityBuilder, AgentActivity, parse_iso_timestamp};
 
 const MAX_CANDIDATES: usize = 2_000;
 const MAX_DIRECTORIES: usize = 2_000;
 const MAX_DEPTH: usize = 6;
 const MAX_LINES_PER_FILE: usize = 10_000;
 const MAX_SEARCH_BYTES: usize = 64 * 1024;
+const MAX_HEADER_BYTES: usize = 64 * 1024;
 const RUNNING_ACTIVITY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -74,6 +78,9 @@ impl SessionSummary {
         search: String,
     ) -> Self {
         let is_running = recently_running(is_running, modified, SystemTime::now());
+        let parent_session = parent_session
+            .as_deref()
+            .and_then(|parent| resolve_parent_session(&path, parent));
         Self {
             id,
             path,
@@ -94,6 +101,66 @@ impl SessionSummary {
     pub(crate) fn search_text(&self) -> &str {
         &self.search
     }
+}
+
+pub(crate) fn filter_session_tree(
+    mut sessions: Vec<SessionSummary>,
+    query: &str,
+) -> Vec<SessionSummary> {
+    let needle = query.to_lowercase();
+    if needle.is_empty() {
+        return sessions;
+    }
+    let by_id = sessions
+        .iter()
+        .map(|session| (session.id.as_str(), session))
+        .collect::<HashMap<_, _>>();
+    let mut included = sessions
+        .iter()
+        .filter(|session| session.search.contains(&needle))
+        .map(|session| session.id.clone())
+        .collect::<HashSet<_>>();
+    for id in included.clone() {
+        let mut current = by_id.get(id.as_str()).copied();
+        let mut seen = HashSet::new();
+        while let Some(session) = current {
+            if !seen.insert(session.id.as_str()) {
+                break;
+            }
+            included.insert(session.id.clone());
+            current = session
+                .parent_session
+                .as_deref()
+                .and_then(|parent| by_id.get(parent).copied());
+        }
+    }
+    let by_parent = sessions.iter().fold(
+        HashMap::<&str, Vec<&str>>::new(),
+        |mut children, session| {
+            if let Some(parent) = session.parent_session.as_deref() {
+                children
+                    .entry(parent)
+                    .or_default()
+                    .push(session.id.as_str());
+            }
+            children
+        },
+    );
+    let mut stack = included.iter().cloned().collect::<Vec<_>>();
+    let mut expanded = HashSet::new();
+    while let Some(parent) = stack.pop() {
+        if !expanded.insert(parent.clone()) {
+            continue;
+        }
+        if let Some(children) = by_parent.get(parent.as_str()) {
+            for child in children {
+                included.insert((*child).to_owned());
+                stack.push((*child).to_owned());
+            }
+        }
+    }
+    sessions.retain(|session| included.contains(&session.id));
+    sessions
 }
 
 pub(crate) fn root_sessions(sessions: &[SessionSummary]) -> Vec<&SessionSummary> {
@@ -206,11 +273,31 @@ fn session_root_from_at(
 #[derive(Clone, Debug)]
 pub(crate) struct SessionDiscovery {
     pub sessions: Vec<SessionSummary>,
+    pub activities: HashMap<String, AgentActivity>,
     pub exhaustive: bool,
 }
 
+#[derive(Clone)]
+struct CachedCandidate {
+    len: u64,
+    modified: SystemTime,
+    parsed: (SessionSummary, AgentActivity),
+}
+
+#[derive(Default)]
+struct DiscoveryCache {
+    candidates: HashMap<PathBuf, CachedCandidate>,
+}
+
+static DISCOVERY_CACHE: OnceLock<Mutex<DiscoveryCache>> = OnceLock::new();
+
 pub(crate) fn discover(query: &str) -> Result<SessionDiscovery, String> {
-    discover_in_with_status(&configured_session_root()?, query)
+    let root = configured_session_root()?;
+    let cache = DISCOVERY_CACHE.get_or_init(|| Mutex::new(DiscoveryCache::default()));
+    let mut cache = cache
+        .lock()
+        .map_err(|_| "session discovery cache is unavailable".to_owned())?;
+    discover_in_cached(&root, query, &mut cache)
 }
 
 /// Read the visible, active branch of a session without starting Pi.
@@ -342,12 +429,28 @@ pub(crate) fn discover_in(root: &Path, query: &str) -> Result<Vec<SessionSummary
     discover_in_with_status(root, query).map(|discovery| discovery.sessions)
 }
 
+#[cfg(test)]
 fn discover_in_with_status(root: &Path, query: &str) -> Result<SessionDiscovery, String> {
-    if !root.exists() {
-        return Ok(SessionDiscovery {
-            sessions: Vec::new(),
-            exhaustive: true,
-        });
+    discover_in_cached(root, query, &mut DiscoveryCache::default())
+}
+
+fn discover_in_cached(
+    root: &Path,
+    query: &str,
+    cache: &mut DiscoveryCache,
+) -> Result<SessionDiscovery, String> {
+    match fs::metadata(root) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(SessionDiscovery {
+                sessions: Vec::new(),
+                activities: HashMap::new(),
+                exhaustive: true,
+            });
+        }
+        Err(error) => {
+            return Err(format!("inspect session root {}: {error}", root.display()));
+        }
     }
     let mut candidates = BinaryHeap::<Reverse<(SystemTime, PathBuf)>>::new();
     let mut exhaustive = true;
@@ -361,21 +464,48 @@ fn discover_in_with_status(root: &Path, query: &str) -> Result<SessionDiscovery,
         directories_seen = directories_seen.saturating_add(1);
         let entries = match fs::read_dir(&directory) {
             Ok(entries) => entries,
-            Err(_) => continue,
+            Err(_) => {
+                exhaustive = false;
+                continue;
+            }
         };
-        for entry in entries.flatten() {
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(_) => {
+                    exhaustive = false;
+                    continue;
+                }
+            };
             let path = entry.path();
-            if path.is_dir() {
+            let file_type = match entry.file_type() {
+                Ok(file_type) => file_type,
+                Err(_) => {
+                    exhaustive = false;
+                    continue;
+                }
+            };
+            if file_type.is_dir() {
                 if depth < MAX_DEPTH {
                     queue.push_back((path, depth + 1));
                 } else {
                     exhaustive = false;
                 }
             } else if path.extension().and_then(|value| value.to_str()) == Some("jsonl") {
-                let modified = entry
-                    .metadata()
-                    .and_then(|metadata| metadata.modified())
-                    .unwrap_or(SystemTime::UNIX_EPOCH);
+                let metadata = match entry.metadata() {
+                    Ok(metadata) => metadata,
+                    Err(_) => {
+                        exhaustive = false;
+                        continue;
+                    }
+                };
+                let modified = match metadata.modified() {
+                    Ok(modified) => modified,
+                    Err(_) => {
+                        exhaustive = false;
+                        continue;
+                    }
+                };
                 let candidate = (modified, path);
                 if candidates.len() < MAX_CANDIDATES {
                     candidates.push(Reverse(candidate));
@@ -389,68 +519,66 @@ fn discover_in_with_status(root: &Path, query: &str) -> Result<SessionDiscovery,
             }
         }
     }
-    let mut sessions = candidates
-        .into_iter()
-        .map(|Reverse((_, path))| path)
-        .filter_map(|path| parse_candidate(&path).ok().flatten())
-        .collect::<Vec<_>>();
-    let needle = query.to_lowercase();
-    if !needle.is_empty() {
-        let by_id = sessions
-            .iter()
-            .map(|session| (session.id.as_str(), session))
-            .collect::<HashMap<_, _>>();
-        let mut included = sessions
-            .iter()
-            .filter(|session| session.search.contains(&needle))
-            .map(|session| session.id.clone())
-            .collect::<HashSet<_>>();
-        let matches = included.clone();
-        for id in matches {
-            let mut current = by_id.get(id.as_str()).copied();
-            let mut seen = HashSet::new();
-            while let Some(session) = current {
-                if !seen.insert(session.id.as_str()) {
-                    break;
-                }
-                included.insert(session.id.clone());
-                current = session
-                    .parent_session
-                    .as_deref()
-                    .and_then(|parent| by_id.get(parent).copied());
-            }
-        }
-        let by_parent = sessions.iter().fold(
-            HashMap::<&str, Vec<&str>>::new(),
-            |mut children, session| {
-                if let Some(parent) = session.parent_session.as_deref() {
-                    children
-                        .entry(parent)
-                        .or_default()
-                        .push(session.id.as_str());
-                }
-                children
-            },
-        );
-        let mut stack = sessions
-            .iter()
-            .filter(|session| session.parent_session.is_none() && included.contains(&session.id))
-            .map(|session| session.id.as_str())
-            .collect::<Vec<_>>();
-        let mut expanded = HashSet::new();
-        while let Some(parent) = stack.pop() {
-            if !expanded.insert(parent) {
+    let mut seen = HashSet::new();
+    let mut parsed = Vec::new();
+    for Reverse((modified, path)) in candidates {
+        let normalized = normalize_session_path(&path);
+        seen.insert(normalized.clone());
+        let metadata = match fs::metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(_) => {
+                exhaustive = false;
                 continue;
             }
-            if let Some(children) = by_parent.get(parent) {
-                for child in children {
-                    included.insert((*child).to_owned());
-                    stack.push(*child);
-                }
+        };
+        let len = metadata.len();
+        if let Some(cached) = cache.candidates.get(&normalized)
+            && cached.len == len
+            && cached.modified == modified
+        {
+            let mut value = cached.parsed.clone();
+            value.0.is_running =
+                recently_running(value.0.is_running, value.0.modified, SystemTime::now());
+            if !value.0.is_running
+                && matches!(
+                    value.1.lifecycle,
+                    crate::agent_activity::AgentLifecycle::NeedsInput
+                        | crate::agent_activity::AgentLifecycle::Working
+                )
+            {
+                value.1.lifecycle = crate::agent_activity::AgentLifecycle::Unknown;
+                value.1.current_tool = None;
             }
+            parsed.push(value);
+            continue;
         }
-        sessions.retain(|session| included.contains(&session.id));
+        match parse_candidate(&path) {
+            Ok(Some(value)) => {
+                cache.candidates.insert(
+                    normalized,
+                    CachedCandidate {
+                        len,
+                        modified,
+                        parsed: value.clone(),
+                    },
+                );
+                parsed.push(value);
+            }
+            Ok(None) | Err(_) => exhaustive = false,
+        }
     }
+    if exhaustive {
+        cache.candidates.retain(|path, _| seen.contains(path));
+    }
+    let activities = parsed
+        .iter()
+        .map(|(_, activity)| (activity.session_id.clone(), activity.clone()))
+        .collect();
+    let mut sessions = parsed
+        .into_iter()
+        .map(|(session, _)| session)
+        .collect::<Vec<_>>();
+    sessions = filter_session_tree(sessions, query);
     sessions.sort_by(|left, right| {
         right
             .modified
@@ -459,16 +587,22 @@ fn discover_in_with_status(root: &Path, query: &str) -> Result<SessionDiscovery,
     });
     Ok(SessionDiscovery {
         sessions,
+        activities,
         exhaustive,
     })
 }
 
-fn parse_candidate(path: &Path) -> Result<Option<SessionSummary>, String> {
+fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)>, String> {
     let file = File::open(path).map_err(|error| format!("open {}: {error}", path.display()))?;
-    let modified = file
-        .metadata()
-        .and_then(|metadata| metadata.modified())
+    let metadata = file.metadata().ok();
+    let modified = metadata
+        .as_ref()
+        .and_then(|metadata| metadata.modified().ok())
         .unwrap_or(SystemTime::UNIX_EPOCH);
+    let file_started = metadata
+        .as_ref()
+        .and_then(|metadata| metadata.created().ok())
+        .unwrap_or(modified);
     let mut reader = BufReader::new(file);
     let mut line = Vec::new();
     if reader
@@ -508,26 +642,35 @@ fn parse_candidate(path: &Path) -> Result<Option<SessionSummary>, String> {
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_owned();
+    let started = parse_iso_timestamp(&timestamp).unwrap_or(file_started);
     let parent_session = header
         .get("parentSession")
         .and_then(Value::as_str)
-        .map(str::to_owned)
+        .and_then(|parent| resolve_parent_session(path, parent))
         .or_else(|| parent_session_from_path(path));
     let mut name = None;
     let mut first_user_message = None;
+    let mut activity = ActivityBuilder::default();
+    let mut detail_limited = true;
     let mut message_count = 0_usize;
     let mut usage = UsageSummary::default();
     let mut is_running = false;
     let mut search = String::new();
     for _ in 0..MAX_LINES_PER_FILE {
         line.clear();
-        if reader.read_until(b'\n', &mut line).unwrap_or(0) == 0 {
+        if reader
+            .read_until(b'\n', &mut line)
+            .map_err(|error| format!("read {}: {error}", path.display()))?
+            == 0
+        {
+            detail_limited = false;
             break;
         }
         trim_frame(&mut line);
         let Ok(entry) = serde_json::from_slice::<Value>(&line) else {
             continue;
         };
+        activity.observe_entry(&entry);
         match entry.get("type").and_then(Value::as_str) {
             Some("session_info") => {
                 name = entry
@@ -565,28 +708,57 @@ fn parse_candidate(path: &Path) -> Result<Option<SessionSummary>, String> {
             _ => {}
         }
     }
-    let is_running = recently_running(is_running, modified, SystemTime::now());
+    if detail_limited {
+        line.clear();
+        detail_limited = reader
+            .read_until(b'\n', &mut line)
+            .map_err(|error| format!("read {}: {error}", path.display()))?
+            != 0;
+    }
+    let is_running = !detail_limited && recently_running(is_running, modified, SystemTime::now());
     let first_user_message = first_user_message.unwrap_or_default();
     let title = name
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| fallback_title(&first_user_message, &timestamp));
     append_bounded(&mut search, &title);
     append_bounded(&mut search, &project.to_string_lossy());
-    Ok(Some(SessionSummary {
-        id,
-        path: normalize_session_path(path),
-        project,
-        title,
-        first_user_message,
-        timestamp,
-        parent_session,
-        modified,
-        message_count,
+    let session_path = normalize_session_path(path);
+    let mut activity = activity.finish(
+        id.clone(),
+        session_path.clone(),
+        &project,
+        &title,
+        &first_user_message,
         usage,
-        settled: false,
+        started,
+        modified,
         is_running,
-        search: search.to_lowercase(),
-    }))
+        detail_limited,
+    );
+    if detail_limited {
+        activity.lifecycle = crate::agent_activity::AgentLifecycle::Unknown;
+        activity.current_tool = None;
+        activity.ended = None;
+        activity.elapsed = None;
+    }
+    Ok(Some((
+        SessionSummary {
+            id,
+            path: session_path,
+            project,
+            title,
+            first_user_message,
+            timestamp,
+            parent_session,
+            modified,
+            message_count,
+            usage,
+            settled: false,
+            is_running,
+            search: search.to_lowercase(),
+        },
+        activity,
+    )))
 }
 
 fn recently_running(incomplete: bool, modified: SystemTime, now: SystemTime) -> bool {
@@ -633,6 +805,67 @@ fn message_usage(message: &Value) -> UsageSummary {
 
 fn u64_field(value: &Value, field: &str) -> u64 {
     value.get(field).and_then(Value::as_u64).unwrap_or(0)
+}
+
+fn resolve_parent_session(session_path: &Path, parent: &str) -> Option<String> {
+    let parent = parent.trim();
+    if parent.is_empty() {
+        return None;
+    }
+    let reference = Path::new(parent);
+    let path_like = reference.is_absolute()
+        || reference
+            .extension()
+            .and_then(|extension| extension.to_str())
+            == Some("jsonl")
+        || reference.components().count() > 1;
+    if !path_like {
+        return Some(parent.to_owned());
+    }
+
+    let referenced_path = if reference.is_absolute() {
+        reference.to_owned()
+    } else {
+        session_path.parent()?.join(reference)
+    };
+    Some(
+        session_header_id(&normalize_session_path(&referenced_path))
+            .unwrap_or_else(|| unresolved_parent_id(reference)),
+    )
+}
+
+fn unresolved_parent_id(reference: &Path) -> String {
+    if let Some(stem) = reference
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| !stem.is_empty())
+    {
+        return stem.rsplit('_').next().unwrap_or(stem).to_owned();
+    }
+    let hash = reference
+        .to_string_lossy()
+        .bytes()
+        .fold(0xcbf29ce484222325_u64, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
+        });
+    format!("unresolved-parent-{hash:016x}")
+}
+
+fn session_header_id(path: &Path) -> Option<String> {
+    let file = File::open(path).ok()?;
+    let mut reader = BufReader::new(file).take((MAX_HEADER_BYTES + 1) as u64);
+    let mut line = Vec::new();
+    let read = reader.read_until(b'\n', &mut line).ok()?;
+    if read == 0 || line.len() > MAX_HEADER_BYTES {
+        return None;
+    }
+    trim_frame(&mut line);
+    let header = serde_json::from_slice::<Value>(&line).ok()?;
+    (header.get("type").and_then(Value::as_str) == Some("session"))
+        .then(|| header.get("id").and_then(Value::as_str))
+        .flatten()
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
 }
 
 fn parent_session_from_path(path: &Path) -> Option<String> {
@@ -750,407 +983,5 @@ pub(crate) fn normalize_lexical(path: &Path) -> PathBuf {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::{error::Error, fs, io::Write as _};
-    use tempfile::tempdir;
-
-    type TestResult = Result<(), Box<dyn Error>>;
-
-    fn session(
-        root: &Path,
-        file: &str,
-        cwd: &Path,
-        name: Option<&str>,
-        message: &str,
-    ) -> TestResult {
-        session_with_parent(root, file, cwd, name, message, None)
-    }
-
-    fn session_with_parent(
-        root: &Path,
-        file: &str,
-        cwd: &Path,
-        name: Option<&str>,
-        message: &str,
-        parent: Option<&str>,
-    ) -> TestResult {
-        let directory = root.join("custom/nested");
-        fs::create_dir_all(&directory)?;
-        let mut lines = vec![
-            serde_json::json!({"type":"session","version":3,"id":file,"timestamp":"2026-01-02T00:00:00Z","cwd":cwd,"parentSession":parent}),
-        ];
-        lines.push(serde_json::json!({"type":"unknown","data":true}));
-        lines.push(
-            serde_json::json!({"type":"message","message":{"role":"user","content":message}}),
-        );
-        if let Some(name) = name {
-            lines.push(serde_json::json!({"type":"session_info","name":name}));
-        }
-        fs::write(
-            directory.join(format!("{file}.jsonl")),
-            lines
-                .into_iter()
-                .map(|line| line.to_string())
-                .collect::<Vec<_>>()
-                .join("\n"),
-        )?;
-        Ok(())
-    }
-
-    fn nested_session(
-        root: &Path,
-        root_file: &str,
-        id: &str,
-        cwd: &Path,
-        name: &str,
-        message: &str,
-    ) -> TestResult {
-        let directory = root
-            .join("custom/nested")
-            .join(root_file)
-            .join("agent/run-0");
-        fs::create_dir_all(&directory)?;
-        let lines = [
-            serde_json::json!({"type":"session","version":3,"id":id,"timestamp":"2026-01-02T00:00:00Z","cwd":cwd}),
-            serde_json::json!({"type":"message","message":{"role":"user","content":message}}),
-            serde_json::json!({"type":"session_info","name":name}),
-        ];
-        fs::write(
-            directory.join("session.jsonl"),
-            lines
-                .into_iter()
-                .map(|line| line.to_string())
-                .collect::<Vec<_>>()
-                .join("\n"),
-        )?;
-        Ok(())
-    }
-
-    #[test]
-    fn override_resolution_order_is_explicit() {
-        let cwd = Path::new("/work");
-        assert_eq!(
-            session_root_from_at(
-                cwd,
-                Some(Path::new("/h")),
-                Some(Path::new("/a")),
-                Some(Path::new("/s"))
-            ),
-            Ok(PathBuf::from("/s"))
-        );
-        assert_eq!(
-            session_root_from_at(cwd, Some(Path::new("/h")), Some(Path::new("/a")), None),
-            Ok(PathBuf::from("/a/sessions"))
-        );
-        assert_eq!(
-            session_root_from_at(cwd, Some(Path::new("/h")), None, None),
-            Ok(PathBuf::from("/h/.pi/agent/sessions"))
-        );
-        assert_eq!(
-            session_root_from_at(cwd, None, None, Some(Path::new("relative/sessions"))),
-            Ok(PathBuf::from("/work/relative/sessions"))
-        );
-    }
-
-    #[test]
-    fn discovers_all_projects_and_name_or_message_fallback() -> TestResult {
-        let root = tempdir()?;
-        let project = tempdir()?;
-        let other = tempdir()?;
-        session(
-            root.path(),
-            "named",
-            project.path(),
-            Some("Named run"),
-            "first text",
-        )?;
-        session(
-            root.path(),
-            "fallback",
-            project.path(),
-            None,
-            "A useful fallback title continues",
-        )?;
-        session(
-            root.path(),
-            "other",
-            other.path(),
-            Some("Other run"),
-            "visible",
-        )?;
-        let sessions = discover_in(root.path(), "")?;
-        assert_eq!(sessions.len(), 3);
-        assert!(sessions.iter().all(|item| item.path.is_absolute()));
-        assert!(sessions.iter().all(|item| item.project.is_absolute()));
-        assert!(sessions.iter().any(|item| item.title == "Named run"));
-        assert!(sessions.iter().any(|item| {
-            item.title == "Other run"
-                && item.project == other.path().canonicalize().expect("project path")
-        }));
-        assert!(
-            sessions
-                .iter()
-                .any(|item| item.title.starts_with("A useful fallback"))
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn search_is_case_insensitive_and_malformed_entries_do_not_poison() -> TestResult {
-        let root = tempdir()?;
-        let project = tempdir()?;
-        session(root.path(), "one", project.path(), None, "Alpha Beta")?;
-        let path = root.path().join("custom/nested/one.jsonl");
-        let mut content = fs::read_to_string(&path)?;
-        content.push_str("\n{broken\n");
-        fs::write(path, content)?;
-        assert_eq!(discover_in(root.path(), "bEtA")?.len(), 1);
-        Ok(())
-    }
-
-    #[test]
-    fn stale_incomplete_children_are_not_reported_as_running_forever() {
-        let now = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(10_000);
-        assert!(recently_running(
-            true,
-            now - std::time::Duration::from_secs(30),
-            now
-        ));
-        assert!(!recently_running(
-            true,
-            now - RUNNING_ACTIVITY_TIMEOUT - std::time::Duration::from_secs(1),
-            now
-        ));
-        assert!(!recently_running(false, now, now));
-    }
-
-    #[test]
-    fn discovery_tracks_running_children_from_the_last_message_lifecycle() -> TestResult {
-        let root = tempdir()?;
-        let project = tempdir()?;
-        session(root.path(), "running", project.path(), None, "Question")?;
-        session(root.path(), "done", project.path(), None, "Question")?;
-        let directory = root.path().join("custom/nested");
-        fs::OpenOptions::new()
-            .append(true)
-            .open(directory.join("running.jsonl"))?
-            .write_all(
-                format!(
-                    "\n{}\n{}",
-                    serde_json::json!({
-                        "type": "message",
-                        "message": {"role": "assistant", "stopReason": "toolUse"}
-                    }),
-                    serde_json::json!({
-                        "type": "message",
-                        "message": {"role": "toolResult"}
-                    })
-                )
-                .as_bytes(),
-            )?;
-        fs::OpenOptions::new()
-            .append(true)
-            .open(directory.join("done.jsonl"))?
-            .write_all(
-                format!(
-                    "\n{}",
-                    serde_json::json!({
-                        "type": "message",
-                        "message": {"role": "assistant", "stopReason": "stop"}
-                    })
-                )
-                .as_bytes(),
-            )?;
-
-        let sessions = discover_in(root.path(), "")?;
-        assert!(
-            sessions
-                .iter()
-                .find(|session| session.id == "running")
-                .is_some_and(|session| session.is_running)
-        );
-        assert!(
-            !sessions
-                .iter()
-                .find(|session| session.id == "done")
-                .is_some_and(|session| session.is_running)
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn discovery_sums_token_and_cost_usage_from_assistant_messages() -> TestResult {
-        let root = tempdir()?;
-        let project = tempdir()?;
-        session(root.path(), "usage", project.path(), None, "Question")?;
-        let path = root.path().join("custom/nested/usage.jsonl");
-        let mut content = fs::read_to_string(&path)?;
-        content.push_str(&format!(
-            "\n{}",
-            serde_json::json!({
-                "type": "message",
-                "message": {
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": "Answer"}],
-                    "usage": {
-                        "input": 1000,
-                        "output": 200,
-                        "cacheRead": 3000,
-                        "cacheWrite": 50,
-                        "totalTokens": 4250,
-                        "cost": {"total": 0.123456}
-                    }
-                }
-            })
-        ));
-        fs::write(path, content)?;
-
-        let sessions = discover_in(root.path(), "")?;
-        assert_eq!(
-            sessions[0].usage,
-            UsageSummary {
-                input: 1000,
-                output: 200,
-                cache_read: 3000,
-                cache_write: 50,
-                total: 4250,
-                cost_micros: 123_456,
-            }
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn child_search_keeps_its_root_and_hierarchy_is_stable() -> TestResult {
-        let root = tempdir()?;
-        let project = tempdir()?;
-        session(
-            root.path(),
-            "root",
-            project.path(),
-            Some("Main"),
-            "ordinary",
-        )?;
-        nested_session(
-            root.path(),
-            "root",
-            "child",
-            project.path(),
-            "subagent-reviewer-long-id",
-            "Needle",
-        )?;
-        session_with_parent(
-            root.path(),
-            "grandchild",
-            project.path(),
-            Some("subagent-worker-long-id"),
-            "Nested",
-            Some("child"),
-        )?;
-        session_with_parent(
-            root.path(),
-            "orphan",
-            project.path(),
-            Some("subagent-worker-orphan-1"),
-            "Detached",
-            Some("missing"),
-        )?;
-
-        let sessions = discover_in(root.path(), "needle")?;
-        assert_eq!(sessions.len(), 3);
-        let roots = root_sessions(&sessions);
-        assert_eq!(roots.len(), 1);
-        assert_eq!(roots[0].id, "root");
-        let child = sessions
-            .iter()
-            .find(|session| session.id == "child")
-            .expect("matching child should remain");
-        assert_eq!(child.parent_session.as_deref(), Some("root"));
-        assert_eq!(
-            root_session_for_path(&sessions, Some(child.path.as_path()))
-                .map(|session| session.id.as_str()),
-            Some("root")
-        );
-
-        let all = discover_in(root.path(), "")?;
-        assert_eq!(
-            root_sessions(&all)
-                .iter()
-                .map(|session| session.id.as_str())
-                .collect::<Vec<_>>(),
-            vec!["root"]
-        );
-        let descendants = descendant_sessions(&all, "root");
-        assert_eq!(
-            descendants
-                .iter()
-                .map(|(session, depth)| (session.id.as_str(), *depth))
-                .collect::<Vec<_>>(),
-            vec![("child", 1), ("grandchild", 2)]
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn bounded_discovery_keeps_the_newest_candidates_and_reports_partial_results() -> TestResult {
-        let root = tempdir()?;
-        let project = tempdir()?;
-        for index in 0..MAX_CANDIDATES {
-            session(
-                root.path(),
-                &format!("old-{index:04}"),
-                project.path(),
-                None,
-                "old",
-            )?;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(5));
-        session(root.path(), "newest-child", project.path(), None, "new")?;
-
-        let discovery = discover_in_with_status(root.path(), "")?;
-        assert!(!discovery.exhaustive);
-        assert_eq!(discovery.sessions.len(), MAX_CANDIDATES);
-        assert!(
-            discovery
-                .sessions
-                .iter()
-                .any(|session| session.id == "newest-child")
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn history_follows_the_current_branch_and_projects_display_entries() {
-        let entries = vec![
-            serde_json::json!({"type":"message","id":"one","parentId":null,"message":{"role":"user","content":"root"}}),
-            serde_json::json!({"type":"message","id":"old","parentId":"one","message":{"role":"assistant","content":[{"type":"text","text":"old branch"}]}}),
-            serde_json::json!({"type":"message","id":"two","parentId":"one","message":{"role":"assistant","content":[{"type":"text","text":"current"}]}}),
-            serde_json::json!({"type":"custom_message","id":"three","parentId":"two","customType":"note","content":"visible","display":true}),
-        ];
-
-        let history = project_history(&entries);
-
-        assert_eq!(history.len(), 3);
-        assert_eq!(history[0]["content"], "root");
-        assert_eq!(history[1]["content"][0]["text"], "current");
-        assert_eq!(history[2]["role"], "custom");
-    }
-
-    #[test]
-    fn history_matches_pi_compaction_order() {
-        let entries = vec![
-            serde_json::json!({"type":"message","id":"one","parentId":null,"message":{"role":"user","content":"summarized"}}),
-            serde_json::json!({"type":"message","id":"two","parentId":"one","message":{"role":"user","content":"kept"}}),
-            serde_json::json!({"type":"compaction","id":"three","parentId":"two","summary":"summary","firstKeptEntryId":"two"}),
-            serde_json::json!({"type":"message","id":"four","parentId":"three","message":{"role":"user","content":"after"}}),
-        ];
-
-        let history = project_history(&entries);
-
-        assert_eq!(history.len(), 3);
-        assert_eq!(history[0]["role"], "compactionSummary");
-        assert_eq!(history[1]["content"], "kept");
-        assert_eq!(history[2]["content"], "after");
-    }
-}
+#[path = "sessions_tests.rs"]
+mod tests;

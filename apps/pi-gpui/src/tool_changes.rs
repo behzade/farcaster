@@ -1,23 +1,33 @@
 //! Native, selectable presentations for file mutation tools.
 
-use std::path::Path;
+use std::{path::Path, rc::Rc};
 
 use gpui::{
-    AnyElement, InteractiveElement as _, IntoElement, Overflow, ParentElement as _,
-    StyleRefinement, Styled as _, div, prelude::FluentBuilder as _, px, rems, transparent_black,
+    AnyElement, App, InteractiveElement as _, IntoElement, ParentElement as _,
+    StatefulInteractiveElement as _, StyleRefinement, Styled as _, Window, div,
+    prelude::FluentBuilder as _, px, rems, transparent_black,
 };
 use gpui_component::{
+    Sizable as _, Size,
+    button::{Button, ButtonVariants as _},
     highlighter::HighlightTheme,
     text::{TextView, TextViewStyle},
 };
 
 use crate::{
     conversation::{EditDiffFormat, ToolPresentation},
-    theme::{READING_FONT_FAMILY, THEME},
+    theme::{MONO_FONT_FAMILY, THEME},
 };
 
-const MAX_DIFF_LINES: usize = 600;
-const SOFT_WRAP_COLUMNS: usize = 12;
+const MAX_DIFF_LINES: usize = 140;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum EmbeddedDiffMode {
+    Split,
+    Unified,
+}
+
+pub(crate) type ExpandHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ChangeKind {
@@ -53,7 +63,12 @@ pub(crate) enum PreparedToolChange {
     Write(Vec<ChangeLine>),
 }
 
-pub(crate) fn render(presentation: &ToolPresentation, key: usize) -> AnyElement {
+pub(crate) fn render(
+    presentation: &ToolPresentation,
+    key: usize,
+    requested_mode: EmbeddedDiffMode,
+    on_expand: Option<ExpandHandler>,
+) -> AnyElement {
     let (path, prepared) = match presentation {
         ToolPresentation::Edit {
             path,
@@ -79,8 +94,13 @@ pub(crate) fn render(presentation: &ToolPresentation, key: usize) -> AnyElement 
         ),
     };
     let language = language_for_path(path);
+    let mode = match prepared {
+        PreparedToolChange::Edit(_) => requested_mode,
+        PreparedToolChange::Write(_) => EmbeddedDiffMode::Unified,
+    };
+    let metadata = diff_metadata(path, prepared, mode);
     let body = match prepared {
-        PreparedToolChange::Edit(rows) => render_edit_diff(rows, &language, key),
+        PreparedToolChange::Edit(rows) => render_edit_diff(rows, &language, key, mode),
         PreparedToolChange::Write(rows) => render_write_diff(rows, &language, key),
     };
     div()
@@ -91,8 +111,115 @@ pub(crate) fn render(presentation: &ToolPresentation, key: usize) -> AnyElement 
         .border_y(THEME.border)
         .border_color(THEME.colors.border)
         .bg(THEME.colors.canvas)
+        .child(render_diff_header(metadata, key, on_expand))
         .child(body)
         .into_any_element()
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DiffMetadata<'a> {
+    path: &'a str,
+    additions: usize,
+    deletions: usize,
+    mode: EmbeddedDiffMode,
+}
+
+fn diff_metadata<'a>(
+    path: &'a str,
+    prepared: &PreparedToolChange,
+    mode: EmbeddedDiffMode,
+) -> DiffMetadata<'a> {
+    let (additions, deletions) = match prepared {
+        PreparedToolChange::Edit(rows) => rows.iter().fold((0, 0), |counts, row| {
+            (
+                counts.0
+                    + usize::from(
+                        row.new
+                            .as_ref()
+                            .is_some_and(|line| line.kind == ChangeKind::Addition),
+                    ),
+                counts.1
+                    + usize::from(
+                        row.old
+                            .as_ref()
+                            .is_some_and(|line| line.kind == ChangeKind::Deletion),
+                    ),
+            )
+        }),
+        PreparedToolChange::Write(rows) => (
+            rows.iter()
+                .filter(|line| line.kind == ChangeKind::Addition)
+                .count(),
+            0,
+        ),
+    };
+    DiffMetadata {
+        path,
+        additions,
+        deletions,
+        mode,
+    }
+}
+
+fn render_diff_header(
+    metadata: DiffMetadata<'_>,
+    key: usize,
+    on_expand: Option<ExpandHandler>,
+) -> impl IntoElement {
+    let expand = on_expand.map(|handler| {
+        Button::new(("expand-tool-change", key))
+            .label("Expand")
+            .with_size(Size::XSmall)
+            .ghost()
+            .on_click(move |_, window, cx| handler(window, cx))
+    });
+    div()
+        .w_full()
+        .min_w_0()
+        .h(px(34.0))
+        .px(THEME.space.sm)
+        .flex()
+        .items_center()
+        .gap(THEME.space.sm)
+        .border_b(THEME.border)
+        .border_color(THEME.colors.border)
+        .bg(THEME.colors.panel)
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .font_family(MONO_FONT_FAMILY)
+                .text_size(THEME.type_scale.caption)
+                .text_color(THEME.colors.text)
+                .child(metadata.path.to_owned()),
+        )
+        .child(
+            div()
+                .font_family(MONO_FONT_FAMILY)
+                .text_size(THEME.type_scale.caption)
+                .text_color(THEME.colors.success)
+                .child(format!("+{}", metadata.additions)),
+        )
+        .child(
+            div()
+                .font_family(MONO_FONT_FAMILY)
+                .text_size(THEME.type_scale.caption)
+                .text_color(THEME.colors.error)
+                .child(format!("-{}", metadata.deletions)),
+        )
+        .child(
+            div()
+                .text_size(THEME.type_scale.caption)
+                .text_color(THEME.colors.muted)
+                .child(match metadata.mode {
+                    EmbeddedDiffMode::Split => "Split",
+                    EmbeddedDiffMode::Unified => "Unified",
+                }),
+        )
+        .children(expand)
 }
 
 fn preparing_rows() -> Vec<ChangeLine> {
@@ -117,11 +244,22 @@ fn write_rows(content: &str) -> Vec<ChangeLine> {
         .collect()
 }
 
-fn render_edit_diff(paired: &[PairedLine], language: &str, key: usize) -> AnyElement {
+fn render_edit_diff(
+    paired: &[PairedLine],
+    language: &str,
+    key: usize,
+    mode: EmbeddedDiffMode,
+) -> AnyElement {
+    if mode == EmbeddedDiffMode::Unified {
+        return render_unified_edit_diff(paired, language, key);
+    }
     let truncated = paired.len() > MAX_DIFF_LINES;
     div()
+        .id(("split-diff-body", key))
         .w_full()
         .min_w_0()
+        .max_h(px(360.0))
+        .overflow_scroll()
         .children(
             paired
                 .iter()
@@ -135,11 +273,57 @@ fn render_edit_diff(paired: &[PairedLine], language: &str, key: usize) -> AnyEle
         .into_any_element()
 }
 
+fn render_unified_edit_diff(paired: &[PairedLine], language: &str, key: usize) -> AnyElement {
+    let rows = unified_edit_rows(paired);
+    let truncated = rows.len() > MAX_DIFF_LINES;
+    div()
+        .id(("unified-diff-body", key))
+        .w_full()
+        .min_w_0()
+        .max_h(px(360.0))
+        .overflow_scroll()
+        .children(
+            rows.iter()
+                .take(MAX_DIFF_LINES)
+                .enumerate()
+                .map(|(index, row)| render_diff_side(Some(row), language, key, index, "unified")),
+        )
+        .when(truncated, |body| {
+            body.child(modal_limit_hint(rows.len() - MAX_DIFF_LINES))
+        })
+        .into_any_element()
+}
+
+fn unified_edit_rows(paired: &[PairedLine]) -> Vec<SideLine> {
+    let mut rows = Vec::new();
+    for pair in paired {
+        match (&pair.old, &pair.new) {
+            (Some(old), Some(new))
+                if old.kind == new.kind
+                    && matches!(old.kind, ChangeKind::Context | ChangeKind::Ellipsis) =>
+            {
+                rows.push(old.clone());
+            }
+            (Some(old), Some(new)) => {
+                rows.push(old.clone());
+                rows.push(new.clone());
+            }
+            (Some(old), None) => rows.push(old.clone()),
+            (None, Some(new)) => rows.push(new.clone()),
+            (None, None) => {}
+        }
+    }
+    rows
+}
+
 fn render_write_diff(rows: &[ChangeLine], language: &str, key: usize) -> AnyElement {
     let truncated = rows.len() > MAX_DIFF_LINES;
     div()
+        .id(("write-diff-body", key))
         .w_full()
         .min_w_0()
+        .max_h(px(360.0))
+        .overflow_scroll()
         .children(
             rows.iter()
                 .take(MAX_DIFF_LINES)
@@ -215,13 +399,7 @@ fn render_diff_side(
             .into_any_element();
     };
     let (marker, background, foreground) = line_colors(line.kind);
-    let line_number = line.number.map_or_else(String::new, |number| {
-        if marker.is_empty() || marker == " " {
-            number.to_string()
-        } else {
-            format!("{marker}{number}")
-        }
-    });
+    let line_number = gutter_label(marker, line.number);
     div()
         .w_full()
         .min_w_0()
@@ -229,7 +407,7 @@ fn render_diff_side(
         .flex()
         .items_start()
         .bg(background)
-        .font_family(READING_FONT_FAMILY)
+        .font_family(MONO_FONT_FAMILY)
         .text_size(THEME.type_scale.body_small)
         .child(
             div()
@@ -249,18 +427,24 @@ fn render_diff_side(
             div()
                 .min_w_0()
                 .flex_1()
-                .overflow_hidden()
                 .px(THEME.space.xs)
                 .py(px(2.0))
                 .text_color(foreground)
                 .child(code_line(
                     format!("change-diff-{key}-{index}-{side}"),
-                    &soft_wrap_source(&replace_tabs(&line.content)),
+                    &replace_tabs(&line.content),
                     language,
-                    true,
                 )),
         )
         .into_any_element()
+}
+
+fn gutter_label(marker: &str, number: Option<u64>) -> String {
+    match (marker, number) {
+        ("", None) => String::new(),
+        (marker, None) => marker.to_owned(),
+        (marker, Some(number)) => format!("{marker}{number}"),
+    }
 }
 
 fn line_colors(kind: ChangeKind) -> (&'static str, gpui::Rgba, gpui::Rgba) {
@@ -272,17 +456,11 @@ fn line_colors(kind: ChangeKind) -> (&'static str, gpui::Rgba, gpui::Rgba) {
     }
 }
 
-fn code_line(
-    id: impl Into<gpui::ElementId>,
-    content: &str,
-    language: &str,
-    wrap: bool,
-) -> TextView {
+fn code_line(id: impl Into<gpui::ElementId>, content: &str, language: &str) -> TextView {
     TextView::markdown(id, fenced_line(content, language))
         .style(code_line_style())
         .selectable(true)
-        .when(wrap, |text| text.whitespace_normal())
-        .when(!wrap, |text| text.whitespace_nowrap())
+        .whitespace_nowrap()
         .w_full()
         .min_w_0()
         .text_size(THEME.type_scale.body_small)
@@ -290,11 +468,10 @@ fn code_line(
 }
 
 fn code_line_style() -> TextViewStyle {
-    let mut code_block = StyleRefinement::default()
+    let code_block = StyleRefinement::default()
         .p_0()
         .rounded(px(0.0))
         .bg(transparent_black());
-    code_block.overflow.x = Some(Overflow::Hidden);
     TextViewStyle {
         paragraph_gap: rems(0.0),
         heading_base_font_size: THEME.type_scale.body_small,
@@ -394,24 +571,6 @@ fn flush_changes(
     additions.clear();
 }
 
-fn soft_wrap_source(content: &str) -> String {
-    let mut wrapped = String::with_capacity(content.len());
-    let mut run_length = 0;
-    for character in content.chars() {
-        wrapped.push(character);
-        if character.is_whitespace() {
-            run_length = 0;
-            continue;
-        }
-        run_length += 1;
-        if run_length == SOFT_WRAP_COLUMNS {
-            wrapped.push('\u{200b}');
-            run_length = 0;
-        }
-    }
-    wrapped
-}
-
 fn replace_tabs(content: &str) -> String {
     content.replace('\t', "   ")
 }
@@ -500,6 +659,12 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
+    fn unnumbered_changes_keep_visible_non_color_markers() {
+        assert_eq!(gutter_label("+", None), "+");
+        assert_eq!(gutter_label("-", None), "-");
+    }
+
+    #[test]
     fn prepared_diff_rows_are_reused_across_renders() {
         let prepared = Arc::default();
         let presentation = ToolPresentation::Edit {
@@ -510,9 +675,9 @@ mod tests {
         };
 
         assert!(prepared.get().is_none());
-        let _ = render(&presentation, 1);
+        let _ = render(&presentation, 1, EmbeddedDiffMode::Split, None);
         let first = prepared.get().expect("render should prepare the diff") as *const _;
-        let _ = render(&presentation, 1);
+        let _ = render(&presentation, 1, EmbeddedDiffMode::Split, None);
         let second = prepared.get().expect("prepared diff should remain cached") as *const _;
 
         assert_eq!(first, second);
@@ -571,16 +736,39 @@ mod tests {
     }
 
     #[test]
-    fn diff_source_inserts_soft_wrap_opportunities_without_changing_source() {
-        let source = format!(
-            "{} short words {}",
-            "x".repeat(SOFT_WRAP_COLUMNS * 2 + 1),
-            "y".repeat(SOFT_WRAP_COLUMNS + 1)
+    fn metadata_counts_changes_and_reports_the_actual_view() {
+        let rows = parse_display_diff(
+            " same\n- old one\n- old two\n+ new one",
+            EditDiffFormat::Unnumbered,
         );
-        let wrapped = soft_wrap_source(&source);
-        assert_eq!(wrapped.matches('\u{200b}').count(), 3);
-        assert_eq!(wrapped.replace('\u{200b}', ""), source);
-        assert!(!soft_wrap_source("short words reset naturally").contains('\u{200b}'));
+        let prepared = PreparedToolChange::Edit(pair_edit_rows(&rows));
+
+        assert_eq!(
+            diff_metadata("src/main.rs", &prepared, EmbeddedDiffMode::Unified),
+            DiffMetadata {
+                path: "src/main.rs",
+                additions: 1,
+                deletions: 2,
+                mode: EmbeddedDiffMode::Unified,
+            }
+        );
+    }
+
+    #[test]
+    fn unified_rows_preserve_change_order_without_duplicating_context() {
+        let rows = parse_display_diff(" before\n- old\n+ new\n after", EditDiffFormat::Unnumbered);
+        let unified = unified_edit_rows(&pair_edit_rows(&rows));
+
+        assert_eq!(unified.len(), 4);
+        assert_eq!(unified[0].kind, ChangeKind::Context);
+        assert_eq!(unified[1].kind, ChangeKind::Deletion);
+        assert_eq!(unified[2].kind, ChangeKind::Addition);
+        assert_eq!(unified[3].kind, ChangeKind::Context);
+        assert!(
+            unified
+                .iter()
+                .all(|line| !line.content.contains('\u{200b}'))
+        );
     }
 
     #[test]

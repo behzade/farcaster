@@ -83,6 +83,7 @@ impl AssetSource for AppAssets {
 pub(crate) enum AppIcon {
     Archive,
     ArrowCounterClockwise,
+    #[allow(dead_code)]
     ChatCircle,
     ChatCircleDots,
     Folder,

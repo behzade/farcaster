@@ -402,6 +402,7 @@ enum ActiveRailRow {
 }
 
 #[derive(Clone, Debug)]
+#[allow(clippy::large_enum_variant)]
 enum ArchivedRailRow {
     Project(PathBuf, bool),
     Session(SessionRailItem),

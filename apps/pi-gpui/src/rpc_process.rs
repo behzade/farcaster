@@ -522,16 +522,36 @@ exec "$@"
         );
         let first = rpc.send_command(serde_json::json!({"type":"get_messages"}))?;
         let second = rpc.send_command(serde_json::json!({"type":"get_state"}))?;
+        let stats = rpc.send_command(serde_json::json!({"type":"get_session_stats"}))?;
         assert_ne!(first, second);
+        assert_ne!(second, stats);
         let deadline = Instant::now() + Duration::from_secs(2);
         let mut responses = 0;
-        while Instant::now() < deadline && responses < 2 {
-            if matches!(rpc.try_next(), Some(ProcessItem::Response(_))) {
+        let mut context_shape = false;
+        while Instant::now() < deadline && responses < 3 {
+            if let Some(ProcessItem::Response(response)) = rpc.try_next() {
                 responses += 1;
+                context_shape |= response.command == "get_session_stats"
+                    && response
+                        .data
+                        .pointer("/contextUsage/tokens")
+                        .and_then(serde_json::Value::as_u64)
+                        == Some(4096)
+                    && response
+                        .data
+                        .pointer("/contextUsage/contextWindow")
+                        .and_then(serde_json::Value::as_u64)
+                        == Some(8192)
+                    && response
+                        .data
+                        .pointer("/contextUsage/percent")
+                        .and_then(serde_json::Value::as_u64)
+                        == Some(50);
             }
             thread::sleep(Duration::from_millis(5));
         }
-        assert_eq!(responses, 2);
+        assert_eq!(responses, 3);
+        assert!(context_shape);
         Ok(())
     }
 
