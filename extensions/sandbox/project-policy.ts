@@ -66,13 +66,10 @@ export function loadProjectPolicy(
 export function loadProjectPolicyForUpdate(
 	cwd: string,
 	globalConfig: NativeSandboxConfig,
-	active: ActiveProjectPolicy,
 ): ActiveProjectPolicy {
-	const disk = loadProjectPolicy(cwd, globalConfig);
-	if (disk.sourceText !== active.sourceText) {
-		throw new Error("Project sandbox policy changed on disk; restart or reload before requesting access");
-	}
-	return disk;
+	// Approval compares this fresh snapshot with the active policy, while the
+	// conditional save below still rejects edits made during the prompt.
+	return loadProjectPolicy(cwd, globalConfig);
 }
 
 export function activateProjectPolicy(
@@ -207,6 +204,32 @@ export function serializeProjectPolicy(policy: ProjectSandboxPolicy): string {
 	return `${JSON.stringify(normalizeProjectPolicy(policy), null, 2)}\n`;
 }
 
+export function sameProjectPolicy(
+	left: ProjectSandboxPolicy,
+	right: ProjectSandboxPolicy,
+): boolean {
+	return JSON.stringify(normalizeProjectPolicy(left)) === JSON.stringify(normalizeProjectPolicy(right));
+}
+
+export function intersectProjectPolicies(
+	left: ProjectSandboxPolicy,
+	right: ProjectSandboxPolicy,
+): ProjectSandboxPolicy {
+	const leftNormalized = normalizeProjectPolicy(left);
+	const rightNormalized = normalizeProjectPolicy(right);
+	const rightKeys = new Set(rightNormalized.rights.map(rightKey));
+	const rightEnvironment = rightNormalized.developmentCache?.environment ?? {};
+	const environment = Object.fromEntries(
+		Object.entries(leftNormalized.developmentCache?.environment ?? {})
+			.filter(([name, target]) => rightEnvironment[name] === target),
+	);
+	return normalizeProjectPolicy({
+		version: 1,
+		rights: leftNormalized.rights.filter((right) => rightKeys.has(rightKey(right))),
+		...(Object.keys(environment).length > 0 ? { developmentCache: { environment } } : {}),
+	});
+}
+
 /** Renders only bounded, semantic net-new entries that approval will add. */
 export function projectPolicyDiff(
 	before: ProjectSandboxPolicy,
@@ -257,7 +280,10 @@ export function normalizeProjectPolicy(value: unknown): ProjectSandboxPolicy {
 		const cache = input.developmentCache as Record<string, unknown>;
 		assertKnownKeys(cache, ["environment"], "developmentCache");
 		const normalized = normalizeDevelopmentCacheConfig({ environment: cache.environment });
-		const environment = normalized?.environment ?? {};
+		const environment = Object.fromEntries(
+			Object.entries(normalized?.environment ?? {})
+				.sort(([left], [right]) => left.localeCompare(right)),
+		);
 		if (Object.keys(environment).length > 128) {
 			throw new Error("Project policy accepts at most 128 development-cache mappings");
 		}
@@ -267,7 +293,9 @@ export function normalizeProjectPolicy(value: unknown): ProjectSandboxPolicy {
 		if (Object.values(environment).some((target) => target.length > 256)) {
 			throw new Error("Project development-cache targets must be at most 256 characters");
 		}
-		developmentCache = { environment };
+		if (Object.keys(environment).length > 0) {
+			developmentCache = { environment };
+		}
 	}
 	return {
 		version: 1,

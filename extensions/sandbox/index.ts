@@ -58,11 +58,13 @@ import {
 import {
 	activateProjectPolicy,
 	addProjectAccess,
+	intersectProjectPolicies,
 	EMPTY_PROJECT_POLICY,
 	loadProjectPolicy,
 	loadProjectPolicyForUpdate,
 	projectPolicyDiff,
 	projectPolicyPath,
+	sameProjectPolicy,
 	saveProjectPolicy,
 	type ActiveProjectPolicy,
 	type ProjectAccessRequest,
@@ -136,13 +138,31 @@ export default function (pi: ExtensionAPI) {
 				return accessError("Project access policy can be changed only for a trusted project.", "project-untrusted");
 			}
 			let diskProject: ActiveProjectPolicy;
-			let candidate: ActiveProjectPolicy;
 			try {
 				diskProject = loadProjectPolicyForUpdate(
 					ctx.cwd,
 					sandboxState.machineConfig,
-					activeProject,
 				);
+			} catch (error) {
+				return accessError(errorMessage(error), "invalid-policy");
+			}
+
+			// Apply valid removals immediately, but keep newly added disk rights
+			// inactive until they appear in the approval diff below.
+			const baseline = intersectProjectPolicies(activeProject.policy, diskProject.policy);
+			const reloadedReductions = !sameProjectPolicy(activeProject.policy, baseline);
+			if (reloadedReductions) {
+				activeProject = activateProjectPolicy(
+					baseline,
+					ctx.cwd,
+					sandboxState.machineConfig,
+					diskProject.sourceText,
+				);
+				sandboxState = { ...sandboxState, config: activeProject.config };
+			}
+
+			let candidate: ActiveProjectPolicy;
+			try {
 				candidate = addProjectAccess(
 					diskProject.policy,
 					params.rights as ProjectAccessRequest[],
@@ -150,16 +170,24 @@ export default function (pi: ExtensionAPI) {
 					sandboxState.machineConfig,
 				);
 			} catch (error) {
-				return accessError(errorMessage(error), "invalid-or-stale-policy");
+				return accessError(errorMessage(error), "invalid-request");
 			}
-			if (JSON.stringify(candidate.policy) === JSON.stringify(diskProject.policy)) {
+			const diskMatchesActive = sameProjectPolicy(diskProject.policy, activeProject.policy);
+			const candidateMatchesDisk = sameProjectPolicy(candidate.policy, diskProject.policy);
+			if (diskMatchesActive && candidateMatchesDisk) {
+				activeProject = activateProjectPolicy(
+					candidate.policy,
+					ctx.cwd,
+					sandboxState.machineConfig,
+					diskProject.sourceText,
+				);
 				return {
-					content: [{ type: "text", text: `All requested rights are already active in ${projectPolicyPath(ctx.cwd)}. No command was retried.` }],
-					details: { granted: true, existing: true, policyPath: projectPolicyPath(ctx.cwd), commandRetried: false },
+					content: [{ type: "text", text: `${reloadedReductions ? "Reloaded the less-permissive policy; all" : "All"} requested rights are active in ${projectPolicyPath(ctx.cwd)}. No command was retried.` }],
+					details: { granted: true, existing: true, reloaded: reloadedReductions, policyPath: projectPolicyPath(ctx.cwd), commandRetried: false },
 				};
 			}
 			const sourceSnapshot = diskProject.sourceText;
-			const diff = projectPolicyDiff(diskProject.policy, candidate.policy, ctx.cwd);
+			const diff = projectPolicyDiff(baseline, candidate.policy, ctx.cwd);
 			pi.events.emit("approval:requested", {
 				kind: "io-permission",
 				title: "Add rights to project sandbox policy",

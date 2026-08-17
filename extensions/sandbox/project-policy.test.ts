@@ -8,11 +8,13 @@ import { DEFAULT_CONFIG, mergeGlobalConfig, normalizeConfig } from "./sandbox-co
 import {
 	activateProjectPolicy,
 	addProjectAccess,
+	intersectProjectPolicies,
 	addProjectRights,
 	loadProjectPolicy,
 	loadProjectPolicyForUpdate,
 	projectPolicyDiff,
 	projectPolicyPath,
+	sameProjectPolicy,
 	saveProjectPolicy,
 	serializeProjectPolicy,
 	type ProjectSandboxPolicy,
@@ -240,22 +242,52 @@ test("request batches check only net-new sibling files and support cache adapter
 	assert.doesNotMatch(diff, /history\/a/);
 });
 
-test("policy updates refuse stale active state and concurrent approval edits", () => {
+test("policy reconciliation activates removals without activating new disk rights", () => {
+	const active: ProjectSandboxPolicy = {
+		version: 1,
+		rights: [
+			{ kind: "network_local" },
+			{ kind: "network_host", host: "kept.example" },
+		],
+		developmentCache: { environment: { KEPT_CACHE: "kept", REMOVED_CACHE: "removed" } },
+	};
+	const disk: ProjectSandboxPolicy = {
+		version: 1,
+		rights: [
+			{ kind: "network_host", host: "kept.example" },
+			{ kind: "network_host", host: "new.example" },
+		],
+		developmentCache: { environment: { NEW_CACHE: "new", KEPT_CACHE: "kept" } },
+	};
+	assert.deepEqual(intersectProjectPolicies(active, disk), {
+		version: 1,
+		rights: [{ kind: "network_host", host: "kept.example" }],
+		developmentCache: { environment: { KEPT_CACHE: "kept" } },
+	});
+	assert.equal(sameProjectPolicy(
+		{ ...disk, developmentCache: { environment: { KEPT_CACHE: "kept", NEW_CACHE: "new" } } },
+		disk,
+	), true);
+	assert.equal(sameProjectPolicy(basePolicy(), {
+		version: 1,
+		rights: [],
+		developmentCache: { environment: {} },
+	}), true);
+});
+
+test("policy updates reload pre-approval edits but reject edits made during approval", () => {
 	const cwd = workspace();
 	const initial = saveProjectPolicy(cwd, basePolicy());
-	const active = loadProjectPolicy(cwd, machine);
 	const changed = { version: 1 as const, rights: [{ kind: "network_local" as const }] };
-	writeFileSync(projectPolicyPath(cwd), `${initial}\n`);
-	assert.throws(
-		() => loadProjectPolicyForUpdate(cwd, machine, active),
-		/changed on disk; restart or reload/,
-	);
-	writeFileSync(projectPolicyPath(cwd), initial);
-	const current = loadProjectPolicyForUpdate(cwd, machine, active);
-	writeFileSync(projectPolicyPath(cwd), `${initial}\n`);
+	const changedSource = saveProjectPolicy(cwd, changed);
+	const current = loadProjectPolicyForUpdate(cwd, machine);
+	assert.equal(current.sourceText, changedSource);
+	assert.deepEqual(current.policy, changed);
+	writeFileSync(projectPolicyPath(cwd), `${changedSource}\n`);
 	assert.throws(
 		() => saveProjectPolicy(cwd, changed, current.sourceText),
 		/changed while request_access was awaiting approval/,
 	);
-	assert.equal(readFileSync(projectPolicyPath(cwd), "utf8"), `${initial}\n`);
+	assert.equal(readFileSync(projectPolicyPath(cwd), "utf8"), `${changedSource}\n`);
+	assert.notEqual(initial, changedSource);
 });
