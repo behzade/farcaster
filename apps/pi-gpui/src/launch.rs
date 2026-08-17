@@ -66,6 +66,15 @@ pub(crate) fn run(project: PathBuf) -> Result<(), LaunchError> {
             }
             install_component_theme(cx);
             cx.on_action(quit);
+            cx.on_system_notification_response(|_, cx| {
+                cx.activate(true);
+                if let Some(window) = cx
+                    .active_window()
+                    .or_else(|| cx.windows().into_iter().next())
+                {
+                    let _ = cx.update_window(window, |_, window, _| window.activate_window());
+                }
+            });
             cx.bind_keys(
                 keybindings::registry()
                     .into_iter()
