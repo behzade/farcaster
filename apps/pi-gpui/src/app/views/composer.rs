@@ -6,9 +6,9 @@ use gpui::{
 };
 use gpui_component::input::{Paste, Textarea};
 
-use super::super::{PiApp, slash_commands};
+use super::super::{PiApp, file_mentions, slash_commands};
 use crate::{
-    app::slash_commands::SlashCommandSuggestion,
+    app::{file_mentions::MentionQuery, slash_commands::SlashCommandSuggestion},
     composer_sessions::ComposerSnapshot,
     primitives::{ButtonTone, button},
     protocol::ExtensionUiRequest,
@@ -28,6 +28,14 @@ impl PiApp {
                 .take(8)
                 .collect::<Vec<_>>();
         let exact_command = slash_commands::is_exact(&composer_value, &self.snapshot.commands);
+        let mention_query = file_mentions::query_at_cursor(
+            &self.composer.read(cx).value(),
+            self.composer.read(cx).cursor(),
+        );
+        let file_suggestions = mention_query
+            .as_ref()
+            .map(|query| file_mentions::matches(&self.composer_project_files, &query.text))
+            .unwrap_or_default();
         let widgets_above = widget_region("above", &self.extension.above_widgets);
         let widgets_below = widget_region("below", &self.extension.below_widgets);
         let send_entity = entity.clone();
@@ -36,6 +44,14 @@ impl PiApp {
         let cursor_entity = entity.clone();
         let attachments_entity = entity.clone();
         let command_entity = entity.clone();
+        let mention_entity = entity.clone();
+        let mention_key_entity = entity.clone();
+        let mention_for_key = mention_query.clone();
+        let mention_selection = self
+            .composer_mention_selection
+            .min(file_suggestions.len().saturating_sub(1));
+        let selected_file_suggestion = file_suggestions.get(mention_selection).cloned();
+        let mention_suggestion_count = file_suggestions.len();
         let controls_entity = entity.clone();
         let abort_entity = entity;
         div()
@@ -56,6 +72,19 @@ impl PiApp {
             .when(!command_suggestions.is_empty(), |composer| {
                 composer.child(slash_command_menu(command_suggestions, command_entity))
             })
+            .when_some(
+                mention_query
+                    .clone()
+                    .filter(|_| !file_suggestions.is_empty()),
+                |composer, query| {
+                    composer.child(file_mention_menu(
+                        file_suggestions,
+                        mention_selection,
+                        query,
+                        mention_entity,
+                    ))
+                },
+            )
             .child(
                 div()
                     .id("composer-input")
@@ -72,6 +101,34 @@ impl PiApp {
                         }
                     })
                     .on_key_down(move |event: &KeyDownEvent, window, cx| {
+                        if mention_suggestion_count > 0
+                            && matches!(event.keystroke.key.as_str(), "up" | "down")
+                        {
+                            let key = event.keystroke.key.as_str();
+                            let _ = mention_key_entity.update(cx, |this, cx| {
+                                this.composer_mention_selection = if key == "up" {
+                                    this.composer_mention_selection
+                                        .checked_sub(1)
+                                        .unwrap_or(mention_suggestion_count - 1)
+                                } else {
+                                    (this.composer_mention_selection + 1) % mention_suggestion_count
+                                };
+                                this.notify_composer(cx);
+                            });
+                            window.prevent_default();
+                            cx.stop_propagation();
+                            return;
+                        }
+                        if event.keystroke.key == "enter"
+                            && !event.keystroke.modifiers.shift
+                            && let (Some(query), Some(path)) =
+                                (mention_for_key.clone(), selected_file_suggestion.clone())
+                        {
+                            fill_file_mention(mention_key_entity.clone(), query, path, window, cx);
+                            window.prevent_default();
+                            cx.stop_propagation();
+                            return;
+                        }
                         let handled = history_entity
                             .update(cx, |this, cx| {
                                 this.handle_composer_history_key(
@@ -339,6 +396,77 @@ impl PiApp {
             .on_mouse_down(MouseButton::Left, move |_, _, cx| cx.stop_propagation())
             .into_any_element()
     }
+}
+
+fn file_mention_menu(
+    files: Vec<String>,
+    selected: usize,
+    query: MentionQuery,
+    entity: WeakEntity<PiApp>,
+) -> AnyElement {
+    let mut menu = div()
+        .id("file-mention-menu")
+        .role(Role::Group)
+        .aria_label("Repository files")
+        .max_h(px(220.0))
+        .overflow_y_scroll()
+        .mb(THEME.space.sm)
+        .border(THEME.border)
+        .border_color(THEME.colors.border)
+        .rounded(THEME.radius)
+        .bg(THEME.colors.surface)
+        .p(THEME.space.xs);
+    for (index, path) in files.into_iter().enumerate() {
+        let click_entity = entity.clone();
+        let click_query = query.clone();
+        menu = menu.child(
+            div()
+                .id(("file-mention", index))
+                .role(Role::Button)
+                .aria_label(format!("Mention {path}"))
+                .tab_index(0)
+                .px(THEME.space.sm)
+                .py(THEME.space.xs)
+                .rounded(THEME.radius)
+                .font_family(MONO_FONT_FAMILY)
+                .text_size(THEME.type_scale.caption)
+                .when(index == selected, |row| {
+                    row.bg(THEME.colors.hover).text_color(THEME.colors.accent)
+                })
+                .hover(|row| row.bg(THEME.colors.hover))
+                .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
+                .cursor_pointer()
+                .child(path.clone())
+                .on_click(move |_, window, cx| {
+                    fill_file_mention(
+                        click_entity.clone(),
+                        click_query.clone(),
+                        path.clone(),
+                        window,
+                        cx,
+                    );
+                }),
+        );
+    }
+    menu.into_any_element()
+}
+
+fn fill_file_mention(
+    entity: WeakEntity<PiApp>,
+    query: MentionQuery,
+    path: String,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let _ = entity.update(cx, |this, cx| {
+        let (text, cursor) = file_mentions::insert(&this.composer.read(cx).value(), &query, &path);
+        this.apply_composer_snapshot(
+            ComposerSnapshot::new(text, cursor, cursor..cursor),
+            window,
+            cx,
+        );
+        this.composer_focus.focus(window, cx);
+    });
 }
 
 fn slash_command_menu(

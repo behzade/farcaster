@@ -3,6 +3,7 @@
 mod changes;
 mod composer_images;
 mod drafts;
+mod file_mentions;
 mod region_state;
 mod slash_commands;
 mod submissions;
@@ -100,6 +101,8 @@ pub(crate) struct PiApp {
     session_generation: u64,
     runtime_generation: u64,
     composer: Entity<TextareaState>,
+    composer_project_files: Vec<String>,
+    composer_mention_selection: usize,
     session_rail_view: Entity<SessionRailView>,
     transcript_view: Entity<TranscriptView>,
     composer_view: Entity<ComposerView>,
@@ -200,6 +203,7 @@ impl PiApp {
             window,
             |this, state, event: &InputEvent, _window, cx| match event {
                 InputEvent::Change => {
+                    this.composer_mention_selection = 0;
                     this.composer_sessions.exit_history();
                     this.composer_sessions
                         .capture_current(input_snapshot(state.read(cx)));
@@ -304,6 +308,8 @@ impl PiApp {
             session_generation: 0,
             runtime_generation: 0,
             composer,
+            composer_project_files: file_mentions::project_files(&project),
+            composer_mention_selection: 0,
             session_rail_view,
             transcript_view,
             composer_view,
@@ -760,6 +766,7 @@ impl PiApp {
     }
 
     fn select_project(&mut self, project: PathBuf) {
+        self.composer_project_files = file_mentions::project_files(&project);
         self.project = project.clone();
         if projects::select(&mut self.projects, project) {
             self.save_project_registry();
