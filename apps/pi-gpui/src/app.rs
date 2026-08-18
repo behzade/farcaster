@@ -169,6 +169,7 @@ pub(crate) struct PiApp {
     _search_subscription: Subscription,
     _session_title_subscription: Subscription,
     _event_task: Task<()>,
+    _maintenance_task: Task<()>,
 }
 
 impl PiApp {
@@ -289,11 +290,17 @@ impl PiApp {
                 InputEvent::Change | InputEvent::Focus => {}
             },
         );
+        let runtime_wake = runtime.wake_receiver();
         let event_task = cx.spawn(async move |weak, cx| {
+            while runtime_wake.recv().await.is_ok() {
+                if weak.update(cx, |this, cx| this.drain_runtime(cx)).is_err() {
+                    break;
+                }
+            }
+        });
+        let maintenance_task = cx.spawn(async move |weak, cx| {
             loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(16))
-                    .await;
+                cx.background_executor().timer(Duration::from_secs(1)).await;
                 if weak.update(cx, |this, cx| this.drain_runtime(cx)).is_err() {
                     break;
                 }
@@ -427,23 +434,22 @@ impl PiApp {
             _search_subscription: search_subscription,
             _session_title_subscription: session_title_subscription,
             _event_task: event_task,
+            _maintenance_task: maintenance_task,
         }
     }
 
     fn drain_runtime(&mut self, cx: &mut Context<Self>) {
-        let mut changed = self.extension.prune_notifications();
+        let mut root_dirty = self.extension.prune_notifications();
         let completions_changed = self.prune_recent_completions();
         let performance_changed = self
             .performance_monitor
             .as_mut()
             .is_some_and(crate::performance::PerformanceMonitor::sample_if_due);
-        changed |= completions_changed || performance_changed;
         let mut rail_dirty = completions_changed;
         let mut transcript_dirty = false;
         let mut composer_dirty = false;
         let mut run_dirty = completions_changed || performance_changed;
         while let Ok(event) = self.runtime.try_recv() {
-            changed = true;
             match &event {
                 RuntimeEvent::Snapshot { snapshot, .. } => {
                     rail_dirty |=
@@ -461,12 +467,17 @@ impl PiApp {
                 }
                 RuntimeEvent::HistoryReset { .. } => transcript_dirty = true,
                 RuntimeEvent::SessionReset { .. } => {
+                    root_dirty = true;
                     transcript_dirty = true;
                     composer_dirty = true;
                     run_dirty = true;
                 }
-                RuntimeEvent::ExtensionUi { .. } => composer_dirty = true,
+                RuntimeEvent::ExtensionUi { .. } => {
+                    root_dirty = true;
+                    composer_dirty = true;
+                }
                 RuntimeEvent::PromptResult { .. } => {
+                    root_dirty = true;
                     rail_dirty = true;
                     composer_dirty = true;
                     run_dirty = true;
@@ -480,6 +491,7 @@ impl PiApp {
                 } if generation >= self.runtime_generation => {
                     if generation > self.runtime_generation {
                         self.reset_session_ui(generation, false);
+                        root_dirty = true;
                     }
                     let next_rows = self.project_transcript_rows(&snapshot);
                     transcript_dirty |= next_rows.as_slice() != self.transcript_rows.as_slice();
@@ -490,10 +502,12 @@ impl PiApp {
                             .saturating_add(count - self.last_transcript_count);
                     }
                     if snapshot.history_preview && !self.snapshot.history_preview {
+                        root_dirty = true;
                         park_extension_surface(&mut self.extension, &mut self.parked_extension);
                         self.pending_dialog_setup = false;
                         self.dialog_return_focus = None;
                     } else if !snapshot.history_preview && self.snapshot.history_preview {
+                        root_dirty = true;
                         restore_extension_surface(&mut self.extension, &mut self.parked_extension);
                         self.pending_dialog_setup = self.extension.dialog.is_some();
                         self.dialog_return_focus = None;
@@ -622,7 +636,7 @@ impl PiApp {
             self.notify_run_panel(cx);
             self.request_changes_refresh(cx);
         }
-        if changed {
+        if root_dirty {
             cx.notify();
         }
     }
@@ -694,10 +708,11 @@ impl PiApp {
                     self.extension_errors.remove(0);
                 }
             }
-            ExtensionEffect::Diagnostic(message) => Arc::make_mut(&mut self.snapshot)
-                .conversation
-                .diagnostics
-                .push(message),
+            ExtensionEffect::Diagnostic(message) => {
+                Arc::make_mut(&mut Arc::make_mut(&mut self.snapshot).conversation)
+                    .diagnostics
+                    .push(message)
+            }
             ExtensionEffect::None => {}
         }
     }

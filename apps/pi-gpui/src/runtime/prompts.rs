@@ -1,11 +1,13 @@
 //! Durable prompt dispatch and deferred-session resume behavior.
 
+use std::sync::Arc;
+
 use crate::{
     protocol::{PromptImage, PromptMode, prompt_command},
     state::QueuedPrompt,
 };
 
-use super::{RuntimeEvent, RuntimeOwner, can_send_prompt};
+use super::{RuntimeEvent, RuntimeOwner, can_send_prompt, conversation_mut};
 
 #[derive(Clone, Debug)]
 pub(super) struct DeferredPrompt {
@@ -54,12 +56,9 @@ impl RuntimeOwner {
             }
         };
         self.pending_prompt_target = Some(target);
-        self.pending_prompt_item = Some(
-            self.snapshot
-                .conversation
-                .push_local_user(message.clone(), images.len()),
-        );
-        self.snapshot.conversation.running = true;
+        let conversation = Arc::make_mut(&mut self.snapshot.conversation);
+        self.pending_prompt_item = Some(conversation.push_local_user(message.clone(), images.len()));
+        conversation.running = true;
         self.snapshot.status = "Working".into();
         self.publish();
         self.dispatch_prompt(mode, message, images, outbox_id);
@@ -70,12 +69,11 @@ impl RuntimeOwner {
         self.snapshot.project = self.project.clone();
         self.snapshot.selected_session = prompt.session.clone();
         self.pending_prompt_target = Some(prompt.target);
+        let conversation = Arc::make_mut(&mut self.snapshot.conversation);
         self.pending_prompt_item = Some(
-            self.snapshot
-                .conversation
-                .push_local_user(prompt.message.clone(), prompt.images.len()),
+            conversation.push_local_user(prompt.message.clone(), prompt.images.len()),
         );
-        self.snapshot.conversation.running = true;
+        conversation.running = true;
         self.snapshot.status = "Working".into();
         self.publish();
         self.dispatch_prompt(prompt.mode, prompt.message, prompt.images, Some(prompt.id));
@@ -131,7 +129,7 @@ impl RuntimeOwner {
             self.mark_outbox_failed(ERROR);
             let target = self.pending_prompt_target.take().unwrap_or_default();
             self.rollback_pending_prompt();
-            self.active_snapshot_mut().conversation.running = was_running;
+            conversation_mut(self.active_snapshot_mut()).running = was_running;
             self.reject_prompt(&target, ERROR.into());
             return;
         }
@@ -166,8 +164,7 @@ impl RuntimeOwner {
     }
 
     pub(super) fn reject_prompt(&mut self, target: &str, message: String) {
-        self.snapshot
-            .conversation
+        Arc::make_mut(&mut self.snapshot.conversation)
             .push_local_error("Prompt not sent", message);
         self.snapshot.status = "Prompt not sent".into();
         self.emit_prompt_result(target, false);
@@ -191,14 +188,12 @@ impl RuntimeOwner {
         }
         if let Some(prompt) = self.deferred_prompt.take() {
             if self.pending_prompt_item.is_none() {
-                let optimistic = self
-                    .active_snapshot_mut()
-                    .conversation
+                let optimistic = conversation_mut(self.active_snapshot_mut())
                     .push_local_user(prompt.message.clone(), prompt.images.len());
                 self.pending_prompt_item = Some(optimistic);
             }
             let snapshot = self.active_snapshot_mut();
-            snapshot.conversation.running = true;
+            Arc::make_mut(&mut snapshot.conversation).running = true;
             snapshot.status = "Working".into();
             if self.snapshot.history_preview
                 && let Some(snapshot) = self.parked_snapshot.take()

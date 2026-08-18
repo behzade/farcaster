@@ -28,6 +28,7 @@ const MAX_IDLE_PI_ACTORS: usize = 4;
 const ACTIVE_ROOT_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const ACTIVE_DESCENDANT_REFRESH_INTERVAL: Duration = Duration::from_secs(3);
 const COALESCED_SESSION_REFRESH_DELAY: Duration = Duration::from_millis(100);
+const STREAM_PUBLISH_INTERVAL: Duration = Duration::from_millis(16);
 
 #[derive(Clone, Debug)]
 pub(crate) enum RuntimeCommand {
@@ -134,7 +135,7 @@ pub(crate) struct RuntimeSnapshot {
     pub prefill_model: Option<Model>,
     pub prefill_thinking_level: Option<String>,
     pub selected_session: Option<PathBuf>,
-    pub conversation: ConversationState,
+    pub conversation: Arc<ConversationState>,
     pub models: Vec<Model>,
     pub thinking_levels: Vec<String>,
     pub stats: Value,
@@ -147,6 +148,21 @@ pub(crate) struct RuntimeSnapshot {
 pub(crate) struct RuntimeHandle {
     commands: mpsc::Sender<RuntimeCommand>,
     events: mpsc::Receiver<RuntimeEvent>,
+    wake: async_channel::Receiver<()>,
+}
+
+#[derive(Clone)]
+struct UiEventSender {
+    events: mpsc::Sender<RuntimeEvent>,
+    wake: async_channel::Sender<()>,
+}
+
+impl UiEventSender {
+    fn send(&self, event: RuntimeEvent) -> Result<(), mpsc::SendError<RuntimeEvent>> {
+        self.events.send(event)?;
+        let _ = self.wake.try_send(());
+        Ok(())
+    }
 }
 
 impl RuntimeHandle {
@@ -170,7 +186,12 @@ impl RuntimeHandle {
         process_command: ProcessCommand,
     ) -> Self {
         let (commands, command_rx) = mpsc::channel();
-        let (event_tx, events) = mpsc::channel();
+        let (events_tx, events) = mpsc::channel();
+        let (wake_tx, wake) = async_channel::bounded(1);
+        let event_tx = UiEventSender {
+            events: events_tx,
+            wake: wake_tx,
+        };
         thread::Builder::new()
             .name("pi-gpui-supervisor".into())
             .spawn(move || {
@@ -184,7 +205,11 @@ impl RuntimeHandle {
                 );
             })
             .ok();
-        Self { commands, events }
+        Self {
+            commands,
+            events,
+            wake,
+        }
     }
 
     pub(crate) fn send(&self, command: RuntimeCommand) -> Result<(), String> {
@@ -195,6 +220,10 @@ impl RuntimeHandle {
 
     pub(crate) fn try_recv(&self) -> Result<RuntimeEvent, mpsc::TryRecvError> {
         self.events.try_recv()
+    }
+
+    pub(crate) fn wake_receiver(&self) -> async_channel::Receiver<()> {
+        self.wake.clone()
     }
 }
 
@@ -221,13 +250,32 @@ impl SessionRuntimeHandle {
     }
 }
 
+fn publish_session_status_if_changed(
+    sender: &UiEventSender,
+    published: &mut HashMap<String, (Option<PathBuf>, String)>,
+    target: &str,
+    session: Option<PathBuf>,
+    status: &str,
+) {
+    let next = (session.clone(), status.to_owned());
+    if published.get(target) == Some(&next) {
+        return;
+    }
+    published.insert(target.to_owned(), next);
+    let _ = sender.send(RuntimeEvent::SessionStatus {
+        target: target.to_owned(),
+        session,
+        status: status.to_owned(),
+    });
+}
+
 fn run_supervisor(
     project: PathBuf,
     draft_id: String,
     initial_session: Option<PathBuf>,
     process_command: ProcessCommand,
     command_rx: mpsc::Receiver<RuntimeCommand>,
-    event_tx: mpsc::Sender<RuntimeEvent>,
+    event_tx: UiEventSender,
 ) {
     let initial_key = format!("draft:{draft_id}");
     let catalog_key = "catalog".to_owned();
@@ -260,6 +308,7 @@ fn run_supervisor(
     let mut catalog_has_running_descendants = false;
     let mut last_catalog_refresh = Instant::now();
     let mut session_controls = SessionControls::default();
+    let mut published_statuses = HashMap::<String, (Option<PathBuf>, String)>::new();
     if let Ok(state) = StateStore::open()
         && let Ok(prompts) = state.queued_prompts()
     {
@@ -300,14 +349,16 @@ fn run_supervisor(
                         } else {
                             semantic_status(&snapshot)
                         };
-                        let _ = event_tx.send(RuntimeEvent::SessionStatus {
-                            target: key.clone(),
-                            session: snapshot
+                        publish_session_status_if_changed(
+                            &event_tx,
+                            &mut published_statuses,
+                            &key,
+                            snapshot
                                 .live_session
                                 .clone()
                                 .or_else(|| snapshot.selected_session.clone()),
-                            status: status.into(),
-                        });
+                            status,
+                        );
                         latest.insert(key.clone(), snapshot.clone());
                         if key == selected {
                             let _ = event_tx.send(RuntimeEvent::Snapshot {
@@ -336,11 +387,13 @@ fn run_supervisor(
                                     .clone()
                                     .or_else(|| snapshot.selected_session.clone())
                             });
-                            let _ = event_tx.send(RuntimeEvent::SessionStatus {
-                                target: key.clone(),
+                            publish_session_status_if_changed(
+                                &event_tx,
+                                &mut published_statuses,
+                                &key,
                                 session,
-                                status: "Needs input".into(),
-                            });
+                                "Needs input",
+                            );
                         }
                         if key == selected {
                             let _ = event_tx.send(RuntimeEvent::ExtensionUi {
@@ -449,11 +502,13 @@ fn run_supervisor(
                             .clone()
                             .or_else(|| snapshot.selected_session.clone())
                     });
-                    let _ = event_tx.send(RuntimeEvent::SessionStatus {
-                        target: selected.clone(),
+                    publish_session_status_if_changed(
+                        &event_tx,
+                        &mut published_statuses,
+                        &selected,
                         session,
-                        status: "Working".into(),
-                    });
+                        "Working",
+                    );
                 }
                 if let RuntimeCommand::RenameSession { path, name, .. } = &command
                     && let Some((key, actor)) = actors.iter().find(|(key, _)| {
@@ -800,6 +855,13 @@ fn evict_idle_actors(
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SnapshotChange {
+    None,
+    Streaming,
+    Immediate,
+}
+
 struct RuntimeOwner {
     project: PathBuf,
     process_command: ProcessCommand,
@@ -896,16 +958,14 @@ fn run(
         title_tx,
     };
     if let Some(error) = state_error {
-        owner
-            .snapshot
-            .conversation
-            .push_local_error("State unavailable", error);
+        conversation_mut(&mut owner.snapshot).push_local_error("State unavailable", error);
     }
     if load_catalog {
         owner.load_sessions(String::new());
     }
     owner.publish();
     let mut running = true;
+    let mut stream_publish_due = None;
     while running {
         while let Ok(result) = discovery_rx.try_recv() {
             owner.apply_discovery(result);
@@ -917,14 +977,29 @@ fn run(
             owner.apply_title_result(result);
         }
         owner.poll_deferred_session_refresh(Instant::now());
-        let mut process_snapshot_changed = false;
+        let mut immediate_snapshot_change = false;
         while let Some(item) = owner.process.as_mut().and_then(RpcProcess::try_next) {
-            process_snapshot_changed |= owner.apply_process_item(item);
+            match owner.apply_process_item(item) {
+                SnapshotChange::None => {}
+                SnapshotChange::Streaming => {
+                    stream_publish_due
+                        .get_or_insert_with(|| Instant::now() + STREAM_PUBLISH_INTERVAL);
+                }
+                SnapshotChange::Immediate => immediate_snapshot_change = true,
+            }
         }
-        if process_snapshot_changed {
+        if immediate_snapshot_change
+            || stream_publish_due.is_some_and(|deadline| Instant::now() >= deadline)
+        {
             owner.publish();
+            stream_publish_due = None;
         }
-        match command_rx.recv_timeout(Duration::from_millis(12)) {
+        let wait = stream_publish_due.map_or(Duration::from_millis(12), |deadline| {
+            deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(12))
+        });
+        match command_rx.recv_timeout(wait) {
             Ok(RuntimeCommand::Shutdown) => running = false,
             Ok(command) => owner.apply_command(command),
             Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -1085,7 +1160,7 @@ impl RuntimeOwner {
         let active = self.active_snapshot();
         if active.conversation.running || active.conversation.compacting {
             let snapshot = self.active_snapshot_mut();
-            snapshot.conversation.push_local_error(
+            conversation_mut(snapshot).push_local_error(
                 "Reload not started",
                 "Wait for the current response to finish before reloading.".into(),
             );
@@ -1118,18 +1193,18 @@ impl RuntimeOwner {
         }
     }
 
-    fn apply_process_item(&mut self, item: ProcessItem) -> bool {
+    fn apply_process_item(&mut self, item: ProcessItem) -> SnapshotChange {
         match item {
             ProcessItem::Response(response) => {
                 self.apply_response(response);
-                false
+                SnapshotChange::None
             }
             ProcessItem::ExtensionUi(request) => {
                 let _ = self.event_tx.send(RuntimeEvent::ExtensionUi {
                     generation: self.process_generation,
                     request,
                 });
-                false
+                SnapshotChange::None
             }
             ProcessItem::Event(event) => {
                 let settled = event.get("type").and_then(Value::as_str) == Some("agent_settled");
@@ -1137,7 +1212,7 @@ impl RuntimeOwner {
                 let previous_live_status =
                     previewing.then(|| session_badge_status(&self.active_snapshot().conversation));
                 let snapshot = self.active_snapshot_mut();
-                snapshot.conversation.reduce(&event);
+                conversation_mut(snapshot).reduce(&event);
                 update_context_from_event(&mut snapshot.stats, &event);
                 snapshot.status = run_status(&snapshot.conversation).to_owned();
                 let live_status_changed = previous_live_status
@@ -1149,7 +1224,16 @@ impl RuntimeOwner {
                     self.send(command("get_session_stats"));
                     self.refresh_sessions();
                 }
-                should_publish
+                if !should_publish {
+                    SnapshotChange::None
+                } else if matches!(
+                    event.get("type").and_then(Value::as_str),
+                    Some("message_update" | "tool_execution_update")
+                ) {
+                    SnapshotChange::Streaming
+                } else {
+                    SnapshotChange::Immediate
+                }
             }
             ProcessItem::Stderr(chunk) => {
                 let previewing = self.parked_snapshot.is_some();
@@ -1158,11 +1242,15 @@ impl RuntimeOwner {
                 if snapshot.stderr.len() > 32 * 1024 {
                     snapshot.stderr.drain(..16 * 1024);
                 }
-                !previewing
+                if previewing {
+                    SnapshotChange::None
+                } else {
+                    SnapshotChange::Streaming
+                }
             }
             ProcessItem::Failure(error) => {
                 self.fail(error);
-                false
+                SnapshotChange::None
             }
         }
     }
@@ -1305,8 +1393,7 @@ impl RuntimeOwner {
             Ok(history) => history,
             Err(error) => {
                 self.snapshot.status = "Could not load history".into();
-                self.snapshot
-                    .conversation
+                conversation_mut(&mut self.snapshot)
                     .push_local_error("History unavailable", error);
                 self.publish();
                 return;
@@ -1335,7 +1422,7 @@ impl RuntimeOwner {
             status: "Ready".into(),
             project: result.project,
             selected_session: Some(result.path),
-            conversation,
+            conversation: Arc::new(conversation),
             models,
             stats,
             auto_retry,
@@ -1386,7 +1473,7 @@ impl RuntimeOwner {
             let blocks_resume = self.deferred_prompt.is_some()
                 && matches!(response.command.as_str(), "get_state" | "get_messages");
             let snapshot = self.active_snapshot_mut();
-            snapshot.conversation.push_local_error(
+            conversation_mut(snapshot).push_local_error(
                 "Command failed",
                 format!(
                     "{}: {}",
@@ -1423,7 +1510,7 @@ impl RuntimeOwner {
                     self.active_session = selected_session.clone();
                     let snapshot = self.active_snapshot_mut();
                     snapshot.selected_session = selected_session;
-                    snapshot.conversation.running = state.is_streaming;
+                    conversation_mut(snapshot).running = state.is_streaming;
                     snapshot.session = Some(state);
                     snapshot.status = "Ready".into();
                     self.startup_state_loaded = true;
@@ -1443,9 +1530,7 @@ impl RuntimeOwner {
                     .and_then(Value::as_array)
                     .cloned()
                     .unwrap_or_default();
-                self.active_snapshot_mut()
-                    .conversation
-                    .replace_history(&messages);
+                conversation_mut(self.active_snapshot_mut()).replace_history(&messages);
                 self.startup_history_loaded = true;
             }
             "get_available_models" => {
@@ -1551,9 +1636,7 @@ impl RuntimeOwner {
 
     fn rollback_pending_prompt(&mut self) {
         if let Some(optimistic) = self.pending_prompt_item.take() {
-            self.active_snapshot_mut()
-                .conversation
-                .rollback_local_user(&optimistic);
+            conversation_mut(self.active_snapshot_mut()).rollback_local_user(&optimistic);
         }
     }
 
@@ -1571,10 +1654,9 @@ impl RuntimeOwner {
         let snapshot = self.active_snapshot_mut();
         snapshot.connected = false;
         snapshot.status = "Failed".into();
-        snapshot.conversation.diagnostics.push(error);
-        snapshot
-            .conversation
-            .push_local_error("Couldn’t send", "Try again from the composer.".into());
+        let conversation = conversation_mut(snapshot);
+        conversation.diagnostics.push(error);
+        conversation.push_local_error("Couldn’t send", "Try again from the composer.".into());
         if previewing && let Some(snapshot) = self.parked_snapshot.take() {
             self.snapshot = snapshot;
         }
@@ -1602,6 +1684,10 @@ impl RuntimeOwner {
             snapshot: Arc::new(snapshot),
         });
     }
+}
+
+pub(super) fn conversation_mut(snapshot: &mut RuntimeSnapshot) -> &mut ConversationState {
+    Arc::make_mut(&mut snapshot.conversation)
 }
 
 fn reset_snapshot_for_process(
@@ -1779,6 +1865,37 @@ mod tests {
     }
 
     #[test]
+    fn cloned_snapshots_share_conversation_storage() {
+        let snapshot = RuntimeSnapshot::default();
+        let cloned = snapshot.clone();
+
+        assert!(Arc::ptr_eq(&snapshot.conversation, &cloned.conversation));
+    }
+
+    #[test]
+    fn session_status_publication_deduplicates_but_tracks_session_changes() {
+        let (events_tx, events_rx) = mpsc::channel();
+        let (wake_tx, _wake_rx) = async_channel::bounded(1);
+        let sender = UiEventSender {
+            events: events_tx,
+            wake: wake_tx,
+        };
+        let mut published = HashMap::new();
+
+        publish_session_status_if_changed(&sender, &mut published, "target", None, "Working");
+        publish_session_status_if_changed(&sender, &mut published, "target", None, "Working");
+        publish_session_status_if_changed(
+            &sender,
+            &mut published,
+            "target",
+            Some(PathBuf::from("session.jsonl")),
+            "Working",
+        );
+
+        assert_eq!(events_rx.try_iter().count(), 2);
+    }
+
+    #[test]
     fn running_stats_keep_the_last_meaningful_context_instead_of_flashing_zero() {
         let previous = json!({
             "contextUsage": {"tokens": 168_000, "contextWindow": 200_000, "percent": 84.0},
@@ -1822,7 +1939,7 @@ mod tests {
         assert_eq!(conversation.items[0].kind, TranscriptKind::Tool);
         assert_eq!(
             semantic_status(&RuntimeSnapshot {
-                conversation,
+                conversation: Arc::new(conversation),
                 ..RuntimeSnapshot::default()
             }),
             "Done"
@@ -1836,7 +1953,7 @@ mod tests {
         assert_eq!(
             semantic_status(&RuntimeSnapshot {
                 selected_session: Some(PathBuf::from("session.jsonl")),
-                conversation,
+                conversation: Arc::new(conversation),
                 history_preview: true,
                 ..RuntimeSnapshot::default()
             }),
@@ -2027,10 +2144,7 @@ mod tests {
     #[test]
     fn reload_is_rejected_while_the_session_is_running() {
         let (mut owner, _events, _discovery) = owner_without_process(std::env::temp_dir());
-        owner
-            .snapshot
-            .conversation
-            .reduce(&json!({"type":"agent_start"}));
+        conversation_mut(&mut owner.snapshot).reduce(&json!({"type":"agent_start"}));
         let generation = owner.process_generation;
 
         owner.apply_command(RuntimeCommand::Reload);
@@ -2595,10 +2709,8 @@ mod tests {
             auto_retry: false,
             ..RuntimeSnapshot::default()
         };
-        snapshot
-            .conversation
-            .reduce(&json!({"type": "agent_start"}));
-        snapshot.conversation.reduce(&json!({
+        conversation_mut(&mut snapshot).reduce(&json!({"type": "agent_start"}));
+        conversation_mut(&mut snapshot).reduce(&json!({
             "type": "queue_update",
             "steering": ["old"],
             "followUp": ["later"]
@@ -2622,7 +2734,7 @@ mod tests {
         assert_eq!(snapshot.stats, Value::Null);
         assert!(snapshot.commands.is_empty());
         assert!(snapshot.stderr.is_empty());
-        assert_eq!(snapshot.conversation, ConversationState::default());
+        assert_eq!(*snapshot.conversation, ConversationState::default());
     }
 
     #[test]
@@ -2684,7 +2796,7 @@ mod tests {
             auto_title_attempted: None,
             title_tx: mpsc::channel().0,
         };
-        owner.snapshot.conversation.reduce(&json!({
+        conversation_mut(&mut owner.snapshot).reduce(&json!({
             "type": "queue_update",
             "steering": ["old"],
             "followUp": []
@@ -2944,10 +3056,7 @@ mod tests {
             auto_title_attempted: None,
             title_tx: mpsc::channel().0,
         };
-        owner
-            .snapshot
-            .conversation
-            .reduce(&json!({"type":"agent_start"}));
+        conversation_mut(&mut owner.snapshot).reduce(&json!({"type":"agent_start"}));
 
         owner.preview_history(history_path.clone(), history_project.clone());
         let history = history_rx
@@ -2976,13 +3085,13 @@ mod tests {
         assert_eq!(visible.live_status, "Working");
         assert_eq!(visible.conversation.items[0].text, "history message");
 
-        assert!(!owner.apply_process_item(ProcessItem::Event(json!({
+        assert_eq!(owner.apply_process_item(ProcessItem::Event(json!({
             "type": "message_start",
             "message": {
                 "role": "assistant",
                 "content": [{"type": "text", "text": "active output"}]
             }
-        }))));
+        }))), SnapshotChange::None);
 
         assert_eq!(owner.snapshot.conversation.items[0].text, "history message");
         assert!(owner.parked_snapshot.as_ref().is_some_and(|snapshot| {
@@ -3002,7 +3111,7 @@ mod tests {
             "type": "compaction_start",
             "reason": "test"
         })));
-        assert!(changed);
+        assert_eq!(changed, SnapshotChange::Immediate);
         owner.publish();
         let visible = event_rx
             .try_iter()

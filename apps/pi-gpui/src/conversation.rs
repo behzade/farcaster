@@ -358,6 +358,7 @@ impl ConversationState {
             .get("type")
             .and_then(Value::as_str)
             .unwrap_or_default();
+        let content_existed = self.content.contains_key(&content_index);
         let partial = self.content.entry(content_index).or_default();
         match delta_type {
             "text_start" => reset_partial(partial, PartialKind::Text),
@@ -386,44 +387,55 @@ impl ConversationState {
             }
             _ => return,
         }
-        self.refresh_live_projection();
+        if !content_existed && self.content.len() == 1 {
+            self.clear_initial_live_projection();
+        }
+        self.refresh_live_projection(content_index, content_existed);
     }
 
-    fn refresh_live_projection(&mut self) {
-        let Some(live) = self.live_message else {
+    fn clear_initial_live_projection(&mut self) {
+        let Some(mut live) = self.live_message else {
             return;
         };
-        let projected = self
-            .content
-            .values()
-            .map(|partial| TranscriptItem {
-                kind: match partial.kind {
-                    PartialKind::Text => TranscriptKind::Assistant,
-                    PartialKind::Thinking => TranscriptKind::Thinking,
-                    PartialKind::ToolCall => TranscriptKind::Tool,
-                },
-                label: match partial.kind {
-                    PartialKind::Text | PartialKind::Thinking => "",
-                    PartialKind::ToolCall if partial.label.is_empty() => "Tool",
-                    PartialKind::ToolCall => &partial.label,
-                }
-                .into(),
-                text: partial.value.clone(),
-                streaming: true,
-                is_error: false,
-                tool_call_id: None,
-                tool_output: String::new(),
-                tool_presentation: None,
-            })
-            .map(Arc::new)
-            .collect::<Vec<_>>();
-        let len = projected.len();
-        self.items
-            .splice(live.start..live.start + live.len, projected);
-        self.live_message = Some(LiveMessage {
-            start: live.start,
-            len,
+        self.items.splice(live.start..live.start + live.len, []);
+        live.len = 0;
+        self.live_message = Some(live);
+    }
+
+    fn refresh_live_projection(&mut self, content_index: usize, content_existed: bool) {
+        let Some(mut live) = self.live_message else {
+            return;
+        };
+        let Some(partial) = self.content.get(&content_index) else {
+            return;
+        };
+        let position = self.content.range(..content_index).count();
+        let projected = Arc::new(TranscriptItem {
+            kind: match partial.kind {
+                PartialKind::Text => TranscriptKind::Assistant,
+                PartialKind::Thinking => TranscriptKind::Thinking,
+                PartialKind::ToolCall => TranscriptKind::Tool,
+            },
+            label: match partial.kind {
+                PartialKind::Text | PartialKind::Thinking => "",
+                PartialKind::ToolCall if partial.label.is_empty() => "Tool",
+                PartialKind::ToolCall => &partial.label,
+            }
+            .into(),
+            text: partial.value.clone(),
+            streaming: true,
+            is_error: false,
+            tool_call_id: None,
+            tool_output: String::new(),
+            tool_presentation: None,
         });
+        if content_existed {
+            self.items[live.start + position] = projected;
+        } else {
+            self.items.insert(live.start + position, projected);
+            live.len += 1;
+            self.live_message = Some(live);
+        }
     }
 
     fn end_message(&mut self, message: Option<&Value>) {

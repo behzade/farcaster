@@ -7,6 +7,7 @@ license = "GPL-3.0-or-later"
 description = "Native GPUI client for Pi RPC"
 
 [dependencies]
+async-channel = "2.5.0"
 base64 = "0.22.1"
 gpui = { path = "third_party/zed-gpui-cc053a4/crates/gpui", features = ["profiler"] }
 gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "bd833291311289f3468479d31b629d3de279d3d4", features = ["tree-sitter-languages"] }

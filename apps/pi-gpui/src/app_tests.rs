@@ -97,7 +97,9 @@ fn selecting_a_subagent_does_not_invalidate_the_session_rail() {
 fn transcript_only_snapshot_changes_do_not_invalidate_other_regions() {
     let previous = RuntimeSnapshot::default();
     let mut next = previous.clone();
-    next.conversation.items.push(Arc::new(item("stream update")));
+    Arc::make_mut(&mut next.conversation)
+        .items
+        .push(Arc::new(item("stream update")));
 
     assert!(!composer_snapshot_changed(&previous, &next));
     assert!(!run_panel_snapshot_changed(&previous, &next));
@@ -109,7 +111,7 @@ fn composer_and_run_panel_track_their_rendered_snapshot_inputs() {
     let mut composer = previous.clone();
     composer.status = "Working".into();
     let mut run_panel = previous.clone();
-    run_panel.conversation.average_cache_hit_rate = Some(0.5);
+    Arc::make_mut(&mut run_panel.conversation).average_cache_hit_rate = Some(0.5);
 
     assert!(composer_snapshot_changed(&previous, &composer));
     assert!(!run_panel_snapshot_changed(&previous, &composer));

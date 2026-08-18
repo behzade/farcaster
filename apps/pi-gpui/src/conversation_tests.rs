@@ -51,6 +51,48 @@ fn assembles_ordered_text_thinking_and_tool_arguments_by_index() {
 }
 
 #[test]
+fn updating_one_partial_keeps_other_live_blocks_shared() {
+    let mut state = ConversationState::default();
+    state.reduce(&json!({"type":"message_start","message":{"role":"assistant","content":[]}}));
+    for delta in [
+        json!({"type":"thinking_delta","contentIndex":0,"delta":"plan"}),
+        json!({"type":"text_delta","contentIndex":1,"delta":"answer"}),
+    ] {
+        state.reduce(&json!({"type":"message_update","assistantMessageEvent":delta}));
+    }
+    let thinking = state.items[0].clone();
+    let text = state.items[1].clone();
+
+    state.reduce(&json!({"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":" continued"}}));
+
+    assert!(Arc::ptr_eq(&thinking, &state.items[0]));
+    assert!(!Arc::ptr_eq(&text, &state.items[1]));
+    assert_eq!(state.items[1].text, "answer continued");
+}
+
+#[test]
+fn live_partial_blocks_remain_sorted_when_indexes_arrive_out_of_order() {
+    let mut state = ConversationState::default();
+    state.reduce(&json!({"type":"message_start","message":{"role":"assistant","content":[]}}));
+    for delta in [
+        json!({"type":"toolcall_delta","contentIndex":2,"delta":"tool"}),
+        json!({"type":"thinking_delta","contentIndex":0,"delta":"plan"}),
+        json!({"type":"text_delta","contentIndex":1,"delta":"answer"}),
+    ] {
+        state.reduce(&json!({"type":"message_update","assistantMessageEvent":delta}));
+    }
+
+    assert_eq!(
+        state
+            .items
+            .iter()
+            .map(|item| item.text.as_str())
+            .collect::<Vec<_>>(),
+        ["plan", "answer", "tool"]
+    );
+}
+
+#[test]
 fn authoritative_end_replaces_all_partial_blocks_without_duplicate() {
     let mut state = ConversationState::default();
     state.reduce(&json!({"type":"message_start","message":{"role":"assistant","content":[]}}));

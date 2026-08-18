@@ -92,7 +92,7 @@ impl PiApp {
             Err(error) => {
                 let snapshot = Arc::make_mut(&mut self.snapshot);
                 let index = snapshot.conversation.items.len();
-                snapshot.conversation.push_transport_error(error);
+                Arc::make_mut(&mut snapshot.conversation).push_transport_error(error);
                 self.transcript_list.splice(index..index, 1);
                 cx.notify();
             }
@@ -251,9 +251,7 @@ impl PiApp {
     fn push_builtin_error(&mut self, label: &str, message: &str, cx: &mut Context<Self>) {
         let snapshot = Arc::make_mut(&mut self.snapshot);
         let index = snapshot.conversation.items.len();
-        snapshot
-            .conversation
-            .push_local_error(label, message.to_owned());
+        Arc::make_mut(&mut snapshot.conversation).push_local_error(label, message.to_owned());
         self.transcript_list.splice(index..index, 1);
         cx.notify();
     }

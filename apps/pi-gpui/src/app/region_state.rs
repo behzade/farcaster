@@ -35,7 +35,7 @@ impl PiApp {
         if let Err(error) = self.runtime.send(command) {
             let snapshot = Arc::make_mut(&mut self.snapshot);
             let index = snapshot.conversation.items.len();
-            snapshot.conversation.push_transport_error(error);
+            Arc::make_mut(&mut snapshot.conversation).push_transport_error(error);
             self.mark_transcript_changed(index, index == 0);
         }
     }
