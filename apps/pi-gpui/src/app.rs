@@ -76,6 +76,8 @@ actions!(
         SubmitPrompt,
         AbortRun,
         SettleSession,
+        ComposerHistoryPrevious,
+        ComposerHistoryNext,
         ShowKeybindings,
         ShowWorkGraph
     ]

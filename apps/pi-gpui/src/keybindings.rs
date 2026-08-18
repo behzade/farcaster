@@ -3,11 +3,12 @@
 use gpui::KeyBinding;
 
 use crate::app::{
-    AbortRun, AddProject, DismissSurface, FocusComposer, FocusSessionSearch, NewSession,
-    NextSession, OVERLAY_KEY_CONTEXT, PreviousSession, QuitApplication, SettleSession,
-    ShowKeybindings, ShowWorkGraph, SubmitFollowUp, SubmitPrompt, SwitchSession1, SwitchSession2,
-    SwitchSession3, SwitchSession4, SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8,
-    SwitchSession9, ToggleArchivedSessions,
+    AbortRun, AddProject, ComposerHistoryNext, ComposerHistoryPrevious, DismissSurface,
+    FocusComposer, FocusSessionSearch, NewSession, NextSession, OVERLAY_KEY_CONTEXT,
+    PreviousSession, QuitApplication, SettleSession, ShowKeybindings, ShowWorkGraph,
+    SubmitFollowUp, SubmitPrompt, SwitchSession1, SwitchSession2, SwitchSession3, SwitchSession4,
+    SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8, SwitchSession9,
+    ToggleArchivedSessions,
 };
 
 pub(crate) struct Shortcut {
@@ -74,6 +75,20 @@ pub(crate) fn registry() -> Vec<Shortcut> {
             SettleSession,
             None
         ),
+        Shortcut {
+            section: "Composer",
+            label: "Previous prompt",
+            keystroke: "up",
+            show_in_help: false,
+            binding: KeyBinding::new("up", ComposerHistoryPrevious, Some("PiComposer > Input")),
+        },
+        Shortcut {
+            section: "Composer",
+            label: "Next prompt",
+            keystroke: "down",
+            show_in_help: false,
+            binding: KeyBinding::new("down", ComposerHistoryNext, Some("PiComposer > Input")),
+        },
         shortcut!("Composer", "Focus composer", "cmd-l", FocusComposer, None),
         shortcut!("Composer", "Send prompt", "cmd-enter", SubmitPrompt, None),
         shortcut!(
@@ -138,6 +153,12 @@ mod tests {
         }));
         assert!(shortcuts.iter().any(|shortcut| {
             shortcut.label == "Toggle settled session" && shortcut.keystroke == "cmd-w"
+        }));
+        assert!(shortcuts.iter().any(|shortcut| {
+            shortcut.label == "Previous prompt" && shortcut.keystroke == "up"
+        }));
+        assert!(shortcuts.iter().any(|shortcut| {
+            shortcut.label == "Next prompt" && shortcut.keystroke == "down"
         }));
     }
 }

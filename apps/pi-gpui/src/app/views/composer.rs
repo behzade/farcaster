@@ -1,12 +1,14 @@
 use gpui::{
     AnyElement, App, CursorStyle, ElementId, FontWeight, InteractiveElement as _, IntoElement,
     KeyDownEvent, MouseButton, ParentElement as _, Role, SharedString,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div, point,
     prelude::FluentBuilder as _, px,
 };
-use gpui_component::input::{Paste, Textarea};
+use gpui_component::input::{MoveDown, MoveUp, Paste, Textarea};
 
-use super::super::{PiApp, file_mentions, slash_commands};
+use super::super::{
+    ComposerHistoryNext, ComposerHistoryPrevious, PiApp, file_mentions, slash_commands,
+};
 use crate::{
     app::{file_mentions::MentionQuery, slash_commands::SlashCommandSuggestion},
     composer_sessions::ComposerSnapshot,
@@ -39,8 +41,10 @@ impl PiApp {
         let widgets_above = widget_region("above", &self.extension.above_widgets);
         let widgets_below = widget_region("below", &self.extension.below_widgets);
         let send_entity = entity.clone();
-        let history_entity = entity.clone();
+        let previous_history_entity = entity.clone();
+        let next_history_entity = entity.clone();
         let paste_entity = entity.clone();
+        let composer_for_paste = self.composer.clone();
         let cursor_entity = entity.clone();
         let attachments_entity = entity.clone();
         let command_entity = entity.clone();
@@ -98,27 +102,57 @@ impl PiApp {
                             .unwrap_or(false)
                         {
                             cx.stop_propagation();
-                        }
-                    })
-                    .capture_key_down(move |event: &KeyDownEvent, window, cx| {
-                        if mention_suggestion_count > 0
-                            && matches!(event.keystroke.key.as_str(), "up" | "down")
-                        {
-                            let key = event.keystroke.key.as_str();
-                            let _ = mention_key_entity.update(cx, |this, cx| {
-                                this.composer_mention_selection = if key == "up" {
-                                    this.composer_mention_selection
-                                        .checked_sub(1)
-                                        .unwrap_or(mention_suggestion_count - 1)
-                                } else {
-                                    (this.composer_mention_selection + 1) % mention_suggestion_count
-                                };
-                                this.notify_composer(cx);
-                            });
-                            window.prevent_default();
-                            cx.stop_propagation();
                             return;
                         }
+
+                        let composer = composer_for_paste.clone();
+                        cx.defer(move |cx| {
+                            composer.update(cx, |input, cx| {
+                                let offset = input.scroll_offset();
+                                input.set_scroll_offset(point(offset.x, px(-1.0e9)), cx);
+                            });
+                        });
+                    })
+                    .on_action(move |_: &ComposerHistoryPrevious, window, cx| {
+                        let handled = previous_history_entity
+                            .update(cx, |this, cx| {
+                                if mention_suggestion_count > 0 {
+                                    this.composer_mention_selection = this
+                                        .composer_mention_selection
+                                        .checked_sub(1)
+                                        .unwrap_or(mention_suggestion_count - 1);
+                                    this.notify_composer(cx);
+                                    true
+                                } else {
+                                    this.handle_composer_history_key("up", window, cx)
+                                }
+                            })
+                            .unwrap_or(false);
+                        if !handled {
+                            window.dispatch_action(Box::new(MoveUp), cx);
+                        }
+                        cx.stop_propagation();
+                    })
+                    .on_action(move |_: &ComposerHistoryNext, window, cx| {
+                        let handled = next_history_entity
+                            .update(cx, |this, cx| {
+                                if mention_suggestion_count > 0 {
+                                    this.composer_mention_selection =
+                                        (this.composer_mention_selection + 1)
+                                            % mention_suggestion_count;
+                                    this.notify_composer(cx);
+                                    true
+                                } else {
+                                    this.handle_composer_history_key("down", window, cx)
+                                }
+                            })
+                            .unwrap_or(false);
+                        if !handled {
+                            window.dispatch_action(Box::new(MoveDown), cx);
+                        }
+                        cx.stop_propagation();
+                    })
+                    .capture_key_down(move |event: &KeyDownEvent, window, cx| {
                         if event.keystroke.key == "enter"
                             && !event.keystroke.modifiers.shift
                             && let (Some(query), Some(path)) =
@@ -129,21 +163,7 @@ impl PiApp {
                             cx.stop_propagation();
                             return;
                         }
-                        let handled = history_entity
-                            .update(cx, |this, cx| {
-                                this.handle_composer_history_key(
-                                    event.keystroke.key.as_str(),
-                                    window,
-                                    cx,
-                                )
-                            })
-                            .unwrap_or(false);
-                        if handled {
-                            window.prevent_default();
-                            cx.stop_propagation();
-                        } else {
-                            capture_after_input(history_entity.clone(), cx);
-                        }
+                        capture_after_input(mention_key_entity.clone(), cx);
                     })
                     .on_mouse_up(MouseButton::Left, move |_, _, cx| {
                         capture_after_input(cursor_entity.clone(), cx);
