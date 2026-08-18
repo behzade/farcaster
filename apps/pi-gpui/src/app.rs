@@ -227,9 +227,29 @@ impl PiApp {
                         .capture_current(input_snapshot(state.read(cx)));
                 }
                 InputEvent::PressEnter { shift: false, .. } => {
-                    let value = state.read(cx).value().trim().to_owned();
-                    if !value.is_empty() || this.has_composer_images() {
-                        this.submit(value, this.enter_mode(), _window, cx);
+                    let input = state.read(cx);
+                    let value = input.value();
+                    let mention = file_mentions::query_at_cursor(&value, input.cursor()).and_then(
+                        |query| {
+                            file_mentions::matches(&this.composer_project_files, &query.text)
+                                .get(this.composer_mention_selection)
+                                .cloned()
+                                .map(|path| (query, path))
+                        },
+                    );
+                    if let Some((query, path)) = mention {
+                        let (text, cursor) = file_mentions::insert(&value, &query, &path);
+                        this.apply_composer_snapshot(
+                            ComposerSnapshot::new(text, cursor, cursor..cursor),
+                            _window,
+                            cx,
+                        );
+                        this.composer_focus.focus(_window, cx);
+                    } else {
+                        let value = value.trim().to_owned();
+                        if !value.is_empty() || this.has_composer_images() {
+                            this.submit(value, this.enter_mode(), _window, cx);
+                        }
                     }
                 }
                 InputEvent::PressEnter { .. } | InputEvent::Focus => {}
