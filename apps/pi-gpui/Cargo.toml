@@ -8,7 +8,7 @@ description = "Native GPUI client for Pi RPC"
 
 [dependencies]
 base64 = "0.22.1"
-gpui = { path = "third_party/zed-gpui-cc053a4/crates/gpui" }
+gpui = { path = "third_party/zed-gpui-cc053a4/crates/gpui", features = ["profiler"] }
 gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "bd833291311289f3468479d31b629d3de279d3d4", features = ["tree-sitter-languages"] }
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "bd833291311289f3468479d31b629d3de279d3d4" }
 gpui-fps = { git = "https://github.com/longbridge/gpui-component", rev = "bd833291311289f3468479d31b629d3de279d3d4" }

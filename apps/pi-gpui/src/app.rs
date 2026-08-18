@@ -139,6 +139,7 @@ pub(crate) struct PiApp {
     pub(crate) transcript_disclosure_states: HashMap<usize, bool>,
     last_transcript_count: usize,
     fps_monitor: Option<Entity<FpsMonitor>>,
+    performance_monitor: Option<crate::performance::PerformanceMonitor>,
     extension: ExtensionUiState,
     parked_extension: Option<ExtensionUiState>,
     pending_dialog_setup: bool,
@@ -288,13 +289,15 @@ impl PiApp {
             crate::theme::THEME.layout.transcript_overdraw,
         );
         transcript_list.set_follow_mode(FollowMode::Tail);
-        let fps_monitor = (std::env::var("DEBUG").ok().as_deref() == Some("true")).then(|| {
+        let debug = std::env::var("DEBUG").ok().as_deref() == Some("true");
+        let fps_monitor = debug.then(|| {
             cx.new(|cx| {
                 FpsMonitor::new(window, cx)
                     .continuous(true)
                     .show_resources(false)
             })
         });
+        let performance_monitor = debug.then(crate::performance::PerformanceMonitor::new);
         let app = cx.entity().downgrade();
         let session_rail_view = cx.new(|_| SessionRailView::new(app.clone()));
         let transcript_view = cx.new(|_| TranscriptView::new(app.clone()));
@@ -380,6 +383,7 @@ impl PiApp {
             transcript_disclosure_states: HashMap::new(),
             last_transcript_count: 0,
             fps_monitor,
+            performance_monitor,
             extension: ExtensionUiState::default(),
             parked_extension: None,
             pending_dialog_setup: false,
@@ -407,11 +411,15 @@ impl PiApp {
     fn drain_runtime(&mut self, cx: &mut Context<Self>) {
         let mut changed = self.extension.prune_notifications();
         let completions_changed = self.prune_recent_completions();
-        changed |= completions_changed;
+        let performance_changed = self
+            .performance_monitor
+            .as_mut()
+            .is_some_and(crate::performance::PerformanceMonitor::sample_if_due);
+        changed |= completions_changed || performance_changed;
         let mut rail_dirty = completions_changed;
         let mut transcript_dirty = false;
         let mut composer_dirty = false;
-        let mut run_dirty = completions_changed;
+        let mut run_dirty = completions_changed || performance_changed;
         while let Ok(event) = self.runtime.try_recv() {
             changed = true;
             match &event {

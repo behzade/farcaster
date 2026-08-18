@@ -10,6 +10,7 @@ mod framing;
 mod keybindings;
 mod launch;
 mod layout;
+mod performance;
 mod primitives;
 mod projects;
 mod protocol;

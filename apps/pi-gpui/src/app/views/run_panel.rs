@@ -159,6 +159,9 @@ impl PiApp {
                 run.child(render_accounting(aggregate))
             })
             .when_some(self.fps_monitor.clone(), |run, monitor| run.child(monitor))
+            .when_some(self.performance_monitor.as_ref(), |run, monitor| {
+                run.child(render_performance(&monitor.summary))
+            })
             .when(main.is_some() || !active.is_empty(), |run| {
                 run.child(section_heading("Agents"))
                     .children(main.and_then(|(activity, session)| {
@@ -557,6 +560,49 @@ fn render_accounting(usage: UsageSummary) -> impl IntoElement {
                 compact_number(usage.cache_read),
                 compact_number(usage.cache_write)
             ),
+        ))
+}
+
+fn render_performance(summary: &crate::performance::PerformanceSummary) -> impl IntoElement {
+    div()
+        .p(THEME.space.sm)
+        .border(THEME.border)
+        .border_color(THEME.colors.border)
+        .bg(THEME.colors.canvas)
+        .flex()
+        .flex_col()
+        .gap(THEME.space.xs)
+        .child(section_heading("GPUI profiler · 1 second"))
+        .child(metric_row(
+            "Frames",
+            format!("{} sampled", summary.frame_count),
+        ))
+        .child(metric_row(
+            "Draw p95 / max",
+            format!(
+                "{} / {}",
+                crate::performance::duration_label(summary.draw_p95),
+                crate::performance::duration_label(summary.draw_max)
+            ),
+        ))
+        .child(metric_row(
+            "Dirty to draw p95",
+            crate::performance::duration_label(summary.dirty_to_draw_p95),
+        ))
+        .child(metric_row(
+            "Invalidations avg / max",
+            format!(
+                "{:.1} / {}",
+                summary.invalidations_average, summary.invalidations_max
+            ),
+        ))
+        .child(metric_row(
+            "Slowest task poll",
+            summary.slowest_task.clone().unwrap_or_else(|| "—".into()),
+        ))
+        .child(metric_row(
+            "Slowest action",
+            summary.slowest_action.clone().unwrap_or_else(|| "—".into()),
         ))
 }
 
