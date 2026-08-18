@@ -21,6 +21,35 @@ fn item(text: &str) -> TranscriptItem {
 }
 
 #[test]
+fn unchanged_scroll_follow_event_does_not_invalidate_transcript() {
+    let mut following = true;
+    let mut unseen = 0;
+    assert!(!update_transcript_follow_state(
+        &mut following,
+        &mut unseen,
+        true,
+    ));
+
+    unseen = 3;
+    assert!(update_transcript_follow_state(
+        &mut following,
+        &mut unseen,
+        true,
+    ));
+    assert_eq!(unseen, 0);
+    assert!(update_transcript_follow_state(
+        &mut following,
+        &mut unseen,
+        false,
+    ));
+    assert!(!update_transcript_follow_state(
+        &mut following,
+        &mut unseen,
+        false,
+    ));
+}
+
+#[test]
 fn unchanged_catalog_poll_does_not_invalidate_session_regions() {
     assert!(!session_catalog_changed(&[], &[], None, &[], &[]));
     assert!(!session_activities_changed(&HashMap::new(), None));

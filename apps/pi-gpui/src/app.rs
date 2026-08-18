@@ -336,11 +336,13 @@ impl PiApp {
             let app = app.clone();
             cx.defer(move |cx| {
                 let _ = app.update(cx, |this, cx| {
-                    this.transcript_following = following;
-                    if following {
-                        this.transcript_unseen = 0;
+                    if update_transcript_follow_state(
+                        &mut this.transcript_following,
+                        &mut this.transcript_unseen,
+                        following,
+                    ) {
+                        this.notify_transcript(cx);
                     }
-                    this.notify_transcript(cx);
                 });
             });
         });
@@ -1072,6 +1074,15 @@ impl PiApp {
         self.send(RuntimeCommand::SetThinking(level));
         cx.notify();
     }
+}
+
+fn update_transcript_follow_state(current: &mut bool, unseen: &mut usize, following: bool) -> bool {
+    let changed = *current != following || (following && *unseen != 0);
+    *current = following;
+    if following {
+        *unseen = 0;
+    }
+    changed
 }
 
 fn session_catalog_changed(
