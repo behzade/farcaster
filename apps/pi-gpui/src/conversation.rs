@@ -235,6 +235,30 @@ impl ConversationState {
         self.reduce_with_projection(event, false)
     }
 
+    pub(crate) fn reduce_deferred_with_change(&mut self, event: &Value) -> (Option<usize>, bool) {
+        let previous_state = (
+            self.running,
+            self.settled,
+            self.compacting,
+            self.retrying,
+            self.queue.clone(),
+            self.average_cache_hit_rate,
+            self.diagnostics.len(),
+        );
+        let changed_from = self.reduce_deferred(event);
+        let state_changed = previous_state
+            != (
+                self.running,
+                self.settled,
+                self.compacting,
+                self.retrying,
+                self.queue.clone(),
+                self.average_cache_hit_rate,
+                self.diagnostics.len(),
+            );
+        (changed_from, state_changed)
+    }
+
     fn reduce_with_projection(&mut self, event: &Value, project_live: bool) -> Option<usize> {
         let kind = event
             .get("type")

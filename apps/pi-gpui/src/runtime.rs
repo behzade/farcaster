@@ -833,11 +833,11 @@ fn historical_context_stats(messages: &[Value], models: &[Model]) -> Value {
     json!({"contextUsage": context})
 }
 
-fn update_context_from_event(stats: &mut Value, event: &Value) {
+fn update_context_from_event(stats: &mut Value, event: &Value) -> bool {
     let usage = event
         .get("usage")
         .or_else(|| event.pointer("/message/usage"));
-    let Some(usage) = usage else { return };
+    let Some(usage) = usage else { return false };
     let tokens = usage
         .get("totalTokens")
         .and_then(Value::as_u64)
@@ -850,16 +850,29 @@ fn update_context_from_event(stats: &mut Value, event: &Value) {
                 })
                 .filter(|tokens| *tokens > 0)
         });
-    let Some(tokens) = tokens else { return };
+    let Some(tokens) = tokens else { return false };
     let Some(context_window) = stats
         .pointer("/contextUsage/contextWindow")
         .and_then(Value::as_u64)
         .filter(|window| *window > 0)
     else {
-        return;
+        return false;
     };
+    let percent = tokens as f64 * 100.0 / context_window as f64;
+    if stats
+        .pointer("/contextUsage/tokens")
+        .and_then(Value::as_u64)
+        == Some(tokens)
+        && stats
+            .pointer("/contextUsage/percent")
+            .and_then(Value::as_f64)
+            == Some(percent)
+    {
+        return false;
+    }
     stats["contextUsage"]["tokens"] = tokens.into();
-    stats["contextUsage"]["percent"] = (tokens as f64 * 100.0 / context_window as f64).into();
+    stats["contextUsage"]["percent"] = percent.into();
+    true
 }
 
 fn semantic_status(snapshot: &RuntimeSnapshot) -> &'static str {
@@ -1281,15 +1294,25 @@ impl RuntimeOwner {
                 let previewing = self.parked_snapshot.is_some();
                 let previous_live_status =
                     previewing.then(|| session_badge_status(&self.active_snapshot().conversation));
-                let (changed_from, live_status_changed) = {
+                let (changed_from, snapshot_changed, live_status_changed) = {
                     let snapshot = self.active_snapshot_mut();
-                    let changed_from = conversation_mut(snapshot).reduce_deferred(&event);
-                    update_context_from_event(&mut snapshot.stats, &event);
-                    snapshot.status = run_status(&snapshot.conversation).to_owned();
+                    let (changed_from, conversation_state_changed) =
+                        conversation_mut(snapshot).reduce_deferred_with_change(&event);
+                    let context_changed = update_context_from_event(&mut snapshot.stats, &event);
+                    let status = run_status(&snapshot.conversation);
+                    let status_changed = snapshot.status != status;
+                    snapshot.status = status.to_owned();
                     let live_status_changed = previous_live_status.is_some_and(|status| {
                         status != session_badge_status(&snapshot.conversation)
                     });
-                    (changed_from, live_status_changed)
+                    (
+                        changed_from,
+                        changed_from.is_some()
+                            || conversation_state_changed
+                            || context_changed
+                            || status_changed,
+                        live_status_changed,
+                    )
                 };
                 if let Some(changed_from) = changed_from {
                     self.transcript_changed_from = Some(
@@ -1297,7 +1320,7 @@ impl RuntimeOwner {
                             .map_or(changed_from, |previous| previous.min(changed_from)),
                     );
                 }
-                let should_publish = !previewing || live_status_changed;
+                let should_publish = (!previewing && snapshot_changed) || live_status_changed;
                 if session_starting {
                     self.send(command("get_state"));
                 }
@@ -1363,6 +1386,15 @@ impl RuntimeOwner {
                 });
                 self.publish();
             }
+            return;
+        }
+        let active = self.active_snapshot();
+        if !active.conversation.running
+            && !active.conversation.compacting
+            && !active.conversation.retrying
+        {
+            self.project = project;
+            self.start_process(Some(path));
             return;
         }
         let generation = self.history_generation;
@@ -2027,15 +2059,22 @@ mod tests {
         let mut stats = json!({
             "contextUsage": {"tokens": 40, "contextWindow": 200, "percent": 20.0}
         });
-        update_context_from_event(
+        assert!(update_context_from_event(
             &mut stats,
             &json!({
                 "type": "message_update",
                 "usage": {"input": 60, "output": 10, "cacheRead": 20, "cacheWrite": 10, "totalTokens": 100}
             }),
-        );
+        ));
         assert_eq!(stats["contextUsage"]["tokens"], 100);
         assert_eq!(stats["contextUsage"]["percent"], 50.0);
+        assert!(!update_context_from_event(
+            &mut stats,
+            &json!({
+                "type": "message_update",
+                "usage": {"totalTokens": 100}
+            }),
+        ));
     }
 
     #[test]
@@ -2052,6 +2091,21 @@ mod tests {
         );
         assert_eq!(stats["contextUsage"]["tokens"], 90);
         assert_eq!(stats["contextUsage"]["percent"], 45.0);
+    }
+
+    #[test]
+    fn no_op_working_events_do_not_request_a_snapshot_publish() {
+        let project = PathBuf::from("/project");
+        let (mut owner, events, _discovery) = owner_without_process(project);
+        owner.snapshot.status = "Working".into();
+        conversation_mut(&mut owner.snapshot).running = true;
+
+        let changed = owner.apply_process_item(ProcessItem::Event(json!({
+            "type": "turn_start"
+        })));
+
+        assert_eq!(changed, SnapshotChange::None);
+        assert!(events.try_recv().is_err());
     }
 
     #[test]
@@ -2873,7 +2927,31 @@ mod tests {
     }
 
     #[test]
-    fn history_preview_keeps_pi_until_a_prompt_resumes_the_session() -> Result<(), String> {
+    fn switching_from_an_idle_session_resumes_instead_of_previewing_history() {
+        let old_project = PathBuf::from("/old-project");
+        let new_project = PathBuf::from("/new-project");
+        let old_path = PathBuf::from("/old-session.jsonl");
+        let new_path = PathBuf::from("/new-session.jsonl");
+        let (mut owner, events, _discovery) = owner_without_process(old_project.clone());
+        owner.active_session = Some(old_path.clone());
+        owner.snapshot.selected_session = Some(old_path);
+        owner.process_generation = 4;
+
+        owner.preview_history(new_path.clone(), new_project.clone());
+
+        assert_eq!(owner.process_generation, 5);
+        assert_eq!(owner.active_session, Some(new_path.clone()));
+        assert_eq!(owner.project, new_project);
+        assert!(!owner.snapshot.history_preview);
+        assert!(
+            events
+                .try_iter()
+                .any(|event| matches!(event, RuntimeEvent::SessionReset { generation: 5, .. }))
+        );
+    }
+
+    #[test]
+    fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Result<(), String> {
         let temp = tempdir().map_err(|error| error.to_string())?;
         let script = temp.path().join("fake-pi.sh");
         fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))
@@ -2903,7 +2981,7 @@ mod tests {
             process: Some(process),
             snapshot: RuntimeSnapshot {
                 connected: true,
-                status: "Ready".into(),
+                status: "Working".into(),
                 project: old_project.clone(),
                 selected_session: Some(old_path.clone()),
                 ..RuntimeSnapshot::default()
@@ -2931,6 +3009,7 @@ mod tests {
             state: Some(StateStore::open_at(&temp.path().join("gui-state.sqlite3"))?),
             session_query: String::new(),
         };
+        conversation_mut(&mut owner.snapshot).running = true;
 
         owner.preview_history(old_path.clone(), old_project);
         owner.apply_history(HistoryResult {
@@ -2974,7 +3053,7 @@ mod tests {
             PromptMode::Normal,
             "continue".into(),
             Vec::new(),
-            false,
+            true,
         );
         assert!(owner.snapshot.history_preview);
         assert_eq!(owner.snapshot.conversation.items[0].text, "previewed");
