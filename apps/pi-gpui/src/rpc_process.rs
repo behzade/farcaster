@@ -95,7 +95,9 @@ impl RpcProcess {
         session: Option<&Path>,
     ) -> Result<Self, String> {
         let mut process = command.command(project);
-        process.args(["--mode", "rpc"]);
+        process
+            .args(["--mode", "rpc"])
+            .env("PI_GPUI_NATIVE_NOTIFICATIONS", "1");
         if let Some(session) = session {
             process.arg("--session").arg(session);
         }

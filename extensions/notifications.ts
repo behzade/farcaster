@@ -57,6 +57,7 @@ function supportsOsc9(): boolean {
 
 export default function (pi: ExtensionAPI) {
   const config = loadConfig();
+  let postGpuiNotification: ((title: string, message: string) => void) | undefined;
   let lastAssistantText = "Turn ended";
   let terminalFocused = true;
   let focusTail = "";
@@ -69,7 +70,9 @@ export default function (pi: ExtensionAPI) {
     (config.condition === "always" || !terminalFocused);
 
   const post = Effect.fn("Notifications.post")(function* ({ title, message }: PendingNotification) {
-    if ((config.method === "auto" && supportsOsc9()) || config.method === "osc9") {
+    if (postGpuiNotification) {
+      yield* Effect.sync(() => postGpuiNotification?.(title, message));
+    } else if ((config.method === "auto" && supportsOsc9()) || config.method === "osc9") {
       yield* Effect.sync(() => process.stdout.write(osc9Sequence(message, Boolean(process.env.TMUX))));
     } else if (config.method === "bel") {
       yield* Effect.sync(() => process.stdout.write("\u0007"));
@@ -134,6 +137,11 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", (_event, ctx) => {
     terminalFocused = ctx.mode === "tui";
+    if (process.env.PI_GPUI_NATIVE_NOTIFICATIONS === "1") {
+      postGpuiNotification = (title, message) => {
+        ctx.ui.notify(`\u001fpi-gpui-notification\u001f${title}\u001f${preview(message)}`, "info");
+      };
+    }
     if (ctx.mode === "tui" && process.stdin.isTTY) {
       process.stdin.on("data", onInput);
       process.stdout.write("\u001b[?1004h");
@@ -153,6 +161,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", () => {
+    postGpuiNotification = undefined;
     unsubscribeApproval();
     unsubscribeFeedback();
     flushFiber?.interruptUnsafe();

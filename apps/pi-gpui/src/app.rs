@@ -27,7 +27,8 @@ use std::{
 
 use gpui::{
     AppContext as _, Context, Entity, FocusHandle, Focusable as _, FollowMode, ListAlignment,
-    ListState, PathPromptOptions, ScrollHandle, Subscription, Task, Window, actions, point, px,
+    ListState, PathPromptOptions, ScrollHandle, Subscription, SystemNotification, Task, Window,
+    actions, point, px,
 };
 use gpui_component::input::{InputEvent, InputState, TextareaState};
 use gpui_fps::FpsMonitor;
@@ -528,7 +529,14 @@ impl PiApp {
                     generation,
                     request,
                 } if generation == self.runtime_generation => {
-                    if let Some(extension) = self.parked_extension.as_mut() {
+                    if let Some((title, body)) = request.gpui_system_notification() {
+                        cx.show_system_notification(SystemNotification {
+                            tag: "pi-agent".into(),
+                            title: title.into(),
+                            body: body.into(),
+                            actions: Vec::new(),
+                        });
+                    } else if let Some(extension) = self.parked_extension.as_mut() {
                         let _ = extension.apply(request);
                     } else {
                         self.apply_extension_request(request, generation);

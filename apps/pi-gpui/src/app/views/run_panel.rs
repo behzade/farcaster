@@ -150,12 +150,13 @@ impl PiApp {
             .overflow_y_scroll()
             .track_scroll(&self.run_panel_scroll)
             .child(section_heading("Context"))
-            .child(render_context_summary(&context, context_control))
+            .child(render_context_summary(
+                &context,
+                self.snapshot.conversation.latest_cache_hit_rate,
+                context_control,
+            ))
             .when(self.context_details_expanded, |run| {
-                run.child(render_accounting(
-                    aggregate,
-                    self.snapshot.conversation.latest_cache_hit_rate,
-                ))
+                run.child(render_accounting(aggregate))
             })
             .when_some(self.fps_monitor.clone(), |run, monitor| run.child(monitor))
             .when(main.is_some() || !active.is_empty(), |run| {
@@ -472,7 +473,11 @@ impl PiApp {
     }
 }
 
-fn render_context_summary(summary: &ContextSummary, control: AnyElement) -> impl IntoElement {
+fn render_context_summary(
+    summary: &ContextSummary,
+    cache_hit_rate: Option<f64>,
+    control: AnyElement,
+) -> impl IntoElement {
     let percent = summary
         .percent
         .map_or_else(|| "—".into(), |percent| format!("{percent:.0}%"));
@@ -523,11 +528,15 @@ fn render_context_summary(summary: &ContextSummary, control: AnyElement) -> impl
                     summary.remaining.map_or_else(|| "—".into(), compact_number),
                 ))
                 .child(metric_row("Session cost", format_cost(summary.cost_micros)))
+                .child(metric_row(
+                    "Latest cache hit",
+                    cache_hit_rate.map_or_else(|| "—".into(), |rate| format!("{rate:.1}%")),
+                ))
                 .child(control),
         )
 }
 
-fn render_accounting(usage: UsageSummary, cache_hit_rate: Option<f64>) -> impl IntoElement {
+fn render_accounting(usage: UsageSummary) -> impl IntoElement {
     div()
         .p(THEME.space.sm)
         .border(THEME.border)
@@ -548,10 +557,6 @@ fn render_accounting(usage: UsageSummary, cache_hit_rate: Option<f64>) -> impl I
                 compact_number(usage.cache_read),
                 compact_number(usage.cache_write)
             ),
-        ))
-        .child(metric_row(
-            "Latest cache hit",
-            cache_hit_rate.map_or_else(|| "—".into(), |rate| format!("{rate:.1}%")),
         ))
 }
 

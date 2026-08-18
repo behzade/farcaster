@@ -317,6 +317,13 @@ fn run_supervisor(
                         }
                     }
                     RuntimeEvent::ExtensionUi { request, .. } => {
+                        if request.gpui_system_notification().is_some() {
+                            let _ = event_tx.send(RuntimeEvent::ExtensionUi {
+                                generation,
+                                request,
+                            });
+                            continue;
+                        }
                         if request.dialog_id().is_some() {
                             active_dialogs
                                 .entry(key.clone())

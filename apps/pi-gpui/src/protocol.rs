@@ -141,6 +141,14 @@ pub(crate) enum ExtensionUiRequest {
 }
 
 impl ExtensionUiRequest {
+    pub(crate) fn gpui_system_notification(&self) -> Option<(&str, &str)> {
+        let Self::Notify { message, .. } = self else {
+            return None;
+        };
+        let payload = message.strip_prefix("\u{1f}pi-gpui-notification\u{1f}")?;
+        payload.split_once('\u{1f}')
+    }
+
     pub(crate) fn dialog_id(&self) -> Option<&str> {
         match self {
             Self::Select { id, .. }
@@ -317,6 +325,19 @@ fn parse_extension_request(value: &Value) -> ExtensionUiRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gpui_notification_transport_separates_title_and_body() {
+        let request = ExtensionUiRequest::Notify {
+            id: "notification".into(),
+            message: "\u{1f}pi-gpui-notification\u{1f}Pi finished\u{1f}Done".into(),
+            tone: NotifyTone::Info,
+        };
+        assert_eq!(
+            request.gpui_system_notification(),
+            Some(("Pi finished", "Done"))
+        );
+    }
 
     #[test]
     fn decodes_every_extension_ui_request_exactly() {
