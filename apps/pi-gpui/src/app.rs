@@ -755,6 +755,8 @@ impl PiApp {
         self.switch_composer_target(session_target(&path), window, cx);
         self.selected_draft = None;
         self.select_project(project.clone());
+        self.cache_current_transcript();
+        self.preview_cached_session(&path, &project);
         self.send(RuntimeCommand::Resume { path, project });
         self.close_sessions_sheet_after_selection(window, cx);
         if previous_root != next_root {

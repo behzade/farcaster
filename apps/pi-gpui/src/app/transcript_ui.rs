@@ -74,6 +74,34 @@ impl PiApp {
         true
     }
 
+    pub(super) fn preview_cached_session(
+        &mut self,
+        path: &std::path::Path,
+        project: &std::path::Path,
+    ) -> bool {
+        let Some(cached) = self.transcript_cache.get(path).cloned() else {
+            return false;
+        };
+        self.transcript_list.reset(cached.rows.len());
+        self.transcript_rows = cached.rows;
+        self.transcript_disclosure_states = cached.disclosures;
+        self.transcript_unseen = cached.unseen;
+        self.last_transcript_count = self.transcript_rows.len();
+        self.transcript_following = cached.following;
+        self.transcript_list.set_follow_mode(FollowMode::Tail);
+        if cached.following {
+            self.transcript_list.scroll_to_end();
+        } else {
+            self.transcript_list.scroll_to(cached.scroll);
+        }
+        let snapshot = Arc::make_mut(&mut self.snapshot);
+        snapshot.selected_session = Some(path.to_path_buf());
+        snapshot.project = project.to_path_buf();
+        snapshot.conversation = cached.conversation;
+        snapshot.history_preview = true;
+        true
+    }
+
     pub(super) fn project_transcript_rows(
         &self,
         snapshot: &crate::runtime::RuntimeSnapshot,
