@@ -71,7 +71,7 @@ export class PiSessionFactory implements ChildSessionFactory {
 			: (supported.includes("medium") ? "medium" : (supported[0] ?? "off"));
 		const context = request.context ?? "fork";
 		const manager = context === "fork"
-			? SessionManager.forkFrom(request.parentSessionFile!, request.cwd)
+			? forkBeforeActiveToolCall(request.parentSessionFile!, request.cwd)
 			: SessionManager.create(request.cwd, undefined, { parentSession: request.parentSessionFile });
 		const services = await createAgentSessionServices({
 			cwd: request.cwd,
@@ -88,6 +88,7 @@ export class PiSessionFactory implements ChildSessionFactory {
 			thinkingLevel: effort as PiThinkingLevel,
 			sessionManager: manager,
 			sessionStartEvent,
+			excludeTools: ["subagent_start", "subagent_send", "subagent_control"],
 		});
 		const runtime = new AgentSessionRuntime(
 			session,
@@ -137,4 +138,18 @@ export class PiSessionFactory implements ChildSessionFactory {
 	}
 }
 
-export { finalAssistantText };
+function forkBeforeActiveToolCall(parentSessionFile: string, cwd: string): SessionManager {
+	const manager = SessionManager.forkFrom(parentSessionFile, cwd);
+	const leaf = manager.getLeafEntry();
+	if (leaf?.type === "message" && leaf.message.role === "assistant") {
+		const startsChild = Array.isArray(leaf.message.content) && leaf.message.content.some((part) =>
+			part.type === "toolCall" && part.name === "subagent_start");
+		if (startsChild) {
+			if (leaf.parentId) manager.branch(leaf.parentId);
+			else manager.resetLeaf();
+		}
+	}
+	return manager;
+}
+
+export { finalAssistantText, forkBeforeActiveToolCall };

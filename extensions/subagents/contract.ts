@@ -11,7 +11,6 @@ export const THINKING_LEVELS = [
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 export type SubagentContext = "fork" | "blank";
 export type SendMode = "prompt" | "steer";
-export type WaitUntil = "first" | "all";
 export type RunStatus = "running" | "idle" | "failed" | "stopped";
 
 export interface StartRequest {
@@ -56,16 +55,3 @@ export interface RunSnapshot {
 	output?: string;
 	error?: string;
 }
-
-export interface WaitResult {
-	interruptedByUser: false;
-	runs: RunSnapshot[];
-}
-
-export interface InterruptedWaitResult {
-	interruptedByUser: true;
-	pendingIds: string[];
-	instruction: string;
-}
-
-export type SubagentWaitResult = WaitResult | InterruptedWaitResult;

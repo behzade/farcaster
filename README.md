@@ -49,7 +49,8 @@ separate `nix-config` repo.
   manifests and Effect v4 handlers from trusted project `.pi/project-tools`
   directories. These handlers run in Pi's host process, not the shell sandbox.
 - [`extensions/subagents`](extensions/subagents) owns persistent child Pi
-  sessions and exposes the four Effect-backed lifecycle tools.
+  sessions. Child completion automatically reprompts the parent; three
+  Effect-backed tools start, message, and control children.
 - The loose entrypoints under [`extensions`](extensions) are packaged together by
   `pi-core-extensions`; notifications, title animation, user input, and feedback use the
   same pinned Effect v4 runtime while Pi callbacks remain boundary adapters.

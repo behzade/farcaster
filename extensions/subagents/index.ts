@@ -3,7 +3,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import { Effect } from "effect";
 import { PiSessionFactory } from "./adapter.ts";
-import { THINKING_LEVELS, type StartRequest } from "./contract.ts";
+import { THINKING_LEVELS, type RunSnapshot, type StartRequest } from "./contract.ts";
 import { SubagentCore } from "./core.ts";
 
 const StartParams = Type.Object({
@@ -18,11 +18,6 @@ const SendParams = Type.Object({
 	id: Type.String({ minLength: 1 }),
 	message: Type.String({ minLength: 1 }),
 	mode: Type.Optional(StringEnum(["prompt", "steer"] as const)),
-});
-
-const WaitParams = Type.Object({
-	ids: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, uniqueItems: true }),
-	until: Type.Optional(StringEnum(["first", "all"] as const)),
 });
 
 const ControlParams = Type.Object({
@@ -62,7 +57,28 @@ function startRequest(
 }
 
 export default function subagentsExtension(pi: ExtensionAPI) {
-	const core = new SubagentCore(new PiSessionFactory());
+	let settled: RunSnapshot[] = [];
+	let flushTimer: ReturnType<typeof setTimeout> | undefined;
+	const flushSettled = () => {
+		flushTimer = undefined;
+		const batch = settled;
+		settled = [];
+		if (batch.length === 0) return;
+		const content = batch.map((run) => {
+			const body = run.output ?? run.error ?? "Subagent finished without text.";
+			return `Subagent ${run.id} (${run.status}) returned:\n${body}`;
+		}).join("\n\n");
+		pi.sendMessage({
+			customType: "subagent-result",
+			content,
+			display: true,
+			details: { runs: batch },
+		}, { triggerTurn: true, deliverAs: "steer" });
+	};
+	const core = new SubagentCore(new PiSessionFactory(), (snapshot) => {
+		settled.push(snapshot);
+		flushTimer ??= setTimeout(flushSettled, 25);
+	});
 
 	pi.registerTool({
 		name: "subagent_start",
@@ -87,20 +103,6 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerTool({
-		name: "subagent_wait",
-		label: "Wait for subagents",
-		description: "Wait for the first or all named child sessions. A new parent user message interrupts waiting successfully without consuming that message; answer it, then wait again.",
-		promptSnippet: "Wait interruptibly for child Pi session results",
-		parameters: WaitParams,
-		async execute(_toolCallId, params) {
-			// Parent input aborts the current tool signal before the input event is
-			// delivered. Keep this wait alive long enough for notifyUserInput() to
-			// resolve it successfully with the resumable interruption result.
-			return toolResult(await runEffect(core.wait(params.ids, params.until)));
-		},
-	});
-
-	pi.registerTool({
 		name: "subagent_control",
 		label: "Control subagents",
 		description: "List child sessions, inspect one status, or stop one child session. status and stop require id.",
@@ -111,12 +113,10 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.on("input", (event) => {
-		if (event.source === "interactive" || event.source === "rpc") core.notifyUserInput();
-		return { action: "continue" };
-	});
-
 	pi.on("session_shutdown", async () => {
+		if (flushTimer) clearTimeout(flushTimer);
+		flushTimer = undefined;
+		settled = [];
 		await Effect.runPromise(core.shutdown());
 	});
 }
