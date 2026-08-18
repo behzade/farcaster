@@ -7,10 +7,10 @@ use gpui::{
     Render, StatefulInteractiveElement as _, Styled as _, Task, Window, div,
     prelude::FluentBuilder as _, px,
 };
-use gpui_component::input::{Textarea, TextareaState};
+use gpui_component::input::{Input, InputState, Textarea, TextareaState};
 use workgraph::{
     adapter::SqliteAdapter,
-    contract::{EditAction, EditRequest, SearchRequest, SearchResult},
+    contract::{EditAction, EditRequest, EditResult, SearchRequest, SearchResult},
     core::WorkGraph,
 };
 
@@ -31,7 +31,10 @@ pub(crate) struct WorkGraphBoardView {
     filter: BoardFilter,
     mode: BoardMode,
     selected: Option<u64>,
+    creating: bool,
     active_session: Option<(String, String)>,
+    create_title: Option<Entity<InputState>>,
+    create_body: Option<Entity<TextareaState>>,
     note: Option<Entity<TextareaState>>,
     note_issue: Option<u64>,
     refresh: Option<Task<()>>,
@@ -55,7 +58,10 @@ impl WorkGraphBoardView {
             filter: BoardFilter::Active,
             mode: BoardMode::Kanban,
             selected: None,
+            creating: false,
             active_session: None,
+            create_title: None,
+            create_body: None,
             note: None,
             note_issue: None,
             refresh: None,
@@ -110,12 +116,42 @@ impl WorkGraphBoardView {
     }
 
     fn select_issue(&mut self, number: u64, cx: &mut Context<Self>) {
+        self.creating = false;
         self.selected = Some(number);
         cx.notify();
     }
 
     fn clear_selection(&mut self, cx: &mut Context<Self>) {
+        self.creating = false;
         self.selected = None;
+        cx.notify();
+    }
+
+    fn start_create(&mut self, cx: &mut Context<Self>) {
+        self.selected = None;
+        self.creating = true;
+        cx.notify();
+    }
+
+    fn create_issue(&mut self, title: String, body: String, cx: &mut Context<Self>) {
+        let database = self.database.clone();
+        let project = self.project.clone();
+        let edit = cx.background_spawn(async move { create_issue(database, project, title, body) });
+        self.state = BoardLoadState::Loading;
+        self.refresh = Some(cx.spawn(async move |weak, cx| {
+            let result = edit.await;
+            let _ = weak.update(cx, |this, cx| {
+                match result {
+                    Ok((data, number)) => {
+                        this.state = BoardLoadState::Ready(data);
+                        this.selected = Some(number);
+                        this.creating = false;
+                    }
+                    Err(error) => this.state = BoardLoadState::Failed(error),
+                }
+                cx.notify();
+            });
+        }));
         cx.notify();
     }
 
@@ -290,6 +326,112 @@ impl WorkGraphBoardView {
                     .collect::<Vec<_>>();
                 render_graph_row(issue, dependency_titles, self.selected, entity.clone())
             }))
+    }
+
+    fn render_create(&self, entity: Entity<Self>, layout: BoardLayoutMode) -> impl IntoElement {
+        let title = self
+            .create_title
+            .as_ref()
+            .expect("create title initialized");
+        let body = self.create_body.as_ref().expect("create body initialized");
+        let submit_title = title.clone();
+        let submit_body = body.clone();
+        let submit = entity.clone();
+        let cancel = entity;
+        let narrow = issue_detail_shell(layout).shows_sheet(false);
+        div()
+            .id("workgraph-create")
+            .w(px(400.0))
+            .min_w(px(360.0))
+            .when(narrow, |form| form.w_full().min_w_0())
+            .flex_none()
+            .h_full()
+            .overflow_y_scroll()
+            .p(THEME.space.md)
+            .bg(THEME.colors.panel)
+            .border_l(THEME.border)
+            .border_color(THEME.colors.border)
+            .flex()
+            .flex_col()
+            .gap(THEME.space.md)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(THEME.space.xs)
+                    .child(
+                        div()
+                            .text_size(THEME.type_scale.caption)
+                            .text_color(THEME.colors.subtle)
+                            .child("NEW ISSUE"),
+                    )
+                    .child(
+                        div()
+                            .text_size(THEME.type_scale.display)
+                            .text_color(THEME.colors.text)
+                            .child("Record concrete project work"),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(THEME.space.xs)
+                    .child(
+                        div()
+                            .text_size(THEME.type_scale.caption)
+                            .text_color(THEME.colors.subtle)
+                            .child("TITLE"),
+                    )
+                    .child(Input::new(title).w_full()),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(THEME.space.xs)
+                    .child(
+                        div()
+                            .text_size(THEME.type_scale.caption)
+                            .text_color(THEME.colors.subtle)
+                            .child("DESCRIPTION"),
+                    )
+                    .child(Textarea::new(body).w_full()),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap(THEME.space.xs)
+                    .child(button(
+                        "workgraph-create-submit",
+                        "Create issue",
+                        ButtonTone::Neutral,
+                        true,
+                        move |window, cx| {
+                            let title = submit_title.read(cx).value().trim().to_owned();
+                            if title.is_empty() {
+                                return;
+                            }
+                            let body = submit_body.read(cx).value().trim().to_owned();
+                            submit_title.update(cx, |input, cx| {
+                                input.set_value(String::new(), window, cx);
+                            });
+                            submit_body.update(cx, |input, cx| {
+                                input.set_value(String::new(), window, cx);
+                            });
+                            submit.update(cx, |this, cx| this.create_issue(title, body, cx));
+                        },
+                    ))
+                    .child(button(
+                        "workgraph-create-cancel",
+                        "Cancel",
+                        ButtonTone::Quiet,
+                        true,
+                        move |_, cx| {
+                            cancel.update(cx, |this, cx| this.clear_selection(cx));
+                        },
+                    )),
+            )
     }
 
     fn render_detail(
@@ -561,6 +703,19 @@ impl WorkGraphBoardView {
 
 impl Render for WorkGraphBoardView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.create_title.is_none() {
+            self.create_title = Some(
+                cx.new(|cx| InputState::new(window, cx).placeholder("What needs to be done?")),
+            );
+        }
+        if self.create_body.is_none() {
+            self.create_body = Some(cx.new(|cx| {
+                TextareaState::new(window, cx)
+                    .auto_grow(4, 10)
+                    .submit_on_enter(false)
+                    .placeholder("Context, expected result, and useful constraints")
+            }));
+        }
         if self.note.is_none() {
             self.note = Some(cx.new(|cx| {
                 TextareaState::new(window, cx)
@@ -617,6 +772,7 @@ impl Render for WorkGraphBoardView {
                     let mode = self.mode;
                     let kanban = entity.clone();
                     let graph = entity.clone();
+                    let create = entity.clone();
                     let active_count = filter_count(data, BoardFilter::Active);
                     let blocked_count = filter_count(data, BoardFilter::Blocked);
                     div()
@@ -657,8 +813,19 @@ impl Render for WorkGraphBoardView {
                                         ),
                                 )
                                 .child(
-                                    div().flex().gap(THEME.space.xs).children(
-                                        [BoardMode::Kanban, BoardMode::Graph].map(|item| {
+                                    div()
+                                        .flex()
+                                        .gap(THEME.space.xs)
+                                        .child(button(
+                                            "workgraph-create-open",
+                                            "New issue",
+                                            ButtonTone::Neutral,
+                                            true,
+                                            move |_, cx| {
+                                                create.update(cx, |this, cx| this.start_create(cx));
+                                            },
+                                        ))
+                                        .children([BoardMode::Kanban, BoardMode::Graph].map(|item| {
                                             let target = if item == BoardMode::Kanban {
                                                 kanban.clone()
                                             } else {
@@ -679,8 +846,7 @@ impl Render for WorkGraphBoardView {
                                                     })
                                                 },
                                             )
-                                        }),
-                                    ),
+                                        })),
                                 ),
                         )
                         .child(
@@ -692,7 +858,9 @@ impl Render for WorkGraphBoardView {
                                     board.child(self.render_filter_rail(entity.clone(), data))
                                 })
                                 .when(
-                                    layout != BoardLayoutMode::Narrow || self.selected.is_none(),
+                                    !self.creating
+                                        && (layout != BoardLayoutMode::Narrow
+                                            || self.selected.is_none()),
                                     |board| {
                                         board.child(if groups.is_empty() {
                                             feedback(
@@ -710,8 +878,13 @@ impl Render for WorkGraphBoardView {
                                         })
                                     },
                                 )
+                                .when(self.creating, |board| {
+                                    board.child(self.render_create(entity.clone(), layout))
+                                })
                                 .when(
-                                    layout != BoardLayoutMode::Narrow || self.selected.is_some(),
+                                    !self.creating
+                                        && (layout != BoardLayoutMode::Narrow
+                                            || self.selected.is_some()),
                                     |board| {
                                         board.child(self.render_detail(entity, data, layout))
                                     },
@@ -721,6 +894,36 @@ impl Render for WorkGraphBoardView {
                 }
             })
     }
+}
+
+pub(super) fn create_issue(
+    database: PathBuf,
+    project: PathBuf,
+    title: String,
+    body: String,
+) -> Result<(BoardData, u64), String> {
+    let project_key = canonical_project(&project)?;
+    let adapter = SqliteAdapter::open(&database).map_err(|error| error.to_string())?;
+    let mut graph = WorkGraph::new(adapter);
+    let operation = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| "system clock is unavailable".to_owned())?
+        .as_nanos();
+    let result = graph
+        .edit(&EditRequest {
+            project: project_key,
+            idempotency_key: format!("gui-create-{operation}"),
+            action: EditAction::Create {
+                title,
+                body,
+                priority: 0,
+            },
+        })
+        .map_err(|error| error.to_string())?;
+    let EditResult::Issue(issue) = result else {
+        return Err("work graph returned an unexpected create result".into());
+    };
+    Ok((load_issues(database, project)?, issue.number))
 }
 
 pub(super) fn add_issue_note(

@@ -4,7 +4,7 @@ use workgraph::{
     core::WorkGraph,
 };
 
-use super::adapter::{add_issue_note, load_issues, update_issue_status};
+use super::adapter::{add_issue_note, create_issue, load_issues, update_issue_status};
 
 #[test]
 fn board_loader_reads_issues_from_the_shared_gui_database() {
@@ -102,8 +102,8 @@ fn board_loader_reads_issues_from_the_shared_gui_database() {
         .expect("updated prerequisite")
         .version;
     let updated = update_issue_status(
-        database,
-        project,
+        database.clone(),
+        project.clone(),
         prerequisite.number,
         IssueStatus::InProgress,
         updated_version,
@@ -116,5 +116,22 @@ fn board_loader_reads_issues_from_the_shared_gui_database() {
             .find(|issue| issue.number == prerequisite.number)
             .map(|issue| issue.status),
         Some(IssueStatus::InProgress)
+    );
+
+    let (with_created, created_number) = create_issue(
+        database,
+        project,
+        "Created in the native board".into(),
+        "Persist the issue without leaving Pi".into(),
+    )
+    .expect("native issue create");
+    assert_eq!(with_created.issues.len(), 3);
+    assert_eq!(
+        with_created
+            .issues
+            .iter()
+            .find(|issue| issue.number == created_number)
+            .map(|issue| issue.title.as_str()),
+        Some("Created in the native board")
     );
 }
