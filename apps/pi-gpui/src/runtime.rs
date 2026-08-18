@@ -550,7 +550,10 @@ fn run_supervisor(
                         SessionRuntimeHandle::spawn(project, process_command.clone(), false)
                     });
                     actor.send(command);
-                    if let Some(snapshot) = latest.get(&key).cloned() {
+                    if let Some(mut snapshot) = latest.get(&key).cloned() {
+                        if selection_changed {
+                            Arc::make_mut(&mut snapshot).transcript_changed_from = Some(0);
+                        }
                         let _ = event_tx.send(RuntimeEvent::Snapshot {
                             generation,
                             snapshot,

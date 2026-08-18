@@ -65,6 +65,14 @@ fn history_keys_only_take_over_at_the_text_edges() {
         sessions.navigate_history("up", top),
         HistoryNavigation::Handled(Some(_))
     ));
+
+    sessions.exit_history();
+    let single_line_end = ComposerSnapshot::new("draft".into(), 5, 5..5);
+    assert!(matches!(
+        sessions.navigate_history("up", single_line_end),
+        HistoryNavigation::Handled(Some(_))
+    ));
+
     let first_line = ComposerSnapshot::new("top\nbottom".into(), 3, 3..3);
     assert_eq!(
         sessions.navigate_history("down", first_line),

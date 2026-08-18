@@ -489,11 +489,16 @@ impl PiApp {
                     generation,
                     snapshot,
                 } if generation >= self.runtime_generation => {
-                    if generation > self.runtime_generation {
+                    let session_changed = generation > self.runtime_generation;
+                    if session_changed {
                         self.reset_session_ui(generation, false);
                         root_dirty = true;
                     }
-                    let next_rows = self.project_transcript_rows(&snapshot);
+                    let next_rows = if session_changed {
+                        crate::transcript::project_rows(&snapshot.conversation.items)
+                    } else {
+                        self.project_transcript_rows(&snapshot)
+                    };
                     transcript_dirty |= next_rows.as_slice() != self.transcript_rows.as_slice();
                     let count = next_rows.len();
                     if count > self.last_transcript_count && !self.transcript_following {

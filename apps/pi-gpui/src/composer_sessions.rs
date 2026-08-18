@@ -279,9 +279,7 @@ impl ComposerSessions {
         let after_cursor = current.text.get(current.cursor..).unwrap_or_default();
         let browsing = self.is_browsing_history();
         match key {
-            "up" if !before_cursor.contains('\n')
-                && (current.text.is_empty() || browsing || current.cursor == 0) =>
-            {
+            "up" if !before_cursor.contains('\n') => {
                 HistoryNavigation::Handled(self.previous_history(current))
             }
             "down" if browsing && !after_cursor.contains('\n') => {
