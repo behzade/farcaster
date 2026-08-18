@@ -614,7 +614,7 @@ impl PiApp {
             .get(number.saturating_sub(1))
             .cloned()
         {
-            self.resume(session.path, session.project, window, cx);
+            self.select_session(session.path, session.project, window, cx);
         }
     }
 
@@ -637,7 +637,7 @@ impl PiApp {
         if next >= 0
             && let Some(session) = sessions.get(next as usize).cloned()
         {
-            self.resume(session.path, session.project, window, cx);
+            self.select_session(session.path, session.project, window, cx);
         }
     }
 

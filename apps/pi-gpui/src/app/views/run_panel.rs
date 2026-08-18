@@ -316,7 +316,7 @@ impl PiApp {
                 .cursor_pointer()
                 .on_click(move |_, window, cx| {
                     let _ = entity.update(cx, |this, cx| {
-                        this.resume(path.clone(), project.clone(), window, cx);
+                        this.select_session(path.clone(), project.clone(), window, cx);
                     });
                 })
                 .child(

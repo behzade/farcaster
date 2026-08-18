@@ -63,7 +63,7 @@ pub(crate) enum RuntimeCommand {
         id: String,
         project: PathBuf,
     },
-    Resume {
+    SelectSession {
         path: PathBuf,
         project: PathBuf,
     },
@@ -585,14 +585,18 @@ fn run_supervisor(
                     clock = clock.saturating_add(1);
                     last_touch.insert(key.clone(), clock);
                     let selection_changed = key != selected;
+                    let view_only = is_view_only_selection(&command);
                     if selection_changed {
                         generation = generation.saturating_add(1);
                         selected = key.clone();
-                        let _ = event_tx.send(RuntimeEvent::SessionReset {
-                            generation,
-                            preserve_submission: false,
-                        });
+                        if !view_only {
+                            let _ = event_tx.send(RuntimeEvent::SessionReset {
+                                generation,
+                                preserve_submission: false,
+                            });
+                        }
                     }
+                    let cached_snapshot = latest.get(&key).cloned();
                     let actor = actors.entry(key.clone()).or_insert_with(|| {
                         SessionRuntimeHandle::spawn(
                             project,
@@ -601,10 +605,12 @@ fn run_supervisor(
                             supervisor_thread.clone(),
                         )
                     });
-                    actor.send(command);
-                    if let Some(mut snapshot) = latest.get(&key).cloned() {
-                        if selection_changed {
-                            Arc::make_mut(&mut snapshot).transcript_changed_from = Some(0);
+                    if !view_only || cached_snapshot.is_none() {
+                        actor.send(command);
+                    }
+                    if let Some(mut snapshot) = cached_snapshot {
+                        if view_only {
+                            Arc::make_mut(&mut snapshot).transcript_changed_from = None;
                         }
                         let _ = event_tx.send(RuntimeEvent::Snapshot {
                             generation,
@@ -663,7 +669,7 @@ fn initial_draft_command(id: String, project: PathBuf, session: Option<PathBuf>)
             id,
             project: project.clone(),
         },
-        |path| RuntimeCommand::Resume { path, project },
+        |path| RuntimeCommand::SelectSession { path, project },
     )
 }
 
@@ -691,11 +697,15 @@ fn command_target(command: &RuntimeCommand) -> Option<(String, PathBuf)> {
         | RuntimeCommand::ResumeDraft { id, project } => {
             Some((format!("draft:{id}"), project.clone()))
         }
-        RuntimeCommand::Resume { path, project } => {
+        RuntimeCommand::SelectSession { path, project } => {
             Some((format!("session:{}", path.display()), project.clone()))
         }
         _ => None,
     }
+}
+
+fn is_view_only_selection(command: &RuntimeCommand) -> bool {
+    matches!(command, RuntimeCommand::SelectSession { .. })
 }
 
 fn actor_key_for_command(
@@ -703,7 +713,7 @@ fn actor_key_for_command(
     requested_key: &str,
     latest: &HashMap<String, Arc<RuntimeSnapshot>>,
 ) -> String {
-    let RuntimeCommand::Resume { path, .. } = command else {
+    let RuntimeCommand::SelectSession { path, .. } = command else {
         return requested_key.to_owned();
     };
     latest
@@ -1203,7 +1213,7 @@ impl RuntimeOwner {
                 self.start_process(None);
             }
             RuntimeCommand::ResumeDraft { project, .. } => self.resume_draft(project),
-            RuntimeCommand::Resume { path, project } => self.preview_history(path, project),
+            RuntimeCommand::SelectSession { path, project } => self.select_history(path, project),
             RuntimeCommand::SetModel { provider, model_id } => {
                 self.send(json!({"type":"set_model","provider":provider,"modelId":model_id}))
             }
@@ -1375,7 +1385,7 @@ impl RuntimeOwner {
         self.parked_snapshot.as_ref().unwrap_or(&self.snapshot)
     }
 
-    fn preview_history(&mut self, path: PathBuf, project: PathBuf) {
+    fn select_history(&mut self, path: PathBuf, project: PathBuf) {
         self.history_generation = self.history_generation.saturating_add(1);
         if self.snapshot.selected_session.as_deref() == Some(path.as_path()) {
             return;
@@ -1389,15 +1399,6 @@ impl RuntimeOwner {
                 });
                 self.publish();
             }
-            return;
-        }
-        let active = self.active_snapshot();
-        if !active.conversation.running
-            && !active.conversation.compacting
-            && !active.conversation.retrying
-        {
-            self.project = project;
-            self.start_process(Some(path));
             return;
         }
         let generation = self.history_generation;
@@ -1902,13 +1903,13 @@ mod tests {
     }
 
     #[test]
-    fn persisted_submitted_draft_resumes_its_session() {
+    fn persisted_submitted_draft_selects_its_session() {
         let project = PathBuf::from("/project");
         let session = PathBuf::from("/sessions/submitted.jsonl");
         assert!(matches!(
             initial_draft_command("draft".into(), project.clone(), Some(session.clone())),
-            RuntimeCommand::Resume { path, project: resumed_project }
-                if path == session && resumed_project == project
+            RuntimeCommand::SelectSession { path, project: selected_project }
+                if path == session && selected_project == project
         ));
         assert!(matches!(
             initial_draft_command("draft".into(), project.clone(), None),
@@ -2138,7 +2139,7 @@ mod tests {
     #[test]
     fn saved_path_reuses_the_actor_that_started_as_a_draft() {
         let path = PathBuf::from("/sessions/one.jsonl");
-        let command = RuntimeCommand::Resume {
+        let command = RuntimeCommand::SelectSession {
             path: path.clone(),
             project: PathBuf::from("/project"),
         };
@@ -2150,6 +2151,7 @@ mod tests {
             }),
         )]);
 
+        assert!(is_view_only_selection(&command));
         assert_eq!(
             actor_key_for_command(&command, &format!("session:{}", path.display()), &latest,),
             "draft:one"
@@ -2944,26 +2946,25 @@ mod tests {
     }
 
     #[test]
-    fn switching_from_an_idle_session_resumes_instead_of_previewing_history() {
+    fn selecting_from_an_idle_session_does_not_start_pi() {
         let old_project = PathBuf::from("/old-project");
         let new_project = PathBuf::from("/new-project");
         let old_path = PathBuf::from("/old-session.jsonl");
         let new_path = PathBuf::from("/new-session.jsonl");
-        let (mut owner, events, _discovery) = owner_without_process(old_project.clone());
+        let (mut owner, events, _discovery) = owner_without_process(old_project);
         owner.active_session = Some(old_path.clone());
-        owner.snapshot.selected_session = Some(old_path);
+        owner.snapshot.selected_session = Some(old_path.clone());
         owner.process_generation = 4;
 
-        owner.preview_history(new_path.clone(), new_project.clone());
+        owner.select_history(new_path, new_project);
 
-        assert_eq!(owner.process_generation, 5);
-        assert_eq!(owner.active_session, Some(new_path.clone()));
-        assert_eq!(owner.project, new_project);
-        assert!(!owner.snapshot.history_preview);
+        assert_eq!(owner.process_generation, 4);
+        assert_eq!(owner.active_session, Some(old_path));
+        assert!(owner.process.is_none());
         assert!(
             events
                 .try_iter()
-                .any(|event| matches!(event, RuntimeEvent::SessionReset { generation: 5, .. }))
+                .all(|event| !matches!(event, RuntimeEvent::SessionReset { .. }))
         );
     }
 
@@ -3028,7 +3029,7 @@ mod tests {
         };
         conversation_mut(&mut owner.snapshot).running = true;
 
-        owner.preview_history(old_path.clone(), old_project);
+        owner.select_history(old_path.clone(), old_project);
         owner.apply_history(HistoryResult {
             generation: 1,
             path: new_path.clone(),
@@ -3189,7 +3190,7 @@ mod tests {
         };
         conversation_mut(&mut owner.snapshot).reduce(&json!({"type":"agent_start"}));
 
-        owner.preview_history(history_path.clone(), history_project.clone());
+        owner.select_history(history_path.clone(), history_project.clone());
         let history = history_rx
             .recv_timeout(Duration::from_secs(1))
             .map_err(|error| format!("history switch was rejected: {error}"))?;
@@ -3259,7 +3260,7 @@ mod tests {
         assert_eq!(visible.live_status, "Compacting");
         assert_eq!(visible.conversation.items[0].text, "history message");
 
-        owner.preview_history(active_path.clone(), temp.path().to_path_buf());
+        owner.select_history(active_path.clone(), temp.path().to_path_buf());
         assert!(!owner.snapshot.history_preview);
         assert_eq!(owner.snapshot.selected_session, Some(active_path));
         assert!(

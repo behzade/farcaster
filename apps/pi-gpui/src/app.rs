@@ -490,14 +490,20 @@ impl PiApp {
                     snapshot,
                 } if generation >= self.runtime_generation => {
                     let session_changed = generation > self.runtime_generation;
+                    let transcript_preselected = session_changed
+                        && self.snapshot.selected_session == snapshot.selected_session;
                     if session_changed {
-                        self.cache_current_transcript();
-                        self.reset_session_ui(generation, false);
+                        if !transcript_preselected {
+                            self.cache_current_transcript();
+                        }
+                        self.reset_session_ui(generation, transcript_preselected);
                         root_dirty = true;
                     }
                     let restored = session_changed && self.restore_cached_transcript(&snapshot);
                     let next_rows = if restored {
                         self.transcript_rows.as_ref().clone()
+                    } else if transcript_preselected {
+                        self.project_transcript_rows(&snapshot)
                     } else if session_changed {
                         crate::transcript::project_rows(&snapshot.conversation.items)
                     } else {
@@ -750,13 +756,19 @@ impl PiApp {
         self.last_transcript_count = 0;
     }
 
-    fn resume(
+    fn select_session(
         &mut self,
         path: PathBuf,
         project: PathBuf,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.snapshot.selected_session.as_deref() == Some(path.as_path())
+            && self.selected_draft.is_none()
+        {
+            self.close_sessions_sheet_after_selection(window, cx);
+            return;
+        }
         let previous_root =
             root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
                 .map(|session| session.id.clone());
@@ -767,7 +779,7 @@ impl PiApp {
         self.select_project(project.clone());
         self.cache_current_transcript();
         self.preview_cached_session(&path, &project);
-        self.send(RuntimeCommand::Resume { path, project });
+        self.send(RuntimeCommand::SelectSession { path, project });
         self.close_sessions_sheet_after_selection(window, cx);
         if previous_root != next_root {
             self.run_panel_scroll.set_offset(point(px(0.0), px(0.0)));
@@ -818,7 +830,7 @@ impl PiApp {
         self.selected_draft = Some(id.clone());
         self.select_project(project.clone());
         if let Some(Some(path)) = self.submitted_drafts.get(&id).cloned() {
-            self.send(RuntimeCommand::Resume { path, project });
+            self.send(RuntimeCommand::SelectSession { path, project });
         } else {
             self.send(RuntimeCommand::ResumeDraft { id, project });
         }
@@ -955,7 +967,7 @@ impl PiApp {
                     .composer_sessions
                     .discard_and_switch(&target, session_target(&session.path));
                 self.apply_composer_snapshot(snapshot, window, cx);
-                self.send(RuntimeCommand::Resume {
+                self.send(RuntimeCommand::SelectSession {
                     path: session.path,
                     project: session.project,
                 });

@@ -303,7 +303,7 @@ pub(super) fn session_row_with_height(
                 });
             } else {
                 let _ = open_entity.update(cx, |this, cx| {
-                    this.resume(path.clone(), project.clone(), window, cx)
+                    this.select_session(path.clone(), project.clone(), window, cx)
                 });
             }
         })
