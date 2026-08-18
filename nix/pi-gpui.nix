@@ -159,6 +159,10 @@ craneLib.buildPackage (
         --set PI_GUI_PI_PATH ${piTerminal}/bin/pi \
         --set PI_GUI_COMPANION_EXTENSION "$out/lib/pi-gpui/companion.ts" \
         --prefix PATH : ${lib.makeBinPath [ direnv piTerminal ]}
+    ''
+    + lib.optionalString stdenv.hostPlatform.isDarwin ''
+      # UNUserNotificationCenter rejects unsigned application bundles.
+      /usr/bin/codesign --force --sign - "$out/Applications/Pi.app"
     '';
 
     meta = {
