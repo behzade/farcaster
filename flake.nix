@@ -2,11 +2,16 @@
   description = "Behzad's reviewed Pi coding-agent extensions";
 
   inputs.crane.url = "github:ipetkov/crane";
+  inputs.guardian = {
+    url = "github:behzade/pi-guardian";
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
   outputs =
     {
       crane,
+      guardian,
       nixpkgs,
       self,
     }:
@@ -25,10 +30,8 @@
           pkgs = pkgsFor system;
           coreExtensions = pkgs.callPackage ./nix/pi-core-extensions.nix { };
           mcpCli = pkgs.callPackage ./nix/pi-mcp-cli.nix { };
-          sandboxBroker = pkgs.callPackage ./nix/pi-sandbox-broker.nix { };
-          sandbox = pkgs.callPackage ./nix/pi-sandbox-extension.nix {
-            inherit mcpCli sandboxBroker;
-          };
+          sandboxBroker = guardian.packages.${system}.sandbox-broker;
+          sandbox = guardian.packages.${system}.guardian;
           denseTools = pkgs.callPackage ./nix/pi-dense-tools.nix { };
           sessionAgents = pkgs.callPackage ./nix/pi-session-agents.nix { };
           webAccess = pkgs.callPackage ./nix/pi-web-access.nix { };
@@ -51,13 +54,11 @@
               platforms = pkgs.lib.platforms.darwin ++ pkgs.lib.platforms.linux;
             };
           };
-          permissionSystem = pkgs.callPackage ./nix/pi-permission-system.nix { };
           agent = pkgs.callPackage ./nix/pi-agent.nix {
             inherit
               coreExtensions
               denseTools
               openaiServerCompaction
-              permissionSystem
               piTerminal
               projectTools
               sandbox
@@ -73,7 +74,6 @@
           inherit pi;
           pi-terminal = piTerminal;
           mcp-cli = mcpCli;
-          permission-system = permissionSystem;
           sandbox-broker = sandboxBroker;
           dense-tools = denseTools;
           openai-server-compaction = openaiServerCompaction;
@@ -158,10 +158,8 @@
           coreExtensions = pkgs.callPackage ./nix/pi-core-extensions.nix { };
           denseTools = pkgs.callPackage ./nix/pi-dense-tools.nix { };
           mcpCli = pkgs.callPackage ./nix/pi-mcp-cli.nix { };
-          sandboxBroker = pkgs.callPackage ./nix/pi-sandbox-broker.nix { };
-          sandbox = pkgs.callPackage ./nix/pi-sandbox-extension.nix {
-            inherit mcpCli sandboxBroker;
-          };
+          sandboxBroker = guardian.packages.${system}.sandbox-broker;
+          sandbox = guardian.packages.${system}.guardian;
           openaiServerCompaction = pkgs.callPackage ./nix/pi-openai-server-compaction.nix { };
           projectTools = pkgs.callPackage ./nix/pi-project-tools.nix { };
           piTerminal = pkgs.callPackage ./nix/pi-terminal.nix { };
@@ -169,7 +167,6 @@
             craneLib = crane.mkLib pkgs;
             inherit piTerminal;
           };
-          permissionSystem = pkgs.callPackage ./nix/pi-permission-system.nix { };
           sessionAgents = pkgs.callPackage ./nix/pi-session-agents.nix { };
           webAccess = pkgs.callPackage ./nix/pi-web-access.nix { };
           agent = pkgs.callPackage ./nix/pi-agent.nix {
@@ -177,7 +174,6 @@
               coreExtensions
               denseTools
               openaiServerCompaction
-              permissionSystem
               piTerminal
               projectTools
               sandbox
@@ -213,7 +209,7 @@
           '';
 
           sandbox-tests = pkgs.runCommand "pi-sandbox-tests" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
-            cp ${self}/extensions/sandbox/*.ts .
+            cp ${guardian}/extensions/sandbox/*.ts .
             cp -R ${sandbox}/node_modules .
             chmod -R u+w node_modules
             mkdir -p node_modules/@earendil-works
@@ -234,7 +230,7 @@
               io-policy.test.ts \
               native-sandbox-ops.test.ts \
               project-policy.test.ts \
-              permission-system-approval.test.ts
+              approval-transport.test.ts
             touch "$out"
           '';
 
@@ -269,7 +265,6 @@
             test ! -s empty
             touch "$out"
           '';
-          permission-system = permissionSystem;
           pi-terminal = pkgs.runCommand "pi-terminal-test" { nativeBuildInputs = [ piTerminal ]; } ''
             test "$(pi --version)" = "0.84.2"
             touch "$out"

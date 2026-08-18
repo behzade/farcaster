@@ -7,8 +7,6 @@ const denseToolsPath = new URL("../extensions/dense-tools/index.ts", import.meta
 const pierreEditPath = new URL("../extensions/dense-tools/pierre-edit.ts", import.meta.url);
 const pierreRendererPath = new URL("../extensions/dense-tools/pierre-renderer.ts", import.meta.url);
 const piDiffPath = new URL("../extensions/dense-tools/pi-diff.ts", import.meta.url);
-const sandboxPath = new URL("../extensions/sandbox/index.ts", import.meta.url);
-const sandboxSchemasPath = new URL("../extensions/sandbox/tool-schemas.ts", import.meta.url);
 
 const requiredColors = [
   "accent", "border", "borderAccent", "borderMuted", "success", "error", "warning",
@@ -70,28 +68,9 @@ test("Gruvbox dark hard uses the canonical palette and every Pi color", async ()
   assert.equal(theme.export.pageBg, canonicalPalette.bg0Hard);
 });
 
-test("dense tools leave bash to the sandbox", async () => {
+test("dense tools do not replace the guardian bash tool", async () => {
   const denseTools = await readFile(denseToolsPath, "utf8");
-  const sandbox = await readFile(sandboxPath, "utf8");
   assert.doesNotMatch(denseTools, /createBashTool|name:\s*["']bash["']/);
-  assert.match(sandbox, /renderShell:\s*["']self["']/);
-});
-
-test("sandboxed file tools deny with an explicit request_access path", async () => {
-  const sandbox = await readFile(sandboxPath, "utf8");
-  assert.match(sandbox, /name:\s*["']request_access["']/);
-  assert.match(sandbox, /Use request_access for the smallest file or tree right/);
-  assert.doesNotMatch(sandbox, /promptForToolPermission|request_network_permission/);
-});
-
-test("bash and background jobs carry no per-command permission schema", async () => {
-  const sandbox = await readFile(sandboxPath, "utf8");
-  const schemas = await readFile(sandboxSchemasPath, "utf8");
-  assert.match(schemas, /kind:\s*Type\.Literal\(["']network_host["']\)/);
-  assert.match(schemas, /kind:\s*Type\.Literal\(["']network_local["']\)/);
-  assert.match(schemas, /kind:\s*Type\.Literal\(["']development_cache["']\)/);
-  assert.match(schemas, /const RequestAccessParams/);
-  assert.doesNotMatch(`${sandbox}\n${schemas}`, /DeclaredNetworkPermission|declaredNetworkPermissions|permissions:\s*Type\.Optional/);
 });
 
 test("dense reads keep group state and hide follower rows", async () => {

@@ -35,11 +35,9 @@ separate `nix-config` repo.
 
 ## Repository map
 
-- [`extensions/sandbox`](extensions/sandbox) contains the Pi adapter,
-  permission UI, native broker client, exact-host proxy, and native
-  background-job support.
-- [`sandbox-broker`](sandbox-broker) contains the Rust broker and its security
-  documentation.
+- [Pi Guardian](https://github.com/behzade/pi-guardian) supplies the pinned
+  sandbox, approval transport, native broker, exact-host proxy, and background
+  jobs as one external extension.
 - [`extensions/dense-tools`](extensions/dense-tools) renders compact tool output
   and provides `pi-diff`, the same syntax-highlighted diff view as a terminal
   command. It keeps a bounded output cache in the system temporary directory so
@@ -103,10 +101,8 @@ Choose only the checks that cover the changed area. Start with an exact test or
 package check; do not run this whole list for every change:
 
 ```sh
-npm run check --prefix extensions/sandbox
 npm run check --prefix extensions/project-tools
 npm run check --prefix extensions/subagents
-cargo test --manifest-path sandbox-broker/Cargo.toml
 make check-gpui
 node --test \
   tests/governance.test.ts \
@@ -117,13 +113,10 @@ node --test \
   tests/terminal-text.test.ts
 ```
 
-The full sandbox test needs a built broker and an unsandboxed host because it
-must observe real OS denials and bind local network fixtures:
-
-```sh
-cargo build --manifest-path sandbox-broker/Cargo.toml
-npm run check:e2e --prefix extensions/sandbox
-```
+Sandbox and broker checks live in the pinned
+[Pi Guardian](https://github.com/behzade/pi-guardian) repository. Its full
+platform test requires an unsandboxed host because it observes real OS denials
+and binds local network fixtures.
 
 My Home Manager configuration consumes the default flake package and deploys
 it at `~/.pi/agent`.
@@ -215,8 +208,5 @@ mappings with relative targets beneath that root, but cannot relocate it. The
 cache is shared across workspaces, so projects that do not trust each other
 should use separate users or disposable homes.
 
-The broker details are documented in:
-
-- [`sandbox-broker/PROTOCOL.md`](sandbox-broker/PROTOCOL.md)
-- [`sandbox-broker/THREAT_MODEL.md`](sandbox-broker/THREAT_MODEL.md)
-- [`sandbox-broker/UPSTREAM.md`](sandbox-broker/UPSTREAM.md)
+The broker protocol, threat model, and upstream notes are maintained in
+[Pi Guardian](https://github.com/behzade/pi-guardian/tree/main/sandbox-broker).
