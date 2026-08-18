@@ -154,11 +154,15 @@ mod tests {
         assert!(shortcuts.iter().any(|shortcut| {
             shortcut.label == "Toggle settled session" && shortcut.keystroke == "cmd-w"
         }));
-        assert!(shortcuts.iter().any(|shortcut| {
-            shortcut.label == "Previous prompt" && shortcut.keystroke == "up"
-        }));
-        assert!(shortcuts.iter().any(|shortcut| {
-            shortcut.label == "Next prompt" && shortcut.keystroke == "down"
-        }));
+        assert!(
+            shortcuts.iter().any(|shortcut| {
+                shortcut.label == "Previous prompt" && shortcut.keystroke == "up"
+            })
+        );
+        assert!(
+            shortcuts.iter().any(|shortcut| {
+                shortcut.label == "Next prompt" && shortcut.keystroke == "down"
+            })
+        );
     }
 }

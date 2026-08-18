@@ -71,9 +71,8 @@ impl RuntimeOwner {
         self.snapshot.selected_session = prompt.session.clone();
         self.pending_prompt_target = Some(prompt.target);
         let conversation = Arc::make_mut(&mut self.snapshot.conversation);
-        self.pending_prompt_item = Some(
-            conversation.push_local_user(prompt.message.clone(), prompt.images.len()),
-        );
+        self.pending_prompt_item =
+            Some(conversation.push_local_user(prompt.message.clone(), prompt.images.len()));
         conversation.running = true;
         self.snapshot.status = "Working".into();
         self.publish();
@@ -165,8 +164,7 @@ impl RuntimeOwner {
     }
 
     pub(super) fn reject_prompt(&mut self, target: &str, message: String) {
-        Arc::make_mut(&mut self.snapshot.conversation)
-            .push_local_error("Prompt not sent", message);
+        Arc::make_mut(&mut self.snapshot.conversation).push_local_error("Prompt not sent", message);
         self.snapshot.status = "Prompt not sent".into();
         self.emit_prompt_result(target, false);
         self.publish();

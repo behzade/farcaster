@@ -233,11 +233,8 @@ impl PiApp {
                     this.composer_mention_selection = 0;
                     this.composer_sessions.exit_history();
                     let snapshot = input_snapshot(state.read(cx));
-                    let has_mention = file_mentions::query_at_cursor(
-                        &snapshot.text,
-                        snapshot.cursor,
-                    )
-                    .is_some();
+                    let has_mention =
+                        file_mentions::query_at_cursor(&snapshot.text, snapshot.cursor).is_some();
                     this.composer_sessions.capture_current(snapshot);
                     if has_mention {
                         this.request_composer_project_files(cx);

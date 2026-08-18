@@ -124,12 +124,7 @@ impl PiApp {
                 .as_ref()
                 .is_some_and(|pending| pending.target == target)
         {
-            establish_submission(
-                &mut self.submitted_drafts,
-                &target,
-                true,
-                session.clone(),
-            );
+            establish_submission(&mut self.submitted_drafts, &target, true, session.clone());
         }
         let associated_path =
             fill_session_association(&mut self.submitted_drafts, &target, session.as_deref());
