@@ -133,15 +133,25 @@ impl WorkGraphBoardView {
 
     fn render_filter_rail(&self, entity: Entity<Self>, data: &BoardData) -> impl IntoElement {
         div()
-            .w(px(176.0))
-            .min_w(px(144.0))
+            .w(px(216.0))
+            .min_w(px(216.0))
             .flex_none()
             .flex()
             .flex_col()
             .gap(THEME.space.xs)
-            .pr(THEME.space.sm)
+            .px(THEME.space.sm)
+            .py(THEME.space.md)
+            .bg(THEME.colors.canvas)
             .border_r(THEME.border)
             .border_color(THEME.colors.border)
+            .child(
+                div()
+                    .px(THEME.space.sm)
+                    .pb(THEME.space.sm)
+                    .text_size(THEME.type_scale.caption)
+                    .text_color(THEME.colors.subtle)
+                    .child("WORK STATES"),
+            )
             .children(BoardFilter::ALL.into_iter().map(|filter| {
                 let selected = filter == self.filter;
                 let count = filter_count(data, filter);
@@ -163,6 +173,7 @@ impl WorkGraphBoardView {
     }
 
     fn render_groups(&self, entity: Entity<Self>, groups: Vec<IssueGroup>) -> impl IntoElement {
+        let selected = self.selected;
         div()
             .id("workgraph-issue-list")
             .flex_1()
@@ -172,10 +183,11 @@ impl WorkGraphBoardView {
             .flex()
             .flex_col()
             .gap(THEME.space.md)
+            .p(THEME.space.md)
             .children(
                 groups
                     .into_iter()
-                    .map(|group| render_group(group, entity.clone())),
+                    .map(|group| render_group(group, selected, entity.clone())),
             )
     }
 
@@ -202,7 +214,7 @@ impl WorkGraphBoardView {
                             .map(|candidate| format!("#{} {}", candidate.number, candidate.title))
                     })
                     .collect::<Vec<_>>();
-                render_graph_row(issue, dependency_titles, entity.clone())
+                render_graph_row(issue, dependency_titles, self.selected, entity.clone())
             }))
     }
 
@@ -211,9 +223,14 @@ impl WorkGraphBoardView {
             .selected
             .and_then(|number| data.issues.iter().find(|issue| issue.number == number));
         div()
-            .w(px(280.0))
+            .id("workgraph-issue-detail")
+            .w(px(400.0))
+            .min_w(px(360.0))
             .flex_none()
-            .pl(THEME.space.md)
+            .h_full()
+            .overflow_y_scroll()
+            .p(THEME.space.md)
+            .bg(THEME.colors.panel)
             .border_l(THEME.border)
             .border_color(THEME.colors.border)
             .child(match issue {
@@ -229,11 +246,22 @@ impl WorkGraphBoardView {
                         })
                         .map(|item| format!("#{}  {}", item.number, item.title))
                         .collect::<Vec<_>>();
+                    let dependents = data
+                        .dependencies
+                        .iter()
+                        .filter(|edge| edge.depends_on == issue.number)
+                        .filter_map(|edge| {
+                            data.issues
+                                .iter()
+                                .find(|item| item.number == edge.issue_number)
+                        })
+                        .map(|item| format!("#{}  {}", item.number, item.title))
+                        .collect::<Vec<_>>();
                     let sessions = data
                         .sessions
                         .iter()
                         .filter(|link| link.issue_number == issue.number)
-                        .count();
+                        .collect::<Vec<_>>();
                     let active_link = self.active_session.as_ref().and_then(|(id, _)| {
                         data.sessions.iter().find(|link| link.session_id == *id)
                     });
@@ -266,34 +294,75 @@ impl WorkGraphBoardView {
                     div()
                         .flex()
                         .flex_col()
-                        .gap(THEME.space.sm)
+                        .gap(THEME.space.md)
                         .child(
                             div()
-                                .text_color(THEME.colors.text)
-                                .child(format!("#{}  {}", issue.number, issue.title)),
+                                .flex()
+                                .flex_col()
+                                .gap(THEME.space.xs)
+                                .pb(THEME.space.md)
+                                .border_b(THEME.border)
+                                .border_color(THEME.colors.border)
+                                .child(
+                                    div()
+                                        .text_size(THEME.type_scale.caption)
+                                        .text_color(THEME.colors.subtle)
+                                        .child(format!("ISSUE #{}", issue.number)),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(THEME.type_scale.display)
+                                        .text_color(THEME.colors.text)
+                                        .child(issue.title.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(THEME.type_scale.caption)
+                                        .text_color(status_color(issue.status))
+                                        .child(format!(
+                                            "{}  ·  Priority {}  ·  Version {}",
+                                            super::core::status_label(issue.status),
+                                            issue.priority,
+                                            issue.version
+                                        )),
+                                ),
                         )
-                        .child(
-                            div()
-                                .text_size(THEME.type_scale.body_small)
-                                .text_color(THEME.colors.muted)
-                                .child(issue.body.clone()),
-                        )
-                        .child(
-                            div()
-                                .text_size(THEME.type_scale.caption)
-                                .text_color(THEME.colors.subtle)
-                                .child(if dependencies.is_empty() {
-                                    "No dependencies".into()
-                                } else {
-                                    format!("Depends on\n{}", dependencies.join("\n"))
-                                }),
-                        )
-                        .child(
-                            div()
-                                .text_size(THEME.type_scale.caption)
-                                .text_color(THEME.colors.subtle)
-                                .child(format!("Linked sessions  {sessions}")),
-                        )
+                        .child(detail_section(
+                            "DESCRIPTION",
+                            if issue.body.trim().is_empty() {
+                                "No description recorded.".into()
+                            } else {
+                                issue.body.clone()
+                            },
+                        ))
+                        .child(detail_section(
+                            "DEPENDS ON",
+                            if dependencies.is_empty() {
+                                "Nothing — this issue can move independently.".into()
+                            } else {
+                                dependencies.join("\n")
+                            },
+                        ))
+                        .child(detail_section(
+                            "UNBLOCKS",
+                            if dependents.is_empty() {
+                                "No dependent issues.".into()
+                            } else {
+                                dependents.join("\n")
+                            },
+                        ))
+                        .child(detail_section(
+                            "LINKED SESSIONS",
+                            if sessions.is_empty() {
+                                "No sessions linked.".into()
+                            } else {
+                                sessions
+                                    .iter()
+                                    .map(|link| link.session_id.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join("\n")
+                            },
+                        ))
                         .children(session_action)
                         .into_any_element()
                 }
@@ -313,7 +382,6 @@ impl Render for WorkGraphBoardView {
         div()
             .size_full()
             .min_h_0()
-            .p(THEME.space.md)
             .bg(THEME.colors.panel)
             .child(match &self.state {
                 BoardLoadState::Loading => feedback(
@@ -349,40 +417,77 @@ impl Render for WorkGraphBoardView {
                     let mode = self.mode;
                     let kanban = entity.clone();
                     let graph = entity.clone();
+                    let active_count = filter_count(data, BoardFilter::Active);
+                    let blocked_count = filter_count(data, BoardFilter::Blocked);
                     div()
                         .size_full()
                         .min_h_0()
                         .flex()
                         .flex_col()
-                        .gap(THEME.space.sm)
-                        .child(div().flex_none().flex().gap(THEME.space.xs).children(
-                            [BoardMode::Kanban, BoardMode::Graph].map(|item| {
-                                let target = if item == BoardMode::Kanban {
-                                    kanban.clone()
-                                } else {
-                                    graph.clone()
-                                };
-                                button(
-                                    format!("workgraph-mode-{item:?}"),
-                                    item.label(),
-                                    if item == mode {
-                                        ButtonTone::Neutral
-                                    } else {
-                                        ButtonTone::Quiet
-                                    },
-                                    true,
-                                    move |_, cx| {
-                                        target.update(cx, |this, cx| this.set_mode(item, cx))
-                                    },
+                        .child(
+                            div()
+                                .h(px(64.0))
+                                .flex_none()
+                                .px(THEME.space.md)
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .border_b(THEME.border)
+                                .border_color(THEME.colors.border)
+                                .bg(THEME.colors.canvas)
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap(THEME.space.xs)
+                                        .child(
+                                            div()
+                                                .text_size(THEME.type_scale.display)
+                                                .text_color(THEME.colors.text)
+                                                .child("Project work"),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(THEME.type_scale.caption)
+                                                .text_color(THEME.colors.subtle)
+                                                .child(format!(
+                                                    "{active_count} active  ·  {blocked_count} need attention  ·  {} total",
+                                                    data.issues.len()
+                                                )),
+                                        ),
                                 )
-                            }),
-                        ))
+                                .child(
+                                    div().flex().gap(THEME.space.xs).children(
+                                        [BoardMode::Kanban, BoardMode::Graph].map(|item| {
+                                            let target = if item == BoardMode::Kanban {
+                                                kanban.clone()
+                                            } else {
+                                                graph.clone()
+                                            };
+                                            button(
+                                                format!("workgraph-mode-{item:?}"),
+                                                item.label(),
+                                                if item == mode {
+                                                    ButtonTone::Neutral
+                                                } else {
+                                                    ButtonTone::Quiet
+                                                },
+                                                true,
+                                                move |_, cx| {
+                                                    target.update(cx, |this, cx| {
+                                                        this.set_mode(item, cx)
+                                                    })
+                                                },
+                                            )
+                                        }),
+                                    ),
+                                ),
+                        )
                         .child(
                             div()
                                 .flex_1()
                                 .min_h_0()
                                 .flex()
-                                .gap(THEME.space.md)
                                 .child(self.render_filter_rail(entity.clone(), data))
                                 .child(if groups.is_empty() {
                                     feedback(
@@ -463,7 +568,41 @@ pub(super) fn load_issues(database: PathBuf, project: PathBuf) -> Result<BoardDa
     }
 }
 
-fn render_group(group: IssueGroup, entity: Entity<WorkGraphBoardView>) -> impl IntoElement {
+fn detail_section(label: &'static str, body: String) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap(THEME.space.xs)
+        .child(
+            div()
+                .text_size(THEME.type_scale.caption)
+                .text_color(THEME.colors.subtle)
+                .child(label),
+        )
+        .child(
+            div()
+                .text_size(THEME.type_scale.body_small)
+                .text_color(THEME.colors.muted)
+                .line_height(THEME.type_scale.line_body)
+                .child(body),
+        )
+}
+
+fn status_color(status: workgraph::contract::IssueStatus) -> gpui::Rgba {
+    match status {
+        workgraph::contract::IssueStatus::Blocked => THEME.colors.warning,
+        workgraph::contract::IssueStatus::Done => THEME.colors.success,
+        workgraph::contract::IssueStatus::Cancelled => THEME.colors.subtle,
+        workgraph::contract::IssueStatus::InProgress => THEME.colors.accent,
+        workgraph::contract::IssueStatus::Open => THEME.colors.link,
+    }
+}
+
+fn render_group(
+    group: IssueGroup,
+    selected: Option<u64>,
+    entity: Entity<WorkGraphBoardView>,
+) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
@@ -478,12 +617,16 @@ fn render_group(group: IssueGroup, entity: Entity<WorkGraphBoardView>) -> impl I
             group
                 .rows
                 .into_iter()
-                .map(|row| render_issue_row(row, entity.clone())),
+                .map(|row| render_issue_row(row, selected, entity.clone())),
         )
 }
 
-fn render_issue_row(row: IssueRow, entity: Entity<WorkGraphBoardView>) -> impl IntoElement {
-    let status_color = if row.status_label.starts_with("Blocked") {
+fn render_issue_row(
+    row: IssueRow,
+    selected: Option<u64>,
+    entity: Entity<WorkGraphBoardView>,
+) -> impl IntoElement {
+    let row_status_color = if row.status_label.starts_with("Blocked") {
         THEME.colors.warning
     } else {
         match row.issue.status {
@@ -495,15 +638,26 @@ fn render_issue_row(row: IssueRow, entity: Entity<WorkGraphBoardView>) -> impl I
         }
     };
     let number = row.issue.number;
+    let is_selected = selected == Some(number);
     div()
         .id(format!("workgraph-issue-{number}"))
         .cursor_pointer()
         .on_click(move |_, _, cx| entity.update(cx, |this, cx| this.select_issue(number, cx)))
         .rounded(THEME.radius)
         .border(THEME.border)
-        .border_color(THEME.colors.border)
-        .bg(THEME.colors.surface)
-        .p(THEME.space.sm)
+        .border_color(if is_selected {
+            THEME.colors.accent
+        } else {
+            THEME.colors.border
+        })
+        .bg(if is_selected {
+            THEME.colors.selection
+        } else {
+            THEME.colors.surface
+        })
+        .hover(|style| style.bg(THEME.colors.hover))
+        .px(THEME.space.sm)
+        .py(THEME.space.sm)
         .flex()
         .flex_col()
         .gap(THEME.space.xs)
@@ -530,7 +684,7 @@ fn render_issue_row(row: IssueRow, entity: Entity<WorkGraphBoardView>) -> impl I
         .child(
             div()
                 .text_size(THEME.type_scale.caption)
-                .text_color(status_color)
+                .text_color(row_status_color)
                 .child(row.status_label),
         )
         .when(!row.issue.body.trim().is_empty(), |item| {
@@ -546,16 +700,25 @@ fn render_issue_row(row: IssueRow, entity: Entity<WorkGraphBoardView>) -> impl I
 fn render_graph_row(
     issue: workgraph::contract::Issue,
     dependencies: Vec<String>,
+    selected: Option<u64>,
     entity: Entity<WorkGraphBoardView>,
 ) -> impl IntoElement {
     let number = issue.number;
+    let is_selected = selected == Some(number);
     div()
         .id(format!("workgraph-graph-{number}"))
         .cursor_pointer()
         .on_click(move |_, _, cx| entity.update(cx, |this, cx| this.select_issue(number, cx)))
-        .p(THEME.space.sm)
+        .px(THEME.space.md)
+        .py(THEME.space.sm)
         .border_b(THEME.border)
         .border_color(THEME.colors.border)
+        .bg(if is_selected {
+            THEME.colors.selection
+        } else {
+            THEME.colors.panel
+        })
+        .hover(|style| style.bg(THEME.colors.hover))
         .flex()
         .items_center()
         .gap(THEME.space.md)

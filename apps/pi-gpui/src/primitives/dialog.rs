@@ -1,11 +1,27 @@
 use crate::theme::THEME;
 use gpui::{
-    App, Div, ElementId, InteractiveElement as _, Role, SharedString, Stateful,
-    StatefulInteractiveElement as _, Styled as _, Window, div, px,
+    App, Div, FocusHandle, InteractiveElement as _, ParentElement as _, Role, SharedString,
+    Stateful, StatefulInteractiveElement as _, Styled as _, Window, div, px,
 };
+use gpui_component::FocusTrapElement as _;
 
-pub(crate) fn dialog_backdrop(
-    id: impl Into<ElementId>,
+pub(crate) fn modal(
+    id: &'static str,
+    label: impl Into<SharedString>,
+    focus: &FocusHandle,
+    key_context: &'static str,
+    on_dismiss: impl Fn(&mut Window, &mut App) + 'static,
+    configure: impl FnOnce(Stateful<Div>) -> Stateful<Div>,
+) -> Stateful<Div> {
+    let surface = configure(dialog_surface(format!("{id}-surface"), label))
+        .track_focus(focus)
+        .key_context(key_context)
+        .focus_trap(format!("{id}-focus-trap"), focus);
+    dialog_backdrop(format!("{id}-backdrop"), on_dismiss).child(surface)
+}
+
+fn dialog_backdrop(
+    id: impl Into<gpui::ElementId>,
     on_dismiss: impl Fn(&mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
     div()
@@ -21,10 +37,7 @@ pub(crate) fn dialog_backdrop(
         .on_click(move |_, window, cx| on_dismiss(window, cx))
 }
 
-pub(crate) fn dialog_surface(
-    id: impl Into<ElementId>,
-    label: impl Into<SharedString>,
-) -> Stateful<Div> {
+fn dialog_surface(id: impl Into<gpui::ElementId>, label: impl Into<SharedString>) -> Stateful<Div> {
     div()
         .id(id)
         .role(Role::Dialog)

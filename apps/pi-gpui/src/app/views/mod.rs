@@ -19,7 +19,7 @@ use gpui::{
     Context, Focusable as _, InteractiveElement as _, IntoElement, ParentElement as _, Render,
     Styled as _, Window, div, prelude::FluentBuilder as _,
 };
-use gpui_component::{FocusTrapElement as _, kbd::Kbd};
+use gpui_component::kbd::Kbd;
 
 use super::{
     AbortRun, AddProject, DismissSurface, FocusComposer, FocusSessionSearch, NewSession,
@@ -35,7 +35,7 @@ use crate::{
         layout_mode, shows_left_inline, shows_right_inline, shows_run_sheet_button,
         shows_session_sheet_button,
     },
-    primitives::{FeedbackTone, dialog_backdrop, dialog_surface, feedback},
+    primitives::{FeedbackTone, feedback, modal},
     protocol::ExtensionUiRequest,
     theme::THEME,
 };
@@ -268,102 +268,101 @@ impl Render for PiApp {
             )
             .when(self.keybindings_help, |root| {
                 let close = entity.clone();
-                root.child(
-                    dialog_backdrop("keybindings-help-backdrop", move |window, cx| {
+                root.child(modal(
+                    "keybindings-help",
+                    "Keyboard shortcuts",
+                    &self.sheet_focus,
+                    OVERLAY_KEY_CONTEXT,
+                    move |window, cx| {
                         let _ = close.update(cx, |this, cx| this.close_sheet(window, cx));
-                    })
-                    .child(
-                        dialog_surface("keybindings-help", "Keyboard shortcuts")
-                            .track_focus(&self.sheet_focus)
-                            .key_context(OVERLAY_KEY_CONTEXT)
+                    },
+                    |surface| {
+                        surface
                             .w(gpui::px(520.0))
                             .max_w_full()
                             .child(render_keybindings_help())
-                            .focus_trap("keybindings-help-trap", &self.sheet_focus),
-                    ),
-                )
+                    },
+                ))
             })
             .when(self.sessions_sheet, |root| {
                 let close = entity.clone();
-                root.child(
-                    dialog_backdrop("sessions-sheet", move |window, cx| {
+                root.child(modal(
+                    "sessions",
+                    "Sessions",
+                    &self.sheet_focus,
+                    OVERLAY_KEY_CONTEXT,
+                    move |window, cx| {
                         let _ = close.update(cx, |this, cx| this.close_sheet(window, cx));
-                    })
-                    .child(
-                        dialog_surface("sessions-dialog", "Sessions")
-                            .track_focus(&self.sheet_focus)
-                            .key_context(OVERLAY_KEY_CONTEXT)
-                            .h_full()
-                            .max_w_full()
-                            .child(
-                                self.session_rail_view
-                                    .clone()
-                                    .cached(gpui::StyleRefinement::default().size_full()),
-                            )
-                            .focus_trap("sessions-sheet-trap", &self.sheet_focus),
-                    ),
-                )
+                    },
+                    |surface| {
+                        surface.h_full().max_w_full().child(
+                            self.session_rail_view
+                                .clone()
+                                .cached(gpui::StyleRefinement::default().size_full()),
+                        )
+                    },
+                ))
             })
             .when(self.run_sheet, |root| {
                 let close = entity.clone();
-                root.child(
-                    dialog_backdrop("run-sheet", move |window, cx| {
+                root.child(modal(
+                    "run",
+                    "Session details",
+                    &self.sheet_focus,
+                    OVERLAY_KEY_CONTEXT,
+                    move |window, cx| {
                         let _ = close.update(cx, |this, cx| this.close_sheet(window, cx));
-                    })
-                    .child(
-                        dialog_surface("run-dialog", "Session details")
-                            .track_focus(&self.sheet_focus)
-                            .key_context(OVERLAY_KEY_CONTEXT)
-                            .h_full()
-                            .max_w_full()
-                            .child(
-                                self.run_panel_view
-                                    .clone()
-                                    .cached(gpui::StyleRefinement::default().size_full()),
-                            )
-                            .focus_trap("run-sheet-trap", &self.sheet_focus),
-                    ),
-                )
+                    },
+                    |surface| {
+                        surface.h_full().max_w_full().child(
+                            self.run_panel_view
+                                .clone()
+                                .cached(gpui::StyleRefinement::default().size_full()),
+                        )
+                    },
+                ))
             })
             .when(self.workgraph_sheet, |root| {
                 let close = entity.clone();
-                root.child(
-                    dialog_backdrop("workgraph-sheet", move |window, cx| {
+                root.child(modal(
+                    "workgraph",
+                    "Work graph",
+                    &self.sheet_focus,
+                    OVERLAY_KEY_CONTEXT,
+                    move |window, cx| {
                         let _ = close.update(cx, |this, cx| this.close_sheet(window, cx));
-                    })
-                    .child(
-                        dialog_surface("workgraph-dialog", "Work graph")
-                            .track_focus(&self.sheet_focus)
-                            .key_context(OVERLAY_KEY_CONTEXT)
+                    },
+                    |surface| {
+                        surface
                             .w_full()
-                            .max_w(gpui::px(1_080.0))
+                            .max_w(gpui::px(1_180.0))
                             .h_full()
-                            .max_h(gpui::relative(0.92))
+                            .max_h(gpui::relative(0.94))
                             .overflow_hidden()
                             .child(self.workgraph_view.clone())
-                            .focus_trap("workgraph-sheet-trap", &self.sheet_focus),
-                    ),
-                )
+                    },
+                ))
             })
             .when(self.changes.diff.is_some(), |root| {
                 let close = entity.clone();
-                root.child(
-                    dialog_backdrop("full-diff-backdrop", move |window, cx| {
+                root.child(modal(
+                    "full-diff",
+                    "File diff",
+                    &self.changes.diff_focus,
+                    OVERLAY_KEY_CONTEXT,
+                    move |window, cx| {
                         let _ = close.update(cx, |this, cx| this.close_file_diff(window, cx));
-                    })
-                    .child(
-                        dialog_surface("full-diff-dialog", "File diff")
-                            .track_focus(&self.changes.diff_focus)
-                            .key_context(OVERLAY_KEY_CONTEXT)
+                    },
+                    |surface| {
+                        surface
                             .w_full()
                             .max_w_full()
                             .h_full()
                             .max_h(gpui::relative(1.0))
                             .overflow_hidden()
                             .child(self.render_diff_modal(entity.clone(), full_diff_mode))
-                            .focus_trap("full-diff-trap", &self.changes.diff_focus),
-                    ),
-                )
+                    },
+                ))
             })
             .when(!self.extension.notifications.is_empty(), |root| {
                 root.child(
