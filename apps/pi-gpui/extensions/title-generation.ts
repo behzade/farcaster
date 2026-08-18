@@ -69,14 +69,16 @@ export default function titleGeneration(pi: ExtensionAPI): void {
   let attempted = false;
   const controller = new AbortController();
 
-  pi.on("before_agent_start", (event, ctx) => {
+  pi.on("before_agent_start", async (event, ctx) => {
     if (attempted || pi.getSessionName() || !event.prompt.trim()) return;
     attempted = true;
-    void generateTitle(pi, event.prompt, ctx, controller.signal).catch((error) => {
+    try {
+      await generateTitle(pi, event.prompt, ctx, controller.signal);
+    } catch (error) {
       if (!controller.signal.aborted) {
         console.error(`Automatic session title generation failed: ${String(error)}`);
       }
-    });
+    }
   });
 
   pi.on("session_shutdown", () => {

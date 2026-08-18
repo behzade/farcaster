@@ -1324,6 +1324,9 @@ impl RuntimeOwner {
                 if session_starting {
                     self.send(command("get_state"));
                 }
+                if event_type == Some("agent_start") {
+                    self.refresh_sessions();
+                }
                 if event_type == Some("session_info_changed") {
                     self.send(command("get_state"));
                     self.refresh_sessions();
@@ -2106,6 +2109,20 @@ mod tests {
 
         assert_eq!(changed, SnapshotChange::None);
         assert!(events.try_recv().is_err());
+    }
+
+    #[test]
+    fn first_agent_action_refreshes_catalog_for_draft_promotion() {
+        let (mut owner, events, _discovery) = owner_without_process(PathBuf::from("/project"));
+        owner.owns_session_catalog = false;
+        owner.active_session = Some(PathBuf::from("/sessions/new.jsonl"));
+
+        owner.apply_process_item(ProcessItem::Event(json!({"type":"agent_start"})));
+
+        assert!(matches!(
+            events.try_recv(),
+            Ok(RuntimeEvent::RefreshCatalog)
+        ));
     }
 
     #[test]
