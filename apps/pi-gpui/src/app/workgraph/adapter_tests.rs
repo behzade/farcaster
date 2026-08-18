@@ -4,7 +4,7 @@ use workgraph::{
     core::WorkGraph,
 };
 
-use super::adapter::{add_issue_note, create_issue, load_issues, update_issue_status};
+use super::persistence::{add_issue_note, create_issue, load_issues, update_issue_status};
 
 #[test]
 fn board_loader_reads_issues_from_the_shared_gui_database() {
