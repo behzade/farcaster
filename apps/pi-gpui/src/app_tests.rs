@@ -21,6 +21,23 @@ fn item(text: &str) -> TranscriptItem {
 }
 
 #[test]
+fn unchanged_catalog_poll_does_not_invalidate_session_regions() {
+    assert!(!session_catalog_changed(&[], &[], None, &[], &[]));
+    assert!(!session_activities_changed(&HashMap::new(), None));
+    assert!(!session_activities_changed(
+        &HashMap::new(),
+        Some(&(HashMap::new(), true)),
+    ));
+    assert!(session_catalog_changed(
+        &[],
+        &[],
+        Some("previous failure"),
+        &[],
+        &[],
+    ));
+}
+
+#[test]
 fn done_is_recent_only_after_an_active_status_transition() {
     assert!(!starts_recent_completion(None, "Done", false));
     assert!(!starts_recent_completion(Some("Done"), "Done", false));

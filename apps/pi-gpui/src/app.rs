@@ -461,10 +461,7 @@ impl PiApp {
                     composer_dirty |= composer_snapshot_changed(&self.snapshot, snapshot);
                     run_dirty |= run_panel_snapshot_changed(&self.snapshot, snapshot);
                 }
-                RuntimeEvent::Sessions { .. } | RuntimeEvent::SessionsFailed { .. } => {
-                    rail_dirty = true;
-                    run_dirty = true;
-                }
+                RuntimeEvent::Sessions { .. } | RuntimeEvent::SessionsFailed { .. } => {}
                 RuntimeEvent::SessionStatus { .. } => {
                     rail_dirty = true;
                     run_dirty = true;
@@ -550,6 +547,15 @@ impl PiApp {
                     ..
                 } if generation >= self.session_generation => {
                     self.session_generation = generation;
+                    let catalog_changed = session_catalog_changed(
+                        &self.sessions,
+                        &self.all_sessions,
+                        self.sessions_error.as_deref(),
+                        &sessions,
+                        &all_sessions,
+                    );
+                    let activities_changed =
+                        session_activities_changed(&self.agent_activities, activities.as_ref());
                     for session in &all_sessions {
                         projects::add_unique(&mut self.projects, session.project.clone());
                     }
@@ -573,6 +579,8 @@ impl PiApp {
                             .entry(id.clone())
                             .or_insert_with(|| cx.focus_handle());
                     }
+                    rail_dirty |= catalog_changed || activities_changed;
+                    run_dirty |= catalog_changed || activities_changed;
                     self.reconcile_submitted_drafts(cx);
                 }
                 RuntimeEvent::SessionsFailed {
@@ -580,7 +588,10 @@ impl PiApp {
                     message,
                 } if generation >= self.session_generation => {
                     self.session_generation = generation;
+                    let changed = self.sessions_error.as_deref() != Some(message.as_str());
                     self.sessions_error = Some(message);
+                    rail_dirty |= changed;
+                    run_dirty |= changed;
                 }
                 RuntimeEvent::ExtensionUi {
                     generation,
@@ -1061,6 +1072,31 @@ impl PiApp {
         self.send(RuntimeCommand::SetThinking(level));
         cx.notify();
     }
+}
+
+fn session_catalog_changed(
+    current: &[SessionSummary],
+    current_all: &[SessionSummary],
+    current_error: Option<&str>,
+    next: &[SessionSummary],
+    next_all: &[SessionSummary],
+) -> bool {
+    current != next || current_all != next_all || current_error.is_some()
+}
+
+fn session_activities_changed(
+    current: &HashMap<String, crate::agent_activity::AgentActivity>,
+    next: Option<&(HashMap<String, crate::agent_activity::AgentActivity>, bool)>,
+) -> bool {
+    next.is_some_and(|(activities, exhaustive)| {
+        if *exhaustive {
+            current != activities
+        } else {
+            activities
+                .iter()
+                .any(|(id, activity)| current.get(id) != Some(activity))
+        }
+    })
 }
 
 fn session_rail_snapshot_changed(
