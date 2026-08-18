@@ -7,6 +7,7 @@ use gpui::{
     Render, StatefulInteractiveElement as _, Styled as _, Task, Window, div,
     prelude::FluentBuilder as _, px,
 };
+use gpui_component::input::{Textarea, TextareaState};
 use workgraph::{
     adapter::SqliteAdapter,
     contract::{EditAction, EditRequest, SearchRequest, SearchResult},
@@ -31,6 +32,8 @@ pub(crate) struct WorkGraphBoardView {
     mode: BoardMode,
     selected: Option<u64>,
     active_session: Option<(String, String)>,
+    note: Option<Entity<TextareaState>>,
+    note_issue: Option<u64>,
     refresh: Option<Task<()>>,
 }
 
@@ -53,6 +56,8 @@ impl WorkGraphBoardView {
             mode: BoardMode::Kanban,
             selected: None,
             active_session: None,
+            note: None,
+            note_issue: None,
             refresh: None,
         };
         if should_refresh {
@@ -125,6 +130,32 @@ impl WorkGraphBoardView {
         let project = self.project.clone();
         let edit = cx.background_spawn(async move {
             update_issue_status(database, project, number, status, expected_version)
+        });
+        self.state = BoardLoadState::Loading;
+        self.refresh = Some(cx.spawn(async move |weak, cx| {
+            let state = match edit.await {
+                Ok(data) => BoardLoadState::Ready(data),
+                Err(error) => BoardLoadState::Failed(error),
+            };
+            let _ = weak.update(cx, |this, cx| {
+                this.state = state;
+                cx.notify();
+            });
+        }));
+        cx.notify();
+    }
+
+    fn add_note(
+        &mut self,
+        number: u64,
+        expected_version: u64,
+        body: String,
+        cx: &mut Context<Self>,
+    ) {
+        let database = self.database.clone();
+        let project = self.project.clone();
+        let edit = cx.background_spawn(async move {
+            add_issue_note(database, project, number, expected_version, body)
         });
         self.state = BoardLoadState::Loading;
         self.refresh = Some(cx.spawn(async move |weak, cx| {
@@ -320,6 +351,36 @@ impl WorkGraphBoardView {
                     let active_link = self.active_session.as_ref().and_then(|(id, _)| {
                         data.sessions.iter().find(|link| link.session_id == *id)
                     });
+                    let note_action = self.note.as_ref().map(|note| {
+                        let note_input = note.clone();
+                        let note_submit = note.clone();
+                        let entity = entity.clone();
+                        let number = issue.number;
+                        let version = issue.version;
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(THEME.space.xs)
+                            .child(Textarea::new(&note_input).w_full().appearance(true))
+                            .child(button(
+                                format!("workgraph-add-note-{number}"),
+                                "Add note",
+                                ButtonTone::Neutral,
+                                true,
+                                move |window, cx| {
+                                    let body = note_submit.read(cx).value().trim().to_owned();
+                                    if body.is_empty() {
+                                        return;
+                                    }
+                                    note_submit.update(cx, |input, cx| {
+                                        input.set_value(String::new(), window, cx);
+                                    });
+                                    entity.update(cx, |this, cx| {
+                                        this.add_note(number, version, body, cx);
+                                    });
+                                },
+                            ))
+                    });
                     let status_actions = [
                         workgraph::contract::IssueStatus::Open,
                         workgraph::contract::IssueStatus::InProgress,
@@ -472,6 +533,7 @@ impl WorkGraphBoardView {
                                     .join("\n\n")
                             },
                         ))
+                        .children(note_action)
                         .child(detail_section(
                             "LINKED SESSIONS",
                             if sessions.is_empty() {
@@ -499,6 +561,22 @@ impl WorkGraphBoardView {
 
 impl Render for WorkGraphBoardView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.note.is_none() {
+            self.note = Some(cx.new(|cx| {
+                TextareaState::new(window, cx)
+                    .auto_grow(2, 5)
+                    .submit_on_enter(false)
+                    .placeholder("Add a progress or handoff note")
+            }));
+        }
+        if self.note_issue != self.selected {
+            if let Some(note) = &self.note {
+                note.update(cx, |input, cx| {
+                    input.set_value(String::new(), window, cx);
+                });
+            }
+            self.note_issue = self.selected;
+        }
         let entity = cx.entity();
         let layout = board_layout_mode(window.viewport_size().width);
         div()
@@ -643,6 +721,34 @@ impl Render for WorkGraphBoardView {
                 }
             })
     }
+}
+
+pub(super) fn add_issue_note(
+    database: PathBuf,
+    project: PathBuf,
+    number: u64,
+    expected_version: u64,
+    body: String,
+) -> Result<BoardData, String> {
+    let project_key = canonical_project(&project)?;
+    let adapter = SqliteAdapter::open(&database).map_err(|error| error.to_string())?;
+    let mut graph = WorkGraph::new(adapter);
+    let operation = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| "system clock is unavailable".to_owned())?
+        .as_nanos();
+    graph
+        .edit(&EditRequest {
+            project: project_key,
+            idempotency_key: format!("gui-note-{number}-{operation}"),
+            action: EditAction::AddNote {
+                number,
+                body,
+                expected_version: Some(expected_version),
+            },
+        })
+        .map_err(|error| error.to_string())?;
+    load_issues(database, project)
 }
 
 pub(super) fn update_issue_status(

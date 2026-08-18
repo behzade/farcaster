@@ -4,7 +4,7 @@ use workgraph::{
     core::WorkGraph,
 };
 
-use super::adapter::{load_issues, update_issue_status};
+use super::adapter::{add_issue_note, load_issues, update_issue_status};
 
 #[test]
 fn board_loader_reads_issues_from_the_shared_gui_database() {
@@ -86,12 +86,27 @@ fn board_loader_reads_issues_from_the_shared_gui_database() {
         .find(|issue| issue.number == prerequisite.number)
         .expect("loaded prerequisite")
         .version;
+    let with_note = add_issue_note(
+        database.clone(),
+        project.clone(),
+        prerequisite.number,
+        prerequisite_version,
+        "Second durable note".into(),
+    )
+    .expect("native note update");
+    assert_eq!(with_note.notes.len(), 2);
+    let updated_version = with_note
+        .issues
+        .iter()
+        .find(|issue| issue.number == prerequisite.number)
+        .expect("updated prerequisite")
+        .version;
     let updated = update_issue_status(
         database,
         project,
         prerequisite.number,
         IssueStatus::InProgress,
-        prerequisite_version,
+        updated_version,
     )
     .expect("native status update");
     assert_eq!(
