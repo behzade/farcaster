@@ -270,8 +270,9 @@ pub(super) fn session_row_with_height(
         .size_full()
         .h(row_height)
         .flex()
-        .items_center()
+        .items_stretch()
         .px(THEME.space.sm)
+        .py(THEME.space.xs)
         .rounded(THEME.radius)
         .group(format!("session-actions-{}", session.id))
         .bg(if selected {
@@ -311,19 +312,8 @@ pub(super) fn session_row_with_height(
                 .w_full()
                 .min_w_0()
                 .flex()
-                .items_center()
-                .gap(THEME.space.xs)
-                .when(show_status, |line| {
-                    line.child(
-                        div()
-                            .flex_none()
-                            .whitespace_nowrap()
-                            .text_size(THEME.type_scale.caption)
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(status_color)
-                            .child(status_text),
-                    )
-                })
+                .items_stretch()
+                .gap(THEME.space.sm)
                 .child(if let Some(title_input) = title_editor {
                     div()
                         .min_w_0()
@@ -344,8 +334,9 @@ pub(super) fn session_row_with_height(
                         .min_w_0()
                         .flex_1()
                         .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
+                        .whitespace_normal()
+                        .line_clamp(2)
+                        .line_height(THEME.type_scale.line_body)
                         .text_size(THEME.type_scale.body)
                         .font_weight(if selected || !is_settled {
                             FontWeight::SEMIBOLD
@@ -363,54 +354,90 @@ pub(super) fn session_row_with_height(
                 .child(
                     div()
                         .flex_none()
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.subtle)
-                        .child(age),
-                )
-                .when_some(shortcut, |line, number| {
-                    line.child(Kbd::new(
-                        gpui::Keystroke::parse(&format!("cmd-{number}"))
-                            .expect("fixed session shortcut must parse"),
-                    ))
-                })
-                .child(
-                    div()
-                        .id(format!("settle-{}", session.id))
-                        .role(Role::Button)
-                        .aria_label(format!("{settle_label} session"))
-                        .tab_index(0)
-                        .size(THEME.controls.icon_button)
-                        .flex_none()
                         .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(THEME.radius)
-                        .opacity(0.65)
-                        .group_hover(format!("session-actions-{}", session.id), |button| {
-                            button.opacity(1.0)
+                        .flex_col()
+                        .items_end()
+                        .justify_between()
+                        .when(show_status, |column| {
+                            column.child(
+                                div()
+                                    .whitespace_nowrap()
+                                    .text_size(THEME.type_scale.caption)
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(status_color)
+                                    .child(format!("{status_text} · {age}")),
+                            )
                         })
-                        .focus(|button| {
-                            button
-                                .opacity(1.0)
-                                .border(THEME.border)
-                                .border_color(THEME.colors.accent)
+                        .when(!show_status, |column| {
+                            column.child(
+                                div()
+                                    .text_size(THEME.type_scale.caption)
+                                    .text_color(THEME.colors.subtle)
+                                    .child(age),
+                            )
                         })
-                        .text_color(if is_settled {
-                            THEME.colors.success
-                        } else {
-                            THEME.colors.muted
-                        })
-                        .hover(|button| button.bg(THEME.colors.hover))
-                        .tooltip(move |window, cx| {
-                            Tooltip::new(format!("{settle_label} session")).build(window, cx)
-                        })
-                        .child(app_icon(settle_icon, AppIconSize::Control))
-                        .on_click(move |_, _, cx| {
-                            cx.stop_propagation();
-                            let _ = settle_entity.update(cx, |this, cx| {
-                                this.set_session_settled(settle_path.clone(), !is_settled, cx);
-                            });
-                        }),
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_end()
+                                .gap(THEME.space.xs)
+                                .when_some(shortcut, |actions, number| {
+                                    actions.child(Kbd::new(
+                                        gpui::Keystroke::parse(&format!("cmd-{number}"))
+                                            .expect("fixed session shortcut must parse"),
+                                    ))
+                                })
+                                .child(
+                                    div()
+                                        .id(format!("settle-{}", session.id))
+                                        .role(Role::Button)
+                                        .aria_label(format!("{settle_label} session"))
+                                        .tab_index(0)
+                                        .h(THEME.controls.icon_button)
+                                        .px(THEME.space.xs)
+                                        .flex_none()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .rounded(THEME.radius)
+                                        .opacity(0.65)
+                                        .group_hover(
+                                            format!("session-actions-{}", session.id),
+                                            |button| button.opacity(1.0),
+                                        )
+                                        .focus(|button| {
+                                            button
+                                                .opacity(1.0)
+                                                .border(THEME.border)
+                                                .border_color(THEME.colors.accent)
+                                        })
+                                        .text_color(if is_settled {
+                                            THEME.colors.success
+                                        } else {
+                                            THEME.colors.muted
+                                        })
+                                        .hover(|button| button.bg(THEME.colors.hover))
+                                        .tooltip(move |window, cx| {
+                                            Tooltip::new(format!("{settle_label} session"))
+                                                .build(window, cx)
+                                        })
+                                        .gap(THEME.space.xs)
+                                        .text_size(THEME.type_scale.caption)
+                                        .child(app_icon(settle_icon, AppIconSize::Control))
+                                        .child(settle_label)
+                                        .on_click(move |_, _, cx| {
+                                            cx.stop_propagation();
+                                            let _ = settle_entity.update(cx, |this, cx| {
+                                                this.set_session_settled(
+                                                    settle_path.clone(),
+                                                    !is_settled,
+                                                    cx,
+                                                );
+                                            });
+                                        }),
+                                ),
+                        ),
                 ),
         );
     div()

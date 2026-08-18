@@ -61,7 +61,36 @@ pub struct Note {
 pub struct IssueDetail {
     pub issue: Issue,
     pub dependencies: Vec<u64>,
+    pub dependents: Vec<u64>,
     pub notes: Vec<Note>,
+    pub sessions: Vec<SessionLink>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Dependency {
+    pub issue_number: u64,
+    pub depends_on: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionLink {
+    pub session_id: String,
+    pub session_path: String,
+    pub issue_number: u64,
+    pub linked_at: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectGraph {
+    pub issues: Vec<Issue>,
+    pub dependencies: Vec<Dependency>,
+    pub sessions: Vec<SessionLink>,
+    pub ready: Vec<u64>,
+    pub blocked: Vec<u64>,
+    pub next: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -87,6 +116,13 @@ pub enum SearchRequest {
         project: String,
         planning: PlanningView,
     },
+    Graph {
+        project: String,
+    },
+    Session {
+        project: String,
+        session_id: String,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -95,6 +131,8 @@ pub enum SearchResult {
     Status(Vec<Issue>),
     Issue(IssueDetail),
     Planning(Vec<Issue>),
+    Graph(ProjectGraph),
+    Session(Option<SessionLink>),
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -127,6 +165,15 @@ pub enum EditAction {
         depends_on: u64,
         expected_version: Option<u64>,
     },
+    LinkSession {
+        number: u64,
+        session_id: String,
+        session_path: String,
+        expected_version: Option<u64>,
+    },
+    UnlinkSession {
+        session_id: String,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -142,6 +189,8 @@ pub struct EditRequest {
 pub enum EditResult {
     Issue(Issue),
     Note(Note),
+    Session(SessionLink),
+    UnlinkedSession(SessionLink),
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

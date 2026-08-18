@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::{
     contract::{
-        EditAction, EditRequest, EditResult, IdempotencyReceipt, Issue, IssueStatus, Note,
-        PlanningView, ProjectRecordId, SearchRequest, SearchResult,
+        Dependency, EditAction, EditRequest, EditResult, IdempotencyReceipt, Issue, IssueStatus,
+        Note, PlanningView, ProjectRecordId, SearchRequest, SearchResult, SessionLink,
     },
     core::{
         Persistence, PersistenceError, TransactionMode, WorkGraph, WorkGraphError,
@@ -20,6 +20,7 @@ struct MemoryPersistence {
     notes: BTreeMap<(ProjectRecordId, u64), Vec<Note>>,
     dependencies: BTreeSet<(ProjectRecordId, u64, u64)>,
     receipts: HashMap<String, IdempotencyReceipt>,
+    session_links: BTreeMap<(ProjectRecordId, String), SessionLink>,
     next_note_id: i64,
 }
 
@@ -206,6 +207,22 @@ impl WorkGraphTransaction for MemoryTransaction<'_> {
             .collect())
     }
 
+    fn all_dependencies(
+        &self,
+        project: ProjectRecordId,
+    ) -> Result<Vec<Dependency>, PersistenceError> {
+        Ok(self
+            .state
+            .dependencies
+            .iter()
+            .filter(|(id, _, _)| *id == project)
+            .map(|(_, issue_number, depends_on)| Dependency {
+                issue_number: *issue_number,
+                depends_on: *depends_on,
+            })
+            .collect())
+    }
+
     fn dependency_reaches(
         &self,
         project: ProjectRecordId,
@@ -254,6 +271,56 @@ impl WorkGraphTransaction for MemoryTransaction<'_> {
         self.state
             .dependencies
             .remove(&(project, number, depends_on));
+        Ok(())
+    }
+
+    fn session_link(
+        &self,
+        project: ProjectRecordId,
+        session_id: &str,
+    ) -> Result<Option<SessionLink>, PersistenceError> {
+        Ok(self
+            .state
+            .session_links
+            .get(&(project, session_id.to_owned()))
+            .cloned())
+    }
+
+    fn session_links(
+        &self,
+        project: ProjectRecordId,
+        issue_number: Option<u64>,
+    ) -> Result<Vec<SessionLink>, PersistenceError> {
+        Ok(self
+            .state
+            .session_links
+            .iter()
+            .filter(|((id, _), link)| {
+                *id == project && issue_number.is_none_or(|number| link.issue_number == number)
+            })
+            .map(|(_, link)| link.clone())
+            .collect())
+    }
+
+    fn upsert_session_link(
+        &mut self,
+        project: ProjectRecordId,
+        link: &SessionLink,
+    ) -> Result<(), PersistenceError> {
+        self.state
+            .session_links
+            .insert((project, link.session_id.clone()), link.clone());
+        Ok(())
+    }
+
+    fn remove_session_link(
+        &mut self,
+        project: ProjectRecordId,
+        session_id: &str,
+    ) -> Result<(), PersistenceError> {
+        self.state
+            .session_links
+            .remove(&(project, session_id.to_owned()));
         Ok(())
     }
 

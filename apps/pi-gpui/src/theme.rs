@@ -158,7 +158,7 @@ pub(crate) const THEME: Theme = Theme {
         icon_button: px(28.0),
         utility_row: px(40.0),
         project_row: px(36.0),
-        archived_preview_row: px(40.0),
+        archived_preview_row: px(56.0),
         agent_marker: px(20.0),
     },
     radius: px(6.0),
@@ -177,7 +177,7 @@ pub(crate) const THEME: Theme = Theme {
         dialog_width: px(560.0),
         dialog_max_height: px(680.0),
         tool_max_height: px(220.0),
-        session_row_height: px(48.0),
+        session_row_height: px(64.0),
         status_row_height: px(24.0),
     },
 };

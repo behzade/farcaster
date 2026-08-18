@@ -11,7 +11,7 @@ use crate::{
     agent_activity::{AgentActivity, AgentLifecycle, AgentOutcome},
     primitives::{disclosure_button, panel, section_heading},
     sessions::{UsageSummary, descendant_sessions, root_session_for_path},
-    theme::{MONO_FONT_FAMILY, THEME},
+    theme::THEME,
 };
 
 const CONTEXT_WARNING_PERCENT: f64 = 80.0;
@@ -282,32 +282,7 @@ impl PiApp {
         let activity_text = activity.activity.clone();
         let role = role_override.unwrap_or(&activity.role).to_owned();
         let marker = role_glyph(&role);
-        let tool = active
-            .then(|| {
-                activity
-                    .current_tool
-                    .as_ref()
-                    .or(activity.recent_tool.as_ref())
-            })
-            .flatten()
-            .map(|tool| {
-                let mut detail = if tool.target.is_empty() {
-                    tool.name.clone()
-                } else {
-                    format!("{} · {}", tool.name, tool.target)
-                };
-                if tool.failed {
-                    detail.push_str(" · failed");
-                }
-                detail
-            });
-        let facts = format!(
-            "{} · {} tokens · {}",
-            tool_count(activity),
-            compact_number(activity.usage.total),
-            elapsed_label(activity, SystemTime::now())
-        );
-        let meta = tool.map_or(facts.clone(), |tool| format!("{facts} · {tool}"));
+        let elapsed = elapsed_label(activity, SystemTime::now());
         Some(
             div()
                 .id(format!("agent-card-{}", activity.session_id))
@@ -316,8 +291,8 @@ impl PiApp {
                 .aria_label(format!("Show {role} transcript: {state}"))
                 .tab_index(0)
                 .ml(px(depth.saturating_sub(1) as f32 * 8.0))
-                .px(THEME.space.xs)
-                .py(px(5.0))
+                .px(THEME.space.sm)
+                .py(THEME.space.xs)
                 .border(THEME.border)
                 .border_color(if selected {
                     THEME.colors.accent
@@ -330,6 +305,7 @@ impl PiApp {
                     THEME.colors.canvas
                 })
                 .flex()
+                .items_stretch()
                 .gap(THEME.space.sm)
                 .hover(|card| card.bg(THEME.colors.hover))
                 .focus(|card| card.border_color(THEME.colors.accent))
@@ -365,51 +341,37 @@ impl PiApp {
                     div()
                         .min_w_0()
                         .flex_1()
+                        .overflow_hidden()
+                        .whitespace_normal()
+                        .line_clamp(2)
+                        .line_height(THEME.type_scale.line_body)
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(THEME.colors.text)
+                        .child(if activity_text.is_empty() {
+                            role
+                        } else {
+                            activity_text
+                        }),
+                )
+                .child(
+                    div()
+                        .flex_none()
                         .flex()
                         .flex_col()
-                        .gap(px(2.0))
+                        .items_end()
+                        .justify_between()
+                        .text_size(THEME.type_scale.caption)
                         .child(
                             div()
-                                .flex()
-                                .justify_between()
-                                .gap(THEME.space.xs)
-                                .child(
-                                    div()
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .text_color(THEME.colors.text)
-                                        .child(role),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(THEME.type_scale.caption)
-                                        .text_color(lifecycle_color(displayed_lifecycle))
-                                        .child(state),
-                                ),
+                                .whitespace_nowrap()
+                                .text_color(lifecycle_color(displayed_lifecycle))
+                                .child(state),
                         )
                         .child(
                             div()
-                                .min_w_0()
-                                .overflow_hidden()
                                 .whitespace_nowrap()
-                                .text_ellipsis()
-                                .text_size(THEME.type_scale.caption)
-                                .text_color(THEME.colors.muted)
-                                .child(if activity_text.is_empty() {
-                                    "No assigned activity".into()
-                                } else {
-                                    activity_text
-                                }),
-                        )
-                        .child(
-                            div()
-                                .min_w_0()
-                                .overflow_hidden()
-                                .whitespace_nowrap()
-                                .text_ellipsis()
-                                .font_family(MONO_FONT_FAMILY)
-                                .text_size(THEME.type_scale.caption)
                                 .text_color(THEME.colors.subtle)
-                                .child(meta),
+                                .child(elapsed),
                         ),
                 )
                 .into_any_element(),
@@ -709,16 +671,6 @@ fn lifecycle_color(lifecycle: AgentLifecycle) -> gpui::Rgba {
         AgentLifecycle::Completed(AgentOutcome::Incomplete) => THEME.colors.warning,
         AgentLifecycle::Completed(AgentOutcome::Complete) => THEME.colors.success,
         AgentLifecycle::Unknown => THEME.colors.subtle,
-    }
-}
-
-fn tool_count(activity: &AgentActivity) -> String {
-    if activity.limited {
-        format!("{}+ tools", activity.tool_call_count)
-    } else if activity.tool_call_count == 1 {
-        "1 tool".into()
-    } else {
-        format!("{} tools", activity.tool_call_count)
     }
 }
 

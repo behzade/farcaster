@@ -5,6 +5,7 @@
 //! Applications choose and assemble the adapter with the core.
 
 pub mod adapter;
+mod adapter_rows;
 pub mod contract;
 pub mod core;
 

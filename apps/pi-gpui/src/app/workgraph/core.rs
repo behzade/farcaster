@@ -115,6 +115,8 @@ mod tests {
     fn data(issues: Vec<Issue>, ready: &[u64], blocked: &[u64], next: Option<u64>) -> BoardData {
         BoardData {
             issues,
+            dependencies: Vec::new(),
+            sessions: Vec::new(),
             ready: ready.iter().copied().collect::<HashSet<_>>(),
             blocked: blocked.iter().copied().collect::<HashSet<_>>(),
             next,

@@ -2,7 +2,23 @@
 
 use std::collections::HashSet;
 
-use workgraph::contract::Issue;
+use workgraph::contract::{Dependency, Issue, SessionLink};
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) enum BoardMode {
+    #[default]
+    Kanban,
+    Graph,
+}
+
+impl BoardMode {
+    pub(super) const fn label(self) -> &'static str {
+        match self {
+            Self::Kanban => "Kanban",
+            Self::Graph => "Dependencies",
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) enum BoardFilter {
@@ -92,6 +108,8 @@ pub(super) enum BoardLoadState {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(super) struct BoardData {
     pub issues: Vec<Issue>,
+    pub dependencies: Vec<Dependency>,
+    pub sessions: Vec<SessionLink>,
     pub ready: HashSet<u64>,
     pub blocked: HashSet<u64>,
     pub next: Option<u64>,

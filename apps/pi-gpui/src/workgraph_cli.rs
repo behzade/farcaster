@@ -94,7 +94,10 @@ fn search_request(
     project: String,
     fields: &BTreeMap<String, String>,
 ) -> Result<SearchRequest, CliError> {
-    reject_unknown(fields, &["project", "view", "status", "number"])?;
+    reject_unknown(
+        fields,
+        &["project", "view", "status", "number", "sessionId"],
+    )?;
     match fields.get("view").map(String::as_str).unwrap_or("status") {
         "status" => Ok(SearchRequest::Status {
             project,
@@ -119,6 +122,11 @@ fn search_request(
             project,
             planning: PlanningView::Next,
         }),
+        "graph" => Ok(SearchRequest::Graph { project }),
+        "session" => Ok(SearchRequest::Session {
+            project,
+            session_id: required(fields, "sessionId")?.to_owned(),
+        }),
         _ => Err(CliError::Invalid("view")),
     }
 }
@@ -140,6 +148,8 @@ fn edit_request(
             "dependsOn",
             "expectedVersion",
             "idempotencyKey",
+            "sessionId",
+            "sessionPath",
         ],
     )?;
     let action = match required(fields, "action")? {
@@ -167,6 +177,15 @@ fn edit_request(
             number: number(fields, "number")?,
             depends_on: number(fields, "dependsOn")?,
             expected_version: optional_number(fields, "expectedVersion")?,
+        },
+        "link_session" => EditAction::LinkSession {
+            number: number(fields, "number")?,
+            session_id: required(fields, "sessionId")?.to_owned(),
+            session_path: required(fields, "sessionPath")?.to_owned(),
+            expected_version: optional_number(fields, "expectedVersion")?,
+        },
+        "unlink_session" => EditAction::UnlinkSession {
+            session_id: required(fields, "sessionId")?.to_owned(),
         },
         _ => return Err(CliError::Invalid("action")),
     };

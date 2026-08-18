@@ -3,11 +3,14 @@ use std::path::Path;
 use rusqlite::{Connection, OptionalExtension as _, Transaction, TransactionBehavior, params};
 
 use crate::{
-    contract::{EditResult, IdempotencyReceipt, Issue, IssueStatus, Note, ProjectRecordId},
+    contract::{
+        Dependency, EditResult, IdempotencyReceipt, Issue, IssueStatus, Note, ProjectRecordId,
+        SessionLink,
+    },
     core::{Persistence, PersistenceError, TransactionMode, WorkGraphTransaction},
 };
 
-const SCHEMA_VERSION: &str = "1";
+const SCHEMA_VERSION: &str = "2";
 
 pub struct SqliteAdapter {
     connection: Connection,
@@ -157,7 +160,7 @@ impl WorkGraphTransaction for SqliteTransaction<'_> {
             .query_row(
                 "SELECT number, title, body, status, priority, version, created_ms, updated_ms FROM wg_issues WHERE project_id=?1 AND number=?2",
                 params![project.as_storage(), number],
-                |row| row_issue(row, project_path),
+                |row| crate::adapter_rows::issue(row, project_path),
             )
             .optional()
             .map_err(error)
@@ -175,7 +178,7 @@ impl WorkGraphTransaction for SqliteTransaction<'_> {
         let rows = statement
             .query_map(
                 params![project.as_storage(), status.map(IssueStatus::as_str)],
-                |row| row_issue(row, project_path),
+                |row| crate::adapter_rows::issue(row, project_path),
             )
             .map_err(error)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(error)
@@ -268,6 +271,25 @@ impl WorkGraphTransaction for SqliteTransaction<'_> {
         rows.collect::<Result<Vec<_>, _>>().map_err(error)
     }
 
+    fn all_dependencies(
+        &self,
+        project: ProjectRecordId,
+    ) -> Result<Vec<Dependency>, PersistenceError> {
+        let mut statement = self
+            .inner
+            .prepare("SELECT issue_number, depends_on_number FROM wg_dependencies WHERE project_id=?1 ORDER BY issue_number, depends_on_number")
+            .map_err(error)?;
+        let rows = statement
+            .query_map([project.as_storage()], |row| {
+                Ok(Dependency {
+                    issue_number: row.get(0)?,
+                    depends_on: row.get(1)?,
+                })
+            })
+            .map_err(error)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(error)
+    }
+
     fn dependency_reaches(
         &self,
         project: ProjectRecordId,
@@ -315,6 +337,57 @@ impl WorkGraphTransaction for SqliteTransaction<'_> {
             .map_err(error)
     }
 
+    fn session_link(
+        &self,
+        project: ProjectRecordId,
+        session_id: &str,
+    ) -> Result<Option<SessionLink>, PersistenceError> {
+        self.inner
+            .query_row(
+                "SELECT session_id, session_path, issue_number, linked_ms FROM wg_session_links WHERE project_id=?1 AND session_id=?2",
+                params![project.as_storage(), session_id],
+                crate::adapter_rows::session_link,
+            )
+            .optional()
+            .map_err(error)
+    }
+
+    fn session_links(
+        &self,
+        project: ProjectRecordId,
+        issue_number: Option<u64>,
+    ) -> Result<Vec<SessionLink>, PersistenceError> {
+        let mut statement = self.inner.prepare(
+            "SELECT session_id, session_path, issue_number, linked_ms FROM wg_session_links WHERE project_id=?1 AND (?2 IS NULL OR issue_number=?2) ORDER BY linked_ms, session_id",
+        ).map_err(error)?;
+        let rows = statement
+            .query_map(params![project.as_storage(), issue_number], crate::adapter_rows::session_link)
+            .map_err(error)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(error)
+    }
+
+    fn upsert_session_link(
+        &mut self,
+        project: ProjectRecordId,
+        link: &SessionLink,
+    ) -> Result<(), PersistenceError> {
+        self.inner.execute(
+            "INSERT INTO wg_session_links(project_id, session_id, session_path, issue_number, linked_ms) VALUES(?1, ?2, ?3, ?4, ?5) ON CONFLICT(project_id, session_id) DO UPDATE SET session_path=excluded.session_path, issue_number=excluded.issue_number, linked_ms=excluded.linked_ms",
+            params![project.as_storage(), link.session_id, link.session_path, link.issue_number, link.linked_at],
+        ).map(|_| ()).map_err(error)
+    }
+
+    fn remove_session_link(
+        &mut self,
+        project: ProjectRecordId,
+        session_id: &str,
+    ) -> Result<(), PersistenceError> {
+        self.inner.execute(
+            "DELETE FROM wg_session_links WHERE project_id=?1 AND session_id=?2",
+            params![project.as_storage(), session_id],
+        ).map(|_| ()).map_err(error)
+    }
+
     fn commit(self) -> Result<(), PersistenceError> {
         self.inner.commit().map_err(error)
     }
@@ -339,7 +412,7 @@ fn migrate(connection: &Connection) -> Result<(), PersistenceError> {
                 )
                 .optional()
                 .map_err(error)?;
-            if version.as_deref().is_some_and(|version| version != SCHEMA_VERSION) {
+            if version.as_deref().is_some_and(|version| version != "1" && version != SCHEMA_VERSION) {
                 return Err(PersistenceError::new(format!(
                     "work graph schema {} is not supported",
                     version.unwrap_or_default()
@@ -395,7 +468,20 @@ fn migrate(connection: &Connection) -> Result<(), PersistenceError> {
                result_json TEXT NOT NULL,
                created_ms INTEGER NOT NULL
              );
-             INSERT OR IGNORE INTO meta(key, value) VALUES('workgraph_schema_version', '1');",
+             CREATE TABLE IF NOT EXISTS wg_session_links (
+               project_id INTEGER NOT NULL,
+               session_id TEXT NOT NULL,
+               session_path TEXT NOT NULL,
+               issue_number INTEGER NOT NULL,
+               linked_ms INTEGER NOT NULL,
+               PRIMARY KEY(project_id, session_id),
+               FOREIGN KEY(project_id, issue_number) REFERENCES wg_issues(project_id, number) ON DELETE CASCADE,
+               CHECK(length(session_id) BETWEEN 1 AND 256),
+               CHECK(length(session_path) BETWEEN 1 AND 4096)
+             );
+             CREATE INDEX IF NOT EXISTS wg_session_links_issue ON wg_session_links(project_id, issue_number);
+             INSERT INTO meta(key, value) VALUES('workgraph_schema_version', '2')
+               ON CONFLICT(key) DO UPDATE SET value=excluded.value;",
         )
         .map_err(error)?;
         connection.execute_batch("COMMIT").map_err(error)
@@ -404,21 +490,6 @@ fn migrate(connection: &Connection) -> Result<(), PersistenceError> {
         let _rollback = connection.execute_batch("ROLLBACK");
     }
     migration
-}
-
-fn row_issue(row: &rusqlite::Row<'_>, project: &str) -> rusqlite::Result<Issue> {
-    let status = row.get::<_, String>(3)?;
-    Ok(Issue {
-        project: project.to_owned(),
-        number: row.get(0)?,
-        title: row.get(1)?,
-        body: row.get(2)?,
-        status: IssueStatus::parse(&status).ok_or(rusqlite::Error::InvalidQuery)?,
-        priority: row.get(4)?,
-        version: row.get(5)?,
-        created_at: row.get(6)?,
-        updated_at: row.get(7)?,
-    })
 }
 
 fn error(value: impl std::fmt::Display) -> PersistenceError {

@@ -3,7 +3,9 @@
 use gpui::{Context, Window};
 
 use super::PiApp;
-use crate::{protocol::ExtensionUiRequest, runtime::RuntimeCommand};
+use crate::{
+    protocol::ExtensionUiRequest, runtime::RuntimeCommand, sessions::root_session_for_path,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AppSheet {
@@ -115,8 +117,12 @@ impl PiApp {
 
     pub(super) fn open_workgraph_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let project = self.project.clone();
-        self.workgraph_view
-            .update(cx, |view, cx| view.refresh_for(project, cx));
+        let active_session =
+            root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
+                .map(|session| (session.id.clone(), session.path.display().to_string()));
+        self.workgraph_view.update(cx, |view, cx| {
+            view.refresh_for(project, active_session, cx);
+        });
         self.open_sheet(AppSheet::WorkGraph, window, cx);
     }
 

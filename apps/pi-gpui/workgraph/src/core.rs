@@ -1,8 +1,9 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{collections::{HashMap, HashSet}, time::{SystemTime, UNIX_EPOCH}};
 
 use crate::contract::{
-    EditAction, EditRequest, EditResult, IdempotencyReceipt, Issue, IssueDetail, IssueStatus, Note,
-    PlanningView, ProjectRecordId, SearchRequest, SearchResult,
+    Dependency, EditAction, EditRequest, EditResult, IdempotencyReceipt, Issue, IssueDetail,
+    IssueStatus, Note, PlanningView, ProjectGraph, ProjectRecordId, SearchRequest, SearchResult,
+    SessionLink,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -115,6 +116,10 @@ pub trait WorkGraphTransaction {
         project: ProjectRecordId,
         number: u64,
     ) -> Result<Vec<u64>, PersistenceError>;
+    fn all_dependencies(
+        &self,
+        project: ProjectRecordId,
+    ) -> Result<Vec<Dependency>, PersistenceError>;
     fn dependency_reaches(
         &self,
         project: ProjectRecordId,
@@ -132,6 +137,26 @@ pub trait WorkGraphTransaction {
         project: ProjectRecordId,
         number: u64,
         depends_on: u64,
+    ) -> Result<(), PersistenceError>;
+    fn session_link(
+        &self,
+        project: ProjectRecordId,
+        session_id: &str,
+    ) -> Result<Option<SessionLink>, PersistenceError>;
+    fn session_links(
+        &self,
+        project: ProjectRecordId,
+        issue_number: Option<u64>,
+    ) -> Result<Vec<SessionLink>, PersistenceError>;
+    fn upsert_session_link(
+        &mut self,
+        project: ProjectRecordId,
+        link: &SessionLink,
+    ) -> Result<(), PersistenceError>;
+    fn remove_session_link(
+        &mut self,
+        project: ProjectRecordId,
+        session_id: &str,
     ) -> Result<(), PersistenceError>;
     fn commit(self) -> Result<(), PersistenceError>;
 }
@@ -163,43 +188,64 @@ impl<P: Persistence> WorkGraph<P> {
                 let issue = transaction
                     .issue(project, id, *number)?
                     .ok_or(WorkGraphError::IssueNotFound)?;
+                let dependencies = transaction.dependencies(id, *number)?;
+                let dependents = transaction
+                    .all_dependencies(id)?
+                    .into_iter()
+                    .filter(|edge| edge.depends_on == *number)
+                    .map(|edge| edge.issue_number)
+                    .collect();
                 Ok(SearchResult::Issue(IssueDetail {
                     issue,
-                    dependencies: transaction.dependencies(id, *number)?,
+                    dependencies,
+                    dependents,
                     notes: transaction.notes(id, *number)?,
+                    sessions: transaction.session_links(id, Some(*number))?,
                 }))
             }
             SearchRequest::Planning { project, planning } => {
                 let Some(id) = transaction.project_id(project)? else {
                     return Ok(SearchResult::Planning(Vec::new()));
                 };
-                let mut issues = transaction.issues(project, id, None)?;
-                issues.sort_by_key(|issue| (issue.priority, issue.created_at, issue.number));
-                let mut result = Vec::new();
-                for issue in issues.into_iter().filter(|issue| {
-                    !matches!(issue.status, IssueStatus::Done | IssueStatus::Cancelled)
-                }) {
-                    let dependencies = transaction.dependencies(id, issue.number)?;
-                    let mut unmet = false;
-                    for dependency in dependencies {
-                        let satisfied = transaction
-                            .issue(project, id, dependency)?
-                            .is_some_and(|item| item.status == IssueStatus::Done);
-                        unmet |= !satisfied;
-                    }
-                    let blocked = issue.status == IssueStatus::Blocked || unmet;
-                    let include = match planning {
-                        PlanningView::Blocked => blocked,
-                        PlanningView::Ready | PlanningView::Next => !blocked,
-                    };
-                    if include {
-                        result.push(issue);
-                        if *planning == PlanningView::Next {
-                            break;
-                        }
-                    }
-                }
+                let issues = transaction.issues(project, id, None)?;
+                let dependencies = transaction.all_dependencies(id)?;
+                let (_, _, result) = project_planning(issues, &dependencies, *planning);
                 Ok(SearchResult::Planning(result))
+            }
+            SearchRequest::Graph { project } => {
+                let Some(id) = transaction.project_id(project)? else {
+                    return Ok(SearchResult::Graph(ProjectGraph {
+                        issues: Vec::new(),
+                        dependencies: Vec::new(),
+                        sessions: Vec::new(),
+                        ready: Vec::new(),
+                        blocked: Vec::new(),
+                        next: None,
+                    }));
+                };
+                let issues = transaction.issues(project, id, None)?;
+                let dependencies = transaction.all_dependencies(id)?;
+                let (ready, blocked, ready_issues) =
+                    project_planning(issues.clone(), &dependencies, PlanningView::Ready);
+                Ok(SearchResult::Graph(ProjectGraph {
+                    issues,
+                    dependencies,
+                    sessions: transaction.session_links(id, None)?,
+                    ready,
+                    blocked,
+                    next: ready_issues.first().map(|issue| issue.number),
+                }))
+            }
+            SearchRequest::Session {
+                project,
+                session_id,
+            } => {
+                let Some(id) = transaction.project_id(project)? else {
+                    return Ok(SearchResult::Session(None));
+                };
+                Ok(SearchResult::Session(
+                    transaction.session_link(id, session_id)?,
+                ))
             }
         }
     }
@@ -318,6 +364,32 @@ fn apply_edit<T: WorkGraphTransaction>(
                 *number,
             )?))
         }
+        EditAction::LinkSession {
+            number,
+            session_id,
+            session_path,
+            expected_version,
+        } => {
+            let issue = required_issue(transaction, &request.project, project, *number)?;
+            if expected_version.is_some_and(|version| version != issue.version) {
+                return Err(WorkGraphError::VersionConflict);
+            }
+            let link = SessionLink {
+                session_id: session_id.clone(),
+                session_path: session_path.clone(),
+                issue_number: *number,
+                linked_at: now,
+            };
+            transaction.upsert_session_link(project, &link)?;
+            Ok(EditResult::Session(link))
+        }
+        EditAction::UnlinkSession { session_id } => {
+            let link = transaction
+                .session_link(project, session_id)?
+                .ok_or(WorkGraphError::IssueNotFound)?;
+            transaction.remove_session_link(project, session_id)?;
+            Ok(EditResult::UnlinkedSession(link))
+        }
     }
 }
 
@@ -352,8 +424,66 @@ fn validate_request(request: &EditRequest) -> Result<(), WorkGraphError> {
         EditAction::AddNote { body, .. } if body.trim().is_empty() || body.len() > 100_000 => {
             Err(WorkGraphError::InvalidInput("note body is invalid"))
         }
+        EditAction::LinkSession {
+            session_id,
+            session_path,
+            ..
+        } if session_id.trim().is_empty()
+            || session_id.len() > 256
+            || session_path.trim().is_empty()
+            || session_path.len() > 4096 =>
+        {
+            Err(WorkGraphError::InvalidInput("session link is invalid"))
+        }
+        EditAction::UnlinkSession { session_id }
+            if session_id.trim().is_empty() || session_id.len() > 256 =>
+        {
+            Err(WorkGraphError::InvalidInput("session link is invalid"))
+        }
         _ => Ok(()),
     }
+}
+
+fn project_planning(
+    mut issues: Vec<Issue>,
+    dependencies: &[Dependency],
+    view: PlanningView,
+) -> (Vec<u64>, Vec<u64>, Vec<Issue>) {
+    issues.sort_by_key(|issue| (issue.priority, issue.created_at, issue.number));
+    let statuses = issues
+        .iter()
+        .map(|issue| (issue.number, issue.status))
+        .collect::<HashMap<_, _>>();
+    let unmet = dependencies.iter().fold(HashSet::new(), |mut result, edge| {
+        if statuses.get(&edge.depends_on) != Some(&IssueStatus::Done) {
+            result.insert(edge.issue_number);
+        }
+        result
+    });
+    let mut ready = Vec::new();
+    let mut blocked = Vec::new();
+    let mut selected = Vec::new();
+    for issue in issues.into_iter().filter(|issue| {
+        !matches!(issue.status, IssueStatus::Done | IssueStatus::Cancelled)
+    }) {
+        let is_blocked = issue.status == IssueStatus::Blocked || unmet.contains(&issue.number);
+        if is_blocked {
+            blocked.push(issue.number);
+        } else {
+            ready.push(issue.number);
+        }
+        let include = match view {
+            PlanningView::Blocked => is_blocked,
+            PlanningView::Ready | PlanningView::Next => !is_blocked,
+        };
+        if include {
+            selected.push(issue);
+            if view == PlanningView::Next {
+                break;
+            }
+        }
+    }
+    (ready, blocked, selected)
 }
 
 fn now_ms() -> Result<i64, WorkGraphError> {
