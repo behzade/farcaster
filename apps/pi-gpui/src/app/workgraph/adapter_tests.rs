@@ -51,6 +51,17 @@ fn board_loader_reads_issues_from_the_shared_gui_database() {
     };
     graph
         .edit(&EditRequest {
+            project: project_key.clone(),
+            idempotency_key: "note".into(),
+            action: EditAction::AddNote {
+                number: prerequisite.number,
+                body: "Ready for the next session".into(),
+                expected_version: Some(prerequisite.version),
+            },
+        })
+        .expect("add note");
+    graph
+        .edit(&EditRequest {
             project: project_key,
             idempotency_key: "dependency".into(),
             action: EditAction::AddDependency {
@@ -63,6 +74,8 @@ fn board_loader_reads_issues_from_the_shared_gui_database() {
 
     let loaded = load_issues(database, project).expect("board load");
     assert_eq!(loaded.issues.len(), 2);
+    assert_eq!(loaded.notes.len(), 1);
+    assert_eq!(loaded.notes[0].body, "Ready for the next session");
     assert!(loaded.ready.contains(&prerequisite.number));
     assert!(loaded.blocked.contains(&blocked.number));
     assert_eq!(loaded.next, Some(prerequisite.number));

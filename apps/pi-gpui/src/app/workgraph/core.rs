@@ -116,6 +116,7 @@ mod tests {
         BoardData {
             issues,
             dependencies: Vec::new(),
+            notes: Vec::new(),
             sessions: Vec::new(),
             ready: ready.iter().copied().collect::<HashSet<_>>(),
             blocked: blocked.iter().copied().collect::<HashSet<_>>(),

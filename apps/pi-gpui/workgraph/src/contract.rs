@@ -87,6 +87,7 @@ pub struct SessionLink {
 pub struct ProjectGraph {
     pub issues: Vec<Issue>,
     pub dependencies: Vec<Dependency>,
+    pub notes: Vec<Note>,
     pub sessions: Vec<SessionLink>,
     pub ready: Vec<u64>,
     pub blocked: Vec<u64>,

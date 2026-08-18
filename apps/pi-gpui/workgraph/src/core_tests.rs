@@ -193,6 +193,16 @@ impl WorkGraphTransaction for MemoryTransaction<'_> {
             .unwrap_or_default())
     }
 
+    fn all_notes(&self, project: ProjectRecordId) -> Result<Vec<Note>, PersistenceError> {
+        Ok(self
+            .state
+            .notes
+            .iter()
+            .filter(|((id, _), _)| *id == project)
+            .flat_map(|(_, notes)| notes.iter().cloned())
+            .collect())
+    }
+
     fn dependencies(
         &self,
         project: ProjectRecordId,
@@ -409,6 +419,36 @@ fn next_uses_canonical_lowest_priority_then_creation_order() {
         })
         .expect("next planning");
     assert!(matches!(first, SearchResult::Planning(items) if items[0].number == next.number));
+}
+
+#[test]
+fn graph_snapshot_includes_notes_for_native_board_details() {
+    let mut graph = WorkGraph::new(MemoryPersistence::default());
+    let issue = create(&mut graph, "first", "First");
+    graph
+        .edit(&EditRequest {
+            project: "/project".into(),
+            idempotency_key: "note".into(),
+            action: EditAction::AddNote {
+                number: issue.number,
+                body: "Concrete progress".into(),
+                expected_version: Some(issue.version),
+            },
+        })
+        .expect("add note");
+
+    let result = graph
+        .search(&SearchRequest::Graph {
+            project: "/project".into(),
+        })
+        .expect("graph");
+    assert!(matches!(
+        result,
+        SearchResult::Graph(snapshot)
+            if snapshot.notes.len() == 1
+                && snapshot.notes[0].issue_number == issue.number
+                && snapshot.notes[0].body == "Concrete progress"
+    ));
 }
 
 #[test]

@@ -111,6 +111,7 @@ pub trait WorkGraphTransaction {
         created_at: i64,
     ) -> Result<Note, PersistenceError>;
     fn notes(&self, project: ProjectRecordId, number: u64) -> Result<Vec<Note>, PersistenceError>;
+    fn all_notes(&self, project: ProjectRecordId) -> Result<Vec<Note>, PersistenceError>;
     fn dependencies(
         &self,
         project: ProjectRecordId,
@@ -217,6 +218,7 @@ impl<P: Persistence> WorkGraph<P> {
                     return Ok(SearchResult::Graph(ProjectGraph {
                         issues: Vec::new(),
                         dependencies: Vec::new(),
+                        notes: Vec::new(),
                         sessions: Vec::new(),
                         ready: Vec::new(),
                         blocked: Vec::new(),
@@ -230,6 +232,7 @@ impl<P: Persistence> WorkGraph<P> {
                 Ok(SearchResult::Graph(ProjectGraph {
                     issues,
                     dependencies,
+                    notes: transaction.all_notes(id)?,
                     sessions: transaction.session_links(id, None)?,
                     ready,
                     blocked,

@@ -256,6 +256,26 @@ impl WorkGraphTransaction for SqliteTransaction<'_> {
         rows.collect::<Result<Vec<_>, _>>().map_err(error)
     }
 
+    fn all_notes(&self, project: ProjectRecordId) -> Result<Vec<Note>, PersistenceError> {
+        let mut statement = self
+            .inner
+            .prepare(
+                "SELECT id, issue_number, body, created_ms FROM wg_notes WHERE project_id=?1 ORDER BY created_ms, id",
+            )
+            .map_err(error)?;
+        let rows = statement
+            .query_map([project.as_storage()], |row| {
+                Ok(Note {
+                    id: row.get(0)?,
+                    issue_number: row.get(1)?,
+                    body: row.get(2)?,
+                    created_at: row.get(3)?,
+                })
+            })
+            .map_err(error)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(error)
+    }
+
     fn dependencies(
         &self,
         project: ProjectRecordId,

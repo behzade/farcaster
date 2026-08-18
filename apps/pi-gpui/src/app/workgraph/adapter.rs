@@ -244,7 +244,7 @@ impl WorkGraphBoardView {
                                 .iter()
                                 .find(|item| item.number == edge.depends_on)
                         })
-                        .map(|item| format!("#{}  {}", item.number, item.title))
+                        .cloned()
                         .collect::<Vec<_>>();
                     let dependents = data
                         .dependencies
@@ -255,18 +255,24 @@ impl WorkGraphBoardView {
                                 .iter()
                                 .find(|item| item.number == edge.issue_number)
                         })
-                        .map(|item| format!("#{}  {}", item.number, item.title))
+                        .cloned()
                         .collect::<Vec<_>>();
                     let sessions = data
                         .sessions
                         .iter()
                         .filter(|link| link.issue_number == issue.number)
                         .collect::<Vec<_>>();
+                    let notes = data
+                        .notes
+                        .iter()
+                        .filter(|note| note.issue_number == issue.number)
+                        .collect::<Vec<_>>();
                     let active_link = self.active_session.as_ref().and_then(|(id, _)| {
                         data.sessions.iter().find(|link| link.session_id == *id)
                     });
                     let session_action = self.active_session.as_ref().map(|_| {
                         let number = issue.number;
+                        let entity = entity.clone();
                         let linked_here =
                             active_link.is_some_and(|link| link.issue_number == issue.number);
                         button(
@@ -335,20 +341,28 @@ impl WorkGraphBoardView {
                                 issue.body.clone()
                             },
                         ))
-                        .child(detail_section(
+                        .child(related_issue_section(
                             "DEPENDS ON",
-                            if dependencies.is_empty() {
-                                "Nothing — this issue can move independently.".into()
-                            } else {
-                                dependencies.join("\n")
-                            },
+                            "Nothing — this issue can move independently.",
+                            dependencies,
+                            entity.clone(),
+                        ))
+                        .child(related_issue_section(
+                            "UNBLOCKS",
+                            "No dependent issues.",
+                            dependents,
+                            entity.clone(),
                         ))
                         .child(detail_section(
-                            "UNBLOCKS",
-                            if dependents.is_empty() {
-                                "No dependent issues.".into()
+                            "NOTES",
+                            if notes.is_empty() {
+                                "No progress notes yet.".into()
                             } else {
-                                dependents.join("\n")
+                                notes
+                                    .iter()
+                                    .map(|note| note.body.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join("\n\n")
                             },
                         ))
                         .child(detail_section(
@@ -559,6 +573,7 @@ pub(super) fn load_issues(database: PathBuf, project: PathBuf) -> Result<BoardDa
         SearchResult::Graph(graph) => Ok(BoardData {
             issues: graph.issues,
             dependencies: graph.dependencies,
+            notes: graph.notes,
             sessions: graph.sessions,
             ready: graph.ready.into_iter().collect(),
             blocked: graph.blocked.into_iter().collect(),
@@ -566,6 +581,50 @@ pub(super) fn load_issues(database: PathBuf, project: PathBuf) -> Result<BoardDa
         }),
         _ => Err("work graph returned an unexpected graph result".into()),
     }
+}
+
+fn related_issue_section(
+    label: &'static str,
+    empty: &'static str,
+    issues: Vec<workgraph::contract::Issue>,
+    entity: Entity<WorkGraphBoardView>,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap(THEME.space.xs)
+        .child(
+            div()
+                .text_size(THEME.type_scale.caption)
+                .text_color(THEME.colors.subtle)
+                .child(label),
+        )
+        .when(issues.is_empty(), |section| {
+            section.child(
+                div()
+                    .text_size(THEME.type_scale.body_small)
+                    .text_color(THEME.colors.muted)
+                    .child(empty),
+            )
+        })
+        .children(issues.into_iter().map(|issue| {
+            let number = issue.number;
+            let entity = entity.clone();
+            div()
+                .id(format!("workgraph-related-{label}-{number}"))
+                .cursor_pointer()
+                .rounded(THEME.radius)
+                .px(THEME.space.sm)
+                .py(THEME.space.xs)
+                .bg(THEME.colors.surface)
+                .hover(|style| style.bg(THEME.colors.hover))
+                .text_size(THEME.type_scale.body_small)
+                .text_color(THEME.colors.link)
+                .child(format!("#{number}  {}", issue.title))
+                .on_click(move |_, _, cx| {
+                    entity.update(cx, |this, cx| this.select_issue(number, cx));
+                })
+        }))
 }
 
 fn detail_section(label: &'static str, body: String) -> impl IntoElement {

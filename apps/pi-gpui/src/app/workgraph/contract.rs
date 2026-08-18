@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use workgraph::contract::{Dependency, Issue, SessionLink};
+use workgraph::contract::{Dependency, Issue, Note, SessionLink};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) enum BoardMode {
@@ -109,6 +109,7 @@ pub(super) enum BoardLoadState {
 pub(super) struct BoardData {
     pub issues: Vec<Issue>,
     pub dependencies: Vec<Dependency>,
+    pub notes: Vec<Note>,
     pub sessions: Vec<SessionLink>,
     pub ready: HashSet<u64>,
     pub blocked: HashSet<u64>,
