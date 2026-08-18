@@ -92,8 +92,11 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		description: "Wait for the first or all named child sessions. A new parent user message interrupts waiting successfully without consuming that message; answer it, then wait again.",
 		promptSnippet: "Wait interruptibly for child Pi session results",
 		parameters: WaitParams,
-		async execute(_toolCallId, params, signal) {
-			return toolResult(await runEffect(core.wait(params.ids, params.until), signal));
+		async execute(_toolCallId, params) {
+			// Parent input aborts the current tool signal before the input event is
+			// delivered. Keep this wait alive long enough for notifyUserInput() to
+			// resolve it successfully with the resumable interruption result.
+			return toolResult(await runEffect(core.wait(params.ids, params.until)));
 		},
 	});
 

@@ -37,7 +37,7 @@ export interface ChildSession {
 	run(prompt: string): Promise<string>;
 	send(message: string, mode: SendMode): Promise<void>;
 	abort(): Promise<void>;
-	dispose(): void;
+	dispose(): Promise<void> | void;
 }
 
 export interface ChildSessionFactory {

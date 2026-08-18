@@ -1,7 +1,9 @@
 import type { ThinkingLevel as PiThinkingLevel } from "@earendil-works/pi-agent-core";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import {
-	createAgentSession,
+	AgentSessionRuntime,
+	createAgentSessionFromServices,
+	createAgentSessionServices,
 	ModelRuntime,
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
@@ -71,21 +73,40 @@ export class PiSessionFactory implements ChildSessionFactory {
 		const manager = context === "fork"
 			? SessionManager.forkFrom(request.parentSessionFile!, request.cwd)
 			: SessionManager.create(request.cwd, undefined, { parentSession: request.parentSessionFile });
-		const { session } = await createAgentSession({
+		const services = await createAgentSessionServices({
 			cwd: request.cwd,
 			modelRuntime,
+		});
+		const sessionStartEvent = {
+			type: "session_start" as const,
+			reason: context === "fork" ? "fork" as const : "new" as const,
+			previousSessionFile: request.parentSessionFile,
+		};
+		const { session } = await createAgentSessionFromServices({
+			services,
 			model,
 			thinkingLevel: effort as PiThinkingLevel,
 			sessionManager: manager,
-			sessionStartEvent: {
-				type: "session_start",
-				reason: context === "fork" ? "fork" : "new",
-				previousSessionFile: request.parentSessionFile,
-			},
+			sessionStartEvent,
 		});
+		const runtime = new AgentSessionRuntime(
+			session,
+			services,
+			async () => { throw new Error("Subagent runtime replacement is unsupported"); },
+			services.diagnostics,
+		);
+		try {
+			// SDK-created sessions are unbound until their host mode initializes the
+			// extension runner. Children are headless, but still need lifecycle events
+			// so Guardian and every other extension can initialize isolated state.
+			await session.bindExtensions({ mode: "print" });
+		} catch (error) {
+			await runtime.dispose();
+			throw error;
+		}
 		const sessionFile = session.sessionFile;
 		if (!sessionFile) {
-			session.dispose();
+			await runtime.dispose();
 			throw new Error("Subagent session was not persisted");
 		}
 
@@ -111,7 +132,7 @@ export class PiSessionFactory implements ChildSessionFactory {
 					: undefined);
 			},
 			abort: () => session.abort(),
-			dispose: () => session.dispose(),
+			dispose: () => runtime.dispose(),
 		};
 	}
 }

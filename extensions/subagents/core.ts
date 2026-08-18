@@ -14,6 +14,7 @@ interface RunRecord {
 	snapshot: RunSnapshot;
 	fiber?: Fiber.Fiber<void, never>;
 	stopping: boolean;
+	disposed: boolean;
 	waiters: Set<(snapshot: RunSnapshot) => void>;
 }
 
@@ -50,7 +51,7 @@ export class SubagentCore {
 				catch: (error) => new Error(`Failed to create subagent session: ${errorMessage(error)}`),
 			});
 			if (self.#runs.has(session.id)) {
-				session.dispose();
+				yield* Effect.promise(() => Promise.resolve(session.dispose()));
 				return yield* Effect.fail(new Error(`Duplicate subagent session id: ${session.id}`));
 			}
 
@@ -67,6 +68,7 @@ export class SubagentCore {
 					effort: session.effort,
 				},
 				stopping: false,
+				disposed: false,
 				waiters: new Set(),
 			};
 			self.#runs.set(session.id, record);
@@ -159,6 +161,7 @@ export class SubagentCore {
 							catch: (error) => new Error(`Failed to stop ${record.snapshot.id}: ${errorMessage(error)}`),
 						});
 						yield* self.#finish(record, "stopped");
+						yield* self.#dispose(record);
 					}
 					return self.#copy(record.snapshot);
 				});
@@ -174,12 +177,23 @@ export class SubagentCore {
 
 	shutdown() {
 		return Effect.forEach(this.#runs.values(), (record) => {
-			if (terminal(record.snapshot)) return Effect.sync(() => record.session.dispose());
-			return Effect.tryPromise(() => record.session.abort()).pipe(
+			const stop = terminal(record.snapshot)
+				? Effect.void
+				: Effect.tryPromise(() => record.session.abort()).pipe(
+					Effect.ignore,
+					Effect.andThen(this.#finish(record, "stopped")),
+				);
+			return stop.pipe(
+				Effect.andThen(this.#dispose(record)),
 				Effect.ignore,
-				Effect.andThen(this.#finish(record, "stopped")),
 			);
 		}, { discard: true });
+	}
+
+	#dispose(record: RunRecord) {
+		if (record.disposed) return Effect.void;
+		record.disposed = true;
+		return Effect.promise(() => Promise.resolve(record.session.dispose()));
 	}
 
 	#launch(record: RunRecord, run: () => Promise<string>): void {
@@ -202,7 +216,6 @@ export class SubagentCore {
 		return Effect.sync(() => {
 			if (terminal(record.snapshot)) return;
 			record.snapshot = { ...record.snapshot, status, ...(output === undefined ? {} : { output }), ...(error === undefined ? {} : { error }) };
-			if (status === "stopped") record.session.dispose();
 			for (const resume of record.waiters) resume(this.#copy(record.snapshot));
 			record.waiters.clear();
 		});
