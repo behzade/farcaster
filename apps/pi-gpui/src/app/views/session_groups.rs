@@ -64,7 +64,7 @@ pub(super) fn session_rail_groups(
     drafts: &[DraftSession],
     order: &[String],
     project_filter: Option<&Path>,
-    active_projects: &HashSet<PathBuf>,
+    _active_projects: &HashSet<PathBuf>,
 ) -> SessionRailGroups {
     let rank = order
         .iter()
@@ -115,8 +115,6 @@ pub(super) fn session_rail_groups(
             );
         }
     }
-
-    active.sort_by_key(|group| !active_projects.contains(&group.project));
 
     SessionRailGroups { active, archived }
 }
@@ -236,7 +234,7 @@ mod tests {
     }
 
     #[test]
-    fn resolved_active_project_groups_sort_first_without_reordering_each_class() {
+    fn project_group_order_does_not_change_with_runtime_status() {
         let inactive_one = PathBuf::from("/inactive-one");
         let running_one = PathBuf::from("/running-one");
         let inactive_two = PathBuf::from("/inactive-two");
@@ -270,10 +268,10 @@ mod tests {
         assert_eq!(
             projects,
             vec![
-                running_one.as_path(),
-                running_two.as_path(),
                 inactive_one.as_path(),
+                running_one.as_path(),
                 inactive_two.as_path(),
+                running_two.as_path(),
             ]
         );
     }
