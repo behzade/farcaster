@@ -12,7 +12,7 @@ use super::super::{
 use crate::{
     primitives::{ButtonTone, button, section_heading},
     session_changes::FileChangeKind,
-    syntax_highlight::{HighlightedDiff, HighlightedText},
+    syntax_highlight::{DiffLineKind, HighlightedDiff, HighlightedText},
     theme::{MONO_FONT_FAMILY, THEME},
 };
 
@@ -261,11 +261,24 @@ fn render_diff_document(id: &'static str, text: &HighlightedText) -> AnyElement 
         .min_w_0()
         .overflow_hidden()
         .whitespace_normal()
-        .p(THEME.space.xs)
+        .py(THEME.space.xs)
         .font_family(MONO_FONT_FAMILY)
         .text_size(THEME.type_scale.body_small)
         .line_height(THEME.type_scale.line_body)
         .text_color(THEME.colors.text)
-        .child(text.element())
+        .children(text.diff_lines().into_iter().map(|(kind, line)| {
+            let background = match kind {
+                DiffLineKind::Context => THEME.colors.canvas,
+                DiffLineKind::Addition => THEME.colors.diff_added,
+                DiffLineKind::Deletion => THEME.colors.diff_deleted,
+            };
+            div()
+                .w_full()
+                .min_w_0()
+                .min_h(THEME.type_scale.line_body)
+                .px(THEME.space.xs)
+                .bg(background)
+                .child(line.element())
+        }))
         .into_any_element()
 }

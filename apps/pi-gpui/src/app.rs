@@ -229,14 +229,13 @@ impl PiApp {
                 InputEvent::PressEnter { shift: false, .. } => {
                     let input = state.read(cx);
                     let value = input.value();
-                    let mention = file_mentions::query_at_cursor(&value, input.cursor()).and_then(
-                        |query| {
+                    let mention =
+                        file_mentions::query_at_cursor(&value, input.cursor()).and_then(|query| {
                             file_mentions::matches(&this.composer_project_files, &query.text)
                                 .get(this.composer_mention_selection)
                                 .cloned()
                                 .map(|path| (query, path))
-                        },
-                    );
+                        });
                     if let Some((query, path)) = mention {
                         let (text, cursor) = file_mentions::insert(&value, &query, &path);
                         this.apply_composer_snapshot(

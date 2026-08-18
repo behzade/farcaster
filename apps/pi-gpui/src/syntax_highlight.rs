@@ -24,10 +24,58 @@ impl HighlightedText {
         StyledText::new(self.text.clone()).with_highlights(self.highlights.iter().cloned())
     }
 
+    pub(crate) fn diff_lines(&self) -> Vec<(DiffLineKind, HighlightedText)> {
+        let mut in_hunk = false;
+        let mut offset = 0;
+        self.text
+            .split_inclusive('\n')
+            .map(|line| {
+                let text = line.strip_suffix('\n').unwrap_or(line);
+                if text.starts_with("diff --git ") {
+                    in_hunk = false;
+                } else if text.starts_with("@@") {
+                    in_hunk = true;
+                }
+                let kind = if text.starts_with('-') && (in_hunk || !is_git_old_header(text)) {
+                    DiffLineKind::Deletion
+                } else if text.starts_with('+') && (in_hunk || !is_git_new_header(text)) {
+                    DiffLineKind::Addition
+                } else {
+                    DiffLineKind::Context
+                };
+                let end = offset + text.len();
+                let highlights = self
+                    .highlights
+                    .iter()
+                    .filter_map(|(range, style)| {
+                        let start = range.start.max(offset);
+                        let finish = range.end.min(end);
+                        (start < finish).then(|| (start - offset..finish - offset, style.clone()))
+                    })
+                    .collect();
+                offset += line.len();
+                (
+                    kind,
+                    HighlightedText {
+                        text: text.to_owned().into(),
+                        highlights: Arc::new(highlights),
+                    },
+                )
+            })
+            .collect()
+    }
+
     #[cfg(test)]
     pub(crate) fn text(&self) -> &str {
         &self.text
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DiffLineKind {
+    Context,
+    Addition,
+    Deletion,
 }
 
 pub(crate) fn highlight(text: String, language: &str) -> HighlightedText {
@@ -160,5 +208,24 @@ mod tests {
         let text = highlight("fn main() { let answer = 42; }".into(), "rs");
         assert_eq!(text.text(), "fn main() { let answer = 42; }");
         assert!(!text.highlights.is_empty());
+    }
+
+    #[test]
+    fn diff_lines_classify_changes_without_coloring_file_headers() {
+        let text = HighlightedText::plain(
+            "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+new\n",
+        );
+        let lines = text.diff_lines();
+        assert_eq!(
+            lines.iter().map(|(kind, _)| *kind).collect::<Vec<_>>(),
+            [
+                DiffLineKind::Context,
+                DiffLineKind::Context,
+                DiffLineKind::Context,
+                DiffLineKind::Context,
+                DiffLineKind::Deletion,
+                DiffLineKind::Addition,
+            ]
+        );
     }
 }
