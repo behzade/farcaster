@@ -14,16 +14,7 @@ use crate::{
 
 impl PiApp {
     pub(super) fn available_projects(&self) -> Vec<PathBuf> {
-        let current = &self.project;
-        let mut available = self.projects.clone();
-        for session in &self.sessions {
-            projects::add_unique(&mut available, session.project.clone());
-        }
-        projects::add_unique(&mut available, current.clone());
-        if let Some(index) = available.iter().position(|project| project == current) {
-            available.swap(0, index);
-        }
-        available
+        available_projects(&self.projects, &self.project)
     }
 
     pub(super) fn editable_draft_project(&self) -> Option<PathBuf> {
@@ -219,6 +210,15 @@ impl PiApp {
     }
 }
 
+fn available_projects(registered: &[PathBuf], current: &std::path::Path) -> Vec<PathBuf> {
+    let mut available = registered.to_vec();
+    projects::add_unique(&mut available, current.to_path_buf());
+    if let Some(index) = available.iter().position(|project| project == current) {
+        available.swap(0, index);
+    }
+    available
+}
+
 fn draft_id(target: &str) -> Option<&str> {
     target.strip_prefix("draft:").filter(|id| !id.is_empty())
 }
@@ -381,6 +381,24 @@ fn reconciliation_candidates<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_choices_only_include_registered_and_current_projects() {
+        let registered = vec![PathBuf::from("/project"), PathBuf::from("/other")];
+
+        assert_eq!(
+            available_projects(&registered, std::path::Path::new("/other")),
+            vec![PathBuf::from("/other"), PathBuf::from("/project")]
+        );
+        assert_eq!(
+            available_projects(&registered, std::path::Path::new("/current-worktree")),
+            vec![
+                PathBuf::from("/current-worktree"),
+                PathBuf::from("/other"),
+                PathBuf::from("/project"),
+            ]
+        );
+    }
 
     #[test]
     fn drafts_materialize_only_when_leaving_a_composer_with_content() {
