@@ -782,6 +782,7 @@ impl Render for WorkGraphBoardView {
                     let kanban = entity.clone();
                     let graph = entity.clone();
                     let create = entity.clone();
+                    let refresh = entity.clone();
                     let active_count = filter_count(data, BoardFilter::Active);
                     let blocked_count = filter_count(data, BoardFilter::Blocked);
                     div()
@@ -834,6 +835,15 @@ impl Render for WorkGraphBoardView {
                                             )
                                             .w(px(220.0)),
                                         )
+                                        .child(button(
+                                            "workgraph-refresh",
+                                            "Refresh",
+                                            ButtonTone::Quiet,
+                                            true,
+                                            move |_, cx| {
+                                                refresh.update(cx, |this, cx| this.refresh(cx));
+                                            },
+                                        ))
                                         .child(button(
                                             "workgraph-create-open",
                                             "New issue",
