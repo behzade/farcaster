@@ -1,10 +1,10 @@
 use workgraph::{
     adapter::SqliteAdapter,
-    contract::{EditAction, EditRequest, EditResult},
+    contract::{EditAction, EditRequest, EditResult, IssueStatus},
     core::WorkGraph,
 };
 
-use super::adapter::load_issues;
+use super::adapter::{load_issues, update_issue_status};
 
 #[test]
 fn board_loader_reads_issues_from_the_shared_gui_database() {
@@ -72,11 +72,34 @@ fn board_loader_reads_issues_from_the_shared_gui_database() {
         })
         .expect("add dependency");
 
-    let loaded = load_issues(database, project).expect("board load");
+    let loaded = load_issues(database.clone(), project.clone()).expect("board load");
     assert_eq!(loaded.issues.len(), 2);
     assert_eq!(loaded.notes.len(), 1);
     assert_eq!(loaded.notes[0].body, "Ready for the next session");
     assert!(loaded.ready.contains(&prerequisite.number));
     assert!(loaded.blocked.contains(&blocked.number));
     assert_eq!(loaded.next, Some(prerequisite.number));
+
+    let prerequisite_version = loaded
+        .issues
+        .iter()
+        .find(|issue| issue.number == prerequisite.number)
+        .expect("loaded prerequisite")
+        .version;
+    let updated = update_issue_status(
+        database,
+        project,
+        prerequisite.number,
+        IssueStatus::InProgress,
+        prerequisite_version,
+    )
+    .expect("native status update");
+    assert_eq!(
+        updated
+            .issues
+            .iter()
+            .find(|issue| issue.number == prerequisite.number)
+            .map(|issue| issue.status),
+        Some(IssueStatus::InProgress)
+    );
 }

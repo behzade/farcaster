@@ -108,6 +108,32 @@ impl WorkGraphBoardView {
         cx.notify();
     }
 
+    fn set_issue_status(
+        &mut self,
+        number: u64,
+        status: workgraph::contract::IssueStatus,
+        expected_version: u64,
+        cx: &mut Context<Self>,
+    ) {
+        let database = self.database.clone();
+        let project = self.project.clone();
+        let edit = cx.background_spawn(async move {
+            update_issue_status(database, project, number, status, expected_version)
+        });
+        self.state = BoardLoadState::Loading;
+        self.refresh = Some(cx.spawn(async move |weak, cx| {
+            let state = match edit.await {
+                Ok(data) => BoardLoadState::Ready(data),
+                Err(error) => BoardLoadState::Failed(error),
+            };
+            let _ = weak.update(cx, |this, cx| {
+                this.state = state;
+                cx.notify();
+            });
+        }));
+        cx.notify();
+    }
+
     fn link_active_session(&mut self, number: u64, cx: &mut Context<Self>) {
         let Some((session_id, session_path)) = self.active_session.clone() else {
             return;
@@ -174,6 +200,17 @@ impl WorkGraphBoardView {
 
     fn render_groups(&self, entity: Entity<Self>, groups: Vec<IssueGroup>) -> impl IntoElement {
         let selected = self.selected;
+        let current_issue =
+            self.active_session
+                .as_ref()
+                .and_then(|(session_id, _)| match &self.state {
+                    BoardLoadState::Ready(data) => data
+                        .sessions
+                        .iter()
+                        .find(|link| link.session_id == *session_id)
+                        .map(|link| link.issue_number),
+                    BoardLoadState::Loading | BoardLoadState::Failed(_) => None,
+                });
         div()
             .id("workgraph-issue-list")
             .flex_1()
@@ -187,7 +224,7 @@ impl WorkGraphBoardView {
             .children(
                 groups
                     .into_iter()
-                    .map(|group| render_group(group, selected, entity.clone())),
+                    .map(|group| render_group(group, selected, current_issue, entity.clone())),
             )
     }
 
@@ -270,6 +307,32 @@ impl WorkGraphBoardView {
                     let active_link = self.active_session.as_ref().and_then(|(id, _)| {
                         data.sessions.iter().find(|link| link.session_id == *id)
                     });
+                    let status_actions = [
+                        workgraph::contract::IssueStatus::Open,
+                        workgraph::contract::IssueStatus::InProgress,
+                        workgraph::contract::IssueStatus::Blocked,
+                        workgraph::contract::IssueStatus::Done,
+                        workgraph::contract::IssueStatus::Cancelled,
+                    ]
+                    .into_iter()
+                    .filter(|status| *status != issue.status)
+                    .map(|status| {
+                        let entity = entity.clone();
+                        let number = issue.number;
+                        let version = issue.version;
+                        button(
+                            format!("workgraph-status-{number}-{status:?}"),
+                            super::core::status_label(status),
+                            ButtonTone::Quiet,
+                            true,
+                            move |_, cx| {
+                                entity.update(cx, |this, cx| {
+                                    this.set_issue_status(number, status, version, cx);
+                                });
+                            },
+                        )
+                    })
+                    .collect::<Vec<_>>();
                     let session_action = self.active_session.as_ref().map(|_| {
                         let number = issue.number;
                         let entity = entity.clone();
@@ -331,6 +394,25 @@ impl WorkGraphBoardView {
                                             issue.priority,
                                             issue.version
                                         )),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(THEME.space.xs)
+                                .child(
+                                    div()
+                                        .text_size(THEME.type_scale.caption)
+                                        .text_color(THEME.colors.subtle)
+                                        .child("CHANGE STATUS"),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_wrap()
+                                        .gap(THEME.space.xs)
+                                        .children(status_actions),
                                 ),
                         )
                         .child(detail_section(
@@ -524,6 +606,34 @@ impl Render for WorkGraphBoardView {
     }
 }
 
+pub(super) fn update_issue_status(
+    database: PathBuf,
+    project: PathBuf,
+    number: u64,
+    status: workgraph::contract::IssueStatus,
+    expected_version: u64,
+) -> Result<BoardData, String> {
+    let project_key = canonical_project(&project)?;
+    let adapter = SqliteAdapter::open(&database).map_err(|error| error.to_string())?;
+    let mut graph = WorkGraph::new(adapter);
+    let operation = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| "system clock is unavailable".to_owned())?
+        .as_nanos();
+    graph
+        .edit(&EditRequest {
+            project: project_key,
+            idempotency_key: format!("gui-status-{number}-{operation}"),
+            action: EditAction::SetStatus {
+                number,
+                status,
+                expected_version: Some(expected_version),
+            },
+        })
+        .map_err(|error| error.to_string())?;
+    load_issues(database, project)
+}
+
 fn link_session(
     database: PathBuf,
     project: PathBuf,
@@ -660,6 +770,7 @@ fn status_color(status: workgraph::contract::IssueStatus) -> gpui::Rgba {
 fn render_group(
     group: IssueGroup,
     selected: Option<u64>,
+    current_issue: Option<u64>,
     entity: Entity<WorkGraphBoardView>,
 ) -> impl IntoElement {
     div()
@@ -676,13 +787,14 @@ fn render_group(
             group
                 .rows
                 .into_iter()
-                .map(|row| render_issue_row(row, selected, entity.clone())),
+                .map(|row| render_issue_row(row, selected, current_issue, entity.clone())),
         )
 }
 
 fn render_issue_row(
     row: IssueRow,
     selected: Option<u64>,
+    current_issue: Option<u64>,
     entity: Entity<WorkGraphBoardView>,
 ) -> impl IntoElement {
     let row_status_color = if row.status_label.starts_with("Blocked") {
@@ -735,9 +847,26 @@ fn render_issue_row(
                 .child(
                     div()
                         .flex_none()
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.muted)
-                        .child(row.priority_label),
+                        .flex()
+                        .items_center()
+                        .gap(THEME.space.xs)
+                        .when(current_issue == Some(number), |meta| {
+                            meta.child(
+                                div()
+                                    .rounded(THEME.radius)
+                                    .px(THEME.space.xs)
+                                    .bg(THEME.colors.accent_active)
+                                    .text_size(THEME.type_scale.caption)
+                                    .text_color(THEME.colors.canvas)
+                                    .child("Current session"),
+                            )
+                        })
+                        .child(
+                            div()
+                                .text_size(THEME.type_scale.caption)
+                                .text_color(THEME.colors.muted)
+                                .child(row.priority_label),
+                        ),
                 ),
         )
         .child(
