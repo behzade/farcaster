@@ -14,6 +14,12 @@ diff. Keep unrelated work intact.
 - Do not create new Nix caches, Rust target directories, or dependency folders.
   If the environment lacks a tool or build variable, report that problem.
 
+## UI assets
+
+- Use Phosphor icons from
+  `/Users/behzad/Projects/personal/issues/assets/phosphor-icons` for application
+  icons instead of Unicode glyphs or improvised icons.
+
 ## Checks
 
 - Start with the smallest check that covers the changed behavior. Do not run
