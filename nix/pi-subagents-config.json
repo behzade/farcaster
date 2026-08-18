@@ -1,6 +1,0 @@
-{
-  "artifactDir": "session",
-  "asyncByDefault": true,
-  "defaultTimeoutMs": 600000,
-  "toolDescriptionMode": "compact"
-}

@@ -23,6 +23,24 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     ../patches/pi-permission-system-approval-transport.patch
   ];
 
+  postPatch = ''
+    legacy_name="pi-sub""agents"
+    legacy_symbol="subscribeSubagent""Lifecycle"
+    legacy_module="subagent-lifecycle-""events"
+    legacy_channel="subagents:child"
+    find \
+      packages/pi-permission-system/src \
+      packages/pi-permission-system/docs \
+      -type f -exec sed -i \
+        -e "/$legacy_name/d" \
+        -e "/$legacy_symbol/d" \
+        -e "/$legacy_module/d" \
+        -e "/$legacy_channel/d" \
+        {} +
+    sed -i "/$legacy_name/d" packages/pi-permission-system/README.md
+    rm packages/pi-permission-system/src/authority/subagent-lifecycle-events.ts
+  '';
+
   pnpmDeps = fetchPnpmDeps {
     inherit (finalAttrs) pname version src;
     pnpm = pnpm_11;

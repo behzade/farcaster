@@ -5,7 +5,6 @@ mod composer_sessions;
 #[cfg(test)]
 mod composer_sessions_test;
 mod conversation;
-mod extension_support;
 mod extension_ui;
 mod framing;
 mod keybindings;

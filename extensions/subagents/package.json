@@ -1,0 +1,17 @@
+{
+	"name": "pi-extension-subagents",
+	"private": true,
+	"version": "1.0.0",
+	"type": "module",
+	"scripts": {
+		"check": "node --test adapter.test.ts core.test.ts"
+	},
+	"pi": {
+		"extensions": [
+			"./index.ts"
+		]
+	},
+	"dependencies": {
+		"effect": "4.0.0-beta.107"
+	}
+}

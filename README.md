@@ -17,8 +17,8 @@ separate `nix-config` repo.
 - A native sandbox broker using Seatbelt on macOS and Bubblewrap on Linux.
 - Portable, checked-in project access policy with explicit host approval and no
   automatic command retries.
-- Async subagents with steering, timeouts, review prompts, and parent-visible
-  approval requests.
+- Persistent child Pi sessions with forked or blank context, steering, waiting,
+  model selection, and cancellation.
 - Web search, page extraction, and video tools, with OpenAI used first when the
   request is supported.
 - Stateless MCP access through a pinned `mcp-cli`.
@@ -50,11 +50,13 @@ separate `nix-config` repo.
 - [`extensions/project-tools`](extensions/project-tools) loads strict tool
   manifests and Effect v4 handlers from trusted project `.pi/project-tools`
   directories. These handlers run in Pi's host process, not the shell sandbox.
+- [`extensions/subagents`](extensions/subagents) owns persistent child Pi
+  sessions and exposes the four Effect-backed lifecycle tools.
 - The loose entrypoints under [`extensions`](extensions) are packaged together by
   `pi-core-extensions`; notifications, title animation, user input, and feedback use the
   same pinned Effect v4 runtime while Pi callbacks remain boundary adapters.
 - [`extensions/agent-feedback.ts`](extensions/agent-feedback.ts) exposes the
-  non-blocking feedback tool to main and packaged subagents.
+  non-blocking feedback tool to Pi sessions.
 - [`nix`](nix) contains the pinned builds for Pi and every packaged extension.
 - [`apps/pi-terminal`](apps/pi-terminal) pins the upstream Pi 0.84.2 terminal
   client and the small Pi AI output-item hook needed for cached OpenAI
@@ -103,11 +105,12 @@ package check; do not run this whole list for every change:
 ```sh
 npm run check --prefix extensions/sandbox
 npm run check --prefix extensions/project-tools
+npm run check --prefix extensions/subagents
 cargo test --manifest-path sandbox-broker/Cargo.toml
 make check-gpui
 node --test \
   tests/governance.test.ts \
-  tests/output-bounds.test.ts \
+  tests/session-agents-package.test.ts \
   tests/prompt-contract.test.ts \
   tests/prompt-inspector.test.ts \
   tests/theme-and-rendering.test.ts \

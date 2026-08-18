@@ -6,8 +6,8 @@
   piTerminal,
   projectTools,
   sandbox,
+  sessionAgents,
   stdenvNoCC,
-  subagents,
   webAccess,
 }:
 
@@ -20,7 +20,7 @@ stdenvNoCC.mkDerivation {
   installPhase = ''
     runHook preInstall
 
-    mkdir -p "$out/extensions" "$out/skills" "$out/themes"
+    mkdir -p "$out/extensions" "$out/prompts" "$out/skills" "$out/themes"
 
     substitute ${../SYSTEM.md} "$out/SYSTEM.md" \
       --replace-fail "@piCodingAgent@" "${piTerminal}/lib/pi-terminal/node_modules/@earendil-works/pi-coding-agent"
@@ -31,7 +31,7 @@ stdenvNoCC.mkDerivation {
     ln -s ${permissionSystem} "$out/extensions/permission-system"
     ln -s ${projectTools} "$out/extensions/project-tools"
     ln -s ${sandbox} "$out/extensions/sandbox"
-    ln -s ${subagents} "$out/extensions/subagent"
+    ln -s ${sessionAgents} "$out/extensions/session-agents"
     ln -s ${webAccess} "$out/extensions/web-access"
     ln -s ${coreExtensions}/lib "$out/extensions/lib"
     ln -s ${coreExtensions}/node_modules "$out/extensions/node_modules"
@@ -42,10 +42,10 @@ stdenvNoCC.mkDerivation {
     ln -s ${coreExtensions}/title-state.ts "$out/extensions/title-state.ts"
     ln -s ${coreExtensions}/user-input.ts "$out/extensions/user-input.ts"
 
-    ln -s ${subagents}/prompts "$out/prompts"
+    ln -s ${../prompts/commit.md} "$out/prompts/commit.md"
     ln -s ${../themes/gruvbox-dark-hard.json} "$out/themes/gruvbox-dark-hard.json"
 
-    for skill in ${subagents}/skills/* ${../skills}/*; do
+    for skill in ${../skills}/*; do
       name="$(basename "$skill")"
       if [ -e "$out/skills/$name" ]; then
         echo "duplicate Pi skill: $name" >&2

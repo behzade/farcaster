@@ -2335,7 +2335,7 @@ mod tests {
             "child".into(),
             child_path.canonicalize()?,
             project.clone(),
-            "subagent-worker".into(),
+            "Implementation child".into(),
             "Needle assignment".into(),
             String::new(),
             Some("root".into()),

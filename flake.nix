@@ -30,7 +30,7 @@
             inherit mcpCli sandboxBroker;
           };
           denseTools = pkgs.callPackage ./nix/pi-dense-tools.nix { };
-          subagents = pkgs.callPackage ./nix/pi-subagents.nix { inherit coreExtensions; };
+          sessionAgents = pkgs.callPackage ./nix/pi-session-agents.nix { };
           webAccess = pkgs.callPackage ./nix/pi-web-access.nix { };
           openaiServerCompaction = pkgs.callPackage ./nix/pi-openai-server-compaction.nix { };
           projectTools = pkgs.callPackage ./nix/pi-project-tools.nix { };
@@ -61,13 +61,14 @@
               piTerminal
               projectTools
               sandbox
-              subagents
+              sessionAgents
               webAccess
               ;
           };
         in
         {
-          inherit agent sandbox subagents;
+          inherit agent sandbox;
+          session-agents = sessionAgents;
           core-extensions = coreExtensions;
           inherit pi;
           pi-terminal = piTerminal;
@@ -169,7 +170,7 @@
             inherit piTerminal;
           };
           permissionSystem = pkgs.callPackage ./nix/pi-permission-system.nix { };
-          subagents = pkgs.callPackage ./nix/pi-subagents.nix { inherit coreExtensions; };
+          sessionAgents = pkgs.callPackage ./nix/pi-session-agents.nix { };
           webAccess = pkgs.callPackage ./nix/pi-web-access.nix { };
           agent = pkgs.callPackage ./nix/pi-agent.nix {
             inherit
@@ -180,7 +181,7 @@
               piTerminal
               projectTools
               sandbox
-              subagents
+              sessionAgents
               webAccess
               ;
           };
@@ -299,31 +300,20 @@
             node --experimental-strip-types --test test/project-tools.test.ts
             touch "$out"
           '';
-          subagent-output-bounds = pkgs.runCommand "pi-subagent-output-bounds" {
+          session-agents-tests = pkgs.runCommand "pi-session-agents-tests" {
             nativeBuildInputs = [ pkgs.nodejs ];
           } ''
-            PI_SUBAGENTS_PACKAGE=${subagents} node --test ${self}/tests/output-bounds.test.ts
-            touch "$out"
-          '';
-          subagent-permission-system-resolution = pkgs.runCommand "pi-subagent-permission-system-resolution" {
-            nativeBuildInputs = [ pkgs.nodejs ];
-          } ''
-            PI_SUBAGENTS_PACKAGE=${subagents} node --test ${self}/tests/permission-system-resolution.test.ts
-            touch "$out"
-          '';
-          subagent-feedback = pkgs.runCommand "pi-subagent-feedback-test" {
-            nativeBuildInputs = [ pkgs.nodejs ];
-          } ''
-            test -f ${subagents}/agent-feedback/index.ts
-            test -f ${subagents}/agent-feedback/lib/agent-feedback.ts
-            test -f ${subagents}/agent-feedback/node_modules/effect/package.json
-            test "$(readlink ${subagents}/agent-feedback/node_modules)" = ${coreExtensions}/node_modules
-            for agent in ${subagents}/agents/*.md; do
-              grep -F 'report_pi_feedback' "$agent"
-              grep -Fx 'extensions:' "$agent"
-              grep -F 'subagentOnlyExtensions: ${subagents}/agent-feedback/index.ts' "$agent"
-            done
-            PI_SUBAGENTS_PACKAGE=${subagents} node --test ${self}/tests/agent-feedback.test.ts
+            cp -R ${sessionAgents}/* .
+            chmod -R u+w .
+            cp ${self}/extensions/subagents/adapter.test.ts ${self}/extensions/subagents/core.test.ts .
+            mkdir -p node_modules/@earendil-works
+            ln -s ${piTerminal}/lib/pi-terminal/node_modules/@earendil-works/pi-agent-core node_modules/@earendil-works/pi-agent-core
+            ln -s ${piTerminal}/lib/pi-terminal/node_modules/@earendil-works/pi-ai node_modules/@earendil-works/pi-ai
+            ln -s ${piTerminal}/lib/pi-terminal/node_modules/@earendil-works/pi-coding-agent node_modules/@earendil-works/pi-coding-agent
+            ln -s ${piTerminal}/lib/pi-terminal/node_modules/typebox node_modules/typebox
+            node --test adapter.test.ts core.test.ts
+            node -e 'import("./index.ts")'
+            node --test ${self}/tests/session-agents-package.test.ts
             touch "$out"
           '';
           web-access = webAccess;
@@ -332,7 +322,7 @@
             node --test \
               ${self}/tests/agent-feedback.test.ts \
               ${self}/tests/governance.test.ts \
-              ${self}/tests/output-bounds.test.ts \
+              ${self}/tests/session-agents-package.test.ts \
               ${self}/tests/prompt-contract.test.ts \
               ${self}/tests/prompt-inspector.test.ts \
               ${self}/tests/theme-and-rendering.test.ts \

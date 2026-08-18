@@ -8,10 +8,7 @@ use std::{
 
 use serde_json::Value;
 
-use crate::{
-    extension_support::pi_subagents,
-    sessions::{UsageSummary, normalize_lexical},
-};
+use crate::sessions::{UsageSummary, normalize_lexical};
 
 const MAX_ACTIVITY_CHARS: usize = 160;
 const MAX_TOOL_TARGET_CHARS: usize = 120;
@@ -36,7 +33,6 @@ pub(crate) struct AgentToolActivity {
     pub name: String,
     pub target: String,
     pub failed: bool,
-    awaits_input: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -144,12 +140,10 @@ impl ActivityBuilder {
                 let arguments = block.get("arguments").unwrap_or(&Value::Null);
                 let target = tool_target(arguments);
                 let mutation = pending_mutation(&name, arguments, observed_at);
-                let awaits_input = pi_subagents::tool_requires_input(&name, arguments);
                 let tool = AgentToolActivity {
                     name,
                     target,
                     failed: false,
-                    awaits_input,
                 };
                 self.tool_call_count = self.tool_call_count.saturating_add(1);
                 if !id.is_empty() {
@@ -190,7 +184,6 @@ impl ActivityBuilder {
                 .to_owned(),
             target: String::new(),
             failed,
-            awaits_input: false,
         });
         tool.failed = failed;
         self.recent_tool = Some(tool);
@@ -253,13 +246,7 @@ impl ActivityBuilder {
         is_running: bool,
         limited: bool,
     ) -> AgentActivity {
-        let awaits_input = self
-            .outstanding_tool_ids
-            .iter()
-            .any(|id| self.tools.get(id).is_some_and(|tool| tool.awaits_input));
-        let lifecycle = if is_running && awaits_input {
-            AgentLifecycle::NeedsInput
-        } else if is_running {
+        let lifecycle = if is_running {
             AgentLifecycle::Working
         } else if let Some(outcome) = self.outcome {
             AgentLifecycle::Completed(outcome)
@@ -473,7 +460,7 @@ pub(crate) fn parse_iso_timestamp(value: &str) -> Option<SystemTime> {
 }
 
 fn role_label(title: &str) -> String {
-    let role = bounded(pi_subagents::role(title), 28);
+    let role = bounded(title, 28);
     if role.is_empty() {
         "Agent".into()
     } else {
@@ -527,7 +514,7 @@ mod tests {
             "child".into(),
             PathBuf::from("/sessions/child"),
             Path::new("/project"),
-            "subagent-worker-id",
+            "Implementation session",
             "Implement the feature",
             UsageSummary::default(),
             SystemTime::UNIX_EPOCH,
@@ -559,7 +546,7 @@ mod tests {
             "child".into(),
             PathBuf::from("/sessions/child"),
             Path::new("/project"),
-            "subagent-reviewer-id",
+            "Review session",
             "Review",
             UsageSummary::default(),
             SystemTime::UNIX_EPOCH,
@@ -610,29 +597,6 @@ mod tests {
                 .map(|tool| tool.target.as_str()),
             Some("one")
         );
-    }
-
-    #[test]
-    fn only_explicit_unmatched_supervisor_requests_need_input() {
-        let mut builder = ActivityBuilder::default();
-        builder.observe_entry(&serde_json::json!({
-            "type":"message","message":{"role":"assistant","stopReason":"toolUse","content":[
-                {"type":"toolCall","id":"wait","name":"contact_supervisor","arguments":{"reason":"need_decision"}}
-            ]}
-        }));
-        let activity = builder.finish(
-            "id".into(),
-            PathBuf::new(),
-            Path::new("/project"),
-            "worker",
-            "task",
-            UsageSummary::default(),
-            SystemTime::UNIX_EPOCH,
-            SystemTime::UNIX_EPOCH,
-            true,
-            false,
-        );
-        assert_eq!(activity.lifecycle, AgentLifecycle::NeedsInput);
     }
 
     #[test]
@@ -722,7 +686,7 @@ mod tests {
             "id".into(),
             PathBuf::new(),
             Path::new("/project"),
-            "subagent-worker-id",
+            "Implementation session",
             &"x".repeat(MAX_ACTIVITY_CHARS + 5),
             UsageSummary::default(),
             SystemTime::UNIX_EPOCH,

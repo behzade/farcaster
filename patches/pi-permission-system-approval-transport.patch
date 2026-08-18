@@ -1,19 +1,13 @@
 diff --git a/packages/pi-permission-system/README.md b/packages/pi-permission-system/README.md
-index 201e5f36..deab16f6 100644
+index 201e5f3..deab16f 100644
 --- a/packages/pi-permission-system/README.md
 +++ b/packages/pi-permission-system/README.md
-@@ -22,6 +22,8 @@ Permission enforcement extension for the [Pi](https://pi.mariozechner.at/) codin
- - **Fails closed** — an internal gate error blocks the tool (with a `gate_error` review-log entry), and an unparseable bash command — or an indirection wrapper that hides the gated command (`bash -c`/`eval`, `sudo`, `env`, `xargs`, `find -exec`, …) — prompts (`ask`) rather than passing silently
- - **Forwards prompts from subagents** — `ask` policies work even in non-UI execution contexts
- - **Broadcasts UI prompt events** — `permissions:ui_prompt` fires only when the permission system is about to invoke the active user-facing permission UI
+@@ -24,0 +25,2 @@ Permission enforcement extension for the [Pi](https://pi.mariozechner.at/) codin
 +- **Shares approval transport** — other extensions can submit caller-owned choices through `PermissionsService.requestUserApproval()` while retaining their own policy and grant storage
 +- **Supports approval-transport-only mode** — set `approvalTransportOnly` in the global config to publish and forward caller-owned prompts without registering tool, shell, path, or skill permission gates
- - **Native [`@gotgenes/pi-subagents`](https://github.com/gotgenes/pi-subagents) integration** — in-process child sessions register with the permission system automatically, enabling per-agent policy enforcement and `ask`-state forwarding to the parent UI without configuration
- 
- ## Install
 diff --git a/packages/pi-permission-system/dist/public.d.ts b/packages/pi-permission-system/dist/public.d.ts
 new file mode 100644
-index 00000000..c772e9e0
+index 0000000..c772e9e
 --- /dev/null
 +++ b/packages/pi-permission-system/dist/public.d.ts
 @@ -0,0 +1,452 @@
@@ -470,25 +464,16 @@ index 00000000..c772e9e0
 +export { PERMISSIONS_DECISION_CHANNEL, PERMISSIONS_READY_CHANNEL, PERMISSIONS_UI_PROMPT_CHANNEL, getPermissionsService, publishPermissionsService, unpublishPermissionsService };
 +export type { Authorizer, AuthorizerLog, AuthorizerVerdict, ForwardedPromptContext, PermissionCheckResult, PermissionDecisionEvent, PermissionQuery, PermissionState, PermissionUiPromptEvent, PermissionUiPromptSource, PermissionsReadyEvent, PermissionsService, PromptPermissionDetails, ToolInputFormatter, UserApprovalChoice, UserApprovalRequest, UserApprovalResult };
 diff --git a/packages/pi-permission-system/docs/cross-extension-api.md b/packages/pi-permission-system/docs/cross-extension-api.md
-index 8f3d20a9..ea100a5d 100644
+index 8f3d20a..ea100a5 100644
 --- a/packages/pi-permission-system/docs/cross-extension-api.md
 +++ b/packages/pi-permission-system/docs/cross-extension-api.md
-@@ -58,6 +58,11 @@ interface PermissionsService {
-   /** Query tool-level permission state for pre-filtering before session creation. */
-   getToolPermission(toolName: string, agentName?: string): PermissionState;
- 
+@@ -60,0 +61,5 @@ interface PermissionsService {
 +  /** Show caller-defined approval choices locally or through the parent session. */
 +  requestUserApproval(
 +    request: UserApprovalRequest,
 +  ): Promise<UserApprovalResult>;
 +
-   /**
-    * Register a custom preview formatter for a specific tool name.
-    * Returns a disposer that unregisters the formatter.
-@@ -108,6 +113,39 @@ const denied = tools.filter(
- );
- ```
- 
+@@ -110,0 +116,33 @@ const denied = tools.filter(
 +#### `requestUserApproval`
 +
 +Use `requestUserApproval` when another extension owns a deterministic policy but needs the permission system's user-prompt and direct-child forwarding transport.
@@ -522,34 +507,22 @@ index 8f3d20a9..ea100a5d 100644
 +The request message and choices cross a private owner-only file transport for process-based direct children, so do not include secrets that the parent UI does not need.
 +Nested process children remain limited by the same direct-parent routing rule described in [Subagent Integration](subagent-integration.md).
 +
- #### `registerToolInputFormatter`
- 
- Register a custom preview formatter for a specific tool name.
 diff --git a/packages/pi-permission-system/schemas/permissions.schema.json b/packages/pi-permission-system/schemas/permissions.schema.json
-index bd940cae..be04047a 100644
+index bd940ca..be04047 100644
 --- a/packages/pi-permission-system/schemas/permissions.schema.json
 +++ b/packages/pi-permission-system/schemas/permissions.schema.json
-@@ -19,6 +19,12 @@
-       "default": true,
-       "type": "boolean"
-     },
+@@ -21,0 +22,6 @@
 +    "approvalTransportOnly": {
 +      "description": "Publish and forward caller-owned approval prompts without enforcing tool, shell, path, or skill policy.",
 +      "markdownDescription": "Publish `PermissionsService.requestUserApproval()` and keep parent/child prompt forwarding active, but do not register permission-system gates. Use this when another extension owns the permission boundary.",
 +      "default": false,
 +      "type": "boolean"
 +    },
-     "yoloMode": {
-       "description": "Auto-approve ask-state permission checks, including subagent approval forwarding.",
-       "markdownDescription": "Auto-approve `ask`-state permission checks, including subagent approval forwarding.\n\n⚠️ **Use with caution** — this disables all interactive confirmation prompts.",
 diff --git a/packages/pi-permission-system/src/authority/permission-dialog.ts b/packages/pi-permission-system/src/authority/permission-dialog.ts
-index 83e0a004..8e54fb4e 100644
+index 83e0a00..8e54fb4 100644
 --- a/packages/pi-permission-system/src/authority/permission-dialog.ts
 +++ b/packages/pi-permission-system/src/authority/permission-dialog.ts
-@@ -29,8 +29,16 @@ export type PermissionPromptDecision = {
- };
- 
- export interface PermissionDecisionUi {
+@@ -32,2 +32,10 @@ export interface PermissionDecisionUi {
 -  select(title: string, options: string[]): Promise<string | undefined>;
 -  input(title: string, placeholder?: string): Promise<string | undefined>;
 +  select(
@@ -562,50 +535,26 @@ index 83e0a004..8e54fb4e 100644
 +    placeholder?: string,
 +    dialogOptions?: { signal?: AbortSignal },
 +  ): Promise<string | undefined>;
- }
- 
- const APPROVE_OPTION = "Yes";
 diff --git a/packages/pi-permission-system/src/config-loader.ts b/packages/pi-permission-system/src/config-loader.ts
-index b99ddb42..844fce0b 100644
+index b99ddb4..844fce0 100644
 --- a/packages/pi-permission-system/src/config-loader.ts
 +++ b/packages/pi-permission-system/src/config-loader.ts
-@@ -199,7 +199,7 @@ function formatConfigIssues(error: ZodError): string[] {
-  */
- // Scalar knobs merged by override-replaces-base; keep in sync with
- // PermissionSystemExtensionConfig booleans (debugLog, permissionReviewLog,
+@@ -202 +202 @@ function formatConfigIssues(error: ZodError): string[] {
 -// yoloMode, doublePressToConfirm).
 +// approvalTransportOnly, yoloMode, doublePressToConfirm).
- export function mergeUnifiedConfigs(
-   base: UnifiedPermissionConfig,
-   override: UnifiedPermissionConfig,
-@@ -210,6 +210,7 @@ export function mergeUnifiedConfigs(
-   for (const key of [
-     "debugLog",
-     "permissionReviewLog",
+@@ -212,0 +213 @@ export function mergeUnifiedConfigs(
 +    "approvalTransportOnly",
-     "yoloMode",
-     "doublePressToConfirm",
-   ] as const) {
 diff --git a/packages/pi-permission-system/src/config-modal.ts b/packages/pi-permission-system/src/config-modal.ts
-index 3c59addc..012060a4 100644
+index 3c59add..012060a 100644
 --- a/packages/pi-permission-system/src/config-modal.ts
 +++ b/packages/pi-permission-system/src/config-modal.ts
-@@ -50,6 +50,7 @@ function cloneDefaultConfig(): PermissionSystemExtensionConfig {
-   return {
-     debugLog: DEFAULT_EXTENSION_CONFIG.debugLog,
-     permissionReviewLog: DEFAULT_EXTENSION_CONFIG.permissionReviewLog,
+@@ -52,0 +53 @@ function cloneDefaultConfig(): PermissionSystemExtensionConfig {
 +    approvalTransportOnly: DEFAULT_EXTENSION_CONFIG.approvalTransportOnly,
-     yoloMode: DEFAULT_EXTENSION_CONFIG.yoloMode,
-     doublePressToConfirm: DEFAULT_EXTENSION_CONFIG.doublePressToConfirm,
-   };
 diff --git a/packages/pi-permission-system/src/config-schema.ts b/packages/pi-permission-system/src/config-schema.ts
-index b0812849..1c318ff7 100644
+index b081284..1c318ff 100644
 --- a/packages/pi-permission-system/src/config-schema.ts
 +++ b/packages/pi-permission-system/src/config-schema.ts
-@@ -173,6 +173,13 @@ export const unifiedConfigSchema = z
-         "Write permission request and decision audit events to `logs/pi-permission-system-permission-review.jsonl` under the extension config directory.",
-       default: true,
-     }),
+@@ -175,0 +176,7 @@ export const unifiedConfigSchema = z
 +    approvalTransportOnly: z.boolean().optional().meta({
 +      description:
 +        "Publish and forward caller-owned approval prompts without enforcing tool, shell, path, or skill policy.",
@@ -613,93 +562,41 @@ index b0812849..1c318ff7 100644
 +        "Publish `PermissionsService.requestUserApproval()` and keep parent/child prompt forwarding active, but do not register permission-system gates. Use this when another extension owns the permission boundary.",
 +      default: false,
 +    }),
-     yoloMode: z.boolean().optional().meta({
-       description:
-         "Auto-approve ask-state permission checks, including subagent approval forwarding.",
 diff --git a/packages/pi-permission-system/src/config-store.ts b/packages/pi-permission-system/src/config-store.ts
-index bf779c82..fa7eaeda 100644
+index bf779c8..fa7eaed 100644
 --- a/packages/pi-permission-system/src/config-store.ts
 +++ b/packages/pi-permission-system/src/config-store.ts
-@@ -129,6 +129,7 @@ export class ConfigStore implements SessionConfigStore, CommandConfigStore {
-       warning: warning ?? null,
-       debugLog: runtimeConfig.debugLog,
-       permissionReviewLog: runtimeConfig.permissionReviewLog,
+@@ -131,0 +132 @@ export class ConfigStore implements SessionConfigStore, CommandConfigStore {
 +      approvalTransportOnly: runtimeConfig.approvalTransportOnly,
-       yoloMode: runtimeConfig.yoloMode,
-       projectTrusted,
-     });
-@@ -154,6 +155,7 @@ export class ConfigStore implements SessionConfigStore, CommandConfigStore {
-       ...existing.config,
-       debugLog: normalized.debugLog,
-       permissionReviewLog: normalized.permissionReviewLog,
+@@ -156,0 +158 @@ export class ConfigStore implements SessionConfigStore, CommandConfigStore {
 +      approvalTransportOnly: normalized.approvalTransportOnly,
-       yoloMode: normalized.yoloMode,
-     };
- 
-@@ -185,6 +187,7 @@ export class ConfigStore implements SessionConfigStore, CommandConfigStore {
-     this.deps.logger.debug("config.saved", {
-       debugLog: normalized.debugLog,
-       permissionReviewLog: normalized.permissionReviewLog,
+@@ -187,0 +190 @@ export class ConfigStore implements SessionConfigStore, CommandConfigStore {
 +      approvalTransportOnly: normalized.approvalTransportOnly,
-       yoloMode: normalized.yoloMode,
-     });
-   }
 diff --git a/packages/pi-permission-system/src/extension-config.ts b/packages/pi-permission-system/src/extension-config.ts
-index f7bb1d05..1ca152e9 100644
+index f7bb1d0..1ca152e 100644
 --- a/packages/pi-permission-system/src/extension-config.ts
 +++ b/packages/pi-permission-system/src/extension-config.ts
-@@ -15,6 +15,11 @@ export const EXTENSION_ID = "pi-permission-system";
- export interface PermissionSystemExtensionConfig {
-   debugLog: boolean;
-   permissionReviewLog: boolean;
+@@ -17,0 +18,5 @@ export interface PermissionSystemExtensionConfig {
 +  /**
 +   * Keep only the approval service and parent/child prompt forwarding active.
 +   * The caller remains the sole owner of policy and grant storage.
 +   */
 +  approvalTransportOnly?: boolean;
-   yoloMode: boolean;
-   /** Require a confirming second press of a decision hotkey in the inline TUI dialog. Defaults to true. */
-   doublePressToConfirm: boolean;
-@@ -35,6 +40,7 @@ export interface PermissionSystemExtensionConfig {
- export const DEFAULT_EXTENSION_CONFIG: PermissionSystemExtensionConfig = {
-   debugLog: false,
-   permissionReviewLog: true,
+@@ -37,0 +43 @@ export const DEFAULT_EXTENSION_CONFIG: PermissionSystemExtensionConfig = {
 +  approvalTransportOnly: false,
-   yoloMode: false,
-   doublePressToConfirm: true,
- };
-@@ -67,6 +73,7 @@ export function normalizePermissionSystemConfig(
-   const result: PermissionSystemExtensionConfig = {
-     debugLog: raw.debugLog === true,
-     permissionReviewLog: raw.permissionReviewLog !== false,
+@@ -69,0 +76 @@ export function normalizePermissionSystemConfig(
 +    approvalTransportOnly: raw.approvalTransportOnly === true,
-     yoloMode: raw.yoloMode === true,
-     doublePressToConfirm: raw.doublePressToConfirm !== false,
-   };
 diff --git a/packages/pi-permission-system/src/index.ts b/packages/pi-permission-system/src/index.ts
-index d6fbffc3..ec72c493 100644
+index d6fbffc..a26a864 100644
 --- a/packages/pi-permission-system/src/index.ts
 +++ b/packages/pi-permission-system/src/index.ts
-@@ -6,6 +6,7 @@ import { AuthorizerRegistry } from "./authority/authorizer-registry";
- import { AuthorizerSelection } from "./authority/authorizer-selection";
- import {
-   ForwardedRequestServer,
+@@ -8,0 +9 @@ import {
 +  type InboxProcessor,
-   type ServingPolicy,
- } from "./authority/forwarded-request-server";
- import { ForwardingManager } from "./authority/forwarding-manager";
-@@ -43,6 +44,7 @@ import { PermissionSessionLogger } from "./session-logger";
- import { SessionRules } from "./session-rules";
- import { ToolAccessExtractorRegistry } from "./tool-access-extractor-registry";
- import { ToolInputFormatterRegistry } from "./tool-input-formatter-registry";
+@@ -17 +17,0 @@ import { SubagentDetection } from "./authority/subagent-detection";
+-import { subscribeSubagentLifecycle } from "./authority/subagent-lifecycle-events";
+@@ -45,0 +46 @@ import { ToolInputFormatterRegistry } from "./tool-input-formatter-registry";
 +import { UserApprovalBroker } from "./user-approval";
- 
- export default function piPermissionSystemExtension(pi: ExtensionAPI): void {
-   const agentDir = getAgentDir();
-@@ -166,12 +168,27 @@ export default function piPermissionSystemExtension(pi: ExtensionAPI): void {
-     recorder: sessionRules,
-     registry: subagentRegistry,
-   });
+@@ -168,0 +170,15 @@ export default function piPermissionSystemExtension(pi: ExtensionAPI): void {
 +  const userApproval = new UserApprovalBroker({
 +    forwardingDir: paths.forwardingDir,
 +    getContext: () => session.getRuntimeContext(),
@@ -715,28 +612,21 @@ index d6fbffc3..ec72c493 100644
 +      await userApproval.processInbox(ctx);
 +    },
 +  };
- 
-   session = new PermissionSession(
-     paths,
-     new ForwardingManager({
-       detection: subagentDetection,
+@@ -174 +190 @@ export default function piPermissionSystemExtension(pi: ExtensionAPI): void {
 -      forwarder: requestServer,
 +      forwarder: inbox,
-       serving: servingRegistry,
-       logger,
-     }),
-@@ -205,6 +222,7 @@ export default function piPermissionSystemExtension(pi: ExtensionAPI): void {
-     formatterRegistry,
-     accessExtractorRegistry,
-     authorizerRegistry,
+@@ -207,0 +224 @@ export default function piPermissionSystemExtension(pi: ExtensionAPI): void {
 +    userApproval,
-   );
- 
-   // Subscribe to @gotgenes/pi-subagents' child lifecycle events so child
-@@ -278,15 +296,21 @@ export default function piPermissionSystemExtension(pi: ExtensionAPI): void {
-     lifecycle.handleResourcesDiscover(event, ctx),
-   );
-   pi.on("session_shutdown", () => lifecycle.handleSessionShutdown());
+@@ -212,5 +228,0 @@ export default function piPermissionSystemExtension(pi: ExtensionAPI): void {
+-  const unsubSubagentLifecycle = subscribeSubagentLifecycle(
+-    pi.events,
+-    subagentRegistry,
+-  );
+-
+@@ -226 +238 @@ export default function piPermissionSystemExtension(pi: ExtensionAPI): void {
+-    [unsubSubagentLifecycle],
++    [],
+@@ -281,11 +293,17 @@ export default function piPermissionSystemExtension(pi: ExtensionAPI): void {
 -  pi.on("before_agent_start", (event, ctx) => agentPrep.handle(event, ctx));
 -  pi.on("input", (event, ctx) => gates.handleInput(event, ctx));
 -  pi.on(
@@ -765,46 +655,29 @@ index d6fbffc3..ec72c493 100644
 +      ),
 +    );
 +  }
- }
 diff --git a/packages/pi-permission-system/src/permissions-service.ts b/packages/pi-permission-system/src/permissions-service.ts
-index 29c7d8c1..39bb3a12 100644
+index 29c7d8c..39bb3a1 100644
 --- a/packages/pi-permission-system/src/permissions-service.ts
 +++ b/packages/pi-permission-system/src/permissions-service.ts
-@@ -15,6 +15,10 @@ import type {
- } from "./tool-input-formatter-registry";
- import type { PermissionCheckResult, PermissionState } from "./types";
- 
+@@ -17,0 +18,4 @@ import type { PermissionCheckResult, PermissionState } from "./types";
 +interface UserApprovalRequester {
 +  request: PermissionsService["requestUserApproval"];
 +}
 +
- /**
-  * Resolution surface the service needs: answer a gate-style {@link AccessIntent}
-  * (composing the session ruleset internally) and report a tool-level state.
-@@ -47,8 +51,15 @@ export class LocalPermissionsService implements PermissionsService {
-     private readonly formatterRegistry: ToolInputFormatterRegistrar,
-     private readonly accessExtractorRegistry: ToolAccessExtractorRegistrar,
-     private readonly authorizerRegistry: AuthorizerRegistrar,
+@@ -49,0 +54 @@ export class LocalPermissionsService implements PermissionsService {
 +    private readonly userApproval: UserApprovalRequester,
-   ) {}
- 
+@@ -51,0 +57,6 @@ export class LocalPermissionsService implements PermissionsService {
 +  requestUserApproval(
 +    request: Parameters<PermissionsService["requestUserApproval"]>[0],
 +  ): ReturnType<PermissionsService["requestUserApproval"]> {
 +    return this.userApproval.request(request);
 +  }
 +
-   checkPermission(
-     surface: string,
-     value?: string,
 diff --git a/packages/pi-permission-system/src/service.ts b/packages/pi-permission-system/src/service.ts
-index 59d149f7..d200a32d 100644
+index 59d149f..d200a32 100644
 --- a/packages/pi-permission-system/src/service.ts
 +++ b/packages/pi-permission-system/src/service.ts
-@@ -51,6 +51,40 @@ export {
- } from "./permission-events";
- export type { PermissionCheckResult, PermissionState, ToolInputFormatter };
- 
+@@ -53,0 +54,34 @@ export type { PermissionCheckResult, PermissionState, ToolInputFormatter };
 +/** One explicit option shown by {@link PermissionsService.requestUserApproval}. */
 +export interface UserApprovalChoice {
 +  /** Stable caller-owned value returned when this option is selected. */
@@ -839,13 +712,7 @@ index 59d149f7..d200a32d 100644
 +  unavailableReason?: string;
 +}
 +
- /** Process-global key for the service slot. */
- const SERVICE_KEY = Symbol.for("@gotgenes/pi-permission-system:service");
- 
-@@ -100,6 +134,19 @@ export interface PermissionQuery {
-  * rules internally.
-  */
- export interface PermissionsService extends PermissionQuery {
+@@ -102,0 +137,13 @@ export interface PermissionsService extends PermissionQuery {
 +  /**
 +   * Ask the active user to choose from caller-defined approval options.
 +   *
@@ -859,12 +726,9 @@ index 59d149f7..d200a32d 100644
 +    request: UserApprovalRequest,
 +  ): Promise<UserApprovalResult>;
 +
-   /**
-    * Register a custom preview formatter for a specific tool name.
-    *
 diff --git a/packages/pi-permission-system/src/user-approval.ts b/packages/pi-permission-system/src/user-approval.ts
 new file mode 100644
-index 00000000..1d5b7697
+index 0000000..1d5b769
 --- /dev/null
 +++ b/packages/pi-permission-system/src/user-approval.ts
 @@ -0,0 +1,553 @@
@@ -1422,55 +1286,25 @@ index 00000000..1d5b7697
 +  }
 +}
 diff --git a/packages/pi-permission-system/test/permissions-service.test.ts b/packages/pi-permission-system/test/permissions-service.test.ts
-index c14f9750..ae890049 100644
+index c14f975..ae89004 100644
 --- a/packages/pi-permission-system/test/permissions-service.test.ts
 +++ b/packages/pi-permission-system/test/permissions-service.test.ts
-@@ -77,11 +77,18 @@ function makeAuthorizerRegistry(): AuthorizerRegistrar {
-   };
- }
- 
+@@ -79,0 +80,6 @@ function makeAuthorizerRegistry(): AuthorizerRegistrar {
 +function makeUserApproval() {
 +  return {
 +    request: vi.fn().mockResolvedValue({ choiceId: null }),
 +  };
 +}
 +
- function makeService(overrides?: {
-   resolver?: FakeResolver;
-   formatterRegistry?: ToolInputFormatterRegistrar;
-   accessExtractorRegistry?: ToolAccessExtractorRegistrar;
-   authorizerRegistry?: AuthorizerRegistrar;
+@@ -84,0 +91 @@ function makeService(overrides?: {
 +  userApproval?: ReturnType<typeof makeUserApproval>;
- }) {
-   const resolver = overrides?.resolver ?? makeResolver();
-   // The published service always answers against the parent session's cwd.
-@@ -92,12 +99,14 @@ function makeService(overrides?: {
-     overrides?.accessExtractorRegistry ?? makeAccessExtractorRegistry();
-   const authorizerRegistry =
-     overrides?.authorizerRegistry ?? makeAuthorizerRegistry();
+@@ -94,0 +102 @@ function makeService(overrides?: {
 +  const userApproval = overrides?.userApproval ?? makeUserApproval();
-   const service = new LocalPermissionsService(
-     resolver,
-     session,
-     formatterRegistry,
-     accessExtractorRegistry,
-     authorizerRegistry,
+@@ -100,0 +109 @@ function makeService(overrides?: {
 +    userApproval,
-   );
-   return {
-     service,
-@@ -105,6 +114,7 @@ function makeService(overrides?: {
-     formatterRegistry,
-     accessExtractorRegistry,
-     authorizerRegistry,
+@@ -107,0 +117 @@ function makeService(overrides?: {
 +    userApproval,
-   };
- }
- 
-@@ -121,6 +131,31 @@ beforeEach(() => {
-   );
- });
- 
+@@ -123,0 +134,25 @@ beforeEach(() => {
 +describe("requestUserApproval", () => {
 +  it("delegates to the user approval broker", async () => {
 +    const userApproval = makeUserApproval();
@@ -1496,44 +1330,23 @@ index c14f9750..ae890049 100644
 +  });
 +});
 +
- describe("checkPermission", () => {
-   it("resolves a non-path surface through a tool intent", () => {
-     const { service, resolver } = makeService();
 diff --git a/packages/pi-permission-system/test/service-lifecycle.test.ts b/packages/pi-permission-system/test/service-lifecycle.test.ts
-index d0b598aa..d06a3e08 100644
+index d0b598a..d06a3e0 100644
 --- a/packages/pi-permission-system/test/service-lifecycle.test.ts
 +++ b/packages/pi-permission-system/test/service-lifecycle.test.ts
-@@ -29,6 +29,7 @@ function makeService(): PermissionsService {
-   return {
-     checkPermission: vi.fn(),
-     getToolPermission: vi.fn(),
+@@ -31,0 +32 @@ function makeService(): PermissionsService {
 +    requestUserApproval: vi.fn().mockResolvedValue({ choiceId: null }),
-     registerToolInputFormatter: vi.fn(),
-     registerToolAccessExtractor: vi.fn(),
-     registerAuthorizer: vi.fn(),
 diff --git a/packages/pi-permission-system/test/service.test.ts b/packages/pi-permission-system/test/service.test.ts
-index 22bed2e6..f765e70f 100644
+index 22bed2e..f765e70 100644
 --- a/packages/pi-permission-system/test/service.test.ts
 +++ b/packages/pi-permission-system/test/service.test.ts
-@@ -22,6 +22,7 @@ function makeService(
-   return {
-     checkPermission: vi.fn(),
-     getToolPermission: vi.fn(),
+@@ -24,0 +25 @@ function makeService(
 +    requestUserApproval: vi.fn().mockResolvedValue({ choiceId: null }),
-     registerToolInputFormatter: vi.fn(),
-     registerToolAccessExtractor: vi.fn(),
-     registerAuthorizer: vi.fn(),
-@@ -120,6 +121,7 @@ describe("service round-trip through the global slot", () => {
-         new ToolInputFormatterRegistry(),
-         new ToolAccessExtractorRegistry(),
-         new AuthorizerRegistry(),
+@@ -122,0 +124 @@ describe("service round-trip through the global slot", () => {
 +        { request: vi.fn().mockResolvedValue({ choiceId: null }) },
-       ),
-     );
-   }
 diff --git a/packages/pi-permission-system/test/user-approval.test.ts b/packages/pi-permission-system/test/user-approval.test.ts
 new file mode 100644
-index 00000000..0cbd5e9e
+index 0000000..0cbd5e9
 --- /dev/null
 +++ b/packages/pi-permission-system/test/user-approval.test.ts
 @@ -0,0 +1,170 @@

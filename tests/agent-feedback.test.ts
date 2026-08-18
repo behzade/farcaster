@@ -2,14 +2,11 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import test from "node:test";
 import {
   appendAgentFeedback,
   type AgentFeedbackRecord,
 } from "../extensions/lib/agent-feedback.ts";
-
-const installedSubagents = process.env.PI_SUBAGENTS_PACKAGE;
 
 function record(id: string): AgentFeedbackRecord {
   return {
@@ -51,53 +48,4 @@ test("feedback append refuses a symlink destination", () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-});
-
-test("packaged feedback disables ambient child extensions", () => {
-  const expression = readFileSync(
-    new URL("../nix/pi-subagents.nix", import.meta.url),
-    "utf8",
-  );
-  assert.match(
-    expression,
-    /extensions:\nsubagentOnlyExtensions: \$out\/agent-feedback\/index\.ts/,
-  );
-});
-
-test("installed feedback extension loads once in an isolated child", {
-  skip: installedSubagents ? false : "PI_SUBAGENTS_PACKAGE is set by the Nix integration check",
-}, async () => {
-  const reviewer = readFileSync(join(installedSubagents!, "agents", "reviewer.md"), "utf8");
-  const frontmatterModule = await import(
-    pathToFileURL(join(installedSubagents!, "src", "agents", "frontmatter.ts")).href
-  ) as {
-    parseFrontmatter(content: string): { frontmatter: Record<string, string> };
-    parseFrontmatterList(value: string | undefined): string[] | undefined;
-  };
-  const launchModule = await import(
-    pathToFileURL(join(installedSubagents!, "src", "runs", "shared", "pi-args.ts")).href
-  ) as {
-    resolvePiLaunchToolPlan(input: Record<string, unknown>): {
-      disableAmbientExtensions: boolean;
-      extensionArgs: string[];
-    };
-  };
-  const { frontmatter } = frontmatterModule.parseFrontmatter(reviewer);
-  const extensions = frontmatterModule.parseFrontmatterList(frontmatter.extensions);
-  const subagentOnlyExtensions = frontmatterModule.parseFrontmatterList(
-    frontmatter.subagentOnlyExtensions,
-  );
-  const plan = launchModule.resolvePiLaunchToolPlan({
-    cwd: process.cwd(),
-    tools: frontmatterModule.parseFrontmatterList(frontmatter.tools),
-    extensions,
-    subagentOnlyExtensions,
-  });
-
-  assert.deepEqual(extensions, []);
-  assert.equal(plan.disableAmbientExtensions, true);
-  assert.equal(
-    plan.extensionArgs.filter((path) => path.endsWith("/agent-feedback/index.ts")).length,
-    1,
-  );
 });

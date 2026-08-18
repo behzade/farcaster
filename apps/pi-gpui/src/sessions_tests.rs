@@ -312,7 +312,7 @@ fn official_path_parent_resolves_to_id_and_keeps_live_hierarchy() -> TestResult 
         root.path(),
         "child-id",
         project.path(),
-        Some("subagent-worker"),
+        Some("Implementation child"),
         "Needle",
         parent_path.to_str(),
     )?;
@@ -441,7 +441,7 @@ fn discovery_carries_transient_agent_activity_without_persisting_it() -> TestRes
         root.path(),
         "child",
         project.path(),
-        Some("subagent-worker-generated"),
+        Some("Generated child"),
         "Implement the activity panel",
     )?;
     let path = root.path().join("custom/nested/child.jsonl");
@@ -473,7 +473,7 @@ fn discovery_carries_transient_agent_activity_without_persisting_it() -> TestRes
 
     let discovery = discover_in_with_status(root.path(), "")?;
     let activity = discovery.activities.get("child").expect("activity");
-    assert_eq!(activity.role, "worker");
+    assert_eq!(activity.role, "Generated child");
     assert_eq!(activity.activity, "Implement the activity panel");
     assert_eq!(activity.tool_call_count, 1);
     assert!(activity.current_tool.is_none());
@@ -557,14 +557,14 @@ fn child_search_keeps_its_root_and_hierarchy_is_stable() -> TestResult {
         "root",
         "child",
         project.path(),
-        "subagent-reviewer-long-id",
+        "Review child",
         "Needle",
     )?;
     session_with_parent(
         root.path(),
         "grandchild",
         project.path(),
-        Some("subagent-worker-long-id"),
+        Some("Implementation grandchild"),
         "Nested",
         Some("child"),
     )?;
@@ -572,7 +572,7 @@ fn child_search_keeps_its_root_and_hierarchy_is_stable() -> TestResult {
         root.path(),
         "orphan",
         project.path(),
-        Some("subagent-worker-orphan-1"),
+        Some("Detached child"),
         "Detached",
         Some("missing"),
     )?;

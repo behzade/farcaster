@@ -299,7 +299,7 @@ fn load_tool_diff_surface(path: PathBuf, presentation: ToolPresentation) -> Diff
 mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use super::{DiffSurface, RefreshGate, is_project_change, load_tool_diff_surface};
+    use super::{DiffSurface, RefreshGate, load_tool_diff_surface};
     use crate::conversation::{EditDiffFormat, ToolPresentation};
     use std::{path::PathBuf, sync::Arc};
 
@@ -341,24 +341,6 @@ mod tests {
         };
         assert!(diff.patch.contains("+retained"));
         assert!(reason.contains("no completed tool-result patch"));
-    }
-
-    #[test]
-    fn changes_exclude_subagent_exchange_files_outside_the_project() {
-        let project = PathBuf::from("/project");
-
-        assert!(is_project_change(
-            &PathBuf::from("/project/src/lib.rs"),
-            &project
-        ));
-        assert!(!is_project_change(
-            &PathBuf::from("/home/user/.pi/agent/sessions/project/subagent-artifacts/output.md"),
-            &project
-        ));
-        assert!(!is_project_change(
-            &PathBuf::from("/tmp/pi-subagents/async-runs/status.json"),
-            &project
-        ));
     }
 
     #[test]
