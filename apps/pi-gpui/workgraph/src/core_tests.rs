@@ -124,6 +124,36 @@ impl WorkGraphTransaction for MemoryTransaction<'_> {
         Ok(issues)
     }
 
+    fn set_fields(
+        &mut self,
+        project: ProjectRecordId,
+        number: u64,
+        title: Option<&str>,
+        body: Option<&str>,
+        priority: Option<u64>,
+        expected_version: Option<u64>,
+        updated_at: i64,
+    ) -> Result<bool, PersistenceError> {
+        let Some(issue) = self.state.issues.get_mut(&(project, number)) else {
+            return Ok(false);
+        };
+        if expected_version.is_some_and(|version| version != issue.version) {
+            return Ok(false);
+        }
+        if let Some(title) = title {
+            issue.title = title.to_owned();
+        }
+        if let Some(body) = body {
+            issue.body = body.to_owned();
+        }
+        if let Some(priority) = priority {
+            issue.priority = priority;
+        }
+        issue.version += 1;
+        issue.updated_at = updated_at;
+        Ok(true)
+    }
+
     fn set_status(
         &mut self,
         project: ProjectRecordId,
@@ -449,6 +479,47 @@ fn graph_snapshot_includes_notes_for_native_board_details() {
                 && snapshot.notes[0].issue_number == issue.number
                 && snapshot.notes[0].body == "Concrete progress"
     ));
+}
+
+#[test]
+fn set_fields_and_priority_follow_the_issues_version_contract() {
+    let mut graph = WorkGraph::new(MemoryPersistence::default());
+    let issue = create(&mut graph, "first", "First");
+    let EditResult::Issue(updated) = graph
+        .edit(&EditRequest {
+            project: "/project".into(),
+            idempotency_key: "fields".into(),
+            action: EditAction::SetFields {
+                number: issue.number,
+                title: Some(" Renamed ".into()),
+                body: Some("Useful context".into()),
+                priority: None,
+                expected_version: Some(issue.version),
+            },
+        })
+        .expect("set fields")
+    else {
+        panic!("issue result");
+    };
+    assert_eq!(updated.title, "Renamed");
+    assert_eq!(updated.body, "Useful context");
+
+    let EditResult::Issue(reprioritized) = graph
+        .edit(&EditRequest {
+            project: "/project".into(),
+            idempotency_key: "priority".into(),
+            action: EditAction::SetPriority {
+                number: issue.number,
+                priority: 4,
+                expected_version: Some(updated.version),
+            },
+        })
+        .expect("set priority")
+    else {
+        panic!("issue result");
+    };
+    assert_eq!(reprioritized.priority, 4);
+    assert_eq!(reprioritized.version, issue.version + 2);
 }
 
 #[test]

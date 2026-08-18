@@ -88,6 +88,16 @@ pub trait WorkGraphTransaction {
         project: ProjectRecordId,
         status: Option<IssueStatus>,
     ) -> Result<Vec<Issue>, PersistenceError>;
+    fn set_fields(
+        &mut self,
+        project: ProjectRecordId,
+        number: u64,
+        title: Option<&str>,
+        body: Option<&str>,
+        priority: Option<u64>,
+        expected_version: Option<u64>,
+        updated_at: i64,
+    ) -> Result<bool, PersistenceError>;
     fn set_status(
         &mut self,
         project: ProjectRecordId,
@@ -299,6 +309,54 @@ fn apply_edit<T: WorkGraphTransaction>(
             transaction.insert_issue(project, &issue)?;
             Ok(EditResult::Issue(issue))
         }
+        EditAction::SetFields {
+            number,
+            title,
+            body,
+            priority,
+            expected_version,
+        } => {
+            if !transaction.set_fields(
+                project,
+                *number,
+                title.as_deref().map(str::trim),
+                body.as_deref(),
+                *priority,
+                *expected_version,
+                now,
+            )? {
+                return Err(WorkGraphError::VersionConflict);
+            }
+            Ok(EditResult::Issue(required_issue(
+                transaction,
+                &request.project,
+                project,
+                *number,
+            )?))
+        }
+        EditAction::SetPriority {
+            number,
+            priority,
+            expected_version,
+        } => {
+            if !transaction.set_fields(
+                project,
+                *number,
+                None,
+                None,
+                Some(*priority),
+                *expected_version,
+                now,
+            )? {
+                return Err(WorkGraphError::VersionConflict);
+            }
+            Ok(EditResult::Issue(required_issue(
+                transaction,
+                &request.project,
+                project,
+                *number,
+            )?))
+        }
         EditAction::SetStatus {
             number,
             status,
@@ -423,6 +481,19 @@ fn validate_request(request: &EditRequest) -> Result<(), WorkGraphError> {
             Err(WorkGraphError::InvalidInput(
                 "issue title or body is invalid",
             ))
+        }
+        EditAction::SetFields {
+            title,
+            body,
+            priority,
+            ..
+        } if title
+            .as_ref()
+            .is_some_and(|title| title.trim().is_empty() || title.len() > 512)
+            || body.as_ref().is_some_and(|body| body.len() > 1_000_000)
+            || (title.is_none() && body.is_none() && priority.is_none()) =>
+        {
+            Err(WorkGraphError::InvalidInput("issue fields are invalid"))
         }
         EditAction::AddNote { body, .. } if body.trim().is_empty() || body.len() > 100_000 => {
             Err(WorkGraphError::InvalidInput("note body is invalid"))

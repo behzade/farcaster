@@ -184,6 +184,25 @@ impl WorkGraphTransaction for SqliteTransaction<'_> {
         rows.collect::<Result<Vec<_>, _>>().map_err(error)
     }
 
+    fn set_fields(
+        &mut self,
+        project: ProjectRecordId,
+        number: u64,
+        title: Option<&str>,
+        body: Option<&str>,
+        priority: Option<u64>,
+        expected_version: Option<u64>,
+        updated_at: i64,
+    ) -> Result<bool, PersistenceError> {
+        self.inner
+            .execute(
+                "UPDATE wg_issues SET title=COALESCE(?3, title), body=COALESCE(?4, body), priority=COALESCE(?5, priority), version=version+1, updated_ms=?6 WHERE project_id=?1 AND number=?2 AND (?7 IS NULL OR version=?7)",
+                params![project.as_storage(), number, title, body, priority, updated_at, expected_version],
+            )
+            .map(|changed| changed == 1)
+            .map_err(error)
+    }
+
     fn set_status(
         &mut self,
         project: ProjectRecordId,

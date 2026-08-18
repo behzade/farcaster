@@ -146,6 +146,18 @@ pub enum EditAction {
         #[serde(default)]
         priority: u64,
     },
+    SetFields {
+        number: u64,
+        title: Option<String>,
+        body: Option<String>,
+        priority: Option<u64>,
+        expected_version: Option<u64>,
+    },
+    SetPriority {
+        number: u64,
+        priority: u64,
+        expected_version: Option<u64>,
+    },
     SetStatus {
         number: u64,
         status: IssueStatus,
