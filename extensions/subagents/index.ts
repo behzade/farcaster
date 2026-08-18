@@ -1,5 +1,6 @@
 import { StringEnum } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { keyHint, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { Effect } from "effect";
 import { PiSessionFactory } from "./adapter.ts";
@@ -36,6 +37,15 @@ function runEffect<A>(effect: Effect.Effect<A, Error>, signal?: AbortSignal): Pr
 	return Effect.runPromise(effect, signal ? { signal } : undefined);
 }
 
+export function summarizeRuns(runs: readonly RunSnapshot[]): string {
+	return runs.map((run) => {
+		const body = run.output ?? run.error ?? "Subagent finished without text.";
+		const firstLine = body.split(/\r?\n/, 1)[0]?.trim() || "Subagent finished without text.";
+		const preview = firstLine.length > 160 ? `${firstLine.slice(0, 157)}...` : firstLine;
+		return `${run.id} (${run.status}): ${preview}`;
+	}).join("\n");
+}
+
 function startRequest(
 	params: {
 		prompt: string;
@@ -57,6 +67,14 @@ function startRequest(
 }
 
 export default function subagentsExtension(pi: ExtensionAPI) {
+	pi.registerMessageRenderer("subagent-result", (message, { expanded, outputPad }, theme) => {
+		if (expanded) return new Text(message.content, outputPad, 0);
+		const runs = (message.details as { runs?: RunSnapshot[] } | undefined)?.runs ?? [];
+		let text = runs.length > 0 ? summarizeRuns(runs) : "Subagent finished.";
+		text += theme.fg("dim", `\n${keyHint("app.tools.expand", "to expand")}`);
+		return new Text(text, outputPad, 0);
+	});
+
 	let settled: RunSnapshot[] = [];
 	let flushTimer: ReturnType<typeof setTimeout> | undefined;
 	const flushSettled = () => {

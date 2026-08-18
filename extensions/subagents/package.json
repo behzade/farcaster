@@ -4,7 +4,7 @@
 	"version": "1.0.0",
 	"type": "module",
 	"scripts": {
-		"check": "node --test adapter.test.ts core.test.ts"
+		"check": "node --test adapter.test.ts core.test.ts index.test.ts"
 	},
 	"pi": {
 		"extensions": [
