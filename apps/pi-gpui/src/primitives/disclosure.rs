@@ -2,17 +2,23 @@ use gpui::{
     AnyElement, App, ElementId, InteractiveElement as _, IntoElement as _, ParentElement as _,
     SharedString, StatefulInteractiveElement as _, Styled as _, Window,
 };
-use gpui_component::{Icon, IconName, Sizable as _};
+use gpui_component::Icon;
 
-use crate::{primitives::icon_control, theme::THEME};
+use crate::{
+    assets::AppIcon,
+    primitives::{AppIconSize, app_icon, icon_control},
+    theme::THEME,
+};
 
 pub(crate) fn disclosure_indicator(expanded: bool) -> Icon {
-    Icon::new(if expanded {
-        IconName::ChevronDown
-    } else {
-        IconName::ChevronRight
-    })
-    .with_size(THEME.icons.control)
+    app_icon(
+        if expanded {
+            AppIcon::CaretDown
+        } else {
+            AppIcon::CaretRight
+        },
+        AppIconSize::Control,
+    )
 }
 
 pub(crate) fn disclosure_button(

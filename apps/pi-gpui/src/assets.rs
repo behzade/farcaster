@@ -4,14 +4,19 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 8] = [
+const ICON_PATHS: [&str; 13] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrow-counter-clockwise.svg",
-    "icons/phosphor/chat-circle-dots.svg",
+    "icons/phosphor/arrow-up.svg",
+    "icons/phosphor/caret-down.svg",
+    "icons/phosphor/caret-right.svg",
+    "icons/phosphor/check-circle.svg",
+    "icons/phosphor/plus.svg",
     "icons/phosphor/folder.svg",
     "icons/phosphor/folder-plus.svg",
     "icons/phosphor/list.svg",
     "icons/phosphor/magnifying-glass.svg",
+    "icons/phosphor/stop.svg",
     "icons/phosphor/x.svg",
 ];
 
@@ -37,9 +42,19 @@ impl AssetSource for AppAssets {
             "icons/phosphor/arrow-counter-clockwise.svg" => Some(include_bytes!(
                 "../assets/phosphor-icons/arrow-counter-clockwise.svg"
             )),
-            "icons/phosphor/chat-circle-dots.svg" => Some(include_bytes!(
-                "../assets/phosphor-icons/chat-circle-dots.svg"
-            )),
+            "icons/phosphor/arrow-up.svg" => {
+                Some(include_bytes!("../assets/phosphor-icons/arrow-up.svg"))
+            }
+            "icons/phosphor/caret-down.svg" => {
+                Some(include_bytes!("../assets/phosphor-icons/caret-down.svg"))
+            }
+            "icons/phosphor/caret-right.svg" => {
+                Some(include_bytes!("../assets/phosphor-icons/caret-right.svg"))
+            }
+            "icons/phosphor/check-circle.svg" => {
+                Some(include_bytes!("../assets/phosphor-icons/check-circle.svg"))
+            }
+            "icons/phosphor/plus.svg" => Some(include_bytes!("../assets/phosphor-icons/plus.svg")),
             "icons/phosphor/folder.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/folder.svg"))
             }
@@ -50,6 +65,7 @@ impl AssetSource for AppAssets {
             "icons/phosphor/magnifying-glass.svg" => Some(include_bytes!(
                 "../assets/phosphor-icons/magnifying-glass.svg"
             )),
+            "icons/phosphor/stop.svg" => Some(include_bytes!("../assets/phosphor-icons/stop.svg")),
             "icons/phosphor/x.svg" => Some(include_bytes!("../assets/phosphor-icons/x.svg")),
             _ => None,
         };
@@ -75,11 +91,16 @@ impl AssetSource for AppAssets {
 pub(crate) enum AppIcon {
     Archive,
     ArrowCounterClockwise,
-    ChatCircleDots,
+    ArrowUp,
+    CaretDown,
+    CaretRight,
+    CheckCircle,
+    Plus,
     Folder,
     FolderPlus,
     List,
     MagnifyingGlass,
+    Stop,
     X,
 }
 
@@ -88,11 +109,16 @@ impl IconNamed for AppIcon {
         let name = match self {
             Self::Archive => "archive",
             Self::ArrowCounterClockwise => "arrow-counter-clockwise",
-            Self::ChatCircleDots => "chat-circle-dots",
+            Self::ArrowUp => "arrow-up",
+            Self::CaretDown => "caret-down",
+            Self::CaretRight => "caret-right",
+            Self::CheckCircle => "check-circle",
+            Self::Plus => "plus",
             Self::Folder => "folder",
             Self::FolderPlus => "folder-plus",
             Self::List => "list",
             Self::MagnifyingGlass => "magnifying-glass",
+            Self::Stop => "stop",
             Self::X => "x",
         };
         format!("{ICON_ROOT}/{name}.svg").into()
@@ -123,11 +149,16 @@ mod tests {
         for icon in [
             AppIcon::Archive,
             AppIcon::ArrowCounterClockwise,
-            AppIcon::ChatCircleDots,
+            AppIcon::ArrowUp,
+            AppIcon::CaretDown,
+            AppIcon::CaretRight,
+            AppIcon::CheckCircle,
+            AppIcon::Plus,
             AppIcon::Folder,
             AppIcon::FolderPlus,
             AppIcon::List,
             AppIcon::MagnifyingGlass,
+            AppIcon::Stop,
             AppIcon::X,
         ] {
             let path = icon.path();

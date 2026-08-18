@@ -314,7 +314,7 @@ impl PiApp {
                                     .gap(THEME.space.xs)
                                     .child(icon_button(
                                         "new-session",
-                                        AppIcon::ChatCircleDots,
+                                        AppIcon::Plus,
                                         "New session",
                                         ButtonTone::Quiet,
                                         move |window, cx| {

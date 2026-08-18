@@ -35,6 +35,23 @@ pub(crate) fn button(
     tone_button(button, tone)
 }
 
+pub(crate) fn button_with_icon(
+    id: impl Into<ElementId>,
+    icon: impl IconNamed,
+    label: impl Into<SharedString>,
+    tone: ButtonTone,
+    enabled: bool,
+    on_press: impl Fn(&mut Window, &mut App) + 'static,
+) -> Button {
+    let button = Button::new(id)
+        .icon(app_icon(icon, AppIconSize::Inline))
+        .label(label)
+        .with_size(Size::Small)
+        .disabled(!enabled)
+        .on_click(move |_, window, cx| on_press(window, cx));
+    tone_button(button, tone)
+}
+
 pub(crate) fn dropdown_button(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,

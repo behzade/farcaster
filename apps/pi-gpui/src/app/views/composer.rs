@@ -11,9 +11,10 @@ use super::super::{
 };
 use crate::{
     app::{file_mentions::MentionQuery, slash_commands::SlashCommandSuggestion},
+    assets::AppIcon,
     composer_sessions::ComposerSnapshot,
     conversation::QueueState,
-    primitives::{ButtonTone, button},
+    primitives::{ButtonTone, button, button_with_icon},
     protocol::ExtensionUiRequest,
     runtime::RuntimeCommand,
     theme::{MONO_FONT_FAMILY, THEME},
@@ -191,8 +192,9 @@ impl PiApp {
                             .flex()
                             .gap(THEME.space.xs)
                             .when(self.snapshot.conversation.running, |actions| {
-                                actions.child(button(
+                                actions.child(button_with_icon(
                                     "abort",
+                                    AppIcon::Stop,
                                     "Abort",
                                     ButtonTone::Danger,
                                     true,
@@ -202,8 +204,9 @@ impl PiApp {
                                     },
                                 ))
                             })
-                            .child(button(
+                            .child(button_with_icon(
                                 "send",
+                                AppIcon::ArrowUp,
                                 if exact_command {
                                     "Run"
                                 } else if self.snapshot.conversation.running {

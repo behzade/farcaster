@@ -9,7 +9,8 @@ use gpui::{
 use super::super::PiApp;
 use crate::{
     agent_activity::{AgentActivity, AgentLifecycle, AgentOutcome},
-    primitives::{disclosure_button, panel, section_heading},
+    assets::AppIcon,
+    primitives::{AppIconSize, app_icon, disclosure_button, panel, section_heading},
     sessions::{UsageSummary, descendant_sessions, root_session_for_path},
     theme::THEME,
 };
@@ -358,13 +359,22 @@ impl PiApp {
                 )
                 .child(
                     div()
-                        .w(px(88.0))
+                        .w(px(104.0))
                         .flex_none()
                         .flex()
+                        .items_center()
                         .justify_end()
+                        .gap(px(3.0))
                         .text_size(THEME.type_scale.caption)
                         .whitespace_nowrap()
                         .text_color(lifecycle_color(displayed_lifecycle))
+                        .when(
+                            displayed_lifecycle
+                                == AgentLifecycle::Completed(AgentOutcome::Complete),
+                            |status| {
+                                status.child(app_icon(AppIcon::CheckCircle, AppIconSize::Inline))
+                            },
+                        )
                         .child(format!("{state} · {elapsed}")),
                 )
                 .into_any_element(),

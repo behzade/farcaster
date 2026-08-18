@@ -10,7 +10,8 @@ use super::super::{
     changes::{DiffSurface, FullDiffMode},
 };
 use crate::{
-    primitives::{ButtonTone, button, section_heading},
+    assets::AppIcon,
+    primitives::{ButtonTone, button, icon_button, section_heading},
     session_changes::FileChangeKind,
     syntax_highlight::{DiffLineKind, HighlightedDiff, HighlightedText},
     theme::{MONO_FONT_FAMILY, THEME},
@@ -78,11 +79,11 @@ impl PiApp {
                                     .child(path),
                             ),
                     )
-                    .child(button(
+                    .child(icon_button(
                         "close-full-diff",
+                        AppIcon::X,
                         "Close",
-                        ButtonTone::Neutral,
-                        true,
+                        ButtonTone::Quiet,
                         move |window, cx| {
                             let _ = close.update(cx, |this, cx| this.close_file_diff(window, cx));
                         },
