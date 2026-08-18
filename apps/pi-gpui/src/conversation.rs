@@ -266,6 +266,7 @@ impl ConversationState {
             .unwrap_or_default();
         let previous_len = self.items.len();
         let previous_live_start = self.live_message.map(|live| live.start);
+        let mut incremental_content_changed = true;
         match kind {
             "agent_start" => {
                 self.running = true;
@@ -284,11 +285,12 @@ impl ConversationState {
             }
             "message_start" => self.start_message(event.get("message")),
             "message_update" => {
-                self.update_message(event.get("assistantMessageEvent"), project_live)
+                incremental_content_changed =
+                    self.update_message(event.get("assistantMessageEvent"), project_live);
             }
             "message_end" => self.end_message(event.get("message")),
             "tool_execution_start" => self.start_tool(event),
-            "tool_execution_update" => self.update_tool(event),
+            "tool_execution_update" => incremental_content_changed = self.update_tool(event),
             "tool_execution_end" => self.end_tool(event),
             "queue_update" => {
                 self.queue.steering = strings(event.get("steering"));
@@ -328,7 +330,10 @@ impl ConversationState {
         }
         match kind {
             "message_start" => Some(previous_len.saturating_sub(1)),
-            "message_update" | "message_end" => previous_live_start,
+            "message_update" if incremental_content_changed => previous_live_start,
+            "message_update" => None,
+            "message_end" => previous_live_start,
+            "tool_execution_update" if !incremental_content_changed => None,
             "tool_execution_start" | "tool_execution_update" | "tool_execution_end" => event
                 .get("toolCallId")
                 .and_then(Value::as_str)
@@ -433,20 +438,21 @@ impl ConversationState {
         self.live_message = Some(LiveMessage { start, len });
     }
 
-    fn update_message(&mut self, delta: Option<&Value>, project_live: bool) {
-        let Some(delta) = delta else { return };
+    fn update_message(&mut self, delta: Option<&Value>, project_live: bool) -> bool {
+        let Some(delta) = delta else { return false };
         let Some(content_index) = delta
             .get("contentIndex")
             .and_then(Value::as_u64)
             .map(|value| value as usize)
         else {
-            return;
+            return false;
         };
         let delta_type = delta
             .get("type")
             .and_then(Value::as_str)
             .unwrap_or_default();
         let partial = self.content.entry(content_index).or_default();
+        let previous = partial.clone();
         match delta_type {
             "text_start" => reset_partial(partial, PartialKind::Text),
             "text_delta" => append_delta(partial, delta),
@@ -472,12 +478,16 @@ impl ConversationState {
                     partial.value = tool_arguments(tool_call);
                 }
             }
-            _ => return,
+            _ => return false,
+        }
+        if *partial == previous {
+            return false;
         }
         self.dirty_content.insert(content_index);
         if project_live {
             self.flush_live_projection();
         }
+        true
     }
 
     pub(crate) fn flush_live_projection(&mut self) {
@@ -618,16 +628,23 @@ impl ConversationState {
         self.tools.insert(id, self.items.len() - 1);
     }
 
-    fn update_tool(&mut self, event: &Value) {
+    fn update_tool(&mut self, event: &Value) -> bool {
         let id = text_field(event, "toolCallId");
-        if let Some(index) = self.tools.get(&id).copied()
-            && let Some(item) = self.items.get_mut(index).map(Arc::make_mut)
-        {
-            item.tool_output = event
-                .get("partialResult")
-                .map(result_text)
-                .unwrap_or_default();
+        let Some(index) = self.tools.get(&id).copied() else {
+            return false;
+        };
+        let output = event
+            .get("partialResult")
+            .map(result_text)
+            .unwrap_or_default();
+        let Some(item) = self.items.get_mut(index) else {
+            return false;
+        };
+        if item.tool_output == output {
+            return false;
         }
+        Arc::make_mut(item).tool_output = output;
+        true
     }
 
     fn end_tool(&mut self, event: &Value) {

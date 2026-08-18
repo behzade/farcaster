@@ -258,6 +258,24 @@ fn tool_updates_replace_snapshots_and_correlate() {
 }
 
 #[test]
+fn duplicate_tool_updates_preserve_item_identity() {
+    let mut state = ConversationState::default();
+    state.reduce(
+        &json!({"type":"tool_execution_start","toolCallId":"a","toolName":"bash","args":{}}),
+    );
+    let update = json!({
+        "type":"tool_execution_update",
+        "toolCallId":"a",
+        "partialResult":{"content":[{"type":"text","text":"one"}]}
+    });
+    assert_eq!(state.reduce(&update), Some(0));
+    let item = state.items[0].clone();
+
+    assert_eq!(state.reduce(&update), None);
+    assert!(Arc::ptr_eq(&item, &state.items[0]));
+}
+
+#[test]
 fn edit_results_keep_the_structured_diff_for_native_rendering() {
     let mut state = ConversationState::default();
     state.replace_history(&[
