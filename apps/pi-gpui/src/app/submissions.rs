@@ -53,6 +53,7 @@ impl PiApp {
         } else {
             mode
         };
+        let show_in_transcript = !self.snapshot.conversation.running;
         let images = self
             .composer_images
             .get(&target)
@@ -91,10 +92,14 @@ impl PiApp {
                 let snapshot = Arc::make_mut(&mut self.snapshot);
                 let index = snapshot.conversation.items.len();
                 let conversation = Arc::make_mut(&mut snapshot.conversation);
-                conversation.push_local_user(value, image_count);
+                if show_in_transcript {
+                    conversation.push_local_user(value, image_count);
+                }
                 conversation.running = true;
                 snapshot.status = "Working".into();
-                self.transcript_list.splice(index..index, 1);
+                if show_in_transcript {
+                    self.transcript_list.splice(index..index, 1);
+                }
                 self.jump_to_latest(cx);
                 cx.notify();
             }

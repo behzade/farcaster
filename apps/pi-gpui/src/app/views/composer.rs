@@ -12,6 +12,7 @@ use super::super::{
 use crate::{
     app::{file_mentions::MentionQuery, slash_commands::SlashCommandSuggestion},
     composer_sessions::ComposerSnapshot,
+    conversation::QueueState,
     primitives::{ButtonTone, button},
     protocol::ExtensionUiRequest,
     runtime::RuntimeCommand,
@@ -66,6 +67,10 @@ impl PiApp {
             .bg(THEME.colors.panel)
             .p(THEME.space.sm)
             .when_some(widgets_above, |composer, widgets| composer.child(widgets))
+            .when_some(
+                queued_messages(&self.snapshot.conversation.queue),
+                |composer, queue| composer.child(queue),
+            )
             .when_some(composer_status(self), |composer, status| {
                 composer.child(status)
             })
@@ -565,9 +570,55 @@ fn fill_slash_command(entity: WeakEntity<PiApp>, name: String, window: &mut Wind
     });
 }
 
+fn queued_messages(queue: &QueueState) -> Option<AnyElement> {
+    let messages = queue
+        .steering
+        .iter()
+        .chain(&queue.follow_up)
+        .collect::<Vec<_>>();
+    if messages.is_empty() {
+        return None;
+    }
+    Some(
+        div()
+            .mb(THEME.space.sm)
+            .border(THEME.border)
+            .border_color(THEME.colors.border)
+            .rounded(THEME.radius)
+            .overflow_hidden()
+            .bg(THEME.colors.surface)
+            .children(messages.into_iter().enumerate().map(|(index, message)| {
+                div()
+                    .when(index > 0, |row| {
+                        row.border_t(THEME.border).border_color(THEME.colors.border)
+                    })
+                    .px(THEME.space.sm)
+                    .py(THEME.space.xs)
+                    .flex()
+                    .items_start()
+                    .gap(THEME.space.sm)
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_size(THEME.type_scale.caption)
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(THEME.colors.subtle)
+                            .child("Queued"),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .text_size(THEME.type_scale.body)
+                            .text_color(THEME.colors.text)
+                            .child(message.clone()),
+                    )
+            }))
+            .into_any_element(),
+    )
+}
+
 fn composer_status(app: &PiApp) -> Option<AnyElement> {
-    let queued = app.snapshot.conversation.queue.steering.len()
-        + app.snapshot.conversation.queue.follow_up.len();
     let mut parts = Vec::new();
     if !matches!(app.snapshot.status.as_str(), "" | "Ready" | "Idle" | "Done") {
         parts.push(app.snapshot.status.clone());
@@ -575,9 +626,6 @@ fn composer_status(app: &PiApp) -> Option<AnyElement> {
     parts.extend(app.extension.statuses.values().cloned());
     if let Some(error) = app.extension_errors.last() {
         parts.push(error.chars().take(120).collect());
-    }
-    if queued > 0 {
-        parts.push(format!("{queued} queued"));
     }
     if parts.is_empty() {
         return None;
