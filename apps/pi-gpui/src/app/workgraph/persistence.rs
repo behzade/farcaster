@@ -35,6 +35,34 @@ pub(super) fn create_issue(
     Ok((load_issues(database, project)?, issue.number))
 }
 
+pub(super) fn update_issue_fields(
+    database: PathBuf,
+    project: PathBuf,
+    number: u64,
+    title: String,
+    body: String,
+    priority: u64,
+    expected_version: u64,
+) -> Result<BoardData, String> {
+    let project_key = canonical_project(&project)?;
+    let adapter = SqliteAdapter::open(&database).map_err(|error| error.to_string())?;
+    let mut graph = WorkGraph::new(adapter);
+    graph
+        .edit(&EditRequest {
+            project: project_key,
+            idempotency_key: format!("gui-fields-{number}-{}", operation_id()?),
+            action: EditAction::SetFields {
+                number,
+                title: Some(title),
+                body: Some(body),
+                priority: Some(priority),
+                expected_version: Some(expected_version),
+            },
+        })
+        .map_err(|error| error.to_string())?;
+    load_issues(database, project)
+}
+
 pub(super) fn add_dependency(
     database: PathBuf,
     project: PathBuf,

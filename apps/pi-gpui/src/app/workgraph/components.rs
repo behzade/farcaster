@@ -121,6 +121,105 @@ pub(super) fn render_create(
         )
 }
 
+pub(super) fn render_edit_fields(
+    issue: workgraph::contract::Issue,
+    title: &Entity<InputState>,
+    body: &Entity<TextareaState>,
+    priority: &Entity<InputState>,
+    entity: Entity<WorkGraphBoardView>,
+) -> impl IntoElement {
+    let submit_title = title.clone();
+    let submit_body = body.clone();
+    let submit_priority = priority.clone();
+    let submit = entity.clone();
+    let cancel = entity;
+    let number = issue.number;
+    let version = issue.version;
+    div()
+        .flex()
+        .flex_col()
+        .gap(THEME.space.md)
+        .child(
+            div()
+                .text_size(THEME.type_scale.caption)
+                .text_color(THEME.colors.subtle)
+                .child(format!("EDIT ISSUE #{number}")),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(THEME.space.xs)
+                .child(
+                    div()
+                        .text_size(THEME.type_scale.caption)
+                        .text_color(THEME.colors.subtle)
+                        .child("TITLE"),
+                )
+                .child(Input::new(title).w_full()),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(THEME.space.xs)
+                .child(
+                    div()
+                        .text_size(THEME.type_scale.caption)
+                        .text_color(THEME.colors.subtle)
+                        .child("DESCRIPTION"),
+                )
+                .child(Textarea::new(body).w_full()),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(THEME.space.xs)
+                .child(
+                    div()
+                        .text_size(THEME.type_scale.caption)
+                        .text_color(THEME.colors.subtle)
+                        .child("PRIORITY"),
+                )
+                .child(Input::new(priority).w(px(120.0))),
+        )
+        .child(
+            div()
+                .flex()
+                .gap(THEME.space.xs)
+                .child(button(
+                    format!("workgraph-edit-save-{number}"),
+                    "Save changes",
+                    ButtonTone::Neutral,
+                    true,
+                    move |_, cx| {
+                        let title = submit_title.read(cx).value().trim().to_owned();
+                        let body = submit_body.read(cx).value().to_string();
+                        let Ok(priority) = submit_priority.read(cx).value().trim().parse::<u64>()
+                        else {
+                            return;
+                        };
+                        if title.is_empty() {
+                            return;
+                        }
+                        submit.update(cx, |this, cx| {
+                            this.update_issue_fields(number, title, body, priority, version, cx);
+                        });
+                    },
+                ))
+                .child(button(
+                    format!("workgraph-edit-cancel-{number}"),
+                    "Cancel",
+                    ButtonTone::Quiet,
+                    true,
+                    move |_, cx| {
+                        cancel.update(cx, |this, cx| this.set_editing(None, cx));
+                    },
+                )),
+        )
+}
+
 pub(super) fn related_issue_section(
     label: &'static str,
     empty: &'static str,

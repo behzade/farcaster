@@ -5,14 +5,14 @@ use std::path::PathBuf;
 use super::{
     components::{
         dependency_issue_section, detail_section, related_issue_section, render_create,
-        render_graph_row, render_group, status_color,
+        render_edit_fields, render_graph_row, render_group, status_color,
     },
     contract::{BoardData, BoardFilter, BoardLoadState, BoardMode, IssueGroup},
     core::{filter_count, matching_project_groups},
     layout::{BoardLayoutMode, board_layout_mode, issue_detail_shell},
     persistence::{
         add_dependency, add_issue_note, create_issue, link_session, load_issues, remove_dependency,
-        update_issue_status,
+        update_issue_fields, update_issue_status,
     },
 };
 use crate::{
@@ -34,10 +34,14 @@ pub(crate) struct WorkGraphBoardView {
     mode: BoardMode,
     selected: Option<u64>,
     creating: bool,
+    editing: Option<u64>,
     active_session: Option<(String, String)>,
     search: Option<Entity<InputState>>,
     create_title: Option<Entity<InputState>>,
     create_body: Option<Entity<TextareaState>>,
+    edit_title: Option<Entity<InputState>>,
+    edit_body: Option<Entity<TextareaState>>,
+    edit_priority: Option<Entity<InputState>>,
     dependency: Option<Entity<InputState>>,
     note: Option<Entity<TextareaState>>,
     note_issue: Option<u64>,
@@ -64,10 +68,14 @@ impl WorkGraphBoardView {
             mode: BoardMode::Kanban,
             selected: None,
             creating: false,
+            editing: None,
             active_session: None,
             search: None,
             create_title: None,
             create_body: None,
+            edit_title: None,
+            edit_body: None,
+            edit_priority: None,
             dependency: None,
             note: None,
             note_issue: None,
@@ -125,19 +133,64 @@ impl WorkGraphBoardView {
 
     pub(super) fn select_issue(&mut self, number: u64, cx: &mut Context<Self>) {
         self.creating = false;
+        self.editing = None;
         self.selected = Some(number);
         cx.notify();
     }
 
     pub(super) fn clear_selection(&mut self, cx: &mut Context<Self>) {
         self.creating = false;
+        self.editing = None;
         self.selected = None;
         cx.notify();
     }
 
     fn start_create(&mut self, cx: &mut Context<Self>) {
         self.selected = None;
+        self.editing = None;
         self.creating = true;
+        cx.notify();
+    }
+
+    pub(super) fn set_editing(&mut self, number: Option<u64>, cx: &mut Context<Self>) {
+        self.editing = number;
+        cx.notify();
+    }
+
+    pub(super) fn update_issue_fields(
+        &mut self,
+        number: u64,
+        title: String,
+        body: String,
+        priority: u64,
+        expected_version: u64,
+        cx: &mut Context<Self>,
+    ) {
+        let database = self.database.clone();
+        let project = self.project.clone();
+        let edit = cx.background_spawn(async move {
+            update_issue_fields(
+                database,
+                project,
+                number,
+                title,
+                body,
+                priority,
+                expected_version,
+            )
+        });
+        self.state = BoardLoadState::Loading;
+        self.refresh = Some(cx.spawn(async move |weak, cx| {
+            let state = match edit.await {
+                Ok(data) => BoardLoadState::Ready(data),
+                Err(error) => BoardLoadState::Failed(error),
+            };
+            let _ = weak.update(cx, |this, cx| {
+                this.state = state;
+                this.editing = None;
+                cx.notify();
+            });
+        }));
         cx.notify();
     }
 
@@ -390,6 +443,16 @@ impl WorkGraphBoardView {
             .border_l(THEME.border)
             .border_color(THEME.colors.border)
             .child(match issue {
+                Some(issue) if self.editing == Some(issue.number) => render_edit_fields(
+                    issue.clone(),
+                    self.edit_title.as_ref().expect("edit title initialized"),
+                    self.edit_body.as_ref().expect("edit body initialized"),
+                    self.edit_priority
+                        .as_ref()
+                        .expect("edit priority initialized"),
+                    entity,
+                )
+                .into_any_element(),
                 Some(issue) => {
                     let dependencies = data
                         .dependencies
@@ -490,6 +553,46 @@ impl WorkGraphBoardView {
                                 },
                             ))
                     });
+                    let edit_title = self
+                        .edit_title
+                        .as_ref()
+                        .expect("edit title initialized")
+                        .clone();
+                    let edit_body = self
+                        .edit_body
+                        .as_ref()
+                        .expect("edit body initialized")
+                        .clone();
+                    let edit_priority = self
+                        .edit_priority
+                        .as_ref()
+                        .expect("edit priority initialized")
+                        .clone();
+                    let edit_entity = entity.clone();
+                    let edit_number = issue.number;
+                    let current_title = issue.title.clone();
+                    let current_body = issue.body.clone();
+                    let current_priority = issue.priority.to_string();
+                    let edit_action = button(
+                        format!("workgraph-edit-{edit_number}"),
+                        "Edit issue",
+                        ButtonTone::Quiet,
+                        true,
+                        move |window, cx| {
+                            edit_title.update(cx, |input, cx| {
+                                input.set_value(current_title.clone(), window, cx);
+                            });
+                            edit_body.update(cx, |input, cx| {
+                                input.set_value(current_body.clone(), window, cx);
+                            });
+                            edit_priority.update(cx, |input, cx| {
+                                input.set_value(current_priority.clone(), window, cx);
+                            });
+                            edit_entity.update(cx, |this, cx| {
+                                this.set_editing(Some(edit_number), cx);
+                            });
+                        },
+                    );
                     let status_actions = [
                         workgraph::contract::IssueStatus::Open,
                         workgraph::contract::IssueStatus::InProgress,
@@ -589,7 +692,8 @@ impl WorkGraphBoardView {
                                             issue.priority,
                                             issue.version
                                         )),
-                                ),
+                                )
+                                .child(edit_action),
                         )
                         .child(
                             div()
@@ -692,6 +796,22 @@ impl Render for WorkGraphBoardView {
                     .submit_on_enter(false)
                     .placeholder("Context, expected result, and useful constraints")
             }));
+        }
+        if self.edit_title.is_none() {
+            self.edit_title =
+                Some(cx.new(|cx| InputState::new(window, cx).placeholder("Issue title")));
+        }
+        if self.edit_body.is_none() {
+            self.edit_body = Some(cx.new(|cx| {
+                TextareaState::new(window, cx)
+                    .auto_grow(4, 10)
+                    .submit_on_enter(false)
+                    .placeholder("Issue description")
+            }));
+        }
+        if self.edit_priority.is_none() {
+            self.edit_priority =
+                Some(cx.new(|cx| InputState::new(window, cx).placeholder("Priority")));
         }
         if self.dependency.is_none() {
             self.dependency =

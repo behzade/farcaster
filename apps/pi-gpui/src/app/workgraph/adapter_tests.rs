@@ -6,7 +6,7 @@ use workgraph::{
 
 use super::persistence::{
     add_dependency, add_issue_note, create_issue, load_issues, remove_dependency,
-    update_issue_status,
+    update_issue_fields, update_issue_status,
 };
 
 #[test]
@@ -135,12 +135,29 @@ fn board_loader_reads_issues_from_the_shared_gui_database() {
         .find(|issue| issue.number == created_number)
         .expect("native created issue");
     assert_eq!(created.title, "Created in the native board");
+    let with_fields = update_issue_fields(
+        directory.path().join("gui-state.sqlite3"),
+        directory.path().join("project"),
+        created_number,
+        "Edited in the native board".into(),
+        "Updated durable context".into(),
+        3,
+        created.version,
+    )
+    .expect("native field update");
+    let edited = with_fields
+        .issues
+        .iter()
+        .find(|issue| issue.number == created_number)
+        .expect("native edited issue");
+    assert_eq!(edited.title, "Edited in the native board");
+    assert_eq!(edited.priority, 3);
     let with_dependency = add_dependency(
         directory.path().join("gui-state.sqlite3"),
         directory.path().join("project"),
         created_number,
         prerequisite.number,
-        created.version,
+        edited.version,
     )
     .expect("native dependency add");
     assert!(with_dependency.dependencies.iter().any(|edge| {
