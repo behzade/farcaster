@@ -70,7 +70,7 @@ pub(crate) fn registry() -> Vec<Shortcut> {
         shortcut!(
             "Sessions",
             "Settle current session",
-            "cmd-shift-.",
+            "cmd-w",
             SettleSession,
             None
         ),
@@ -137,7 +137,7 @@ mod tests {
             shortcut.label == "Open work graph" && shortcut.keystroke == "cmd-shift-i"
         }));
         assert!(shortcuts.iter().any(|shortcut| {
-            shortcut.label == "Settle current session" && shortcut.keystroke == "cmd-shift-."
+            shortcut.label == "Settle current session" && shortcut.keystroke == "cmd-w"
         }));
     }
 }
