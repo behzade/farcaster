@@ -153,6 +153,7 @@ pub(crate) struct RuntimeHandle {
     commands: mpsc::Sender<RuntimeCommand>,
     events: mpsc::Receiver<RuntimeEvent>,
     wake: async_channel::Receiver<()>,
+    thread: thread::Thread,
 }
 
 #[derive(Clone)]
@@ -196,7 +197,7 @@ impl RuntimeHandle {
             events: events_tx,
             wake: wake_tx,
         };
-        thread::Builder::new()
+        let handle = thread::Builder::new()
             .name("pi-gpui-supervisor".into())
             .spawn(move || {
                 run_supervisor(
@@ -208,18 +209,21 @@ impl RuntimeHandle {
                     event_tx,
                 );
             })
-            .ok();
+            .expect("start Pi supervisor");
         Self {
             commands,
             events,
             wake,
+            thread: handle.thread().clone(),
         }
     }
 
     pub(crate) fn send(&self, command: RuntimeCommand) -> Result<(), String> {
         self.commands
             .send(command)
-            .map_err(|_| "Pi runtime has stopped".to_owned())
+            .map_err(|_| "Pi runtime has stopped".to_owned())?;
+        self.thread.unpark();
+        Ok(())
     }
 
     pub(crate) fn try_recv(&self) -> Result<RuntimeEvent, mpsc::TryRecvError> {
@@ -233,24 +237,54 @@ impl RuntimeHandle {
 
 use prompts::DeferredPrompt;
 
+#[derive(Clone)]
+struct SessionEventSender {
+    sender: mpsc::Sender<RuntimeEvent>,
+    supervisor: thread::Thread,
+}
+
+impl SessionEventSender {
+    fn send(&self, event: RuntimeEvent) -> Result<(), mpsc::SendError<RuntimeEvent>> {
+        self.sender.send(event)?;
+        self.supervisor.unpark();
+        Ok(())
+    }
+}
+
 struct SessionRuntimeHandle {
     commands: mpsc::Sender<RuntimeCommand>,
     events: mpsc::Receiver<RuntimeEvent>,
+    thread: thread::Thread,
 }
 
 impl SessionRuntimeHandle {
-    fn spawn(project: PathBuf, process_command: ProcessCommand, load_catalog: bool) -> Self {
+    fn spawn(
+        project: PathBuf,
+        process_command: ProcessCommand,
+        load_catalog: bool,
+        supervisor: thread::Thread,
+    ) -> Self {
         let (commands, command_rx) = mpsc::channel();
-        let (event_tx, events) = mpsc::channel();
-        thread::Builder::new()
+        let (event_sender, events) = mpsc::channel();
+        let event_tx = SessionEventSender {
+            sender: event_sender,
+            supervisor,
+        };
+        let handle = thread::Builder::new()
             .name("pi-gpui-session".into())
             .spawn(move || run(project, process_command, command_rx, event_tx, load_catalog))
-            .ok();
-        Self { commands, events }
+            .expect("start Pi session runtime");
+        Self {
+            commands,
+            events,
+            thread: handle.thread().clone(),
+        }
     }
 
     fn send(&self, command: RuntimeCommand) {
-        let _ = self.commands.send(command);
+        if self.commands.send(command).is_ok() {
+            self.thread.unpark();
+        }
     }
 }
 
@@ -281,17 +315,28 @@ fn run_supervisor(
     command_rx: mpsc::Receiver<RuntimeCommand>,
     event_tx: UiEventSender,
 ) {
+    let supervisor_thread = thread::current();
     let initial_key = format!("draft:{draft_id}");
     let catalog_key = "catalog".to_owned();
     let initial_project = project.clone();
     let mut actors = HashMap::from([
         (
             catalog_key.clone(),
-            SessionRuntimeHandle::spawn(project.clone(), process_command.clone(), true),
+            SessionRuntimeHandle::spawn(
+                project.clone(),
+                process_command.clone(),
+                true,
+                supervisor_thread.clone(),
+            ),
         ),
         (
             initial_key.clone(),
-            SessionRuntimeHandle::spawn(project, process_command.clone(), false),
+            SessionRuntimeHandle::spawn(
+                project,
+                process_command.clone(),
+                false,
+                supervisor_thread.clone(),
+            ),
         ),
     ]);
     if let Some(actor) = actors.get(&initial_key) {
@@ -319,7 +364,12 @@ fn run_supervisor(
         for prompt in prompts {
             let key = prompt.target.clone();
             let actor = actors.entry(key).or_insert_with(|| {
-                SessionRuntimeHandle::spawn(prompt.project.clone(), process_command.clone(), false)
+                SessionRuntimeHandle::spawn(
+                    prompt.project.clone(),
+                    process_command.clone(),
+                    false,
+                    supervisor_thread.clone(),
+                )
             });
             actor.send(RuntimeCommand::DeliverQueued(prompt));
         }
@@ -487,12 +537,9 @@ fn run_supervisor(
             catalog.send(RuntimeCommand::RefreshActiveSessions);
             last_catalog_refresh = Instant::now();
         }
-        let supervisor_wait = if has_running_root || catalog_has_running_descendants {
-            Duration::from_millis(12)
-        } else {
-            Duration::from_millis(250)
-        };
-        match command_rx.recv_timeout(supervisor_wait) {
+        let supervisor_wait = refresh_interval
+            .map(|interval| interval.saturating_sub(last_catalog_refresh.elapsed()));
+        match command_rx.try_recv() {
             Ok(RuntimeCommand::Shutdown) => running = false,
             Ok(command) => {
                 if matches!(&command, RuntimeCommand::ExtensionResponse(_)) {
@@ -547,7 +594,12 @@ fn run_supervisor(
                         });
                     }
                     let actor = actors.entry(key.clone()).or_insert_with(|| {
-                        SessionRuntimeHandle::spawn(project, process_command.clone(), false)
+                        SessionRuntimeHandle::spawn(
+                            project,
+                            process_command.clone(),
+                            false,
+                            supervisor_thread.clone(),
+                        )
                     });
                     actor.send(command);
                     if let Some(mut snapshot) = latest.get(&key).cloned() {
@@ -592,8 +644,11 @@ fn run_supervisor(
                     }
                 }
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => running = false,
+            Err(mpsc::TryRecvError::Empty) => match supervisor_wait {
+                Some(wait) => thread::park_timeout(wait),
+                None => thread::park(),
+            },
+            Err(mpsc::TryRecvError::Disconnected) => running = false,
         }
     }
     for actor in actors.values() {
@@ -890,7 +945,7 @@ struct RuntimeOwner {
     pending_prompt_item: Option<Arc<TranscriptItem>>,
     pending_outbox_id: Option<i64>,
     transcript_changed_from: Option<usize>,
-    event_tx: mpsc::Sender<RuntimeEvent>,
+    event_tx: SessionEventSender,
     discovery_tx: mpsc::Sender<DiscoveryResult>,
     history_tx: mpsc::Sender<HistoryResult>,
     history_generation: u64,
@@ -926,7 +981,7 @@ fn run(
     project: PathBuf,
     process_command: ProcessCommand,
     command_rx: mpsc::Receiver<RuntimeCommand>,
-    event_tx: mpsc::Sender<RuntimeEvent>,
+    event_tx: SessionEventSender,
     load_catalog: bool,
 ) {
     let (discovery_tx, discovery_rx) = mpsc::channel();
@@ -1009,25 +1064,19 @@ fn run(
             owner.publish();
             stream_publish_due = None;
         }
-        let active = owner.active_snapshot().conversation.running
-            || !owner.startup_state_loaded
-            || !owner.startup_history_loaded
-            || owner.pending_prompt_id.is_some();
-        let poll_ceiling = if active {
-            Duration::from_millis(12)
-        } else {
-            Duration::from_millis(250)
-        };
-        let wait = stream_publish_due.map_or(poll_ceiling, |deadline| {
-            deadline
-                .saturating_duration_since(Instant::now())
-                .min(poll_ceiling)
-        });
-        match command_rx.recv_timeout(wait) {
+        let now = Instant::now();
+        let next_deadline = [stream_publish_due, owner.session_refresh_due]
+            .into_iter()
+            .flatten()
+            .min();
+        match command_rx.try_recv() {
             Ok(RuntimeCommand::Shutdown) => running = false,
             Ok(command) => owner.apply_command(command),
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => running = false,
+            Err(mpsc::TryRecvError::Empty) => match next_deadline {
+                Some(deadline) => thread::park_timeout(deadline.saturating_duration_since(now)),
+                None => thread::park(),
+            },
+            Err(mpsc::TryRecvError::Disconnected) => running = false,
         }
     }
     if let Some(mut process) = owner.process.take() {
@@ -1076,7 +1125,12 @@ impl RuntimeOwner {
             preserve_submission,
         });
         self.publish();
-        match RpcProcess::spawn(&self.process_command, &self.project, session.as_deref()) {
+        match RpcProcess::spawn_with_waker(
+            &self.process_command,
+            &self.project,
+            session.as_deref(),
+            thread::current(),
+        ) {
             Ok(process) => {
                 self.process = Some(process);
                 let snapshot = self.active_snapshot_mut();
@@ -1312,12 +1366,14 @@ impl RuntimeOwner {
         let command = self.process_command.clone();
         let project = self.project.clone();
         let sender = self.title_tx.clone();
+        let wake = thread::current();
         thread::Builder::new()
             .name("pi-gpui-session-title".into())
             .spawn(move || {
                 let result =
                     crate::title_generation::generate(&command, &project, &model, &context);
                 let _ = sender.send(TitleResult { path, result });
+                wake.unpark();
             })
             .ok();
     }
@@ -1383,6 +1439,7 @@ impl RuntimeOwner {
         }
         let generation = self.history_generation;
         let sender = self.history_tx.clone();
+        let wake = thread::current();
         thread::Builder::new()
             .name("pi-gpui-history".into())
             .spawn(move || {
@@ -1393,6 +1450,7 @@ impl RuntimeOwner {
                     project,
                     result,
                 });
+                wake.unpark();
             })
             .ok();
     }
@@ -1432,8 +1490,7 @@ impl RuntimeOwner {
             Ok(history) => history,
             Err(error) => {
                 self.snapshot.status = "Could not load history".into();
-                conversation_mut(&mut self.snapshot)
-                    .push_local_error("History unavailable", error);
+                conversation_mut(&mut self.snapshot).push_local_error("History unavailable", error);
                 self.publish();
                 return;
             }
@@ -1817,6 +1874,17 @@ mod tests {
 
     use super::*;
 
+    fn test_event_channel() -> (SessionEventSender, mpsc::Receiver<RuntimeEvent>) {
+        let (sender, receiver) = mpsc::channel();
+        (
+            SessionEventSender {
+                sender,
+                supervisor: thread::current(),
+            },
+            receiver,
+        )
+    }
+
     fn owner_without_process(
         project: PathBuf,
     ) -> (
@@ -1824,7 +1892,7 @@ mod tests {
         mpsc::Receiver<RuntimeEvent>,
         mpsc::Receiver<DiscoveryResult>,
     ) {
-        let (event_tx, event_rx) = mpsc::channel();
+        let (event_tx, event_rx) = test_event_channel();
         let (discovery_tx, discovery_rx) = mpsc::channel();
         let (history_tx, _history_rx) = mpsc::channel();
         (
@@ -2783,7 +2851,7 @@ mod tests {
 
     #[test]
     fn failed_resume_publishes_no_state_from_the_previous_process() {
-        let (event_tx, event_rx) = mpsc::channel();
+        let (event_tx, event_rx) = test_event_channel();
         let (discovery_tx, _discovery_rx) = mpsc::channel();
         let (history_tx, _history_rx) = mpsc::channel();
         let mut owner = RuntimeOwner {
@@ -2897,7 +2965,7 @@ mod tests {
             direnv_program: None,
         };
         let process = RpcProcess::spawn(&process_command, temp.path(), None)?;
-        let (event_tx, event_rx) = mpsc::channel();
+        let (event_tx, event_rx) = test_event_channel();
         let (discovery_tx, _discovery_rx) = mpsc::channel();
         let (history_tx, _history_rx) = mpsc::channel();
         let old_path = PathBuf::from("/old");
@@ -3064,7 +3132,7 @@ mod tests {
         )
         .map_err(|error| error.to_string())?;
 
-        let (event_tx, event_rx) = mpsc::channel();
+        let (event_tx, event_rx) = test_event_channel();
         let (discovery_tx, _discovery_rx) = mpsc::channel();
         let (history_tx, history_rx) = mpsc::channel();
         let mut owner = RuntimeOwner {
@@ -3132,13 +3200,16 @@ mod tests {
         assert_eq!(visible.live_status, "Working");
         assert_eq!(visible.conversation.items[0].text, "history message");
 
-        assert_eq!(owner.apply_process_item(ProcessItem::Event(json!({
-            "type": "message_start",
-            "message": {
-                "role": "assistant",
-                "content": [{"type": "text", "text": "active output"}]
-            }
-        }))), SnapshotChange::None);
+        assert_eq!(
+            owner.apply_process_item(ProcessItem::Event(json!({
+                "type": "message_start",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "active output"}]
+                }
+            }))),
+            SnapshotChange::None
+        );
 
         assert_eq!(owner.snapshot.conversation.items[0].text, "history message");
         assert!(owner.parked_snapshot.as_ref().is_some_and(|snapshot| {

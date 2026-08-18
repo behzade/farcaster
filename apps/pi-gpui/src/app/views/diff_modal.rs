@@ -162,7 +162,7 @@ impl PiApp {
                         )
                     })
                     .child(render_patch(
-                        self.changes.diff_syntax.as_ref(),
+                        self.changes.diff_syntax.as_deref(),
                         mode,
                         &self.changes.diff_scroll,
                     ))
@@ -186,7 +186,7 @@ impl PiApp {
                             .child(reason.clone()),
                     )
                     .child(render_patch(
-                        self.changes.diff_syntax.as_ref(),
+                        self.changes.diff_syntax.as_deref(),
                         mode,
                         &self.changes.diff_scroll,
                     ))
@@ -204,13 +204,13 @@ fn render_patch(
     let Some(syntax) = syntax else {
         return div().child("Preparing diff…").into_any_element();
     };
-    match mode {
-        FullDiffMode::Unified => scrollable_diff(
+    match (mode, syntax) {
+        (FullDiffMode::Unified, HighlightedDiff::Unified(text)) => scrollable_diff(
             "full-unified-diff",
-            render_diff_document("full-unified", &syntax.unified),
+            render_diff_document("full-unified", text),
             scroll,
         ),
-        FullDiffMode::Split => scrollable_diff(
+        (FullDiffMode::Split, HighlightedDiff::Split { old, new }) => scrollable_diff(
             "full-split-diff",
             div()
                 .w_full()
@@ -223,16 +223,17 @@ fn render_patch(
                         .min_w_0()
                         .border_r(THEME.border)
                         .border_color(THEME.colors.border)
-                        .child(render_diff_document("full-split-old", &syntax.old)),
+                        .child(render_diff_document("full-split-old", old)),
                 )
                 .child(
                     div()
                         .w_1_2()
                         .min_w_0()
-                        .child(render_diff_document("full-split-new", &syntax.new)),
+                        .child(render_diff_document("full-split-new", new)),
                 ),
             scroll,
         ),
+        _ => div().child("Preparing diff…").into_any_element(),
     }
 }
 

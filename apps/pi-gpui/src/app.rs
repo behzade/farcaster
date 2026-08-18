@@ -143,6 +143,7 @@ pub(crate) struct PiApp {
     pending_sheet_setup: bool,
     transcript_list: ListState,
     transcript_rows: Arc<Vec<crate::transcript::TranscriptRow>>,
+    transcript_cache: HashMap<PathBuf, transcript_ui::TranscriptUiCache>,
     transcript_following: bool,
     transcript_unseen: usize,
     pub(crate) transcript_disclosure_states: HashMap<usize, bool>,
@@ -408,6 +409,7 @@ impl PiApp {
             pending_sheet_setup: false,
             transcript_list,
             transcript_rows: Arc::new(Vec::new()),
+            transcript_cache: HashMap::new(),
             transcript_following: true,
             transcript_unseen: 0,
             transcript_disclosure_states: HashMap::new(),
@@ -493,10 +495,14 @@ impl PiApp {
                 } if generation >= self.runtime_generation => {
                     let session_changed = generation > self.runtime_generation;
                     if session_changed {
+                        self.cache_current_transcript();
                         self.reset_session_ui(generation, false);
                         root_dirty = true;
                     }
-                    let next_rows = if session_changed {
+                    let restored = session_changed && self.restore_cached_transcript(&snapshot);
+                    let next_rows = if restored {
+                        self.transcript_rows.as_ref().clone()
+                    } else if session_changed {
                         crate::transcript::project_rows(&snapshot.conversation.items)
                     } else {
                         self.project_transcript_rows(&snapshot)

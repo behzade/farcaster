@@ -1,9 +1,10 @@
 //! Application state for changes retained in Pi session records.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet, VecDeque},
     hash::{Hash, Hasher},
     path::PathBuf,
+    sync::Arc,
     time::SystemTime,
 };
 
@@ -15,10 +16,12 @@ use crate::{
     conversation::{EditDiffFormat, ToolPresentation},
     session_changes::{self, ChangeSet, FileChange, FullDiff},
     sessions::{descendant_sessions, root_session_for_path},
-    syntax_highlight::HighlightedDiff,
+    syntax_highlight::{DiffHighlightMode, HighlightedDiff},
 };
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+const DIFF_HIGHLIGHT_CACHE_BYTES: usize = 8 * 1024 * 1024;
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum FullDiffMode {
     Split,
     Unified,
@@ -80,13 +83,60 @@ impl RefreshGate {
     }
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct DiffHighlightKey {
+    path: String,
+    patch_hash: u64,
+    mode: FullDiffMode,
+}
+
+#[derive(Default)]
+struct DiffHighlightCache {
+    entries: HashMap<DiffHighlightKey, (Arc<HighlightedDiff>, usize)>,
+    order: VecDeque<DiffHighlightKey>,
+    bytes: usize,
+}
+
+impl DiffHighlightCache {
+    fn get(&mut self, key: &DiffHighlightKey) -> Option<Arc<HighlightedDiff>> {
+        let value = self.entries.get(key)?.0.clone();
+        self.order.retain(|candidate| candidate != key);
+        self.order.push_back(key.clone());
+        Some(value)
+    }
+
+    fn insert(&mut self, key: DiffHighlightKey, value: Arc<HighlightedDiff>, bytes: usize) {
+        if bytes > DIFF_HIGHLIGHT_CACHE_BYTES {
+            return;
+        }
+        if let Some((_, previous_bytes)) = self.entries.remove(&key) {
+            self.bytes = self.bytes.saturating_sub(previous_bytes);
+            self.order.retain(|candidate| candidate != &key);
+        }
+        while self.bytes.saturating_add(bytes) > DIFF_HIGHLIGHT_CACHE_BYTES {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            if let Some((_, removed_bytes)) = self.entries.remove(&oldest) {
+                self.bytes = self.bytes.saturating_sub(removed_bytes);
+            }
+        }
+        self.bytes = self.bytes.saturating_add(bytes);
+        self.order.push_back(key.clone());
+        self.entries.insert(key, (value, bytes));
+    }
+}
+
 pub(crate) struct ChangesState {
     pub set: ChangeSet,
     refresh: RefreshGate,
     pub row_focus: HashMap<PathBuf, FocusHandle>,
     pub diff: Option<DiffSurface>,
-    pub diff_syntax: Option<HighlightedDiff>,
+    pub diff_syntax: Option<Arc<HighlightedDiff>>,
     diff_generation: u64,
+    diff_highlights: DiffHighlightCache,
+    diff_highlights_in_flight: HashSet<DiffHighlightKey>,
+    diff_highlight_requested: Option<DiffHighlightKey>,
     pub diff_scroll: ScrollHandle,
     pub diff_focus: FocusHandle,
     pub return_focus: Option<FocusHandle>,
@@ -102,6 +152,9 @@ impl ChangesState {
             diff: None,
             diff_syntax: None,
             diff_generation: 0,
+            diff_highlights: DiffHighlightCache::default(),
+            diff_highlights_in_flight: HashSet::new(),
+            diff_highlight_requested: None,
             diff_scroll: ScrollHandle::new(),
             diff_focus: cx.focus_handle(),
             return_focus: None,
@@ -200,9 +253,9 @@ impl PiApp {
         self.changes.diff_scroll.set_offset(point(px(0.0), px(0.0)));
         let surface = DiffSurface::Ready(file.clone(), file.diff.clone());
         self.changes.diff_syntax = None;
-        self.changes.diff = Some(surface.clone());
+        self.changes.diff = Some(surface);
         self.changes.pending_diff_setup = true;
-        self.start_diff_highlight(&surface, cx);
+        self.ensure_diff_highlight(full_diff_mode(window), cx);
         cx.notify();
     }
 
@@ -231,28 +284,60 @@ impl PiApp {
         self.changes.diff_scroll.set_offset(point(px(0.0), px(0.0)));
         let surface = load_tool_diff_surface(path, presentation);
         self.changes.diff_syntax = None;
-        self.changes.diff = Some(surface.clone());
+        self.changes.diff = Some(surface);
         self.changes.pending_diff_setup = true;
-        self.start_diff_highlight(&surface, cx);
+        self.ensure_diff_highlight(full_diff_mode(window), cx);
         cx.notify();
     }
 
-    fn start_diff_highlight(&mut self, surface: &DiffSurface, cx: &mut Context<Self>) {
+    pub(super) fn ensure_diff_highlight(&mut self, mode: FullDiffMode, cx: &mut Context<Self>) {
+        if self
+            .changes
+            .diff_syntax
+            .as_ref()
+            .is_some_and(|syntax| syntax.mode() == mode.highlight_mode())
+        {
+            return;
+        }
+        let Some(surface) = self.changes.diff.as_ref() else {
+            return;
+        };
         let Some((path, patch)) = surface_diff(surface) else {
             return;
         };
-        let generation = self.changes.diff_generation;
         let path = path.to_string_lossy().into_owned();
         let patch = patch.to_owned();
-        let task = cx.background_spawn(async move { HighlightedDiff::new(&path, &patch) });
+        let key = diff_highlight_key(&path, &patch, mode);
+        self.changes.diff_highlight_requested = Some(key.clone());
+        if let Some(syntax) = self.changes.diff_highlights.get(&key) {
+            self.changes.diff_syntax = Some(syntax);
+            return;
+        }
+        if !self.changes.diff_highlights_in_flight.insert(key.clone()) {
+            return;
+        }
+        let generation = self.changes.diff_generation;
+        let highlight_mode = mode.highlight_mode();
+        let bytes = patch
+            .len()
+            .saturating_mul(if mode == FullDiffMode::Split { 2 } else { 1 });
+        let task = cx.background_spawn(async move {
+            Arc::new(HighlightedDiff::new(&path, &patch, highlight_mode))
+        });
         cx.spawn(async move |weak, cx| {
             let syntax = task.await;
             let _ = weak.update(cx, |this, cx| {
-                if this.changes.diff_generation != generation || this.changes.diff.is_none() {
-                    return;
+                this.changes.diff_highlights_in_flight.remove(&key);
+                this.changes
+                    .diff_highlights
+                    .insert(key.clone(), syntax.clone(), bytes);
+                if this.changes.diff_generation == generation
+                    && this.changes.diff_highlight_requested.as_ref() == Some(&key)
+                    && this.changes.diff.is_some()
+                {
+                    this.changes.diff_syntax = Some(syntax);
+                    cx.notify();
                 }
-                this.changes.diff_syntax = Some(syntax);
-                cx.notify();
             });
         })
         .detach();
@@ -262,6 +347,7 @@ impl PiApp {
         self.changes.diff_generation = self.changes.diff_generation.saturating_add(1);
         self.changes.diff = None;
         self.changes.diff_syntax = None;
+        self.changes.diff_highlight_requested = None;
         self.changes.pending_diff_setup = false;
         self.changes
             .return_focus
@@ -269,6 +355,33 @@ impl PiApp {
             .unwrap_or_else(|| self.composer_focus.clone())
             .focus(window, cx);
         cx.notify();
+    }
+}
+
+impl FullDiffMode {
+    fn highlight_mode(self) -> DiffHighlightMode {
+        match self {
+            Self::Split => DiffHighlightMode::Split,
+            Self::Unified => DiffHighlightMode::Unified,
+        }
+    }
+}
+
+fn full_diff_mode(window: &Window) -> FullDiffMode {
+    if crate::layout::shows_split_diff(window.viewport_size().width - px(64.0)) {
+        FullDiffMode::Split
+    } else {
+        FullDiffMode::Unified
+    }
+}
+
+fn diff_highlight_key(path: &str, patch: &str, mode: FullDiffMode) -> DiffHighlightKey {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    patch.hash(&mut hasher);
+    DiffHighlightKey {
+        path: path.to_owned(),
+        patch_hash: hasher.finish(),
+        mode,
     }
 }
 
@@ -319,8 +432,14 @@ fn load_tool_diff_surface(path: PathBuf, presentation: ToolPresentation) -> Diff
 mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use super::{DiffSurface, RefreshGate, load_tool_diff_surface};
-    use crate::conversation::{EditDiffFormat, ToolPresentation};
+    use super::{
+        DIFF_HIGHLIGHT_CACHE_BYTES, DiffHighlightCache, DiffSurface, FullDiffMode, RefreshGate,
+        diff_highlight_key, load_tool_diff_surface,
+    };
+    use crate::{
+        conversation::{EditDiffFormat, ToolPresentation},
+        syntax_highlight::{HighlightedDiff, HighlightedText},
+    };
     use std::{path::PathBuf, sync::Arc};
 
     fn edit(path: &str, diff: Option<&str>) -> ToolPresentation {
@@ -361,6 +480,30 @@ mod tests {
         };
         assert!(diff.patch.contains("+retained"));
         assert!(reason.contains("no completed tool-result patch"));
+    }
+
+    #[test]
+    fn diff_highlight_cache_is_mode_specific_and_bounded() {
+        let mut cache = DiffHighlightCache::default();
+        let unified = diff_highlight_key("file.rs", "patch", FullDiffMode::Unified);
+        let split = diff_highlight_key("file.rs", "patch", FullDiffMode::Split);
+        cache.insert(
+            unified.clone(),
+            Arc::new(HighlightedDiff::Unified(HighlightedText::plain("patch"))),
+            DIFF_HIGHLIGHT_CACHE_BYTES / 2,
+        );
+        cache.insert(
+            split.clone(),
+            Arc::new(HighlightedDiff::Split {
+                old: HighlightedText::plain("old"),
+                new: HighlightedText::plain("new"),
+            }),
+            DIFF_HIGHLIGHT_CACHE_BYTES / 2 + 1,
+        );
+
+        assert!(cache.get(&unified).is_none());
+        assert!(cache.get(&split).is_some());
+        assert!(cache.bytes <= DIFF_HIGHLIGHT_CACHE_BYTES);
     }
 
     #[test]

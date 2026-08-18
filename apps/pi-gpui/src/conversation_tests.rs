@@ -110,6 +110,35 @@ fn deferred_streaming_projects_only_when_the_frame_flushes() {
 }
 
 #[test]
+fn long_streams_freeze_chunks_and_keep_only_a_bounded_mutable_tail() {
+    let mut state = ConversationState::default();
+    state.reduce(&json!({"type":"message_start","message":{"role":"assistant","content":[]}}));
+    let source = "abcdefghij".repeat(1_200);
+    for part in source.as_bytes().chunks(97) {
+        let delta = std::str::from_utf8(part).expect("ASCII fixture");
+        state.reduce_deferred(&json!({
+            "type":"message_update",
+            "assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":delta}
+        }));
+    }
+    state.flush_live_projection();
+
+    let item = &state.items[0];
+    assert!(item.text.len() <= STREAM_TAIL_MAX_BYTES);
+    assert!(!item.stream_chunks.is_empty());
+    assert_eq!(item.complete_text(), source);
+    let completed = item.stream_chunks[0].clone();
+
+    state.reduce_deferred(&json!({
+        "type":"message_update",
+        "assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"tail"}
+    }));
+    state.flush_live_projection();
+    assert!(Arc::ptr_eq(&completed, &state.items[0].stream_chunks[0]));
+    assert_eq!(state.items[0].complete_text(), format!("{source}tail"));
+}
+
+#[test]
 fn authoritative_end_replaces_all_partial_blocks_without_duplicate() {
     let mut state = ConversationState::default();
     state.reduce(&json!({"type":"message_start","message":{"role":"assistant","content":[]}}));

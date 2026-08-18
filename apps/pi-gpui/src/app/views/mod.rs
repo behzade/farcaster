@@ -104,6 +104,14 @@ impl Render for PiApp {
         }
         let viewport = window.viewport_size();
         let mode = layout_mode(viewport.width);
+        let full_diff_mode = if crate::layout::shows_split_diff(viewport.width - gpui::px(64.0)) {
+            crate::app::changes::FullDiffMode::Split
+        } else {
+            crate::app::changes::FullDiffMode::Unified
+        };
+        if self.changes.diff.is_some() {
+            self.ensure_diff_highlight(full_diff_mode, cx);
+        }
         let entity = cx.entity().downgrade();
         let main = div()
             .relative()
@@ -352,15 +360,7 @@ impl Render for PiApp {
                             .h_full()
                             .max_h(gpui::relative(1.0))
                             .overflow_hidden()
-                            .child(self.render_diff_modal(
-                                entity.clone(),
-                                if crate::layout::shows_split_diff(viewport.width - gpui::px(64.0))
-                                {
-                                    crate::app::changes::FullDiffMode::Split
-                                } else {
-                                    crate::app::changes::FullDiffMode::Unified
-                                },
-                            ))
+                            .child(self.render_diff_modal(entity.clone(), full_diff_mode))
                             .focus_trap("full-diff-trap", &self.changes.diff_focus),
                     ),
                 )

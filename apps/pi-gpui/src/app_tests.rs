@@ -11,6 +11,7 @@ fn item(text: &str) -> TranscriptItem {
         kind: TranscriptKind::Assistant,
         label: "Pi".into(),
         text: text.into(),
+        stream_chunks: Arc::default(),
         streaming: false,
         is_error: false,
         tool_call_id: None,

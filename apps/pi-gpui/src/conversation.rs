@@ -8,6 +8,8 @@ use std::{
 use serde_json::Value;
 
 const MAX_DIAGNOSTICS: usize = 32;
+const STREAM_CHUNK_BYTES: usize = 2 * 1024;
+const STREAM_TAIL_MAX_BYTES: usize = STREAM_CHUNK_BYTES;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TranscriptKind {
@@ -75,11 +77,32 @@ pub(crate) struct TranscriptItem {
     pub kind: TranscriptKind,
     pub label: String,
     pub text: String,
+    pub stream_chunks: Arc<Vec<Arc<str>>>,
     pub streaming: bool,
     pub is_error: bool,
     pub tool_call_id: Option<String>,
     pub tool_output: String,
     pub tool_presentation: Option<ToolPresentation>,
+}
+
+impl TranscriptItem {
+    pub(crate) fn complete_text(&self) -> String {
+        if self.stream_chunks.is_empty() {
+            return self.text.clone();
+        }
+        let mut text = String::with_capacity(
+            self.stream_chunks
+                .iter()
+                .map(|chunk| chunk.len())
+                .sum::<usize>()
+                + self.text.len(),
+        );
+        for chunk in self.stream_chunks.iter() {
+            text.push_str(chunk);
+        }
+        text.push_str(&self.text);
+        text
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -118,6 +141,7 @@ struct PartialContent {
     kind: PartialKind,
     label: String,
     value: String,
+    chunks: Arc<Vec<Arc<str>>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -138,6 +162,7 @@ impl ConversationState {
             kind: TranscriptKind::User,
             label: String::new(),
             text: user_message_text(&message, image_count),
+            stream_chunks: Arc::default(),
             streaming: false,
             is_error: false,
             tool_call_id: None,
@@ -303,6 +328,7 @@ impl ConversationState {
             kind: TranscriptKind::Error,
             label: "Connection error".into(),
             text: message,
+            stream_chunks: Arc::default(),
             streaming: false,
             is_error: true,
             tool_call_id: None,
@@ -316,6 +342,7 @@ impl ConversationState {
             kind: TranscriptKind::Error,
             label: "Extension error".into(),
             text: message,
+            stream_chunks: Arc::default(),
             streaming: false,
             is_error: true,
             tool_call_id: None,
@@ -329,6 +356,7 @@ impl ConversationState {
             kind: TranscriptKind::Error,
             label: label.into(),
             text: message,
+            stream_chunks: Arc::default(),
             streaming: false,
             is_error: true,
             tool_call_id: None,
@@ -470,6 +498,7 @@ impl ConversationState {
             }
             .into(),
             text: partial.value.clone(),
+            stream_chunks: partial.chunks.clone(),
             streaming: true,
             is_error: false,
             tool_call_id: None,
@@ -555,6 +584,7 @@ impl ConversationState {
             kind: TranscriptKind::Tool,
             label: display_tool_name(&name),
             text: args,
+            stream_chunks: Arc::default(),
             streaming: true,
             is_error: false,
             tool_call_id: Some(id.clone()),
@@ -598,6 +628,7 @@ impl ConversationState {
             kind: TranscriptKind::Notice,
             label: "Run".into(),
             text,
+            stream_chunks: Arc::default(),
             streaming: false,
             is_error: false,
             tool_call_id: None,
@@ -618,6 +649,7 @@ fn reset_partial(partial: &mut PartialContent, kind: PartialKind) {
     partial.kind = kind;
     partial.label.clear();
     partial.value.clear();
+    partial.chunks = Arc::default();
 }
 
 fn append_delta(partial: &mut PartialContent, delta: &Value) {
@@ -627,14 +659,33 @@ fn append_delta(partial: &mut PartialContent, delta: &Value) {
             .and_then(Value::as_str)
             .unwrap_or_default(),
     );
+    if matches!(partial.kind, PartialKind::Text | PartialKind::Thinking) {
+        freeze_stream_chunks(partial);
+    }
+}
+
+fn freeze_stream_chunks(partial: &mut PartialContent) {
+    while partial.value.len() > STREAM_TAIL_MAX_BYTES {
+        let mut split = STREAM_CHUNK_BYTES.min(partial.value.len());
+        while !partial.value.is_char_boundary(split) {
+            split -= 1;
+        }
+        if let Some(newline) = partial.value[..split].rfind('\n')
+            && newline > STREAM_CHUNK_BYTES / 2
+        {
+            split = newline + 1;
+        }
+        let chunk = partial.value[..split].to_owned();
+        partial.value.drain(..split);
+        Arc::make_mut(&mut partial.chunks).push(Arc::from(chunk));
+    }
 }
 
 fn finish_content(partial: &mut PartialContent, delta: &Value) {
-    partial.value = delta
-        .get("content")
-        .and_then(Value::as_str)
-        .unwrap_or(&partial.value)
-        .to_owned();
+    if let Some(content) = delta.get("content").and_then(Value::as_str) {
+        partial.value = content.to_owned();
+        partial.chunks = Arc::default();
+    }
 }
 
 fn cache_hit_rate(message: &Value) -> Option<f64> {
@@ -691,6 +742,7 @@ fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
                             },
                             label,
                             text,
+                            stream_chunks: Arc::default(),
                             streaming: false,
                             is_error,
                             tool_call_id: block
@@ -719,6 +771,7 @@ fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
                 kind: TranscriptKind::Error,
                 label: "Model error".into(),
                 text: error.to_owned(),
+                stream_chunks: Arc::default(),
                 streaming: false,
                 is_error: true,
                 tool_call_id: None,
@@ -762,6 +815,7 @@ fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
         },
         label,
         text: message_text(message),
+        stream_chunks: Arc::default(),
         streaming: false,
         is_error,
         tool_call_id: message

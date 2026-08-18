@@ -93,21 +93,40 @@ pub(crate) fn highlight(text: String, language: &str) -> HighlightedText {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum DiffHighlightMode {
+    Unified,
+    Split,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct HighlightedDiff {
-    pub(crate) unified: HighlightedText,
-    pub(crate) old: HighlightedText,
-    pub(crate) new: HighlightedText,
+pub(crate) enum HighlightedDiff {
+    Unified(HighlightedText),
+    Split {
+        old: HighlightedText,
+        new: HighlightedText,
+    },
 }
 
 impl HighlightedDiff {
-    pub(crate) fn new(path: &str, patch: &str) -> Self {
+    pub(crate) fn new(path: &str, patch: &str, mode: DiffHighlightMode) -> Self {
         let language = language_for_path(path);
-        let (old, new) = split_patch(patch);
-        Self {
-            unified: highlight(patch.to_owned(), &language),
-            old: highlight(old, &language),
-            new: highlight(new, &language),
+        match mode {
+            DiffHighlightMode::Unified => Self::Unified(highlight(patch.to_owned(), &language)),
+            DiffHighlightMode::Split => {
+                let (old, new) = split_patch(patch);
+                Self::Split {
+                    old: highlight(old, &language),
+                    new: highlight(new, &language),
+                }
+            }
+        }
+    }
+
+    pub(crate) fn mode(&self) -> DiffHighlightMode {
+        match self {
+            Self::Unified(_) => DiffHighlightMode::Unified,
+            Self::Split { .. } => DiffHighlightMode::Split,
         }
     }
 }

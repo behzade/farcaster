@@ -54,6 +54,13 @@ pub(crate) enum TranscriptRow {
         first: bool,
         last: bool,
     },
+    StreamChunk {
+        index: usize,
+        chunk: usize,
+        revision: usize,
+        first: bool,
+        last: bool,
+    },
     ReadGroup {
         start: usize,
         len: usize,
@@ -91,6 +98,22 @@ impl TranscriptRow {
                     && left_first == right_first
             }
             (
+                Self::StreamChunk {
+                    index: left_index,
+                    chunk: left_chunk,
+                    first: left_first,
+                    ..
+                },
+                Self::StreamChunk {
+                    index: right_index,
+                    chunk: right_chunk,
+                    first: right_first,
+                    ..
+                },
+            ) => {
+                left_index == right_index && left_chunk == right_chunk && left_first == right_first
+            }
+            (
                 Self::ReadGroup {
                     start: left_start,
                     len: left_len,
@@ -108,14 +131,18 @@ impl TranscriptRow {
 
     fn item_start(&self) -> usize {
         match self {
-            Self::Item { index, .. } | Self::MessageChunk { index, .. } => *index,
+            Self::Item { index, .. }
+            | Self::MessageChunk { index, .. }
+            | Self::StreamChunk { index, .. } => *index,
             Self::ReadGroup { start, .. } => *start,
         }
     }
 
     fn item_end(&self) -> usize {
         match self {
-            Self::Item { index, .. } | Self::MessageChunk { index, .. } => index + 1,
+            Self::Item { index, .. }
+            | Self::MessageChunk { index, .. }
+            | Self::StreamChunk { index, .. } => index + 1,
             Self::ReadGroup { start, len, .. } => start + len,
         }
     }
@@ -199,7 +226,23 @@ fn project_rows_from(items: &[Arc<TranscriptItem>], mut index: usize) -> Vec<Tra
             });
             continue;
         }
-        if items[index].kind == TranscriptKind::Assistant
+        if items[index].kind == TranscriptKind::Assistant && items[index].streaming {
+            let chunk_count =
+                items[index].stream_chunks.len() + usize::from(!items[index].text.is_empty());
+            rows.extend((0..chunk_count).map(|chunk| {
+                let text = items[index]
+                    .stream_chunks
+                    .get(chunk)
+                    .map_or(items[index].text.as_str(), |chunk| chunk.as_ref());
+                TranscriptRow::StreamChunk {
+                    index,
+                    chunk,
+                    revision: text_revision(text),
+                    first: chunk == 0,
+                    last: chunk + 1 == chunk_count,
+                }
+            }));
+        } else if items[index].kind == TranscriptKind::Assistant
             && (items[index].text.len() > MARKDOWN_CHUNK_HARD_BYTES
                 || (items[index].streaming
                     && items[index].text.len() > MARKDOWN_CHUNK_TARGET_BYTES))
@@ -330,7 +373,9 @@ fn resolved_expanded(
 fn message_follows_tool(row: TranscriptRow, items: &[Arc<TranscriptItem>]) -> bool {
     let is_first_assistant_row = match row {
         TranscriptRow::Item { index, .. } => items[index].kind == TranscriptKind::Assistant,
-        TranscriptRow::MessageChunk { first, .. } => first,
+        TranscriptRow::MessageChunk { first, .. } | TranscriptRow::StreamChunk { first, .. } => {
+            first
+        }
         TranscriptRow::ReadGroup { .. } => false,
     };
     is_first_assistant_row
@@ -437,7 +482,7 @@ fn latest_allows_tail_reserve(
     expanded: bool,
 ) -> bool {
     match row {
-        TranscriptRow::MessageChunk { .. } => true,
+        TranscriptRow::MessageChunk { .. } | TranscriptRow::StreamChunk { .. } => true,
         TranscriptRow::Item { index, .. } => {
             !expanded
                 || !matches!(
@@ -479,6 +524,19 @@ fn render_row(
             last,
             follows_tool,
         ),
+        TranscriptRow::StreamChunk {
+            index,
+            chunk,
+            first,
+            last,
+            ..
+        } => {
+            let text = items[index]
+                .stream_chunks
+                .get(chunk)
+                .map_or(items[index].text.as_str(), |chunk| chunk.as_ref());
+            render_message_chunk(key, chunk, &items[index], text, first, last, follows_tool)
+        }
         TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Tool => {
             render_tool(key, &items[index], expanded, diff_mode, entity)
         }
@@ -571,9 +629,15 @@ fn render_thinking(
     entity: WeakEntity<PiApp>,
 ) -> AnyElement {
     let body = if expanded {
-        item.text.clone()
+        item.complete_text()
     } else {
-        item.text.lines().next().unwrap_or("Thinking…").to_owned()
+        item.stream_chunks
+            .first()
+            .map_or(item.text.as_str(), |chunk| chunk.as_ref())
+            .lines()
+            .next()
+            .unwrap_or("Thinking…")
+            .to_owned()
     };
     div()
         .id(("thinking-row", key))

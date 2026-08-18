@@ -5,6 +5,7 @@ fn item(kind: TranscriptKind, label: &str, text: &str) -> Arc<TranscriptItem> {
         kind,
         label: label.into(),
         text: text.into(),
+        stream_chunks: Arc::default(),
         streaming: false,
         is_error: false,
         tool_call_id: None,

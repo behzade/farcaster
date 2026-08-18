@@ -1,13 +1,79 @@
 //! Cached transcript projection and long-session UI synchronization.
 
-use std::sync::Arc;
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
-use gpui::{Context, FollowMode};
+use gpui::{Context, FollowMode, ListOffset};
 
 use super::{PiApp, transcript_splice};
-use crate::{conversation::TranscriptKind, transcript::TranscriptRow};
+const MAX_TRANSCRIPT_CACHE_ENTRIES: usize = 16;
+
+use crate::{
+    conversation::{ConversationState, TranscriptKind},
+    transcript::TranscriptRow,
+};
+
+#[derive(Clone)]
+pub(super) struct TranscriptUiCache {
+    rows: Arc<Vec<TranscriptRow>>,
+    conversation: Arc<ConversationState>,
+    scroll: ListOffset,
+    following: bool,
+    unseen: usize,
+    disclosures: HashMap<usize, bool>,
+}
 
 impl PiApp {
+    pub(super) fn cache_current_transcript(&mut self) {
+        let Some(path) = transcript_session_path(&self.snapshot) else {
+            return;
+        };
+        if !self.transcript_cache.contains_key(&path)
+            && self.transcript_cache.len() >= MAX_TRANSCRIPT_CACHE_ENTRIES
+            && let Some(oldest) = self.transcript_cache.keys().next().cloned()
+        {
+            self.transcript_cache.remove(&oldest);
+        }
+        self.transcript_cache.insert(
+            path,
+            TranscriptUiCache {
+                rows: self.transcript_rows.clone(),
+                conversation: self.snapshot.conversation.clone(),
+                scroll: self.transcript_list.logical_scroll_top(),
+                following: self.transcript_list.is_following_tail(),
+                unseen: self.transcript_unseen,
+                disclosures: self.transcript_disclosure_states.clone(),
+            },
+        );
+    }
+
+    pub(super) fn restore_cached_transcript(
+        &mut self,
+        snapshot: &crate::runtime::RuntimeSnapshot,
+    ) -> bool {
+        let Some(path) = transcript_session_path(snapshot) else {
+            return false;
+        };
+        let Some(cached) = self.transcript_cache.get(&path).cloned() else {
+            return false;
+        };
+        if !cache_matches_snapshot(&cached, snapshot) {
+            return false;
+        }
+        self.transcript_list.reset(cached.rows.len());
+        self.transcript_rows = cached.rows;
+        self.transcript_disclosure_states = cached.disclosures;
+        self.transcript_unseen = cached.unseen;
+        self.last_transcript_count = self.transcript_rows.len();
+        self.transcript_following = cached.following;
+        self.transcript_list.set_follow_mode(FollowMode::Tail);
+        if cached.following {
+            self.transcript_list.scroll_to_end();
+        } else {
+            self.transcript_list.scroll_to(cached.scroll);
+        }
+        true
+    }
+
     pub(super) fn project_transcript_rows(
         &self,
         snapshot: &crate::runtime::RuntimeSnapshot,
@@ -120,5 +186,42 @@ impl PiApp {
         let rows = crate::transcript::project_rows(&self.snapshot.conversation.items);
         self.transcript_list.reset(rows.len());
         self.transcript_rows = Arc::new(rows);
+    }
+}
+
+fn cache_matches_snapshot(
+    cached: &TranscriptUiCache,
+    snapshot: &crate::runtime::RuntimeSnapshot,
+) -> bool {
+    Arc::ptr_eq(&cached.conversation, &snapshot.conversation)
+}
+
+fn transcript_session_path(snapshot: &crate::runtime::RuntimeSnapshot) -> Option<PathBuf> {
+    snapshot
+        .selected_session
+        .clone()
+        .or_else(|| snapshot.live_session.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cached_rows_are_reused_only_for_the_same_conversation_revision() {
+        let snapshot = crate::runtime::RuntimeSnapshot::default();
+        let cached = TranscriptUiCache {
+            rows: Arc::default(),
+            conversation: snapshot.conversation.clone(),
+            scroll: ListOffset::default(),
+            following: true,
+            unseen: 0,
+            disclosures: HashMap::new(),
+        };
+        assert!(cache_matches_snapshot(&cached, &snapshot));
+
+        let mut changed = snapshot.clone();
+        Arc::make_mut(&mut changed.conversation).push_local_user("changed".into(), 0);
+        assert!(!cache_matches_snapshot(&cached, &changed));
     }
 }

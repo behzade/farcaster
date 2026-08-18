@@ -71,6 +71,22 @@ pub(crate) enum ProcessItem {
     Failure(String),
 }
 
+#[derive(Clone)]
+struct ReaderSender {
+    sender: mpsc::Sender<ReaderItem>,
+    wake: Option<thread::Thread>,
+}
+
+impl ReaderSender {
+    fn send(&self, item: ReaderItem) -> Result<(), ()> {
+        self.sender.send(item).map_err(|_| ())?;
+        if let Some(wake) = &self.wake {
+            wake.unpark();
+        }
+        Ok(())
+    }
+}
+
 enum ReaderItem {
     Wire(Result<WireMessage, String>),
     Stderr(String),
@@ -93,6 +109,24 @@ impl RpcProcess {
         command: &ProcessCommand,
         project: &Path,
         session: Option<&Path>,
+    ) -> Result<Self, String> {
+        Self::spawn_inner(command, project, session, None)
+    }
+
+    pub(crate) fn spawn_with_waker(
+        command: &ProcessCommand,
+        project: &Path,
+        session: Option<&Path>,
+        wake: thread::Thread,
+    ) -> Result<Self, String> {
+        Self::spawn_inner(command, project, session, Some(wake))
+    }
+
+    fn spawn_inner(
+        command: &ProcessCommand,
+        project: &Path,
+        session: Option<&Path>,
+        wake: Option<thread::Thread>,
     ) -> Result<Self, String> {
         let mut process = command.command(project);
         process
@@ -128,6 +162,7 @@ impl RpcProcess {
             .ok_or_else(|| "Pi stderr was not piped".to_owned())?;
         let child = Arc::new(Mutex::new(child));
         let (sender, incoming) = mpsc::channel();
+        let sender = ReaderSender { sender, wake };
         spawn_stdout_reader(stdout, sender.clone());
         spawn_stderr_reader(stderr, sender);
         let mut rpc = Self {
@@ -430,10 +465,7 @@ impl Drop for RpcProcess {
     }
 }
 
-fn spawn_stdout_reader(
-    mut stdout: impl std::io::Read + Send + 'static,
-    sender: mpsc::Sender<ReaderItem>,
-) {
+fn spawn_stdout_reader(mut stdout: impl std::io::Read + Send + 'static, sender: ReaderSender) {
     thread::Builder::new()
         .name("pi-gpui-stdout".into())
         .spawn(move || {
@@ -464,10 +496,7 @@ fn spawn_stdout_reader(
         .ok();
 }
 
-fn spawn_stderr_reader(
-    mut stderr: impl std::io::Read + Send + 'static,
-    sender: mpsc::Sender<ReaderItem>,
-) {
+fn spawn_stderr_reader(mut stderr: impl std::io::Read + Send + 'static, sender: ReaderSender) {
     thread::Builder::new()
         .name("pi-gpui-stderr".into())
         .spawn(move || {

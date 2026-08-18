@@ -54,6 +54,7 @@ impl RuntimeOwner {
         self.session_discovery_in_flight = true;
         let generation = self.session_generation;
         let sender = self.discovery_tx.clone();
+        let wake = thread::current();
         if let Err(error) = thread::Builder::new()
             .name("pi-gpui-active-sessions".into())
             .spawn(move || {
@@ -61,6 +62,7 @@ impl RuntimeOwner {
                     generation,
                     result: discover_paths(&paths),
                 });
+                wake.unpark();
             })
         {
             self.session_discovery_in_flight = false;
@@ -87,6 +89,7 @@ impl RuntimeOwner {
         self.session_discovery_in_flight = true;
         let generation = self.session_generation;
         let sender = self.discovery_tx.clone();
+        let wake = thread::current();
         if let Err(error) = thread::Builder::new()
             .name("pi-gpui-sessions".into())
             .spawn(move || {
@@ -94,6 +97,7 @@ impl RuntimeOwner {
                     generation,
                     result: discover(""),
                 });
+                wake.unpark();
             })
         {
             self.session_discovery_in_flight = false;
