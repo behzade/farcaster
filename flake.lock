@@ -15,6 +15,26 @@
         "type": "github"
       }
     },
+    "guardian": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1787062728,
+        "narHash": "sha256-CDJHDqkbACcU7VDuhVEWHeRfCBH5uHeKz1QvFMoGbF8=",
+        "owner": "behzade",
+        "repo": "pi-guardian",
+        "rev": "a1f529cd6ff6b6520dad0879e4cf223732833c6e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "behzade",
+        "repo": "pi-guardian",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1784856561,
@@ -34,6 +54,7 @@
     "root": {
       "inputs": {
         "crane": "crane",
+        "guardian": "guardian",
         "nixpkgs": "nixpkgs"
       }
     }

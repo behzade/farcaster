@@ -14,6 +14,12 @@
       "scope": "tree"
     },
     {
+      "kind": "filesystem",
+      "access": "write",
+      "path": "~/Projects/personal/pi-guardian",
+      "scope": "tree"
+    },
+    {
       "kind": "network_local"
     }
   ]
