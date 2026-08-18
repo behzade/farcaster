@@ -2,16 +2,124 @@ use gpui::{
     Entity, InteractiveElement as _, IntoElement, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, div, prelude::FluentBuilder as _, px,
 };
+use gpui_component::input::{Input, InputState, Textarea, TextareaState};
 
 use super::{
     adapter::WorkGraphBoardView,
     contract::{IssueGroup, IssueRow},
     core::format_relative_issue_time,
+    layout::{BoardLayoutMode, issue_detail_shell},
 };
 use crate::{
     primitives::{ButtonTone, button},
     theme::THEME,
 };
+
+pub(super) fn render_create(
+    title: &Entity<InputState>,
+    body: &Entity<TextareaState>,
+    entity: Entity<WorkGraphBoardView>,
+    layout: BoardLayoutMode,
+) -> impl IntoElement {
+    let submit_title = title.clone();
+    let submit_body = body.clone();
+    let submit = entity.clone();
+    let cancel = entity;
+    let narrow = issue_detail_shell(layout).shows_sheet(false);
+    div()
+        .id("workgraph-create")
+        .w(px(400.0))
+        .min_w(px(360.0))
+        .when(narrow, |form| form.w_full().min_w_0())
+        .flex_none()
+        .h_full()
+        .overflow_y_scroll()
+        .p(THEME.space.md)
+        .bg(THEME.colors.panel)
+        .border_l(THEME.border)
+        .border_color(THEME.colors.border)
+        .flex()
+        .flex_col()
+        .gap(THEME.space.md)
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(THEME.space.xs)
+                .child(
+                    div()
+                        .text_size(THEME.type_scale.caption)
+                        .text_color(THEME.colors.subtle)
+                        .child("NEW ISSUE"),
+                )
+                .child(
+                    div()
+                        .text_size(THEME.type_scale.display)
+                        .text_color(THEME.colors.text)
+                        .child("Record concrete project work"),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(THEME.space.xs)
+                .child(
+                    div()
+                        .text_size(THEME.type_scale.caption)
+                        .text_color(THEME.colors.subtle)
+                        .child("TITLE"),
+                )
+                .child(Input::new(title).w_full()),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(THEME.space.xs)
+                .child(
+                    div()
+                        .text_size(THEME.type_scale.caption)
+                        .text_color(THEME.colors.subtle)
+                        .child("DESCRIPTION"),
+                )
+                .child(Textarea::new(body).w_full()),
+        )
+        .child(
+            div()
+                .flex()
+                .gap(THEME.space.xs)
+                .child(button(
+                    "workgraph-create-submit",
+                    "Create issue",
+                    ButtonTone::Neutral,
+                    true,
+                    move |window, cx| {
+                        let title = submit_title.read(cx).value().trim().to_owned();
+                        if title.is_empty() {
+                            return;
+                        }
+                        let body = submit_body.read(cx).value().trim().to_owned();
+                        submit_title.update(cx, |input, cx| {
+                            input.set_value(String::new(), window, cx);
+                        });
+                        submit_body.update(cx, |input, cx| {
+                            input.set_value(String::new(), window, cx);
+                        });
+                        submit.update(cx, |this, cx| this.create_issue(title, body, cx));
+                    },
+                ))
+                .child(button(
+                    "workgraph-create-cancel",
+                    "Cancel",
+                    ButtonTone::Quiet,
+                    true,
+                    move |_, cx| {
+                        cancel.update(cx, |this, cx| this.clear_selection(cx));
+                    },
+                )),
+        )
+}
 
 pub(super) fn related_issue_section(
     label: &'static str,

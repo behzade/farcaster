@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use super::{
     components::{
-        dependency_issue_section, detail_section, related_issue_section, render_graph_row,
-        render_group, status_color,
+        dependency_issue_section, detail_section, related_issue_section, render_create,
+        render_graph_row, render_group, status_color,
     },
     contract::{BoardData, BoardFilter, BoardLoadState, BoardMode, IssueGroup},
     core::{filter_count, matching_project_groups},
@@ -129,7 +129,7 @@ impl WorkGraphBoardView {
         cx.notify();
     }
 
-    fn clear_selection(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn clear_selection(&mut self, cx: &mut Context<Self>) {
         self.creating = false;
         self.selected = None;
         cx.notify();
@@ -141,7 +141,7 @@ impl WorkGraphBoardView {
         cx.notify();
     }
 
-    fn create_issue(&mut self, title: String, body: String, cx: &mut Context<Self>) {
+    pub(super) fn create_issue(&mut self, title: String, body: String, cx: &mut Context<Self>) {
         let database = self.database.clone();
         let project = self.project.clone();
         let edit = cx.background_spawn(async move { create_issue(database, project, title, body) });
@@ -365,112 +365,6 @@ impl WorkGraphBoardView {
                     .collect::<Vec<_>>();
                 render_graph_row(issue, dependency_titles, self.selected, entity.clone())
             }))
-    }
-
-    fn render_create(&self, entity: Entity<Self>, layout: BoardLayoutMode) -> impl IntoElement {
-        let title = self
-            .create_title
-            .as_ref()
-            .expect("create title initialized");
-        let body = self.create_body.as_ref().expect("create body initialized");
-        let submit_title = title.clone();
-        let submit_body = body.clone();
-        let submit = entity.clone();
-        let cancel = entity;
-        let narrow = issue_detail_shell(layout).shows_sheet(false);
-        div()
-            .id("workgraph-create")
-            .w(px(400.0))
-            .min_w(px(360.0))
-            .when(narrow, |form| form.w_full().min_w_0())
-            .flex_none()
-            .h_full()
-            .overflow_y_scroll()
-            .p(THEME.space.md)
-            .bg(THEME.colors.panel)
-            .border_l(THEME.border)
-            .border_color(THEME.colors.border)
-            .flex()
-            .flex_col()
-            .gap(THEME.space.md)
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(THEME.space.xs)
-                    .child(
-                        div()
-                            .text_size(THEME.type_scale.caption)
-                            .text_color(THEME.colors.subtle)
-                            .child("NEW ISSUE"),
-                    )
-                    .child(
-                        div()
-                            .text_size(THEME.type_scale.display)
-                            .text_color(THEME.colors.text)
-                            .child("Record concrete project work"),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(THEME.space.xs)
-                    .child(
-                        div()
-                            .text_size(THEME.type_scale.caption)
-                            .text_color(THEME.colors.subtle)
-                            .child("TITLE"),
-                    )
-                    .child(Input::new(title).w_full()),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(THEME.space.xs)
-                    .child(
-                        div()
-                            .text_size(THEME.type_scale.caption)
-                            .text_color(THEME.colors.subtle)
-                            .child("DESCRIPTION"),
-                    )
-                    .child(Textarea::new(body).w_full()),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap(THEME.space.xs)
-                    .child(button(
-                        "workgraph-create-submit",
-                        "Create issue",
-                        ButtonTone::Neutral,
-                        true,
-                        move |window, cx| {
-                            let title = submit_title.read(cx).value().trim().to_owned();
-                            if title.is_empty() {
-                                return;
-                            }
-                            let body = submit_body.read(cx).value().trim().to_owned();
-                            submit_title.update(cx, |input, cx| {
-                                input.set_value(String::new(), window, cx);
-                            });
-                            submit_body.update(cx, |input, cx| {
-                                input.set_value(String::new(), window, cx);
-                            });
-                            submit.update(cx, |this, cx| this.create_issue(title, body, cx));
-                        },
-                    ))
-                    .child(button(
-                        "workgraph-create-cancel",
-                        "Cancel",
-                        ButtonTone::Quiet,
-                        true,
-                        move |_, cx| {
-                            cancel.update(cx, |this, cx| this.clear_selection(cx));
-                        },
-                    )),
-            )
     }
 
     fn render_detail(
@@ -981,7 +875,12 @@ impl Render for WorkGraphBoardView {
                                     },
                                 )
                                 .when(self.creating, |board| {
-                                    board.child(self.render_create(entity.clone(), layout))
+                                    board.child(render_create(
+                                        self.create_title.as_ref().expect("create title initialized"),
+                                        self.create_body.as_ref().expect("create body initialized"),
+                                        entity.clone(),
+                                        layout,
+                                    ))
                                 })
                                 .when(
                                     !self.creating
