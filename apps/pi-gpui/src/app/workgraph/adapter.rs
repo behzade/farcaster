@@ -16,6 +16,7 @@ use workgraph::{
 use super::{
     contract::{BoardData, BoardFilter, BoardLoadState, BoardMode, IssueGroup, IssueRow},
     core::{filter_count, project_groups},
+    layout::{BoardLayoutMode, board_layout_mode, issue_detail_shell},
 };
 use crate::{
     primitives::{ButtonTone, FeedbackTone, button, feedback},
@@ -105,6 +106,11 @@ impl WorkGraphBoardView {
 
     fn select_issue(&mut self, number: u64, cx: &mut Context<Self>) {
         self.selected = Some(number);
+        cx.notify();
+    }
+
+    fn clear_selection(&mut self, cx: &mut Context<Self>) {
+        self.selected = None;
         cx.notify();
     }
 
@@ -255,14 +261,21 @@ impl WorkGraphBoardView {
             }))
     }
 
-    fn render_detail(&self, entity: Entity<Self>, data: &BoardData) -> impl IntoElement {
+    fn render_detail(
+        &self,
+        entity: Entity<Self>,
+        data: &BoardData,
+        layout: BoardLayoutMode,
+    ) -> impl IntoElement {
         let issue = self
             .selected
             .and_then(|number| data.issues.iter().find(|issue| issue.number == number));
+        let narrow = issue_detail_shell(layout).shows_sheet(false);
         div()
             .id("workgraph-issue-detail")
             .w(px(400.0))
             .min_w(px(360.0))
+            .when(narrow, |detail| detail.w_full().min_w_0())
             .flex_none()
             .h_full()
             .overflow_y_scroll()
@@ -360,10 +373,22 @@ impl WorkGraphBoardView {
                             },
                         )
                     });
+                    let back = entity.clone();
                     div()
                         .flex()
                         .flex_col()
                         .gap(THEME.space.md)
+                        .when(narrow, |detail| {
+                            detail.child(button(
+                                "workgraph-detail-back",
+                                "Back to issues",
+                                ButtonTone::Quiet,
+                                true,
+                                move |_, cx| {
+                                    back.update(cx, |this, cx| this.clear_selection(cx));
+                                },
+                            ))
+                        })
                         .child(
                             div()
                                 .flex()
@@ -473,8 +498,9 @@ impl WorkGraphBoardView {
 }
 
 impl Render for WorkGraphBoardView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let entity = cx.entity();
+        let layout = board_layout_mode(window.viewport_size().width);
         div()
             .size_full()
             .min_h_0()
@@ -584,21 +610,34 @@ impl Render for WorkGraphBoardView {
                                 .flex_1()
                                 .min_h_0()
                                 .flex()
-                                .child(self.render_filter_rail(entity.clone(), data))
-                                .child(if groups.is_empty() {
-                                    feedback(
-                                        "workgraph-empty",
-                                        self.filter.empty_message(),
-                                        FeedbackTone::Info,
-                                    )
-                                    .into_any_element()
-                                } else if self.mode == BoardMode::Graph {
-                                    self.render_graph(entity.clone(), data).into_any_element()
-                                } else {
-                                    self.render_groups(entity.clone(), groups)
-                                        .into_any_element()
+                                .when(layout != BoardLayoutMode::Narrow, |board| {
+                                    board.child(self.render_filter_rail(entity.clone(), data))
                                 })
-                                .child(self.render_detail(entity, data)),
+                                .when(
+                                    layout != BoardLayoutMode::Narrow || self.selected.is_none(),
+                                    |board| {
+                                        board.child(if groups.is_empty() {
+                                            feedback(
+                                                "workgraph-empty",
+                                                self.filter.empty_message(),
+                                                FeedbackTone::Info,
+                                            )
+                                            .into_any_element()
+                                        } else if self.mode == BoardMode::Graph {
+                                            self.render_graph(entity.clone(), data)
+                                                .into_any_element()
+                                        } else {
+                                            self.render_groups(entity.clone(), groups)
+                                                .into_any_element()
+                                        })
+                                    },
+                                )
+                                .when(
+                                    layout != BoardLayoutMode::Narrow || self.selected.is_some(),
+                                    |board| {
+                                        board.child(self.render_detail(entity, data, layout))
+                                    },
+                                ),
                         )
                         .into_any_element()
                 }

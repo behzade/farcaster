@@ -5,3 +5,4 @@ pub(super) mod adapter;
 mod adapter_tests;
 pub(super) mod contract;
 pub(super) mod core;
+pub(super) mod layout;
