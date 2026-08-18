@@ -111,6 +111,8 @@ pub(crate) struct PiApp {
     runtime_generation: u64,
     composer: Entity<TextareaState>,
     composer_project_files: Vec<String>,
+    composer_project_files_project: Option<PathBuf>,
+    composer_project_files_loading: Option<PathBuf>,
     composer_mention_selection: usize,
     session_rail_view: Entity<SessionRailView>,
     transcript_view: Entity<TranscriptView>,
@@ -220,8 +222,16 @@ impl PiApp {
                 InputEvent::Change => {
                     this.composer_mention_selection = 0;
                     this.composer_sessions.exit_history();
-                    this.composer_sessions
-                        .capture_current(input_snapshot(state.read(cx)));
+                    let snapshot = input_snapshot(state.read(cx));
+                    let has_mention = file_mentions::query_at_cursor(
+                        &snapshot.text,
+                        snapshot.cursor,
+                    )
+                    .is_some();
+                    this.composer_sessions.capture_current(snapshot);
+                    if has_mention {
+                        this.request_composer_project_files(cx);
+                    }
                     this.notify_composer(cx);
                 }
                 InputEvent::Blur => {
@@ -354,7 +364,9 @@ impl PiApp {
             session_generation: 0,
             runtime_generation: 0,
             composer,
-            composer_project_files: file_mentions::project_files(&project),
+            composer_project_files: Vec::new(),
+            composer_project_files_project: None,
+            composer_project_files_loading: None,
             composer_mention_selection: 0,
             session_rail_view,
             transcript_view,
@@ -828,11 +840,43 @@ impl PiApp {
     }
 
     fn select_project(&mut self, project: PathBuf) {
-        self.composer_project_files = file_mentions::project_files(&project);
+        if self.project != project {
+            self.composer_project_files.clear();
+            self.composer_project_files_project = None;
+            self.composer_project_files_loading = None;
+        }
         self.project = project.clone();
         if projects::select(&mut self.projects, project) {
             self.save_project_registry();
         }
+    }
+
+    fn request_composer_project_files(&mut self, cx: &mut Context<Self>) {
+        let project = self.project.clone();
+        if self.composer_project_files_project.as_ref() == Some(&project)
+            || self.composer_project_files_loading.as_ref() == Some(&project)
+        {
+            return;
+        }
+        self.composer_project_files_loading = Some(project.clone());
+        let task = cx.background_spawn(async move {
+            let files = file_mentions::project_files(&project);
+            (project, files)
+        });
+        cx.spawn(async move |weak, cx| {
+            let (project, files) = task.await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.composer_project_files_loading.as_ref() == Some(&project) {
+                    this.composer_project_files_loading = None;
+                }
+                if this.project == project {
+                    this.composer_project_files = files;
+                    this.composer_project_files_project = Some(project);
+                    this.notify_composer(cx);
+                }
+            });
+        })
+        .detach();
     }
 
     fn save_project_registry(&mut self) {
