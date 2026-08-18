@@ -147,11 +147,11 @@ craneLib.buildPackage (
     + lib.optionalString stdenv.hostPlatform.isDarwin ''
       app="$out/Applications/Pi.app"
       mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-      install -Dm644 ${../packaging/macos/Info.plist} "$app/Contents/Info.plist"
+      substitute ${../packaging/macos/Info.plist} "$app/Contents/Info.plist" \
+        --replace-fail '@pi_path@' '${piTerminal}/bin/pi' \
+        --replace-fail '@companion_extension@' "$out/lib/pi-gpui/companion.ts"
       install -Dm644 ${../packaging/macos/Pi.icns} "$app/Contents/Resources/Pi.icns"
-      substitute ${../packaging/macos/launch.sh} "$app/Contents/MacOS/pi-gpui" \
-        --replace-fail '@binary@' "$out/bin/pi-gpui"
-      chmod +x "$app/Contents/MacOS/pi-gpui"
+      install -Dm755 "$out/bin/pi-gpui" "$app/Contents/MacOS/pi-gpui"
     '';
 
     postFixup = ''
