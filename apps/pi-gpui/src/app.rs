@@ -447,9 +447,8 @@ impl PiApp {
                 RuntimeEvent::Snapshot { snapshot, .. } => {
                     rail_dirty |=
                         session_rail_snapshot_changed(&self.sessions, &self.snapshot, snapshot);
-                    transcript_dirty = true;
-                    composer_dirty = true;
-                    run_dirty = true;
+                    composer_dirty |= composer_snapshot_changed(&self.snapshot, snapshot);
+                    run_dirty |= run_panel_snapshot_changed(&self.snapshot, snapshot);
                 }
                 RuntimeEvent::Sessions { .. } | RuntimeEvent::SessionsFailed { .. } => {
                     rail_dirty = true;
@@ -482,6 +481,7 @@ impl PiApp {
                         self.reset_session_ui(generation, false);
                     }
                     let next_rows = self.project_transcript_rows(&snapshot);
+                    transcript_dirty |= next_rows.as_slice() != self.transcript_rows.as_slice();
                     let count = next_rows.len();
                     if count > self.last_transcript_count && !self.transcript_following {
                         self.transcript_unseen = self
@@ -1041,6 +1041,39 @@ fn session_rail_snapshot_changed(
     root_id(previous.selected_session.as_deref()) != root_id(next.selected_session.as_deref())
         || root_id(previous.live_session.as_deref()) != root_id(next.live_session.as_deref())
         || previous.live_status != next.live_status
+}
+
+fn composer_snapshot_changed(previous: &RuntimeSnapshot, next: &RuntimeSnapshot) -> bool {
+    fn composer_model(snapshot: &RuntimeSnapshot) -> Option<&Model> {
+        snapshot
+            .session
+            .as_ref()
+            .and_then(|session| session.model.as_ref())
+            .or(snapshot.prefill_model.as_ref())
+    }
+    fn thinking_level(snapshot: &RuntimeSnapshot) -> Option<&str> {
+        snapshot
+            .session
+            .as_ref()
+            .map(|session| session.thinking_level.as_str())
+            .or(snapshot.prefill_thinking_level.as_deref())
+    }
+
+    previous.status != next.status
+        || previous.commands != next.commands
+        || previous.conversation.running != next.conversation.running
+        || previous.conversation.queue != next.conversation.queue
+        || composer_model(previous) != composer_model(next)
+        || thinking_level(previous) != thinking_level(next)
+        || previous.models != next.models
+        || previous.thinking_levels != next.thinking_levels
+}
+
+fn run_panel_snapshot_changed(previous: &RuntimeSnapshot, next: &RuntimeSnapshot) -> bool {
+    previous.selected_session != next.selected_session
+        || previous.stats != next.stats
+        || previous.conversation.running != next.conversation.running
+        || previous.conversation.latest_cache_hit_rate != next.conversation.latest_cache_hit_rate
 }
 
 fn input_snapshot(input: &TextareaState) -> ComposerSnapshot {

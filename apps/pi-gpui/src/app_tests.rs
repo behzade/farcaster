@@ -94,6 +94,30 @@ fn selecting_a_subagent_does_not_invalidate_the_session_rail() {
 }
 
 #[test]
+fn transcript_only_snapshot_changes_do_not_invalidate_other_regions() {
+    let previous = RuntimeSnapshot::default();
+    let mut next = previous.clone();
+    next.conversation.items.push(Arc::new(item("stream update")));
+
+    assert!(!composer_snapshot_changed(&previous, &next));
+    assert!(!run_panel_snapshot_changed(&previous, &next));
+}
+
+#[test]
+fn composer_and_run_panel_track_their_rendered_snapshot_inputs() {
+    let previous = RuntimeSnapshot::default();
+    let mut composer = previous.clone();
+    composer.status = "Working".into();
+    let mut run_panel = previous.clone();
+    run_panel.conversation.latest_cache_hit_rate = Some(0.5);
+
+    assert!(composer_snapshot_changed(&previous, &composer));
+    assert!(!run_panel_snapshot_changed(&previous, &composer));
+    assert!(run_panel_snapshot_changed(&previous, &run_panel));
+    assert!(!composer_snapshot_changed(&previous, &run_panel));
+}
+
+#[test]
 fn manual_session_move_is_stable() {
     let mut order = vec!["a".into(), "b".into(), "c".into()];
     assert!(move_to(&mut order, "c", "a"));
