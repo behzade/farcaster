@@ -6,6 +6,7 @@ use gpui::{
 use super::{
     adapter::WorkGraphBoardView,
     contract::{IssueGroup, IssueRow},
+    core::format_relative_issue_time,
 };
 use crate::theme::THEME;
 
@@ -89,6 +90,11 @@ pub(super) fn render_group(
     current_issue: Option<u64>,
     entity: Entity<WorkGraphBoardView>,
 ) -> impl IntoElement {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_millis()).ok())
+        .unwrap_or_default();
     div()
         .flex()
         .flex_col()
@@ -103,7 +109,7 @@ pub(super) fn render_group(
             group
                 .rows
                 .into_iter()
-                .map(|row| render_issue_row(row, selected, current_issue, entity.clone())),
+                .map(|row| render_issue_row(row, selected, current_issue, now, entity.clone())),
         )
 }
 
@@ -111,6 +117,7 @@ fn render_issue_row(
     row: IssueRow,
     selected: Option<u64>,
     current_issue: Option<u64>,
+    now: i64,
     entity: Entity<WorkGraphBoardView>,
 ) -> impl IntoElement {
     let row_status_color = if row.status_label.starts_with("Blocked") {
@@ -175,7 +182,11 @@ fn render_issue_row(
                             div()
                                 .text_size(THEME.type_scale.caption)
                                 .text_color(THEME.colors.muted)
-                                .child(row.priority_label),
+                                .child(format!(
+                                    "{}  ·  {}",
+                                    row.priority_label,
+                                    format_relative_issue_time(row.issue.updated_at, now)
+                                )),
                         ),
                 ),
         )

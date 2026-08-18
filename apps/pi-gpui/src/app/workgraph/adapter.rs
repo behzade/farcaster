@@ -7,7 +7,7 @@ use super::{
         detail_section, related_issue_section, render_graph_row, render_group, status_color,
     },
     contract::{BoardData, BoardFilter, BoardLoadState, BoardMode, IssueGroup},
-    core::{filter_count, project_groups},
+    core::{filter_count, matching_project_groups},
     layout::{BoardLayoutMode, board_layout_mode, issue_detail_shell},
     persistence::{add_issue_note, create_issue, link_session, load_issues, update_issue_status},
 };
@@ -17,10 +17,10 @@ use crate::{
 };
 use gpui::{
     AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
-    Render, StatefulInteractiveElement as _, Styled as _, Task, Window, div,
+    Render, StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div,
     prelude::FluentBuilder as _, px,
 };
-use gpui_component::input::{Input, InputState, Textarea, TextareaState};
+use gpui_component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 
 pub(crate) struct WorkGraphBoardView {
     database: PathBuf,
@@ -31,11 +31,13 @@ pub(crate) struct WorkGraphBoardView {
     selected: Option<u64>,
     creating: bool,
     active_session: Option<(String, String)>,
+    search: Option<Entity<InputState>>,
     create_title: Option<Entity<InputState>>,
     create_body: Option<Entity<TextareaState>>,
     note: Option<Entity<TextareaState>>,
     note_issue: Option<u64>,
     refresh: Option<Task<()>>,
+    subscriptions: Vec<Subscription>,
 }
 
 impl WorkGraphBoardView {
@@ -58,11 +60,13 @@ impl WorkGraphBoardView {
             selected: None,
             creating: false,
             active_session: None,
+            search: None,
             create_title: None,
             create_body: None,
             note: None,
             note_issue: None,
             refresh: None,
+            subscriptions: Vec::new(),
         };
         if should_refresh {
             view.refresh(cx);
@@ -701,6 +705,15 @@ impl WorkGraphBoardView {
 
 impl Render for WorkGraphBoardView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.search.is_none() {
+            let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search issues"));
+            self.subscriptions.push(cx.subscribe_in(
+                &search,
+                window,
+                |_, _, _: &InputEvent, _, cx| cx.notify(),
+            ));
+            self.search = Some(search);
+        }
         if self.create_title.is_none() {
             self.create_title = Some(
                 cx.new(|cx| InputState::new(window, cx).placeholder("What needs to be done?")),
@@ -766,7 +779,13 @@ impl Render for WorkGraphBoardView {
                         .into_any_element()
                 }
                 BoardLoadState::Ready(data) => {
-                    let groups = project_groups(data, self.filter);
+                    let search = self
+                        .search
+                        .as_ref()
+                        .map(|input| input.read(cx).value().to_string())
+                        .unwrap_or_default();
+                    let groups = matching_project_groups(data, self.filter, &search);
+                    let matching_count = groups.iter().map(|group| group.rows.len()).sum::<usize>();
                     let mode = self.mode;
                     let kanban = entity.clone();
                     let graph = entity.clone();
@@ -805,7 +824,7 @@ impl Render for WorkGraphBoardView {
                                                 .text_size(THEME.type_scale.caption)
                                                 .text_color(THEME.colors.subtle)
                                                 .child(format!(
-                                                    "{active_count} active  ·  {blocked_count} need attention  ·  {} total",
+                                                    "{matching_count} shown  ·  {active_count} active  ·  {blocked_count} need attention  ·  {} total",
                                                     data.issues.len()
                                                 )),
                                         ),
@@ -813,7 +832,16 @@ impl Render for WorkGraphBoardView {
                                 .child(
                                     div()
                                         .flex()
+                                        .items_center()
                                         .gap(THEME.space.xs)
+                                        .child(
+                                            Input::new(
+                                                self.search
+                                                    .as_ref()
+                                                    .expect("workgraph search initialized"),
+                                            )
+                                            .w(px(220.0)),
+                                        )
                                         .child(button(
                                             "workgraph-create-open",
                                             "New issue",

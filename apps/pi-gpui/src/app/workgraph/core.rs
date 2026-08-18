@@ -82,6 +82,44 @@ fn group_for(data: &BoardData, issue: &Issue) -> BoardGroup {
     }
 }
 
+pub(super) fn issue_matches_board_filter(issue: &Issue, filter: &str) -> bool {
+    let filter = filter.trim();
+    if filter.is_empty() {
+        return true;
+    }
+    let searchable = format!("#{} {}", issue.number, issue.title);
+    searchable.to_lowercase().contains(&filter.to_lowercase())
+}
+
+pub(super) fn matching_project_groups(
+    data: &BoardData,
+    filter: BoardFilter,
+    search: &str,
+) -> Vec<IssueGroup> {
+    project_groups(data, filter)
+        .into_iter()
+        .filter_map(|mut group| {
+            group
+                .rows
+                .retain(|row| issue_matches_board_filter(&row.issue, search));
+            (!group.rows.is_empty()).then_some(group)
+        })
+        .collect()
+}
+
+pub(super) fn format_relative_issue_time(updated_at: i64, now: i64) -> String {
+    let elapsed_seconds = now.saturating_sub(updated_at).max(0) / 1_000;
+    match elapsed_seconds {
+        0..=59 => "just now".to_owned(),
+        60..=3_599 => format!("{}m ago", elapsed_seconds / 60),
+        3_600..=86_399 => format!("{}h ago", elapsed_seconds / 3_600),
+        86_400..=604_799 => format!("{}d ago", elapsed_seconds / 86_400),
+        604_800..=2_629_799 => format!("{}w ago", elapsed_seconds / 604_800),
+        2_629_800..=31_557_599 => format!("{}mo ago", elapsed_seconds / 2_629_800),
+        _ => format!("{}y ago", elapsed_seconds / 31_557_600),
+    }
+}
+
 pub(super) const fn status_label(status: IssueStatus) -> &'static str {
     match status {
         IssueStatus::Open => "Ready",
@@ -195,5 +233,23 @@ mod tests {
             BoardGroup::Cancelled
         );
         assert!(project_groups(&board, BoardFilter::Active).is_empty());
+    }
+
+    #[test]
+    fn text_filter_matches_issue_number_and_title_case_insensitively() {
+        let issue = issue(42, IssueStatus::Open, 0);
+        assert!(issue_matches_board_filter(&issue, "#42"));
+        assert!(issue_matches_board_filter(&issue, "ISSUE 42"));
+        assert!(!issue_matches_board_filter(&issue, "unrelated"));
+    }
+
+    #[test]
+    fn relative_issue_time_uses_the_issues_board_boundaries() {
+        let now = 1_800_000_000_000_i64;
+        assert_eq!(format_relative_issue_time(now - 30_000, now), "just now");
+        assert_eq!(format_relative_issue_time(now - 120_000, now), "2m ago");
+        assert_eq!(format_relative_issue_time(now - 7_200_000, now), "2h ago");
+        assert_eq!(format_relative_issue_time(now - 259_200_000, now), "3d ago");
+        assert_eq!(format_relative_issue_time(now + 30_000, now), "just now");
     }
 }
