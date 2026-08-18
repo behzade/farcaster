@@ -31,6 +31,9 @@ mod transcript;
 mod workgraph_cli;
 
 fn main() -> std::process::ExitCode {
+    zlog::init();
+    zlog::init_output_stderr();
+
     let mut arguments = std::env::args_os().skip(1);
     if arguments.next().as_deref() == Some(std::ffi::OsStr::new("workgraph")) {
         return match workgraph_cli::run(

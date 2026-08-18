@@ -1305,6 +1305,7 @@ impl RuntimeOwner {
         };
         self.auto_title_attempted = Some(path.clone());
         let model = crate::title_generation::configured_model();
+        zlog::info!("Generating automatic session title with model {model}");
         let command = self.process_command.clone();
         let project = self.project.clone();
         let sender = self.title_tx.clone();
@@ -1332,6 +1333,7 @@ impl RuntimeOwner {
             });
         match generated.result {
             Ok(title) if still_unnamed => {
+                zlog::info!("Automatic session title generated");
                 if let Some(state) = self.active_snapshot_mut().session.as_mut() {
                     state.session_name = Some(title.clone());
                 }
@@ -1339,6 +1341,7 @@ impl RuntimeOwner {
             }
             Ok(_) => {}
             Err(error) => {
+                zlog::error!("Automatic session title generation failed: {error}");
                 let snapshot = self.active_snapshot_mut();
                 if !snapshot.stderr.is_empty() && !snapshot.stderr.ends_with('\n') {
                     snapshot.stderr.push('\n');
