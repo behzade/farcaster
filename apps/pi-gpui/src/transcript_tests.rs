@@ -226,6 +226,26 @@ fn explicit_disclosure_state_survives_default_changes() {
 }
 
 #[test]
+fn row_position_ignores_content_revision() {
+    let original = TranscriptRow::Item {
+        index: 3,
+        revision: 1,
+    };
+    let streamed = TranscriptRow::Item {
+        index: 3,
+        revision: 2,
+    };
+    let next = TranscriptRow::Item {
+        index: 4,
+        revision: 2,
+    };
+
+    assert!(original.same_position(&streamed));
+    assert!(!original.same_position(&next));
+    assert_ne!(original, streamed);
+}
+
+#[test]
 fn targets_use_the_first_readable_argument_value() {
     assert_eq!(tool_target("Path: src/main.rs\nOffset: 2"), "src/main.rs");
     assert_eq!(tool_target(""), "");

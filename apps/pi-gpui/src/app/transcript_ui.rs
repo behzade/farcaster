@@ -71,7 +71,29 @@ impl PiApp {
     }
 
     pub(super) fn sync_transcript_rows(&mut self, next: Vec<TranscriptRow>) {
-        if let Some((old_range, new_count)) = transcript_splice(&self.transcript_rows, &next) {
+        let positions_unchanged = self.transcript_rows.len() == next.len()
+            && self
+                .transcript_rows
+                .iter()
+                .zip(&next)
+                .all(|(current, next)| current.same_position(next));
+        if positions_unchanged {
+            if let Some(first) = self
+                .transcript_rows
+                .iter()
+                .zip(&next)
+                .position(|(current, next)| current != next)
+            {
+                let last = self
+                    .transcript_rows
+                    .iter()
+                    .zip(&next)
+                    .rposition(|(current, next)| current != next)
+                    .unwrap_or(first);
+                self.transcript_list.remeasure_items(first..last + 1);
+            }
+        } else if let Some((old_range, new_count)) = transcript_splice(&self.transcript_rows, &next)
+        {
             self.transcript_list.splice(old_range, new_count);
         }
         self.transcript_rows = Arc::new(next);

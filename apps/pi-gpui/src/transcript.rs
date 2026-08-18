@@ -62,6 +62,52 @@ impl TranscriptRow {
         self.item_start()
     }
 
+    pub(crate) fn same_position(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Item { index: left, .. }, Self::Item { index: right, .. }) => left == right,
+            (
+                Self::MessageChunk {
+                    index: left_index,
+                    start: left_start,
+                    end: left_end,
+                    block: left_block,
+                    first: left_first,
+                    last: left_last,
+                    ..
+                },
+                Self::MessageChunk {
+                    index: right_index,
+                    start: right_start,
+                    end: right_end,
+                    block: right_block,
+                    first: right_first,
+                    last: right_last,
+                    ..
+                },
+            ) => {
+                left_index == right_index
+                    && left_start == right_start
+                    && left_end == right_end
+                    && left_block == right_block
+                    && left_first == right_first
+                    && left_last == right_last
+            }
+            (
+                Self::ReadGroup {
+                    start: left_start,
+                    len: left_len,
+                    ..
+                },
+                Self::ReadGroup {
+                    start: right_start,
+                    len: right_len,
+                    ..
+                },
+            ) => left_start == right_start && left_len == right_len,
+            _ => false,
+        }
+    }
+
     fn item_start(&self) -> usize {
         match self {
             Self::Item { index, .. } | Self::MessageChunk { index, .. } => *index,
