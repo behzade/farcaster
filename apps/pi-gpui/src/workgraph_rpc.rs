@@ -39,7 +39,25 @@ struct BridgeRequest {
     fields: BTreeMap<String, String>,
 }
 
-pub(crate) fn handle(payload: &str, database: &Path) -> Result<String, WorkGraphRpcError> {
+pub(crate) fn response(
+    request: &crate::protocol::ExtensionUiRequest,
+    database: &Path,
+) -> Option<crate::protocol::ExtensionUiResponse> {
+    let (id, payload) = request.workgraph_rpc()?;
+    let value = handle(payload, database).unwrap_or_else(|error| {
+        serde_json::json!({
+            "success": false,
+            "error": error.to_string(),
+        })
+        .to_string()
+    });
+    Some(crate::protocol::ExtensionUiResponse::Value {
+        id: id.to_owned(),
+        value,
+    })
+}
+
+fn handle(payload: &str, database: &Path) -> Result<String, WorkGraphRpcError> {
     let request = serde_json::from_str::<BridgeRequest>(payload)?;
     let project = canonical_project(&request.project)?;
     let adapter = SqliteAdapter::open(database).map_err(WorkGraphError::Persistence)?;
@@ -293,6 +311,35 @@ mod tests {
         )
         .expect("search");
         assert!(output.contains("Merge durable graph"));
+    }
+
+    #[test]
+    fn companion_request_receives_a_typed_rpc_response_without_ui() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let project = tempfile::tempdir().expect("project");
+        let payload = request(
+            "edit",
+            project.path(),
+            serde_json::json!({
+                "action": "create",
+                "title": "Agent-created issue",
+                "idempotencyKey": "agent-create-1",
+            }),
+        );
+        let request = crate::protocol::ExtensionUiRequest::Input {
+            id: "bridge-1".into(),
+            title: crate::protocol::WORKGRAPH_RPC_TITLE.into(),
+            placeholder: Some(payload),
+            timeout: None,
+        };
+        let response = response(&request, &directory.path().join("state.sqlite"));
+        let crate::protocol::ExtensionUiResponse::Value { id, value } =
+            response.expect("bridge response")
+        else {
+            panic!("value response");
+        };
+        assert_eq!(id, "bridge-1");
+        assert!(value.contains("Agent-created issue"));
     }
 
     #[test]

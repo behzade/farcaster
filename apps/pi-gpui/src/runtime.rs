@@ -1289,27 +1289,20 @@ impl RuntimeOwner {
                 SnapshotChange::None
             }
             ProcessItem::ExtensionUi(request) => {
-                if let Some((id, payload)) = request.workgraph_rpc() {
+                if request.workgraph_rpc().is_some() {
                     let response = crate::state::state_path()
-                        .map_err(|error| error.to_string())
-                        .and_then(|database| {
-                            crate::workgraph_rpc::handle(payload, &database)
-                                .map_err(|error| error.to_string())
-                        })
-                        .unwrap_or_else(|error| {
-                            serde_json::json!({
+                        .ok()
+                        .and_then(|database| crate::workgraph_rpc::response(&request, &database))
+                        .unwrap_or_else(|| crate::protocol::ExtensionUiResponse::Value {
+                            id: request.dialog_id().unwrap_or_default().to_owned(),
+                            value: serde_json::json!({
                                 "success": false,
-                                "error": error.to_string(),
+                                "error": "work graph state is unavailable",
                             })
-                            .to_string()
+                            .to_string(),
                         });
                     if let Some(process) = self.process.as_mut()
-                        && let Err(error) = process.send_extension_response(
-                            crate::protocol::ExtensionUiResponse::Value {
-                                id: id.to_owned(),
-                                value: response,
-                            },
-                        )
+                        && let Err(error) = process.send_extension_response(response)
                     {
                         self.fail(error);
                     }
