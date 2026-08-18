@@ -649,36 +649,20 @@ fn dialog_choice(
 
 pub(super) fn dialog_copy(value: &str) -> (SharedString, Option<SharedString>) {
     let mut lines = value.lines();
-    let heading = match lines.next().unwrap_or_default().trim() {
-        "Tool requests an IO right" | "Tool requests grouped IO rights" => "File access request",
-        "" => "Action required",
-        heading => heading,
-    };
+    let heading = lines.next().unwrap_or_default().trim();
     let prompt = lines.collect::<Vec<_>>().join("\n");
-    let prompt = prompt
-        .trim()
-        .replace(" to access write file ", " to write to ")
-        .replace(" to access read file ", " to read ");
     (
-        heading.to_owned().into(),
-        (!prompt.is_empty()).then(|| prompt.into()),
+        if heading.is_empty() {
+            "Action required".into()
+        } else {
+            heading.to_owned().into()
+        },
+        (!prompt.trim().is_empty()).then(|| prompt.trim().to_owned().into()),
     )
 }
 
 pub(super) fn choice_copy(value: &str) -> (SharedString, Option<SharedString>) {
-    let (title, detail) = match value {
-        "Allow once and retry" => ("Allow once", Some("Retry this command")),
-        "Always allow in this workspace and retry" => (
-            "Always allow",
-            Some("Remember for this workspace and retry"),
-        ),
-        "Allow once" => ("Allow once", None),
-        "Always allow in this workspace" => ("Always allow", Some("Remember for this workspace")),
-        "No" => ("Deny", None),
-        "No, with comment" => ("Deny with note", Some("Tell Pi what to do instead")),
-        value => (value, None),
-    };
-    (title.to_owned().into(), detail.map(Into::into))
+    (value.to_owned().into(), None)
 }
 
 fn widget_region(
