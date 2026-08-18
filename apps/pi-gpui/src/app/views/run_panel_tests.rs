@@ -75,6 +75,28 @@ fn duration_and_lifecycle_labels_are_truthful() {
 }
 
 #[test]
+fn every_lifecycle_has_a_compact_status_icon() {
+    assert_eq!(lifecycle_icon(AgentLifecycle::Working), AppIcon::SpinnerGap);
+    assert_eq!(
+        lifecycle_icon(AgentLifecycle::NeedsInput),
+        AppIcon::WarningCircle
+    );
+    assert_eq!(lifecycle_icon(AgentLifecycle::Unknown), AppIcon::Question);
+    assert_eq!(
+        lifecycle_icon(AgentLifecycle::Completed(AgentOutcome::Complete)),
+        AppIcon::CheckCircle
+    );
+    assert_eq!(
+        lifecycle_icon(AgentLifecycle::Completed(AgentOutcome::Failed)),
+        AppIcon::XCircle
+    );
+    assert_eq!(
+        lifecycle_icon(AgentLifecycle::Completed(AgentOutcome::Incomplete)),
+        AppIcon::WarningCircle
+    );
+}
+
+#[test]
 fn active_agents_are_never_hidden_by_limited_history() {
     assert_eq!(
         agent_section(AgentLifecycle::Working, true, true),

@@ -4,7 +4,7 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 13] = [
+const ICON_PATHS: [&str; 17] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrow-counter-clockwise.svg",
     "icons/phosphor/arrow-up.svg",
@@ -12,12 +12,16 @@ const ICON_PATHS: [&str; 13] = [
     "icons/phosphor/caret-right.svg",
     "icons/phosphor/check-circle.svg",
     "icons/phosphor/plus.svg",
+    "icons/phosphor/question.svg",
     "icons/phosphor/folder.svg",
     "icons/phosphor/folder-plus.svg",
     "icons/phosphor/list.svg",
     "icons/phosphor/magnifying-glass.svg",
+    "icons/phosphor/spinner-gap.svg",
     "icons/phosphor/stop.svg",
+    "icons/phosphor/warning-circle.svg",
     "icons/phosphor/x.svg",
+    "icons/phosphor/x-circle.svg",
 ];
 
 pub(crate) struct AppAssets;
@@ -55,6 +59,9 @@ impl AssetSource for AppAssets {
                 Some(include_bytes!("../assets/phosphor-icons/check-circle.svg"))
             }
             "icons/phosphor/plus.svg" => Some(include_bytes!("../assets/phosphor-icons/plus.svg")),
+            "icons/phosphor/question.svg" => {
+                Some(include_bytes!("../assets/phosphor-icons/question.svg"))
+            }
             "icons/phosphor/folder.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/folder.svg"))
             }
@@ -65,8 +72,17 @@ impl AssetSource for AppAssets {
             "icons/phosphor/magnifying-glass.svg" => Some(include_bytes!(
                 "../assets/phosphor-icons/magnifying-glass.svg"
             )),
+            "icons/phosphor/spinner-gap.svg" => {
+                Some(include_bytes!("../assets/phosphor-icons/spinner-gap.svg"))
+            }
             "icons/phosphor/stop.svg" => Some(include_bytes!("../assets/phosphor-icons/stop.svg")),
+            "icons/phosphor/warning-circle.svg" => Some(include_bytes!(
+                "../assets/phosphor-icons/warning-circle.svg"
+            )),
             "icons/phosphor/x.svg" => Some(include_bytes!("../assets/phosphor-icons/x.svg")),
+            "icons/phosphor/x-circle.svg" => {
+                Some(include_bytes!("../assets/phosphor-icons/x-circle.svg"))
+            }
             _ => None,
         };
         bytes.map_or_else(
@@ -96,12 +112,16 @@ pub(crate) enum AppIcon {
     CaretRight,
     CheckCircle,
     Plus,
+    Question,
     Folder,
     FolderPlus,
     List,
     MagnifyingGlass,
+    SpinnerGap,
     Stop,
+    WarningCircle,
     X,
+    XCircle,
 }
 
 impl IconNamed for AppIcon {
@@ -114,12 +134,16 @@ impl IconNamed for AppIcon {
             Self::CaretRight => "caret-right",
             Self::CheckCircle => "check-circle",
             Self::Plus => "plus",
+            Self::Question => "question",
             Self::Folder => "folder",
             Self::FolderPlus => "folder-plus",
             Self::List => "list",
             Self::MagnifyingGlass => "magnifying-glass",
+            Self::SpinnerGap => "spinner-gap",
             Self::Stop => "stop",
+            Self::WarningCircle => "warning-circle",
             Self::X => "x",
+            Self::XCircle => "x-circle",
         };
         format!("{ICON_ROOT}/{name}.svg").into()
     }
@@ -154,12 +178,16 @@ mod tests {
             AppIcon::CaretRight,
             AppIcon::CheckCircle,
             AppIcon::Plus,
+            AppIcon::Question,
             AppIcon::Folder,
             AppIcon::FolderPlus,
             AppIcon::List,
             AppIcon::MagnifyingGlass,
+            AppIcon::SpinnerGap,
             AppIcon::Stop,
+            AppIcon::WarningCircle,
             AppIcon::X,
+            AppIcon::XCircle,
         ] {
             let path = icon.path();
             let bytes = AppAssets

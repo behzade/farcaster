@@ -343,6 +343,7 @@ impl PiApp {
                 )
                 .child(
                     div()
+                        .w_0()
                         .min_w_0()
                         .flex_1()
                         .overflow_hidden()
@@ -359,23 +360,19 @@ impl PiApp {
                 )
                 .child(
                     div()
-                        .w(px(104.0))
                         .flex_none()
                         .flex()
-                        .items_center()
+                        .items_start()
                         .justify_end()
                         .gap(px(3.0))
                         .text_size(THEME.type_scale.caption)
                         .whitespace_nowrap()
                         .text_color(lifecycle_color(displayed_lifecycle))
-                        .when(
-                            displayed_lifecycle
-                                == AgentLifecycle::Completed(AgentOutcome::Complete),
-                            |status| {
-                                status.child(app_icon(AppIcon::CheckCircle, AppIconSize::Inline))
-                            },
-                        )
-                        .child(format!("{state} · {elapsed}")),
+                        .child(app_icon(
+                            lifecycle_icon(displayed_lifecycle),
+                            AppIconSize::Inline,
+                        ))
+                        .child(elapsed),
                 )
                 .into_any_element(),
         )
@@ -738,6 +735,18 @@ fn lifecycle_label(lifecycle: AgentLifecycle) -> &'static str {
         AgentLifecycle::Completed(AgentOutcome::Complete) => "Complete",
         AgentLifecycle::Completed(AgentOutcome::Failed) => "Failed",
         AgentLifecycle::Completed(AgentOutcome::Incomplete) => "Incomplete",
+    }
+}
+
+fn lifecycle_icon(lifecycle: AgentLifecycle) -> AppIcon {
+    match lifecycle {
+        AgentLifecycle::NeedsInput | AgentLifecycle::Completed(AgentOutcome::Incomplete) => {
+            AppIcon::WarningCircle
+        }
+        AgentLifecycle::Working => AppIcon::SpinnerGap,
+        AgentLifecycle::Unknown => AppIcon::Question,
+        AgentLifecycle::Completed(AgentOutcome::Complete) => AppIcon::CheckCircle,
+        AgentLifecycle::Completed(AgentOutcome::Failed) => AppIcon::XCircle,
     }
 }
 
