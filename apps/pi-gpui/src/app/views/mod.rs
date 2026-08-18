@@ -170,7 +170,12 @@ impl Render for PiApp {
             }))
             .on_action(cx.listener(|this, _: &SettleSession, _, cx| {
                 if let Some(path) = this.snapshot.selected_session.clone() {
-                    this.set_session_settled(path, true, cx);
+                    let settled = this
+                        .sessions
+                        .iter()
+                        .find(|session| session.path == path)
+                        .is_some_and(|session| session.settled);
+                    this.set_session_settled(path, !settled, cx);
                 }
             }))
             .on_action(cx.listener(|this, _: &ShowKeybindings, window, cx| {
