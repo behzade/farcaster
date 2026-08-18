@@ -123,7 +123,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "subagent_control",
 		label: "Control subagents",
-		description: "List child sessions, inspect one status, or stop one child session. status and stop require id.",
+		description: "List child sessions, inspect one status, or stop one child session. status and stop require id. Child completion is delivered automatically. Do not poll or sleep; use status only to debug or intervene.",
 		promptSnippet: "List, inspect, or stop child Pi sessions",
 		parameters: ControlParams,
 		async execute(_toolCallId, params, signal) {
