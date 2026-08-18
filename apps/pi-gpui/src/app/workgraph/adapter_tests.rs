@@ -4,7 +4,10 @@ use workgraph::{
     core::WorkGraph,
 };
 
-use super::persistence::{add_issue_note, create_issue, load_issues, update_issue_status};
+use super::persistence::{
+    add_dependency, add_issue_note, create_issue, load_issues, remove_dependency,
+    update_issue_status,
+};
 
 #[test]
 fn board_loader_reads_issues_from_the_shared_gui_database() {
@@ -126,12 +129,38 @@ fn board_loader_reads_issues_from_the_shared_gui_database() {
     )
     .expect("native issue create");
     assert_eq!(with_created.issues.len(), 3);
-    assert_eq!(
-        with_created
-            .issues
-            .iter()
-            .find(|issue| issue.number == created_number)
-            .map(|issue| issue.title.as_str()),
-        Some("Created in the native board")
-    );
+    let created = with_created
+        .issues
+        .iter()
+        .find(|issue| issue.number == created_number)
+        .expect("native created issue");
+    assert_eq!(created.title, "Created in the native board");
+    let with_dependency = add_dependency(
+        directory.path().join("gui-state.sqlite3"),
+        directory.path().join("project"),
+        created_number,
+        prerequisite.number,
+        created.version,
+    )
+    .expect("native dependency add");
+    assert!(with_dependency.dependencies.iter().any(|edge| {
+        edge.issue_number == created_number && edge.depends_on == prerequisite.number
+    }));
+    let created_version = with_dependency
+        .issues
+        .iter()
+        .find(|issue| issue.number == created_number)
+        .expect("created issue after dependency")
+        .version;
+    let without_dependency = remove_dependency(
+        directory.path().join("gui-state.sqlite3"),
+        directory.path().join("project"),
+        created_number,
+        prerequisite.number,
+        created_version,
+    )
+    .expect("native dependency remove");
+    assert!(!without_dependency.dependencies.iter().any(|edge| {
+        edge.issue_number == created_number && edge.depends_on == prerequisite.number
+    }));
 }

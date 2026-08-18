@@ -8,7 +8,10 @@ use super::{
     contract::{IssueGroup, IssueRow},
     core::format_relative_issue_time,
 };
-use crate::theme::THEME;
+use crate::{
+    primitives::{ButtonTone, button},
+    theme::THEME,
+};
 
 pub(super) fn related_issue_section(
     label: &'static str,
@@ -51,6 +54,77 @@ pub(super) fn related_issue_section(
                 .on_click(move |_, _, cx| {
                     entity.update(cx, |this, cx| this.select_issue(number, cx));
                 })
+        }))
+}
+
+pub(super) fn dependency_issue_section(
+    issue_number: u64,
+    issue_version: u64,
+    dependencies: Vec<workgraph::contract::Issue>,
+    entity: Entity<WorkGraphBoardView>,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap(THEME.space.xs)
+        .child(
+            div()
+                .text_size(THEME.type_scale.caption)
+                .text_color(THEME.colors.subtle)
+                .child("DEPENDS ON"),
+        )
+        .when(dependencies.is_empty(), |section| {
+            section.child(
+                div()
+                    .text_size(THEME.type_scale.body_small)
+                    .text_color(THEME.colors.muted)
+                    .child("Nothing — this issue can move independently."),
+            )
+        })
+        .children(dependencies.into_iter().map(|dependency| {
+            let depends_on = dependency.number;
+            let open = entity.clone();
+            let remove = entity.clone();
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(THEME.space.xs)
+                .child(
+                    div()
+                        .id(format!("workgraph-dependency-{issue_number}-{depends_on}"))
+                        .flex_1()
+                        .min_w_0()
+                        .cursor_pointer()
+                        .rounded(THEME.radius)
+                        .px(THEME.space.sm)
+                        .py(THEME.space.xs)
+                        .bg(THEME.colors.surface)
+                        .hover(|style| style.bg(THEME.colors.hover))
+                        .text_size(THEME.type_scale.body_small)
+                        .text_color(THEME.colors.link)
+                        .child(format!("#{depends_on}  {}", dependency.title))
+                        .on_click(move |_, _, cx| {
+                            open.update(cx, |this, cx| this.select_issue(depends_on, cx));
+                        }),
+                )
+                .child(button(
+                    format!("workgraph-remove-dependency-{issue_number}-{depends_on}"),
+                    "Remove",
+                    ButtonTone::Quiet,
+                    true,
+                    move |_, cx| {
+                        remove.update(cx, |this, cx| {
+                            this.change_dependency(
+                                issue_number,
+                                depends_on,
+                                issue_version,
+                                false,
+                                cx,
+                            );
+                        });
+                    },
+                ))
         }))
 }
 

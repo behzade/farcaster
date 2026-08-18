@@ -35,6 +35,74 @@ pub(super) fn create_issue(
     Ok((load_issues(database, project)?, issue.number))
 }
 
+pub(super) fn add_dependency(
+    database: PathBuf,
+    project: PathBuf,
+    number: u64,
+    depends_on: u64,
+    expected_version: u64,
+) -> Result<BoardData, String> {
+    change_dependency(
+        database,
+        project,
+        number,
+        depends_on,
+        expected_version,
+        true,
+    )
+}
+
+pub(super) fn remove_dependency(
+    database: PathBuf,
+    project: PathBuf,
+    number: u64,
+    depends_on: u64,
+    expected_version: u64,
+) -> Result<BoardData, String> {
+    change_dependency(
+        database,
+        project,
+        number,
+        depends_on,
+        expected_version,
+        false,
+    )
+}
+
+fn change_dependency(
+    database: PathBuf,
+    project: PathBuf,
+    number: u64,
+    depends_on: u64,
+    expected_version: u64,
+    add: bool,
+) -> Result<BoardData, String> {
+    let project_key = canonical_project(&project)?;
+    let adapter = SqliteAdapter::open(&database).map_err(|error| error.to_string())?;
+    let mut graph = WorkGraph::new(adapter);
+    let action = if add {
+        EditAction::AddDependency {
+            number,
+            depends_on,
+            expected_version: Some(expected_version),
+        }
+    } else {
+        EditAction::RemoveDependency {
+            number,
+            depends_on,
+            expected_version: Some(expected_version),
+        }
+    };
+    graph
+        .edit(&EditRequest {
+            project: project_key,
+            idempotency_key: format!("gui-dependency-{number}-{depends_on}-{}", operation_id()?),
+            action,
+        })
+        .map_err(|error| error.to_string())?;
+    load_issues(database, project)
+}
+
 pub(super) fn add_issue_note(
     database: PathBuf,
     project: PathBuf,

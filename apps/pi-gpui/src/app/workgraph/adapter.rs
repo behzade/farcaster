@@ -4,12 +4,16 @@ use std::path::PathBuf;
 
 use super::{
     components::{
-        detail_section, related_issue_section, render_graph_row, render_group, status_color,
+        dependency_issue_section, detail_section, related_issue_section, render_graph_row,
+        render_group, status_color,
     },
     contract::{BoardData, BoardFilter, BoardLoadState, BoardMode, IssueGroup},
     core::{filter_count, matching_project_groups},
     layout::{BoardLayoutMode, board_layout_mode, issue_detail_shell},
-    persistence::{add_issue_note, create_issue, link_session, load_issues, update_issue_status},
+    persistence::{
+        add_dependency, add_issue_note, create_issue, link_session, load_issues, remove_dependency,
+        update_issue_status,
+    },
 };
 use crate::{
     primitives::{ButtonTone, FeedbackTone, button, feedback},
@@ -34,6 +38,7 @@ pub(crate) struct WorkGraphBoardView {
     search: Option<Entity<InputState>>,
     create_title: Option<Entity<InputState>>,
     create_body: Option<Entity<TextareaState>>,
+    dependency: Option<Entity<InputState>>,
     note: Option<Entity<TextareaState>>,
     note_issue: Option<u64>,
     refresh: Option<Task<()>>,
@@ -63,6 +68,7 @@ impl WorkGraphBoardView {
             search: None,
             create_title: None,
             create_body: None,
+            dependency: None,
             note: None,
             note_issue: None,
             refresh: None,
@@ -168,6 +174,37 @@ impl WorkGraphBoardView {
         let project = self.project.clone();
         let edit = cx.background_spawn(async move {
             update_issue_status(database, project, number, status, expected_version)
+        });
+        self.state = BoardLoadState::Loading;
+        self.refresh = Some(cx.spawn(async move |weak, cx| {
+            let state = match edit.await {
+                Ok(data) => BoardLoadState::Ready(data),
+                Err(error) => BoardLoadState::Failed(error),
+            };
+            let _ = weak.update(cx, |this, cx| {
+                this.state = state;
+                cx.notify();
+            });
+        }));
+        cx.notify();
+    }
+
+    pub(super) fn change_dependency(
+        &mut self,
+        number: u64,
+        depends_on: u64,
+        expected_version: u64,
+        add: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let database = self.database.clone();
+        let project = self.project.clone();
+        let edit = cx.background_spawn(async move {
+            if add {
+                add_dependency(database, project, number, depends_on, expected_version)
+            } else {
+                remove_dependency(database, project, number, depends_on, expected_version)
+            }
         });
         self.state = BoardLoadState::Loading;
         self.refresh = Some(cx.spawn(async move |weak, cx| {
@@ -495,6 +532,40 @@ impl WorkGraphBoardView {
                     let active_link = self.active_session.as_ref().and_then(|(id, _)| {
                         data.sessions.iter().find(|link| link.session_id == *id)
                     });
+                    let dependency_action = self.dependency.as_ref().map(|dependency| {
+                        let dependency_input = dependency.clone();
+                        let dependency_submit = dependency.clone();
+                        let entity = entity.clone();
+                        let number = issue.number;
+                        let version = issue.version;
+                        div()
+                            .flex()
+                            .gap(THEME.space.xs)
+                            .child(Input::new(&dependency_input).w(px(160.0)))
+                            .child(button(
+                                format!("workgraph-add-dependency-{number}"),
+                                "Add dependency",
+                                ButtonTone::Quiet,
+                                true,
+                                move |window, cx| {
+                                    let value =
+                                        dependency_submit.read(cx).value().trim().to_owned();
+                                    let Ok(depends_on) =
+                                        value.strip_prefix('#').unwrap_or(&value).parse::<u64>()
+                                    else {
+                                        return;
+                                    };
+                                    dependency_submit.update(cx, |input, cx| {
+                                        input.set_value(String::new(), window, cx);
+                                    });
+                                    entity.update(cx, |this, cx| {
+                                        this.change_dependency(
+                                            number, depends_on, version, true, cx,
+                                        );
+                                    });
+                                },
+                            ))
+                    });
                     let note_action = self.note.as_ref().map(|note| {
                         let note_input = note.clone();
                         let note_submit = note.clone();
@@ -653,12 +724,13 @@ impl WorkGraphBoardView {
                                 issue.body.clone()
                             },
                         ))
-                        .child(related_issue_section(
-                            "DEPENDS ON",
-                            "Nothing — this issue can move independently.",
+                        .child(dependency_issue_section(
+                            issue.number,
+                            issue.version,
                             dependencies,
                             entity.clone(),
                         ))
+                        .children(dependency_action)
                         .child(related_issue_section(
                             "UNBLOCKS",
                             "No dependent issues.",
@@ -726,6 +798,10 @@ impl Render for WorkGraphBoardView {
                     .submit_on_enter(false)
                     .placeholder("Context, expected result, and useful constraints")
             }));
+        }
+        if self.dependency.is_none() {
+            self.dependency =
+                Some(cx.new(|cx| InputState::new(window, cx).placeholder("Issue number")));
         }
         if self.note.is_none() {
             self.note = Some(cx.new(|cx| {
