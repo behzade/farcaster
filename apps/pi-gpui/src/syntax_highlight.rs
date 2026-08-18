@@ -79,6 +79,7 @@ pub(crate) enum DiffLineKind {
 }
 
 pub(crate) fn highlight(text: String, language: &str) -> HighlightedText {
+    crate::performance::count_highlight_bytes(text.len());
     if text.is_empty() || language == "text" {
         return HighlightedText::plain(text);
     }

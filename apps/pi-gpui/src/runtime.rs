@@ -20,7 +20,9 @@ use crate::{
         ExtensionUiResponse, Model, PromptImage, PromptMode, SessionState, SlashCommand, command,
     },
     rpc_process::{ProcessCommand, ProcessItem, RpcProcess},
-    sessions::{LoadedHistory, SessionDiscovery, SessionSummary, discover, load_history},
+    sessions::{
+        LoadedHistory, SessionDiscovery, SessionSummary, discover, discover_paths, load_history,
+    },
     state::StateStore,
 };
 
@@ -78,6 +80,7 @@ pub(crate) enum RuntimeCommand {
     },
     LoadSessions(String),
     RefreshSessions,
+    RefreshActiveSessions,
     Shutdown,
 }
 
@@ -143,6 +146,7 @@ pub(crate) struct RuntimeSnapshot {
     pub stderr: String,
     pub auto_retry: bool,
     pub history_preview: bool,
+    pub transcript_changed_from: Option<usize>,
 }
 
 pub(crate) struct RuntimeHandle {
@@ -480,10 +484,15 @@ fn run_supervisor(
         if refresh_interval.is_some_and(|interval| last_catalog_refresh.elapsed() >= interval)
             && let Some(catalog) = actors.get(&catalog_key)
         {
-            catalog.send(RuntimeCommand::RefreshSessions);
+            catalog.send(RuntimeCommand::RefreshActiveSessions);
             last_catalog_refresh = Instant::now();
         }
-        match command_rx.recv_timeout(Duration::from_millis(12)) {
+        let supervisor_wait = if has_running_root || catalog_has_running_descendants {
+            Duration::from_millis(12)
+        } else {
+            Duration::from_millis(250)
+        };
+        match command_rx.recv_timeout(supervisor_wait) {
             Ok(RuntimeCommand::Shutdown) => running = false,
             Ok(command) => {
                 if matches!(&command, RuntimeCommand::ExtensionResponse(_)) {
@@ -877,6 +886,7 @@ struct RuntimeOwner {
     pending_prompt_target: Option<String>,
     pending_prompt_item: Option<Arc<TranscriptItem>>,
     pending_outbox_id: Option<i64>,
+    transcript_changed_from: Option<usize>,
     event_tx: mpsc::Sender<RuntimeEvent>,
     discovery_tx: mpsc::Sender<DiscoveryResult>,
     history_tx: mpsc::Sender<HistoryResult>,
@@ -943,6 +953,7 @@ fn run(
         pending_prompt_target: None,
         pending_prompt_item: None,
         pending_outbox_id: None,
+        transcript_changed_from: Some(0),
         event_tx,
         discovery_tx,
         history_tx,
@@ -982,6 +993,7 @@ fn run(
             match owner.apply_process_item(item) {
                 SnapshotChange::None => {}
                 SnapshotChange::Streaming => {
+                    crate::performance::count_coalesced_stream_event();
                     stream_publish_due
                         .get_or_insert_with(|| Instant::now() + STREAM_PUBLISH_INTERVAL);
                 }
@@ -994,10 +1006,19 @@ fn run(
             owner.publish();
             stream_publish_due = None;
         }
-        let wait = stream_publish_due.map_or(Duration::from_millis(12), |deadline| {
+        let active = owner.active_snapshot().conversation.running
+            || !owner.startup_state_loaded
+            || !owner.startup_history_loaded
+            || owner.pending_prompt_id.is_some();
+        let poll_ceiling = if active {
+            Duration::from_millis(12)
+        } else {
+            Duration::from_millis(250)
+        };
+        let wait = stream_publish_due.map_or(poll_ceiling, |deadline| {
             deadline
                 .saturating_duration_since(Instant::now())
-                .min(Duration::from_millis(12))
+                .min(poll_ceiling)
         });
         match command_rx.recv_timeout(wait) {
             Ok(RuntimeCommand::Shutdown) => running = false,
@@ -1027,6 +1048,7 @@ impl RuntimeOwner {
         self.pending_prompt_id = None;
         self.pending_prompt_item = None;
         self.auto_title_attempted = None;
+        self.transcript_changed_from = Some(0);
         let status = session.as_ref().map_or_else(
             || "Starting new session".into(),
             |_| "Resuming session".into(),
@@ -1152,6 +1174,7 @@ impl RuntimeOwner {
             }
             RuntimeCommand::LoadSessions(query) => self.load_sessions(query),
             RuntimeCommand::RefreshSessions => self.refresh_sessions(),
+            RuntimeCommand::RefreshActiveSessions => self.refresh_active_sessions(),
             RuntimeCommand::Shutdown => {}
         }
     }
@@ -1211,12 +1234,22 @@ impl RuntimeOwner {
                 let previewing = self.parked_snapshot.is_some();
                 let previous_live_status =
                     previewing.then(|| session_badge_status(&self.active_snapshot().conversation));
-                let snapshot = self.active_snapshot_mut();
-                conversation_mut(snapshot).reduce(&event);
-                update_context_from_event(&mut snapshot.stats, &event);
-                snapshot.status = run_status(&snapshot.conversation).to_owned();
-                let live_status_changed = previous_live_status
-                    .is_some_and(|status| status != session_badge_status(&snapshot.conversation));
+                let (changed_from, live_status_changed) = {
+                    let snapshot = self.active_snapshot_mut();
+                    let changed_from = conversation_mut(snapshot).reduce_deferred(&event);
+                    update_context_from_event(&mut snapshot.stats, &event);
+                    snapshot.status = run_status(&snapshot.conversation).to_owned();
+                    let live_status_changed = previous_live_status.is_some_and(|status| {
+                        status != session_badge_status(&snapshot.conversation)
+                    });
+                    (changed_from, live_status_changed)
+                };
+                if let Some(changed_from) = changed_from {
+                    self.transcript_changed_from = Some(
+                        self.transcript_changed_from
+                            .map_or(changed_from, |previous| previous.min(changed_from)),
+                    );
+                }
                 let should_publish = !previewing || live_status_changed;
                 if settled {
                     self.maybe_generate_session_title();
@@ -1417,6 +1450,7 @@ impl RuntimeOwner {
         });
         let mut conversation = ConversationState::default();
         conversation.replace_history(&history.messages);
+        self.transcript_changed_from = Some(0);
         self.snapshot = RuntimeSnapshot {
             connected: true,
             status: "Ready".into(),
@@ -1671,7 +1705,9 @@ impl RuntimeOwner {
         }
     }
 
-    fn publish(&self) {
+    fn publish(&mut self) {
+        crate::performance::count_snapshot();
+        conversation_mut(self.active_snapshot_mut()).flush_live_projection();
         let active_snapshot = self.active_snapshot();
         let mut snapshot = self.snapshot.clone();
         snapshot.live_session = self
@@ -1679,6 +1715,7 @@ impl RuntimeOwner {
             .clone()
             .or_else(|| active_snapshot.selected_session.clone());
         snapshot.live_status = session_badge_status(&active_snapshot.conversation).into();
+        snapshot.transcript_changed_from = self.transcript_changed_from.take();
         let _ = self.event_tx.send(RuntimeEvent::Snapshot {
             generation: self.process_generation,
             snapshot: Arc::new(snapshot),
@@ -1809,6 +1846,7 @@ mod tests {
                 pending_prompt_target: None,
                 pending_prompt_item: None,
                 pending_outbox_id: None,
+                transcript_changed_from: None,
                 event_tx,
                 discovery_tx,
                 history_tx,
@@ -2782,6 +2820,7 @@ mod tests {
             pending_prompt_target: None,
             pending_prompt_item: None,
             pending_outbox_id: None,
+            transcript_changed_from: None,
             event_tx,
             discovery_tx,
             history_tx,
@@ -2881,6 +2920,7 @@ mod tests {
             pending_prompt_target: None,
             pending_prompt_item: None,
             pending_outbox_id: None,
+            transcript_changed_from: None,
             event_tx,
             discovery_tx,
             history_tx,
@@ -3042,6 +3082,7 @@ mod tests {
             pending_prompt_target: Some(format!("session:{}", active_path.display())),
             pending_prompt_item: None,
             pending_outbox_id: None,
+            transcript_changed_from: None,
             event_tx,
             discovery_tx,
             history_tx,

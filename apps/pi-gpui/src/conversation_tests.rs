@@ -93,6 +93,23 @@ fn live_partial_blocks_remain_sorted_when_indexes_arrive_out_of_order() {
 }
 
 #[test]
+fn deferred_streaming_projects_only_when_the_frame_flushes() {
+    let mut state = ConversationState::default();
+    state.reduce(&json!({"type":"message_start","message":{"role":"assistant","content":[]}}));
+
+    let changed = state.reduce_deferred(&json!({
+        "type":"message_update",
+        "assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"batched"}
+    }));
+    assert_eq!(changed, Some(0));
+    assert!(state.items.is_empty());
+
+    state.flush_live_projection();
+    assert_eq!(state.items.len(), 1);
+    assert_eq!(state.items[0].text, "batched");
+}
+
+#[test]
 fn authoritative_end_replaces_all_partial_blocks_without_duplicate() {
     let mut state = ConversationState::default();
     state.reduce(&json!({"type":"message_start","message":{"role":"assistant","content":[]}}));

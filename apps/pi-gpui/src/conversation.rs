@@ -102,6 +102,8 @@ pub(crate) struct ConversationState {
     cache_hit_rate_count: usize,
     live_message: Option<LiveMessage>,
     content: BTreeMap<usize, PartialContent>,
+    dirty_content: std::collections::BTreeSet<usize>,
+    projected_content: std::collections::BTreeSet<usize>,
     tools: HashMap<String, usize>,
 }
 
@@ -171,6 +173,8 @@ impl ConversationState {
         }
         self.live_message = None;
         self.content.clear();
+        self.dirty_content.clear();
+        self.projected_content.clear();
         self.tools.clear();
     }
 
@@ -198,11 +202,21 @@ impl ConversationState {
         self.items.extend(projected.into_iter().map(Arc::new));
     }
 
-    pub(crate) fn reduce(&mut self, event: &Value) {
+    pub(crate) fn reduce(&mut self, event: &Value) -> Option<usize> {
+        self.reduce_with_projection(event, true)
+    }
+
+    pub(crate) fn reduce_deferred(&mut self, event: &Value) -> Option<usize> {
+        self.reduce_with_projection(event, false)
+    }
+
+    fn reduce_with_projection(&mut self, event: &Value, project_live: bool) -> Option<usize> {
         let kind = event
             .get("type")
             .and_then(Value::as_str)
             .unwrap_or_default();
+        let previous_len = self.items.len();
+        let previous_live_start = self.live_message.map(|live| live.start);
         match kind {
             "agent_start" => {
                 self.running = true;
@@ -220,7 +234,9 @@ impl ConversationState {
                 self.compacting = false;
             }
             "message_start" => self.start_message(event.get("message")),
-            "message_update" => self.update_message(event.get("assistantMessageEvent")),
+            "message_update" => {
+                self.update_message(event.get("assistantMessageEvent"), project_live)
+            }
             "message_end" => self.end_message(event.get("message")),
             "tool_execution_start" => self.start_tool(event),
             "tool_execution_update" => self.update_tool(event),
@@ -260,6 +276,24 @@ impl ConversationState {
             "extension_error" => self.push_extension_error(text_field(event, "error")),
             "turn_start" | "turn_end" => {}
             unknown => self.diagnostic(format!("Unknown RPC event: {unknown}")),
+        }
+        match kind {
+            "message_start" => Some(previous_len.saturating_sub(1)),
+            "message_update" | "message_end" => previous_live_start,
+            "tool_execution_start" | "tool_execution_update" | "tool_execution_end" => event
+                .get("toolCallId")
+                .and_then(Value::as_str)
+                .and_then(|id| self.tools.get(id).copied())
+                .or(Some(previous_len)),
+            "compaction_start"
+            | "compaction_end"
+            | "auto_retry_start"
+            | "auto_retry_end"
+            | "summarization_retry_scheduled"
+            | "summarization_retry_attempt_start"
+            | "summarization_retry_finished"
+            | "extension_error" => Some(previous_len),
+            _ => None,
         }
     }
 
@@ -305,6 +339,8 @@ impl ConversationState {
 
     fn start_message(&mut self, message: Option<&Value>) {
         self.content.clear();
+        self.dirty_content.clear();
+        self.projected_content.clear();
         if message.is_some_and(|message| {
             message.get("role").and_then(Value::as_str) == Some("toolResult")
                 && message
@@ -345,7 +381,7 @@ impl ConversationState {
         self.live_message = Some(LiveMessage { start, len });
     }
 
-    fn update_message(&mut self, delta: Option<&Value>) {
+    fn update_message(&mut self, delta: Option<&Value>, project_live: bool) {
         let Some(delta) = delta else { return };
         let Some(content_index) = delta
             .get("contentIndex")
@@ -358,7 +394,6 @@ impl ConversationState {
             .get("type")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        let content_existed = self.content.contains_key(&content_index);
         let partial = self.content.entry(content_index).or_default();
         match delta_type {
             "text_start" => reset_partial(partial, PartialKind::Text),
@@ -387,10 +422,22 @@ impl ConversationState {
             }
             _ => return,
         }
-        if !content_existed && self.content.len() == 1 {
-            self.clear_initial_live_projection();
+        self.dirty_content.insert(content_index);
+        if project_live {
+            self.flush_live_projection();
         }
-        self.refresh_live_projection(content_index, content_existed);
+    }
+
+    pub(crate) fn flush_live_projection(&mut self) {
+        let dirty = std::mem::take(&mut self.dirty_content);
+        for content_index in dirty {
+            let projection_existed = self.projected_content.contains(&content_index);
+            if self.projected_content.is_empty() {
+                self.clear_initial_live_projection();
+            }
+            self.refresh_live_projection(content_index, projection_existed);
+            self.projected_content.insert(content_index);
+        }
     }
 
     fn clear_initial_live_projection(&mut self) {
@@ -456,6 +503,8 @@ impl ConversationState {
             }) {
                 apply_tool_result(Arc::make_mut(item), message, true);
                 self.content.clear();
+                self.dirty_content.clear();
+                self.projected_content.clear();
                 return;
             }
         }
@@ -470,6 +519,8 @@ impl ConversationState {
             self.items.extend(final_items);
         }
         self.content.clear();
+        self.dirty_content.clear();
+        self.projected_content.clear();
     }
 
     fn record_cache_hit_rate(&mut self, message: &Value) {

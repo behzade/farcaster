@@ -34,6 +34,43 @@ impl RuntimeOwner {
         }
     }
 
+    pub(super) fn refresh_active_sessions(&mut self) {
+        if !self.owns_session_catalog {
+            return;
+        }
+        let paths = self
+            .state
+            .as_ref()
+            .and_then(|state| state.cached_sessions("").ok())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|session| session.is_running)
+            .map(|session| session.path)
+            .collect::<Vec<_>>();
+        if paths.is_empty() || self.session_discovery_in_flight {
+            return;
+        }
+        self.session_generation = self.session_generation.saturating_add(1);
+        self.session_discovery_in_flight = true;
+        let generation = self.session_generation;
+        let sender = self.discovery_tx.clone();
+        if let Err(error) = thread::Builder::new()
+            .name("pi-gpui-active-sessions".into())
+            .spawn(move || {
+                let _ = sender.send(DiscoveryResult {
+                    generation,
+                    result: discover_paths(&paths),
+                });
+            })
+        {
+            self.session_discovery_in_flight = false;
+            let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
+                generation,
+                message: format!("start active session refresh: {error}"),
+            });
+        }
+    }
+
     pub(super) fn refresh_sessions(&mut self) {
         if !self.owns_session_catalog {
             let _ = self.event_tx.send(RuntimeEvent::RefreshCatalog);

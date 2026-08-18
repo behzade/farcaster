@@ -12,10 +12,11 @@ impl PiApp {
         &self,
         snapshot: &crate::runtime::RuntimeSnapshot,
     ) -> Vec<TranscriptRow> {
-        crate::transcript::update_rows(
+        crate::transcript::update_rows_from(
             &self.transcript_rows,
             &self.snapshot.conversation.items,
             &snapshot.conversation.items,
+            snapshot.transcript_changed_from,
         )
     }
 
@@ -90,11 +91,27 @@ impl PiApp {
                     .zip(&next)
                     .rposition(|(current, next)| current != next)
                     .unwrap_or(first);
+                crate::performance::count_remeasured_rows(last + 1 - first);
                 self.transcript_list.remeasure_items(first..last + 1);
             }
         } else if let Some((old_range, new_count)) = transcript_splice(&self.transcript_rows, &next)
         {
+            let anchor = (!self.transcript_list.is_following_tail()).then(|| {
+                let offset = self.transcript_list.logical_scroll_top();
+                self.transcript_rows
+                    .get(offset.item_ix)
+                    .copied()
+                    .map(|row| (row, offset.offset_in_item))
+            });
             self.transcript_list.splice(old_range, new_count);
+            if let Some(Some((anchored_row, offset_in_item))) = anchor
+                && let Some(item_ix) = next.iter().position(|row| row.same_position(&anchored_row))
+            {
+                self.transcript_list.scroll_to(gpui::ListOffset {
+                    item_ix,
+                    offset_in_item,
+                });
+            }
         }
         self.transcript_rows = Arc::new(next);
     }

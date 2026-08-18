@@ -198,12 +198,11 @@ impl PiApp {
         self.changes.return_focus = Some(opener);
         self.changes.diff_generation = self.changes.diff_generation.saturating_add(1);
         self.changes.diff_scroll.set_offset(point(px(0.0), px(0.0)));
-        self.changes.diff_syntax = Some(HighlightedDiff::new(
-            &file.path.to_string_lossy(),
-            &file.diff.patch,
-        ));
-        self.changes.diff = Some(DiffSurface::Ready(file.clone(), file.diff.clone()));
+        let surface = DiffSurface::Ready(file.clone(), file.diff.clone());
+        self.changes.diff_syntax = None;
+        self.changes.diff = Some(surface.clone());
         self.changes.pending_diff_setup = true;
+        self.start_diff_highlight(&surface, cx);
         cx.notify();
     }
 
@@ -231,11 +230,32 @@ impl PiApp {
         self.changes.diff_generation = self.changes.diff_generation.saturating_add(1);
         self.changes.diff_scroll.set_offset(point(px(0.0), px(0.0)));
         let surface = load_tool_diff_surface(path, presentation);
-        self.changes.diff_syntax = surface_diff(&surface)
-            .map(|(path, patch)| HighlightedDiff::new(&path.to_string_lossy(), patch));
-        self.changes.diff = Some(surface);
+        self.changes.diff_syntax = None;
+        self.changes.diff = Some(surface.clone());
         self.changes.pending_diff_setup = true;
+        self.start_diff_highlight(&surface, cx);
         cx.notify();
+    }
+
+    fn start_diff_highlight(&mut self, surface: &DiffSurface, cx: &mut Context<Self>) {
+        let Some((path, patch)) = surface_diff(surface) else {
+            return;
+        };
+        let generation = self.changes.diff_generation;
+        let path = path.to_string_lossy().into_owned();
+        let patch = patch.to_owned();
+        let task = cx.background_spawn(async move { HighlightedDiff::new(&path, &patch) });
+        cx.spawn(async move |weak, cx| {
+            let syntax = task.await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.changes.diff_generation != generation || this.changes.diff.is_none() {
+                    return;
+                }
+                this.changes.diff_syntax = Some(syntax);
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     pub(crate) fn close_file_diff(&mut self, window: &mut Window, cx: &mut Context<Self>) {

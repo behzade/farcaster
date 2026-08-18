@@ -1,10 +1,44 @@
 //! DEBUG-only summaries from GPUI's frame, task, and action profilers.
 
-use std::time::{Duration, Instant};
+use std::{
+    sync::atomic::{AtomicU64, Ordering},
+    time::{Duration, Instant},
+};
 
 use gpui::{FrameTimingCollector, TasksIncluded, profiler};
 
 const SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
+
+static SNAPSHOTS_PUBLISHED: AtomicU64 = AtomicU64::new(0);
+static STREAM_EVENTS_COALESCED: AtomicU64 = AtomicU64::new(0);
+static TRANSCRIPT_ITEMS_EXAMINED: AtomicU64 = AtomicU64::new(0);
+static TRANSCRIPT_ROWS_REMEASURED: AtomicU64 = AtomicU64::new(0);
+static CATALOG_FILES_PARSED: AtomicU64 = AtomicU64::new(0);
+static HIGHLIGHT_BYTES: AtomicU64 = AtomicU64::new(0);
+
+pub(crate) fn count_snapshot() {
+    SNAPSHOTS_PUBLISHED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub(crate) fn count_coalesced_stream_event() {
+    STREAM_EVENTS_COALESCED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub(crate) fn count_transcript_items(count: usize) {
+    TRANSCRIPT_ITEMS_EXAMINED.fetch_add(count as u64, Ordering::Relaxed);
+}
+
+pub(crate) fn count_remeasured_rows(count: usize) {
+    TRANSCRIPT_ROWS_REMEASURED.fetch_add(count as u64, Ordering::Relaxed);
+}
+
+pub(crate) fn count_catalog_parse() {
+    CATALOG_FILES_PARSED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub(crate) fn count_highlight_bytes(count: usize) {
+    HIGHLIGHT_BYTES.fetch_add(count as u64, Ordering::Relaxed);
+}
 
 pub(crate) struct PerformanceMonitor {
     frames: FrameTimingCollector,
@@ -22,6 +56,12 @@ pub(crate) struct PerformanceSummary {
     pub(crate) invalidations_max: u64,
     pub(crate) slowest_task: Option<String>,
     pub(crate) slowest_action: Option<String>,
+    pub(crate) snapshots_published: u64,
+    pub(crate) stream_events_coalesced: u64,
+    pub(crate) transcript_items_examined: u64,
+    pub(crate) transcript_rows_remeasured: u64,
+    pub(crate) catalog_files_parsed: u64,
+    pub(crate) highlight_bytes: u64,
 }
 
 impl PerformanceMonitor {
@@ -100,6 +140,12 @@ fn collect_summary(frames: &mut FrameTimingCollector) -> PerformanceSummary {
         invalidations_max: invalidations.into_iter().max().unwrap_or_default(),
         slowest_task,
         slowest_action,
+        snapshots_published: SNAPSHOTS_PUBLISHED.swap(0, Ordering::Relaxed),
+        stream_events_coalesced: STREAM_EVENTS_COALESCED.swap(0, Ordering::Relaxed),
+        transcript_items_examined: TRANSCRIPT_ITEMS_EXAMINED.swap(0, Ordering::Relaxed),
+        transcript_rows_remeasured: TRANSCRIPT_ROWS_REMEASURED.swap(0, Ordering::Relaxed),
+        catalog_files_parsed: CATALOG_FILES_PARSED.swap(0, Ordering::Relaxed),
+        highlight_bytes: HIGHLIGHT_BYTES.swap(0, Ordering::Relaxed),
     }
 }
 

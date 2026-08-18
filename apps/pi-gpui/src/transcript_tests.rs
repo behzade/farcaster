@@ -246,6 +246,31 @@ fn row_position_ignores_content_revision() {
 }
 
 #[test]
+fn streaming_chunk_growth_keeps_stable_row_position() {
+    let original = TranscriptRow::MessageChunk {
+        index: 3,
+        start: 0,
+        end: 100,
+        block: 0,
+        revision: 1,
+        first: true,
+        last: true,
+    };
+    let streamed = TranscriptRow::MessageChunk {
+        index: 3,
+        start: 0,
+        end: 180,
+        block: 0,
+        revision: 2,
+        first: true,
+        last: false,
+    };
+
+    assert!(original.same_position(&streamed));
+    assert_ne!(original, streamed);
+}
+
+#[test]
 fn targets_use_the_first_readable_argument_value() {
     assert_eq!(tool_target("Path: src/main.rs\nOffset: 2"), "src/main.rs");
     assert_eq!(tool_target(""), "");

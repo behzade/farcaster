@@ -597,6 +597,27 @@ fn render_performance(summary: &crate::performance::PerformanceSummary) -> impl 
             ),
         ))
         .child(metric_row(
+            "Snapshots / coalesced",
+            format!(
+                "{} / {}",
+                summary.snapshots_published, summary.stream_events_coalesced
+            ),
+        ))
+        .child(metric_row(
+            "Transcript examined / remeasured",
+            format!(
+                "{} / {}",
+                summary.transcript_items_examined, summary.transcript_rows_remeasured
+            ),
+        ))
+        .child(metric_row(
+            "Catalog parses / highlight bytes",
+            format!(
+                "{} / {}",
+                summary.catalog_files_parsed, summary.highlight_bytes
+            ),
+        ))
+        .child(metric_row(
             "Slowest task poll",
             summary.slowest_task.clone().unwrap_or_else(|| "—".into()),
         ))

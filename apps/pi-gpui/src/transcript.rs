@@ -1,6 +1,10 @@
 //! Selectable, compact transcript projection.
 
-use std::{rc::Rc, sync::Arc};
+use std::{
+    hash::{Hash, Hasher},
+    rc::Rc,
+    sync::Arc,
+};
 
 use gpui::{
     AnyElement, FontWeight, HighlightStyle, InteractiveElement as _, IntoElement as _,
@@ -69,28 +73,22 @@ impl TranscriptRow {
                 Self::MessageChunk {
                     index: left_index,
                     start: left_start,
-                    end: left_end,
                     block: left_block,
                     first: left_first,
-                    last: left_last,
                     ..
                 },
                 Self::MessageChunk {
                     index: right_index,
                     start: right_start,
-                    end: right_end,
                     block: right_block,
                     first: right_first,
-                    last: right_last,
                     ..
                 },
             ) => {
                 left_index == right_index
                     && left_start == right_start
-                    && left_end == right_end
                     && left_block == right_block
                     && left_first == right_first
-                    && left_last == right_last
             }
             (
                 Self::ReadGroup {
@@ -132,11 +130,28 @@ pub(crate) fn update_rows(
     previous_items: &[Arc<TranscriptItem>],
     items: &[Arc<TranscriptItem>],
 ) -> Vec<TranscriptRow> {
-    let unchanged_items = previous_items
-        .iter()
-        .zip(items)
-        .take_while(|(previous, next)| Arc::ptr_eq(previous, next))
-        .count();
+    update_rows_from(previous_rows, previous_items, items, None)
+}
+
+pub(crate) fn update_rows_from(
+    previous_rows: &[TranscriptRow],
+    previous_items: &[Arc<TranscriptItem>],
+    items: &[Arc<TranscriptItem>],
+    changed_from: Option<usize>,
+) -> Vec<TranscriptRow> {
+    let unchanged_items = changed_from.map_or_else(
+        || {
+            previous_items
+                .iter()
+                .zip(items)
+                .take_while(|(previous, next)| Arc::ptr_eq(previous, next))
+                .count()
+        },
+        |changed_from| changed_from.min(previous_items.len()).min(items.len()),
+    );
+    crate::performance::count_transcript_items(
+        unchanged_items.saturating_add(usize::from(unchanged_items < items.len())),
+    );
     if unchanged_items == previous_items.len()
         && unchanged_items == items.len()
         && (items.is_empty() || !previous_rows.is_empty())
@@ -169,6 +184,7 @@ pub(crate) fn update_rows(
 }
 
 fn project_rows_from(items: &[Arc<TranscriptItem>], mut index: usize) -> Vec<TranscriptRow> {
+    crate::performance::count_transcript_items(items.len().saturating_sub(index));
     let mut rows = Vec::new();
     while index < items.len() {
         if is_read(&items[index]) {
@@ -184,7 +200,9 @@ fn project_rows_from(items: &[Arc<TranscriptItem>], mut index: usize) -> Vec<Tra
             continue;
         }
         if items[index].kind == TranscriptKind::Assistant
-            && items[index].text.len() > MARKDOWN_CHUNK_HARD_BYTES
+            && (items[index].text.len() > MARKDOWN_CHUNK_HARD_BYTES
+                || (items[index].streaming
+                    && items[index].text.len() > MARKDOWN_CHUNK_TARGET_BYTES))
         {
             let chunks = markdown_chunk_ranges(&items[index].text);
             let last_block = chunks.len().saturating_sub(1);
@@ -194,7 +212,7 @@ fn project_rows_from(items: &[Arc<TranscriptItem>], mut index: usize) -> Vec<Tra
                     start,
                     end,
                     block,
-                    revision: item_revision(std::slice::from_ref(&items[index])),
+                    revision: text_revision(&items[index].text[start..end]),
                     first: block == 0,
                     last: block == last_block,
                 }
@@ -216,12 +234,18 @@ fn item_revision(items: &[Arc<TranscriptItem>]) -> usize {
     })
 }
 
+fn text_revision(text: &str) -> usize {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish() as usize
+}
+
 fn is_read(item: &TranscriptItem) -> bool {
     item.kind == TranscriptKind::Tool && item.label == "Read"
 }
 
 fn markdown_chunk_ranges(text: &str) -> Vec<(usize, usize)> {
-    if text.len() <= MARKDOWN_CHUNK_HARD_BYTES {
+    if text.len() <= MARKDOWN_CHUNK_TARGET_BYTES {
         return vec![(0, text.len())];
     }
     let mut chunks = Vec::new();
