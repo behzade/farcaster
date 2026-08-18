@@ -109,7 +109,7 @@ fn composer_and_run_panel_track_their_rendered_snapshot_inputs() {
     let mut composer = previous.clone();
     composer.status = "Working".into();
     let mut run_panel = previous.clone();
-    run_panel.conversation.latest_cache_hit_rate = Some(0.5);
+    run_panel.conversation.average_cache_hit_rate = Some(0.5);
 
     assert!(composer_snapshot_changed(&previous, &composer));
     assert!(!run_panel_snapshot_changed(&previous, &composer));

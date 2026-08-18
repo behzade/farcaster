@@ -96,8 +96,10 @@ pub(crate) struct ConversationState {
     pub settled: bool,
     pub compacting: bool,
     pub retrying: bool,
-    pub latest_cache_hit_rate: Option<f64>,
+    pub average_cache_hit_rate: Option<f64>,
     pub diagnostics: Vec<String>,
+    cache_hit_rate_sum: f64,
+    cache_hit_rate_count: usize,
     live_message: Option<LiveMessage>,
     content: BTreeMap<usize, PartialContent>,
     tools: HashMap<String, usize>,
@@ -158,10 +160,12 @@ impl ConversationState {
 
     pub(crate) fn replace_history(&mut self, messages: &[Value]) {
         self.items.clear();
-        self.latest_cache_hit_rate = None;
+        self.average_cache_hit_rate = None;
+        self.cache_hit_rate_sum = 0.0;
+        self.cache_hit_rate_count = 0;
         for message in messages {
             if message.get("role").and_then(Value::as_str) == Some("assistant") {
-                self.latest_cache_hit_rate = cache_hit_rate(message);
+                self.record_cache_hit_rate(message);
             }
             self.project_history_message(message);
         }
@@ -425,7 +429,7 @@ impl ConversationState {
     fn end_message(&mut self, message: Option<&Value>) {
         let Some(message) = message else { return };
         if message.get("role").and_then(Value::as_str) == Some("assistant") {
-            self.latest_cache_hit_rate = cache_hit_rate(message);
+            self.record_cache_hit_rate(message);
         }
         if message.get("role").and_then(Value::as_str) == Some("toolResult") {
             if let Some(live) = self.live_message.take() {
@@ -454,6 +458,16 @@ impl ConversationState {
             self.items.extend(final_items);
         }
         self.content.clear();
+    }
+
+    fn record_cache_hit_rate(&mut self, message: &Value) {
+        let Some(rate) = cache_hit_rate(message) else {
+            return;
+        };
+        self.cache_hit_rate_sum += rate;
+        self.cache_hit_rate_count += 1;
+        self.average_cache_hit_rate =
+            Some(self.cache_hit_rate_sum / self.cache_hit_rate_count as f64);
     }
 
     fn start_tool(&mut self, event: &Value) {

@@ -1073,7 +1073,7 @@ fn run_panel_snapshot_changed(previous: &RuntimeSnapshot, next: &RuntimeSnapshot
     previous.selected_session != next.selected_session
         || previous.stats != next.stats
         || previous.conversation.running != next.conversation.running
-        || previous.conversation.latest_cache_hit_rate != next.conversation.latest_cache_hit_rate
+        || previous.conversation.average_cache_hit_rate != next.conversation.average_cache_hit_rate
 }
 
 fn input_snapshot(input: &TextareaState) -> ComposerSnapshot {

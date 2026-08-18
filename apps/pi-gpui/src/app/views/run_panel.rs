@@ -152,7 +152,7 @@ impl PiApp {
             .child(section_heading("Context"))
             .child(render_context_summary(
                 &context,
-                self.snapshot.conversation.latest_cache_hit_rate,
+                self.snapshot.conversation.average_cache_hit_rate,
                 context_control,
             ))
             .when(self.context_details_expanded, |run| {
@@ -532,7 +532,7 @@ fn render_context_summary(
                 ))
                 .child(metric_row("Session cost", format_cost(summary.cost_micros)))
                 .child(metric_row(
-                    "Latest cache hit",
+                    "Average cache hit",
                     cache_hit_rate.map_or_else(|| "—".into(), |rate| format!("{rate:.1}%")),
                 ))
                 .child(control),
