@@ -127,6 +127,19 @@ impl PiApp {
         status: String,
     ) {
         let session = session.map(|path| normalize_session_path(&path));
+        if status == "Working"
+            && self
+                .pending_submission
+                .as_ref()
+                .is_some_and(|pending| pending.target == target)
+        {
+            establish_submission(
+                &mut self.submitted_drafts,
+                &target,
+                true,
+                session.clone(),
+            );
+        }
         let associated_path =
             fill_session_association(&mut self.submitted_drafts, &target, session.as_deref());
         if let Some(id) = draft_id(&target)
