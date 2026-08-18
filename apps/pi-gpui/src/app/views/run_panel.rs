@@ -103,20 +103,24 @@ impl PiApp {
                 continue;
             };
             match agent_section(activity.lifecycle, activity.limited, session.is_running) {
-                AgentSection::Active => active.push((activity, depth, session.modified)),
-                AgentSection::Completed => completed.push((activity, depth, session.modified)),
-                AgentSection::Limited => limited.push((activity, depth, session.modified)),
+                AgentSection::Active => active.push((activity, depth, session)),
+                AgentSection::Completed => completed.push((activity, depth, session)),
+                AgentSection::Limited => limited.push((activity, depth, session)),
                 AgentSection::Hidden => {}
             }
         }
-        active.sort_by_key(|(activity, _, modified)| {
-            (
-                !matches!(activity.lifecycle, AgentLifecycle::NeedsInput),
-                std::cmp::Reverse(*modified),
-            )
-        });
-        completed.sort_by_key(|(_, _, modified)| std::cmp::Reverse(*modified));
-        limited.sort_by_key(|(_, _, modified)| std::cmp::Reverse(*modified));
+        let by_created_at =
+            |left: &(&AgentActivity, usize, &crate::sessions::SessionSummary),
+             right: &(&AgentActivity, usize, &crate::sessions::SessionSummary)| {
+                right
+                    .2
+                    .timestamp
+                    .cmp(&left.2.timestamp)
+                    .then_with(|| left.2.id.cmp(&right.2.id))
+            };
+        active.sort_by(by_created_at);
+        completed.sort_by(by_created_at);
+        limited.sort_by(by_created_at);
 
         let context_control = disclosure_control(
             "toggle-context-details",
