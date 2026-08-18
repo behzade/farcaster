@@ -10,7 +10,7 @@ const searchSchema = Type.Object({
 });
 
 const editSchema = Type.Object({
-  action: StringEnum(["create", "set_status", "add_note", "add_dependency", "remove_dependency", "link_session", "unlink_session"] as const),
+  action: StringEnum(["create", "set_fields", "set_priority", "set_status", "add_note", "add_dependency", "remove_dependency", "link_session", "unlink_session"] as const),
   title: Type.Optional(Type.String()),
   body: Type.Optional(Type.String()),
   priority: Type.Optional(Type.Integer({ minimum: 0 })),

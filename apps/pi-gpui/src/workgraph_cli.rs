@@ -158,6 +158,18 @@ fn edit_request(
             body: fields.get("body").cloned().unwrap_or_default(),
             priority: optional_number(fields, "priority")?.unwrap_or(0),
         },
+        "set_fields" => EditAction::SetFields {
+            number: number(fields, "number")?,
+            title: fields.get("title").cloned(),
+            body: fields.get("body").cloned(),
+            priority: optional_number(fields, "priority")?,
+            expected_version: optional_number(fields, "expectedVersion")?,
+        },
+        "set_priority" => EditAction::SetPriority {
+            number: number(fields, "number")?,
+            priority: number(fields, "priority")?,
+            expected_version: optional_number(fields, "expectedVersion")?,
+        },
         "set_status" => EditAction::SetStatus {
             number: number(fields, "number")?,
             status: parse_status(required(fields, "status")?)?,
@@ -263,11 +275,26 @@ mod tests {
         .expect("create");
         assert!(output.contains("Merge graph"));
         let output = run(
+            [
+                "edit".into(),
+                project_field.clone().into(),
+                "action=set_fields".into(),
+                "number=1".into(),
+                "title=Merge durable graph".into(),
+                "priority=2".into(),
+                "expectedVersion=1".into(),
+                "idempotencyKey=fields-1".into(),
+            ],
+            &database,
+        )
+        .expect("set fields");
+        assert!(output.contains("Merge durable graph"));
+        let output = run(
             ["search".into(), project_field.into(), "view=ready".into()],
             &database,
         )
         .expect("search");
-        assert!(output.contains("Merge graph"));
+        assert!(output.contains("Merge durable graph"));
         let _gui_state = crate::state::StateStore::open_at(&database)
             .expect("GUI state opens after work graph migration");
     }
