@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+pub(crate) const WORKGRAPH_RPC_TITLE: &str = "\u{1f}pi-gpui-workgraph\u{1f}";
+
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub(crate) struct RpcResponse {
     pub id: Option<String>,
@@ -147,6 +149,19 @@ impl ExtensionUiRequest {
         };
         let payload = message.strip_prefix("\u{1f}pi-gpui-notification\u{1f}")?;
         payload.split_once('\u{1f}')
+    }
+
+    pub(crate) fn workgraph_rpc(&self) -> Option<(&str, &str)> {
+        let Self::Input {
+            id,
+            title,
+            placeholder: Some(payload),
+            ..
+        } = self
+        else {
+            return None;
+        };
+        (title == WORKGRAPH_RPC_TITLE).then_some((id, payload))
     }
 
     pub(crate) fn dialog_id(&self) -> Option<&str> {
@@ -337,6 +352,27 @@ mod tests {
             request.gpui_system_notification(),
             Some(("Pi finished", "Done"))
         );
+    }
+
+    #[test]
+    fn companion_workgraph_requests_use_the_private_rpc_marker() {
+        let request = ExtensionUiRequest::Input {
+            id: "request-1".into(),
+            title: WORKGRAPH_RPC_TITLE.into(),
+            placeholder: Some("{\"operation\":\"search\"}".into()),
+            timeout: None,
+        };
+        assert_eq!(
+            request.workgraph_rpc(),
+            Some(("request-1", "{\"operation\":\"search\"}"))
+        );
+        let ordinary = ExtensionUiRequest::Input {
+            id: "input-1".into(),
+            title: "Question".into(),
+            placeholder: Some("Answer".into()),
+            timeout: None,
+        };
+        assert_eq!(ordinary.workgraph_rpc(), None);
     }
 
     #[test]

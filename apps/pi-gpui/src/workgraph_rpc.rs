@@ -1,8 +1,8 @@
-//! Same-binary command edge for the durable work graph.
+//! Private companion-extension RPC edge for the durable work graph.
 
-use std::{collections::BTreeMap, ffi::OsString, path::Path};
+use std::{collections::BTreeMap, path::Path};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use workgraph::{
     adapter::SqliteAdapter,
     contract::{EditAction, EditRequest, IssueStatus, PlanningView, SearchRequest},
@@ -10,10 +10,8 @@ use workgraph::{
 };
 
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum CliError {
-    #[error("usage: pi-gpui workgraph search|edit key=value...")]
-    Usage,
-    #[error("unknown or duplicate workgraph field: {0}")]
+pub(crate) enum WorkGraphRpcError {
+    #[error("unknown workgraph field: {0}")]
     Field(String),
     #[error("workgraph field is missing: {0}")]
     Missing(&'static str),
@@ -32,68 +30,49 @@ struct Output<T> {
     data: T,
 }
 
-pub(crate) fn run(
-    arguments: impl IntoIterator<Item = OsString>,
-    database: &Path,
-) -> Result<String, CliError> {
-    let mut arguments = arguments.into_iter();
-    let operation = arguments
-        .next()
-        .and_then(|value| value.into_string().ok())
-        .ok_or(CliError::Usage)?;
-    let fields = parse_fields(arguments)?;
-    let project = canonical_project(fields.get("project").map(String::as_str))?;
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BridgeRequest {
+    operation: String,
+    project: String,
+    #[serde(default)]
+    fields: BTreeMap<String, String>,
+}
+
+pub(crate) fn handle(payload: &str, database: &Path) -> Result<String, WorkGraphRpcError> {
+    let request = serde_json::from_str::<BridgeRequest>(payload)?;
+    let project = canonical_project(&request.project)?;
     let adapter = SqliteAdapter::open(database).map_err(WorkGraphError::Persistence)?;
     let mut graph = WorkGraph::new(adapter);
-    let value = match operation.as_str() {
-        "search" => serde_json::to_value(graph.search(&search_request(project, &fields)?)?)?,
-        "edit" => serde_json::to_value(graph.edit(&edit_request(project, &fields)?)?)?,
-        _ => return Err(CliError::Usage),
-    };
-    Ok(format!(
-        "{}\n",
-        serde_json::to_string(&Output {
-            success: true,
-            data: value
-        })?
-    ))
-}
-
-fn parse_fields(
-    arguments: impl IntoIterator<Item = OsString>,
-) -> Result<BTreeMap<String, String>, CliError> {
-    let mut fields = BTreeMap::new();
-    for argument in arguments {
-        let argument = argument
-            .into_string()
-            .map_err(|_| CliError::Invalid("argument"))?;
-        let (key, value) = argument
-            .split_once('=')
-            .ok_or(CliError::Invalid("argument"))?;
-        if key.is_empty() || fields.insert(key.to_owned(), value.to_owned()).is_some() {
-            return Err(CliError::Field(key.to_owned()));
+    let value = match request.operation.as_str() {
+        "search" => {
+            serde_json::to_value(graph.search(&search_request(project, &request.fields)?)?)?
         }
-    }
-    Ok(fields)
+        "edit" => serde_json::to_value(graph.edit(&edit_request(project, &request.fields)?)?)?,
+        _ => return Err(WorkGraphRpcError::Invalid("operation")),
+    };
+    serde_json::to_string(&Output {
+        success: true,
+        data: value,
+    })
+    .map_err(Into::into)
 }
 
-fn canonical_project(configured: Option<&str>) -> Result<String, CliError> {
-    let path = configured
-        .map_or_else(std::env::current_dir, |value| Ok(value.into()))
-        .map_err(|_| CliError::Invalid("project"))?;
+fn canonical_project(configured: &str) -> Result<String, WorkGraphRpcError> {
+    let path = std::path::PathBuf::from(configured);
     path.canonicalize()
-        .map_err(|_| CliError::Invalid("project"))
+        .map_err(|_| WorkGraphRpcError::Invalid("project"))
         .and_then(|path| {
             path.into_os_string()
                 .into_string()
-                .map_err(|_| CliError::Invalid("project"))
+                .map_err(|_| WorkGraphRpcError::Invalid("project"))
         })
 }
 
 fn search_request(
     project: String,
     fields: &BTreeMap<String, String>,
-) -> Result<SearchRequest, CliError> {
+) -> Result<SearchRequest, WorkGraphRpcError> {
     reject_unknown(
         fields,
         &["project", "view", "status", "number", "sessionId"],
@@ -127,14 +106,14 @@ fn search_request(
             project,
             session_id: required(fields, "sessionId")?.to_owned(),
         }),
-        _ => Err(CliError::Invalid("view")),
+        _ => Err(WorkGraphRpcError::Invalid("view")),
     }
 }
 
 fn edit_request(
     project: String,
     fields: &BTreeMap<String, String>,
-) -> Result<EditRequest, CliError> {
+) -> Result<EditRequest, WorkGraphRpcError> {
     reject_unknown(
         fields,
         &[
@@ -199,7 +178,7 @@ fn edit_request(
         "unlink_session" => EditAction::UnlinkSession {
             session_id: required(fields, "sessionId")?.to_owned(),
         },
-        _ => return Err(CliError::Invalid("action")),
+        _ => return Err(WorkGraphRpcError::Invalid("action")),
     };
     let idempotency_key = required(fields, "idempotencyKey")?.to_owned();
     Ok(EditRequest {
@@ -209,9 +188,12 @@ fn edit_request(
     })
 }
 
-fn reject_unknown(fields: &BTreeMap<String, String>, allowed: &[&str]) -> Result<(), CliError> {
+fn reject_unknown(
+    fields: &BTreeMap<String, String>,
+    allowed: &[&str],
+) -> Result<(), WorkGraphRpcError> {
     if let Some(key) = fields.keys().find(|key| !allowed.contains(&key.as_str())) {
-        return Err(CliError::Field(key.clone()));
+        return Err(WorkGraphRpcError::Field(key.clone()));
     }
     Ok(())
 }
@@ -219,36 +201,36 @@ fn reject_unknown(fields: &BTreeMap<String, String>, allowed: &[&str]) -> Result
 fn required<'a>(
     fields: &'a BTreeMap<String, String>,
     key: &'static str,
-) -> Result<&'a str, CliError> {
+) -> Result<&'a str, WorkGraphRpcError> {
     fields
         .get(key)
         .filter(|value| !value.is_empty())
         .map(String::as_str)
-        .ok_or(CliError::Missing(key))
+        .ok_or(WorkGraphRpcError::Missing(key))
 }
 
-fn number(fields: &BTreeMap<String, String>, key: &'static str) -> Result<u64, CliError> {
-    optional_number(fields, key)?.ok_or(CliError::Missing(key))
+fn number(fields: &BTreeMap<String, String>, key: &'static str) -> Result<u64, WorkGraphRpcError> {
+    optional_number(fields, key)?.ok_or(WorkGraphRpcError::Missing(key))
 }
 
 fn optional_number(
     fields: &BTreeMap<String, String>,
     key: &'static str,
-) -> Result<Option<u64>, CliError> {
+) -> Result<Option<u64>, WorkGraphRpcError> {
     fields
         .get(key)
-        .map(|value| value.parse().map_err(|_| CliError::Invalid(key)))
+        .map(|value| value.parse().map_err(|_| WorkGraphRpcError::Invalid(key)))
         .transpose()
 }
 
-fn parse_status(value: &str) -> Result<IssueStatus, CliError> {
+fn parse_status(value: &str) -> Result<IssueStatus, WorkGraphRpcError> {
     match value {
         "open" => Ok(IssueStatus::Open),
         "in_progress" => Ok(IssueStatus::InProgress),
         "blocked" => Ok(IssueStatus::Blocked),
         "done" => Ok(IssueStatus::Done),
         "cancelled" => Ok(IssueStatus::Cancelled),
-        _ => Err(CliError::Invalid("status")),
+        _ => Err(WorkGraphRpcError::Invalid("status")),
     }
 }
 
@@ -256,61 +238,71 @@ fn parse_status(value: &str) -> Result<IssueStatus, CliError> {
 mod tests {
     use super::*;
 
+    fn request(operation: &str, project: &Path, fields: serde_json::Value) -> String {
+        serde_json::json!({
+            "operation": operation,
+            "project": project,
+            "fields": fields,
+        })
+        .to_string()
+    }
+
     #[test]
-    fn same_database_cli_creates_and_reads_an_issue() {
+    fn companion_rpc_creates_edits_and_reads_an_issue() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let project = tempfile::tempdir().expect("project");
         let database = directory.path().join("gui-state.sqlite3");
-        let project_field = format!("project={}", project.path().display());
-        let output = run(
-            [
-                "edit".into(),
-                project_field.clone().into(),
-                "action=create".into(),
-                "title=Merge graph".into(),
-                "idempotencyKey=create-1".into(),
-            ],
+        let output = handle(
+            &request(
+                "edit",
+                project.path(),
+                serde_json::json!({
+                    "action": "create",
+                    "title": "Merge graph",
+                    "idempotencyKey": "create-1",
+                }),
+            ),
             &database,
         )
         .expect("create");
         assert!(output.contains("Merge graph"));
-        let output = run(
-            [
-                "edit".into(),
-                project_field.clone().into(),
-                "action=set_fields".into(),
-                "number=1".into(),
-                "title=Merge durable graph".into(),
-                "priority=2".into(),
-                "expectedVersion=1".into(),
-                "idempotencyKey=fields-1".into(),
-            ],
+        let output = handle(
+            &request(
+                "edit",
+                project.path(),
+                serde_json::json!({
+                    "action": "set_fields",
+                    "number": "1",
+                    "title": "Merge durable graph",
+                    "priority": "2",
+                    "expectedVersion": "1",
+                    "idempotencyKey": "fields-1",
+                }),
+            ),
             &database,
         )
         .expect("set fields");
         assert!(output.contains("Merge durable graph"));
-        let output = run(
-            ["search".into(), project_field.into(), "view=ready".into()],
+        let output = handle(
+            &request(
+                "search",
+                project.path(),
+                serde_json::json!({ "view": "ready" }),
+            ),
             &database,
         )
         .expect("search");
         assert!(output.contains("Merge durable graph"));
-        let _gui_state = crate::state::StateStore::open_at(&database)
-            .expect("GUI state opens after work graph migration");
     }
 
     #[test]
-    fn unknown_fields_are_rejected() {
+    fn unknown_rpc_fields_are_rejected() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let project = tempfile::tempdir().expect("project");
-        let result = run(
-            [
-                "search".into(),
-                format!("project={}", project.path().display()).into(),
-                "wat=no".into(),
-            ],
+        let result = handle(
+            &request("search", project.path(), serde_json::json!({ "wat": "no" })),
             &directory.path().join("state.sqlite"),
         );
-        assert!(matches!(result, Err(CliError::Field(field)) if field == "wat"));
+        assert!(matches!(result, Err(WorkGraphRpcError::Field(field)) if field == "wat"));
     }
 }

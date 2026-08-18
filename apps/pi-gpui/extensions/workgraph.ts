@@ -3,6 +3,8 @@ import { truncateHead, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@earendil-wo
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
 
+const WORKGRAPH_RPC_TITLE = "\u001fpi-gpui-workgraph\u001f";
+
 const searchSchema = Type.Object({
   view: StringEnum(["status", "issue", "ready", "blocked", "next", "graph", "session"] as const),
   status: Type.Optional(StringEnum(["open", "in_progress", "blocked", "done", "cancelled"] as const)),
@@ -23,28 +25,27 @@ const editSchema = Type.Object({
 type SearchInput = Static<typeof searchSchema>;
 type EditInput = Static<typeof editSchema>;
 
-function command(): string {
-  const value = process.env.PI_GPUI_WORKGRAPH_COMMAND;
-  if (!value) throw new Error("Pi GPUI did not provide its work graph command");
-  return value;
-}
-
-function fields(input: Record<string, unknown>): string[] {
-  return Object.entries(input)
-    .filter(([, value]) => value !== undefined)
-    .map(([key, value]) => `${key}=${String(value)}`);
+function fields(input: Record<string, unknown>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(input)
+      .filter(([, value]) => value !== undefined)
+      .map(([key, value]) => [key, String(value)]),
+  );
 }
 
 async function run(
-  pi: ExtensionAPI,
   operation: "search" | "edit",
   input: Record<string, unknown>,
   ctx: ExtensionContext,
-  signal: AbortSignal | undefined,
 ): Promise<string> {
-  const result = await pi.exec(command(), ["workgraph", operation, `project=${ctx.cwd}`, ...fields(input)], { signal });
-  if (result.code !== 0) throw new Error(result.stderr.trim() || `work graph ${operation} failed`);
-  const truncated = truncateHead(result.stdout, { maxBytes: DEFAULT_MAX_BYTES, maxLines: DEFAULT_MAX_LINES });
+  const value = await ctx.ui.input(
+    WORKGRAPH_RPC_TITLE,
+    JSON.stringify({ operation, project: ctx.cwd, fields: fields(input) }),
+  );
+  if (value === undefined) throw new Error("Pi GPUI cancelled the work graph request");
+  const result = JSON.parse(value) as { success?: boolean; error?: string };
+  if (!result.success) throw new Error(result.error || `work graph ${operation} failed`);
+  const truncated = truncateHead(value, { maxBytes: DEFAULT_MAX_BYTES, maxLines: DEFAULT_MAX_LINES });
   return truncated.truncated ? `${truncated.content}\n[Work graph output truncated]` : truncated.content;
 }
 
@@ -55,10 +56,10 @@ export default function workgraph(pi: ExtensionAPI): void {
     description: "Read durable project issues, planning state, dependencies, and the current session link.",
     promptSnippet: "Query durable project work and dependency state",
     parameters: searchSchema,
-    async execute(_id, input: SearchInput, signal, _update, ctx) {
+    async execute(_id, input: SearchInput, _signal, _update, ctx) {
       const request: Record<string, unknown> = { ...input };
       if (input.view === "session") request.sessionId = ctx.sessionManager.getSessionId();
-      return { content: [{ type: "text", text: await run(pi, "search", request, ctx, signal) }] };
+      return { content: [{ type: "text", text: await run("search", request, ctx) }] };
     },
   });
 
@@ -69,7 +70,7 @@ export default function workgraph(pi: ExtensionAPI): void {
     promptSnippet: "Update durable project work and dependency state",
     promptGuidelines: ["Use workgraph_edit once work is concrete, record useful progress, and mark completed work done."],
     parameters: editSchema,
-    async execute(toolCallId, input: EditInput, signal, _update, ctx) {
+    async execute(toolCallId, input: EditInput, _signal, _update, ctx) {
       const request: Record<string, unknown> = { ...input, idempotencyKey: `${ctx.sessionManager.getSessionId()}:${toolCallId}` };
       if (input.action === "link_session" || input.action === "unlink_session") {
         request.sessionId = ctx.sessionManager.getSessionId();
@@ -79,7 +80,7 @@ export default function workgraph(pi: ExtensionAPI): void {
         if (!path) throw new Error("the current Pi session is not durable yet");
         request.sessionPath = path;
       }
-      return { content: [{ type: "text", text: await run(pi, "edit", request, ctx, signal) }] };
+      return { content: [{ type: "text", text: await run("edit", request, ctx) }] };
     },
   });
 }

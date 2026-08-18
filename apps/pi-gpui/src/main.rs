@@ -27,7 +27,7 @@ mod syntax_highlight;
 mod theme;
 mod tool_changes;
 mod transcript;
-mod workgraph_cli;
+mod workgraph_rpc;
 
 fn main() -> std::process::ExitCode {
     zlog::init();
@@ -36,19 +36,6 @@ fn main() -> std::process::ExitCode {
         zlog::error!("Failed to initialize application log file: {error}");
     }
 
-    let mut arguments = std::env::args_os().skip(1);
-    if arguments.next().as_deref() == Some(std::ffi::OsStr::new("workgraph")) {
-        return match workgraph_cli::run(
-            arguments,
-            &match state::state_path() {
-                Ok(path) => path,
-                Err(error) => return fail(error),
-            },
-        ) {
-            Ok(output) => write_success(std::io::stdout(), &output),
-            Err(error) => fail(error),
-        };
-    }
     match launch::resolve_project(std::env::args_os().nth(1).map(Into::into)).and_then(launch::run)
     {
         Ok(()) => std::process::ExitCode::SUCCESS,
@@ -80,14 +67,6 @@ fn fail_to(
 ) -> std::process::ExitCode {
     let _written = destination.write_all(format!("{error}\n").as_bytes());
     std::process::ExitCode::from(1)
-}
-
-fn write_success(mut destination: impl std::io::Write, value: &str) -> std::process::ExitCode {
-    if destination.write_all(value.as_bytes()).is_ok() {
-        std::process::ExitCode::SUCCESS
-    } else {
-        std::process::ExitCode::from(1)
-    }
 }
 
 #[cfg(test)]

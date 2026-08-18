@@ -144,9 +144,6 @@ impl RpcProcess {
         if let Some(extension) = companion_extension() {
             process.arg("--extension").arg(extension);
         }
-        if let Ok(executable) = std::env::current_exe() {
-            process.env("PI_GPUI_WORKGRAPH_COMMAND", executable);
-        }
         if let Some(session) = session {
             process.arg("--session").arg(session);
         }
