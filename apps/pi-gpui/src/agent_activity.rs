@@ -8,7 +8,10 @@ use std::{
 
 use serde_json::Value;
 
-use crate::sessions::{UsageSummary, normalize_lexical};
+use crate::{
+    extension_support::pi_subagents,
+    sessions::{UsageSummary, normalize_lexical},
+};
 
 const MAX_ACTIVITY_CHARS: usize = 160;
 const MAX_TOOL_TARGET_CHARS: usize = 120;
@@ -141,7 +144,7 @@ impl ActivityBuilder {
                 let arguments = block.get("arguments").unwrap_or(&Value::Null);
                 let target = tool_target(arguments);
                 let mutation = pending_mutation(&name, arguments, observed_at);
-                let awaits_input = supervisor_wait(&name, arguments);
+                let awaits_input = pi_subagents::tool_requires_input(&name, arguments);
                 let tool = AgentToolActivity {
                     name,
                     target,
@@ -470,27 +473,12 @@ pub(crate) fn parse_iso_timestamp(value: &str) -> Option<SystemTime> {
 }
 
 fn role_label(title: &str) -> String {
-    let role = title
-        .strip_prefix("subagent-")
-        .and_then(|rest| rest.split('-').next())
-        .filter(|role| !role.is_empty())
-        .unwrap_or(title);
-    let role = bounded(role, 28);
+    let role = bounded(pi_subagents::role(title), 28);
     if role.is_empty() {
         "Agent".into()
     } else {
         role
     }
-}
-
-fn supervisor_wait(name: &str, arguments: &Value) -> bool {
-    if !name.eq_ignore_ascii_case("contact_supervisor") {
-        return false;
-    }
-    matches!(
-        arguments.get("reason").and_then(Value::as_str),
-        Some("need_decision" | "interview_request" | "approval_required")
-    )
 }
 
 fn tool_target(arguments: &Value) -> String {
