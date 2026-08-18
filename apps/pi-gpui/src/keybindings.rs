@@ -4,10 +4,10 @@ use gpui::KeyBinding;
 
 use crate::app::{
     AbortRun, AddProject, DismissSurface, FocusComposer, FocusSessionSearch, NewSession,
-    NextSession, OVERLAY_KEY_CONTEXT, PreviousSession, QuitApplication, ShowKeybindings,
-    ShowWorkGraph, SubmitFollowUp, SubmitPrompt, SwitchSession1, SwitchSession2, SwitchSession3,
-    SwitchSession4, SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8, SwitchSession9,
-    ToggleArchivedSessions,
+    NextSession, OVERLAY_KEY_CONTEXT, PreviousSession, QuitApplication, SettleSession,
+    ShowKeybindings, ShowWorkGraph, SubmitFollowUp, SubmitPrompt, SwitchSession1, SwitchSession2,
+    SwitchSession3, SwitchSession4, SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8,
+    SwitchSession9, ToggleArchivedSessions,
 };
 
 pub(crate) struct Shortcut {
@@ -65,6 +65,13 @@ pub(crate) fn registry() -> Vec<Shortcut> {
             "Show archived sessions",
             "cmd-shift-a",
             ToggleArchivedSessions,
+            None
+        ),
+        shortcut!(
+            "Sessions",
+            "Settle current session",
+            "cmd-shift-.",
+            SettleSession,
             None
         ),
         shortcut!("Composer", "Focus composer", "cmd-l", FocusComposer, None),
@@ -128,6 +135,9 @@ mod tests {
         );
         assert!(shortcuts.iter().any(|shortcut| {
             shortcut.label == "Open work graph" && shortcut.keystroke == "cmd-shift-i"
+        }));
+        assert!(shortcuts.iter().any(|shortcut| {
+            shortcut.label == "Settle current session" && shortcut.keystroke == "cmd-shift-."
         }));
     }
 }

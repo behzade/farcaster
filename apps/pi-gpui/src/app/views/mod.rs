@@ -23,9 +23,10 @@ use gpui_component::{FocusTrapElement as _, kbd::Kbd};
 
 use super::{
     AbortRun, AddProject, DismissSurface, FocusComposer, FocusSessionSearch, NewSession,
-    NextSession, PiApp, PreviousSession, ShowKeybindings, ShowWorkGraph, SubmitFollowUp,
-    SubmitPrompt, SwitchSession1, SwitchSession2, SwitchSession3, SwitchSession4, SwitchSession5,
-    SwitchSession6, SwitchSession7, SwitchSession8, SwitchSession9, ToggleArchivedSessions,
+    NextSession, PiApp, PreviousSession, SettleSession, ShowKeybindings, ShowWorkGraph,
+    SubmitFollowUp, SubmitPrompt, SwitchSession1, SwitchSession2, SwitchSession3, SwitchSession4,
+    SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8, SwitchSession9,
+    ToggleArchivedSessions,
 };
 pub(crate) const OVERLAY_KEY_CONTEXT: &str = "PiGpuiOverlay";
 
@@ -165,6 +166,11 @@ impl Render for PiApp {
             .on_action(cx.listener(|this, _: &AbortRun, _, _| {
                 if this.snapshot.conversation.running {
                     this.send(crate::runtime::RuntimeCommand::Abort);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &SettleSession, _, cx| {
+                if let Some(path) = this.snapshot.selected_session.clone() {
+                    this.set_session_settled(path, true, cx);
                 }
             }))
             .on_action(cx.listener(|this, _: &ShowKeybindings, window, cx| {

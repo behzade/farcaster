@@ -75,6 +75,7 @@ actions!(
         ToggleArchivedSessions,
         SubmitPrompt,
         AbortRun,
+        SettleSession,
         ShowKeybindings,
         ShowWorkGraph
     ]
