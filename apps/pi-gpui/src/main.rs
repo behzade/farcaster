@@ -33,6 +33,9 @@ mod workgraph_cli;
 fn main() -> std::process::ExitCode {
     zlog::init();
     zlog::init_output_stderr();
+    if let Err(error) = init_log_file() {
+        zlog::error!("Failed to initialize application log file: {error}");
+    }
 
     let mut arguments = std::env::args_os().skip(1);
     if arguments.next().as_deref() == Some(std::ffi::OsStr::new("workgraph")) {
@@ -52,6 +55,20 @@ fn main() -> std::process::ExitCode {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => fail(error),
     }
+}
+
+fn init_log_file() -> Result<(), String> {
+    static LOG_PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    static OLD_LOG_PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+    let home = std::env::var_os("HOME").ok_or_else(|| "HOME is not set".to_owned())?;
+    let directory = std::path::PathBuf::from(home).join("Library/Logs");
+    std::fs::create_dir_all(&directory)
+        .map_err(|error| format!("create {}: {error}", directory.display()))?;
+    let path = LOG_PATH.get_or_init(|| directory.join("pi-gpui.log"));
+    let old_path = OLD_LOG_PATH.get_or_init(|| directory.join("pi-gpui.log.old"));
+    zlog::init_output_file(path, Some(old_path))
+        .map_err(|error| format!("open {}: {error}", path.display()))
 }
 
 fn fail(error: impl std::fmt::Display) -> std::process::ExitCode {
