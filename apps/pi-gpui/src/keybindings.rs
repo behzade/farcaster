@@ -5,8 +5,8 @@ use gpui::KeyBinding;
 use crate::app::{
     AbortRun, AddProject, DismissSurface, FocusComposer, FocusSessionSearch, NewSession,
     NextSession, OVERLAY_KEY_CONTEXT, PreviousSession, QuitApplication, ShowKeybindings,
-    SubmitFollowUp, SubmitPrompt, SwitchSession1, SwitchSession2, SwitchSession3, SwitchSession4,
-    SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8, SwitchSession9,
+    ShowWorkGraph, SubmitFollowUp, SubmitPrompt, SwitchSession1, SwitchSession2, SwitchSession3,
+    SwitchSession4, SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8, SwitchSession9,
     ToggleArchivedSessions,
 };
 
@@ -79,6 +79,13 @@ pub(crate) fn registry() -> Vec<Shortcut> {
         shortcut!("Run", "Abort current run", "cmd-.", AbortRun, None),
         shortcut!(
             "Application",
+            "Open work graph",
+            "cmd-shift-i",
+            ShowWorkGraph,
+            None
+        ),
+        shortcut!(
+            "Application",
             "Keyboard shortcuts",
             "cmd-?",
             ShowKeybindings,
@@ -107,7 +114,7 @@ mod tests {
     use super::registry;
 
     #[test]
-    fn keyboard_help_has_both_question_mark_shortcuts() {
+    fn keyboard_help_has_both_question_mark_shortcuts_and_workgraph_navigation() {
         let shortcuts = registry();
         assert!(
             shortcuts
@@ -119,5 +126,8 @@ mod tests {
                 .iter()
                 .any(|shortcut| shortcut.keystroke == "cmd-/")
         );
+        assert!(shortcuts.iter().any(|shortcut| {
+            shortcut.label == "Open work graph" && shortcut.keystroke == "cmd-shift-i"
+        }));
     }
 }

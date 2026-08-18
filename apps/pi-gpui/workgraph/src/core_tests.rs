@@ -263,6 +263,15 @@ impl WorkGraphTransaction for MemoryTransaction<'_> {
 }
 
 fn create(graph: &mut WorkGraph<MemoryPersistence>, key: &str, title: &str) -> Issue {
+    create_with_priority(graph, key, title, 0)
+}
+
+fn create_with_priority(
+    graph: &mut WorkGraph<MemoryPersistence>,
+    key: &str,
+    title: &str,
+    priority: u64,
+) -> Issue {
     let EditResult::Issue(issue) = graph
         .edit(&EditRequest {
             project: "/project".into(),
@@ -270,7 +279,7 @@ fn create(graph: &mut WorkGraph<MemoryPersistence>, key: &str, title: &str) -> I
             action: EditAction::Create {
                 title: title.into(),
                 body: String::new(),
-                priority: 0,
+                priority,
             },
         })
         .expect("create issue")
@@ -305,6 +314,34 @@ fn core_runs_against_a_non_sqlite_persistence() {
     assert!(
         matches!(blocked, SearchResult::Planning(items) if items.len() == 1 && items[0].number == second.number)
     );
+}
+
+#[test]
+fn next_uses_canonical_lowest_priority_then_creation_order() {
+    let mut graph = WorkGraph::new(MemoryPersistence::default());
+    let later = create_with_priority(&mut graph, "later", "Later", 2);
+    let next = create_with_priority(&mut graph, "next", "Next", 0);
+    let middle = create_with_priority(&mut graph, "middle", "Middle", 1);
+
+    let ready = graph
+        .search(&SearchRequest::Planning {
+            project: "/project".into(),
+            planning: PlanningView::Ready,
+        })
+        .expect("ready planning");
+    assert!(matches!(
+        ready,
+        SearchResult::Planning(items)
+            if items.iter().map(|issue| issue.number).collect::<Vec<_>>()
+                == vec![next.number, middle.number, later.number]
+    ));
+    let first = graph
+        .search(&SearchRequest::Planning {
+            project: "/project".into(),
+            planning: PlanningView::Next,
+        })
+        .expect("next planning");
+    assert!(matches!(first, SearchResult::Planning(items) if items[0].number == next.number));
 }
 
 #[test]

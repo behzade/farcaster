@@ -48,6 +48,7 @@ impl PiApp {
         let menu_new_entity = entity.clone();
         let add_project_entity = entity.clone();
         let menu_add_project_entity = entity.clone();
+        let menu_workgraph_entity = entity.clone();
         let search_focus = self.search_focus.clone();
         let new_session_project =
             selected_new_session_project(self.session_project_filter.as_deref(), &self.project);
@@ -268,6 +269,7 @@ impl PiApp {
                                             let add_project_entity =
                                                 menu_add_project_entity.clone();
                                             let project = menu_new_session_project.clone();
+                                            let workgraph_entity = menu_workgraph_entity.clone();
                                             menu.label("Menu")
                                                 .item(PopupMenuItem::new("New session").on_click(
                                                     move |_, window, cx| {
@@ -287,6 +289,19 @@ impl PiApp {
                                                             cx,
                                                             |this, cx| {
                                                                 this.choose_project_folder(
+                                                                    window, cx,
+                                                                );
+                                                            },
+                                                        );
+                                                    },
+                                                ))
+                                                .separator()
+                                                .item(PopupMenuItem::new("Work graph").on_click(
+                                                    move |_, window, cx| {
+                                                        let _ = workgraph_entity.update(
+                                                            cx,
+                                                            |this, cx| {
+                                                                this.open_workgraph_sheet(
                                                                     window, cx,
                                                                 );
                                                             },

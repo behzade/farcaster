@@ -602,20 +602,6 @@ struct SessionControls {
 }
 
 fn prefill_session_controls(snapshot: &mut RuntimeSnapshot, controls: &mut SessionControls) {
-    if let Some(session) = &snapshot.session {
-        if let Some(model) = &session.model {
-            controls.model = snapshot
-                .models
-                .iter()
-                .find(|candidate| candidate.id == model.id && candidate.provider == model.provider)
-                .cloned()
-                .or_else(|| Some(model.clone()));
-        }
-        controls.thinking_level = Some(session.thinking_level.clone());
-    } else {
-        snapshot.prefill_model = controls.model.clone();
-        snapshot.prefill_thinking_level = controls.thinking_level.clone();
-    }
     if snapshot.models.is_empty() {
         snapshot.models.clone_from(&controls.models);
     } else {
@@ -629,6 +615,21 @@ fn prefill_session_controls(snapshot: &mut RuntimeSnapshot, controls: &mut Sessi
         controls
             .thinking_levels
             .clone_from(&snapshot.thinking_levels);
+    }
+
+    if let Some(session) = &snapshot.session {
+        if let Some(model) = &session.model {
+            controls.model = controls
+                .models
+                .iter()
+                .find(|candidate| candidate.id == model.id && candidate.provider == model.provider)
+                .cloned()
+                .or_else(|| Some(model.clone()));
+        }
+        controls.thinking_level = Some(session.thinking_level.clone());
+    } else {
+        snapshot.prefill_model = controls.model.clone();
+        snapshot.prefill_thinking_level = controls.thinking_level.clone();
     }
 }
 

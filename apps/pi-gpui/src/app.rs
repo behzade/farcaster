@@ -11,10 +11,12 @@ mod submissions;
 mod surfaces;
 mod transcript_ui;
 mod views;
+mod workgraph;
 pub(crate) use composer_images::ComposerImage;
 use submissions::PendingSubmission;
 pub(crate) use views::OVERLAY_KEY_CONTEXT;
 use views::{ComposerView, RunPanelView, SessionRailView, TranscriptView, session_move_allowed};
+use workgraph::adapter::WorkGraphBoardView;
 
 use std::{
     cell::RefCell,
@@ -73,7 +75,8 @@ actions!(
         ToggleArchivedSessions,
         SubmitPrompt,
         AbortRun,
-        ShowKeybindings
+        ShowKeybindings,
+        ShowWorkGraph
     ]
 );
 
@@ -118,6 +121,7 @@ pub(crate) struct PiApp {
     transcript_view: Entity<TranscriptView>,
     composer_view: Entity<ComposerView>,
     run_panel_view: Entity<RunPanelView>,
+    workgraph_view: Entity<WorkGraphBoardView>,
     run_panel_scroll: ScrollHandle,
     composer_sessions: ComposerSessions,
     composer_history_marker: Option<(String, usize, String)>,
@@ -154,6 +158,7 @@ pub(crate) struct PiApp {
     sessions_sheet: bool,
     archived_sessions_expanded: bool,
     run_sheet: bool,
+    workgraph_sheet: bool,
     keybindings_help: bool,
     context_details_expanded: bool,
     completed_agents_expanded: bool,
@@ -313,6 +318,8 @@ impl PiApp {
         let transcript_view = cx.new(|_| TranscriptView::new(app.clone()));
         let composer_view = cx.new(|_| ComposerView::new(app.clone()));
         let run_panel_view = cx.new(|_| RunPanelView::new(app.clone()));
+        let workgraph_view =
+            cx.new(|cx| WorkGraphBoardView::new(crate::state::state_path(), project.clone(), cx));
         transcript_list.set_scroll_handler(move |event, _, cx| {
             let following = event.is_following_tail;
             let app = app.clone();
@@ -372,6 +379,7 @@ impl PiApp {
             transcript_view,
             composer_view,
             run_panel_view,
+            workgraph_view,
             run_panel_scroll: ScrollHandle::new(),
             composer_sessions,
             composer_history_marker: None,
@@ -408,6 +416,7 @@ impl PiApp {
             sessions_sheet: false,
             archived_sessions_expanded: false,
             run_sheet: false,
+            workgraph_sheet: false,
             keybindings_help: false,
             context_details_expanded: false,
             completed_agents_expanded: false,
@@ -662,6 +671,7 @@ impl PiApp {
         self.dialog_return_focus = None;
         self.sessions_sheet = false;
         self.run_sheet = false;
+        self.workgraph_sheet = false;
         self.sheet_return_focus = None;
         self.pending_sheet_setup = false;
         self.extension_errors.clear();

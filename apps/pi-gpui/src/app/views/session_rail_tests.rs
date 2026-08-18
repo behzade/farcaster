@@ -67,7 +67,7 @@ fn archived_sessions_suppress_done_but_keep_active_states() {
 }
 
 #[test]
-fn resolved_ui_activity_prioritizes_projects_stably() {
+fn runtime_activity_does_not_reorder_draft_and_session_projects() {
     let inactive_draft_project = PathBuf::from("/inactive-draft");
     let runtime_draft_project = PathBuf::from("/runtime-draft");
     let live_project = PathBuf::from("/live");
@@ -119,10 +119,10 @@ fn resolved_ui_activity_prioritizes_projects_stably() {
     assert_eq!(
         projects,
         vec![
+            inactive_draft_project.as_path(),
             runtime_draft_project.as_path(),
             live_project.as_path(),
             discovered_project.as_path(),
-            inactive_draft_project.as_path(),
             inactive_session_project.as_path(),
         ]
     );

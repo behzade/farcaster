@@ -1,14 +1,14 @@
 use std::path::Path;
 
 use gpui::{
-    Anchor, AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _, Role,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
+    Anchor, AnyElement, IntoElement as _, ParentElement as _, Styled as _, WeakEntity, div,
+    prelude::FluentBuilder as _, px,
 };
 use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
 
 use super::super::PiApp;
 use crate::{
-    primitives::{ButtonTone, button},
+    primitives::{ButtonTone, button, dropdown_button},
     theme::THEME,
 };
 
@@ -155,66 +155,45 @@ impl PiApp {
                     menu
                 }),
             )
-            .child(effort_slider(effort.as_deref(), &efforts, effort_entity))
+            .child(effort_selector(effort.as_deref(), &efforts, effort_entity))
             .into_any_element()
     }
 }
 
-fn effort_slider(
+fn effort_selector(
     selected: Option<&str>,
     efforts: &[String],
     entity: WeakEntity<PiApp>,
 ) -> AnyElement {
-    let selected_index = selected.and_then(|selected| {
-        efforts
-            .iter()
-            .position(|effort| effort.eq_ignore_ascii_case(selected))
-    });
-    div()
-        .id("select-effort")
-        .role(Role::Group)
-        .aria_label("Effort")
-        .flex()
-        .items_center()
-        .gap(THEME.space.xs)
-        .child(
-            div()
-                .text_size(THEME.type_scale.caption)
-                .text_color(effort_color(selected.unwrap_or("off")))
-                .child(selected.map_or_else(
-                    || "Effort".into(),
-                    |level| format!("Effort: {}", effort_label(level)),
-                )),
-        )
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(2.0))
-                .children(efforts.iter().enumerate().map(|(index, effort)| {
-                    let target = effort.clone();
-                    let click_entity = entity.clone();
-                    let active = selected_index.is_some_and(|selected| index <= selected);
-                    let color = effort_color(effort);
-                    div()
-                        .id(("effort-level", index))
-                        .role(Role::Button)
-                        .aria_label(format!("Set effort to {}", effort_label(effort)))
-                        .tab_index(0)
-                        .w(px(14.0))
-                        .h(px(6.0))
-                        .rounded_full()
-                        .bg(if active { color } else { THEME.colors.border })
-                        .hover(move |segment| segment.bg(color))
-                        .cursor_pointer()
-                        .on_click(move |_, _, cx| {
-                            let _ = click_entity.update(cx, |this, cx| {
-                                this.set_thinking_level(target.clone(), cx);
-                            });
-                        })
-                })),
-        )
-        .into_any_element()
+    let label = selected.map_or_else(
+        || "Effort".into(),
+        |level| format!("Effort: {}", effort_label(level)),
+    );
+    let efforts = efforts.to_vec();
+
+    dropdown_button(
+        "select-effort",
+        label,
+        ButtonTone::Quiet,
+        !efforts.is_empty(),
+    )
+    .text_color(effort_color(selected.unwrap_or("off")))
+    .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+        let mut menu = menu.min_w(px(160.0)).max_h(px(420.0)).label("Effort");
+        for effort in efforts {
+            let target = effort.clone();
+            let click_entity = entity.clone();
+            menu = menu.item(
+                PopupMenuItem::new(effort_label(effort)).on_click(move |_, _, cx| {
+                    let _ = click_entity.update(cx, |this, cx| {
+                        this.set_thinking_level(target.clone(), cx);
+                    });
+                }),
+            );
+        }
+        menu
+    })
+    .into_any_element()
 }
 
 fn effort_color(level: &str) -> gpui::Rgba {

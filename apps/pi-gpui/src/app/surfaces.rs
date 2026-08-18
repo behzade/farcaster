@@ -5,6 +5,41 @@ use gpui::{Context, Window};
 use super::PiApp;
 use crate::{protocol::ExtensionUiRequest, runtime::RuntimeCommand};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AppSheet {
+    Sessions,
+    Run,
+    WorkGraph,
+    Keybindings,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct SheetFlags {
+    sessions: bool,
+    run: bool,
+    workgraph: bool,
+    keybindings: bool,
+}
+
+const fn sheet_flags(active: Option<AppSheet>) -> SheetFlags {
+    SheetFlags {
+        sessions: matches!(active, Some(AppSheet::Sessions)),
+        run: matches!(active, Some(AppSheet::Run)),
+        workgraph: matches!(active, Some(AppSheet::WorkGraph)),
+        keybindings: matches!(active, Some(AppSheet::Keybindings)),
+    }
+}
+
+impl SheetFlags {
+    const fn any(self) -> bool {
+        self.sessions || self.run || self.workgraph || self.keybindings
+    }
+}
+
+const fn should_capture_return_focus(flags: SheetFlags) -> bool {
+    !flags.any()
+}
+
 impl PiApp {
     pub(super) fn respond_value(
         &mut self,
@@ -71,17 +106,18 @@ impl PiApp {
     }
 
     pub(super) fn open_sessions_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.sheet_return_focus = window.focused(cx);
-        self.sessions_sheet = true;
-        self.pending_sheet_setup = true;
-        cx.notify();
+        self.open_sheet(AppSheet::Sessions, window, cx);
     }
 
     pub(super) fn open_run_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.sheet_return_focus = window.focused(cx);
-        self.run_sheet = true;
-        self.pending_sheet_setup = true;
-        cx.notify();
+        self.open_sheet(AppSheet::Run, window, cx);
+    }
+
+    pub(super) fn open_workgraph_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let project = self.project.clone();
+        self.workgraph_view
+            .update(cx, |view, cx| view.refresh_for(project, cx));
+        self.open_sheet(AppSheet::WorkGraph, window, cx);
     }
 
     pub(super) fn close_sessions_sheet_after_selection(
@@ -95,16 +131,36 @@ impl PiApp {
     }
 
     pub(super) fn open_keybindings_help(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.sheet_return_focus = window.focused(cx);
-        self.keybindings_help = true;
+        self.open_sheet(AppSheet::Keybindings, window, cx);
+    }
+
+    fn open_sheet(&mut self, sheet: AppSheet, window: &mut Window, cx: &mut Context<Self>) {
+        if should_capture_return_focus(self.current_sheet_flags()) {
+            self.sheet_return_focus = window.focused(cx);
+        }
+        self.apply_sheet_flags(sheet_flags(Some(sheet)));
         self.pending_sheet_setup = true;
         cx.notify();
     }
 
+    fn current_sheet_flags(&self) -> SheetFlags {
+        SheetFlags {
+            sessions: self.sessions_sheet,
+            run: self.run_sheet,
+            workgraph: self.workgraph_sheet,
+            keybindings: self.keybindings_help,
+        }
+    }
+
+    fn apply_sheet_flags(&mut self, flags: SheetFlags) {
+        self.sessions_sheet = flags.sessions;
+        self.run_sheet = flags.run;
+        self.workgraph_sheet = flags.workgraph;
+        self.keybindings_help = flags.keybindings;
+    }
+
     pub(super) fn close_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.sessions_sheet = false;
-        self.run_sheet = false;
-        self.keybindings_help = false;
+        self.apply_sheet_flags(sheet_flags(None));
         self.pending_sheet_setup = false;
         let focus = self
             .sheet_return_focus
@@ -119,9 +175,54 @@ impl PiApp {
             self.close_file_diff(window, cx);
         } else if self.extension.dialog.is_some() {
             self.cancel_dialog(window, cx);
-        } else if self.sessions_sheet || self.run_sheet || self.keybindings_help {
+        } else if self.sessions_sheet
+            || self.run_sheet
+            || self.workgraph_sheet
+            || self.keybindings_help
+        {
             self.close_sheet(window, cx);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn activating_a_sheet_never_stacks_it_with_an_existing_sheet() {
+        for sheet in [
+            AppSheet::Sessions,
+            AppSheet::Run,
+            AppSheet::WorkGraph,
+            AppSheet::Keybindings,
+        ] {
+            let flags = sheet_flags(Some(sheet));
+            assert_eq!(
+                [
+                    flags.sessions,
+                    flags.run,
+                    flags.workgraph,
+                    flags.keybindings
+                ]
+                .into_iter()
+                .filter(|active| *active)
+                .count(),
+                1
+            );
+        }
+        assert!(!sheet_flags(None).any());
+    }
+
+    #[test]
+    fn an_existing_sheet_prevents_recapturing_the_return_focus() {
+        assert!(should_capture_return_focus(sheet_flags(None)));
+        assert!(!should_capture_return_focus(sheet_flags(Some(
+            AppSheet::Sessions
+        ))));
+        assert!(!should_capture_return_focus(sheet_flags(Some(
+            AppSheet::WorkGraph
+        ))));
     }
 }
 

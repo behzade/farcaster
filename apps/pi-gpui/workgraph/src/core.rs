@@ -173,7 +173,8 @@ impl<P: Persistence> WorkGraph<P> {
                 let Some(id) = transaction.project_id(project)? else {
                     return Ok(SearchResult::Planning(Vec::new()));
                 };
-                let issues = transaction.issues(project, id, None)?;
+                let mut issues = transaction.issues(project, id, None)?;
+                issues.sort_by_key(|issue| (issue.priority, issue.created_at, issue.number));
                 let mut result = Vec::new();
                 for issue in issues.into_iter().filter(|issue| {
                     !matches!(issue.status, IssueStatus::Done | IssueStatus::Cancelled)

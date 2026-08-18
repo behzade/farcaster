@@ -23,9 +23,9 @@ use gpui_component::{FocusTrapElement as _, kbd::Kbd};
 
 use super::{
     AbortRun, AddProject, DismissSurface, FocusComposer, FocusSessionSearch, NewSession,
-    NextSession, PiApp, PreviousSession, ShowKeybindings, SubmitFollowUp, SubmitPrompt,
-    SwitchSession1, SwitchSession2, SwitchSession3, SwitchSession4, SwitchSession5, SwitchSession6,
-    SwitchSession7, SwitchSession8, SwitchSession9, ToggleArchivedSessions,
+    NextSession, PiApp, PreviousSession, ShowKeybindings, ShowWorkGraph, SubmitFollowUp,
+    SubmitPrompt, SwitchSession1, SwitchSession2, SwitchSession3, SwitchSession4, SwitchSession5,
+    SwitchSession6, SwitchSession7, SwitchSession8, SwitchSession9, ToggleArchivedSessions,
 };
 pub(crate) const OVERLAY_KEY_CONTEXT: &str = "PiGpuiOverlay";
 
@@ -170,6 +170,9 @@ impl Render for PiApp {
             .on_action(cx.listener(|this, _: &ShowKeybindings, window, cx| {
                 this.open_keybindings_help(window, cx);
             }))
+            .on_action(cx.listener(|this, _: &ShowWorkGraph, window, cx| {
+                this.open_workgraph_sheet(window, cx);
+            }))
             .on_action(cx.listener(|this, _: &SwitchSession1, window, cx| {
                 this.switch_to_session_number(1, window, cx);
             }))
@@ -300,6 +303,26 @@ impl Render for PiApp {
                                     .cached(gpui::StyleRefinement::default().size_full()),
                             )
                             .focus_trap("run-sheet-trap", &self.sheet_focus),
+                    ),
+                )
+            })
+            .when(self.workgraph_sheet, |root| {
+                let close = entity.clone();
+                root.child(
+                    dialog_backdrop("workgraph-sheet", move |window, cx| {
+                        let _ = close.update(cx, |this, cx| this.close_sheet(window, cx));
+                    })
+                    .child(
+                        dialog_surface("workgraph-dialog", "Work graph")
+                            .track_focus(&self.sheet_focus)
+                            .key_context(OVERLAY_KEY_CONTEXT)
+                            .w_full()
+                            .max_w(gpui::px(1_080.0))
+                            .h_full()
+                            .max_h(gpui::relative(0.92))
+                            .overflow_hidden()
+                            .child(self.workgraph_view.clone())
+                            .focus_trap("workgraph-sheet-trap", &self.sheet_focus),
                     ),
                 )
             })

@@ -37,14 +37,34 @@ impl PiApp {
                     },
                 ))
             })
-            .child(button(
-                "open-run",
-                "Session details",
-                ButtonTone::Quiet,
-                true,
-                move |window, cx| {
-                    let _ = entity.update(cx, |this, cx| this.open_run_sheet(window, cx));
-                },
-            ))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(THEME.space.xs)
+                    .child({
+                        let workgraph = entity.clone();
+                        button(
+                            "open-workgraph",
+                            "Work graph",
+                            ButtonTone::Quiet,
+                            true,
+                            move |window, cx| {
+                                let _ = workgraph.update(cx, |this, cx| {
+                                    this.open_workgraph_sheet(window, cx);
+                                });
+                            },
+                        )
+                    })
+                    .child(button(
+                        "open-run",
+                        "Session details",
+                        ButtonTone::Quiet,
+                        true,
+                        move |window, cx| {
+                            let _ = entity.update(cx, |this, cx| this.open_run_sheet(window, cx));
+                        },
+                    )),
+            )
     }
 }
