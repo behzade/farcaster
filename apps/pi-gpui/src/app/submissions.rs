@@ -82,12 +82,21 @@ impl PiApp {
                     .get(&target)
                     .cloned()
                     .unwrap_or_default();
+                let image_count = pending_images.len();
                 self.pending_submission = Some(PendingSubmission {
                     target,
                     text: editor_text,
                     images: pending_images,
                 });
+                let snapshot = Arc::make_mut(&mut self.snapshot);
+                let index = snapshot.conversation.items.len();
+                let conversation = Arc::make_mut(&mut snapshot.conversation);
+                conversation.push_local_user(value, image_count);
+                conversation.running = true;
+                snapshot.status = "Working".into();
+                self.transcript_list.splice(index..index, 1);
                 self.jump_to_latest(cx);
+                cx.notify();
             }
             Err(error) => {
                 let snapshot = Arc::make_mut(&mut self.snapshot);
