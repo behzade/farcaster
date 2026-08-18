@@ -33,7 +33,7 @@ use crate::{
     composer_sessions::session_target,
     primitives::{
         AppIconSize, ButtonTone, FeedbackTone, app_icon, disclosure_button, dropdown_button,
-        feedback, icon_button,
+        dropdown_icon_button, feedback, icon_button,
     },
     projects::DraftSession,
     sessions::root_session_for_path,
@@ -259,57 +259,53 @@ impl PiApp {
                             .items_center()
                             .justify_between()
                             .child(
-                                dropdown_button("session-menu", "☰", ButtonTone::Quiet, true)
-                                    .dropdown_caret(false)
-                                    .text_size(THEME.type_scale.display)
-                                    .dropdown_menu_with_anchor(
-                                        Anchor::TopLeft,
-                                        move |menu, _, _| {
-                                            let new_entity = menu_new_entity.clone();
-                                            let add_project_entity =
-                                                menu_add_project_entity.clone();
-                                            let project = menu_new_session_project.clone();
-                                            let workgraph_entity = menu_workgraph_entity.clone();
-                                            menu.label("Menu")
-                                                .item(PopupMenuItem::new("New session").on_click(
-                                                    move |_, window, cx| {
-                                                        let _ =
-                                                            new_entity.update(cx, |this, cx| {
-                                                                this.new_session(
-                                                                    project.clone(),
-                                                                    window,
-                                                                    cx,
-                                                                );
-                                                            });
-                                                    },
-                                                ))
-                                                .item(PopupMenuItem::new("New project").on_click(
-                                                    move |_, window, cx| {
-                                                        let _ = add_project_entity.update(
+                                dropdown_icon_button(
+                                    "session-menu",
+                                    AppIcon::List,
+                                    "Menu",
+                                    ButtonTone::Quiet,
+                                    true,
+                                )
+                                .dropdown_menu_with_anchor(
+                                    Anchor::TopLeft,
+                                    move |menu, _, _| {
+                                        let new_entity = menu_new_entity.clone();
+                                        let add_project_entity = menu_add_project_entity.clone();
+                                        let project = menu_new_session_project.clone();
+                                        let workgraph_entity = menu_workgraph_entity.clone();
+                                        menu.label("Menu")
+                                            .item(PopupMenuItem::new("New session").on_click(
+                                                move |_, window, cx| {
+                                                    let _ = new_entity.update(cx, |this, cx| {
+                                                        this.new_session(
+                                                            project.clone(),
+                                                            window,
                                                             cx,
-                                                            |this, cx| {
-                                                                this.choose_project_folder(
-                                                                    window, cx,
-                                                                );
-                                                            },
                                                         );
-                                                    },
-                                                ))
-                                                .separator()
-                                                .item(PopupMenuItem::new("Work graph").on_click(
-                                                    move |_, window, cx| {
-                                                        let _ = workgraph_entity.update(
-                                                            cx,
-                                                            |this, cx| {
-                                                                this.open_workgraph_sheet(
-                                                                    window, cx,
-                                                                );
-                                                            },
-                                                        );
-                                                    },
-                                                ))
-                                        },
-                                    ),
+                                                    });
+                                                },
+                                            ))
+                                            .item(PopupMenuItem::new("New project").on_click(
+                                                move |_, window, cx| {
+                                                    let _ = add_project_entity.update(
+                                                        cx,
+                                                        |this, cx| {
+                                                            this.choose_project_folder(window, cx);
+                                                        },
+                                                    );
+                                                },
+                                            ))
+                                            .separator()
+                                            .item(PopupMenuItem::new("Work graph").on_click(
+                                                move |_, window, cx| {
+                                                    let _ =
+                                                        workgraph_entity.update(cx, |this, cx| {
+                                                            this.open_workgraph_sheet(window, cx);
+                                                        });
+                                                },
+                                            ))
+                                    },
+                                ),
                             )
                             .child(
                                 div()

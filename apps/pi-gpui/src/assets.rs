@@ -4,12 +4,13 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 7] = [
+const ICON_PATHS: [&str; 8] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrow-counter-clockwise.svg",
     "icons/phosphor/chat-circle-dots.svg",
     "icons/phosphor/folder.svg",
     "icons/phosphor/folder-plus.svg",
+    "icons/phosphor/list.svg",
     "icons/phosphor/magnifying-glass.svg",
     "icons/phosphor/x.svg",
 ];
@@ -45,6 +46,7 @@ impl AssetSource for AppAssets {
             "icons/phosphor/folder-plus.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/folder-plus.svg"))
             }
+            "icons/phosphor/list.svg" => Some(include_bytes!("../assets/phosphor-icons/list.svg")),
             "icons/phosphor/magnifying-glass.svg" => Some(include_bytes!(
                 "../assets/phosphor-icons/magnifying-glass.svg"
             )),
@@ -76,6 +78,7 @@ pub(crate) enum AppIcon {
     ChatCircleDots,
     Folder,
     FolderPlus,
+    List,
     MagnifyingGlass,
     X,
 }
@@ -88,6 +91,7 @@ impl IconNamed for AppIcon {
             Self::ChatCircleDots => "chat-circle-dots",
             Self::Folder => "folder",
             Self::FolderPlus => "folder-plus",
+            Self::List => "list",
             Self::MagnifyingGlass => "magnifying-glass",
             Self::X => "x",
         };
@@ -122,6 +126,7 @@ mod tests {
             AppIcon::ChatCircleDots,
             AppIcon::Folder,
             AppIcon::FolderPlus,
+            AppIcon::List,
             AppIcon::MagnifyingGlass,
             AppIcon::X,
         ] {
