@@ -56,11 +56,11 @@ impl ProcessCommand {
     }
 }
 
-fn workgraph_extension() -> Option<PathBuf> {
-    std::env::var_os("PI_GUI_WORKGRAPH_EXTENSION")
+fn companion_extension() -> Option<PathBuf> {
+    std::env::var_os("PI_GUI_COMPANION_EXTENSION")
         .map(PathBuf::from)
         .or_else(|| {
-            let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("extensions/workgraph.ts");
+            let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("extensions/companion.ts");
             path.is_file().then_some(path)
         })
 }
@@ -141,7 +141,7 @@ impl RpcProcess {
         process
             .args(["--mode", "rpc"])
             .env("PI_GPUI_NATIVE_NOTIFICATIONS", "1");
-        if let Some(extension) = workgraph_extension() {
+        if let Some(extension) = companion_extension() {
             process.arg("--extension").arg(extension);
         }
         if let Ok(executable) = std::env::current_exe() {

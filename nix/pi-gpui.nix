@@ -140,6 +140,8 @@ craneLib.buildPackage (
 
     postInstall = ''
       ln -s "$out/bin/pi-gpui" "$out/bin/pi-gui"
+      install -Dm644 ${../apps/pi-gpui/extensions/companion.ts} "$out/lib/pi-gpui/companion.ts"
+      install -Dm644 ${../apps/pi-gpui/extensions/title-generation.ts} "$out/lib/pi-gpui/title-generation.ts"
       install -Dm644 ${../apps/pi-gpui/extensions/workgraph.ts} "$out/lib/pi-gpui/workgraph.ts"
     ''
     + lib.optionalString stdenv.hostPlatform.isDarwin ''
@@ -155,7 +157,7 @@ craneLib.buildPackage (
     postFixup = ''
       wrapProgram "$out/bin/pi-gpui" \
         --set PI_GUI_PI_PATH ${piTerminal}/bin/pi \
-        --set PI_GUI_WORKGRAPH_EXTENSION "$out/lib/pi-gpui/workgraph.ts" \
+        --set PI_GUI_COMPANION_EXTENSION "$out/lib/pi-gpui/companion.ts" \
         --prefix PATH : ${lib.makeBinPath [ direnv piTerminal ]}
     '';
 

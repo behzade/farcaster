@@ -25,7 +25,6 @@ mod state;
 mod state_test;
 mod syntax_highlight;
 mod theme;
-mod title_generation;
 mod tool_changes;
 mod transcript;
 mod workgraph_cli;
@@ -97,6 +96,9 @@ mod main_tests {
 
     #[test]
     fn reported_errors_return_failure_even_when_stderr_write_succeeds() {
-        assert_eq!(fail_to(Vec::new(), "failed"), std::process::ExitCode::from(1));
+        assert_eq!(
+            fail_to(Vec::new(), "failed"),
+            std::process::ExitCode::from(1)
+        );
     }
 }

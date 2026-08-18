@@ -20,11 +20,11 @@ The project defaults to the repository directory. `pi` must be available on
 Use those tools directly. Do not run a Nix command unless the user asks for that
 exact check.
 
-After the first completed exchange, GPUI asks a short-lived, tool-free Pi
-process to create a semantic session title. It uses `openai-codex/gpt-5.6-luna` by
-default; set `PI_GUI_TITLE_MODEL` to any Pi model selector to use another
-lightweight model. Existing and manually edited session names are never
-replaced automatically.
+After the first prompt creates a session, the GPUI companion extension creates
+a semantic session title with Pi's configured model registry. It uses
+`openai-codex/gpt-5.6-luna` by default; set `PI_GUI_TITLE_MODEL` to any fully
+qualified Pi model selector to use another lightweight model. Existing and
+manually edited session names are never replaced automatically.
 
 ## Check
 

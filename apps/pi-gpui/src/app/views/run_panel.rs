@@ -270,7 +270,6 @@ impl PiApp {
             .all_sessions
             .iter()
             .find(|session| session.id == activity.session_id)?;
-        let selected = self.snapshot.selected_session.as_deref() == Some(session.path.as_path());
         let path = session.path.clone();
         let project = session.project.clone();
         let displayed_lifecycle = if limited {
@@ -293,22 +292,11 @@ impl PiApp {
                 .ml(px(depth.saturating_sub(1) as f32 * 8.0))
                 .px(THEME.space.sm)
                 .py(THEME.space.xs)
-                .border(THEME.border)
-                .border_color(if selected {
-                    THEME.colors.accent
-                } else {
-                    THEME.colors.border
-                })
-                .bg(if selected {
-                    THEME.colors.surface
-                } else {
-                    THEME.colors.canvas
-                })
                 .flex()
                 .items_stretch()
                 .gap(THEME.space.sm)
                 .hover(|card| card.bg(THEME.colors.hover))
-                .focus(|card| card.border_color(THEME.colors.accent))
+                .focus(|card| card.bg(THEME.colors.hover))
                 .cursor_pointer()
                 .on_click(move |_, window, cx| {
                     let _ = entity.update(cx, |this, cx| {
@@ -355,24 +343,14 @@ impl PiApp {
                 )
                 .child(
                     div()
+                        .w(px(88.0))
                         .flex_none()
                         .flex()
-                        .flex_col()
-                        .items_end()
-                        .justify_between()
+                        .justify_end()
                         .text_size(THEME.type_scale.caption)
-                        .child(
-                            div()
-                                .whitespace_nowrap()
-                                .text_color(lifecycle_color(displayed_lifecycle))
-                                .child(state),
-                        )
-                        .child(
-                            div()
-                                .whitespace_nowrap()
-                                .text_color(THEME.colors.subtle)
-                                .child(elapsed),
-                        ),
+                        .whitespace_nowrap()
+                        .text_color(lifecycle_color(displayed_lifecycle))
+                        .child(format!("{state} · {elapsed}")),
                 )
                 .into_any_element(),
         )
