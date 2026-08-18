@@ -5,9 +5,9 @@ use std::path::PathBuf;
 use super::{
     components::{
         dependency_issue_section, detail_section, related_issue_section, render_create,
-        render_edit_fields, render_graph_row, render_group, status_color,
+        render_edit_fields, render_filter_rail, render_graph, render_groups, status_color,
     },
-    contract::{BoardData, BoardFilter, BoardLoadState, BoardMode, IssueGroup},
+    contract::{BoardData, BoardFilter, BoardLoadState, BoardMode},
     core::{filter_count, matching_project_groups},
     layout::{BoardLayoutMode, board_layout_mode, issue_detail_shell},
     persistence::{
@@ -117,7 +117,7 @@ impl WorkGraphBoardView {
         cx.notify();
     }
 
-    fn set_filter(&mut self, filter: BoardFilter, cx: &mut Context<Self>) {
+    pub(super) fn set_filter(&mut self, filter: BoardFilter, cx: &mut Context<Self>) {
         if self.filter != filter {
             self.filter = filter;
             cx.notify();
@@ -320,104 +320,6 @@ impl WorkGraphBoardView {
             });
         }));
         cx.notify();
-    }
-
-    fn render_filter_rail(&self, entity: Entity<Self>, data: &BoardData) -> impl IntoElement {
-        div()
-            .w(px(216.0))
-            .min_w(px(216.0))
-            .flex_none()
-            .flex()
-            .flex_col()
-            .gap(THEME.space.xs)
-            .px(THEME.space.sm)
-            .py(THEME.space.md)
-            .bg(THEME.colors.canvas)
-            .border_r(THEME.border)
-            .border_color(THEME.colors.border)
-            .child(
-                div()
-                    .px(THEME.space.sm)
-                    .pb(THEME.space.sm)
-                    .text_size(THEME.type_scale.caption)
-                    .text_color(THEME.colors.subtle)
-                    .child("WORK STATES"),
-            )
-            .children(BoardFilter::ALL.into_iter().map(|filter| {
-                let selected = filter == self.filter;
-                let count = filter_count(data, filter);
-                let entity = entity.clone();
-                button(
-                    format!("workgraph-filter-{filter:?}"),
-                    format!("{}  {count}", filter.label()),
-                    if selected {
-                        ButtonTone::Neutral
-                    } else {
-                        ButtonTone::Quiet
-                    },
-                    true,
-                    move |_, cx| {
-                        entity.update(cx, |this, cx| this.set_filter(filter, cx));
-                    },
-                )
-            }))
-    }
-
-    fn render_groups(&self, entity: Entity<Self>, groups: Vec<IssueGroup>) -> impl IntoElement {
-        let selected = self.selected;
-        let current_issue =
-            self.active_session
-                .as_ref()
-                .and_then(|(session_id, _)| match &self.state {
-                    BoardLoadState::Ready(data) => data
-                        .sessions
-                        .iter()
-                        .find(|link| link.session_id == *session_id)
-                        .map(|link| link.issue_number),
-                    BoardLoadState::Loading | BoardLoadState::Failed(_) => None,
-                });
-        div()
-            .id("workgraph-issue-list")
-            .flex_1()
-            .min_w_0()
-            .h_full()
-            .overflow_y_scroll()
-            .flex()
-            .flex_col()
-            .gap(THEME.space.md)
-            .p(THEME.space.md)
-            .children(
-                groups
-                    .into_iter()
-                    .map(|group| render_group(group, selected, current_issue, entity.clone())),
-            )
-    }
-
-    fn render_graph(&self, entity: Entity<Self>, data: &BoardData) -> impl IntoElement {
-        let issues = data.issues.clone();
-        let dependencies = data.dependencies.clone();
-        div()
-            .id("workgraph-dependency-list")
-            .flex_1()
-            .min_w_0()
-            .h_full()
-            .overflow_y_scroll()
-            .flex()
-            .flex_col()
-            .gap(THEME.space.xs)
-            .children(issues.into_iter().map(move |issue| {
-                let dependency_titles = dependencies
-                    .iter()
-                    .filter(|edge| edge.issue_number == issue.number)
-                    .filter_map(|edge| {
-                        data.issues
-                            .iter()
-                            .find(|candidate| candidate.number == edge.depends_on)
-                            .map(|candidate| format!("#{} {}", candidate.number, candidate.title))
-                    })
-                    .collect::<Vec<_>>();
-                render_graph_row(issue, dependency_titles, self.selected, entity.clone())
-            }))
     }
 
     fn render_detail(
@@ -971,7 +873,11 @@ impl Render for WorkGraphBoardView {
                                 .min_h_0()
                                 .flex()
                                 .when(layout != BoardLayoutMode::Narrow, |board| {
-                                    board.child(self.render_filter_rail(entity.clone(), data))
+                                    board.child(render_filter_rail(
+                                        self.filter,
+                                        entity.clone(),
+                                        data,
+                                    ))
                                 })
                                 .when(
                                     !self.creating
@@ -986,11 +892,23 @@ impl Render for WorkGraphBoardView {
                                             )
                                             .into_any_element()
                                         } else if self.mode == BoardMode::Graph {
-                                            self.render_graph(entity.clone(), data)
-                                                .into_any_element()
+                                            render_graph(
+                                                self.selected,
+                                                entity.clone(),
+                                                data,
+                                            )
+                                            .into_any_element()
                                         } else {
-                                            self.render_groups(entity.clone(), groups)
-                                                .into_any_element()
+                                            render_groups(
+                                                self.selected,
+                                                self.active_session
+                                                    .as_ref()
+                                                    .map(|(session_id, _)| session_id.as_str()),
+                                                entity.clone(),
+                                                groups,
+                                                data,
+                                            )
+                                            .into_any_element()
                                         })
                                     },
                                 )

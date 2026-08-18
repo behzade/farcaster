@@ -6,14 +6,120 @@ use gpui_component::input::{Input, InputState, Textarea, TextareaState};
 
 use super::{
     adapter::WorkGraphBoardView,
-    contract::{IssueGroup, IssueRow},
-    core::format_relative_issue_time,
+    contract::{BoardData, BoardFilter, IssueGroup, IssueRow},
+    core::{filter_count, format_relative_issue_time},
     layout::{BoardLayoutMode, issue_detail_shell},
 };
 use crate::{
     primitives::{ButtonTone, button},
     theme::THEME,
 };
+
+pub(super) fn render_filter_rail(
+    filter: BoardFilter,
+    entity: Entity<WorkGraphBoardView>,
+    data: &BoardData,
+) -> impl IntoElement {
+    div()
+        .w(px(216.0))
+        .min_w(px(216.0))
+        .flex_none()
+        .flex()
+        .flex_col()
+        .gap(THEME.space.xs)
+        .px(THEME.space.sm)
+        .py(THEME.space.md)
+        .bg(THEME.colors.canvas)
+        .border_r(THEME.border)
+        .border_color(THEME.colors.border)
+        .child(
+            div()
+                .px(THEME.space.sm)
+                .pb(THEME.space.sm)
+                .text_size(THEME.type_scale.caption)
+                .text_color(THEME.colors.subtle)
+                .child("WORK STATES"),
+        )
+        .children(BoardFilter::ALL.into_iter().map(|item| {
+            let selected = item == filter;
+            let count = filter_count(data, item);
+            let entity = entity.clone();
+            button(
+                format!("workgraph-filter-{item:?}"),
+                format!("{}  {count}", item.label()),
+                if selected {
+                    ButtonTone::Neutral
+                } else {
+                    ButtonTone::Quiet
+                },
+                true,
+                move |_, cx| {
+                    entity.update(cx, |this, cx| this.set_filter(item, cx));
+                },
+            )
+        }))
+}
+
+pub(super) fn render_groups(
+    selected: Option<u64>,
+    active_session_id: Option<&str>,
+    entity: Entity<WorkGraphBoardView>,
+    groups: Vec<IssueGroup>,
+    data: &BoardData,
+) -> impl IntoElement {
+    let current_issue = active_session_id.and_then(|session_id| {
+        data.sessions
+            .iter()
+            .find(|link| link.session_id == session_id)
+            .map(|link| link.issue_number)
+    });
+    div()
+        .id("workgraph-issue-list")
+        .flex_1()
+        .min_w_0()
+        .h_full()
+        .overflow_y_scroll()
+        .flex()
+        .flex_col()
+        .gap(THEME.space.md)
+        .p(THEME.space.md)
+        .children(
+            groups
+                .into_iter()
+                .map(|group| render_group(group, selected, current_issue, entity.clone())),
+        )
+}
+
+pub(super) fn render_graph(
+    selected: Option<u64>,
+    entity: Entity<WorkGraphBoardView>,
+    data: &BoardData,
+) -> impl IntoElement {
+    let issues = data.issues.clone();
+    let dependencies = data.dependencies.clone();
+    div()
+        .id("workgraph-dependency-list")
+        .flex_1()
+        .min_w_0()
+        .h_full()
+        .overflow_y_scroll()
+        .flex()
+        .flex_col()
+        .gap(THEME.space.xs)
+        .children(issues.into_iter().map(move |issue| {
+            let dependency_titles = dependencies
+                .iter()
+                .filter(|edge| edge.issue_number == issue.number)
+                .filter_map(|edge| {
+                    data.issues
+                        .iter()
+                        .find(|candidate| candidate.number == edge.depends_on)
+                        .map(|candidate| format!("#{} {}", candidate.number, candidate.title))
+                })
+                .collect::<Vec<_>>();
+            render_graph_row(issue, dependency_titles, selected, entity.clone())
+        }))
+}
 
 pub(super) fn render_create(
     title: &Entity<InputState>,
