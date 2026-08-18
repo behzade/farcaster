@@ -100,7 +100,7 @@ impl PiApp {
                             cx.stop_propagation();
                         }
                     })
-                    .on_key_down(move |event: &KeyDownEvent, window, cx| {
+                    .capture_key_down(move |event: &KeyDownEvent, window, cx| {
                         if mention_suggestion_count > 0
                             && matches!(event.keystroke.key.as_str(), "up" | "down")
                         {
@@ -140,6 +140,7 @@ impl PiApp {
                             .unwrap_or(false);
                         if handled {
                             window.prevent_default();
+                            cx.stop_propagation();
                         } else {
                             capture_after_input(history_entity.clone(), cx);
                         }
