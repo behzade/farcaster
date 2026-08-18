@@ -13,7 +13,7 @@ use crate::{
     rpc_process::ProcessCommand,
 };
 
-const DEFAULT_TITLE_MODEL: &str = "openai/gpt-5.6-luna";
+const DEFAULT_TITLE_MODEL: &str = "openai-codex/gpt-5.6-luna";
 const MAX_CONTEXT_CHARS: usize = 4_000;
 const MAX_TITLE_CHARS: usize = 80;
 const MAX_TITLE_WORDS: usize = 12;
