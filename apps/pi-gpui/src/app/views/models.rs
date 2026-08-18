@@ -180,7 +180,7 @@ fn effort_selector(
     .text_color(effort_color(selected.unwrap_or("off")))
     .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
         let mut menu = menu.min_w(px(160.0)).max_h(px(420.0)).label("Effort");
-        for effort in efforts {
+        for effort in &efforts {
             let target = effort.clone();
             let click_entity = entity.clone();
             menu = menu.item(
