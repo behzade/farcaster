@@ -1,9 +1,10 @@
 //! Reusable GPUI drag handles and before/after reorder targets.
 
 use gpui::{
-    AnyElement, App, AppContext as _, Div, DragMoveEvent, ElementId, InteractiveElement as _,
-    IntoElement, ParentElement as _, Render, Rgba, Role, SharedString, Stateful,
-    StatefulInteractiveElement as _, Styled as _, Window, div, prelude::FluentBuilder as _, px,
+    AnyElement, App, AppContext as _, Bounds, Div, DragMoveEvent, ElementId,
+    InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Point, Render, Rgba, Role,
+    SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, Window, div,
+    prelude::FluentBuilder as _, px,
 };
 use gpui_component::tooltip::Tooltip;
 
@@ -79,6 +80,16 @@ impl ReorderTargetExt for Stateful<Div> {
     }
 }
 
+fn reorder_position(bounds: &Bounds<Pixels>, pointer: &Point<Pixels>) -> Option<ReorderPosition> {
+    bounds.contains(pointer).then(|| {
+        if pointer.y < bounds.center().y {
+            ReorderPosition::Before
+        } else {
+            ReorderPosition::After
+        }
+    })
+}
+
 fn reorder_target<T>(
     row: Stateful<Div>,
     position: Option<ReorderPosition>,
@@ -97,13 +108,33 @@ where
         row.border_b(px(2.0)).border_color(indicator)
     })
     .on_drag_move(move |event: &DragMoveEvent<T>, window, cx| {
-        let position = if event.event.position.y < event.bounds.center().y {
-            ReorderPosition::Before
-        } else {
-            ReorderPosition::After
-        };
-        on_move(position, window, cx);
+        if let Some(position) = reorder_position(&event.bounds, &event.event.position) {
+            on_move(position, window, cx);
+        }
     })
     .drag_over::<T>(move |row, _, _, _| row.bg(hover))
     .on_drop(on_drop)
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{Bounds, point, size};
+
+    use super::*;
+
+    #[test]
+    fn reorder_position_only_selects_the_row_under_the_pointer() {
+        let row = Bounds::new(point(px(10.0), px(100.0)), size(px(200.0), px(40.0)));
+
+        assert_eq!(
+            reorder_position(&row, &point(px(20.0), px(110.0))),
+            Some(ReorderPosition::Before)
+        );
+        assert_eq!(
+            reorder_position(&row, &point(px(20.0), px(130.0))),
+            Some(ReorderPosition::After)
+        );
+        assert_eq!(reorder_position(&row, &point(px(20.0), px(90.0))), None);
+        assert_eq!(reorder_position(&row, &point(px(20.0), px(150.0))), None);
+    }
 }
