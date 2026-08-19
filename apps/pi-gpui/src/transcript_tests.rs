@@ -33,6 +33,24 @@ fn markdown_inline_code_uses_the_reading_palette() {
 }
 
 #[test]
+fn completed_markdown_state_survives_rows_leaving_the_view() {
+    let mut cache = RecentCache::new(2);
+    let mut parses = 0;
+    let first = cache.get_or_insert_with("final-row", || {
+        parses += 1;
+        "parsed state"
+    });
+    let _other = cache.get_or_insert_with("other-row", || "other state");
+    let restored = cache.get_or_insert_with("final-row", || {
+        parses += 1;
+        "replacement state"
+    });
+
+    assert_eq!(first, restored);
+    assert_eq!(parses, 1);
+}
+
+#[test]
 fn consecutive_reads_collapse_into_one_row() {
     let rows = project_rows(&[
         item(TranscriptKind::User, "", "question"),
