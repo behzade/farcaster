@@ -574,13 +574,74 @@ fn fill_slash_command(entity: WeakEntity<PiApp>, name: String, window: &mut Wind
     });
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum QueuedMessageKind {
+    Steer,
+    FollowUp,
+}
+
+impl QueuedMessageKind {
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::Steer => "Steer next",
+            Self::FollowUp => "Follow-ups",
+        }
+    }
+}
+
+pub(super) fn queued_message_groups(queue: &QueueState) -> Vec<(QueuedMessageKind, &[String])> {
+    [
+        (QueuedMessageKind::Steer, queue.steering.as_slice()),
+        (QueuedMessageKind::FollowUp, queue.follow_up.as_slice()),
+    ]
+    .into_iter()
+    .filter(|(_, messages)| !messages.is_empty())
+    .collect()
+}
+
+fn queued_message_group(
+    kind: QueuedMessageKind,
+    messages: &[String],
+    separated: bool,
+) -> AnyElement {
+    div()
+        .when(separated, |group| {
+            group
+                .border_t(THEME.border)
+                .border_color(THEME.colors.border)
+        })
+        .child(
+            div()
+                .px(THEME.space.sm)
+                .py(THEME.space.xs)
+                .bg(match kind {
+                    QueuedMessageKind::Steer => THEME.colors.selection,
+                    QueuedMessageKind::FollowUp => THEME.colors.hover,
+                })
+                .text_size(THEME.type_scale.caption)
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(match kind {
+                    QueuedMessageKind::Steer => THEME.colors.accent,
+                    QueuedMessageKind::FollowUp => THEME.colors.subtle,
+                })
+                .child(kind.label()),
+        )
+        .children(messages.iter().map(|message| {
+            div()
+                .border_t(THEME.border)
+                .border_color(THEME.colors.border)
+                .px(THEME.space.sm)
+                .py(THEME.space.xs)
+                .text_size(THEME.type_scale.body)
+                .text_color(THEME.colors.text)
+                .child(message.clone())
+        }))
+        .into_any_element()
+}
+
 fn queued_messages(queue: &QueueState) -> Option<AnyElement> {
-    let messages = queue
-        .steering
-        .iter()
-        .chain(&queue.follow_up)
-        .collect::<Vec<_>>();
-    if messages.is_empty() {
+    let groups = queued_message_groups(queue);
+    if groups.is_empty() {
         return None;
     }
     Some(
@@ -591,33 +652,14 @@ fn queued_messages(queue: &QueueState) -> Option<AnyElement> {
             .rounded(THEME.radius)
             .overflow_hidden()
             .bg(THEME.colors.surface)
-            .children(messages.into_iter().enumerate().map(|(index, message)| {
-                div()
-                    .when(index > 0, |row| {
-                        row.border_t(THEME.border).border_color(THEME.colors.border)
-                    })
-                    .px(THEME.space.sm)
-                    .py(THEME.space.xs)
-                    .flex()
-                    .items_start()
-                    .gap(THEME.space.sm)
-                    .child(
-                        div()
-                            .flex_none()
-                            .text_size(THEME.type_scale.caption)
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(THEME.colors.subtle)
-                            .child("Queued"),
-                    )
-                    .child(
-                        div()
-                            .min_w_0()
-                            .flex_1()
-                            .text_size(THEME.type_scale.body)
-                            .text_color(THEME.colors.text)
-                            .child(message.clone()),
-                    )
-            }))
+            .children(
+                groups
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, (kind, messages))| {
+                        queued_message_group(kind, messages, index > 0)
+                    }),
+            )
             .into_any_element(),
     )
 }

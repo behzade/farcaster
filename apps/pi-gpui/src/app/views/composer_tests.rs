@@ -1,4 +1,7 @@
-use super::composer::{choice_copy, composer_primary_action, dialog_copy};
+use super::composer::{
+    QueuedMessageKind, choice_copy, composer_primary_action, dialog_copy, queued_message_groups,
+};
+use crate::conversation::QueueState;
 
 #[test]
 fn primary_action_only_appears_for_submit_ready_content() {
@@ -17,6 +20,27 @@ fn primary_action_only_appears_for_submit_ready_content() {
         composer_primary_action(true, true, true, false),
         Some("Run")
     );
+}
+
+#[test]
+fn queued_messages_are_grouped_by_delivery_behavior() {
+    let queue = QueueState {
+        steering: vec!["redirect now".into(), "check this first".into()],
+        follow_up: vec!["then summarize".into()],
+    };
+
+    let groups = queued_message_groups(&queue);
+    assert_eq!(groups.len(), 2);
+    assert_eq!(
+        groups[0],
+        (QueuedMessageKind::Steer, queue.steering.as_slice())
+    );
+    assert_eq!(
+        groups[1],
+        (QueuedMessageKind::FollowUp, queue.follow_up.as_slice())
+    );
+    assert_eq!(groups[0].0.label(), "Steer next");
+    assert_eq!(groups[1].0.label(), "Follow-ups");
 }
 
 #[test]
