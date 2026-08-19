@@ -198,6 +198,7 @@
             timeout 60 node --experimental-strip-types -e '
               await Promise.all([
                 import("./agent-feedback.ts"),
+                import("./kimi-tool-schema.ts"),
                 import("./notifications.ts"),
                 import("./prompt-inspector.ts"),
                 import("./session-hooks.ts"),
@@ -317,6 +318,7 @@
             node --test \
               ${self}/tests/agent-feedback.test.ts \
               ${self}/tests/governance.test.ts \
+              ${self}/tests/kimi-tool-schema.test.ts \
               ${self}/tests/session-agents-package.test.ts \
               ${self}/tests/prompt-contract.test.ts \
               ${self}/tests/prompt-inspector.test.ts \
