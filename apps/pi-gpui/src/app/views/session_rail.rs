@@ -51,7 +51,7 @@ impl PiApp {
         let menu_workgraph_entity = entity.clone();
         let search_focus = self.search_focus.clone();
         let new_session_project =
-            selected_new_session_project(self.session_project_filter.as_deref(), &self.project);
+            new_session_project(&self.project, self.session_project_filter.as_deref());
         let menu_new_session_project = new_session_project.clone();
         let selected_root =
             root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
@@ -698,8 +698,8 @@ impl PiApp {
     }
 }
 
-fn selected_new_session_project(filter: Option<&Path>, current: &Path) -> PathBuf {
-    filter.unwrap_or(current).to_path_buf()
+fn new_session_project(current_chat_project: &Path, _session_filter: Option<&Path>) -> PathBuf {
+    current_chat_project.to_path_buf()
 }
 
 fn resolved_active_projects(

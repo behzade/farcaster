@@ -6,9 +6,9 @@ use std::{
 
 use super::{
     ActiveRailRow, ProjectGroup, SessionRailItem, SessionRailKind, is_meaningful_active_status,
-    minimal_row_splice, recent_archived_sessions, resolved_active_projects,
-    roots_waiting_for_descendants, selected_new_session_project, session_accessible_label,
-    session_badge, session_rail_groups, visible_session_shortcuts,
+    minimal_row_splice, new_session_project, recent_archived_sessions, resolved_active_projects,
+    roots_waiting_for_descendants, session_accessible_label, session_badge, session_rail_groups,
+    visible_session_shortcuts,
 };
 use crate::{
     composer_sessions::draft_target,
@@ -206,12 +206,12 @@ fn minimal_row_reconciliation_preserves_equal_prefix_and_suffix() {
 }
 
 #[test]
-fn selected_project_controls_new_session_destination() {
+fn new_session_uses_viewed_chat_project_independent_of_filter() {
     let current = Path::new("/current");
-    assert_eq!(selected_new_session_project(None, current), current);
+    assert_eq!(new_session_project(current, None), current);
     assert_eq!(
-        selected_new_session_project(Some(Path::new("/filtered")), current),
-        PathBuf::from("/filtered")
+        new_session_project(current, Some(Path::new("/filtered"))),
+        PathBuf::from("/current")
     );
 }
 
