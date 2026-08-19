@@ -4,7 +4,7 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 20] = [
+const ICON_PATHS: [&str; 19] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrow-counter-clockwise.svg",
     "icons/phosphor/arrow-square-out.svg",
@@ -16,7 +16,6 @@ const ICON_PATHS: [&str; 20] = [
     "icons/phosphor/plus.svg",
     "icons/phosphor/question.svg",
     "icons/phosphor/folder.svg",
-    "icons/phosphor/folder-dashed.svg",
     "icons/phosphor/folder-plus.svg",
     "icons/phosphor/list.svg",
     "icons/phosphor/magnifying-glass.svg",
@@ -78,9 +77,6 @@ impl AssetSource for AppAssets {
             "icons/phosphor/folder.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/folder.svg"))
             }
-            "icons/phosphor/folder-dashed.svg" => {
-                Some(include_bytes!("../assets/phosphor-icons/folder-dashed.svg"))
-            }
             "icons/phosphor/folder-plus.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/folder-plus.svg"))
             }
@@ -132,7 +128,6 @@ pub(crate) enum AppIcon {
     Plus,
     Question,
     Folder,
-    FolderDashed,
     FolderPlus,
     List,
     MagnifyingGlass,
@@ -157,7 +152,6 @@ impl IconNamed for AppIcon {
             Self::Plus => "plus",
             Self::Question => "question",
             Self::Folder => "folder",
-            Self::FolderDashed => "folder-dashed",
             Self::FolderPlus => "folder-plus",
             Self::List => "list",
             Self::MagnifyingGlass => "magnifying-glass",

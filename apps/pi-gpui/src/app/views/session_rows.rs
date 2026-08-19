@@ -176,7 +176,7 @@ pub(super) fn draft_session_row(
                                     div()
                                         .min_w_0()
                                         .flex_1()
-                                        .child(project_badge(&draft.project)),
+                                        .child(project_badge(&draft.project, None)),
                                 )
                                 .child(draft_badge())
                                 .when(status != "Draft", |metadata| {
@@ -436,9 +436,38 @@ pub(super) fn session_row_with_height(
                                 .gap(THEME.space.xs)
                                 .child(
                                     div()
+                                        .id(format!("move-project-{}", session.id))
+                                        .role(Role::Button)
+                                        .aria_label("Move session to another project")
+                                        .tab_index(0)
                                         .min_w_0()
                                         .flex_1()
-                                        .child(project_badge(&session.project)),
+                                        .rounded(THEME.radius)
+                                        .hover(|badge| badge.bg(THEME.colors.hover))
+                                        .focus(|badge| {
+                                            badge
+                                                .border(THEME.border)
+                                                .border_color(THEME.colors.accent)
+                                        })
+                                        .on_click(move |_, window, cx| {
+                                            cx.stop_propagation();
+                                            let _ = move_entity.update(cx, |this, cx| {
+                                                this.open_picker(
+                                                    PickerScope::Projects(
+                                                        ProjectPickerIntent::MoveSession {
+                                                            path: move_path.clone(),
+                                                            source_project: move_project.clone(),
+                                                        },
+                                                    ),
+                                                    window,
+                                                    cx,
+                                                );
+                                            });
+                                        })
+                                        .child(project_badge(
+                                            &session.project,
+                                            Some("Move to project…"),
+                                        )),
                                 )
                                 .when_some(
                                     status_icon(target_app_session_id, &status_text),
@@ -458,54 +487,6 @@ pub(super) fn session_row_with_height(
                                             .expect("fixed session shortcut must parse"),
                                     ))
                                 })
-                                .child(
-                                    div()
-                                        .id(format!("move-{}", session.id))
-                                        .role(Role::Button)
-                                        .aria_label("Move session to another project")
-                                        .tab_index(0)
-                                        .size(THEME.controls.icon_button)
-                                        .flex_none()
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .rounded(THEME.radius)
-                                        .opacity(0.0)
-                                        .group_hover(
-                                            format!("session-actions-{}", session.id),
-                                            |button| button.opacity(1.0),
-                                        )
-                                        .focus(|button| {
-                                            button
-                                                .opacity(1.0)
-                                                .border(THEME.border)
-                                                .border_color(THEME.colors.accent)
-                                        })
-                                        .text_color(THEME.colors.muted)
-                                        .hover(|button| button.bg(THEME.colors.hover))
-                                        .tooltip(move |window, cx| {
-                                            Tooltip::new("Move to project…").build(window, cx)
-                                        })
-                                        .child(app_icon(
-                                            AppIcon::FolderDashed,
-                                            AppIconSize::Control,
-                                        ))
-                                        .on_click(move |_, window, cx| {
-                                            cx.stop_propagation();
-                                            let _ = move_entity.update(cx, |this, cx| {
-                                                this.open_picker(
-                                                    PickerScope::Projects(
-                                                        ProjectPickerIntent::MoveSession {
-                                                            path: move_path.clone(),
-                                                            source_project: move_project.clone(),
-                                                        },
-                                                    ),
-                                                    window,
-                                                    cx,
-                                                );
-                                            });
-                                        }),
-                                )
                                 .child(
                                     div()
                                         .id(format!("settle-{}", session.id))
@@ -604,8 +585,9 @@ fn draft_badge() -> AnyElement {
         .into_any_element()
 }
 
-fn project_badge(project: &Path) -> AnyElement {
+fn project_badge(project: &Path, action: Option<&str>) -> AnyElement {
     let path = project.display().to_string();
+    let tooltip = action.map_or_else(|| path.clone(), |action| format!("{action}\n{path}"));
     div()
         .id(format!("project-badge:{path}"))
         .max_w_full()
@@ -614,7 +596,7 @@ fn project_badge(project: &Path) -> AnyElement {
         .gap(px(3.0))
         .text_size(THEME.type_scale.caption)
         .text_color(THEME.colors.subtle)
-        .tooltip(move |window, cx| Tooltip::new(path.clone()).build(window, cx))
+        .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
         .child(app_icon(AppIcon::Folder, AppIconSize::Inline))
         .child(
             div()
