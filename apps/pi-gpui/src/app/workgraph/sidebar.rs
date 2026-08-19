@@ -98,18 +98,39 @@ impl Render for WorkGraphSidebarView {
             .items_center()
             .justify_between()
             .child(section_heading("Work graph"))
-            .child(button(
-                "open-workgraph-from-sidebar",
-                "Open",
-                ButtonTone::Quiet,
-                true,
-                {
-                    let app = self.app.clone();
-                    move |window, cx| {
-                        let _ = app.update(cx, |app, cx| app.open_workgraph_sheet(window, cx));
-                    }
-                },
-            ));
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(THEME.space.xs)
+                    .child(button(
+                        "refresh-workgraph-sidebar",
+                        "Refresh",
+                        ButtonTone::Quiet,
+                        true,
+                        {
+                            let entity = cx.entity().downgrade();
+                            move |_, cx| {
+                                if let Some(entity) = entity.upgrade() {
+                                    entity.update(cx, |this, cx| this.refresh(cx));
+                                }
+                            }
+                        },
+                    ))
+                    .child(button(
+                        "open-workgraph-from-sidebar",
+                        "Open",
+                        ButtonTone::Quiet,
+                        true,
+                        {
+                            let app = self.app.clone();
+                            move |window, cx| {
+                                let _ =
+                                    app.update(cx, |app, cx| app.open_workgraph_sheet(window, cx));
+                            }
+                        },
+                    )),
+            );
         div()
             .flex()
             .flex_col()

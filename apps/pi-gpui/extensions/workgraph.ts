@@ -68,7 +68,10 @@ export default function workgraph(pi: ExtensionAPI): void {
     label: "Work graph edit",
     description: "Create or update durable project issues, notes, dependencies, status, and this Pi session's issue link.",
     promptSnippet: "Update durable project work and dependency state",
-    promptGuidelines: ["Use workgraph_edit once work is concrete, record useful progress, and mark completed work done."],
+    promptGuidelines: [
+      "Use workgraph_edit once work is concrete, record useful progress, and mark completed work done.",
+      "Link this session to its primary issue while working on it; move or unlink the session when the primary issue changes.",
+    ],
     parameters: editSchema,
     async execute(toolCallId, input: EditInput, _signal, _update, ctx) {
       const request: Record<string, unknown> = { ...input, idempotencyKey: `${ctx.sessionManager.getSessionId()}:${toolCallId}` };
