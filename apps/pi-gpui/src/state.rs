@@ -7,7 +7,9 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use rusqlite::{Connection, ErrorCode, OptionalExtension as _, TransactionBehavior, params};
+use rusqlite::{
+    Connection, ErrorCode, OptionalExtension as _, Transaction, TransactionBehavior, params,
+};
 
 use crate::{
     projects::{DraftSession, Registry},
@@ -15,7 +17,7 @@ use crate::{
     sessions::{SessionSummary, UsageSummary},
 };
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(crate) struct StateStore {
@@ -144,7 +146,7 @@ impl StateStore {
         let migration = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| format!("start GUI state schema migration: {error}"))?;
-        let schema_version = migration
+        let mut schema_version = migration
             .query_row(
                 "SELECT CAST(value AS INTEGER) FROM meta WHERE key='schema_version'",
                 [],
@@ -184,12 +186,52 @@ impl StateStore {
                      UPDATE meta SET value='5' WHERE key='schema_version';",
                 )
                 .map_err(|error| format!("migrate GUI state schema to 5: {error}"))?,
-            SCHEMA_VERSION => {}
+            5 | SCHEMA_VERSION => {}
             _ => {
                 return Err(format!(
                     "GUI state schema {schema_version} is not supported by this build"
                 ));
             }
+        }
+        if schema_version < 5 {
+            schema_version = 5;
+        }
+        if schema_version == 5 {
+            migration
+                .execute_batch(
+                    "CREATE TABLE app_sessions (
+                       id INTEGER PRIMARY KEY AUTOINCREMENT,
+                       draft_id TEXT UNIQUE,
+                       session_path TEXT UNIQUE,
+                       created_ms INTEGER NOT NULL
+                     );
+                     ALTER TABLE drafts ADD COLUMN app_session_id INTEGER;
+                     ALTER TABLE sessions ADD COLUMN app_session_id INTEGER;
+                     INSERT OR IGNORE INTO app_sessions(session_path, created_ms)
+                       SELECT path, modified_ms FROM sessions ORDER BY modified_ms, path;
+                     UPDATE app_sessions
+                        SET draft_id=(
+                          SELECT drafts.id FROM drafts
+                           WHERE drafts.session_path=app_sessions.session_path
+                           ORDER BY drafts.created_ms LIMIT 1
+                        )
+                      WHERE draft_id IS NULL;
+                     INSERT OR IGNORE INTO app_sessions(draft_id, session_path, created_ms)
+                       SELECT id, session_path, created_ms FROM drafts ORDER BY created_ms, id;
+                     UPDATE sessions
+                        SET app_session_id=(
+                          SELECT id FROM app_sessions WHERE session_path=sessions.path
+                        );
+                     UPDATE drafts
+                        SET app_session_id=COALESCE(
+                          (SELECT id FROM app_sessions WHERE draft_id=drafts.id),
+                          (SELECT id FROM app_sessions WHERE session_path=drafts.session_path)
+                        );
+                     CREATE UNIQUE INDEX drafts_app_session_id ON drafts(app_session_id);
+                     CREATE UNIQUE INDEX sessions_app_session_id ON sessions(app_session_id);
+                     UPDATE meta SET value='6' WHERE key='schema_version';",
+                )
+                .map_err(|error| format!("migrate GUI state schema to 6: {error}"))?;
         }
         migration
             .commit()
@@ -260,6 +302,34 @@ impl StateStore {
         Ok(())
     }
 
+    pub(crate) fn allocate_app_session_id(
+        &mut self,
+        draft_id: &str,
+        created_ms: u64,
+    ) -> Result<i64, String> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| format!("start application session allocation: {error}"))?;
+        transaction
+            .execute(
+                "INSERT OR IGNORE INTO app_sessions(draft_id, created_ms) VALUES(?1, ?2)",
+                params![draft_id, u64_to_i64(created_ms)],
+            )
+            .map_err(|error| format!("allocate application session for {draft_id}: {error}"))?;
+        let id = transaction
+            .query_row(
+                "SELECT id FROM app_sessions WHERE draft_id=?1",
+                [draft_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|error| format!("read application session for {draft_id}: {error}"))?;
+        transaction
+            .commit()
+            .map_err(|error| format!("commit application session allocation: {error}"))?;
+        Ok(id)
+    }
+
     pub(crate) fn load_registry(&self) -> Result<Registry, String> {
         let mut projects = Vec::new();
         let mut statement = self
@@ -278,7 +348,8 @@ impl StateStore {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT id, project, created_ms, submitted, session_path, provisional_title
+                "SELECT id, app_session_id, project, created_ms, submitted, session_path,
+                        provisional_title
                    FROM drafts ORDER BY created_ms DESC",
             )
             .map_err(|error| format!("read drafts: {error}"))?;
@@ -286,20 +357,22 @@ impl StateStore {
             .query_map([], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, u64>(2)?,
-                    row.get::<_, bool>(3)?,
-                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, u64>(3)?,
+                    row.get::<_, bool>(4)?,
                     row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
                 ))
             })
             .map_err(|error| format!("query drafts: {error}"))?;
         for row in rows {
-            let (id, project, created_ms, submitted, session_path, title) =
+            let (id, app_session_id, project, created_ms, submitted, session_path, title) =
                 row.map_err(|error| error.to_string())?;
             if let Some(project) = existing_directory(&project) {
                 drafts.push(DraftSession {
                     id,
+                    app_session_id,
                     project,
                     created_ms,
                     submitted,
@@ -338,13 +411,18 @@ impl StateStore {
                 .session_path
                 .as_ref()
                 .map(|path| crate::sessions::normalize_session_path(path));
+            let app_session_id =
+                ensure_draft_app_session(&transaction, draft, session_path.as_deref())
+                    .map_err(|error| format!("identify draft {}: {error}", draft.id))?;
             transaction
                 .execute(
                     "INSERT INTO drafts(
-                       id, project, created_ms, submitted, session_path, provisional_title
-                     ) VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
+                       id, app_session_id, project, created_ms, submitted, session_path,
+                       provisional_title
+                     ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                     params![
                         draft.id,
+                        app_session_id,
                         draft.project.to_string_lossy(),
                         draft.created_ms,
                         draft.submitted,
@@ -367,7 +445,7 @@ impl StateStore {
                         parent_session, modified_ms, message_count, input_tokens,
                         output_tokens, cache_read_tokens, cache_write_tokens,
                         total_tokens, cost_micros, search_text, settled_ms IS NOT NULL,
-                        is_running
+                        is_running, app_session_id
                    FROM sessions
                   ORDER BY modified_ms DESC, timestamp DESC",
             )
@@ -407,10 +485,10 @@ impl StateStore {
                        parent_session, modified_ms, file_size, message_count,
                        input_tokens, output_tokens, cache_read_tokens,
                        cache_write_tokens, total_tokens, cost_micros, search_text,
-                       is_running
+                       is_running, app_session_id
                      ) VALUES(
                        ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
-                       ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18
+                       ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19
                      ) ON CONFLICT(path) DO UPDATE SET
                        id=excluded.id, project=excluded.project, title=excluded.title,
                        first_user_message=excluded.first_user_message,
@@ -421,10 +499,15 @@ impl StateStore {
                        cache_read_tokens=excluded.cache_read_tokens,
                        cache_write_tokens=excluded.cache_write_tokens,
                        total_tokens=excluded.total_tokens, cost_micros=excluded.cost_micros,
-                       search_text=excluded.search_text, is_running=excluded.is_running",
+                       search_text=excluded.search_text, is_running=excluded.is_running,
+                       app_session_id=excluded.app_session_id",
                 )
                 .map_err(|error| format!("prepare session index update: {error}"))?;
             for session in sessions {
+                let app_session_id =
+                    ensure_session_app_session(&transaction, session).map_err(|error| {
+                        format!("identify session {}: {error}", session.path.display())
+                    })?;
                 let size = std::fs::metadata(&session.path)
                     .map(|metadata| metadata.len())
                     .unwrap_or(0);
@@ -448,6 +531,7 @@ impl StateStore {
                         session.usage.cost_micros,
                         session.search_text(),
                         session.is_running,
+                        app_session_id,
                     ])
                     .map_err(|error| {
                         format!("index session {}: {error}", session.path.display())
@@ -565,6 +649,19 @@ impl StateStore {
             && let Some(session) = session
         {
             let session = crate::sessions::normalize_session_path(session);
+            let app_session_id = transaction
+                .query_row(
+                    "SELECT app_session_id FROM drafts WHERE id=?1",
+                    [draft_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()
+                .map_err(|error| format!("identify queued prompt {id} draft: {error}"))?;
+            if let Some(app_session_id) = app_session_id {
+                associate_app_session(&transaction, app_session_id, draft_id, &session).map_err(
+                    |error| format!("associate queued prompt {id} application session: {error}"),
+                )?;
+            }
             transaction
                 .execute(
                     "UPDATE drafts SET submitted=1, session_path=?2 WHERE id=?1",
@@ -713,6 +810,111 @@ fn enable_wal(connection: &Connection) -> Result<(), String> {
     }
 }
 
+fn ensure_draft_app_session(
+    transaction: &Transaction<'_>,
+    draft: &DraftSession,
+    session_path: Option<&Path>,
+) -> rusqlite::Result<i64> {
+    if draft.app_session_id > 0 {
+        transaction.execute(
+            "INSERT OR IGNORE INTO app_sessions(id, draft_id, created_ms) VALUES(?1, ?2, ?3)",
+            params![draft.app_session_id, draft.id, u64_to_i64(draft.created_ms)],
+        )?;
+    }
+    transaction.execute(
+        "INSERT OR IGNORE INTO app_sessions(draft_id, created_ms) VALUES(?1, ?2)",
+        params![draft.id, u64_to_i64(draft.created_ms)],
+    )?;
+    let app_session_id = transaction.query_row(
+        "SELECT id FROM app_sessions WHERE draft_id=?1",
+        [&draft.id],
+        |row| row.get::<_, i64>(0),
+    )?;
+    if let Some(path) = session_path {
+        associate_app_session(transaction, app_session_id, &draft.id, path)?;
+    }
+    Ok(app_session_id)
+}
+
+fn ensure_session_app_session(
+    transaction: &Transaction<'_>,
+    session: &SessionSummary,
+) -> rusqlite::Result<i64> {
+    let path = crate::sessions::normalize_session_path(&session.path);
+    if let Some(id) = transaction
+        .query_row(
+            "SELECT id FROM app_sessions WHERE session_path=?1",
+            [path.to_string_lossy()],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+    {
+        return Ok(id);
+    }
+    if session.app_session_id > 0 {
+        transaction.execute(
+            "INSERT OR IGNORE INTO app_sessions(id, session_path, created_ms)
+             VALUES(?1, ?2, ?3)",
+            params![
+                session.app_session_id,
+                path.to_string_lossy(),
+                u64_to_i64(system_time_ms(session.modified))
+            ],
+        )?;
+        transaction.execute(
+            "UPDATE app_sessions SET session_path=?2 WHERE id=?1 AND session_path IS NULL",
+            params![session.app_session_id, path.to_string_lossy()],
+        )?;
+    } else {
+        transaction.execute(
+            "INSERT OR IGNORE INTO app_sessions(session_path, created_ms) VALUES(?1, ?2)",
+            params![
+                path.to_string_lossy(),
+                u64_to_i64(system_time_ms(session.modified))
+            ],
+        )?;
+    }
+    transaction.query_row(
+        "SELECT id FROM app_sessions WHERE session_path=?1",
+        [path.to_string_lossy()],
+        |row| row.get::<_, i64>(0),
+    )
+}
+
+fn associate_app_session(
+    transaction: &Transaction<'_>,
+    app_session_id: i64,
+    draft_id: &str,
+    session_path: &Path,
+) -> rusqlite::Result<()> {
+    let path = crate::sessions::normalize_session_path(session_path);
+    let existing = transaction
+        .query_row(
+            "SELECT id FROM app_sessions WHERE session_path=?1",
+            [path.to_string_lossy()],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?;
+    if let Some(existing) = existing.filter(|existing| *existing != app_session_id) {
+        transaction.execute(
+            "UPDATE sessions SET app_session_id=?2 WHERE app_session_id=?1 OR path=?3",
+            params![existing, app_session_id, path.to_string_lossy()],
+        )?;
+        transaction.execute("DELETE FROM app_sessions WHERE id=?1", [existing])?;
+    }
+    transaction.execute(
+        "UPDATE app_sessions
+            SET draft_id=COALESCE(draft_id, ?2), session_path=?3
+          WHERE id=?1",
+        params![app_session_id, draft_id, path.to_string_lossy()],
+    )?;
+    transaction.execute(
+        "UPDATE sessions SET app_session_id=?2 WHERE path=?1",
+        params![path.to_string_lossy(), app_session_id],
+    )?;
+    Ok(())
+}
+
 fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary> {
     Ok(SessionSummary::from_cached(
         row.get(0)?,
@@ -735,7 +937,8 @@ fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary> {
         row.get(16)?,
         row.get(17)?,
         row.get(15)?,
-    ))
+    )
+    .with_app_session_id(row.get(18)?))
 }
 
 fn existing_directory(path: &str) -> Option<PathBuf> {

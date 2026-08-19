@@ -46,6 +46,7 @@ impl UsageSummary {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SessionSummary {
     pub id: String,
+    pub app_session_id: i64,
     pub path: PathBuf,
     pub project: PathBuf,
     pub title: String,
@@ -83,6 +84,7 @@ impl SessionSummary {
             .and_then(|parent| resolve_parent_session(&path, parent));
         Self {
             id,
+            app_session_id: 0,
             path,
             project,
             title,
@@ -96,6 +98,11 @@ impl SessionSummary {
             is_running,
             search,
         }
+    }
+
+    pub(crate) fn with_app_session_id(mut self, app_session_id: i64) -> Self {
+        self.app_session_id = app_session_id;
+        self
     }
 
     pub(crate) fn search_text(&self) -> &str {
@@ -783,6 +790,7 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
     Ok(Some((
         SessionSummary {
             id,
+            app_session_id: 0,
             path: session_path,
             project,
             title,

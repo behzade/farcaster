@@ -153,6 +153,7 @@ pub(crate) struct PiApp {
     system_notification_target: Option<(PathBuf, PathBuf)>,
     projects: Vec<PathBuf>,
     drafts: Vec<projects::DraftSession>,
+    draft_session_ids: HashMap<String, i64>,
     selected_draft: Option<String>,
     submitted_drafts: HashMap<String, Option<PathBuf>>,
     sessions_error: Option<String>,
@@ -243,7 +244,25 @@ impl PiApp {
                 Vec::new()
             }
         };
-        let selected_draft = projects::DraftSession::new(project.clone()).id;
+        let initial_draft = match projects::new_draft(project.clone()) {
+            Ok(draft) => draft,
+            Err(error) => {
+                if project_registry_error.is_none() {
+                    project_registry_error = Some(error);
+                }
+                projects::DraftSession::with_id(
+                    format!("untracked-draft-{}", std::process::id()),
+                    project.clone(),
+                )
+            }
+        };
+        let selected_draft = initial_draft.id.clone();
+        let mut draft_session_ids = registry
+            .drafts
+            .iter()
+            .map(|draft| (draft.id.clone(), draft.app_session_id))
+            .collect::<HashMap<_, _>>();
+        draft_session_ids.insert(initial_draft.id, initial_draft.app_session_id);
         if project_registry_error.is_none()
             && let Err(error) = projects::save(&registry)
         {
@@ -413,6 +432,7 @@ impl PiApp {
             system_notification_target: None,
             projects: registry.projects,
             drafts: registry.drafts,
+            draft_session_ids,
             selected_draft: Some(selected_draft),
             submitted_drafts,
             sessions_error: project_registry_error,
@@ -891,10 +911,20 @@ impl PiApp {
 
     fn new_session(&mut self, project: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         self.run_panel_scroll.set_offset(point(px(0.0), px(0.0)));
-        let draft = projects::DraftSession::new(project.clone());
+        let draft = match projects::new_draft(project.clone()) {
+            Ok(draft) => draft,
+            Err(error) => {
+                self.sessions_error = Some(error);
+                self.notify_session_rail(cx);
+                cx.notify();
+                return;
+            }
+        };
         let draft_key = draft_target(&draft.id);
         self.switch_composer_target(draft_key, window, cx);
         self.selected_draft = Some(draft.id.clone());
+        self.draft_session_ids
+            .insert(draft.id.clone(), draft.app_session_id);
         self.drafts.push(draft.clone());
         self.save_project_registry();
         self.send(RuntimeCommand::NewSession {
@@ -1054,6 +1084,7 @@ impl PiApp {
         let target = draft_target(id);
         self.composer_images.remove(&target);
         self.drafts.retain(|draft| draft.id != id);
+        self.draft_session_ids.remove(id);
         self.submitted_drafts.remove(id);
         self.run_statuses.remove(&target);
         self.recent_completions.remove(&target);

@@ -133,7 +133,16 @@ impl PiApp {
                         &submitted_drafts,
                         &active_run_statuses,
                     );
-                    draft_session_row(draft, selected, &status, active_row_entity.clone())
+                    let shortcut = shortcuts_visible
+                        .then(|| session_shortcuts.get(&draft.app_session_id).copied())
+                        .flatten();
+                    draft_session_row(
+                        draft,
+                        selected,
+                        &status,
+                        shortcut,
+                        active_row_entity.clone(),
+                    )
                 }
                 Some(ActiveRailRow::Session(item)) => {
                     let selected =
@@ -147,7 +156,7 @@ impl PiApp {
                         active_waiting_roots.contains(&item.session.id),
                     );
                     let shortcut = shortcuts_visible
-                        .then(|| session_shortcuts.get(&item.session.id).copied())
+                        .then(|| session_shortcuts.get(&item.session.app_session_id).copied())
                         .flatten();
                     let editing =
                         active_editing_path.as_deref() == Some(item.session.path.as_path());
@@ -509,6 +518,21 @@ enum ActiveRailRow {
 }
 
 #[derive(Clone, Debug)]
+enum VisibleSessionTarget {
+    Draft(DraftSession),
+    Persisted(SessionSummary),
+}
+
+impl VisibleSessionTarget {
+    fn app_session_id(&self) -> i64 {
+        match self {
+            Self::Draft(draft) => draft.app_session_id,
+            Self::Persisted(session) => session.app_session_id,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 #[allow(clippy::large_enum_variant)]
 enum ArchivedRailRow {
     Project(PathBuf, bool),
@@ -581,12 +605,15 @@ fn active_rail_rows(
     rows
 }
 
-fn visible_session_shortcuts(rows: &[ActiveRailRow]) -> HashMap<String, u8> {
+fn visible_session_shortcuts(rows: &[ActiveRailRow]) -> HashMap<i64, u8> {
+    let mut seen = HashSet::new();
     rows.iter()
         .filter_map(|row| match row {
-            ActiveRailRow::Session(item) => Some(item.session.id.clone()),
+            ActiveRailRow::Draft(draft) if draft.submitted => Some(draft.app_session_id),
+            ActiveRailRow::Session(item) => Some(item.session.app_session_id),
             ActiveRailRow::Project(_, _) | ActiveRailRow::Draft(_) => None,
         })
+        .filter(|id| seen.insert(*id))
         .take(9)
         .enumerate()
         .map(|(index, id)| (id, (index + 1) as u8))
@@ -615,12 +642,12 @@ impl PiApp {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        if let Some(session) = self
-            .visible_sessions()
+        if let Some(target) = self
+            .visible_session_targets()
             .get(number.saturating_sub(1))
             .cloned()
         {
-            self.select_session(session.path, session.project, window, cx);
+            self.select_visible_session(target, window, cx);
         }
     }
 
@@ -630,24 +657,47 @@ impl PiApp {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        let sessions = self.visible_sessions();
-        let selected =
-            root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
-                .and_then(|selected| {
-                    sessions
-                        .iter()
-                        .position(|session| session.id == selected.id)
-                });
+        let sessions = self.visible_session_targets();
+        let selected_id = self
+            .selected_draft
+            .as_deref()
+            .and_then(|id| self.drafts.iter().find(|draft| draft.id == id))
+            .map(|draft| draft.app_session_id)
+            .or_else(|| {
+                root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
+                    .map(|session| session.app_session_id)
+            });
+        let selected = selected_id.and_then(|selected_id| {
+            sessions
+                .iter()
+                .position(|session| session.app_session_id() == selected_id)
+        });
         let Some(current) = selected else { return };
         let next = current as isize + direction;
         if next >= 0
-            && let Some(session) = sessions.get(next as usize).cloned()
+            && let Some(target) = sessions.get(next as usize).cloned()
         {
-            self.select_session(session.path, session.project, window, cx);
+            self.select_visible_session(target, window, cx);
         }
     }
 
-    fn visible_sessions(&self) -> Vec<crate::sessions::SessionSummary> {
+    fn select_visible_session(
+        &mut self,
+        target: VisibleSessionTarget,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        match target {
+            VisibleSessionTarget::Draft(draft) => {
+                self.resume_draft(draft.id, draft.project, window, cx);
+            }
+            VisibleSessionTarget::Persisted(session) => {
+                self.select_session(session.path, session.project, window, cx);
+            }
+        }
+    }
+
+    fn visible_session_targets(&self) -> Vec<VisibleSessionTarget> {
         let live_root =
             root_session_for_path(&self.sessions, self.snapshot.live_session.as_deref())
                 .map(|session| session.id.clone());
@@ -669,12 +719,17 @@ impl PiApp {
             self.session_project_filter.as_deref(),
             &active_projects,
         );
+        let mut seen = HashSet::new();
         active_rail_rows(&grouped.active, &self.collapsed_projects)
             .into_iter()
             .filter_map(|row| match row {
-                ActiveRailRow::Session(item) => Some(item.session),
+                ActiveRailRow::Draft(draft) if draft.submitted => {
+                    Some(VisibleSessionTarget::Draft(draft))
+                }
+                ActiveRailRow::Session(item) => Some(VisibleSessionTarget::Persisted(item.session)),
                 ActiveRailRow::Project(_, _) | ActiveRailRow::Draft(_) => None,
             })
+            .filter(|target| seen.insert(target.app_session_id()))
             .collect()
     }
 

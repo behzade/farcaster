@@ -14,6 +14,8 @@ use crate::state::StateStore;
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct DraftSession {
     pub id: String,
+    #[serde(default)]
+    pub app_session_id: i64,
     pub project: PathBuf,
     pub created_ms: u64,
     #[serde(default)]
@@ -25,29 +27,20 @@ pub(crate) struct DraftSession {
 }
 
 impl DraftSession {
-    pub(crate) fn new(project: PathBuf) -> Self {
-        let elapsed = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default();
-        Self::with_id(
-            format!("draft-{}-{}", elapsed.as_nanos(), std::process::id()),
-            project,
-        )
-    }
-
-    pub(crate) fn with_id(id: String, project: PathBuf) -> Self {
-        let elapsed = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default();
-        let created_ms = elapsed.as_millis().try_into().unwrap_or(u64::MAX);
+    pub(crate) fn new(id: String, app_session_id: i64, project: PathBuf, created_ms: u64) -> Self {
         Self {
             id,
+            app_session_id,
             project,
             created_ms,
             submitted: false,
             session_path: None,
             title: None,
         }
+    }
+
+    pub(crate) fn with_id(id: String, project: PathBuf) -> Self {
+        Self::new(id, 0, project, current_time_ms())
     }
 
     pub(crate) const fn can_change_project(&self) -> bool {
@@ -61,6 +54,33 @@ impl DraftSession {
         self.project = project;
         true
     }
+}
+
+pub(crate) fn new_draft(project: PathBuf) -> Result<DraftSession, String> {
+    let elapsed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let id = format!("draft-{}-{}", elapsed.as_nanos(), std::process::id());
+    draft_with_id_at(
+        id,
+        project,
+        elapsed.as_millis().try_into().unwrap_or(u64::MAX),
+    )
+}
+
+fn draft_with_id_at(id: String, project: PathBuf, created_ms: u64) -> Result<DraftSession, String> {
+    let mut store = StateStore::open()?;
+    let app_session_id = store.allocate_app_session_id(&id, created_ms)?;
+    Ok(DraftSession::new(id, app_session_id, project, created_ms))
+}
+
+fn current_time_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -235,6 +255,7 @@ mod tests {
                 projects: vec![first.clone(), second.clone(), first.clone()],
                 drafts: vec![DraftSession {
                     id: "draft-one".into(),
+                    app_session_id: 7,
                     project: first.clone(),
                     created_ms: 1,
                     submitted: true,
@@ -250,6 +271,7 @@ mod tests {
                 projects: vec![first.canonicalize()?, second.canonicalize()?],
                 drafts: vec![DraftSession {
                     id: "draft-one".into(),
+                    app_session_id: 7,
                     project: first.canonicalize()?,
                     created_ms: 1,
                     submitted: true,
@@ -271,6 +293,7 @@ mod tests {
                 projects: vec![temp.path().join("gone")],
                 drafts: vec![DraftSession {
                     id: "gone".into(),
+                    app_session_id: 8,
                     project: temp.path().join("gone"),
                     created_ms: 1,
                     submitted: false,
@@ -322,7 +345,7 @@ mod tests {
 
     #[test]
     fn only_unsubmitted_drafts_can_change_project() {
-        let mut draft = DraftSession::new(PathBuf::from("/first"));
+        let mut draft = DraftSession::new("draft".into(), 1, PathBuf::from("/first"), 1);
         assert!(draft.change_project(PathBuf::from("/second")));
         assert_eq!(draft.project, PathBuf::from("/second"));
         assert!(!draft.change_project(PathBuf::from("/second")));

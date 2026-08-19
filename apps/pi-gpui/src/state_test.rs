@@ -45,6 +45,7 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
     fs::write(&session_path, "{}")?;
     let draft = DraftSession {
         id: "draft-one".into(),
+        app_session_id: 1,
         project: project.clone(),
         created_ms: 7,
         submitted: true,
@@ -137,6 +138,19 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
 }
 
 #[test]
+fn application_session_ids_are_incremental_i64_values() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let mut store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;
+
+    let first = store.allocate_app_session_id("first", 1)?;
+    let second = store.allocate_app_session_id("second", 2)?;
+
+    assert!(first > 0);
+    assert_eq!(second, first + 1);
+    Ok(())
+}
+
+#[test]
 fn prompt_completion_persists_draft_session_association_atomically()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
@@ -149,6 +163,7 @@ fn prompt_completion_persists_draft_session_association_atomically()
         projects: vec![project.clone()],
         drafts: vec![DraftSession {
             id: "pending".into(),
+            app_session_id: 1,
             project: project.clone(),
             created_ms: 1,
             submitted: false,
@@ -156,6 +171,23 @@ fn prompt_completion_persists_draft_session_association_atomically()
             title: None,
         }],
     })?;
+    let summary = SessionSummary::from_cached(
+        "pi-session".into(),
+        session.canonicalize()?,
+        project.canonicalize()?,
+        "Session".into(),
+        "hello".into(),
+        "2026-08-15T00:00:00Z".into(),
+        None,
+        SystemTime::now(),
+        1,
+        UsageSummary::default(),
+        false,
+        false,
+        "session hello".into(),
+    );
+    store.replace_sessions(std::slice::from_ref(&summary))?;
+    assert_ne!(store.cached_sessions("")?[0].app_session_id, 1);
     let outbox = store.enqueue_prompt(
         "draft:pending",
         &project,
@@ -171,6 +203,10 @@ fn prompt_completion_persists_draft_session_association_atomically()
     let draft = &store.load_registry()?.drafts[0];
     assert!(draft.submitted);
     assert_eq!(draft.session_path, Some(session.canonicalize()?));
+    assert_eq!(store.cached_sessions("")?[0].app_session_id, 1);
+
+    store.replace_sessions(&[summary])?;
+    assert_eq!(store.cached_sessions("")?[0].app_session_id, 1);
     Ok(())
 }
 
@@ -211,7 +247,7 @@ fn partial_session_index_updates_do_not_delete_omitted_rows()
 }
 
 #[test]
-fn schema_v1_migrates_to_v5_with_defaults_and_outbox_preserved()
+fn schema_v1_migrates_to_v6_with_defaults_and_outbox_preserved()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
@@ -224,6 +260,7 @@ fn schema_v1_migrates_to_v5_with_defaults_and_outbox_preserved()
         store.load_registry()?.drafts,
         vec![DraftSession {
             id: "legacy-draft".into(),
+            app_session_id: 1,
             project: project.canonicalize()?,
             created_ms: 7,
             submitted: false,
@@ -237,12 +274,12 @@ fn schema_v1_migrates_to_v5_with_defaults_and_outbox_preserved()
     assert!(queued[0].images.is_empty());
     drop(store);
 
-    assert_eq!(database_schema_version(&database)?, 5);
+    assert_eq!(database_schema_version(&database)?, 6);
     Ok(())
 }
 
 #[test]
-fn schema_v2_migrates_to_v5_with_defaults_and_outbox_preserved()
+fn schema_v2_migrates_to_v6_with_defaults_and_outbox_preserved()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
@@ -255,6 +292,7 @@ fn schema_v2_migrates_to_v5_with_defaults_and_outbox_preserved()
         store.load_registry()?.drafts,
         vec![DraftSession {
             id: "legacy-draft".into(),
+            app_session_id: 1,
             project: project.canonicalize()?,
             created_ms: 7,
             submitted: false,
@@ -271,12 +309,12 @@ fn schema_v2_migrates_to_v5_with_defaults_and_outbox_preserved()
     );
     drop(store);
 
-    assert_eq!(database_schema_version(&database)?, 5);
+    assert_eq!(database_schema_version(&database)?, 6);
     Ok(())
 }
 
 #[test]
-fn schema_v3_migrates_to_v5_with_running_default() -> Result<(), Box<dyn std::error::Error>> {
+fn schema_v3_migrates_to_v6_with_running_default() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
     fs::create_dir(&project)?;
@@ -289,13 +327,13 @@ fn schema_v3_migrates_to_v5_with_running_default() -> Result<(), Box<dyn std::er
     )?;
 
     let store = StateStore::open_at(&database)?;
-    assert_eq!(database_schema_version(&database)?, 5);
+    assert_eq!(database_schema_version(&database)?, 6);
     assert!(store.cached_sessions("")?.is_empty());
     Ok(())
 }
 
 #[test]
-fn schema_v4_migrates_to_v5_with_provisional_title_default()
+fn schema_v4_migrates_to_v6_with_provisional_title_default()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
@@ -310,8 +348,49 @@ fn schema_v4_migrates_to_v5_with_provisional_title_default()
     )?;
 
     let store = StateStore::open_at(&database)?;
-    assert_eq!(database_schema_version(&database)?, 5);
+    assert_eq!(database_schema_version(&database)?, 6);
     assert_eq!(store.load_registry()?.drafts[0].title, None);
+    Ok(())
+}
+
+#[test]
+fn schema_v5_migrates_existing_sessions_and_drafts_to_incremental_ids()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let project = temp.path().join("project");
+    fs::create_dir(&project)?;
+    let database = temp.path().join("gui.sqlite3");
+    seed_legacy_database(&database, 2, &project)?;
+    let connection = Connection::open(&database)?;
+    connection.execute_batch(
+        "ALTER TABLE drafts ADD COLUMN submitted INTEGER NOT NULL DEFAULT 0;
+         ALTER TABLE drafts ADD COLUMN session_path TEXT;
+         ALTER TABLE sessions ADD COLUMN is_running INTEGER NOT NULL DEFAULT 0;
+         ALTER TABLE drafts ADD COLUMN provisional_title TEXT;
+         UPDATE meta SET value='5' WHERE key='schema_version';",
+    )?;
+    connection.execute(
+        "INSERT INTO sessions(
+           path, id, project, title, first_user_message, timestamp, parent_session,
+           modified_ms, file_size, message_count, input_tokens, output_tokens,
+           cache_read_tokens, cache_write_tokens, total_tokens, cost_micros,
+           search_text, settled_ms, is_running
+         ) VALUES(
+           '/legacy-session.jsonl', 'pi-legacy', ?1, 'Legacy', '', '', NULL,
+           1, 0, 0, 0, 0, 0, 0, 0, 0, 'legacy', NULL, 0
+         )",
+        [project.to_string_lossy()],
+    )?;
+    drop(connection);
+
+    let store = StateStore::open_at(&database)?;
+    let draft = &store.load_registry()?.drafts[0];
+    let session = &store.cached_sessions("")?[0];
+
+    assert!(draft.app_session_id > 0);
+    assert!(session.app_session_id > 0);
+    assert_ne!(draft.app_session_id, session.app_session_id);
+    assert_eq!(database_schema_version(&database)?, 6);
     Ok(())
 }
 
@@ -327,6 +406,7 @@ fn submitted_draft_without_session_path_survives_reopen() -> Result<(), Box<dyn 
         projects: vec![project.clone()],
         drafts: vec![DraftSession {
             id: "pending".into(),
+            app_session_id: 1,
             project,
             created_ms: 1,
             submitted: true,

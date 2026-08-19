@@ -85,6 +85,7 @@ pub(super) fn draft_session_row(
     draft: &DraftSession,
     selected: bool,
     status: &str,
+    shortcut: Option<u8>,
     entity: WeakEntity<PiApp>,
 ) -> AnyElement {
     let id = draft.id.clone();
@@ -145,15 +146,27 @@ pub(super) fn draft_session_row(
                         .child(
                             div()
                                 .flex_none()
-                                .whitespace_nowrap()
-                                .text_size(THEME.type_scale.caption)
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(if status == "Failed" {
-                                    THEME.colors.error
-                                } else {
-                                    THEME.colors.accent
+                                .flex()
+                                .items_center()
+                                .gap(THEME.space.xs)
+                                .when_some(shortcut, |row, number| {
+                                    row.child(Kbd::new(
+                                        gpui::Keystroke::parse(&format!("cmd-{number}"))
+                                            .expect("fixed session shortcut must parse"),
+                                    ))
                                 })
-                                .child(status.to_owned()),
+                                .child(
+                                    div()
+                                        .whitespace_nowrap()
+                                        .text_size(THEME.type_scale.caption)
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(if status == "Failed" {
+                                            THEME.colors.error
+                                        } else {
+                                            THEME.colors.accent
+                                        })
+                                        .child(status.to_owned()),
+                                ),
                         )
                         .into_any_element()
                 } else {

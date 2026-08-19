@@ -17,17 +17,41 @@ use crate::{
 };
 
 #[test]
-fn shortcuts_follow_visible_session_position_and_skip_headings() {
+fn shortcuts_include_submitted_drafts_and_skip_empty_drafts_and_headings() {
+    let mut empty = DraftSession::with_id("empty".into(), PathBuf::from("/project"));
+    empty.app_session_id = 10;
+    let mut submitted = DraftSession::with_id("submitted".into(), PathBuf::from("/project"));
+    submitted.app_session_id = 11;
+    submitted.submitted = true;
+    let persisted = item("first", "/project", SessionRailKind::Project, false);
+    let persisted_id = persisted.session.app_session_id;
     let rows = vec![
         ActiveRailRow::Project(PathBuf::from("/project"), false),
-        ActiveRailRow::Session(item("first", "/project", SessionRailKind::Project, false)),
-        ActiveRailRow::Project(PathBuf::from("/other"), false),
-        ActiveRailRow::Session(item("second", "/other", SessionRailKind::Project, false)),
+        ActiveRailRow::Draft(empty),
+        ActiveRailRow::Draft(submitted),
+        ActiveRailRow::Session(persisted),
     ];
 
     let shortcuts = visible_session_shortcuts(&rows);
-    assert_eq!(shortcuts.get("first"), Some(&1));
-    assert_eq!(shortcuts.get("second"), Some(&2));
+    assert!(!shortcuts.contains_key(&10));
+    assert_eq!(shortcuts.get(&11), Some(&1));
+    assert_eq!(shortcuts.get(&persisted_id), Some(&2));
+}
+
+#[test]
+fn shortcut_identity_deduplicates_a_draft_during_session_promotion() {
+    let mut draft = DraftSession::with_id("promoting".into(), PathBuf::from("/project"));
+    draft.app_session_id = 42;
+    draft.submitted = true;
+    let mut persisted = item("persisted", "/project", SessionRailKind::Project, false);
+    persisted.session.app_session_id = 42;
+
+    let shortcuts = visible_session_shortcuts(&[
+        ActiveRailRow::Draft(draft),
+        ActiveRailRow::Session(persisted),
+    ]);
+
+    assert_eq!(shortcuts, HashMap::from([(42, 1)]));
 }
 
 #[test]
@@ -243,7 +267,10 @@ fn item(id: &str, project: &str, kind: SessionRailKind, is_running: bool) -> Ses
             kind == SessionRailKind::Settled,
             is_running,
             String::new(),
-        ),
+        )
+        .with_app_session_id(id.bytes().fold(1_i64, |value, byte| {
+            value.saturating_mul(31) + i64::from(byte)
+        })),
         kind,
     }
 }

@@ -77,7 +77,24 @@ impl PiApp {
             return false;
         }
         let has_content = draft_has_content(composer);
-        let changed = sync_materialized_draft(&mut self.drafts, id, &self.project, has_content);
+        let app_session_id = self
+            .draft_session_ids
+            .get(id)
+            .copied()
+            .or_else(|| {
+                self.drafts
+                    .iter()
+                    .find(|draft| draft.id == id)
+                    .map(|draft| draft.app_session_id)
+            })
+            .unwrap_or_default();
+        let changed = sync_materialized_draft(
+            &mut self.drafts,
+            id,
+            app_session_id,
+            &self.project,
+            has_content,
+        );
         if changed {
             self.save_project_registry();
         }
@@ -99,10 +116,10 @@ impl PiApp {
         self.run_statuses
             .insert(target.to_owned(), "Working".into());
         if !self.drafts.iter().any(|draft| draft.id == id) {
-            self.drafts.insert(
-                0,
-                DraftSession::with_id(id.to_owned(), self.project.clone()),
-            );
+            let app_session_id = self.draft_session_ids.get(id).copied().unwrap_or_default();
+            let mut draft = DraftSession::with_id(id.to_owned(), self.project.clone());
+            draft.app_session_id = app_session_id;
+            self.drafts.insert(0, draft);
         }
         let draft = self
             .drafts
@@ -215,6 +232,7 @@ impl PiApp {
         }
         self.canonicalize_draft_status(id, path);
         self.submitted_drafts.remove(id);
+        self.draft_session_ids.remove(id);
         self.drafts.retain(|draft| draft.id != id);
         clear_promoted_selection(&mut self.selected_draft, id);
         self.save_project_registry();
@@ -315,16 +333,16 @@ fn draft_has_content(composer: &crate::composer_sessions::ComposerSnapshot) -> b
 fn sync_materialized_draft(
     drafts: &mut Vec<DraftSession>,
     id: &str,
+    app_session_id: i64,
     project: &std::path::Path,
     has_content: bool,
 ) -> bool {
     let existing = drafts.iter().position(|draft| draft.id == id);
     match (existing, has_content) {
         (None, true) => {
-            drafts.insert(
-                0,
-                DraftSession::with_id(id.to_owned(), project.to_path_buf()),
-            );
+            let mut draft = DraftSession::with_id(id.to_owned(), project.to_path_buf());
+            draft.app_session_id = app_session_id;
+            drafts.insert(0, draft);
             true
         }
         (Some(index), false) => {
@@ -471,6 +489,7 @@ mod tests {
         assert!(!sync_materialized_draft(
             &mut drafts,
             "ephemeral",
+            42,
             &project,
             false,
         ));
@@ -478,20 +497,24 @@ mod tests {
         assert!(sync_materialized_draft(
             &mut drafts,
             "ephemeral",
+            42,
             &project,
             true,
         ));
         assert_eq!(drafts.len(), 1);
         assert_eq!(drafts[0].id, "ephemeral");
+        assert_eq!(drafts[0].app_session_id, 42);
         assert!(!sync_materialized_draft(
             &mut drafts,
             "ephemeral",
+            42,
             &project,
             true,
         ));
         assert!(sync_materialized_draft(
             &mut drafts,
             "ephemeral",
+            42,
             &project,
             false,
         ));
@@ -517,6 +540,7 @@ mod tests {
     fn submitted_pathless_drafts_keep_their_pending_identity() {
         let draft = DraftSession {
             id: "pending".into(),
+            app_session_id: 1,
             project: PathBuf::from("/project"),
             created_ms: 1,
             submitted: true,
@@ -613,6 +637,7 @@ mod tests {
         let session = session.canonicalize()?;
         let mut drafts = vec![DraftSession {
             id: "a".into(),
+            app_session_id: 1,
             project: project.clone(),
             created_ms: 1,
             submitted: false,
@@ -670,6 +695,7 @@ mod tests {
     fn accepted_draft_without_a_path_is_never_durable() {
         let mut drafts = vec![DraftSession {
             id: "a".into(),
+            app_session_id: 1,
             project: PathBuf::from("/project"),
             created_ms: 1,
             submitted: false,
