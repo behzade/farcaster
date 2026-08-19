@@ -2,6 +2,7 @@ use std::time::SystemTime;
 
 use super::*;
 use crate::{
+    agent_activity::{AgentActivity, AgentLifecycle},
     conversation::{TranscriptItem, TranscriptKind},
     sessions::UsageSummary,
 };
@@ -66,11 +67,6 @@ fn unchanged_scroll_follow_event_does_not_invalidate_transcript() {
 #[test]
 fn unchanged_catalog_poll_does_not_invalidate_session_regions() {
     assert!(!session_catalog_changed(&[], &[], None, &[], &[]));
-    assert!(!session_activities_changed(&HashMap::new(), None));
-    assert!(!session_activities_changed(
-        &HashMap::new(),
-        Some(&(HashMap::new(), true)),
-    ));
     assert!(session_catalog_changed(
         &[],
         &[],
@@ -163,6 +159,77 @@ fn selecting_a_subagent_does_not_invalidate_the_session_rail() {
     assert!(!session_rail_snapshot_changed(&sessions, &previous, &next));
 }
 
+fn activity(id: &str, text: &str) -> AgentActivity {
+    AgentActivity {
+        session_id: id.into(),
+        session_path: PathBuf::from(format!("/{id}.jsonl")),
+        role: String::new(),
+        activity: text.into(),
+        lifecycle: AgentLifecycle::Working,
+        current_tool: None,
+        recent_tool: None,
+        tool_call_count: 0,
+        limited: false,
+        usage: UsageSummary::default(),
+        started: SystemTime::UNIX_EPOCH,
+        ended: None,
+        elapsed: None,
+        changed_paths: Vec::new(),
+        file_mutations: Vec::new(),
+    }
+}
+
+#[test]
+fn run_panel_ignores_activity_changes_outside_the_selected_tree() {
+    let session = |id: &str, parent: Option<&str>| {
+        SessionSummary::from_cached(
+            id.into(),
+            PathBuf::from(format!("/{id}.jsonl")),
+            PathBuf::from("/project"),
+            id.into(),
+            String::new(),
+            String::new(),
+            parent.map(str::to_owned),
+            SystemTime::UNIX_EPOCH,
+            0,
+            UsageSummary::default(),
+            false,
+            false,
+            String::new(),
+        )
+    };
+    let sessions = vec![
+        session("root", None),
+        session("child", Some("root")),
+        session("other", None),
+    ];
+    let current = HashMap::from([
+        ("child".into(), activity("child", "working")),
+        ("other".into(), activity("other", "working")),
+    ]);
+    let unrelated = HashMap::from([("other".into(), activity("other", "changed"))]);
+    let visible = HashMap::from([("child".into(), activity("child", "changed"))]);
+
+    assert!(!run_panel_activities_changed(
+        &current,
+        Some(&(unrelated, false)),
+        &sessions,
+        Some(std::path::Path::new("/root.jsonl")),
+    ));
+    assert!(run_panel_activities_changed(
+        &current,
+        Some(&(visible, false)),
+        &sessions,
+        Some(std::path::Path::new("/root.jsonl")),
+    ));
+    assert!(run_panel_activities_changed(
+        &current,
+        Some(&(HashMap::new(), true)),
+        &sessions,
+        Some(std::path::Path::new("/root.jsonl")),
+    ));
+}
+
 #[test]
 fn transcript_only_snapshot_changes_do_not_invalidate_other_regions() {
     let previous = RuntimeSnapshot::default();
@@ -173,6 +240,20 @@ fn transcript_only_snapshot_changes_do_not_invalidate_other_regions() {
 
     assert!(!composer_snapshot_changed(&previous, &next));
     assert!(!run_panel_snapshot_changed(&previous, &next));
+}
+
+#[test]
+fn invisible_status_transitions_do_not_invalidate_the_composer() {
+    let previous = RuntimeSnapshot {
+        status: "Ready".into(),
+        ..RuntimeSnapshot::default()
+    };
+    let next = RuntimeSnapshot {
+        status: "Done".into(),
+        ..previous.clone()
+    };
+
+    assert!(!composer_snapshot_changed(&previous, &next));
 }
 
 #[test]

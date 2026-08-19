@@ -1,10 +1,7 @@
-use std::{
-    path::{Path, PathBuf},
-    time::SystemTime,
-};
+use std::{path::PathBuf, time::SystemTime};
 
 use super::{
-    ActiveSessionItem, SessionRailItem, SessionRailKind, minimal_row_splice, new_session_project,
+    ActiveSessionItem, SessionRailItem, SessionRailKind, minimal_row_splice,
     roots_waiting_for_descendants, session_accessible_label, session_badge, status_visual,
     visible_session_shortcuts,
 };
@@ -102,16 +99,6 @@ fn minimal_row_reconciliation_preserves_equal_prefix_and_suffix() {
         Some((3..3, 1))
     );
     assert_eq!(minimal_row_splice(&current, &["three"]), Some((0..2, 0)));
-}
-
-#[test]
-fn new_session_uses_viewed_chat_project_independent_of_filter() {
-    let current = Path::new("/current");
-    assert_eq!(new_session_project(current, None), current);
-    assert_eq!(
-        new_session_project(current, Some(Path::new("/filtered"))),
-        PathBuf::from("/current")
-    );
 }
 
 #[test]

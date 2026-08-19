@@ -35,6 +35,10 @@ impl AppAssets {
             Cow::Borrowed(include_bytes!("../assets/lilex/Lilex-Bold.ttf")),
             Cow::Borrowed(include_bytes!("../assets/lilex/Lilex-Italic.ttf")),
             Cow::Borrowed(include_bytes!("../assets/lilex/Lilex-BoldItalic.ttf")),
+            Cow::Borrowed(include_bytes!("../assets/vazirmatn/Vazirmatn-Regular.ttf")),
+            Cow::Borrowed(include_bytes!("../assets/vazirmatn/Vazirmatn-Medium.ttf")),
+            Cow::Borrowed(include_bytes!("../assets/vazirmatn/Vazirmatn-SemiBold.ttf")),
+            Cow::Borrowed(include_bytes!("../assets/vazirmatn/Vazirmatn-Bold.ttf")),
         ])
     }
 }
@@ -169,12 +173,16 @@ mod tests {
     use super::{AppAssets, AppIcon};
 
     #[test]
-    fn bundled_lilex_fonts_have_true_type_headers() {
+    fn bundled_fonts_have_true_type_headers() {
         for bytes in [
             include_bytes!("../assets/lilex/Lilex-Regular.ttf").as_slice(),
             include_bytes!("../assets/lilex/Lilex-Bold.ttf").as_slice(),
             include_bytes!("../assets/lilex/Lilex-Italic.ttf").as_slice(),
             include_bytes!("../assets/lilex/Lilex-BoldItalic.ttf").as_slice(),
+            include_bytes!("../assets/vazirmatn/Vazirmatn-Regular.ttf").as_slice(),
+            include_bytes!("../assets/vazirmatn/Vazirmatn-Medium.ttf").as_slice(),
+            include_bytes!("../assets/vazirmatn/Vazirmatn-SemiBold.ttf").as_slice(),
+            include_bytes!("../assets/vazirmatn/Vazirmatn-Bold.ttf").as_slice(),
         ] {
             assert!(matches!(&bytes[..4], b"\0\x01\0\0" | b"OTTO"));
         }

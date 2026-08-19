@@ -66,22 +66,6 @@ pub(crate) fn dropdown_button(
     tone_button(button, tone)
 }
 
-pub(crate) fn dropdown_icon_button(
-    id: impl Into<ElementId>,
-    icon: impl IconNamed,
-    label: impl Into<SharedString>,
-    tone: ButtonTone,
-    enabled: bool,
-) -> Button {
-    let button = Button::new(id)
-        .icon(app_icon(icon, AppIconSize::Control))
-        .tooltip(label)
-        .dropdown_caret(false)
-        .with_size(Size::Small)
-        .disabled(!enabled);
-    tone_button(button, tone)
-}
-
 pub(crate) fn icon_button(
     id: impl Into<ElementId>,
     icon: impl IconNamed,

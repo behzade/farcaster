@@ -2,7 +2,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
 use gpui::{
@@ -31,10 +31,11 @@ use super::{
     session_rows::{session_accessible_label, status_visual},
 };
 use crate::{
+    app::{PickerScope, ProjectPickerIntent},
     assets::AppIcon,
     primitives::{
         AppIconSize, ButtonTone, FeedbackTone, ReorderPosition, app_icon, disclosure_button,
-        dropdown_button, dropdown_icon_button, feedback, icon_button,
+        dropdown_button, feedback, icon_button,
     },
     projects::{self, DraftSession},
     sessions::{SessionSummary, root_session_for_path},
@@ -46,15 +47,9 @@ const ARCHIVED_PREVIEW_LIMIT: usize = 3;
 impl PiApp {
     pub(super) fn render_sessions(&self, entity: WeakEntity<Self>) -> impl IntoElement {
         let new_entity = entity.clone();
-        let menu_new_entity = entity.clone();
-        let add_project_entity = entity.clone();
-        let menu_add_project_entity = entity.clone();
-        let menu_workgraph_entity = entity.clone();
+        let actions_entity = entity.clone();
         let cancel_drop_entity = entity.clone();
         let search_focus = self.search_focus.clone();
-        let new_session_project =
-            new_session_project(&self.project, self.session_project_filter.as_deref());
-        let menu_new_session_project = new_session_project.clone();
         let selected_root =
             root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
                 .map(|session| session.id.clone());
@@ -260,87 +255,32 @@ impl PiApp {
                             .flex()
                             .items_center()
                             .justify_between()
-                            .child(
-                                dropdown_icon_button(
-                                    "session-menu",
-                                    AppIcon::List,
-                                    "Menu",
-                                    ButtonTone::Quiet,
-                                    true,
-                                )
-                                .dropdown_menu_with_anchor(
-                                    Anchor::TopLeft,
-                                    move |menu, _, _| {
-                                        let new_entity = menu_new_entity.clone();
-                                        let add_project_entity = menu_add_project_entity.clone();
-                                        let project = menu_new_session_project.clone();
-                                        let workgraph_entity = menu_workgraph_entity.clone();
-                                        menu.label("Menu")
-                                            .item(PopupMenuItem::new("New session").on_click(
-                                                move |_, window, cx| {
-                                                    let _ = new_entity.update(cx, |this, cx| {
-                                                        this.new_session(
-                                                            project.clone(),
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    });
-                                                },
-                                            ))
-                                            .item(PopupMenuItem::new("New project").on_click(
-                                                move |_, window, cx| {
-                                                    let _ = add_project_entity.update(
-                                                        cx,
-                                                        |this, cx| {
-                                                            this.choose_project_folder(window, cx);
-                                                        },
-                                                    );
-                                                },
-                                            ))
-                                            .separator()
-                                            .item(PopupMenuItem::new("Work graph").on_click(
-                                                move |_, window, cx| {
-                                                    let _ =
-                                                        workgraph_entity.update(cx, |this, cx| {
-                                                            this.open_workgraph_surface(window, cx);
-                                                        });
-                                                },
-                                            ))
-                                    },
-                                ),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(THEME.space.xs)
-                                    .child(icon_button(
-                                        "new-session",
-                                        AppIcon::Plus,
-                                        "New session",
-                                        ButtonTone::Quiet,
-                                        move |window, cx| {
-                                            let _ = new_entity.update(cx, |this, cx| {
-                                                this.new_session(
-                                                    new_session_project.clone(),
-                                                    window,
-                                                    cx,
-                                                );
-                                            });
-                                        },
-                                    ))
-                                    .child(icon_button(
-                                        "add-project",
-                                        AppIcon::FolderPlus,
-                                        "New project",
-                                        ButtonTone::Quiet,
-                                        move |window, cx| {
-                                            let _ = add_project_entity.update(cx, |this, cx| {
-                                                this.choose_project_folder(window, cx);
-                                            });
-                                        },
-                                    )),
-                            ),
+                            .child(icon_button(
+                                "session-actions",
+                                AppIcon::List,
+                                "Actions",
+                                ButtonTone::Quiet,
+                                move |window, cx| {
+                                    let _ = actions_entity.update(cx, |this, cx| {
+                                        this.open_picker(PickerScope::Actions, window, cx);
+                                    });
+                                },
+                            ))
+                            .child(icon_button(
+                                "new-session",
+                                AppIcon::Plus,
+                                "New session",
+                                ButtonTone::Quiet,
+                                move |window, cx| {
+                                    let _ = new_entity.update(cx, |this, cx| {
+                                        this.open_picker(
+                                            PickerScope::Projects(ProjectPickerIntent::NewSession),
+                                            window,
+                                            cx,
+                                        );
+                                    });
+                                },
+                            )),
                     )
                     .child(
                         div()
@@ -715,10 +655,6 @@ impl PiApp {
             self.notify_session_rail(cx);
         }
     }
-}
-
-fn new_session_project(current_chat_project: &Path, _session_filter: Option<&Path>) -> PathBuf {
-    current_chat_project.to_path_buf()
 }
 
 fn roots_waiting_for_descendants(sessions: &[SessionSummary]) -> HashSet<String> {

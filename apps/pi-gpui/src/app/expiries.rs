@@ -79,7 +79,6 @@ impl PiApp {
                     ) {
                         this.recent_completion_expiries.remove(&task_target);
                         this.notify_session_rail(cx);
-                        this.notify_run_panel(cx);
                     }
                 });
             });

@@ -4,12 +4,12 @@ use gpui::KeyBinding;
 
 use crate::app::{
     AbortRun, AddProject, CloseCurrent, ComposerHistoryNext, ComposerHistoryPrevious,
-    DismissSurface, FocusComposer, FocusSessionSearch, NewSession, NextSession,
-    OVERLAY_KEY_CONTEXT, PreviousSession, QuitApplication, ShowKeybindings, ShowWorkGraph,
-    SubmitFollowUp, SubmitPrompt, SwitchSession1, SwitchSession2, SwitchSession3, SwitchSession4,
-    SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8, SwitchSession9,
-    ToggleArchivedSessions, WorkCreateIssue, WorkDismiss, WorkFocusSearch, WorkNextIssue,
-    WorkPreviousIssue,
+    DismissSurface, FocusComposer, NewSession, NextSession, OVERLAY_KEY_CONTEXT,
+    PICKER_KEY_CONTEXT, PickerBack, PreviousSession, QuitApplication, ShowActionPicker,
+    ShowKeybindings, ShowWorkGraph, SubmitFollowUp, SubmitPrompt, SwitchSession1, SwitchSession2,
+    SwitchSession3, SwitchSession4, SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8,
+    SwitchSession9, ToggleArchivedSessions, WorkCreateIssue, WorkDismiss, WorkFocusSearch,
+    WorkNextIssue, WorkPreviousIssue,
 };
 use crate::app::{WORKGRAPH_KEY_CONTEXT, WORKGRAPH_NAV_KEY_CONTEXT};
 
@@ -49,10 +49,10 @@ pub(crate) fn registry() -> Vec<Shortcut> {
         shortcut!("Sessions", "New session", "cmd-n", NewSession, None),
         shortcut!("Sessions", "Add project", "cmd-shift-n", AddProject, None),
         shortcut!(
-            "Sessions",
-            "Search sessions",
+            "Application",
+            "Open action picker",
             "cmd-k",
-            FocusSessionSearch,
+            ShowActionPicker,
             None
         ),
         shortcut!(
@@ -164,6 +164,20 @@ pub(crate) fn registry() -> Vec<Shortcut> {
             DismissSurface,
             Some(OVERLAY_KEY_CONTEXT)
         ),
+        Shortcut {
+            section: "Application",
+            label: "Back in action picker",
+            keystroke: "backspace",
+            show_in_help: false,
+            binding: KeyBinding::new("backspace", PickerBack, Some(PICKER_KEY_CONTEXT)),
+        },
+        Shortcut {
+            section: "Application",
+            label: "Close action picker",
+            keystroke: "escape",
+            show_in_help: false,
+            binding: KeyBinding::new("escape", DismissSurface, Some(PICKER_KEY_CONTEXT)),
+        },
         shortcut!("Application", "Quit", "cmd-q", QuitApplication, None),
     ]
 }

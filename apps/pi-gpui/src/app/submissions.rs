@@ -210,7 +210,11 @@ impl PiApp {
                 }
             }
             BuiltinSlashCommand::Session => self.open_run_sheet(window, cx),
-            BuiltinSlashCommand::New => self.new_session(self.project.clone(), window, cx),
+            BuiltinSlashCommand::New => self.open_picker(
+                super::PickerScope::Projects(super::ProjectPickerIntent::NewSession),
+                window,
+                cx,
+            ),
             BuiltinSlashCommand::Compact => self.send(RuntimeCommand::Compact {
                 custom_instructions: invocation.arguments.map(str::to_owned),
             }),

@@ -201,6 +201,9 @@ impl PiApp {
     }
 
     fn open_sheet(&mut self, sheet: AppSheet, window: &mut Window, cx: &mut Context<Self>) {
+        if self.picker.take().is_some() {
+            self.picker_return_focus = None;
+        }
         if should_capture_return_focus(self.current_sheet_flags()) {
             self.sheet_return_focus = window.focused(cx);
         }
@@ -235,7 +238,9 @@ impl PiApp {
     }
 
     pub(super) fn dismiss_surface(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.changes.diff.is_some() {
+        if self.picker.is_some() {
+            self.close_picker(window, cx);
+        } else if self.changes.diff.is_some() {
             self.close_file_diff(window, cx);
         } else if self.extension.dialog.is_some() {
             self.cancel_dialog(window, cx);

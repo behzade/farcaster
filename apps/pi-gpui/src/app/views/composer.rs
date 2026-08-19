@@ -698,8 +698,8 @@ pub(super) fn composer_primary_action(
 
 fn composer_status(app: &PiApp) -> Option<AnyElement> {
     let mut parts = Vec::new();
-    if !matches!(app.snapshot.status.as_str(), "" | "Ready" | "Idle" | "Done") {
-        parts.push(app.snapshot.status.clone());
+    if let Some(status) = super::super::visible_composer_status(&app.snapshot.status) {
+        parts.push(status.to_owned());
     }
     parts.extend(app.extension.statuses.values().cloned());
     if let Some(error) = app.extension_errors.last() {

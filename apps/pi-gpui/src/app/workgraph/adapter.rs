@@ -136,10 +136,16 @@ impl WorkGraphBoardView {
     }
 
     pub(crate) fn select_issue(&mut self, number: u64, cx: &mut Context<Self>) {
-        self.creating = false;
-        self.editing = None;
-        self.selected = Some(number);
-        cx.notify();
+        if replace_work_state(
+            &mut self.selected,
+            &mut self.creating,
+            &mut self.editing,
+            Some(number),
+            false,
+            None,
+        ) {
+            cx.notify();
+        }
     }
 
     pub(crate) fn focus(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -189,22 +195,36 @@ impl WorkGraphBoardView {
     }
 
     pub(super) fn clear_selection(&mut self, cx: &mut Context<Self>) {
-        self.creating = false;
-        self.editing = None;
-        self.selected = None;
-        cx.notify();
+        if replace_work_state(
+            &mut self.selected,
+            &mut self.creating,
+            &mut self.editing,
+            None,
+            false,
+            None,
+        ) {
+            cx.notify();
+        }
     }
 
     pub(crate) fn start_create(&mut self, cx: &mut Context<Self>) {
-        self.selected = None;
-        self.editing = None;
-        self.creating = true;
-        cx.notify();
+        if replace_work_state(
+            &mut self.selected,
+            &mut self.creating,
+            &mut self.editing,
+            None,
+            true,
+            None,
+        ) {
+            cx.notify();
+        }
     }
 
     pub(super) fn set_editing(&mut self, number: Option<u64>, cx: &mut Context<Self>) {
-        self.editing = number;
-        cx.notify();
+        if self.editing != number {
+            self.editing = number;
+            cx.notify();
+        }
     }
 
     pub(super) fn update_issue_fields(
@@ -371,6 +391,23 @@ impl WorkGraphBoardView {
         }));
         cx.notify();
     }
+}
+
+fn replace_work_state(
+    selected: &mut Option<u64>,
+    creating: &mut bool,
+    editing: &mut Option<u64>,
+    next_selected: Option<u64>,
+    next_creating: bool,
+    next_editing: Option<u64>,
+) -> bool {
+    if (*selected, *creating, *editing) == (next_selected, next_creating, next_editing) {
+        return false;
+    }
+    *selected = next_selected;
+    *creating = next_creating;
+    *editing = next_editing;
+    true
 }
 
 impl Render for WorkGraphBoardView {
@@ -692,5 +729,42 @@ impl Render for WorkGraphBoardView {
                         .into_any_element()
                 }
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::replace_work_state;
+
+    #[test]
+    fn identical_work_state_does_not_request_a_rerender() {
+        let mut selected = Some(7);
+        let mut creating = false;
+        let mut editing = None;
+
+        assert!(!replace_work_state(
+            &mut selected,
+            &mut creating,
+            &mut editing,
+            Some(7),
+            false,
+            None,
+        ));
+        assert!(replace_work_state(
+            &mut selected,
+            &mut creating,
+            &mut editing,
+            None,
+            true,
+            None,
+        ));
+        assert!(!replace_work_state(
+            &mut selected,
+            &mut creating,
+            &mut editing,
+            None,
+            true,
+            None,
+        ));
     }
 }

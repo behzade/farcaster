@@ -1,13 +1,22 @@
 //! Gruvbox dark-hard visual tokens for the complete native surface.
 
-use gpui::{App, Pixels, Rgba, px};
+use gpui::{App, Font, FontFallbacks, Pixels, Rgba, px};
 use gpui_component::{
     highlighter::HighlightTheme,
     theme::{Theme as ComponentTheme, ThemeMode, ThemeTokens},
 };
 
 pub(crate) const UI_FONT_FAMILY: &str = ".SystemUIFont";
+pub(crate) const FARSI_FONT_FAMILY: &str = "Vazirmatn";
 pub(crate) const MONO_FONT_FAMILY: &str = "Lilex";
+
+pub(crate) fn ui_font() -> Font {
+    Font {
+        family: UI_FONT_FAMILY.into(),
+        fallbacks: Some(FontFallbacks::from_fonts(vec![FARSI_FONT_FAMILY.into()])),
+        ..Font::default()
+    }
+}
 
 #[derive(Clone, Copy)]
 pub(crate) struct Theme {
@@ -235,7 +244,18 @@ pub(crate) fn install_component_theme(cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use super::THEME;
+    use super::{FARSI_FONT_FAMILY, THEME, ui_font};
+
+    #[test]
+    fn ui_font_prefers_vazirmatn_for_missing_persian_glyphs() {
+        let font = ui_font();
+        assert_eq!(
+            font.fallbacks
+                .expect("UI font should have a Persian fallback")
+                .fallback_list(),
+            &[FARSI_FONT_FAMILY]
+        );
+    }
 
     #[test]
     fn sidebar_widths_match_the_design_bounds() {

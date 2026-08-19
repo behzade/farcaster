@@ -32,7 +32,7 @@ pub(crate) enum LaunchError {
     },
     #[error("project path is not a directory: {0}")]
     NotDirectory(PathBuf),
-    #[error("the bundled Lilex fonts could not be loaded")]
+    #[error("the bundled fonts could not be loaded")]
     BundledFonts,
     #[error("the native Pi window could not open")]
     NativeWindow,

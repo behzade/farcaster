@@ -5,6 +5,7 @@ mod composer_images;
 mod drafts;
 mod expiries;
 mod file_mentions;
+mod picker;
 mod region_state;
 mod session_titles;
 mod slash_commands;
@@ -14,6 +15,7 @@ mod transcript_ui;
 mod views;
 mod workgraph;
 pub(crate) use composer_images::ComposerImage;
+pub(crate) use picker::{PICKER_KEY_CONTEXT, PickerScope, ProjectPickerIntent};
 use submissions::PendingSubmission;
 pub(crate) use views::OVERLAY_KEY_CONTEXT;
 use views::{ComposerView, RunPanelView, SessionRailView, TranscriptView, WorkGraphDetailView};
@@ -91,6 +93,8 @@ actions!(
         SwitchSession9,
         NewSession,
         AddProject,
+        ShowActionPicker,
+        PickerBack,
         FocusSessionSearch,
         FocusComposer,
         PreviousSession,
@@ -156,6 +160,8 @@ pub(crate) struct PiApp {
     submitted_drafts: HashMap<String, Option<PathBuf>>,
     sessions_error: Option<String>,
     session_project_filter: Option<PathBuf>,
+    picker: Option<picker::PickerState>,
+    picker_return_focus: Option<FocusHandle>,
     session_list: ListState,
     session_list_rows: RefCell<Vec<String>>,
     archived_session_list: ListState,
@@ -435,6 +441,8 @@ impl PiApp {
             submitted_drafts,
             sessions_error: project_registry_error,
             session_project_filter: None,
+            picker: None,
+            picker_return_focus: None,
             session_list: ListState::new(
                 0,
                 ListAlignment::Top,
@@ -537,10 +545,7 @@ impl PiApp {
                         self.snapshot.selected_session != snapshot.selected_session;
                 }
                 RuntimeEvent::Sessions { .. } | RuntimeEvent::SessionsFailed { .. } => {}
-                RuntimeEvent::SessionStatus { .. } => {
-                    rail_dirty = true;
-                    run_dirty = true;
-                }
+                RuntimeEvent::SessionStatus { .. } => rail_dirty = true,
                 RuntimeEvent::HistoryReset { .. } => transcript_dirty = true,
                 RuntimeEvent::SessionReset { .. } => {
                     root_dirty = true;
@@ -548,10 +553,7 @@ impl PiApp {
                     composer_dirty = true;
                     run_dirty = true;
                 }
-                RuntimeEvent::ExtensionUi { .. } => {
-                    root_dirty = true;
-                    composer_dirty = true;
-                }
+                RuntimeEvent::ExtensionUi { .. } => {}
                 RuntimeEvent::PromptResult { .. } => {
                     root_dirty = true;
                     rail_dirty = true;
@@ -647,8 +649,12 @@ impl PiApp {
                         self.snapshot.selected_session.as_deref(),
                     );
                     let previous_workgraph_session = self.active_workgraph_session();
-                    let activities_changed =
-                        session_activities_changed(&self.agent_activities, activities.as_ref());
+                    let visible_activities_changed = run_panel_activities_changed(
+                        &self.agent_activities,
+                        activities.as_ref(),
+                        &self.all_sessions,
+                        self.snapshot.selected_session.as_deref(),
+                    );
                     for session in &all_sessions {
                         projects::add_unique(&mut self.projects, session.project.clone());
                     }
@@ -669,8 +675,8 @@ impl PiApp {
                             .entry(id.clone())
                             .or_insert_with(|| cx.focus_handle());
                     }
-                    rail_dirty |= catalog_changed || activities_changed;
-                    run_dirty |= run_catalog_changed || activities_changed;
+                    rail_dirty |= catalog_changed;
+                    run_dirty |= run_catalog_changed || visible_activities_changed;
                     workgraph_session_dirty |=
                         previous_workgraph_session != self.active_workgraph_session();
                     self.reconcile_submitted_drafts(cx);
@@ -702,6 +708,8 @@ impl PiApp {
                         let _ = extension.apply(request);
                     } else {
                         self.apply_extension_request(request, generation);
+                        root_dirty = true;
+                        composer_dirty = true;
                     }
                 }
                 RuntimeEvent::PromptResult {
@@ -964,7 +972,12 @@ impl PiApp {
         cx.notify();
     }
 
-    fn choose_project_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn choose_project_folder(
+        &mut self,
+        intent: Option<ProjectPickerIntent>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let selected = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
@@ -978,12 +991,26 @@ impl PiApp {
             let Some(project) = paths.pop() else {
                 return;
             };
-            let _ = this.update(cx, |this, cx| this.add_project(project, cx));
+            let _ = this.update_in(cx, |this, window, cx| {
+                let Some(project) = this.add_project(project, cx) else {
+                    return;
+                };
+                match intent {
+                    Some(ProjectPickerIntent::NewSession) => {
+                        this.new_session(project, window, cx);
+                    }
+                    Some(ProjectPickerIntent::ChangeDraft) => {
+                        this.change_draft_project(project, cx);
+                        this.composer_focus.focus(window, cx);
+                    }
+                    None => {}
+                }
+            });
         })
         .detach();
     }
 
-    fn add_project(&mut self, project: PathBuf, cx: &mut Context<Self>) {
+    fn add_project(&mut self, project: PathBuf, cx: &mut Context<Self>) -> Option<PathBuf> {
         let project = match project.canonicalize() {
             Ok(project) if project.is_dir() => project,
             Ok(project) => {
@@ -993,20 +1020,21 @@ impl PiApp {
                 ));
                 self.notify_session_rail(cx);
                 cx.notify();
-                return;
+                return None;
             }
             Err(error) => {
                 self.sessions_error = Some(format!("Open {}: {error}", project.display()));
                 self.notify_session_rail(cx);
                 cx.notify();
-                return;
+                return None;
             }
         };
-        if projects::add_unique(&mut self.projects, project) {
+        if projects::add_unique(&mut self.projects, project.clone()) {
             self.save_project_registry();
         }
         self.notify_session_rail(cx);
         cx.notify();
+        Some(project)
     }
 
     fn select_project(&mut self, project: PathBuf) {
@@ -1251,18 +1279,30 @@ fn run_panel_sessions_changed(
             })
 }
 
-fn session_activities_changed(
+fn run_panel_activities_changed(
     current: &HashMap<String, crate::agent_activity::AgentActivity>,
     next: Option<&(HashMap<String, crate::agent_activity::AgentActivity>, bool)>,
+    sessions: &[SessionSummary],
+    selected: Option<&Path>,
 ) -> bool {
-    next.is_some_and(|(activities, exhaustive)| {
-        if *exhaustive {
-            current != activities
-        } else {
-            activities
-                .iter()
-                .any(|(id, activity)| current.get(id) != Some(activity))
-        }
+    let Some((activities, exhaustive)) = next else {
+        return false;
+    };
+    let Some(root) = root_session_for_path(sessions, selected) else {
+        return false;
+    };
+    let visible_ids = std::iter::once(root.id.as_str())
+        .chain(
+            descendant_sessions(sessions, &root.id)
+                .into_iter()
+                .map(|(session, _)| session.id.as_str()),
+        )
+        .collect::<Vec<_>>();
+    visible_ids.into_iter().any(|id| {
+        activities
+            .get(id)
+            .is_some_and(|activity| current.get(id) != Some(activity))
+            || (*exhaustive && current.contains_key(id) && !activities.contains_key(id))
     })
 }
 
@@ -1277,8 +1317,12 @@ fn session_rail_snapshot_changed(
         || previous.live_status != next.live_status
 }
 
+fn visible_composer_status(status: &str) -> Option<&str> {
+    (!matches!(status, "" | "Ready" | "Idle" | "Done")).then_some(status)
+}
+
 fn composer_snapshot_changed(previous: &RuntimeSnapshot, next: &RuntimeSnapshot) -> bool {
-    previous.status != next.status
+    visible_composer_status(&previous.status) != visible_composer_status(&next.status)
         || previous.commands != next.commands
         || previous.conversation.running != next.conversation.running
         || previous.conversation.queue != next.conversation.queue

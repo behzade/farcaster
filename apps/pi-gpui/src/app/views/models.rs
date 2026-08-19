@@ -1,8 +1,5 @@
-use std::path::Path;
-
 use gpui::{
-    Anchor, AnyElement, IntoElement as _, ParentElement as _, Styled as _, WeakEntity, div,
-    prelude::FluentBuilder as _, px,
+    Anchor, AnyElement, IntoElement as _, ParentElement as _, Styled as _, WeakEntity, div, px,
 };
 use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
 
@@ -53,8 +50,6 @@ impl PiApp {
             .collect::<Vec<_>>();
         let effort = identity.effort;
         let efforts = self.snapshot.thinking_levels.clone();
-        let projects = self.available_projects();
-        let project_entity = entity.clone();
         let provider_entity = entity.clone();
         let model_entity = entity.clone();
         let effort_entity = entity;
@@ -66,36 +61,6 @@ impl PiApp {
             .flex_wrap()
             .items_center()
             .gap(THEME.space.xs)
-            .when_some(self.editable_draft_project(), |controls, project| {
-                controls.child(
-                    button(
-                        "select-project",
-                        format!("Project: {}", bounded_label(&project_label(&project), 18)),
-                        ButtonTone::Neutral,
-                        !projects.is_empty(),
-                        |_, _| {},
-                    )
-                    .dropdown_menu_with_anchor(
-                        Anchor::TopRight,
-                        move |menu, _, _| {
-                            let mut menu = menu.min_w(px(220.0)).max_h(px(420.0)).label("Project");
-                            for project in &projects {
-                                let target = project.clone();
-                                let entity = project_entity.clone();
-                                menu =
-                                    menu.item(PopupMenuItem::new(project_label(project)).on_click(
-                                        move |_, _, cx| {
-                                            let _ = entity.update(cx, |this, cx| {
-                                                this.change_draft_project(target.clone(), cx);
-                                            });
-                                        },
-                                    ));
-                            }
-                            menu
-                        },
-                    ),
-                )
-            })
             .child(
                 button(
                     "select-provider",
@@ -203,14 +168,6 @@ fn effort_label(level: &str) -> String {
         Some(first) => first.to_uppercase().chain(characters).collect(),
         None => "Off".into(),
     }
-}
-
-fn project_label(project: &Path) -> String {
-    project
-        .file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| !name.is_empty())
-        .map_or_else(|| project.display().to_string(), str::to_owned)
 }
 
 fn bounded_label(value: &str, max: usize) -> String {

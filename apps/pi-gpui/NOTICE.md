@@ -25,6 +25,13 @@ on IBM Plex Mono, and is distributed under the SIL Open Font License 1.1. The
 font license is included at `assets/lilex/OFL.txt`; the font files remain under
 that license. Upstream: <https://github.com/mishamyrt/Lilex>.
 
+Vazirmatn Regular, Medium, SemiBold, and Bold v33.003 are bundled as the
+Persian/Arabic UI font.
+Vazirmatn is copyright the Vazirmatn Project Authors and is distributed under
+the SIL Open Font License 1.1. Its license is included at
+`assets/vazirmatn/OFL.txt`; the font files remain under that license. Upstream:
+<https://github.com/rastikerdar/vazirmatn>.
+
 The direct Longbridge GPUI Component dependencies `gpui-component`,
 `gpui-component-assets`, and `gpui-fps` are pinned to commit
 `bd833291311289f3468479d31b629d3de279d3d4` and distributed under Apache-2.0.

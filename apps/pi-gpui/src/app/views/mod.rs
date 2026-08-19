@@ -25,11 +25,12 @@ use gpui_component::kbd::Kbd;
 
 use super::{
     AbortRun, AddProject, AppSurface, CloseCurrent, CurrentCloseTarget, DismissSurface,
-    FocusComposer, FocusSessionSearch, NewSession, NextSession, PiApp, PreviousSession,
-    ShowKeybindings, ShowWorkGraph, SubmitFollowUp, SubmitPrompt, SwitchSession1, SwitchSession2,
-    SwitchSession3, SwitchSession4, SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8,
-    SwitchSession9, ToggleArchivedSessions, WorkCreateIssue, WorkDismiss, WorkFocusSearch,
-    WorkNextIssue, WorkPreviousIssue, current_close_target,
+    FocusComposer, FocusSessionSearch, NewSession, NextSession, PiApp, PickerBack, PickerScope,
+    PreviousSession, ProjectPickerIntent, ShowActionPicker, ShowKeybindings, ShowWorkGraph,
+    SubmitFollowUp, SubmitPrompt, SwitchSession1, SwitchSession2, SwitchSession3, SwitchSession4,
+    SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8, SwitchSession9,
+    ToggleArchivedSessions, WorkCreateIssue, WorkDismiss, WorkFocusSearch, WorkNextIssue,
+    WorkPreviousIssue, current_close_target,
 };
 pub(crate) const OVERLAY_KEY_CONTEXT: &str = "PiGpuiOverlay";
 
@@ -47,9 +48,9 @@ use crate::{
         layout_mode, shows_left_inline, shows_right_inline, shows_run_sheet_button,
         shows_session_sheet_button,
     },
-    primitives::{FeedbackTone, feedback, modal},
+    primitives::{ButtonTone, FeedbackTone, button, feedback, modal},
     protocol::ExtensionUiRequest,
-    theme::THEME,
+    theme::{THEME, ui_font},
 };
 
 impl Render for PiApp {
@@ -128,6 +129,9 @@ impl Render for PiApp {
         let entity = cx.entity().downgrade();
         let work_active = self.surface == AppSurface::Work;
         let has_conversation = !self.snapshot.conversation.items.is_empty();
+        let editable_draft_project = (!has_conversation)
+            .then(|| self.editable_draft_project())
+            .flatten();
         let main = if work_active {
             div()
                 .relative()
@@ -170,6 +174,7 @@ impl Render for PiApp {
                             )
                         })
                         .when(!has_conversation, |body| {
+                            let heading_entity = entity.clone();
                             body.flex()
                                 .items_center()
                                 .justify_center()
@@ -178,6 +183,16 @@ impl Render for PiApp {
                                     div()
                                         .w_full()
                                         .max_w(gpui::px(720.0))
+                                        .flex()
+                                        .flex_col()
+                                        .items_center()
+                                        .gap(THEME.space.md)
+                                        .when_some(editable_draft_project, |draft, project| {
+                                            draft.child(render_draft_heading(
+                                                project,
+                                                heading_entity,
+                                            ))
+                                        })
                                         .child(self.composer_view.clone()),
                                 )
                         }),
@@ -187,10 +202,12 @@ impl Render for PiApp {
                 })
                 .into_any_element()
         };
+        let picker = self.render_picker(entity.clone(), cx);
         div()
             .relative()
             .size_full()
             .bg(THEME.colors.canvas)
+            .font(ui_font())
             .text_color(THEME.colors.text)
             .text_size(THEME.type_scale.body)
             .on_action(cx.listener(|this, _: &DismissSurface, window, cx| {
@@ -200,10 +217,20 @@ impl Render for PiApp {
                 this.submit_follow_up(window, cx);
             }))
             .on_action(cx.listener(|this, _: &NewSession, window, cx| {
-                this.new_session(this.project.clone(), window, cx);
+                this.open_picker(
+                    PickerScope::Projects(ProjectPickerIntent::NewSession),
+                    window,
+                    cx,
+                );
             }))
             .on_action(cx.listener(|this, _: &AddProject, window, cx| {
-                this.choose_project_folder(window, cx);
+                this.choose_project_folder(None, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ShowActionPicker, window, cx| {
+                this.open_picker(PickerScope::Actions, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &PickerBack, window, cx| {
+                this.picker_back(window, cx);
             }))
             .on_action(cx.listener(|this, _: &FocusSessionSearch, window, cx| {
                 this.search_focus.focus(window, cx);
@@ -368,6 +395,7 @@ impl Render for PiApp {
                         )
                     }),
             )
+            .when_some(picker, |root, picker| root.child(picker))
             .when(self.keybindings_help, |root| {
                 let close = entity.clone();
                 root.child(modal(
@@ -474,6 +502,39 @@ impl Render for PiApp {
                 )
             })
     }
+}
+
+fn render_draft_heading(
+    project: std::path::PathBuf,
+    entity: gpui::WeakEntity<PiApp>,
+) -> impl IntoElement {
+    let label = session_rows::project_label(&project);
+    div()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_size(THEME.type_scale.display)
+        .text_color(THEME.colors.text)
+        .child("What needs doing in ")
+        .child(
+            button(
+                "draft-project",
+                label,
+                ButtonTone::Quiet,
+                true,
+                move |window, cx| {
+                    let _ = entity.update(cx, |this, cx| {
+                        this.open_picker(
+                            PickerScope::Projects(ProjectPickerIntent::ChangeDraft),
+                            window,
+                            cx,
+                        );
+                    });
+                },
+            )
+            .text_size(THEME.type_scale.display),
+        )
+        .child("?")
 }
 
 fn render_keybindings_help() -> impl IntoElement {

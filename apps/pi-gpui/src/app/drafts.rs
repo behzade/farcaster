@@ -56,9 +56,7 @@ impl PiApp {
         if !changed {
             return;
         }
-        projects::add_unique(&mut self.projects, project.clone());
-        self.project = project.clone();
-        self.save_project_registry();
+        self.select_project(project.clone());
         self.send(RuntimeCommand::NewSession { id, project });
         self.notify_session_rail(cx);
         self.notify_composer(cx);
