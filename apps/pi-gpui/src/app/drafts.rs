@@ -175,6 +175,7 @@ impl PiApp {
         }) {
             self.run_statuses.remove(&target);
             self.recent_completions.remove(&target);
+            self.recent_completion_expiries.remove(&target);
             self.record_run_status(session_target(&path), status, false);
             return;
         }

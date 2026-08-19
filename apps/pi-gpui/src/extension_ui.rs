@@ -16,9 +16,10 @@ const NOTIFICATION_LIFETIME: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Notification {
+    pub id: String,
     pub message: String,
     pub tone: NotifyTone,
-    expires_at: Instant,
+    pub expires_at: Instant,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -56,11 +57,12 @@ impl ExtensionUiState {
                     ExtensionEffect::None
                 }
             }
-            ExtensionUiRequest::Notify { message, tone, .. } => {
+            ExtensionUiRequest::Notify { id, message, tone } => {
                 if is_rpc_capability_notice(&message) {
                     return ExtensionEffect::None;
                 }
                 self.notifications.push_back(Notification {
+                    id,
                     message: message.clone(),
                     tone,
                     expires_at: Instant::now() + NOTIFICATION_LIFETIME,
@@ -118,11 +120,10 @@ impl ExtensionUiState {
         *self = Self::default();
     }
 
-    pub(crate) fn prune_notifications(&mut self) -> bool {
+    pub(crate) fn remove_notification(&mut self, id: &str, expires_at: Instant) -> bool {
         let before = self.notifications.len();
-        let now = Instant::now();
         self.notifications
-            .retain(|notification| notification.expires_at > now);
+            .retain(|notification| notification.id != id || notification.expires_at != expires_at);
         self.notifications.len() != before
     }
 
@@ -207,6 +208,27 @@ mod tests {
 
         assert_eq!(effect, ExtensionEffect::None);
         assert!(state.notifications.is_empty());
+    }
+
+    #[test]
+    fn notification_expiry_removes_only_the_matching_instance() {
+        let mut state = ExtensionUiState::default();
+        state.apply(ExtensionUiRequest::Notify {
+            id: "notice".into(),
+            message: "first".into(),
+            tone: NotifyTone::Info,
+        });
+        let first_expiry = state.notifications[0].expires_at;
+        state.apply(ExtensionUiRequest::Notify {
+            id: "notice".into(),
+            message: "replacement".into(),
+            tone: NotifyTone::Info,
+        });
+
+        assert!(state.remove_notification("notice", first_expiry));
+        assert_eq!(state.notifications.len(), 1);
+        assert_eq!(state.notifications[0].message, "replacement");
+        assert!(!state.remove_notification("notice", first_expiry));
     }
 
     #[test]
