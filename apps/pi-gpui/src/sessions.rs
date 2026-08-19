@@ -300,23 +300,6 @@ pub(crate) fn discover(query: &str) -> Result<SessionDiscovery, String> {
     discover_in_cached(&root, query, &mut cache)
 }
 
-pub(crate) fn discover_paths(paths: &[PathBuf]) -> Result<SessionDiscovery, String> {
-    let mut sessions = Vec::new();
-    let mut activities = HashMap::new();
-    for path in paths {
-        if let Some((session, activity)) = parse_candidate(path)? {
-            activities.insert(activity.session_id.clone(), activity);
-            sessions.push(session);
-        }
-    }
-    sessions.sort_by_key(|session| std::cmp::Reverse(session.modified));
-    Ok(SessionDiscovery {
-        sessions,
-        activities,
-        exhaustive: false,
-    })
-}
-
 #[derive(Debug)]
 pub(crate) struct LoadedHistory {
     pub messages: Vec<Value>,

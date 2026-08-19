@@ -14,6 +14,7 @@ gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "bd833291311289f3468479d31b629d3de279d3d4" }
 gpui-fps = { git = "https://github.com/longbridge/gpui-component", rev = "bd833291311289f3468479d31b629d3de279d3d4" }
 gpui_platform = { path = "third_party/zed-gpui-cc053a4/crates/gpui_platform", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
+notify = "7.0.0"
 rusqlite = { version = "0.37.0", features = ["bundled"] }
 ropey = "=2.0.0-beta.1"
 serde = { version = "1.0.229", features = ["derive"] }

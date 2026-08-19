@@ -20,15 +20,15 @@ use crate::{
         ExtensionUiResponse, Model, PromptImage, PromptMode, SessionState, SlashCommand, command,
     },
     rpc_process::{ProcessCommand, ProcessItem, RpcProcess},
+    session_watcher::{SessionWatchEvent, SessionWatcher},
     sessions::{
-        LoadedHistory, SessionDiscovery, SessionSummary, discover, discover_paths, load_history,
+        LoadedHistory, SessionDiscovery, SessionSummary, configured_session_root, discover,
+        load_history,
     },
     state::StateStore,
 };
 
 const MAX_IDLE_PI_ACTORS: usize = 4;
-const ACTIVE_ROOT_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
-const ACTIVE_DESCENDANT_REFRESH_INTERVAL: Duration = Duration::from_secs(3);
 const COALESCED_SESSION_REFRESH_DELAY: Duration = Duration::from_millis(100);
 const STREAM_PUBLISH_INTERVAL: Duration = Duration::from_millis(16);
 
@@ -80,7 +80,6 @@ pub(crate) enum RuntimeCommand {
     },
     LoadSessions(String),
     RefreshSessions,
-    RefreshActiveSessions,
     Shutdown,
 }
 
@@ -102,7 +101,6 @@ pub(crate) enum RuntimeEvent {
         sessions: Vec<SessionSummary>,
         all_sessions: Vec<SessionSummary>,
         activities: Option<(HashMap<String, AgentActivity>, bool)>,
-        has_running_descendants: bool,
     },
     SessionsFailed {
         generation: u64,
@@ -355,8 +353,6 @@ fn run_supervisor(
     let mut needs_input = HashSet::<String>::new();
     let mut clock = 0_u64;
     let mut last_touch = HashMap::from([(initial_key.clone(), clock)]);
-    let mut catalog_has_running_descendants = false;
-    let mut last_catalog_refresh = Instant::now();
     let mut session_controls = SessionControls::default();
     let mut published_statuses = HashMap::<String, (Option<PathBuf>, String)>::new();
     if let Ok(state) = StateStore::open()
@@ -495,26 +491,17 @@ fn run_supervisor(
                     RuntimeEvent::RefreshCatalog => {
                         if let Some(catalog) = actors.get(&catalog_key) {
                             catalog.send(RuntimeCommand::RefreshSessions);
-                            last_catalog_refresh = Instant::now();
                         }
                     }
                     event @ (RuntimeEvent::Sessions { .. }
                     | RuntimeEvent::SessionsFailed { .. }) => {
                         match route_session_discovery(&key, &catalog_key, event) {
                             SupervisorSessionAction::Publish(event) => {
-                                if let RuntimeEvent::Sessions {
-                                    has_running_descendants,
-                                    ..
-                                } = &event
-                                {
-                                    catalog_has_running_descendants = *has_running_descendants;
-                                }
                                 let _ = event_tx.send(event);
                             }
                             SupervisorSessionAction::RefreshCatalog => {
                                 if let Some(catalog) = actors.get(&catalog_key) {
                                     catalog.send(RuntimeCommand::RefreshSessions);
-                                    last_catalog_refresh = Instant::now();
                                 }
                             }
                         }
@@ -527,24 +514,6 @@ fn run_supervisor(
             }
         }
         evict_idle_actors(&mut actors, &mut latest, &mut last_touch, &selected);
-        let has_running_root = latest
-            .values()
-            .any(|snapshot| needs_active_catalog_refresh(snapshot));
-        let refresh_interval = if has_running_root {
-            Some(ACTIVE_ROOT_REFRESH_INTERVAL)
-        } else if catalog_has_running_descendants {
-            Some(ACTIVE_DESCENDANT_REFRESH_INTERVAL)
-        } else {
-            None
-        };
-        if refresh_interval.is_some_and(|interval| last_catalog_refresh.elapsed() >= interval)
-            && let Some(catalog) = actors.get(&catalog_key)
-        {
-            catalog.send(RuntimeCommand::RefreshActiveSessions);
-            last_catalog_refresh = Instant::now();
-        }
-        let supervisor_wait = refresh_interval
-            .map(|interval| interval.saturating_sub(last_catalog_refresh.elapsed()));
         match command_rx.try_recv() {
             Ok(RuntimeCommand::Shutdown) => running = false,
             Ok(command) => {
@@ -658,10 +627,7 @@ fn run_supervisor(
                     }
                 }
             }
-            Err(mpsc::TryRecvError::Empty) => match supervisor_wait {
-                Some(wait) => thread::park_timeout(wait),
-                None => thread::park(),
-            },
+            Err(mpsc::TryRecvError::Empty) => thread::park(),
             Err(mpsc::TryRecvError::Disconnected) => running = false,
         }
     }
@@ -1010,6 +976,17 @@ fn run(
 ) {
     let (discovery_tx, discovery_rx) = mpsc::channel();
     let (history_tx, history_rx) = mpsc::channel();
+    let (watch_tx, watch_rx) = mpsc::channel();
+    let (session_watcher, watcher_error) = if load_catalog {
+        match configured_session_root()
+            .and_then(|root| SessionWatcher::start(&root, watch_tx, thread::current()))
+        {
+            Ok(watcher) => (Some(watcher), None),
+            Err(error) => (None, Some(error)),
+        }
+    } else {
+        (None, None)
+    };
     let (state, state_error) = match StateStore::open() {
         Ok(state) => (Some(state), None),
         Err(error) => (None, Some(error)),
@@ -1053,7 +1030,14 @@ fn run(
     if load_catalog {
         owner.load_sessions(String::new());
     }
+    if let Some(message) = watcher_error {
+        let _ = owner.event_tx.send(RuntimeEvent::SessionsFailed {
+            generation: owner.session_generation,
+            message,
+        });
+    }
     owner.publish();
+    let _session_watcher = session_watcher;
     let mut running = true;
     let mut stream_publish_due = None;
     while running {
@@ -1062,6 +1046,17 @@ fn run(
         }
         while let Ok(result) = history_rx.try_recv() {
             owner.apply_history(result);
+        }
+        while let Ok(event) = watch_rx.try_recv() {
+            match event {
+                SessionWatchEvent::Changed => owner.schedule_session_refresh(),
+                SessionWatchEvent::Failed(message) => {
+                    let _ = owner.event_tx.send(RuntimeEvent::SessionsFailed {
+                        generation: owner.session_generation,
+                        message,
+                    });
+                }
+            }
         }
         owner.poll_deferred_session_refresh(Instant::now());
         let mut immediate_snapshot_change = false;
@@ -1248,7 +1243,6 @@ impl RuntimeOwner {
             }
             RuntimeCommand::LoadSessions(query) => self.load_sessions(query),
             RuntimeCommand::RefreshSessions => self.refresh_sessions(),
-            RuntimeCommand::RefreshActiveSessions => self.refresh_active_sessions(),
             RuntimeCommand::Shutdown => {}
         }
     }
@@ -1836,22 +1830,12 @@ fn run_status(conversation: &ConversationState) -> &'static str {
     }
 }
 
-fn needs_active_catalog_refresh(snapshot: &RuntimeSnapshot) -> bool {
-    snapshot.conversation.running && !snapshot.conversation.compacting
-}
-
 fn notification_target(snapshot: &RuntimeSnapshot) -> Option<(PathBuf, PathBuf)> {
     snapshot
         .live_session
         .clone()
         .or_else(|| snapshot.selected_session.clone())
         .map(|path| (path, snapshot.project.clone()))
-}
-
-fn has_running_descendant(sessions: &[SessionSummary]) -> bool {
-    sessions
-        .iter()
-        .any(|session| session.parent_session.is_some() && session.is_running)
 }
 
 fn session_badge_status(conversation: &ConversationState) -> &'static str {
@@ -2177,16 +2161,6 @@ mod tests {
     }
 
     #[test]
-    fn active_catalog_polling_pauses_during_compaction() {
-        let mut snapshot = RuntimeSnapshot::default();
-        conversation_mut(&mut snapshot).running = true;
-        assert!(needs_active_catalog_refresh(&snapshot));
-
-        conversation_mut(&mut snapshot).compacting = true;
-        assert!(!needs_active_catalog_refresh(&snapshot));
-    }
-
-    #[test]
     fn notification_target_comes_from_the_emitting_runtime() {
         let snapshot = RuntimeSnapshot {
             project: PathBuf::from("/background-project"),
@@ -2236,7 +2210,6 @@ mod tests {
                 sessions: Vec::new(),
                 all_sessions: Vec::new(),
                 activities: None,
-                has_running_descendants: false,
             },
         );
 
@@ -2253,7 +2226,6 @@ mod tests {
                 sessions: Vec::new(),
                 all_sessions: Vec::new(),
                 activities: None,
-                has_running_descendants: false,
             },
         );
 
@@ -2570,6 +2542,21 @@ mod tests {
     }
 
     #[test]
+    fn filesystem_changes_coalesce_into_one_delayed_scan() {
+        let (mut owner, _events, _discovery) = owner_without_process(std::env::temp_dir());
+        owner.schedule_session_refresh();
+        let due = owner.session_refresh_due.expect("filesystem refresh");
+        owner.schedule_session_refresh();
+        assert_eq!(owner.session_refresh_due, Some(due));
+
+        owner.poll_deferred_session_refresh(due - Duration::from_millis(1));
+        assert_eq!(owner.session_generation, 0);
+        owner.poll_deferred_session_refresh(due);
+        assert_eq!(owner.session_generation, 1);
+        assert!(owner.session_discovery_in_flight);
+    }
+
+    #[test]
     fn in_flight_catalog_refreshes_coalesce_into_one_delayed_scan() {
         let (mut owner, _events, _discovery) = owner_without_process(std::env::temp_dir());
         owner.session_discovery_in_flight = true;
@@ -2660,7 +2647,7 @@ mod tests {
     }
 
     #[test]
-    fn partial_catalog_refresh_keeps_omitted_running_children_in_polling_state()
+    fn partial_catalog_refresh_keeps_omitted_running_children_in_the_catalog()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempdir()?;
         let project = temp.path().join("project");
@@ -2707,10 +2694,8 @@ mod tests {
 
         assert!(events.try_iter().any(|event| matches!(
             event,
-            RuntimeEvent::Sessions {
-                has_running_descendants: true,
-                ..
-            }
+            RuntimeEvent::Sessions { all_sessions, .. }
+                if all_sessions.iter().any(|session| session.id == "child")
         )));
         Ok(())
     }

@@ -17,6 +17,7 @@ mod protocol;
 mod rpc_process;
 mod runtime;
 mod session_changes;
+mod session_watcher;
 mod sessions;
 #[cfg(any(target_os = "macos", test))]
 mod shell_environment;
