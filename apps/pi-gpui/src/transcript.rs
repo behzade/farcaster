@@ -395,19 +395,7 @@ pub(crate) fn render(
     entity: WeakEntity<PiApp>,
 ) -> AnyElement {
     if rows.is_empty() {
-        return div()
-            .size_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(THEME.colors.canvas)
-            .child(
-                div()
-                    .text_size(THEME.type_scale.body)
-                    .text_color(THEME.colors.subtle)
-                    .child("Ask Pi to start a session"),
-            )
-            .into_any_element();
+        return div().size_full().bg(THEME.colors.canvas).into_any_element();
     }
 
     let jump = entity.clone();

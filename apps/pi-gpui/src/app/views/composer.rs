@@ -25,6 +25,7 @@ impl PiApp {
         if self.extension.dialog.is_some() {
             return self.render_composer_request(entity);
         }
+        let floating = self.snapshot.conversation.items.is_empty();
         let composer_value = self.composer.read(cx).value().trim().to_owned();
         let command_suggestions =
             slash_commands::suggestions(&composer_value, &self.snapshot.commands)
@@ -70,8 +71,17 @@ impl PiApp {
         div()
             .flex_none()
             .min_h(THEME.layout.composer_min)
-            .border_t(THEME.border)
-            .border_color(THEME.colors.border)
+            .when(floating, |composer| {
+                composer
+                    .rounded(THEME.radius)
+                    .border(THEME.border)
+                    .border_color(THEME.colors.border)
+            })
+            .when(!floating, |composer| {
+                composer
+                    .border_t(THEME.border)
+                    .border_color(THEME.colors.border)
+            })
             .bg(THEME.colors.panel)
             .p(THEME.space.sm)
             .when_some(widgets_above, |composer, widgets| composer.child(widgets))

@@ -127,6 +127,7 @@ impl Render for PiApp {
         }
         let entity = cx.entity().downgrade();
         let work_active = self.surface == AppSurface::Work;
+        let has_conversation = !self.snapshot.conversation.items.is_empty();
         let main = if work_active {
             div()
                 .relative()
@@ -158,13 +159,32 @@ impl Render for PiApp {
                     ))
                 })
                 .child(
-                    div().flex_1().min_h_0().child(
-                        self.transcript_view
-                            .clone()
-                            .cached(gpui::StyleRefinement::default().size_full()),
-                    ),
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .when(has_conversation, |body| {
+                            body.child(
+                                self.transcript_view
+                                    .clone()
+                                    .cached(gpui::StyleRefinement::default().size_full()),
+                            )
+                        })
+                        .when(!has_conversation, |body| {
+                            body.flex()
+                                .items_center()
+                                .justify_center()
+                                .px(THEME.space.md)
+                                .child(
+                                    div()
+                                        .w_full()
+                                        .max_w(gpui::px(720.0))
+                                        .child(self.composer_view.clone()),
+                                )
+                        }),
                 )
-                .child(self.composer_view.clone())
+                .when(has_conversation, |main| {
+                    main.child(self.composer_view.clone())
+                })
                 .into_any_element()
         };
         div()
