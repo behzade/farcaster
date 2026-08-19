@@ -33,7 +33,7 @@ pub(crate) struct SessionState {
     pub pending_message_count: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub(crate) struct Model {
     pub id: String,
     pub name: String,
