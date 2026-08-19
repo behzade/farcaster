@@ -192,29 +192,29 @@ impl PiApp {
                         .overflow_hidden()
                         .child(
                             div()
-                            .flex()
-                            .flex_col()
-                            .child(
-                                List::new(&list)
-                                    .search_placeholder(picker.scope.placeholder())
-                                    .max_h(gpui::px(480.0)),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .gap(THEME.space.md)
-                                    .border_t(THEME.border)
-                                    .border_color(THEME.colors.border)
-                                    .px(THEME.space.md)
-                                    .py(THEME.space.sm)
-                                    .text_size(THEME.type_scale.caption)
-                                    .text_color(THEME.colors.subtle)
-                                    .child("Up/Down Navigate")
-                                    .child("Enter Select")
-                                    .child("Backspace Back")
-                                    .child("Esc Close"),
-                            ),
-                    )
+                                .flex()
+                                .flex_col()
+                                .child(
+                                    List::new(&list)
+                                        .search_placeholder(picker.scope.placeholder())
+                                        .max_h(gpui::px(480.0)),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .gap(THEME.space.md)
+                                        .border_t(THEME.border)
+                                        .border_color(THEME.colors.border)
+                                        .px(THEME.space.md)
+                                        .py(THEME.space.sm)
+                                        .text_size(THEME.type_scale.caption)
+                                        .text_color(THEME.colors.subtle)
+                                        .child("Up/Down Navigate")
+                                        .child("Enter Select")
+                                        .child("Backspace Back")
+                                        .child("Esc Close"),
+                                ),
+                        )
                 },
             )
             .into_any_element(),

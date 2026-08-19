@@ -532,7 +532,8 @@ fn render_draft_heading(
                     });
                 },
             )
-            .text_size(THEME.type_scale.display),
+            .text_size(THEME.type_scale.display)
+            .text_color(THEME.colors.accent),
         )
         .child("?")
 }
