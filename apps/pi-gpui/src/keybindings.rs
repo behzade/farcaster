@@ -8,8 +8,10 @@ use crate::app::{
     OVERLAY_KEY_CONTEXT, PreviousSession, QuitApplication, ShowKeybindings, ShowWorkGraph,
     SubmitFollowUp, SubmitPrompt, SwitchSession1, SwitchSession2, SwitchSession3, SwitchSession4,
     SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8, SwitchSession9,
-    ToggleArchivedSessions,
+    ToggleArchivedSessions, WorkCreateIssue, WorkDismiss, WorkFocusSearch, WorkNextIssue,
+    WorkPreviousIssue,
 };
+use crate::app::{WORKGRAPH_KEY_CONTEXT, WORKGRAPH_NAV_KEY_CONTEXT};
 
 pub(crate) struct Shortcut {
     pub section: &'static str,
@@ -99,6 +101,41 @@ pub(crate) fn registry() -> Vec<Shortcut> {
             Some("PiComposer > Input")
         ),
         shortcut!("Run", "Abort current run", "cmd-.", AbortRun, None),
+        shortcut!(
+            "Work",
+            "Previous issue",
+            "k",
+            WorkPreviousIssue,
+            Some(WORKGRAPH_NAV_KEY_CONTEXT)
+        ),
+        shortcut!(
+            "Work",
+            "Next issue",
+            "j",
+            WorkNextIssue,
+            Some(WORKGRAPH_NAV_KEY_CONTEXT)
+        ),
+        shortcut!(
+            "Work",
+            "Search issues",
+            "/",
+            WorkFocusSearch,
+            Some(WORKGRAPH_NAV_KEY_CONTEXT)
+        ),
+        shortcut!(
+            "Work",
+            "Create issue",
+            "c",
+            WorkCreateIssue,
+            Some(WORKGRAPH_NAV_KEY_CONTEXT)
+        ),
+        shortcut!(
+            "Work",
+            "Back or clear",
+            "escape",
+            WorkDismiss,
+            Some(WORKGRAPH_KEY_CONTEXT)
+        ),
         shortcut!(
             "Application",
             "Toggle Chat / Work",

@@ -12,7 +12,9 @@ mod session_rail;
 mod session_rows;
 mod shell;
 
-pub(super) use regions::{ComposerView, RunPanelView, SessionRailView, TranscriptView};
+pub(super) use regions::{
+    ComposerView, RunPanelView, SessionRailView, TranscriptView, WorkGraphDetailView,
+};
 pub(super) use session_groups::session_move_allowed;
 
 use gpui::{
@@ -27,7 +29,8 @@ use super::{
     FocusComposer, FocusSessionSearch, NewSession, NextSession, PiApp, PreviousSession,
     ShowKeybindings, ShowWorkGraph, SubmitFollowUp, SubmitPrompt, SwitchSession1, SwitchSession2,
     SwitchSession3, SwitchSession4, SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8,
-    SwitchSession9, ToggleArchivedSessions, current_close_target,
+    SwitchSession9, ToggleArchivedSessions, WorkCreateIssue, WorkDismiss, WorkFocusSearch,
+    WorkNextIssue, WorkPreviousIssue, current_close_target,
 };
 pub(crate) const OVERLAY_KEY_CONTEXT: &str = "PiGpuiOverlay";
 
@@ -40,6 +43,7 @@ fn session_shortcuts_visible(current: bool, requested: bool, has_text_selection:
 }
 
 use crate::{
+    app::workgraph::layout::{DETAIL_MAX_WIDTH, DETAIL_MIN_WIDTH, DETAIL_WIDTH},
     layout::{
         layout_mode, shows_left_inline, shows_right_inline, shows_run_sheet_button,
         shows_session_sheet_button,
@@ -231,6 +235,26 @@ impl Render for PiApp {
             .on_action(cx.listener(|this, _: &ShowWorkGraph, window, cx| {
                 this.toggle_workgraph_surface(window, cx);
             }))
+            .on_action(cx.listener(|this, _: &WorkPreviousIssue, _, cx| {
+                this.workgraph_view
+                    .update(cx, |view, cx| view.move_selection(-1, cx));
+            }))
+            .on_action(cx.listener(|this, _: &WorkNextIssue, _, cx| {
+                this.workgraph_view
+                    .update(cx, |view, cx| view.move_selection(1, cx));
+            }))
+            .on_action(cx.listener(|this, _: &WorkFocusSearch, window, cx| {
+                this.workgraph_view
+                    .update(cx, |view, cx| view.focus_search(window, cx));
+            }))
+            .on_action(cx.listener(|this, _: &WorkCreateIssue, _, cx| {
+                this.workgraph_view
+                    .update(cx, |view, cx| view.start_create(cx));
+            }))
+            .on_action(cx.listener(|this, _: &WorkDismiss, window, cx| {
+                this.workgraph_view
+                    .update(cx, |view, cx| view.dismiss_work_state(window, cx));
+            }))
             .on_action(cx.listener(|this, _: &SwitchSession1, window, cx| {
                 this.switch_to_session_number(1, window, cx);
             }))
@@ -292,20 +316,35 @@ impl Render for PiApp {
                         )
                     })
                     .child(main)
-                    .when(shows_right_inline(mode) && !work_active, |shell| {
+                    .when(shows_right_inline(mode), |shell| {
                         shell.child(
                             div()
-                                .w(THEME.layout.run_panel)
-                                .min_w(THEME.layout.run_panel_min)
-                                .max_w(THEME.layout.run_panel_max)
+                                .w(if work_active {
+                                    gpui::px(DETAIL_WIDTH)
+                                } else {
+                                    THEME.layout.run_panel
+                                })
+                                .min_w(if work_active {
+                                    gpui::px(DETAIL_MIN_WIDTH)
+                                } else {
+                                    THEME.layout.run_panel_min
+                                })
+                                .max_w(if work_active {
+                                    gpui::px(DETAIL_MAX_WIDTH)
+                                } else {
+                                    THEME.layout.run_panel_max
+                                })
                                 .flex_none()
                                 .border_l(THEME.border)
                                 .border_color(THEME.colors.border)
-                                .child(
+                                .child(if work_active {
+                                    self.workgraph_detail_view.clone().into_any_element()
+                                } else {
                                     self.run_panel_view
                                         .clone()
-                                        .cached(gpui::StyleRefinement::default().size_full()),
-                                ),
+                                        .cached(gpui::StyleRefinement::default().size_full())
+                                        .into_any_element()
+                                }),
                         )
                     }),
             )

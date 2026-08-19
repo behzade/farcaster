@@ -1,15 +1,14 @@
 //! GPUI and SQLite adapters for the workgraph board.
 
+mod detail;
+
 use std::path::PathBuf;
 
 use super::{
-    components::{
-        dependency_issue_section, detail_section, related_issue_section, render_create,
-        render_edit_fields, render_filter_rail, render_graph, render_groups, status_color,
-    },
-    contract::{BoardData, BoardFilter, BoardLoadState, BoardMode},
-    core::{filter_count, matching_project_groups},
-    layout::{BoardLayoutMode, board_layout_mode, issue_detail_shell},
+    components::{render_create, render_filter_rail, render_graph, render_groups},
+    contract::{BoardFilter, BoardLoadState, BoardMode},
+    core::{adjacent_issue_number, filter_count, matching_project_groups},
+    layout::{BoardLayoutMode, DETAIL_WIDTH, surface_board_layout},
     persistence::{
         add_dependency, add_issue_note, create_issue, link_session, load_issues, remove_dependency,
         update_issue_fields, update_issue_status,
@@ -20,16 +19,20 @@ use crate::{
     theme::THEME,
 };
 use gpui::{
-    AppContext as _, Context, Entity, FontWeight, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render, StatefulInteractiveElement as _, Styled as _, Subscription, Task,
-    Window, div, prelude::FluentBuilder as _, px,
+    AppContext as _, Context, Entity, FocusHandle, Focusable as _, FontWeight,
+    InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _, Subscription,
+    Task, Window, div, prelude::FluentBuilder as _, px,
 };
-use gpui_component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
+use gpui_component::input::{Input, InputEvent, InputState, TextareaState};
+
+pub(crate) const WORKGRAPH_KEY_CONTEXT: &str = "PiWorkGraph";
+pub(crate) const WORKGRAPH_NAV_KEY_CONTEXT: &str = "PiWorkGraph && !Input";
 
 pub(crate) struct WorkGraphBoardView {
     database: PathBuf,
     project: PathBuf,
     state: BoardLoadState,
+    focus: FocusHandle,
     filter: BoardFilter,
     mode: BoardMode,
     selected: Option<u64>,
@@ -64,6 +67,7 @@ impl WorkGraphBoardView {
             database,
             project,
             state,
+            focus: cx.focus_handle(),
             filter: BoardFilter::Active,
             mode: BoardMode::Kanban,
             selected: None,
@@ -138,6 +142,52 @@ impl WorkGraphBoardView {
         cx.notify();
     }
 
+    pub(crate) fn focus(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.focus.focus(window, cx);
+    }
+
+    pub(crate) fn focus_search(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(search) = &self.search {
+            search.read(cx).focus_handle(cx).focus(window, cx);
+        } else {
+            self.focus.focus(window, cx);
+        }
+    }
+
+    pub(crate) fn move_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let BoardLoadState::Ready(data) = &self.state else {
+            return;
+        };
+        let search = self
+            .search
+            .as_ref()
+            .map(|input| input.read(cx).value().to_string())
+            .unwrap_or_default();
+        let numbers = matching_project_groups(data, self.filter, &search)
+            .into_iter()
+            .flat_map(|group| group.rows.into_iter().map(|row| row.issue.number))
+            .collect::<Vec<_>>();
+        if let Some(number) = adjacent_issue_number(&numbers, self.selected, delta) {
+            self.select_issue(number, cx);
+        }
+    }
+
+    pub(crate) fn dismiss_work_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editing.take().is_some() || std::mem::take(&mut self.creating) {
+            cx.notify();
+            return;
+        }
+        if let Some(search) = &self.search
+            && !search.read(cx).value().is_empty()
+        {
+            search.update(cx, |input, cx| {
+                input.set_value(String::new(), window, cx);
+            });
+            return;
+        }
+        self.clear_selection(cx);
+    }
+
     pub(super) fn clear_selection(&mut self, cx: &mut Context<Self>) {
         self.creating = false;
         self.editing = None;
@@ -145,7 +195,7 @@ impl WorkGraphBoardView {
         cx.notify();
     }
 
-    fn start_create(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn start_create(&mut self, cx: &mut Context<Self>) {
         self.selected = None;
         self.editing = None;
         self.creating = true;
@@ -321,359 +371,6 @@ impl WorkGraphBoardView {
         }));
         cx.notify();
     }
-
-    fn render_detail(
-        &self,
-        entity: Entity<Self>,
-        data: &BoardData,
-        layout: BoardLayoutMode,
-    ) -> impl IntoElement {
-        let issue = self
-            .selected
-            .and_then(|number| data.issues.iter().find(|issue| issue.number == number));
-        let narrow = issue_detail_shell(layout).shows_sheet(false);
-        div()
-            .id("workgraph-issue-detail")
-            .w(px(400.0))
-            .min_w(px(360.0))
-            .when(narrow, |detail| detail.w_full().min_w_0())
-            .flex_none()
-            .h_full()
-            .overflow_y_scroll()
-            .p(THEME.space.md)
-            .bg(THEME.colors.panel)
-            .border_l(THEME.border)
-            .border_color(THEME.colors.border)
-            .child(match issue {
-                Some(issue) if self.editing == Some(issue.number) => render_edit_fields(
-                    issue.clone(),
-                    self.edit_title.as_ref().expect("edit title initialized"),
-                    self.edit_body.as_ref().expect("edit body initialized"),
-                    self.edit_priority
-                        .as_ref()
-                        .expect("edit priority initialized"),
-                    entity,
-                )
-                .into_any_element(),
-                Some(issue) => {
-                    let dependencies = data
-                        .dependencies
-                        .iter()
-                        .filter(|edge| edge.issue_number == issue.number)
-                        .filter_map(|edge| {
-                            data.issues
-                                .iter()
-                                .find(|item| item.number == edge.depends_on)
-                        })
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    let dependents = data
-                        .dependencies
-                        .iter()
-                        .filter(|edge| edge.depends_on == issue.number)
-                        .filter_map(|edge| {
-                            data.issues
-                                .iter()
-                                .find(|item| item.number == edge.issue_number)
-                        })
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    let sessions = data
-                        .sessions
-                        .iter()
-                        .filter(|link| link.issue_number == issue.number)
-                        .collect::<Vec<_>>();
-                    let notes = data
-                        .notes
-                        .iter()
-                        .filter(|note| note.issue_number == issue.number)
-                        .collect::<Vec<_>>();
-                    let active_link = self.active_session.as_ref().and_then(|(id, _)| {
-                        data.sessions.iter().find(|link| link.session_id == *id)
-                    });
-                    let dependency_action = self.dependency.as_ref().map(|dependency| {
-                        let dependency_input = dependency.clone();
-                        let dependency_submit = dependency.clone();
-                        let entity = entity.clone();
-                        let number = issue.number;
-                        let version = issue.version;
-                        div()
-                            .flex()
-                            .gap(THEME.space.xs)
-                            .child(Input::new(&dependency_input).w(px(160.0)))
-                            .child(button(
-                                format!("workgraph-add-dependency-{number}"),
-                                "Add dependency",
-                                ButtonTone::Quiet,
-                                true,
-                                move |window, cx| {
-                                    let value =
-                                        dependency_submit.read(cx).value().trim().to_owned();
-                                    let Ok(depends_on) =
-                                        value.strip_prefix('#').unwrap_or(&value).parse::<u64>()
-                                    else {
-                                        return;
-                                    };
-                                    dependency_submit.update(cx, |input, cx| {
-                                        input.set_value(String::new(), window, cx);
-                                    });
-                                    entity.update(cx, |this, cx| {
-                                        this.change_dependency(
-                                            number, depends_on, version, true, cx,
-                                        );
-                                    });
-                                },
-                            ))
-                    });
-                    let note_action = self.note.as_ref().map(|note| {
-                        let note_input = note.clone();
-                        let note_submit = note.clone();
-                        let entity = entity.clone();
-                        let number = issue.number;
-                        let version = issue.version;
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(THEME.space.xs)
-                            .child(Textarea::new(&note_input).w_full().appearance(true))
-                            .child(button(
-                                format!("workgraph-add-note-{number}"),
-                                "Add note",
-                                ButtonTone::Neutral,
-                                true,
-                                move |window, cx| {
-                                    let body = note_submit.read(cx).value().trim().to_owned();
-                                    if body.is_empty() {
-                                        return;
-                                    }
-                                    note_submit.update(cx, |input, cx| {
-                                        input.set_value(String::new(), window, cx);
-                                    });
-                                    entity.update(cx, |this, cx| {
-                                        this.add_note(number, version, body, cx);
-                                    });
-                                },
-                            ))
-                    });
-                    let edit_title = self
-                        .edit_title
-                        .as_ref()
-                        .expect("edit title initialized")
-                        .clone();
-                    let edit_body = self
-                        .edit_body
-                        .as_ref()
-                        .expect("edit body initialized")
-                        .clone();
-                    let edit_priority = self
-                        .edit_priority
-                        .as_ref()
-                        .expect("edit priority initialized")
-                        .clone();
-                    let edit_entity = entity.clone();
-                    let edit_number = issue.number;
-                    let current_title = issue.title.clone();
-                    let current_body = issue.body.clone();
-                    let current_priority = issue.priority.to_string();
-                    let edit_action = button(
-                        format!("workgraph-edit-{edit_number}"),
-                        "Edit issue",
-                        ButtonTone::Quiet,
-                        true,
-                        move |window, cx| {
-                            edit_title.update(cx, |input, cx| {
-                                input.set_value(current_title.clone(), window, cx);
-                            });
-                            edit_body.update(cx, |input, cx| {
-                                input.set_value(current_body.clone(), window, cx);
-                            });
-                            edit_priority.update(cx, |input, cx| {
-                                input.set_value(current_priority.clone(), window, cx);
-                            });
-                            edit_entity.update(cx, |this, cx| {
-                                this.set_editing(Some(edit_number), cx);
-                            });
-                        },
-                    );
-                    let status_actions = [
-                        workgraph::contract::IssueStatus::Open,
-                        workgraph::contract::IssueStatus::InProgress,
-                        workgraph::contract::IssueStatus::Blocked,
-                        workgraph::contract::IssueStatus::Done,
-                        workgraph::contract::IssueStatus::Cancelled,
-                    ]
-                    .into_iter()
-                    .filter(|status| *status != issue.status)
-                    .map(|status| {
-                        let entity = entity.clone();
-                        let number = issue.number;
-                        let version = issue.version;
-                        button(
-                            format!("workgraph-status-{number}-{status:?}"),
-                            super::core::status_label(status),
-                            ButtonTone::Quiet,
-                            true,
-                            move |_, cx| {
-                                entity.update(cx, |this, cx| {
-                                    this.set_issue_status(number, status, version, cx);
-                                });
-                            },
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                    let session_action = self.active_session.as_ref().map(|_| {
-                        let number = issue.number;
-                        let entity = entity.clone();
-                        let linked_here =
-                            active_link.is_some_and(|link| link.issue_number == issue.number);
-                        button(
-                            format!("workgraph-link-session-{number}"),
-                            if linked_here {
-                                "Current session linked"
-                            } else if active_link.is_some() {
-                                "Move current session here"
-                            } else {
-                                "Link current session"
-                            },
-                            if linked_here {
-                                ButtonTone::Quiet
-                            } else {
-                                ButtonTone::Neutral
-                            },
-                            !linked_here,
-                            move |_, cx| {
-                                entity.update(cx, |this, cx| {
-                                    this.link_active_session(number, cx);
-                                });
-                            },
-                        )
-                    });
-                    let back = entity.clone();
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(THEME.space.md)
-                        .when(narrow, |detail| {
-                            detail.child(button(
-                                "workgraph-detail-back",
-                                "Back to issues",
-                                ButtonTone::Quiet,
-                                true,
-                                move |_, cx| {
-                                    back.update(cx, |this, cx| this.clear_selection(cx));
-                                },
-                            ))
-                        })
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap(THEME.space.xs)
-                                .pb(THEME.space.md)
-                                .border_b(THEME.border)
-                                .border_color(THEME.colors.border)
-                                .child(
-                                    div()
-                                        .text_size(THEME.type_scale.caption)
-                                        .text_color(THEME.colors.subtle)
-                                        .child(format!("Issue #{}", issue.number)),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(THEME.type_scale.body)
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(THEME.colors.text)
-                                        .child(issue.title.clone()),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(THEME.type_scale.caption)
-                                        .text_color(status_color(issue.status))
-                                        .child(format!(
-                                            "{}  ·  Priority {}  ·  Version {}",
-                                            super::core::status_label(issue.status),
-                                            issue.priority,
-                                            issue.version
-                                        )),
-                                )
-                                .child(edit_action),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap(THEME.space.xs)
-                                .child(
-                                    div()
-                                        .text_size(THEME.type_scale.caption)
-                                        .text_color(THEME.colors.subtle)
-                                        .child("Change status"),
-                                )
-                                .child(
-                                    div()
-                                        .flex()
-                                        .flex_wrap()
-                                        .gap(THEME.space.xs)
-                                        .children(status_actions),
-                                ),
-                        )
-                        .child(detail_section(
-                            "Description",
-                            if issue.body.trim().is_empty() {
-                                "No description recorded.".into()
-                            } else {
-                                issue.body.clone()
-                            },
-                        ))
-                        .child(dependency_issue_section(
-                            issue.number,
-                            issue.version,
-                            dependencies,
-                            entity.clone(),
-                        ))
-                        .children(dependency_action)
-                        .child(related_issue_section(
-                            "Unblocks",
-                            "No dependent issues.",
-                            dependents,
-                            entity.clone(),
-                        ))
-                        .child(detail_section(
-                            "Notes",
-                            if notes.is_empty() {
-                                "No progress notes yet.".into()
-                            } else {
-                                notes
-                                    .iter()
-                                    .map(|note| note.body.as_str())
-                                    .collect::<Vec<_>>()
-                                    .join("\n\n")
-                            },
-                        ))
-                        .children(note_action)
-                        .child(detail_section(
-                            "Linked sessions",
-                            if sessions.is_empty() {
-                                "No sessions linked.".into()
-                            } else {
-                                sessions
-                                    .iter()
-                                    .map(|link| link.session_id.as_str())
-                                    .collect::<Vec<_>>()
-                                    .join("\n")
-                            },
-                        ))
-                        .children(session_action)
-                        .into_any_element()
-                }
-                None => feedback(
-                    "workgraph-detail-empty",
-                    "Select an issue to inspect its dependencies.",
-                    FeedbackTone::Info,
-                )
-                .into_any_element(),
-            })
-    }
 }
 
 impl Render for WorkGraphBoardView {
@@ -739,14 +436,20 @@ impl Render for WorkGraphBoardView {
         let entity = cx.entity();
         let viewport_width = window.viewport_size().width;
         let shell_layout = crate::layout::layout_mode(viewport_width);
-        let board_width = if crate::layout::shows_left_inline(shell_layout) {
+        let mut board_width = if crate::layout::shows_left_inline(shell_layout) {
             viewport_width - THEME.layout.session_rail
         } else {
             viewport_width
         };
-        let layout = board_layout_mode(board_width);
+        if matches!(shell_layout, crate::layout::LayoutMode::Wide) {
+            board_width -= px(DETAIL_WIDTH);
+        }
+        let external_detail = matches!(shell_layout, crate::layout::LayoutMode::Wide);
+        let layout = surface_board_layout(board_width, external_detail);
         div()
             .size_full()
+            .track_focus(&self.focus)
+            .key_context(WORKGRAPH_KEY_CONTEXT)
             .min_h_0()
             .bg(THEME.colors.panel)
             .child(match &self.state {
@@ -900,7 +603,8 @@ impl Render for WorkGraphBoardView {
                                 })
                                 .when(
                                     !self.creating
-                                        && (layout != BoardLayoutMode::Narrow
+                                        && (external_detail
+                                            || layout != BoardLayoutMode::Narrow
                                             || self.selected.is_none()),
                                     |board| {
                                         board.child(if groups.is_empty() {
@@ -941,10 +645,13 @@ impl Render for WorkGraphBoardView {
                                 })
                                 .when(
                                     !self.creating
+                                        && !external_detail
                                         && (layout != BoardLayoutMode::Narrow
                                             || self.selected.is_some()),
                                     |board| {
-                                        board.child(self.render_detail(entity, data, layout))
+                                        board.child(self.render_detail(
+                                            entity, data, layout, false,
+                                        ))
                                     },
                                 ),
                         )

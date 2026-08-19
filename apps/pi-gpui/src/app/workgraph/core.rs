@@ -91,6 +91,21 @@ pub(super) fn issue_matches_board_filter(issue: &Issue, filter: &str) -> bool {
     searchable.to_lowercase().contains(&filter.to_lowercase())
 }
 
+pub(super) fn adjacent_issue_number(
+    numbers: &[u64],
+    selected: Option<u64>,
+    delta: isize,
+) -> Option<u64> {
+    if numbers.is_empty() {
+        return None;
+    }
+    let current = selected
+        .and_then(|number| numbers.iter().position(|candidate| *candidate == number))
+        .unwrap_or(if delta < 0 { 0 } else { numbers.len() - 1 });
+    let next = (current as isize + delta).rem_euclid(numbers.len() as isize) as usize;
+    numbers.get(next).copied()
+}
+
 pub(super) fn matching_project_groups(
     data: &BoardData,
     filter: BoardFilter,
@@ -241,6 +256,16 @@ mod tests {
         assert!(issue_matches_board_filter(&issue, "#42"));
         assert!(issue_matches_board_filter(&issue, "ISSUE 42"));
         assert!(!issue_matches_board_filter(&issue, "unrelated"));
+    }
+
+    #[test]
+    fn issue_navigation_wraps_and_enters_from_either_direction() {
+        let numbers = [2, 5, 8];
+        assert_eq!(adjacent_issue_number(&numbers, None, 1), Some(2));
+        assert_eq!(adjacent_issue_number(&numbers, None, -1), Some(8));
+        assert_eq!(adjacent_issue_number(&numbers, Some(8), 1), Some(2));
+        assert_eq!(adjacent_issue_number(&numbers, Some(2), -1), Some(8));
+        assert_eq!(adjacent_issue_number(&[], None, 1), None);
     }
 
     #[test]

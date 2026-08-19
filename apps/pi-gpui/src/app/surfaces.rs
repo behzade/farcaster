@@ -113,7 +113,7 @@ impl PiApp {
     pub(super) fn toggle_workgraph_surface(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match self.surface.toggled() {
             AppSurface::Chat => self.show_chat_surface(window, cx),
-            AppSurface::Work => self.open_workgraph_surface(cx),
+            AppSurface::Work => self.open_workgraph_surface(window, cx),
         }
     }
 
@@ -125,23 +125,27 @@ impl PiApp {
         }
     }
 
-    pub(super) fn open_workgraph_surface(&mut self, cx: &mut Context<Self>) {
-        self.refresh_workgraph_board(cx);
+    pub(super) fn open_workgraph_surface(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.surface != AppSurface::Work {
+            self.refresh_workgraph_board(cx);
             self.surface = AppSurface::Work;
             cx.notify();
         }
+        self.workgraph_view
+            .update(cx, |view, cx| view.focus(window, cx));
     }
 
     pub(super) fn open_workgraph_issue(
         &mut self,
         number: u64,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.refresh_workgraph_board(cx);
-        self.workgraph_view
-            .update(cx, |view, cx| view.select_issue(number, cx));
+        self.workgraph_view.update(cx, |view, cx| {
+            view.select_issue(number, cx);
+            view.focus(window, cx);
+        });
         if self.surface != AppSurface::Work {
             self.surface = AppSurface::Work;
             cx.notify();

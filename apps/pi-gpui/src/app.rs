@@ -16,7 +16,11 @@ mod workgraph;
 pub(crate) use composer_images::ComposerImage;
 use submissions::PendingSubmission;
 pub(crate) use views::OVERLAY_KEY_CONTEXT;
-use views::{ComposerView, RunPanelView, SessionRailView, TranscriptView, session_move_allowed};
+use views::{
+    ComposerView, RunPanelView, SessionRailView, TranscriptView, WorkGraphDetailView,
+    session_move_allowed,
+};
+pub(crate) use workgraph::adapter::{WORKGRAPH_KEY_CONTEXT, WORKGRAPH_NAV_KEY_CONTEXT};
 use workgraph::{adapter::WorkGraphBoardView, sidebar::WorkGraphSidebarView};
 
 use std::{
@@ -101,7 +105,12 @@ actions!(
         ComposerHistoryPrevious,
         ComposerHistoryNext,
         ShowKeybindings,
-        ShowWorkGraph
+        ShowWorkGraph,
+        WorkPreviousIssue,
+        WorkNextIssue,
+        WorkFocusSearch,
+        WorkCreateIssue,
+        WorkDismiss
     ]
 );
 
@@ -165,6 +174,7 @@ pub(crate) struct PiApp {
     composer_view: Entity<ComposerView>,
     run_panel_view: Entity<RunPanelView>,
     workgraph_view: Entity<WorkGraphBoardView>,
+    workgraph_detail_view: Entity<WorkGraphDetailView>,
     workgraph_sidebar_view: Entity<WorkGraphSidebarView>,
     surface: AppSurface,
     run_panel_scroll: ScrollHandle,
@@ -362,6 +372,8 @@ impl PiApp {
         let run_panel_view = cx.new(|_| RunPanelView::new(app.clone()));
         let workgraph_view =
             cx.new(|cx| WorkGraphBoardView::new(crate::state::state_path(), project.clone(), cx));
+        let workgraph_detail_view =
+            cx.new(|cx| WorkGraphDetailView::new(workgraph_view.clone(), cx));
         let workgraph_sidebar_view = cx.new(|cx| {
             WorkGraphSidebarView::new(app.clone(), crate::state::state_path(), project.clone(), cx)
         });
@@ -429,6 +441,7 @@ impl PiApp {
             composer_view,
             run_panel_view,
             workgraph_view,
+            workgraph_detail_view,
             workgraph_sidebar_view,
             surface: AppSurface::Chat,
             run_panel_scroll: ScrollHandle::new(),

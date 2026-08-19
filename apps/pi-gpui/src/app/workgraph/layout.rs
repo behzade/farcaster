@@ -15,11 +15,6 @@ pub(crate) enum IssueDetailShell {
 
 impl IssueDetailShell {
     #[must_use]
-    pub(crate) const fn detail_is_embedded(self, review_expanded: bool) -> bool {
-        review_expanded || matches!(self, Self::Embedded)
-    }
-
-    #[must_use]
     pub(crate) const fn shows_sheet(self, review_expanded: bool) -> bool {
         !review_expanded && matches!(self, Self::Sheet)
     }
@@ -27,6 +22,10 @@ impl IssueDetailShell {
 
 pub(crate) const WIDE_BOARD_MIN_WIDTH: f32 = 1_180.0;
 pub(crate) const COMPACT_BOARD_MIN_WIDTH: f32 = 960.0;
+pub(crate) const EXTERNAL_DETAIL_FILTER_MIN_WIDTH: f32 = 560.0;
+pub(crate) const DETAIL_WIDTH: f32 = 400.0;
+pub(crate) const DETAIL_MIN_WIDTH: f32 = 360.0;
+pub(crate) const DETAIL_MAX_WIDTH: f32 = 440.0;
 
 #[must_use]
 pub(crate) fn board_layout_mode(width: Pixels) -> BoardLayoutMode {
@@ -37,6 +36,19 @@ pub(crate) fn board_layout_mode(width: Pixels) -> BoardLayoutMode {
         BoardLayoutMode::Compact
     } else {
         BoardLayoutMode::Narrow
+    }
+}
+
+#[must_use]
+pub(crate) fn surface_board_layout(width: Pixels, external_detail: bool) -> BoardLayoutMode {
+    let layout = board_layout_mode(width);
+    if external_detail
+        && layout == BoardLayoutMode::Narrow
+        && f32::from(width) >= EXTERNAL_DETAIL_FILTER_MIN_WIDTH
+    {
+        BoardLayoutMode::Compact
+    } else {
+        layout
     }
 }
 
@@ -52,7 +64,10 @@ pub(crate) const fn issue_detail_shell(layout: BoardLayoutMode) -> IssueDetailSh
 mod tests {
     use gpui::px;
 
-    use super::{BoardLayoutMode, IssueDetailShell, board_layout_mode, issue_detail_shell};
+    use super::{
+        BoardLayoutMode, IssueDetailShell, board_layout_mode, issue_detail_shell,
+        surface_board_layout,
+    };
 
     #[test]
     fn layout_thresholds_use_the_narrow_sheet_only_below_960() {
@@ -61,6 +76,22 @@ mod tests {
         assert_eq!(board_layout_mode(px(1_114.0)), BoardLayoutMode::Compact);
         assert_eq!(board_layout_mode(px(1_179.0)), BoardLayoutMode::Compact);
         assert_eq!(board_layout_mode(px(1_180.0)), BoardLayoutMode::Wide);
+    }
+
+    #[test]
+    fn external_detail_keeps_the_filter_rail_when_the_list_has_room() {
+        assert_eq!(
+            surface_board_layout(px(559.0), true),
+            BoardLayoutMode::Narrow
+        );
+        assert_eq!(
+            surface_board_layout(px(560.0), true),
+            BoardLayoutMode::Compact
+        );
+        assert_eq!(
+            surface_board_layout(px(560.0), false),
+            BoardLayoutMode::Narrow
+        );
     }
 
     #[test]
@@ -78,8 +109,6 @@ mod tests {
             IssueDetailShell::Embedded
         );
         assert!(IssueDetailShell::Sheet.shows_sheet(false));
-        assert!(!IssueDetailShell::Sheet.detail_is_embedded(false));
         assert!(!IssueDetailShell::Sheet.shows_sheet(true));
-        assert!(IssueDetailShell::Sheet.detail_is_embedded(true));
     }
 }

@@ -69,9 +69,10 @@ impl PiApp {
                                 ButtonTone::Quiet
                             },
                             true,
-                            move |_, cx| {
-                                let _ = workgraph
-                                    .update(cx, |this, cx| this.open_workgraph_surface(cx));
+                            move |window, cx| {
+                                let _ = workgraph.update(cx, |this, cx| {
+                                    this.open_workgraph_surface(window, cx);
+                                });
                             },
                         )
                     })

@@ -1,6 +1,7 @@
-use gpui::{Context, IntoElement as _, Render, WeakEntity};
+use gpui::{Context, Entity, IntoElement as _, Render, Subscription, WeakEntity};
 
 use super::PiApp;
+use crate::app::workgraph::adapter::WorkGraphBoardView;
 use crate::transcript;
 
 pub(crate) struct SessionRailView {
@@ -17,6 +18,11 @@ pub(crate) struct ComposerView {
 
 pub(crate) struct RunPanelView {
     app: WeakEntity<PiApp>,
+}
+
+pub(crate) struct WorkGraphDetailView {
+    board: Entity<WorkGraphBoardView>,
+    _board_subscription: Subscription,
 }
 
 impl SessionRailView {
@@ -40,6 +46,16 @@ impl ComposerView {
 impl RunPanelView {
     pub(crate) fn new(app: WeakEntity<PiApp>) -> Self {
         Self { app }
+    }
+}
+
+impl WorkGraphDetailView {
+    pub(crate) fn new(board: Entity<WorkGraphBoardView>, cx: &mut Context<Self>) -> Self {
+        let subscription = cx.observe(&board, |_, _, cx| cx.notify());
+        Self {
+            board,
+            _board_subscription: subscription,
+        }
     }
 }
 
@@ -103,6 +119,13 @@ impl Render for ComposerView {
         app.read(cx)
             .render_composer(self.app.clone(), cx)
             .into_any_element()
+    }
+}
+
+impl Render for WorkGraphDetailView {
+    fn render(&mut self, _: &mut gpui::Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
+        self.board
+            .update(cx, |board, cx| board.render_external_detail(cx))
     }
 }
 
