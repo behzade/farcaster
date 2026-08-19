@@ -1920,7 +1920,9 @@ mod tests {
                 direnv_program: None,
             },
         );
-        let deadline = Instant::now() + Duration::from_secs(2);
+        // RpcProcess permits up to 15 seconds for its readiness handshake. The
+        // full test suite can also delay this supervisor under build-machine load.
+        let deadline = Instant::now() + Duration::from_secs(20);
         let mut connected = false;
         while Instant::now() < deadline && !connected {
             connected = matches!(
