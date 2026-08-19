@@ -89,12 +89,30 @@ pub(crate) fn icon_button(
     tone: ButtonTone,
     on_press: impl Fn(&mut Window, &mut App) + 'static,
 ) -> AnyElement {
-    tone_icon_control(
-        icon_control(id, label).child(app_icon(icon, AppIconSize::Control)),
-        tone,
-    )
-    .on_click(move |_, window, cx| on_press(window, cx))
-    .into_any_element()
+    icon_button_with_size(id, icon, label, AppIconSize::Control, tone, on_press)
+}
+
+pub(crate) fn prominent_icon_button(
+    id: impl Into<ElementId>,
+    icon: impl IconNamed,
+    label: impl Into<SharedString>,
+    tone: ButtonTone,
+    on_press: impl Fn(&mut Window, &mut App) + 'static,
+) -> AnyElement {
+    icon_button_with_size(id, icon, label, AppIconSize::Prominent, tone, on_press)
+}
+
+fn icon_button_with_size(
+    id: impl Into<ElementId>,
+    icon: impl IconNamed,
+    label: impl Into<SharedString>,
+    size: AppIconSize,
+    tone: ButtonTone,
+    on_press: impl Fn(&mut Window, &mut App) + 'static,
+) -> AnyElement {
+    tone_icon_control(icon_control(id, label).child(app_icon(icon, size)), tone)
+        .on_click(move |_, window, cx| on_press(window, cx))
+        .into_any_element()
 }
 
 fn tone_icon_control(control: Stateful<Div>, tone: ButtonTone) -> Stateful<Div> {

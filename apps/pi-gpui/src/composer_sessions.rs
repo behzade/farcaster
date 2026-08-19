@@ -234,6 +234,21 @@ impl ComposerSessions {
         true
     }
 
+    pub(crate) fn restore_submitted_text(
+        &mut self,
+        target: &str,
+        text: String,
+    ) -> Option<ComposerSnapshot> {
+        let session = self.sessions.entry(target.to_owned()).or_default();
+        if !session.composer.text.is_empty() {
+            return None;
+        }
+        let cursor = text.len();
+        session.composer = ComposerSnapshot::new(text, cursor, cursor..cursor);
+        self.persistence.save(session.record(target.to_owned()));
+        Some(session.composer.clone())
+    }
+
     pub(crate) fn sync_history(&mut self, target: &str, messages: &[String]) {
         if messages.is_empty() {
             return;

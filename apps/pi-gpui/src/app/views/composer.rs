@@ -14,7 +14,7 @@ use crate::{
     assets::AppIcon,
     composer_sessions::ComposerSnapshot,
     conversation::QueueState,
-    primitives::{ButtonTone, button, button_with_icon},
+    primitives::{ButtonTone, button, button_with_icon, prominent_icon_button},
     protocol::ExtensionUiRequest,
     runtime::RuntimeCommand,
     theme::{MONO_FONT_FAMILY, THEME},
@@ -32,6 +32,12 @@ impl PiApp {
                 .take(8)
                 .collect::<Vec<_>>();
         let exact_command = slash_commands::is_exact(&composer_value, &self.snapshot.commands);
+        let primary_action = composer_primary_action(
+            !composer_value.is_empty() || self.has_composer_images(),
+            self.can_submit(),
+            exact_command,
+            self.snapshot.conversation.running,
+        );
         let mention_query = file_mentions::query_at_cursor(
             &self.composer.read(cx).value(),
             self.composer.read(cx).cursor(),
@@ -204,28 +210,23 @@ impl PiApp {
                                     },
                                 ))
                             })
-                            .child(button_with_icon(
-                                "send",
-                                AppIcon::ArrowUp,
-                                if exact_command {
-                                    "Run"
-                                } else if self.snapshot.conversation.running {
-                                    "Steer"
-                                } else {
-                                    "Send"
-                                },
-                                ButtonTone::Accent,
-                                self.can_submit(),
-                                move |window, cx| {
-                                    let _ = send_entity.update(cx, |this, cx| {
-                                        let value =
-                                            this.composer.read(cx).value().trim().to_owned();
-                                        if !value.is_empty() || this.has_composer_images() {
-                                            this.submit(value, this.enter_mode(), window, cx);
-                                        }
-                                    });
-                                },
-                            )),
+                            .when_some(primary_action, |actions, label| {
+                                actions.child(prominent_icon_button(
+                                    "send",
+                                    AppIcon::ArrowUp,
+                                    label,
+                                    ButtonTone::Accent,
+                                    move |window, cx| {
+                                        let _ = send_entity.update(cx, |this, cx| {
+                                            let value =
+                                                this.composer.read(cx).value().trim().to_owned();
+                                            if !value.is_empty() || this.has_composer_images() {
+                                                this.submit(value, this.enter_mode(), window, cx);
+                                            }
+                                        });
+                                    },
+                                ))
+                            }),
                     ),
             )
             .into_any_element()
@@ -619,6 +620,24 @@ fn queued_messages(queue: &QueueState) -> Option<AnyElement> {
             }))
             .into_any_element(),
     )
+}
+
+pub(super) fn composer_primary_action(
+    has_content: bool,
+    can_submit: bool,
+    exact_command: bool,
+    running: bool,
+) -> Option<&'static str> {
+    if !has_content || !can_submit {
+        return None;
+    }
+    Some(if exact_command {
+        "Run"
+    } else if running {
+        "Steer"
+    } else {
+        "Send"
+    })
 }
 
 fn composer_status(app: &PiApp) -> Option<AnyElement> {

@@ -114,6 +114,27 @@ fn an_accepted_prompt_only_clears_its_unchanged_session() {
 }
 
 #[test]
+fn rejected_submission_restores_only_an_empty_composer() {
+    let mut sessions = sessions("session:one");
+    sessions.capture_current(ComposerSnapshot::new("sent".into(), 4, 4..4));
+    assert!(sessions.clear_submitted_text("session:one", "sent"));
+
+    assert_eq!(
+        sessions
+            .restore_submitted_text("session:one", "sent".into())
+            .map(|snapshot| snapshot.text),
+        Some("sent".into())
+    );
+    sessions.capture_current(ComposerSnapshot::new("new text".into(), 8, 8..8));
+    assert!(
+        sessions
+            .restore_submitted_text("session:one", "sent".into())
+            .is_none()
+    );
+    assert_eq!(sessions.current().text, "new text");
+}
+
+#[test]
 fn saving_a_draft_promotes_its_full_composer_state() {
     let mut sessions = sessions("draft:one");
     sessions.record_submission("draft:one", "first prompt");

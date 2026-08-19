@@ -15,7 +15,7 @@ use crate::{
     sessions::{SessionSummary, UsageSummary},
 };
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(crate) struct StateStore {
@@ -143,23 +143,32 @@ impl StateStore {
                      ALTER TABLE drafts ADD COLUMN submitted INTEGER NOT NULL DEFAULT 0;
                      ALTER TABLE drafts ADD COLUMN session_path TEXT;
                      ALTER TABLE sessions ADD COLUMN is_running INTEGER NOT NULL DEFAULT 0;
-                     UPDATE meta SET value='4' WHERE key='schema_version';",
+                     ALTER TABLE drafts ADD COLUMN provisional_title TEXT;
+                     UPDATE meta SET value='5' WHERE key='schema_version';",
                 )
-                .map_err(|error| format!("migrate GUI state schema to 4: {error}"))?,
+                .map_err(|error| format!("migrate GUI state schema to 5: {error}"))?,
             2 => migration
                 .execute_batch(
                     "ALTER TABLE drafts ADD COLUMN submitted INTEGER NOT NULL DEFAULT 0;
                      ALTER TABLE drafts ADD COLUMN session_path TEXT;
                      ALTER TABLE sessions ADD COLUMN is_running INTEGER NOT NULL DEFAULT 0;
-                     UPDATE meta SET value='4' WHERE key='schema_version';",
+                     ALTER TABLE drafts ADD COLUMN provisional_title TEXT;
+                     UPDATE meta SET value='5' WHERE key='schema_version';",
                 )
-                .map_err(|error| format!("migrate GUI state schema to 4: {error}"))?,
+                .map_err(|error| format!("migrate GUI state schema to 5: {error}"))?,
             3 => migration
                 .execute_batch(
                     "ALTER TABLE sessions ADD COLUMN is_running INTEGER NOT NULL DEFAULT 0;
-                     UPDATE meta SET value='4' WHERE key='schema_version';",
+                     ALTER TABLE drafts ADD COLUMN provisional_title TEXT;
+                     UPDATE meta SET value='5' WHERE key='schema_version';",
                 )
-                .map_err(|error| format!("migrate GUI state schema to 4: {error}"))?,
+                .map_err(|error| format!("migrate GUI state schema to 5: {error}"))?,
+            4 => migration
+                .execute_batch(
+                    "ALTER TABLE drafts ADD COLUMN provisional_title TEXT;
+                     UPDATE meta SET value='5' WHERE key='schema_version';",
+                )
+                .map_err(|error| format!("migrate GUI state schema to 5: {error}"))?,
             SCHEMA_VERSION => {}
             _ => {
                 return Err(format!(
@@ -167,12 +176,6 @@ impl StateStore {
                 ));
             }
         }
-        migration
-            .execute(
-                "UPDATE drafts SET submitted=0 WHERE submitted != 0 AND session_path IS NULL",
-                [],
-            )
-            .map_err(|error| format!("repair submitted drafts without session paths: {error}"))?;
         migration
             .commit()
             .map_err(|error| format!("commit GUI state schema migration: {error}"))?;
@@ -229,7 +232,7 @@ impl StateStore {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT id, project, created_ms, submitted, session_path
+                "SELECT id, project, created_ms, submitted, session_path, provisional_title
                    FROM drafts ORDER BY created_ms DESC",
             )
             .map_err(|error| format!("read drafts: {error}"))?;
@@ -241,11 +244,12 @@ impl StateStore {
                     row.get::<_, u64>(2)?,
                     row.get::<_, bool>(3)?,
                     row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
                 ))
             })
             .map_err(|error| format!("query drafts: {error}"))?;
         for row in rows {
-            let (id, project, created_ms, submitted, session_path) =
+            let (id, project, created_ms, submitted, session_path, title) =
                 row.map_err(|error| error.to_string())?;
             if let Some(project) = existing_directory(&project) {
                 drafts.push(DraftSession {
@@ -256,6 +260,7 @@ impl StateStore {
                     session_path: session_path
                         .map(PathBuf::from)
                         .map(|path| crate::sessions::normalize_session_path(&path)),
+                    title,
                 });
             }
         }
@@ -263,16 +268,6 @@ impl StateStore {
     }
 
     pub(crate) fn save_registry(&mut self, registry: &Registry) -> Result<(), String> {
-        if let Some(draft) = registry
-            .drafts
-            .iter()
-            .find(|draft| draft.submitted && draft.session_path.is_none())
-        {
-            return Err(format!(
-                "save draft {}: submitted draft has no session path",
-                draft.id
-            ));
-        }
         let transaction = self
             .connection
             .transaction()
@@ -299,14 +294,16 @@ impl StateStore {
                 .map(|path| crate::sessions::normalize_session_path(path));
             transaction
                 .execute(
-                    "INSERT INTO drafts(id, project, created_ms, submitted, session_path)
-                     VALUES(?1, ?2, ?3, ?4, ?5)",
+                    "INSERT INTO drafts(
+                       id, project, created_ms, submitted, session_path, provisional_title
+                     ) VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
                     params![
                         draft.id,
                         draft.project.to_string_lossy(),
                         draft.created_ms,
                         draft.submitted,
-                        session_path.as_ref().map(|path| path.to_string_lossy())
+                        session_path.as_ref().map(|path| path.to_string_lossy()),
+                        draft.title
                     ],
                 )
                 .map_err(|error| format!("save draft {}: {error}", draft.id))?;

@@ -20,6 +20,8 @@ pub(crate) struct DraftSession {
     pub submitted: bool,
     #[serde(default)]
     pub session_path: Option<PathBuf>,
+    #[serde(default)]
+    pub title: Option<String>,
 }
 
 impl DraftSession {
@@ -44,6 +46,7 @@ impl DraftSession {
             created_ms,
             submitted: false,
             session_path: None,
+            title: None,
         }
     }
 
@@ -212,6 +215,7 @@ mod tests {
                     created_ms: 1,
                     submitted: true,
                     session_path: Some(second.clone()),
+                    title: None,
                 }],
             },
         )?;
@@ -226,6 +230,7 @@ mod tests {
                     created_ms: 1,
                     submitted: true,
                     session_path: Some(second.canonicalize()?),
+                    title: None,
                 }],
             }
         );
@@ -246,6 +251,7 @@ mod tests {
                     created_ms: 1,
                     submitted: false,
                     session_path: None,
+                    title: None,
                 }],
             },
         )?;

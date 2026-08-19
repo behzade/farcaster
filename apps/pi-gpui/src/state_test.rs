@@ -29,6 +29,7 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
         created_ms: 7,
         submitted: true,
         session_path: Some(session_path.clone()),
+        title: Some("Provisional title".into()),
     };
     {
         let mut store = StateStore::open_at(&database)?;
@@ -132,6 +133,7 @@ fn prompt_completion_persists_draft_session_association_atomically()
             created_ms: 1,
             submitted: false,
             session_path: None,
+            title: None,
         }],
     })?;
     let outbox = store.enqueue_prompt(
@@ -189,7 +191,7 @@ fn partial_session_index_updates_do_not_delete_omitted_rows()
 }
 
 #[test]
-fn schema_v1_migrates_to_v4_with_defaults_and_outbox_preserved()
+fn schema_v1_migrates_to_v5_with_defaults_and_outbox_preserved()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
@@ -206,6 +208,7 @@ fn schema_v1_migrates_to_v4_with_defaults_and_outbox_preserved()
             created_ms: 7,
             submitted: false,
             session_path: None,
+            title: None,
         }]
     );
     let queued = store.queued_prompts()?;
@@ -214,12 +217,12 @@ fn schema_v1_migrates_to_v4_with_defaults_and_outbox_preserved()
     assert!(queued[0].images.is_empty());
     drop(store);
 
-    assert_eq!(database_schema_version(&database)?, 4);
+    assert_eq!(database_schema_version(&database)?, 5);
     Ok(())
 }
 
 #[test]
-fn schema_v2_migrates_to_v4_with_defaults_and_outbox_preserved()
+fn schema_v2_migrates_to_v5_with_defaults_and_outbox_preserved()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
@@ -236,6 +239,7 @@ fn schema_v2_migrates_to_v4_with_defaults_and_outbox_preserved()
             created_ms: 7,
             submitted: false,
             session_path: None,
+            title: None,
         }]
     );
     let queued = store.queued_prompts()?;
@@ -247,12 +251,12 @@ fn schema_v2_migrates_to_v4_with_defaults_and_outbox_preserved()
     );
     drop(store);
 
-    assert_eq!(database_schema_version(&database)?, 4);
+    assert_eq!(database_schema_version(&database)?, 5);
     Ok(())
 }
 
 #[test]
-fn schema_v3_migrates_to_v4_with_running_default() -> Result<(), Box<dyn std::error::Error>> {
+fn schema_v3_migrates_to_v5_with_running_default() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
     fs::create_dir(&project)?;
@@ -265,34 +269,59 @@ fn schema_v3_migrates_to_v4_with_running_default() -> Result<(), Box<dyn std::er
     )?;
 
     let store = StateStore::open_at(&database)?;
-    assert_eq!(database_schema_version(&database)?, 4);
+    assert_eq!(database_schema_version(&database)?, 5);
     assert!(store.cached_sessions("")?.is_empty());
     Ok(())
 }
 
 #[test]
-fn state_store_rejects_submitted_draft_without_session_path()
+fn schema_v4_migrates_to_v5_with_provisional_title_default()
 -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let project = temp.path().join("project");
+    fs::create_dir(&project)?;
+    let database = temp.path().join("gui.sqlite3");
+    seed_legacy_database(&database, 2, &project)?;
+    Connection::open(&database)?.execute_batch(
+        "ALTER TABLE drafts ADD COLUMN submitted INTEGER NOT NULL DEFAULT 0;
+         ALTER TABLE drafts ADD COLUMN session_path TEXT;
+         ALTER TABLE sessions ADD COLUMN is_running INTEGER NOT NULL DEFAULT 0;
+         UPDATE meta SET value='4' WHERE key='schema_version';",
+    )?;
+
+    let store = StateStore::open_at(&database)?;
+    assert_eq!(database_schema_version(&database)?, 5);
+    assert_eq!(store.load_registry()?.drafts[0].title, None);
+    Ok(())
+}
+
+#[test]
+fn submitted_draft_without_session_path_survives_reopen() -> Result<(), Box<dyn std::error::Error>>
+{
     let temp = tempdir()?;
     let project = temp.path().join("project");
     fs::create_dir(&project)?;
     let mut store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;
 
-    let error = store
-        .save_registry(&Registry {
-            projects: vec![project.clone()],
-            drafts: vec![DraftSession {
-                id: "invalid".into(),
-                project,
-                created_ms: 1,
-                submitted: true,
-                session_path: None,
-            }],
-        })
-        .expect_err("submitted draft without a path must not be persisted");
+    store.save_registry(&Registry {
+        projects: vec![project.clone()],
+        drafts: vec![DraftSession {
+            id: "pending".into(),
+            project,
+            created_ms: 1,
+            submitted: true,
+            session_path: None,
+            title: Some("Pending session".into()),
+        }],
+    })?;
+    drop(store);
 
-    assert!(error.contains("submitted draft has no session path"));
-    assert_eq!(store.load_registry()?, Registry::default());
+    let store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;
+    let registry = store.load_registry()?;
+    assert_eq!(registry.drafts.len(), 1);
+    assert!(registry.drafts[0].submitted);
+    assert_eq!(registry.drafts[0].session_path, None);
+    assert_eq!(registry.drafts[0].title.as_deref(), Some("Pending session"));
     Ok(())
 }
 

@@ -77,18 +77,23 @@ impl PiApp {
                 if let Some(path) = archived_session {
                     self.set_session_settled(path, false, cx);
                 }
+                self.begin_draft_submission(&target, &value);
+                self.notify_session_rail(cx);
                 self.composer_sessions.record_submission(&target, &value);
-                let pending_images = self
-                    .composer_images
-                    .get(&target)
-                    .cloned()
-                    .unwrap_or_default();
+                let pending_images = self.composer_images.remove(&target).unwrap_or_default();
                 let image_count = pending_images.len();
                 self.pending_submission = Some(PendingSubmission {
-                    target,
-                    text: editor_text,
+                    target: target.clone(),
+                    text: editor_text.clone(),
                     images: pending_images,
                 });
+                if self
+                    .composer_sessions
+                    .clear_submitted_text(&target, &editor_text)
+                    && self.composer_sessions.current_target() == target
+                {
+                    self.apply_composer_snapshot(ComposerSnapshot::default(), window, cx);
+                }
                 let snapshot = Arc::make_mut(&mut self.snapshot);
                 let index = snapshot.conversation.items.len();
                 let conversation = Arc::make_mut(&mut snapshot.conversation);
@@ -301,20 +306,23 @@ impl PiApp {
             return;
         };
         if resolution == SubmissionResolution::Accepted {
-            let cleared = self
-                .composer_sessions
-                .clear_submitted_text(&pending.target, &pending.text);
-            if self
-                .composer_images
-                .get(&pending.target)
-                .is_some_and(|images| images == &pending.images)
-            {
-                self.composer_images.remove(&pending.target);
-            }
-            if cleared && self.composer_sessions.current_target() == pending.target {
-                self.apply_composer_snapshot(ComposerSnapshot::default(), window, cx);
-            }
-        } else if let Some(session_key) = rejected_attachment_target(
+            return;
+        }
+
+        let restored = self
+            .composer_sessions
+            .restore_submitted_text(&pending.target, pending.text.clone());
+        if !pending.images.is_empty() {
+            self.composer_images
+                .entry(pending.target.clone())
+                .or_insert_with(|| pending.images.clone());
+        }
+        if let Some(snapshot) = restored
+            && self.composer_sessions.current_target() == pending.target
+        {
+            self.apply_composer_snapshot(snapshot, window, cx);
+        }
+        if let Some(session_key) = rejected_attachment_target(
             &pending.text,
             !pending.images.is_empty(),
             &pending.target,

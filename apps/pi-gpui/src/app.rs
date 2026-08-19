@@ -622,6 +622,9 @@ impl PiApp {
                     session,
                 } if generation == self.runtime_generation => {
                     self.record_draft_submission(&target, accepted, session.clone());
+                    if !accepted {
+                        self.run_statuses.insert(target.clone(), "Failed".into());
+                    }
                     if self
                         .pending_submission
                         .as_ref()

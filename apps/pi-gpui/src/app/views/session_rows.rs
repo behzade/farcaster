@@ -91,6 +91,7 @@ pub(super) fn draft_session_row(
     let discard_id = id.clone();
     let project = draft.project.clone();
     let discard_entity = entity.clone();
+    let title = draft.title.as_deref().unwrap_or("New session").to_owned();
     div()
         .h(THEME.layout.session_row_height)
         .w_full()
@@ -121,7 +122,41 @@ pub(super) fn draft_session_row(
                         this.resume_draft(id.clone(), project.clone(), window, cx);
                     });
                 })
-                .child(
+                .child(if draft.submitted {
+                    div()
+                        .w_full()
+                        .min_w_0()
+                        .flex()
+                        .items_center()
+                        .gap(THEME.space.sm)
+                        .child(
+                            div()
+                                .min_w_0()
+                                .flex_1()
+                                .overflow_hidden()
+                                .whitespace_normal()
+                                .line_clamp(2)
+                                .line_height(THEME.type_scale.line_body)
+                                .text_size(THEME.type_scale.body)
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(THEME.colors.text)
+                                .child(title),
+                        )
+                        .child(
+                            div()
+                                .flex_none()
+                                .whitespace_nowrap()
+                                .text_size(THEME.type_scale.caption)
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(if status == "Failed" {
+                                    THEME.colors.error
+                                } else {
+                                    THEME.colors.accent
+                                })
+                                .child(status.to_owned()),
+                        )
+                        .into_any_element()
+                } else {
                     div()
                         .w_full()
                         .min_w_0()
@@ -134,11 +169,7 @@ pub(super) fn draft_session_row(
                                 .whitespace_nowrap()
                                 .text_size(THEME.type_scale.caption)
                                 .font_weight(FontWeight::MEDIUM)
-                                .text_color(if status == "Draft" {
-                                    THEME.colors.subtle
-                                } else {
-                                    THEME.colors.accent
-                                })
+                                .text_color(THEME.colors.subtle)
                                 .child(status.to_owned()),
                         )
                         .child(
@@ -151,7 +182,7 @@ pub(super) fn draft_session_row(
                                 .text_size(THEME.type_scale.body)
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(THEME.colors.text)
-                                .child("New session"),
+                                .child(title),
                         )
                         .child(
                             icon_control(format!("discard-{discard_id}"), "Discard draft")
@@ -163,8 +194,9 @@ pub(super) fn draft_session_row(
                                         this.discard_draft(&discard_id, window, cx);
                                     });
                                 }),
-                        ),
-                ),
+                        )
+                        .into_any_element()
+                }),
         )
         .into_any_element()
 }

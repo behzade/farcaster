@@ -91,6 +91,31 @@ impl PiApp {
         !has_content
     }
 
+    pub(super) fn begin_draft_submission(&mut self, target: &str, prompt: &str) {
+        let Some(id) = draft_id(target) else {
+            return;
+        };
+        self.submitted_drafts.entry(id.to_owned()).or_default();
+        self.run_statuses
+            .insert(target.to_owned(), "Working".into());
+        if !self.drafts.iter().any(|draft| draft.id == id) {
+            self.drafts.insert(
+                0,
+                DraftSession::with_id(id.to_owned(), self.project.clone()),
+            );
+        }
+        let draft = self
+            .drafts
+            .iter_mut()
+            .find(|draft| draft.id == id)
+            .expect("submitted draft was materialized");
+        draft.submitted = true;
+        if draft.title.is_none() {
+            draft.title = provisional_session_title(prompt);
+        }
+        self.save_project_registry();
+    }
+
     pub(super) fn record_draft_submission(
         &mut self,
         target: &str,
@@ -117,6 +142,14 @@ impl PiApp {
         session: Option<PathBuf>,
         status: String,
     ) {
+        if status == "Done"
+            && self
+                .run_statuses
+                .get(&target)
+                .is_some_and(|status| status == "Failed")
+        {
+            return;
+        }
         let session = session.map(|path| normalize_session_path(&path));
         if status == "Working"
             && self
@@ -223,14 +256,25 @@ pub(super) fn submitted_draft_associations(
 ) -> HashMap<String, Option<PathBuf>> {
     drafts
         .iter()
-        .filter_map(|draft| {
-            draft
-                .submitted
-                .then(|| draft.session_path.clone())
-                .flatten()
-                .map(|path| (draft.id.clone(), Some(path)))
-        })
+        .filter(|draft| draft.submitted)
+        .map(|draft| (draft.id.clone(), draft.session_path.clone()))
         .collect()
+}
+
+fn provisional_session_title(prompt: &str) -> Option<String> {
+    const MAX_WORDS: usize = 12;
+    const MAX_CHARS: usize = 80;
+
+    let line = prompt.lines().find(|line| !line.trim().is_empty())?.trim();
+    let words = line
+        .trim_matches(|character| matches!(character, '"' | '`'))
+        .split_whitespace()
+        .take(MAX_WORDS)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let title = words.chars().take(MAX_CHARS).collect::<String>();
+    let title = title.trim_end_matches(['.', ':', ';']).trim();
+    (!title.is_empty()).then(|| title.to_owned())
 }
 
 fn establish_submission(
@@ -440,6 +484,38 @@ mod tests {
     }
 
     #[test]
+    fn provisional_title_uses_first_nonblank_bounded_prompt_line() {
+        assert_eq!(
+            provisional_session_title("\n  Fix the composer submission flow.\nMore detail"),
+            Some("Fix the composer submission flow".into())
+        );
+        assert_eq!(provisional_session_title("   \n"), None);
+        assert_eq!(
+            provisional_session_title(
+                "one two three four five six seven eight nine ten eleven twelve thirteen"
+            ),
+            Some("one two three four five six seven eight nine ten eleven twelve".into())
+        );
+    }
+
+    #[test]
+    fn submitted_pathless_drafts_keep_their_pending_identity() {
+        let draft = DraftSession {
+            id: "pending".into(),
+            project: PathBuf::from("/project"),
+            created_ms: 1,
+            submitted: true,
+            session_path: None,
+            title: Some("Pending session".into()),
+        };
+
+        assert_eq!(
+            submitted_draft_associations(&[draft]),
+            HashMap::from([("pending".into(), None)])
+        );
+    }
+
+    #[test]
     fn submitted_a_and_selected_empty_b_keep_distinct_identity() {
         let path = PathBuf::from("/sessions/a.jsonl");
         let mut submitted = HashMap::new();
@@ -526,6 +602,7 @@ mod tests {
             created_ms: 1,
             submitted: false,
             session_path: None,
+            title: None,
         }];
         let mut submitted = HashMap::new();
 
@@ -582,6 +659,7 @@ mod tests {
             created_ms: 1,
             submitted: false,
             session_path: None,
+            title: None,
         }];
         let mut submitted = HashMap::new();
 
