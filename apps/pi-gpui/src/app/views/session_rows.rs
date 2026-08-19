@@ -6,9 +6,9 @@ use std::{
 };
 
 use gpui::{
-    AnyElement, AppContext as _, CursorStyle, Empty, Entity, FontWeight, InteractiveElement as _,
-    IntoElement, MouseButton, ParentElement as _, Pixels, Role, StatefulInteractiveElement as _,
-    Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
+    AnyElement, CursorStyle, Entity, FontWeight, InteractiveElement as _, IntoElement, MouseButton,
+    ParentElement as _, Pixels, Role, StatefulInteractiveElement as _, Styled as _, WeakEntity,
+    div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
     input::{Escape, Input, InputState},
@@ -22,64 +22,10 @@ use super::{
 };
 use crate::{
     assets::AppIcon,
-    primitives::{AppIconSize, app_icon, disclosure_indicator, icon_control},
+    primitives::{AppIconSize, app_icon, icon_control},
     projects::DraftSession,
     theme::THEME,
 };
-
-#[derive(Clone)]
-struct DraggedSession(String);
-
-pub(super) fn project_heading(
-    project: &Path,
-    collapsed: bool,
-    entity: WeakEntity<PiApp>,
-) -> AnyElement {
-    let project_path = project.to_path_buf();
-    div()
-        .id(format!("project-group:{}", project.display()))
-        .role(Role::Button)
-        .aria_label(format!(
-            "{} project {}",
-            if collapsed { "Expand" } else { "Collapse" },
-            project_label(project)
-        ))
-        .aria_expanded(!collapsed)
-        .tab_index(0)
-        .h(THEME.controls.project_row)
-        .w_full()
-        .flex()
-        .items_center()
-        .gap(THEME.space.xs)
-        .px(THEME.space.md)
-        .text_size(THEME.type_scale.body_small)
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(THEME.colors.muted)
-        .hover(|heading| heading.bg(THEME.colors.hover))
-        .focus(|heading| {
-            heading
-                .border(THEME.border)
-                .border_color(THEME.colors.accent)
-        })
-        .cursor_pointer()
-        .on_click(move |_, _, cx| {
-            let _ = entity.update(cx, |this, cx| {
-                this.toggle_project_group(&project_path, cx);
-            });
-        })
-        .child(disclosure_indicator(!collapsed))
-        .child(app_icon(AppIcon::Folder, AppIconSize::Inline))
-        .child(
-            div()
-                .min_w_0()
-                .flex_1()
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .child(project_label(project)),
-        )
-        .into_any_element()
-}
 
 pub(super) fn draft_session_row(
     draft: &DraftSession,
@@ -134,14 +80,20 @@ pub(super) fn draft_session_row(
                             div()
                                 .min_w_0()
                                 .flex_1()
+                                .flex()
+                                .flex_col()
+                                .gap(px(2.0))
                                 .overflow_hidden()
-                                .whitespace_normal()
-                                .line_clamp(2)
-                                .line_height(THEME.type_scale.line_body)
-                                .text_size(THEME.type_scale.body)
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(THEME.colors.text)
-                                .child(title),
+                                .child(
+                                    div()
+                                        .whitespace_nowrap()
+                                        .text_ellipsis()
+                                        .text_size(THEME.type_scale.body)
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(THEME.colors.text)
+                                        .child(title),
+                                )
+                                .child(project_badge(&draft.project)),
                         )
                         .child(
                             div()
@@ -189,13 +141,20 @@ pub(super) fn draft_session_row(
                             div()
                                 .min_w_0()
                                 .flex_1()
+                                .flex()
+                                .flex_col()
+                                .gap(px(2.0))
                                 .overflow_hidden()
-                                .whitespace_nowrap()
-                                .text_ellipsis()
-                                .text_size(THEME.type_scale.body)
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(THEME.colors.text)
-                                .child(title),
+                                .child(
+                                    div()
+                                        .whitespace_nowrap()
+                                        .text_ellipsis()
+                                        .text_size(THEME.type_scale.body)
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(THEME.colors.text)
+                                        .child(title),
+                                )
+                                .child(project_badge(&draft.project)),
                         )
                         .child(
                             icon_control(format!("discard-{discard_id}"), "Discard draft")
@@ -281,9 +240,6 @@ pub(super) fn session_row_with_height(
     let edit_path = path.clone();
     let edit_project = project.clone();
     let edit_title = session.title.clone();
-    let drop_entity = entity.clone();
-    let dragged_id = session.id.clone();
-    let drop_target_id = session.id.clone();
     let settle_path = session.path.clone();
     let settle_entity = entity.clone();
     let age = relative_age(session.modified);
@@ -330,12 +286,6 @@ pub(super) fn session_row_with_height(
         .hover(|row| row.bg(THEME.colors.hover))
         .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
         .cursor(CursorStyle::PointingHand)
-        .on_drag(DraggedSession(dragged_id), |_, _, _, cx| cx.new(|_| Empty))
-        .on_drop(move |dragged: &DraggedSession, _, cx| {
-            let _ = drop_entity.update(cx, |this, cx| {
-                this.move_session_to(&dragged.0, &drop_target_id, cx);
-            });
-        })
         .on_click(move |event, window, cx| {
             if event.click_count() >= 2 {
                 cx.stop_propagation();
@@ -380,22 +330,28 @@ pub(super) fn session_row_with_height(
                     div()
                         .min_w_0()
                         .flex_1()
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.0))
                         .overflow_hidden()
-                        .whitespace_normal()
-                        .line_clamp(2)
-                        .line_height(THEME.type_scale.line_body)
-                        .text_size(THEME.type_scale.body)
-                        .font_weight(if selected || !is_settled {
-                            FontWeight::SEMIBOLD
-                        } else {
-                            FontWeight::NORMAL
-                        })
-                        .text_color(if is_settled && !selected {
-                            THEME.colors.muted
-                        } else {
-                            THEME.colors.text
-                        })
-                        .child(session.title.clone())
+                        .child(
+                            div()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .text_size(THEME.type_scale.body)
+                                .font_weight(if selected || !is_settled {
+                                    FontWeight::SEMIBOLD
+                                } else {
+                                    FontWeight::NORMAL
+                                })
+                                .text_color(if is_settled && !selected {
+                                    THEME.colors.muted
+                                } else {
+                                    THEME.colors.text
+                                })
+                                .child(session.title.clone()),
+                        )
+                        .child(project_badge(&session.project))
                         .into_any_element()
                 })
                 .child(
@@ -488,6 +444,29 @@ pub(super) fn session_row_with_height(
 
 pub(super) fn session_accessible_label(title: &str, state: &str, age: &str) -> String {
     format!("Resume session: {title}. State: {state}. Updated {age}")
+}
+
+fn project_badge(project: &Path) -> AnyElement {
+    let path = project.display().to_string();
+    div()
+        .id(format!("project-badge:{path}"))
+        .max_w_full()
+        .flex()
+        .items_center()
+        .gap(px(3.0))
+        .text_size(THEME.type_scale.caption)
+        .text_color(THEME.colors.subtle)
+        .tooltip(move |window, cx| Tooltip::new(path.clone()).build(window, cx))
+        .child(app_icon(AppIcon::Folder, AppIconSize::Inline))
+        .child(
+            div()
+                .min_w_0()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .child(project_label(project)),
+        )
+        .into_any_element()
 }
 
 pub(super) fn project_label(project: &Path) -> String {

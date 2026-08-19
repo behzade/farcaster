@@ -132,39 +132,6 @@ fn done_is_recent_only_after_an_active_status_transition() {
 }
 
 #[test]
-fn new_sessions_are_added_by_creation_without_resorting_existing_sessions() {
-    let session = |id: &str, timestamp: &str| {
-        SessionSummary::from_cached(
-            id.into(),
-            PathBuf::from(format!("/{id}.jsonl")),
-            PathBuf::from("/project"),
-            id.into(),
-            String::new(),
-            timestamp.into(),
-            None,
-            SystemTime::UNIX_EPOCH,
-            0,
-            UsageSummary::default(),
-            false,
-            false,
-            String::new(),
-        )
-    };
-    let mut order = vec!["manual-b".into(), "manual-a".into()];
-
-    assert!(add_new_sessions_to_order(
-        &mut order,
-        &[
-            session("manual-a", "2026-01-01"),
-            session("manual-b", "2026-01-02"),
-            session("new-old", "2026-01-03"),
-            session("new-new", "2026-01-04"),
-        ],
-    ));
-    assert_eq!(order, vec!["new-new", "new-old", "manual-b", "manual-a"]);
-}
-
-#[test]
 fn selecting_a_subagent_does_not_invalidate_the_session_rail() {
     let session = |id: &str, parent: Option<&str>| {
         SessionSummary::from_cached(
@@ -220,16 +187,6 @@ fn composer_and_run_panel_track_their_rendered_snapshot_inputs() {
     assert!(!run_panel_snapshot_changed(&previous, &composer));
     assert!(run_panel_snapshot_changed(&previous, &run_panel));
     assert!(!composer_snapshot_changed(&previous, &run_panel));
-}
-
-#[test]
-fn manual_session_move_is_stable() {
-    let mut order = vec!["a".into(), "b".into(), "c".into()];
-    assert!(move_to(&mut order, "c", "a"));
-    assert_eq!(order, vec!["c", "a", "b"]);
-    assert!(move_to(&mut order, "c", "b"));
-    assert_eq!(order, vec!["a", "b", "c"]);
-    assert!(!move_to(&mut order, "c", "c"));
 }
 
 #[test]

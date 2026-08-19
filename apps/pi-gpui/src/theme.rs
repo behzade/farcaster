@@ -73,7 +73,6 @@ pub(crate) struct IconScale {
 pub(crate) struct ControlScale {
     pub icon_button: Pixels,
     pub utility_row: Pixels,
-    pub project_row: Pixels,
     pub archived_preview_row: Pixels,
     pub agent_marker: Pixels,
 }
@@ -157,7 +156,6 @@ pub(crate) const THEME: Theme = Theme {
     controls: ControlScale {
         icon_button: px(28.0),
         utility_row: px(40.0),
-        project_row: px(36.0),
         archived_preview_row: px(52.0),
         agent_marker: px(20.0),
     },

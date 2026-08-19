@@ -1,63 +1,43 @@
 use std::{
-    collections::HashMap,
     path::{Path, PathBuf},
-    time::{Duration, SystemTime},
+    time::SystemTime,
 };
 
 use super::{
-    ActiveRailRow, ProjectGroup, SessionRailItem, SessionRailKind, is_meaningful_active_status,
-    minimal_row_splice, new_session_project, recent_archived_sessions, resolved_active_projects,
-    roots_waiting_for_descendants, session_accessible_label, session_badge, session_rail_groups,
+    ActiveSessionItem, SessionRailItem, SessionRailKind, minimal_row_splice, new_session_project,
+    roots_waiting_for_descendants, session_accessible_label, session_badge,
     visible_session_shortcuts,
 };
 use crate::{
-    composer_sessions::draft_target,
     projects::DraftSession,
     sessions::{SessionSummary, UsageSummary},
 };
 
 #[test]
-fn shortcuts_include_submitted_drafts_and_skip_empty_drafts_and_headings() {
+fn shortcuts_follow_flat_id_order_and_skip_empty_drafts() {
     let mut empty = DraftSession::with_id("empty".into(), PathBuf::from("/project"));
-    empty.app_session_id = 10;
+    empty.app_session_id = 12;
     let mut submitted = DraftSession::with_id("submitted".into(), PathBuf::from("/project"));
     submitted.app_session_id = 11;
     submitted.submitted = true;
-    let persisted = item("first", "/project", SessionRailKind::Project, false);
-    let persisted_id = persisted.session.app_session_id;
+    let persisted = item("persisted", 10, "/other", SessionRailKind::Project, false);
     let rows = vec![
-        ActiveRailRow::Project(PathBuf::from("/project"), false),
-        ActiveRailRow::Draft(empty),
-        ActiveRailRow::Draft(submitted),
-        ActiveRailRow::Session(persisted),
+        ActiveSessionItem::Draft(empty),
+        ActiveSessionItem::Draft(submitted),
+        ActiveSessionItem::Session(persisted),
     ];
 
     let shortcuts = visible_session_shortcuts(&rows);
-    assert!(!shortcuts.contains_key(&10));
+
+    assert!(!shortcuts.contains_key(&12));
     assert_eq!(shortcuts.get(&11), Some(&1));
-    assert_eq!(shortcuts.get(&persisted_id), Some(&2));
-}
-
-#[test]
-fn shortcut_identity_deduplicates_a_draft_during_session_promotion() {
-    let mut draft = DraftSession::with_id("promoting".into(), PathBuf::from("/project"));
-    draft.app_session_id = 42;
-    draft.submitted = true;
-    let mut persisted = item("persisted", "/project", SessionRailKind::Project, false);
-    persisted.session.app_session_id = 42;
-
-    let shortcuts = visible_session_shortcuts(&[
-        ActiveRailRow::Draft(draft),
-        ActiveRailRow::Session(persisted),
-    ]);
-
-    assert_eq!(shortcuts, HashMap::from([(42, 1)]));
+    assert_eq!(shortcuts.get(&10), Some(&2));
 }
 
 #[test]
 fn active_sessions_always_have_a_meaningful_state() {
-    let done = item("done", "/project", SessionRailKind::Project, false);
-    let running = item("running", "/project", SessionRailKind::Project, true);
+    let done = item("done", 2, "/project", SessionRailKind::Project, false);
+    let running = item("running", 1, "/project", SessionRailKind::Project, true);
 
     assert_eq!(
         session_badge(&done, None, Some("other"), "Working", false),
@@ -79,8 +59,8 @@ fn active_sessions_always_have_a_meaningful_state() {
 
 #[test]
 fn archived_sessions_suppress_done_but_keep_active_states() {
-    let archived = item("archived", "/project", SessionRailKind::Settled, false);
-    let running = item("running", "/project", SessionRailKind::Settled, true);
+    let archived = item("archived", 2, "/project", SessionRailKind::Settled, false);
+    let running = item("running", 1, "/project", SessionRailKind::Settled, true);
 
     assert_eq!(
         session_badge(&archived, Some("Done"), None, "", false),
@@ -95,8 +75,8 @@ fn archived_sessions_suppress_done_but_keep_active_states() {
 
 #[test]
 fn completed_parent_waits_while_a_descendant_is_running() {
-    let parent = item("parent", "/project", SessionRailKind::Project, false);
-    let mut child = item("child", "/project", SessionRailKind::Project, true).session;
+    let parent = item("parent", 2, "/project", SessionRailKind::Project, false);
+    let mut child = item("child", 1, "/project", SessionRailKind::Project, true).session;
     child.parent_session = Some(parent.session.id.clone());
     let waiting = roots_waiting_for_descendants(&[parent.session.clone(), child]);
 
@@ -108,125 +88,19 @@ fn completed_parent_waits_while_a_descendant_is_running() {
 }
 
 #[test]
-fn runtime_activity_does_not_reorder_draft_and_session_projects() {
-    let inactive_draft_project = PathBuf::from("/inactive-draft");
-    let runtime_draft_project = PathBuf::from("/runtime-draft");
-    let live_project = PathBuf::from("/live");
-    let discovered_project = PathBuf::from("/discovered");
-    let inactive_session_project = PathBuf::from("/inactive-session");
-    let drafts = vec![
-        DraftSession::with_id("inactive-draft".into(), inactive_draft_project.clone()),
-        DraftSession::with_id("runtime-draft".into(), runtime_draft_project.clone()),
-    ];
-    let sessions = vec![
-        item("live", "/live", SessionRailKind::Project, false).session,
-        item("discovered", "/discovered", SessionRailKind::Project, true).session,
-        item(
-            "inactive-session",
-            "/inactive-session",
-            SessionRailKind::Project,
-            false,
-        )
-        .session,
-    ];
-    let statuses = HashMap::from([(draft_target("runtime-draft"), "Retrying".into())]);
-
-    let active_projects = resolved_active_projects(
-        &sessions,
-        &drafts,
-        &HashMap::new(),
-        &statuses,
-        Some("live"),
-        "Compacting",
-        None,
-    );
-    let groups = session_rail_groups(
-        &sessions,
-        &drafts,
-        &[
-            "live".into(),
-            "discovered".into(),
-            "inactive-session".into(),
-        ],
-        None,
-        &active_projects,
-    );
-    let projects = groups
-        .active
-        .iter()
-        .map(|group| group.project.as_path())
-        .collect::<Vec<_>>();
-
-    assert_eq!(
-        projects,
-        vec![
-            inactive_draft_project.as_path(),
-            runtime_draft_project.as_path(),
-            live_project.as_path(),
-            discovered_project.as_path(),
-            inactive_session_project.as_path(),
-        ]
-    );
-}
-
-#[test]
-fn only_meaningful_runtime_states_mark_a_project_active() {
-    for status in ["Working", "Needs input", "Compacting", "Retrying"] {
-        assert!(is_meaningful_active_status(status));
-    }
-    for status in ["", "Draft", "Done", "Ready", "Idle"] {
-        assert!(!is_meaningful_active_status(status));
-    }
-}
-
-#[test]
-fn collapsed_archive_preview_keeps_the_three_most_recent_sessions() {
-    let mut oldest = item("oldest", "/one", SessionRailKind::Settled, false);
-    oldest.session.modified = SystemTime::UNIX_EPOCH + Duration::from_secs(1);
-    let mut second = item("second", "/one", SessionRailKind::Settled, false);
-    second.session.modified = SystemTime::UNIX_EPOCH + Duration::from_secs(2);
-    let mut third = item("third", "/two", SessionRailKind::Settled, false);
-    third.session.modified = SystemTime::UNIX_EPOCH + Duration::from_secs(3);
-    let mut newest = item("newest", "/two", SessionRailKind::Settled, false);
-    newest.session.modified = SystemTime::UNIX_EPOCH + Duration::from_secs(4);
-    let groups = vec![
-        ProjectGroup {
-            project: PathBuf::from("/one"),
-            items: vec![oldest, second],
-        },
-        ProjectGroup {
-            project: PathBuf::from("/two"),
-            items: vec![third, newest],
-        },
-    ];
-
-    let preview = recent_archived_sessions(&groups, 3);
-    assert_eq!(
-        preview
-            .iter()
-            .map(|item| item.session.id.as_str())
-            .collect::<Vec<_>>(),
-        ["newest", "third", "second"]
-    );
-}
-
-#[test]
 fn minimal_row_reconciliation_preserves_equal_prefix_and_suffix() {
-    let current = vec!["project", "one", "two", "three"];
+    let current = vec!["one", "two", "three"];
 
     assert_eq!(minimal_row_splice(&current, &current), None);
     assert_eq!(
-        minimal_row_splice(&current, &["project", "one", "changed", "three"]),
-        Some((2..3, 1))
+        minimal_row_splice(&current, &["one", "changed", "three"]),
+        Some((1..2, 1))
     );
     assert_eq!(
-        minimal_row_splice(&current, &["project", "one", "two", "three", "four"]),
-        Some((4..4, 1))
+        minimal_row_splice(&current, &["one", "two", "three", "four"]),
+        Some((3..3, 1))
     );
-    assert_eq!(
-        minimal_row_splice(&current, &["project", "three"]),
-        Some((1..3, 0))
-    );
+    assert_eq!(minimal_row_splice(&current, &["three"]), Some((0..2, 0)));
 }
 
 #[test]
@@ -247,7 +121,13 @@ fn session_accessible_name_contains_state_and_relative_time() {
     );
 }
 
-fn item(id: &str, project: &str, kind: SessionRailKind, is_running: bool) -> SessionRailItem {
+fn item(
+    id: &str,
+    app_session_id: i64,
+    project: &str,
+    kind: SessionRailKind,
+    is_running: bool,
+) -> SessionRailItem {
     SessionRailItem {
         session: SessionSummary::from_cached(
             id.into(),
@@ -268,9 +148,7 @@ fn item(id: &str, project: &str, kind: SessionRailKind, is_running: bool) -> Ses
             is_running,
             String::new(),
         )
-        .with_app_session_id(id.bytes().fold(1_i64, |value, byte| {
-            value.saturating_mul(31) + i64::from(byte)
-        })),
+        .with_app_session_id(app_session_id),
         kind,
     }
 }

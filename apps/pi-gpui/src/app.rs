@@ -16,16 +16,13 @@ mod workgraph;
 pub(crate) use composer_images::ComposerImage;
 use submissions::PendingSubmission;
 pub(crate) use views::OVERLAY_KEY_CONTEXT;
-use views::{
-    ComposerView, RunPanelView, SessionRailView, TranscriptView, WorkGraphDetailView,
-    session_move_allowed,
-};
+use views::{ComposerView, RunPanelView, SessionRailView, TranscriptView, WorkGraphDetailView};
 pub(crate) use workgraph::adapter::{WORKGRAPH_KEY_CONTEXT, WORKGRAPH_NAV_KEY_CONTEXT};
 use workgraph::{adapter::WorkGraphBoardView, sidebar::WorkGraphSidebarView};
 
 use std::{
     cell::RefCell,
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
@@ -146,7 +143,6 @@ pub(crate) struct PiApp {
     agent_activities: HashMap<String, AgentActivity>,
     agent_row_focus: HashMap<String, FocusHandle>,
     changes: changes::ChangesState,
-    session_order: Vec<String>,
     run_statuses: HashMap<String, String>,
     recent_completions: HashMap<String, Instant>,
     recent_completion_expiries: HashMap<String, (Instant, Task<()>)>,
@@ -158,7 +154,6 @@ pub(crate) struct PiApp {
     submitted_drafts: HashMap<String, Option<PathBuf>>,
     sessions_error: Option<String>,
     session_project_filter: Option<PathBuf>,
-    collapsed_projects: HashSet<PathBuf>,
     session_list: ListState,
     session_list_rows: RefCell<Vec<String>>,
     archived_session_list: ListState,
@@ -235,15 +230,6 @@ impl PiApp {
             Err(error) => (projects::Registry::default(), Some(error)),
         };
         projects::select(&mut registry.projects, project.clone());
-        let session_order = match projects::load_session_order() {
-            Ok(order) => order,
-            Err(error) => {
-                if project_registry_error.is_none() {
-                    project_registry_error = Some(error);
-                }
-                Vec::new()
-            }
-        };
         let initial_draft = match projects::new_draft(project.clone()) {
             Ok(draft) => draft,
             Err(error) => {
@@ -425,7 +411,6 @@ impl PiApp {
             agent_activities: HashMap::new(),
             agent_row_focus: HashMap::new(),
             changes: changes::ChangesState::new(cx),
-            session_order,
             run_statuses: HashMap::new(),
             recent_completions: HashMap::new(),
             recent_completion_expiries: HashMap::new(),
@@ -437,7 +422,6 @@ impl PiApp {
             submitted_drafts,
             sessions_error: project_registry_error,
             session_project_filter: None,
-            collapsed_projects: HashSet::new(),
             session_list: ListState::new(
                 0,
                 ListAlignment::Top,
@@ -656,9 +640,6 @@ impl PiApp {
                         projects::add_unique(&mut self.projects, session.project.clone());
                     }
                     self.sessions_error = None;
-                    if add_new_sessions_to_order(&mut self.session_order, &all_sessions) {
-                        self.save_session_order();
-                    }
                     self.sessions = sessions;
                     self.all_sessions = all_sessions;
                     if let Some((activities, exhaustive)) = activities {
@@ -1015,21 +996,6 @@ impl PiApp {
         cx.notify();
     }
 
-    pub(crate) fn move_session_to(&mut self, source: &str, target: &str, cx: &mut Context<Self>) {
-        if session_move_allowed(&self.sessions, source, target)
-            && move_to(&mut self.session_order, source, target)
-        {
-            self.save_session_order();
-            self.notify_session_rail(cx);
-        }
-    }
-
-    fn save_session_order(&mut self) {
-        if let Err(error) = projects::save_session_order(&self.session_order) {
-            self.sessions_error = Some(error);
-        }
-    }
-
     fn select_project(&mut self, project: PathBuf) {
         if self.project != project {
             self.composer_project_files.clear();
@@ -1357,37 +1323,6 @@ fn restore_extension_surface(
 
 fn starts_recent_completion(previous: Option<&str>, next: &str, force: bool) -> bool {
     next == "Done" && (force || previous.is_some_and(|status| status != "Done"))
-}
-
-fn add_new_sessions_to_order(order: &mut Vec<String>, sessions: &[SessionSummary]) -> bool {
-    let known = order.iter().cloned().collect::<HashSet<_>>();
-    let mut added = sessions
-        .iter()
-        .filter(|session| session.parent_session.is_none() && !known.contains(&session.id))
-        .collect::<Vec<_>>();
-    added.sort_by(|left, right| right.timestamp.cmp(&left.timestamp));
-    if added.is_empty() {
-        return false;
-    }
-    order.splice(0..0, added.into_iter().map(|session| session.id.clone()));
-    true
-}
-
-fn move_to(order: &mut Vec<String>, source: &str, target: &str) -> bool {
-    if source == target {
-        return false;
-    }
-    let Some(source_index) = order.iter().position(|id| id == source) else {
-        return false;
-    };
-    let Some(target_index) = order.iter().position(|id| id == target) else {
-        return false;
-    };
-    let source = order.remove(source_index);
-    let target_index = target_index.saturating_sub(usize::from(source_index < target_index));
-    let insertion_index = target_index + usize::from(source_index < target_index);
-    order.insert(insertion_index, source);
-    true
 }
 
 #[cfg(test)]

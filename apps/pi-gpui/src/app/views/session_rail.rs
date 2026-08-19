@@ -18,19 +18,16 @@ use gpui_component::{
 use super::{
     super::PiApp,
     session_groups::{
-        ActiveProjectItem, ProjectGroup, SessionRailItem, recent_archived_sessions,
-        session_rail_groups,
+        ActiveSessionItem, SessionRailItem, recent_archived_sessions, session_rail_lists,
     },
     session_rows::{
-        draft_session_row, project_heading, project_label, session_badge, session_row,
-        session_row_with_height,
+        draft_session_row, project_label, session_badge, session_row, session_row_with_height,
     },
 };
 #[cfg(test)]
 use super::{session_groups::SessionRailKind, session_rows::session_accessible_label};
 use crate::{
     assets::AppIcon,
-    composer_sessions::session_target,
     primitives::{
         AppIconSize, ButtonTone, FeedbackTone, app_icon, disclosure_button, dropdown_button,
         dropdown_icon_button, feedback, icon_button,
@@ -59,51 +56,27 @@ impl PiApp {
         let live_root =
             root_session_for_path(&self.sessions, self.snapshot.live_session.as_deref())
                 .map(|session| session.id.clone());
-        let live_project = (!self.snapshot.project.as_os_str().is_empty())
-            .then_some(self.snapshot.project.as_path());
         let waiting_roots = roots_waiting_for_descendants(&self.all_sessions);
-        let active_projects = resolved_active_projects(
+        let lists = session_rail_lists(
             &self.sessions,
             &self.drafts,
-            &self.submitted_drafts,
-            &self.run_statuses,
-            live_root.as_deref(),
-            &self.snapshot.live_status,
-            live_project,
-        );
-        let grouped = session_rail_groups(
-            &self.sessions,
-            &self.drafts,
-            &self.session_order,
             self.session_project_filter.as_deref(),
-            &active_projects,
         );
-        let active_entry_count = grouped
-            .active
-            .iter()
-            .map(|group| group.items.len())
-            .sum::<usize>();
-        let archived_entry_count = grouped
-            .archived
-            .iter()
-            .map(|group| group.items.len())
-            .sum::<usize>();
-        let active_rows = active_rail_rows(&grouped.active, &self.collapsed_projects);
+        let active_entry_count = lists.active.len();
+        let archived_entry_count = lists.archived.len();
+        let active_rows = lists.active;
         let session_shortcuts = visible_session_shortcuts(&active_rows);
-        let archived_rows = archived_rail_rows(&grouped.archived, &self.collapsed_projects);
-        let archived_preview = recent_archived_sessions(&grouped.archived, ARCHIVED_PREVIEW_LIMIT);
+        let archived_rows = lists.archived;
+        let archived_preview = recent_archived_sessions(&archived_rows, ARCHIVED_PREVIEW_LIMIT);
         reconcile_list_rows(
             &self.session_list,
             &self.session_list_rows,
-            active_rows.iter().map(ActiveRailRow::identity).collect(),
+            active_rows.iter().map(active_item_identity).collect(),
         );
         reconcile_list_rows(
             &self.archived_session_list,
             &self.archived_session_list_rows,
-            archived_rows
-                .iter()
-                .map(ArchivedRailRow::identity)
-                .collect(),
+            archived_rows.iter().map(archived_item_identity).collect(),
         );
 
         let selected_draft = self.selected_draft.clone();
@@ -123,10 +96,7 @@ impl PiApp {
         let active_list = list(
             self.session_list.clone(),
             move |index, _, _| match active_rows.get(index) {
-                Some(ActiveRailRow::Project(project, collapsed)) => {
-                    project_heading(project, *collapsed, active_row_entity.clone())
-                }
-                Some(ActiveRailRow::Draft(draft)) => {
+                Some(ActiveSessionItem::Draft(draft)) => {
                     let selected = selected_draft.as_deref() == Some(draft.id.as_str());
                     let status = crate::app::drafts::resolved_draft_status(
                         &draft.id,
@@ -144,7 +114,7 @@ impl PiApp {
                         active_row_entity.clone(),
                     )
                 }
-                Some(ActiveRailRow::Session(item)) => {
+                Some(ActiveSessionItem::Session(item)) => {
                     let selected =
                         active_selected_root.as_deref() == Some(item.session.id.as_str());
                     let target = format!("session:{}", item.session.path.display());
@@ -214,10 +184,7 @@ impl PiApp {
             list(
                 self.archived_session_list.clone(),
                 move |index, _, _| match archived_rows.get(index) {
-                    Some(ArchivedRailRow::Project(project, collapsed)) => {
-                        project_heading(project, *collapsed, archived_row_entity.clone())
-                    }
-                    Some(ArchivedRailRow::Session(item)) => {
+                    Some(item) => {
                         let selected = selected_root.as_deref() == Some(item.session.id.as_str());
                         let target = format!("session:{}", item.session.path.display());
                         let badge = session_badge(
@@ -511,13 +478,6 @@ impl PiApp {
 }
 
 #[derive(Clone, Debug)]
-enum ActiveRailRow {
-    Project(PathBuf, bool),
-    Draft(DraftSession),
-    Session(SessionRailItem),
-}
-
-#[derive(Clone, Debug)]
 enum VisibleSessionTarget {
     Draft(DraftSession),
     Persisted(SessionSummary),
@@ -532,30 +492,15 @@ impl VisibleSessionTarget {
     }
 }
 
-#[derive(Clone, Debug)]
-#[allow(clippy::large_enum_variant)]
-enum ArchivedRailRow {
-    Project(PathBuf, bool),
-    Session(SessionRailItem),
-}
-
-impl ActiveRailRow {
-    fn identity(&self) -> String {
-        match self {
-            Self::Project(project, _) => format!("project:{project:?}"),
-            Self::Draft(draft) => format!("draft:{}", draft.id),
-            Self::Session(item) => format!("session:{}", item.session.id),
-        }
+fn active_item_identity(item: &ActiveSessionItem) -> String {
+    match item {
+        ActiveSessionItem::Draft(draft) => format!("draft:{}", draft.id),
+        ActiveSessionItem::Session(item) => format!("session:{}", item.session.id),
     }
 }
 
-impl ArchivedRailRow {
-    fn identity(&self) -> String {
-        match self {
-            Self::Project(project, _) => format!("project:{project:?}"),
-            Self::Session(item) => format!("session:{}", item.session.id),
-        }
-    }
+fn archived_item_identity(item: &SessionRailItem) -> String {
+    format!("session:{}", item.session.id)
 }
 
 fn reconcile_list_rows(
@@ -587,52 +532,18 @@ fn minimal_row_splice<T: Eq>(current: &[T], next: &[T]) -> Option<(std::ops::Ran
     (prefix != old_end || replacement_count != 0).then_some((prefix..old_end, replacement_count))
 }
 
-fn active_rail_rows(
-    groups: &[ProjectGroup<ActiveProjectItem>],
-    collapsed_projects: &HashSet<PathBuf>,
-) -> Vec<ActiveRailRow> {
-    let mut rows = Vec::new();
-    for group in groups {
-        let collapsed = collapsed_projects.contains(&group.project);
-        rows.push(ActiveRailRow::Project(group.project.clone(), collapsed));
-        if !collapsed {
-            rows.extend(group.items.iter().cloned().map(|item| match item {
-                ActiveProjectItem::Draft(draft) => ActiveRailRow::Draft(draft),
-                ActiveProjectItem::Session(session) => ActiveRailRow::Session(session),
-            }));
-        }
-    }
-    rows
-}
-
-fn visible_session_shortcuts(rows: &[ActiveRailRow]) -> HashMap<i64, u8> {
-    let mut seen = HashSet::new();
+fn visible_session_shortcuts(rows: &[ActiveSessionItem]) -> HashMap<i64, u8> {
     rows.iter()
         .filter_map(|row| match row {
-            ActiveRailRow::Draft(draft) if draft.submitted => Some(draft.app_session_id),
-            ActiveRailRow::Session(item) => Some(item.session.app_session_id),
-            ActiveRailRow::Project(_, _) | ActiveRailRow::Draft(_) => None,
+            ActiveSessionItem::Draft(draft) if draft.submitted => Some(draft.app_session_id),
+            ActiveSessionItem::Session(item) => Some(item.session.app_session_id),
+            ActiveSessionItem::Draft(_) => None,
         })
-        .filter(|id| seen.insert(*id))
+        .filter(|id| *id > 0)
         .take(9)
         .enumerate()
         .map(|(index, id)| (id, (index + 1) as u8))
         .collect()
-}
-
-fn archived_rail_rows(
-    groups: &[ProjectGroup<SessionRailItem>],
-    collapsed_projects: &HashSet<PathBuf>,
-) -> Vec<ArchivedRailRow> {
-    let mut rows = Vec::new();
-    for group in groups {
-        let collapsed = collapsed_projects.contains(&group.project);
-        rows.push(ArchivedRailRow::Project(group.project.clone(), collapsed));
-        if !collapsed {
-            rows.extend(group.items.iter().cloned().map(ArchivedRailRow::Session));
-        }
-    }
-    rows
 }
 
 impl PiApp {
@@ -698,39 +609,21 @@ impl PiApp {
     }
 
     fn visible_session_targets(&self) -> Vec<VisibleSessionTarget> {
-        let live_root =
-            root_session_for_path(&self.sessions, self.snapshot.live_session.as_deref())
-                .map(|session| session.id.clone());
-        let live_project = (!self.snapshot.project.as_os_str().is_empty())
-            .then_some(self.snapshot.project.as_path());
-        let active_projects = resolved_active_projects(
+        session_rail_lists(
             &self.sessions,
             &self.drafts,
-            &self.submitted_drafts,
-            &self.run_statuses,
-            live_root.as_deref(),
-            &self.snapshot.live_status,
-            live_project,
-        );
-        let grouped = session_rail_groups(
-            &self.sessions,
-            &self.drafts,
-            &self.session_order,
             self.session_project_filter.as_deref(),
-            &active_projects,
-        );
-        let mut seen = HashSet::new();
-        active_rail_rows(&grouped.active, &self.collapsed_projects)
-            .into_iter()
-            .filter_map(|row| match row {
-                ActiveRailRow::Draft(draft) if draft.submitted => {
-                    Some(VisibleSessionTarget::Draft(draft))
-                }
-                ActiveRailRow::Session(item) => Some(VisibleSessionTarget::Persisted(item.session)),
-                ActiveRailRow::Project(_, _) | ActiveRailRow::Draft(_) => None,
-            })
-            .filter(|target| seen.insert(target.app_session_id()))
-            .collect()
+        )
+        .active
+        .into_iter()
+        .filter_map(|row| match row {
+            ActiveSessionItem::Draft(draft) if draft.submitted => {
+                Some(VisibleSessionTarget::Draft(draft))
+            }
+            ActiveSessionItem::Session(item) => Some(VisibleSessionTarget::Persisted(item.session)),
+            ActiveSessionItem::Draft(_) => None,
+        })
+        .collect()
     }
 
     fn set_session_project_filter(
@@ -744,60 +637,10 @@ impl PiApp {
             self.notify_session_rail(cx);
         }
     }
-
-    pub(super) fn toggle_project_group(&mut self, project: &Path, cx: &mut gpui::Context<Self>) {
-        if !self.collapsed_projects.remove(project) {
-            self.collapsed_projects.insert(project.to_path_buf());
-        }
-        self.notify_session_rail(cx);
-    }
 }
 
 fn new_session_project(current_chat_project: &Path, _session_filter: Option<&Path>) -> PathBuf {
     current_chat_project.to_path_buf()
-}
-
-fn resolved_active_projects(
-    sessions: &[crate::sessions::SessionSummary],
-    drafts: &[DraftSession],
-    submitted_drafts: &HashMap<String, Option<PathBuf>>,
-    run_statuses: &HashMap<String, String>,
-    live_root: Option<&str>,
-    live_status: &str,
-    live_project: Option<&Path>,
-) -> HashSet<PathBuf> {
-    let mut active = sessions
-        .iter()
-        .filter(|session| session.is_running)
-        .map(|session| session.project.clone())
-        .collect::<HashSet<_>>();
-
-    for session in sessions {
-        if run_statuses
-            .get(&session_target(&session.path))
-            .is_some_and(|status| is_meaningful_active_status(status))
-        {
-            active.insert(session.project.clone());
-        }
-    }
-    for draft in drafts {
-        let status =
-            crate::app::drafts::resolved_draft_status(&draft.id, submitted_drafts, run_statuses);
-        if is_meaningful_active_status(&status) {
-            active.insert(draft.project.clone());
-        }
-    }
-    if live_root.is_some() && is_meaningful_active_status(live_status) {
-        let project = live_root
-            .and_then(|id| sessions.iter().find(|session| session.id == id))
-            .map(|session| session.project.as_path())
-            .or(live_project);
-        if let Some(project) = project {
-            active.insert(project.to_path_buf());
-        }
-    }
-
-    active
 }
 
 fn roots_waiting_for_descendants(sessions: &[SessionSummary]) -> HashSet<String> {
@@ -823,10 +666,6 @@ fn roots_waiting_for_descendants(sessions: &[SessionSummary]) -> HashSet<String>
         }
     }
     waiting
-}
-
-fn is_meaningful_active_status(status: &str) -> bool {
-    !matches!(status, "" | "Draft" | "Done" | "Ready" | "Idle")
 }
 
 #[cfg(test)]

@@ -1,9 +1,6 @@
-//! Pure session-rail grouping and project-filter policy.
+//! Pure session-rail ordering and project-filter policy.
 
-use std::{
-    collections::{HashMap, HashSet},
-    path::{Path, PathBuf},
-};
+use std::path::Path;
 
 use crate::{
     projects::DraftSession,
@@ -23,307 +20,190 @@ pub(super) struct SessionRailItem {
 }
 
 #[derive(Clone, Debug)]
-pub(super) enum ActiveProjectItem {
+pub(super) enum ActiveSessionItem {
     Draft(DraftSession),
     Session(SessionRailItem),
 }
 
-#[derive(Clone, Debug)]
-pub(super) struct ProjectGroup<T> {
-    pub(super) project: PathBuf,
-    pub(super) items: Vec<T>,
+impl ActiveSessionItem {
+    pub(super) fn app_session_id(&self) -> i64 {
+        match self {
+            Self::Draft(draft) => draft.app_session_id,
+            Self::Session(item) => item.session.app_session_id,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
-pub(super) struct SessionRailGroups {
-    pub(super) active: Vec<ProjectGroup<ActiveProjectItem>>,
-    pub(super) archived: Vec<ProjectGroup<SessionRailItem>>,
+pub(super) struct SessionRailLists {
+    pub(super) active: Vec<ActiveSessionItem>,
+    pub(super) archived: Vec<SessionRailItem>,
 }
 
 pub(super) fn recent_archived_sessions(
-    groups: &[ProjectGroup<SessionRailItem>],
+    sessions: &[SessionRailItem],
     limit: usize,
 ) -> Vec<SessionRailItem> {
-    let mut sessions = groups
-        .iter()
-        .flat_map(|group| group.items.iter().cloned())
-        .collect::<Vec<_>>();
-    sessions.sort_by(|left, right| {
-        right
-            .session
-            .modified
-            .cmp(&left.session.modified)
-            .then_with(|| left.session.id.cmp(&right.session.id))
-    });
-    sessions.truncate(limit);
-    sessions
+    sessions.iter().take(limit).cloned().collect()
 }
 
-pub(super) fn session_rail_groups(
+pub(super) fn session_rail_lists(
     sessions: &[SessionSummary],
     drafts: &[DraftSession],
-    order: &[String],
     project_filter: Option<&Path>,
-    _active_projects: &HashSet<PathBuf>,
-) -> SessionRailGroups {
-    let rank = order
-        .iter()
-        .enumerate()
-        .map(|(index, id)| (id.as_str(), index))
-        .collect::<HashMap<_, _>>();
-    let mut roots = root_sessions(sessions);
-    roots.sort_by(|left, right| {
-        rank.get(left.id.as_str())
-            .cmp(&rank.get(right.id.as_str()))
-            .then_with(|| right.timestamp.cmp(&left.timestamp))
-    });
-
-    let mut active = Vec::new();
-    for draft in drafts
+) -> SessionRailLists {
+    let mut active = drafts
         .iter()
         .filter(|draft| project_filter.is_none_or(|filter| filter == draft.project))
-    {
-        push_grouped(
-            &mut active,
-            draft.project.clone(),
-            ActiveProjectItem::Draft(draft.clone()),
-        );
-    }
-
+        .cloned()
+        .map(ActiveSessionItem::Draft)
+        .collect::<Vec<_>>();
     let mut archived = Vec::new();
-    for session in roots
+
+    for session in root_sessions(sessions)
         .into_iter()
         .filter(|session| project_filter.is_none_or(|filter| filter == session.project))
     {
+        let item = SessionRailItem {
+            session: session.clone(),
+            kind: if session.settled {
+                SessionRailKind::Settled
+            } else {
+                SessionRailKind::Project
+            },
+        };
         if session.settled {
-            push_grouped(
-                &mut archived,
-                session.project.clone(),
-                SessionRailItem {
-                    session: session.clone(),
-                    kind: SessionRailKind::Settled,
-                },
-            );
+            archived.push(item);
         } else {
-            push_grouped(
-                &mut active,
-                session.project.clone(),
-                ActiveProjectItem::Session(SessionRailItem {
-                    session: session.clone(),
-                    kind: SessionRailKind::Project,
-                }),
-            );
+            active.push(ActiveSessionItem::Session(item));
         }
     }
 
-    SessionRailGroups { active, archived }
+    active.sort_by(|left, right| {
+        right
+            .app_session_id()
+            .cmp(&left.app_session_id())
+            .then_with(|| active_kind_rank(left).cmp(&active_kind_rank(right)))
+    });
+    active.dedup_by(|left, right| {
+        let id = left.app_session_id();
+        id > 0 && id == right.app_session_id()
+    });
+    archived.sort_by(|left, right| {
+        right
+            .session
+            .app_session_id
+            .cmp(&left.session.app_session_id)
+    });
+
+    SessionRailLists { active, archived }
 }
 
-pub(in crate::app) fn session_move_allowed(
-    sessions: &[SessionSummary],
-    source: &str,
-    target: &str,
-) -> bool {
-    let project_for = |id: &str| {
-        sessions
-            .iter()
-            .find(|session| session.id == id)
-            .map(|session| session.project.as_path())
-    };
-    matches!(
-        (project_for(source), project_for(target)),
-        (Some(source), Some(target)) if source == target
-    )
-}
-
-fn push_grouped<T>(groups: &mut Vec<ProjectGroup<T>>, project: PathBuf, item: T) {
-    if let Some(group) = groups.iter_mut().find(|group| group.project == project) {
-        group.items.push(item);
-    } else {
-        groups.push(ProjectGroup {
-            project,
-            items: vec![item],
-        });
+const fn active_kind_rank(item: &ActiveSessionItem) -> u8 {
+    match item {
+        ActiveSessionItem::Draft(_) => 0,
+        ActiveSessionItem::Session(_) => 1,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::SystemTime;
+    use std::{path::PathBuf, time::SystemTime};
 
     use super::*;
     use crate::sessions::UsageSummary;
 
     #[test]
-    fn groups_active_drafts_and_sessions_once_per_project() {
+    fn drafts_and_sessions_share_one_descending_id_order() {
         let alpha = PathBuf::from("/alpha");
         let beta = PathBuf::from("/beta");
-        let drafts = vec![DraftSession::with_id("draft".into(), alpha.clone())];
+        let mut draft = DraftSession::with_id("draft".into(), alpha.clone());
+        draft.app_session_id = 2;
         let sessions = vec![
-            session("alpha-one", &alpha, false),
-            session("beta-one", &beta, false),
-            session("alpha-two", &alpha, false),
+            session("old", 1, &alpha, false),
+            session("new", 3, &beta, false),
         ];
 
-        let groups = session_rail_groups(
-            &sessions,
-            &drafts,
-            &["alpha-two".into(), "beta-one".into(), "alpha-one".into()],
-            None,
-            &HashSet::new(),
-        );
-
-        assert_eq!(groups.active.len(), 2);
-        assert_eq!(groups.active[0].project, alpha);
-        assert_eq!(groups.active[0].items.len(), 3);
-        assert_eq!(groups.active[1].project, beta);
-        assert_eq!(groups.active[1].items.len(), 1);
-    }
-
-    #[test]
-    fn project_filter_applies_to_active_drafts_and_archived_sessions() {
-        let alpha = PathBuf::from("/alpha");
-        let beta = PathBuf::from("/beta");
-        let drafts = vec![
-            DraftSession::with_id("alpha-draft".into(), alpha.clone()),
-            DraftSession::with_id("beta-draft".into(), beta.clone()),
-        ];
-        let sessions = vec![
-            session("alpha-active", &alpha, false),
-            session("alpha-archived", &alpha, true),
-            session("beta-active", &beta, false),
-            session("beta-archived", &beta, true),
-        ];
-
-        let groups = session_rail_groups(&sessions, &drafts, &[], Some(&beta), &HashSet::new());
-
-        assert_eq!(groups.active.len(), 1);
-        assert_eq!(groups.active[0].project, beta);
-        assert_eq!(groups.active[0].items.len(), 2);
-        assert_eq!(groups.archived.len(), 1);
-        assert_eq!(groups.archived[0].project, beta);
-        assert_eq!(groups.archived[0].items.len(), 1);
-    }
-
-    #[test]
-    fn manual_order_is_preserved_inside_project_groups() {
-        let project = PathBuf::from("/project");
-        let sessions = vec![
-            session("one", &project, false),
-            session("two", &project, false),
-            session("three", &project, false),
-        ];
-
-        let groups = session_rail_groups(
-            &sessions,
-            &[],
-            &["three".into(), "one".into(), "two".into()],
-            None,
-            &HashSet::new(),
-        );
-        let ids = groups.active[0]
-            .items
-            .iter()
-            .filter_map(|item| match item {
-                ActiveProjectItem::Session(item) => Some(item.session.id.as_str()),
-                ActiveProjectItem::Draft(_) => None,
-            })
-            .collect::<Vec<_>>();
-
-        assert_eq!(ids, vec!["three", "one", "two"]);
-    }
-
-    #[test]
-    fn project_group_order_does_not_change_with_runtime_status() {
-        let inactive_one = PathBuf::from("/inactive-one");
-        let running_one = PathBuf::from("/running-one");
-        let inactive_two = PathBuf::from("/inactive-two");
-        let running_two = PathBuf::from("/running-two");
-        let sessions = vec![
-            session("inactive-one", &inactive_one, false),
-            running_session("running-one", &running_one),
-            session("inactive-two", &inactive_two, false),
-            running_session("running-two", &running_two),
-        ];
-
-        let active_projects = HashSet::from([running_one.clone(), running_two.clone()]);
-        let groups = session_rail_groups(
-            &sessions,
-            &[],
-            &[
-                "inactive-one".into(),
-                "running-one".into(),
-                "inactive-two".into(),
-                "running-two".into(),
-            ],
-            None,
-            &active_projects,
-        );
-        let projects = groups
-            .active
-            .iter()
-            .map(|group| group.project.as_path())
-            .collect::<Vec<_>>();
+        let lists = session_rail_lists(&sessions, &[draft], None);
 
         assert_eq!(
-            projects,
-            vec![
-                inactive_one.as_path(),
-                running_one.as_path(),
-                inactive_two.as_path(),
-                running_two.as_path(),
-            ]
+            lists
+                .active
+                .iter()
+                .map(ActiveSessionItem::app_session_id)
+                .collect::<Vec<_>>(),
+            [3, 2, 1]
         );
     }
 
     #[test]
-    fn session_drag_order_is_limited_to_one_project() {
+    fn project_filter_keeps_a_flat_subset() {
         let alpha = PathBuf::from("/alpha");
         let beta = PathBuf::from("/beta");
+        let mut alpha_draft = DraftSession::with_id("alpha-draft".into(), alpha.clone());
+        alpha_draft.app_session_id = 4;
+        let mut beta_draft = DraftSession::with_id("beta-draft".into(), beta.clone());
+        beta_draft.app_session_id = 3;
         let sessions = vec![
-            session("alpha-one", &alpha, false),
-            session("alpha-two", &alpha, false),
-            session("beta-one", &beta, false),
+            session("alpha-active", 2, &alpha, false),
+            session("beta-archived", 1, &beta, true),
         ];
 
-        assert!(session_move_allowed(&sessions, "alpha-one", "alpha-two"));
-        assert!(!session_move_allowed(&sessions, "alpha-one", "beta-one"));
-        assert!(!session_move_allowed(&sessions, "missing", "alpha-one"));
+        let lists = session_rail_lists(&sessions, &[alpha_draft, beta_draft], Some(beta.as_path()));
+
+        assert_eq!(lists.active.len(), 1);
+        assert_eq!(lists.active[0].app_session_id(), 3);
+        assert_eq!(lists.archived.len(), 1);
+        assert_eq!(lists.archived[0].session.app_session_id, 1);
     }
 
     #[test]
-    fn archived_sessions_are_grouped_separately() {
-        let alpha = PathBuf::from("/alpha");
-        let beta = PathBuf::from("/beta");
+    fn promotion_identity_is_rendered_once_and_prefers_the_draft() {
+        let project = PathBuf::from("/project");
+        let mut draft = DraftSession::with_id("draft".into(), project.clone());
+        draft.app_session_id = 7;
+        draft.submitted = true;
+        let persisted = session("persisted", 7, &project, false);
+
+        let lists = session_rail_lists(&[persisted], &[draft], None);
+
+        assert_eq!(lists.active.len(), 1);
+        assert!(matches!(lists.active[0], ActiveSessionItem::Draft(_)));
+    }
+
+    #[test]
+    fn unassigned_fallback_sessions_are_not_deduplicated() {
+        let project = PathBuf::from("/project");
         let sessions = vec![
-            session("alpha-one", &alpha, true),
-            session("beta-one", &beta, true),
-            session("alpha-two", &alpha, true),
+            session("one", 0, &project, false),
+            session("two", 0, &project, false),
         ];
 
-        let groups = session_rail_groups(&sessions, &[], &[], None, &HashSet::new());
+        let lists = session_rail_lists(&sessions, &[], None);
 
-        assert!(groups.active.is_empty());
-        assert_eq!(groups.archived.len(), 2);
-        assert_eq!(groups.archived[0].project, alpha);
-        assert_eq!(groups.archived[0].items.len(), 2);
-        assert_eq!(groups.archived[1].project, beta);
+        assert_eq!(lists.active.len(), 2);
     }
 
-    fn session(id: &str, project: &Path, settled: bool) -> SessionSummary {
-        session_with_running(id, project, settled, false)
+    #[test]
+    fn archived_preview_uses_the_same_descending_id_order() {
+        let project = PathBuf::from("/project");
+        let sessions = vec![
+            session("one", 1, &project, true),
+            session("three", 3, &project, true),
+            session("two", 2, &project, true),
+        ];
+        let lists = session_rail_lists(&sessions, &[], None);
+
+        assert_eq!(
+            recent_archived_sessions(&lists.archived, 2)
+                .iter()
+                .map(|item| item.session.app_session_id)
+                .collect::<Vec<_>>(),
+            [3, 2]
+        );
     }
 
-    fn running_session(id: &str, project: &Path) -> SessionSummary {
-        session_with_running(id, project, false, true)
-    }
-
-    fn session_with_running(
-        id: &str,
-        project: &Path,
-        settled: bool,
-        is_running: bool,
-    ) -> SessionSummary {
+    fn session(id: &str, app_session_id: i64, project: &Path, settled: bool) -> SessionSummary {
         SessionSummary::from_cached(
             id.into(),
             PathBuf::from(format!("/{id}.jsonl")),
@@ -332,16 +212,13 @@ mod tests {
             String::new(),
             String::new(),
             None,
-            if is_running {
-                SystemTime::now()
-            } else {
-                SystemTime::UNIX_EPOCH
-            },
+            SystemTime::UNIX_EPOCH,
             0,
             UsageSummary::default(),
             settled,
-            is_running,
+            false,
             String::new(),
         )
+        .with_app_session_id(app_session_id)
     }
 }

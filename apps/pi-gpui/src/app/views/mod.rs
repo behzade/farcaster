@@ -15,7 +15,6 @@ mod shell;
 pub(super) use regions::{
     ComposerView, RunPanelView, SessionRailView, TranscriptView, WorkGraphDetailView,
 };
-pub(super) use session_groups::session_move_allowed;
 
 use gpui::{
     Context, Focusable as _, InteractiveElement as _, IntoElement, ParentElement as _, Render,
