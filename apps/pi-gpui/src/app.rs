@@ -3,6 +3,7 @@
 mod changes;
 mod composer_images;
 mod drafts;
+mod expiries;
 mod file_mentions;
 mod region_state;
 mod session_titles;
@@ -24,7 +25,7 @@ use std::{
     ops::Range,
     path::PathBuf,
     sync::Arc,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use gpui::{
@@ -49,7 +50,7 @@ use crate::{
 };
 
 const MAX_EXTENSION_ERRORS: usize = 16;
-const RECENT_COMPLETION_LIFETIME: Duration = Duration::from_secs(10 * 60);
+const SYSTEM_NOTIFICATION_TAG: &str = "pi-agent";
 pub(crate) const COMPOSER_KEY_CONTEXT: &str = "PiComposer";
 actions!(
     pi_gpui,
@@ -102,6 +103,8 @@ pub(crate) struct PiApp {
     session_order: Vec<String>,
     run_statuses: HashMap<String, String>,
     recent_completions: HashMap<String, Instant>,
+    recent_completion_expiries: HashMap<String, (Instant, Task<()>)>,
+    system_notification_target: Option<(PathBuf, PathBuf)>,
     projects: Vec<PathBuf>,
     drafts: Vec<projects::DraftSession>,
     selected_draft: Option<String>,
@@ -152,6 +155,7 @@ pub(crate) struct PiApp {
     performance_monitor: Option<crate::performance::PerformanceMonitor>,
     extension: ExtensionUiState,
     parked_extension: Option<ExtensionUiState>,
+    notification_expiries: HashMap<(String, Instant), Task<()>>,
     pending_dialog_setup: bool,
     pending_title: Option<(u64, String)>,
     pending_editor_text: Option<(u64, String)>,
@@ -172,7 +176,6 @@ pub(crate) struct PiApp {
     _search_subscription: Subscription,
     _session_title_subscription: Subscription,
     _event_task: Task<()>,
-    _maintenance_task: Task<()>,
 }
 
 impl PiApp {
@@ -298,14 +301,6 @@ impl PiApp {
                 }
             }
         });
-        let maintenance_task = cx.spawn(async move |weak, cx| {
-            loop {
-                cx.background_executor().timer(Duration::from_secs(1)).await;
-                if weak.update(cx, |this, cx| this.drain_runtime(cx)).is_err() {
-                    break;
-                }
-            }
-        });
         let transcript_list = ListState::new(
             0,
             ListAlignment::Top,
@@ -359,6 +354,8 @@ impl PiApp {
             session_order,
             run_statuses: HashMap::new(),
             recent_completions: HashMap::new(),
+            recent_completion_expiries: HashMap::new(),
+            system_notification_target: None,
             projects: registry.projects,
             drafts: registry.drafts,
             selected_draft: Some(selected_draft),
@@ -417,6 +414,7 @@ impl PiApp {
             performance_monitor,
             extension: ExtensionUiState::default(),
             parked_extension: None,
+            notification_expiries: HashMap::new(),
             pending_dialog_setup: false,
             pending_title: None,
             pending_editor_text: None,
@@ -437,21 +435,19 @@ impl PiApp {
             _search_subscription: search_subscription,
             _session_title_subscription: session_title_subscription,
             _event_task: event_task,
-            _maintenance_task: maintenance_task,
         }
     }
 
     fn drain_runtime(&mut self, cx: &mut Context<Self>) {
-        let mut root_dirty = self.extension.prune_notifications();
-        let completions_changed = self.prune_recent_completions();
+        let mut root_dirty = false;
         let performance_changed = self
             .performance_monitor
             .as_mut()
             .is_some_and(crate::performance::PerformanceMonitor::sample_if_due);
-        let mut rail_dirty = completions_changed;
+        let mut rail_dirty = false;
         let mut transcript_dirty = false;
         let mut composer_dirty = false;
-        let mut run_dirty = completions_changed || performance_changed;
+        let mut run_dirty = performance_changed;
         while let Ok(event) = self.runtime.try_recv() {
             match &event {
                 RuntimeEvent::Snapshot { snapshot, .. } => {
@@ -601,10 +597,12 @@ impl PiApp {
                 RuntimeEvent::ExtensionUi {
                     generation,
                     request,
+                    system_notification_target,
                 } if generation == self.runtime_generation => {
                     if let Some((title, body)) = request.gpui_system_notification() {
+                        self.system_notification_target = system_notification_target;
                         cx.show_system_notification(SystemNotification {
-                            tag: "pi-agent".into(),
+                            tag: SYSTEM_NOTIFICATION_TAG.into(),
                             title: title.into(),
                             body: body.into(),
                             actions: Vec::new(),
@@ -655,6 +653,8 @@ impl PiApp {
                 | RuntimeEvent::SessionsFailed { .. } => {}
             }
         }
+        self.sync_notification_expiries(cx);
+        self.sync_recent_completion_expiries(cx);
         if rail_dirty {
             self.notify_session_rail(cx);
         }
@@ -697,20 +697,11 @@ impl PiApp {
         false
     }
 
-    fn prune_recent_completions(&mut self) -> bool {
-        let before = self.recent_completions.len();
-        self.recent_completions
-            .retain(|_, completed| completed.elapsed() < RECENT_COMPLETION_LIFETIME);
-        self.run_statuses.retain(|target, status| {
-            status != "Done" || self.recent_completions.contains_key(target)
-        });
-        self.recent_completions.len() != before
-    }
-
     fn reset_session_ui(&mut self, generation: u64, preserve_submission: bool) {
         self.runtime_generation = generation;
         self.extension.reset();
         self.parked_extension = None;
+        self.notification_expiries.clear();
         self.pending_dialog_setup = false;
         self.pending_title = Some((generation, "Pi".into()));
         self.pending_editor_text = None;
@@ -757,6 +748,20 @@ impl PiApp {
         self.transcript_following = true;
         self.transcript_unseen = 0;
         self.last_transcript_count = 0;
+    }
+
+    pub(crate) fn activate_system_notification(
+        &mut self,
+        tag: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if tag != SYSTEM_NOTIFICATION_TAG {
+            return;
+        }
+        if let Some((path, project)) = self.system_notification_target.clone() {
+            self.select_session(path, project, window, cx);
+        }
     }
 
     fn select_session(
@@ -962,6 +967,7 @@ impl PiApp {
         self.submitted_drafts.remove(id);
         self.run_statuses.remove(&target);
         self.recent_completions.remove(&target);
+        self.recent_completion_expiries.remove(&target);
         if was_selected {
             self.selected_draft = None;
             if let Some(session) = self.sessions.first().cloned() {

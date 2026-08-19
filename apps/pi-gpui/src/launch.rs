@@ -1,7 +1,9 @@
 //! Argument validation and native window setup.
 
 use std::{
+    cell::RefCell,
     path::PathBuf,
+    rc::Rc,
     sync::{
         Arc,
         atomic::{AtomicU8, Ordering},
@@ -14,7 +16,9 @@ use crate::{
     keybindings,
     theme::{THEME, install_component_theme},
 };
-use gpui::{App, AppContext as _, Bounds, TitlebarOptions, WindowBounds, WindowOptions, size};
+use gpui::{
+    App, AppContext as _, Bounds, TitlebarOptions, WeakEntity, WindowBounds, WindowOptions, size,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum LaunchError {
@@ -66,9 +70,18 @@ pub(crate) fn run(project: PathBuf) -> Result<(), LaunchError> {
             }
             install_component_theme(cx);
             cx.on_action(quit);
-            cx.on_system_notification_response(|_, cx| {
+            let notification_app: Rc<RefCell<Option<WeakEntity<PiApp>>>> =
+                Rc::new(RefCell::new(None));
+            let response_app = notification_app.clone();
+            cx.on_system_notification_response(move |response, cx| {
                 cx.activate(true);
-                if let Some(window) = cx
+                let app = response_app.borrow().clone();
+                if let Some(app) = app {
+                    let _ = app.update_in(cx, |app, window, cx| {
+                        app.activate_system_notification(&response.tag, window, cx);
+                        window.activate_window();
+                    });
+                } else if let Some(window) = cx
                     .active_window()
                     .or_else(|| cx.windows().into_iter().next())
                 {
@@ -103,6 +116,7 @@ pub(crate) fn run(project: PathBuf) -> Result<(), LaunchError> {
                 },
                 move |window, cx| {
                     let app = cx.new(|cx| PiApp::new(project.clone(), window, cx));
+                    *notification_app.borrow_mut() = Some(app.downgrade());
                     cx.new(|cx| gpui_component::Root::new(app, window, cx))
                 },
             );

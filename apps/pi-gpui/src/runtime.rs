@@ -112,6 +112,7 @@ pub(crate) enum RuntimeEvent {
     ExtensionUi {
         generation: u64,
         request: crate::protocol::ExtensionUiRequest,
+        system_notification_target: Option<(PathBuf, PathBuf)>,
     },
     PromptResult {
         generation: u64,
@@ -423,9 +424,13 @@ fn run_supervisor(
                     }
                     RuntimeEvent::ExtensionUi { request, .. } => {
                         if request.gpui_system_notification().is_some() {
+                            let system_notification_target = latest
+                                .get(&key)
+                                .and_then(|snapshot| notification_target(snapshot));
                             let _ = event_tx.send(RuntimeEvent::ExtensionUi {
                                 generation,
                                 request,
+                                system_notification_target,
                             });
                             continue;
                         }
@@ -453,6 +458,7 @@ fn run_supervisor(
                             let _ = event_tx.send(RuntimeEvent::ExtensionUi {
                                 generation,
                                 request,
+                                system_notification_target: None,
                             });
                         } else if request.dialog_id().is_none() {
                             pending_extensions
@@ -523,7 +529,7 @@ fn run_supervisor(
         evict_idle_actors(&mut actors, &mut latest, &mut last_touch, &selected);
         let has_running_root = latest
             .values()
-            .any(|snapshot| snapshot.conversation.running);
+            .any(|snapshot| needs_active_catalog_refresh(snapshot));
         let refresh_interval = if has_running_root {
             Some(ACTIVE_ROOT_REFRESH_INTERVAL)
         } else if catalog_has_running_descendants {
@@ -622,6 +628,7 @@ fn run_supervisor(
                             let _ = event_tx.send(RuntimeEvent::ExtensionUi {
                                 generation,
                                 request,
+                                system_notification_target: None,
                             });
                         }
                     }
@@ -630,6 +637,7 @@ fn run_supervisor(
                             let _ = event_tx.send(RuntimeEvent::ExtensionUi {
                                 generation,
                                 request: request.clone(),
+                                system_notification_target: None,
                             });
                         }
                     }
@@ -1311,6 +1319,7 @@ impl RuntimeOwner {
                 let _ = self.event_tx.send(RuntimeEvent::ExtensionUi {
                     generation: self.process_generation,
                     request,
+                    system_notification_target: None,
                 });
                 SnapshotChange::None
             }
@@ -1827,6 +1836,18 @@ fn run_status(conversation: &ConversationState) -> &'static str {
     }
 }
 
+fn needs_active_catalog_refresh(snapshot: &RuntimeSnapshot) -> bool {
+    snapshot.conversation.running && !snapshot.conversation.compacting
+}
+
+fn notification_target(snapshot: &RuntimeSnapshot) -> Option<(PathBuf, PathBuf)> {
+    snapshot
+        .live_session
+        .clone()
+        .or_else(|| snapshot.selected_session.clone())
+        .map(|path| (path, snapshot.project.clone()))
+}
+
 fn has_running_descendant(sessions: &[SessionSummary]) -> bool {
     sessions
         .iter()
@@ -2153,6 +2174,34 @@ mod tests {
         assert_eq!(run_status(&conversation), "Working");
         conversation.reduce(&json!({"type":"agent_settled"}));
         assert_eq!(run_status(&conversation), "Ready");
+    }
+
+    #[test]
+    fn active_catalog_polling_pauses_during_compaction() {
+        let mut snapshot = RuntimeSnapshot::default();
+        conversation_mut(&mut snapshot).running = true;
+        assert!(needs_active_catalog_refresh(&snapshot));
+
+        conversation_mut(&mut snapshot).compacting = true;
+        assert!(!needs_active_catalog_refresh(&snapshot));
+    }
+
+    #[test]
+    fn notification_target_comes_from_the_emitting_runtime() {
+        let snapshot = RuntimeSnapshot {
+            project: PathBuf::from("/background-project"),
+            live_session: Some(PathBuf::from("/background-session.jsonl")),
+            selected_session: Some(PathBuf::from("/history-preview.jsonl")),
+            ..RuntimeSnapshot::default()
+        };
+
+        assert_eq!(
+            notification_target(&snapshot),
+            Some((
+                PathBuf::from("/background-session.jsonl"),
+                PathBuf::from("/background-project"),
+            ))
+        );
     }
 
     #[test]
