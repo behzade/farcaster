@@ -20,6 +20,14 @@
       "scope": "tree"
     },
     {
+      "kind": "network_host",
+      "host": "index.crates.io"
+    },
+    {
+      "kind": "network_host",
+      "host": "static.crates.io"
+    },
+    {
       "kind": "network_local"
     }
   ]
