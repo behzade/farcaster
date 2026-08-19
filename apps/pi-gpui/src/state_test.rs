@@ -12,8 +12,28 @@ use crate::{
     projects::{DraftSession, Registry},
     protocol::{PromptImage, PromptMode},
     sessions::{SessionSummary, UsageSummary},
-    state::{ComposerRecord, StateStore},
+    state::{ComposerRecord, StateStore, WindowPlacement, WindowState},
 };
+
+#[test]
+fn window_placement_survives_reopen() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let database = temp.path().join("gui.sqlite3");
+    let placement = WindowPlacement {
+        bounds: [-1800.0, 40.0, 1240.0, 820.0],
+        display_uuid: Some("external-display".into()),
+        display_origin: [-1920.0, 0.0],
+        state: WindowState::Maximized,
+    };
+
+    StateStore::open_at(&database)?.save_window_placement(&placement)?;
+
+    assert_eq!(
+        StateStore::open_at(&database)?.load_window_placement()?,
+        Some(placement)
+    );
+    Ok(())
+}
 
 #[test]
 fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::error::Error>> {

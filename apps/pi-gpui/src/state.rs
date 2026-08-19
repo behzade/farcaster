@@ -33,6 +33,21 @@ pub(crate) struct QueuedPrompt {
     pub images: Vec<PromptImage>,
 }
 
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+pub(crate) struct WindowPlacement {
+    pub bounds: [f32; 4],
+    pub display_uuid: Option<String>,
+    pub display_origin: [f32; 2],
+    pub state: WindowState,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+pub(crate) enum WindowState {
+    Windowed,
+    Maximized,
+    Fullscreen,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ComposerRecord {
     pub target: String,
@@ -180,6 +195,37 @@ impl StateStore {
             .commit()
             .map_err(|error| format!("commit GUI state schema migration: {error}"))?;
         Ok(Self { connection })
+    }
+
+    pub(crate) fn load_window_placement(&self) -> Result<Option<WindowPlacement>, String> {
+        let stored = self
+            .connection
+            .query_row(
+                "SELECT value FROM meta WHERE key='window_placement'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| format!("load window placement: {error}"))?;
+        stored
+            .map(|value| {
+                serde_json::from_str(&value)
+                    .map_err(|error| format!("decode window placement: {error}"))
+            })
+            .transpose()
+    }
+
+    pub(crate) fn save_window_placement(&self, placement: &WindowPlacement) -> Result<(), String> {
+        let value = serde_json::to_string(placement)
+            .map_err(|error| format!("encode window placement: {error}"))?;
+        self.connection
+            .execute(
+                "INSERT INTO meta(key, value) VALUES('window_placement', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                [value],
+            )
+            .map_err(|error| format!("save window placement: {error}"))?;
+        Ok(())
     }
 
     pub(crate) fn load_session_order(&self) -> Result<Vec<String>, String> {

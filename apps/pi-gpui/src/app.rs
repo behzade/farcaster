@@ -176,6 +176,7 @@ pub(crate) struct PiApp {
     _composer_subscription: Subscription,
     _search_subscription: Subscription,
     _session_title_subscription: Subscription,
+    _window_placement_subscription: Subscription,
     _event_task: Task<()>,
 }
 
@@ -294,6 +295,7 @@ impl PiApp {
                 InputEvent::Change | InputEvent::Focus => {}
             },
         );
+        let window_placement_subscription = crate::launch::observe_window_placement(window, cx);
         let runtime_wake = runtime.wake_receiver();
         let event_task = cx.spawn(async move |weak, cx| {
             while runtime_wake.recv().await.is_ok() {
@@ -439,6 +441,7 @@ impl PiApp {
             _composer_subscription: composer_subscription,
             _search_subscription: search_subscription,
             _session_title_subscription: session_title_subscription,
+            _window_placement_subscription: window_placement_subscription,
             _event_task: event_task,
         }
     }
