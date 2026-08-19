@@ -240,7 +240,11 @@ impl PiApp {
 }
 
 fn available_projects(registered: &[PathBuf], current: &std::path::Path) -> Vec<PathBuf> {
-    let mut available = registered.to_vec();
+    let mut available = registered
+        .iter()
+        .filter(|project| !projects::is_linked_worktree(project))
+        .cloned()
+        .collect::<Vec<_>>();
     projects::add_unique(&mut available, current.to_path_buf());
     if let Some(index) = available.iter().position(|project| project == current) {
         available.swap(0, index);
@@ -423,20 +427,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn project_choices_only_include_registered_and_current_projects() {
-        let registered = vec![PathBuf::from("/project"), PathBuf::from("/other")];
+    fn project_choices_only_include_registered_non_worktrees_and_current_project() {
+        let temp = tempfile::tempdir().expect("temporary project root");
+        let project = temp.path().join("project");
+        let other = temp.path().join("other");
+        let worktree = temp.path().join("worktree");
+        let worktree_git_dir = project.join(".git/worktrees/feature");
+        std::fs::create_dir_all(&worktree_git_dir).expect("worktree metadata");
+        std::fs::create_dir_all(&worktree).expect("worktree directory");
+        std::fs::write(worktree_git_dir.join("commondir"), "../..\n")
+            .expect("worktree common directory pointer");
+        std::fs::write(
+            worktree.join(".git"),
+            format!("gitdir: {}\n", worktree_git_dir.display()),
+        )
+        .expect("worktree git pointer");
+        let registered = vec![project.clone(), worktree.clone(), other.clone()];
 
         assert_eq!(
-            available_projects(&registered, std::path::Path::new("/other")),
-            vec![PathBuf::from("/other"), PathBuf::from("/project")]
+            available_projects(&registered, &other),
+            vec![other.clone(), project.clone()]
         );
         assert_eq!(
-            available_projects(&registered, std::path::Path::new("/current-worktree")),
-            vec![
-                PathBuf::from("/current-worktree"),
-                PathBuf::from("/other"),
-                PathBuf::from("/project"),
-            ]
+            available_projects(&registered, &worktree),
+            vec![worktree, other, project]
         );
     }
 

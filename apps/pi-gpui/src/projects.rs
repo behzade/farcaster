@@ -95,8 +95,28 @@ pub(crate) fn save_session_order(order: &[String]) -> Result<(), String> {
     StateStore::open()?.save_session_order(order)
 }
 
+pub(crate) fn is_linked_worktree(project: &Path) -> bool {
+    let Ok(pointer) = fs::read_to_string(project.join(".git")) else {
+        return false;
+    };
+    let Some(git_dir) = pointer
+        .lines()
+        .next()
+        .and_then(|line| line.strip_prefix("gitdir: "))
+    else {
+        return false;
+    };
+    let git_dir = Path::new(git_dir);
+    let git_dir = if git_dir.is_absolute() {
+        git_dir.to_path_buf()
+    } else {
+        project.join(git_dir)
+    };
+    git_dir.join("commondir").is_file()
+}
+
 pub(crate) fn add_unique(projects: &mut Vec<PathBuf>, project: PathBuf) -> bool {
-    if projects.iter().any(|known| known == &project) {
+    if is_linked_worktree(&project) || projects.iter().any(|known| known == &project) {
         return false;
     }
     projects.push(project);
@@ -113,7 +133,11 @@ pub(crate) fn select(projects: &mut Vec<PathBuf>, project: PathBuf) -> bool {
 }
 
 pub(crate) fn most_recent() -> Option<PathBuf> {
-    load().ok()?.projects.into_iter().next()
+    load()
+        .ok()?
+        .projects
+        .into_iter()
+        .find(|project| !is_linked_worktree(project))
 }
 
 fn registry_path() -> Result<PathBuf, String> {
@@ -257,6 +281,31 @@ mod tests {
         )?;
 
         assert_eq!(load_from(&path)?, Registry::default());
+        Ok(())
+    }
+
+    #[test]
+    fn detects_linked_worktrees_without_mistaking_regular_repositories()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempdir()?;
+        let repository = temp.path().join("repository");
+        let worktree = temp.path().join("worktree");
+        let worktree_git_dir = repository.join(".git/worktrees/feature");
+        fs::create_dir_all(&worktree_git_dir)?;
+        fs::create_dir_all(&worktree)?;
+        fs::write(worktree_git_dir.join("commondir"), "../..\n")?;
+        fs::write(
+            worktree.join(".git"),
+            format!("gitdir: {}\n", worktree_git_dir.display()),
+        )?;
+
+        fs::create_dir_all(repository.join(".git"))?;
+        assert!(!is_linked_worktree(&repository));
+        assert!(is_linked_worktree(&worktree));
+
+        let mut projects = vec![repository];
+        assert!(!add_unique(&mut projects, worktree));
+        assert_eq!(projects.len(), 1);
         Ok(())
     }
 
