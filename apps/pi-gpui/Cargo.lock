@@ -4752,6 +4752,7 @@ dependencies = [
  "async-channel",
  "base64",
  "gpui",
+ "gpui-base",
  "gpui-component",
  "gpui-component-assets",
  "gpui-fps",

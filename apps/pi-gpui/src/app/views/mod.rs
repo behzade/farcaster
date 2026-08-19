@@ -19,6 +19,7 @@ use gpui::{
     Context, Focusable as _, InteractiveElement as _, IntoElement, ParentElement as _, Render,
     Styled as _, Window, div, prelude::FluentBuilder as _,
 };
+use gpui_base::TextSelection;
 use gpui_component::kbd::Kbd;
 
 use super::{
@@ -29,6 +30,14 @@ use super::{
     ToggleArchivedSessions,
 };
 pub(crate) const OVERLAY_KEY_CONTEXT: &str = "PiGpuiOverlay";
+
+fn session_shortcuts_visible(current: bool, requested: bool, has_text_selection: bool) -> bool {
+    if has_text_selection {
+        current
+    } else {
+        requested
+    }
+}
 
 use crate::{
     layout::{
@@ -220,8 +229,12 @@ impl Render for PiApp {
                 this.switch_to_session_number(9, window, cx);
             }))
             .on_modifiers_changed(cx.listener(
-                |this, event: &gpui::ModifiersChangedEvent, _, cx| {
-                    let visible = event.modifiers.platform;
+                |this, event: &gpui::ModifiersChangedEvent, window, cx| {
+                    let visible = session_shortcuts_visible(
+                        this.session_shortcuts_visible,
+                        event.modifiers.platform,
+                        TextSelection::has_selection(window, cx),
+                    );
                     if this.session_shortcuts_visible != visible {
                         this.session_shortcuts_visible = visible;
                         this.notify_session_rail(cx);
@@ -473,4 +486,16 @@ fn render_keybindings_help() -> impl IntoElement {
         content = content.child(section);
     }
     content
+}
+
+#[cfg(test)]
+mod tests {
+    use super::session_shortcuts_visible;
+
+    #[test]
+    fn command_modifier_does_not_change_shortcuts_during_text_selection() {
+        assert!(!session_shortcuts_visible(false, true, true));
+        assert!(session_shortcuts_visible(true, false, true));
+        assert!(session_shortcuts_visible(false, true, false));
+    }
 }
