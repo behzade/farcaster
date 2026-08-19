@@ -73,7 +73,7 @@ impl WorkGraphSidebarView {
     }
 
     pub(crate) fn refresh(&mut self, cx: &mut gpui::Context<Self>) {
-        self.state = BoardLoadState::Loading;
+        let notify_loading = prepare_refresh(&mut self.state);
         let database = self.database.clone();
         let project = self.project.clone();
         let load = cx.background_spawn(async move { load_issues(database, project) });
@@ -83,12 +83,24 @@ impl WorkGraphSidebarView {
                 Err(error) => BoardLoadState::Failed(error),
             };
             let _ = weak.update(cx, |this, cx| {
-                this.state = state;
-                cx.notify();
+                if this.state != state {
+                    this.state = state;
+                    cx.notify();
+                }
             });
         }));
-        cx.notify();
+        if notify_loading {
+            cx.notify();
+        }
     }
+}
+
+fn prepare_refresh(state: &mut BoardLoadState) -> bool {
+    if matches!(state, BoardLoadState::Ready(_) | BoardLoadState::Loading) {
+        return false;
+    }
+    *state = BoardLoadState::Loading;
+    true
 }
 
 impl Render for WorkGraphSidebarView {
@@ -291,6 +303,22 @@ mod tests {
             created_at: 0,
             updated_at: 0,
         }
+    }
+
+    #[test]
+    fn ready_content_remains_visible_while_refreshing() {
+        let data = BoardData {
+            issues: vec![issue(1, IssueStatus::Open)],
+            ..BoardData::default()
+        };
+        let mut state = BoardLoadState::Ready(data.clone());
+
+        assert!(!prepare_refresh(&mut state));
+        assert_eq!(state, BoardLoadState::Ready(data));
+
+        let mut failed = BoardLoadState::Failed("unavailable".into());
+        assert!(prepare_refresh(&mut failed));
+        assert_eq!(failed, BoardLoadState::Loading);
     }
 
     #[test]

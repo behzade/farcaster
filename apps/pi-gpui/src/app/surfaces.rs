@@ -155,7 +155,7 @@ impl PiApp {
         }
     }
 
-    fn active_workgraph_session(&self) -> Option<(String, String)> {
+    pub(super) fn active_workgraph_session(&self) -> Option<(String, String)> {
         let selected = self.snapshot.selected_session.as_deref()?;
         self.all_sessions
             .iter()

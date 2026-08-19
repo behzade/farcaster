@@ -23,7 +23,7 @@ use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
     ops::Range,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
     time::Instant,
 };
@@ -46,7 +46,7 @@ use crate::{
     projects,
     protocol::{ExtensionUiRequest, Model},
     runtime::{RuntimeCommand, RuntimeEvent, RuntimeHandle, RuntimeSnapshot},
-    sessions::{SessionSummary, root_session_for_path},
+    sessions::{SessionSummary, descendant_sessions, root_session_for_path},
 };
 
 const MAX_EXTENSION_ERRORS: usize = 16;
@@ -511,7 +511,6 @@ impl PiApp {
                 }
                 RuntimeEvent::WorkGraphChanged { project, .. } => {
                     workgraph_data_dirty |= project == &self.project;
-                    run_dirty |= project == &self.project;
                 }
                 RuntimeEvent::RefreshCatalog | RuntimeEvent::Stopped => run_dirty = true,
             }
@@ -584,6 +583,12 @@ impl PiApp {
                         &sessions,
                         &all_sessions,
                     );
+                    let run_catalog_changed = run_panel_sessions_changed(
+                        &self.all_sessions,
+                        &all_sessions,
+                        self.snapshot.selected_session.as_deref(),
+                    );
+                    let previous_workgraph_session = self.active_workgraph_session();
                     let activities_changed =
                         session_activities_changed(&self.agent_activities, activities.as_ref());
                     for session in &all_sessions {
@@ -610,8 +615,9 @@ impl PiApp {
                             .or_insert_with(|| cx.focus_handle());
                     }
                     rail_dirty |= catalog_changed || activities_changed;
-                    run_dirty |= catalog_changed || activities_changed;
-                    workgraph_session_dirty |= catalog_changed;
+                    run_dirty |= run_catalog_changed || activities_changed;
+                    workgraph_session_dirty |=
+                        previous_workgraph_session != self.active_workgraph_session();
                     self.reconcile_submitted_drafts(cx);
                 }
                 RuntimeEvent::SessionsFailed {
@@ -1149,6 +1155,44 @@ fn session_catalog_changed(
     current != next || current_all != next_all || current_error.is_some()
 }
 
+fn run_panel_sessions_changed(
+    current: &[SessionSummary],
+    next: &[SessionSummary],
+    selected: Option<&Path>,
+) -> bool {
+    fn visible_session_eq(left: &SessionSummary, right: &SessionSummary) -> bool {
+        left.id == right.id
+            && left.path == right.path
+            && left.project == right.project
+            && left.timestamp == right.timestamp
+            && left.parent_session == right.parent_session
+            && left.message_count == right.message_count
+            && left.usage == right.usage
+            && left.is_running == right.is_running
+    }
+
+    fn visible<'a>(
+        sessions: &'a [SessionSummary],
+        selected: Option<&Path>,
+    ) -> Vec<(&'a SessionSummary, usize)> {
+        let Some(root) = root_session_for_path(sessions, selected) else {
+            return Vec::new();
+        };
+        let mut result = vec![(root, 0)];
+        result.extend(descendant_sessions(sessions, &root.id));
+        result
+    }
+    let current = visible(current, selected);
+    let next = visible(next, selected);
+    current.len() != next.len()
+        || current
+            .iter()
+            .zip(next)
+            .any(|((left, left_depth), (right, right_depth))| {
+                left_depth != &right_depth || !visible_session_eq(left, right)
+            })
+}
+
 fn session_activities_changed(
     current: &HashMap<String, crate::agent_activity::AgentActivity>,
     next: Option<&(HashMap<String, crate::agent_activity::AgentActivity>, bool)>,
@@ -1202,10 +1246,27 @@ fn composer_snapshot_changed(previous: &RuntimeSnapshot, next: &RuntimeSnapshot)
 }
 
 fn run_panel_snapshot_changed(previous: &RuntimeSnapshot, next: &RuntimeSnapshot) -> bool {
+    fn model(snapshot: &RuntimeSnapshot) -> Option<&Model> {
+        snapshot
+            .session
+            .as_ref()
+            .and_then(|session| session.model.as_ref())
+            .or(snapshot.prefill_model.as_ref())
+    }
+    fn effort(snapshot: &RuntimeSnapshot) -> Option<&str> {
+        snapshot
+            .session
+            .as_ref()
+            .map(|session| session.thinking_level.as_str())
+            .or(snapshot.prefill_thinking_level.as_deref())
+    }
+
     previous.selected_session != next.selected_session
         || previous.stats != next.stats
         || previous.conversation.running != next.conversation.running
         || previous.conversation.average_cache_hit_rate != next.conversation.average_cache_hit_rate
+        || model(previous) != model(next)
+        || effort(previous) != effort(next)
 }
 
 fn input_snapshot(input: &TextareaState) -> ComposerSnapshot {

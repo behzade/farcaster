@@ -81,6 +81,48 @@ fn unchanged_catalog_poll_does_not_invalidate_session_regions() {
 }
 
 #[test]
+fn run_panel_ignores_non_visible_session_catalog_churn() {
+    let session = |modified, usage| {
+        SessionSummary::from_cached(
+            "root".into(),
+            PathBuf::from("/root.jsonl"),
+            PathBuf::from("/project"),
+            "Root".into(),
+            String::new(),
+            "2026-01-01".into(),
+            None,
+            modified,
+            1,
+            usage,
+            false,
+            false,
+            String::new(),
+        )
+    };
+    let current = vec![session(SystemTime::UNIX_EPOCH, UsageSummary::default())];
+    let touched = vec![session(SystemTime::now(), UsageSummary::default())];
+
+    assert!(!run_panel_sessions_changed(
+        &current,
+        &touched,
+        Some(std::path::Path::new("/root.jsonl")),
+    ));
+
+    let changed = vec![session(
+        SystemTime::now(),
+        UsageSummary {
+            cost_micros: 1,
+            ..UsageSummary::default()
+        },
+    )];
+    assert!(run_panel_sessions_changed(
+        &current,
+        &changed,
+        Some(std::path::Path::new("/root.jsonl")),
+    ));
+}
+
+#[test]
 fn done_is_recent_only_after_an_active_status_transition() {
     assert!(!starts_recent_completion(None, "Done", false));
     assert!(!starts_recent_completion(Some("Done"), "Done", false));
@@ -178,6 +220,17 @@ fn composer_and_run_panel_track_their_rendered_snapshot_inputs() {
     assert!(!run_panel_snapshot_changed(&previous, &composer));
     assert!(run_panel_snapshot_changed(&previous, &run_panel));
     assert!(!composer_snapshot_changed(&previous, &run_panel));
+
+    let mut child_identity = previous.clone();
+    child_identity.prefill_model = Some(Model {
+        id: "kimi-k3".into(),
+        name: "Kimi K3".into(),
+        provider: "opencode-go".into(),
+        context_window: 262_144,
+        reasoning: true,
+    });
+    child_identity.prefill_thinking_level = Some("high".into());
+    assert!(run_panel_snapshot_changed(&previous, &child_identity));
 }
 
 #[test]
