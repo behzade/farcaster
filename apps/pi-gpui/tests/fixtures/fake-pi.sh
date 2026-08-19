@@ -9,6 +9,14 @@ fi
 if [ "$case_name" = "ignore-term" ]; then
   trap '' TERM
 fi
+if [ "$case_name" = "term-marker" ]; then
+  marker=$2
+  on_term() {
+    printf 'terminated\n' >> "$marker"
+    exit 0
+  }
+  trap on_term TERM
+fi
 
 read_id() {
   printf '%s' "$1" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p'
@@ -48,6 +56,9 @@ while IFS= read -r line; do
   if [ "$case_name" = "mismatch-response" ]; then
     printf '{"type":"response","id":"%s","command":"get_state","success":true,"data":{}}\n' "$id"
     continue
+  fi
+  if [ "$case_name" = "term-marker" ] && [ "$type" = "abort" ]; then
+    printf 'aborted\n' >> "$marker"
   fi
   case "$type" in
     get_messages)

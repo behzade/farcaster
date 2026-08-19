@@ -160,6 +160,7 @@ pub(crate) struct RuntimeHandle {
     events: mpsc::Receiver<RuntimeEvent>,
     wake: async_channel::Receiver<()>,
     thread: thread::Thread,
+    join: Option<thread::JoinHandle<()>>,
 }
 
 #[derive(Clone)]
@@ -221,6 +222,7 @@ impl RuntimeHandle {
             events,
             wake,
             thread: handle.thread().clone(),
+            join: Some(handle),
         }
     }
 
@@ -238,6 +240,16 @@ impl RuntimeHandle {
 
     pub(crate) fn wake_receiver(&self) -> async_channel::Receiver<()> {
         self.wake.clone()
+    }
+}
+
+impl Drop for RuntimeHandle {
+    fn drop(&mut self) {
+        let _ = self.commands.send(RuntimeCommand::Shutdown);
+        self.thread.unpark();
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
     }
 }
 
@@ -262,6 +274,7 @@ struct SessionRuntimeHandle {
     commands: mpsc::Sender<RuntimeCommand>,
     events: mpsc::Receiver<RuntimeEvent>,
     thread: thread::Thread,
+    join: thread::JoinHandle<()>,
 }
 
 impl SessionRuntimeHandle {
@@ -285,6 +298,7 @@ impl SessionRuntimeHandle {
             commands,
             events,
             thread: handle.thread().clone(),
+            join: handle,
         }
     }
 
@@ -292,6 +306,10 @@ impl SessionRuntimeHandle {
         if self.commands.send(command).is_ok() {
             self.thread.unpark();
         }
+    }
+
+    fn join(self) {
+        let _ = self.join.join();
     }
 }
 
@@ -605,6 +623,8 @@ fn run_supervisor(
                 }
                 let next = command_target(&command);
                 if let Some((requested_key, project)) = next {
+                    let _selection_timing = is_view_only_selection(&command)
+                        .then(|| crate::performance::Timing::new("switch.runtime_route"));
                     let key = match &command {
                         RuntimeCommand::SelectSession { path, .. } => {
                             actor_paths.get(path).cloned().unwrap_or_else(|| {
@@ -693,6 +713,9 @@ fn run_supervisor(
     }
     for actor in actors.values() {
         actor.send(RuntimeCommand::Shutdown);
+    }
+    for actor in actors.into_values() {
+        actor.join();
     }
     let _ = event_tx.send(RuntimeEvent::Stopped);
 }
@@ -1135,7 +1158,7 @@ fn run(
         }
     }
     if let Some(mut process) = owner.process.take() {
-        let _ = process.terminate();
+        let _ = process.abort_and_terminate();
     }
     let _ = owner.event_tx.send(RuntimeEvent::Stopped);
 }
@@ -1462,6 +1485,7 @@ impl RuntimeOwner {
     }
 
     fn select_history(&mut self, path: PathBuf, project: PathBuf) {
+        let _timing = crate::performance::Timing::new("switch.select_document");
         self.history_generation = self.history_generation.saturating_add(1);
         if self.snapshot.selected_session.as_deref() == Some(path.as_path()) {
             return;
@@ -1491,6 +1515,7 @@ impl RuntimeOwner {
         thread::Builder::new()
             .name("pi-gpui-history".into())
             .spawn(move || {
+                let _timing = crate::performance::Timing::new("switch.load_history");
                 let result = load_history(&path);
                 let _ = sender.send(HistoryResult {
                     generation,
@@ -1928,6 +1953,51 @@ mod tests {
             },
             receiver,
         )
+    }
+
+    #[test]
+    fn dropping_runtime_waits_for_owned_pi_processes_to_terminate() -> Result<(), String> {
+        let temp = tempdir().map_err(|error| error.to_string())?;
+        let script = temp.path().join("fake-pi.sh");
+        fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))
+            .map_err(|error| error.to_string())?;
+        let mut permissions = fs::metadata(&script)
+            .map_err(|error| error.to_string())?
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script, permissions).map_err(|error| error.to_string())?;
+        let marker = temp.path().join("terminated");
+        let runtime = RuntimeHandle::spawn_with(
+            temp.path().to_path_buf(),
+            "shutdown-test".into(),
+            None,
+            ProcessCommand {
+                program: script,
+                prefix_args: vec!["term-marker".into(), marker.to_string_lossy().into_owned()],
+                direnv_program: None,
+            },
+        );
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut connected = false;
+        while Instant::now() < deadline && !connected {
+            connected = matches!(
+                runtime.try_recv(),
+                Ok(RuntimeEvent::Snapshot { snapshot, .. }) if snapshot.connected
+            );
+            if !connected {
+                thread::sleep(Duration::from_millis(5));
+            }
+        }
+        assert!(connected, "owned Pi process did not start");
+
+        drop(runtime);
+
+        assert_eq!(
+            fs::read_to_string(&marker).map_err(|error| error.to_string())?,
+            "aborted\nterminated\n",
+            "runtime returned before Pi handled abort and SIGTERM"
+        );
+        Ok(())
     }
 
     fn owner_without_process(
