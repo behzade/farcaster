@@ -10,7 +10,6 @@ let
     ../extensions/package.json
     ../extensions/package-lock.json
     ../extensions/agent-feedback.ts
-    ../extensions/kimi-tool-schema.ts
     ../extensions/notifications.ts
     ../extensions/prompt-inspector.ts
     ../extensions/session-hooks.ts
