@@ -250,8 +250,11 @@ needed:
 - first user-visible user text for fallback title/search
 - modified time, path, and a bounded message count/search corpus
 
-Never rewrite session files. Let Pi migrate/open them. Use temporary session
-roots in tests. Search should be bounded and case-insensitive. Perform file IO
+Never rewrite session files during discovery or ordinary open/migration. The explicit
+“Move to project” transaction is the sole exception: it stages rewritten headers for
+the complete session family, preserves IDs and entry bytes, quarantines every source,
+and only then atomically exposes the destination files. Use temporary session roots in
+tests. Search should be bounded and case-insensitive. Perform file IO
 and parsing off the GPUI thread and guard late results by a generation/session
 identifier.
 

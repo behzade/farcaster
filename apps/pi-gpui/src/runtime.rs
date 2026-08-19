@@ -22,10 +22,11 @@ use crate::{
         ExtensionUiResponse, Model, PromptImage, PromptMode, SessionState, SlashCommand, command,
     },
     rpc_process::{ProcessCommand, ProcessItem, RpcProcess},
+    session_transfer::{self, TransferMember},
     session_watcher::{SessionWatchEvent, SessionWatcher},
     sessions::{
-        LoadedHistory, SessionDiscovery, SessionSummary, configured_session_root, discover,
-        load_history,
+        LoadedHistory, SessionDiscovery, SessionSummary, configured_session_root,
+        descendant_sessions, discover, load_history, root_session_for_path,
     },
     state::StateStore,
 };
@@ -56,6 +57,10 @@ pub(crate) enum RuntimeCommand {
         path: PathBuf,
         project: PathBuf,
         name: String,
+    },
+    MoveSession {
+        path: PathBuf,
+        target_project: PathBuf,
     },
     NewSession {
         id: String,
@@ -111,6 +116,11 @@ pub(crate) enum RuntimeEvent {
     SessionsFailed {
         generation: u64,
         message: String,
+    },
+    SessionMoved {
+        target_root: PathBuf,
+        target_project: PathBuf,
+        paths: Arc<HashMap<PathBuf, PathBuf>>,
     },
     RefreshCatalog,
     WorkGraphChanged {
@@ -172,8 +182,8 @@ struct UiEventSender {
 }
 
 impl UiEventSender {
-    fn send(&self, event: RuntimeEvent) -> Result<(), mpsc::SendError<RuntimeEvent>> {
-        self.events.send(event)?;
+    fn send(&self, event: RuntimeEvent) -> Result<(), ()> {
+        self.events.send(event).map_err(|_| ())?;
         let _ = self.wake.try_send(());
         Ok(())
     }
@@ -265,8 +275,8 @@ struct SessionEventSender {
 }
 
 impl SessionEventSender {
-    fn send(&self, event: RuntimeEvent) -> Result<(), mpsc::SendError<RuntimeEvent>> {
-        self.sender.send(event)?;
+    fn send(&self, event: RuntimeEvent) -> Result<(), ()> {
+        self.sender.send(event).map_err(|_| ())?;
         self.supervisor.unpark();
         Ok(())
     }
@@ -376,6 +386,8 @@ fn run_supervisor(
     let mut selected = initial_key.clone();
     let mut generation = 0_u64;
     let mut latest = HashMap::<String, Arc<RuntimeSnapshot>>::new();
+    let mut catalog_sessions = Vec::<SessionSummary>::new();
+    let mut catalog_generation = 0_u64;
     if let Some(path) = initial_session.clone() {
         latest.insert(
             initial_key.clone(),
@@ -547,8 +559,14 @@ fn run_supervisor(
                     event @ (RuntimeEvent::Sessions { .. }
                     | RuntimeEvent::SessionsFailed { .. }) => {
                         if key == catalog_key
-                            && let RuntimeEvent::Sessions { all_sessions, .. } = &event
+                            && let RuntimeEvent::Sessions {
+                                generation: next_generation,
+                                all_sessions,
+                                ..
+                            } = &event
                         {
+                            catalog_generation = *next_generation;
+                            catalog_sessions.clone_from(all_sessions);
                             reconcile_live_session_documents(
                                 all_sessions,
                                 &interacted,
@@ -574,6 +592,7 @@ fn run_supervisor(
                         }
                     }
                     RuntimeEvent::Stopped
+                    | RuntimeEvent::SessionMoved { .. }
                     | RuntimeEvent::SessionStatus { .. }
                     | RuntimeEvent::SessionReset { .. }
                     | RuntimeEvent::HistoryReset { .. } => {}
@@ -583,6 +602,137 @@ fn run_supervisor(
         match command_rx.try_recv() {
             Ok(RuntimeCommand::Shutdown) => running = false,
             Ok(command) => {
+                if let RuntimeCommand::MoveSession {
+                    path,
+                    target_project,
+                } = &command
+                {
+                    let result = (|| {
+                        let root = root_session_for_path(&catalog_sessions, Some(path.as_path()))
+                            .ok_or_else(|| {
+                            "The session is no longer available to move".to_owned()
+                        })?;
+                        if root.path != *path {
+                            return Err("Only a root session can be moved".to_owned());
+                        }
+                        let mut family = vec![root];
+                        family.extend(
+                            descendant_sessions(&catalog_sessions, &root.id)
+                                .into_iter()
+                                .map(|(session, _)| session),
+                        );
+                        if family.iter().any(|session| session.is_running) {
+                            return Err(
+                                "Wait for the session family to finish before moving it".to_owned()
+                            );
+                        }
+                        let family_paths = family
+                            .iter()
+                            .map(|session| session.path.clone())
+                            .collect::<HashSet<_>>();
+                        let family_actor_keys = actor_paths
+                            .iter()
+                            .filter(|(path, key)| {
+                                family_paths.contains(*path) && *key != &catalog_key
+                            })
+                            .map(|(_, key)| key.clone())
+                            .collect::<HashSet<_>>();
+                        if family_actor_keys.iter().any(|key| {
+                            latest.get(key).is_some_and(|snapshot| {
+                                snapshot.conversation.running
+                                    || snapshot.conversation.compacting
+                                    || needs_input.contains(key)
+                            })
+                        }) {
+                            return Err(
+                                "Wait for the session family to become idle before moving it"
+                                    .to_owned(),
+                            );
+                        }
+                        let mut state = StateStore::open()?;
+                        let paths = family_paths.iter().cloned().collect::<Vec<_>>();
+                        if state.has_queued_prompts_for(&paths)? {
+                            return Err("Send or remove queued prompts before moving this session"
+                                .to_owned());
+                        }
+                        for key in &family_actor_keys {
+                            if let Some(actor) = actors.remove(key) {
+                                actor.send(RuntimeCommand::Shutdown);
+                                actor.join();
+                            }
+                            latest.remove(key);
+                            last_touch.remove(key);
+                            pending_extensions.remove(key);
+                            active_dialogs.remove(key);
+                            needs_input.remove(key);
+                            interacted.remove(key);
+                            published_statuses.remove(key);
+                        }
+                        document_revisions.retain(|path, _| !family_paths.contains(path));
+                        actor_paths.retain(|path, _| !family_paths.contains(path));
+                        let source_was_selected = family_actor_keys.contains(&selected);
+                        if source_was_selected {
+                            selected = catalog_key.clone();
+                            generation = generation.saturating_add(1);
+                        }
+                        let members = family
+                            .iter()
+                            .map(|session| TransferMember {
+                                path: session.path.clone(),
+                                id: session.id.clone(),
+                                parent_id: session.parent_session.clone(),
+                            })
+                            .collect::<Vec<_>>();
+                        let session_root = configured_session_root()?;
+                        let destination = session_transfer::destination_directory(
+                            &session_root,
+                            target_project,
+                            &root.path,
+                        );
+                        let moved = session_transfer::move_family(
+                            &members,
+                            &root.id,
+                            target_project,
+                            &destination,
+                        )?;
+                        let path_updates = moved
+                            .paths
+                            .iter()
+                            .map(|(source, target)| (source.clone(), target.clone()))
+                            .collect::<Vec<_>>();
+                        let state_warning = state
+                            .relocate_session_paths(&path_updates, target_project)
+                            .err();
+                        Ok((moved, state_warning))
+                    })();
+                    match result {
+                        Ok((moved, state_warning)) => {
+                            let _ = event_tx.send(RuntimeEvent::SessionMoved {
+                                target_root: moved.root,
+                                target_project: target_project.clone(),
+                                paths: Arc::new(moved.paths),
+                            });
+                            if let Some(message) = state_warning {
+                                let _ = event_tx.send(RuntimeEvent::SessionsFailed {
+                                    generation: catalog_generation,
+                                    message: format!(
+                                        "Session moved, but its saved UI state could not be migrated: {message}"
+                                    ),
+                                });
+                            }
+                            if let Some(catalog) = actors.get(&catalog_key) {
+                                catalog.send(RuntimeCommand::RefreshSessions);
+                            }
+                        }
+                        Err(message) => {
+                            let _ = event_tx.send(RuntimeEvent::SessionsFailed {
+                                generation: catalog_generation,
+                                message,
+                            });
+                        }
+                    }
+                    continue;
+                }
                 if matches!(&command, RuntimeCommand::ExtensionResponse(_)) {
                     if let Some(dialogs) = active_dialogs.get_mut(&selected) {
                         if !dialogs.is_empty() {
@@ -696,6 +846,7 @@ fn run_supervisor(
                             | RuntimeCommand::RefreshSessions
                             | RuntimeCommand::SetSettled { .. }
                             | RuntimeCommand::RenameSession { .. }
+                            | RuntimeCommand::MoveSession { .. }
                     ) {
                         &catalog_key
                     } else {
@@ -1219,6 +1370,7 @@ impl RuntimeOwner {
                     });
                 }
             },
+            RuntimeCommand::MoveSession { .. } => {}
             RuntimeCommand::NewSession { project, .. } => {
                 self.project = project;
                 self.start_process(None);

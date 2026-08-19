@@ -395,6 +395,72 @@ fn schema_v5_migrates_existing_sessions_and_drafts_to_incremental_ids()
 }
 
 #[test]
+fn relocating_session_paths_preserves_application_identity_and_composer_state()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let database = temp.path().join("gui.sqlite3");
+    let source_project = temp.path().join("source");
+    let target_project = temp.path().join("target");
+    fs::create_dir(&source_project)?;
+    fs::create_dir(&target_project)?;
+    let source = temp.path().join("source.jsonl");
+    let target = temp.path().join("target.jsonl");
+    drop(StateStore::open_at(&database)?);
+    let connection = Connection::open(&database)?;
+    connection.execute(
+        "INSERT INTO app_sessions(id, session_path, created_ms) VALUES(42, ?1, 1)",
+        [source.to_string_lossy()],
+    )?;
+    connection.execute(
+        "INSERT INTO sessions(
+           path, id, project, title, first_user_message, timestamp, parent_session,
+           modified_ms, file_size, message_count, input_tokens, output_tokens,
+           cache_read_tokens, cache_write_tokens, total_tokens, cost_micros,
+           search_text, settled_ms, is_running, app_session_id
+         ) VALUES(?1, 'pi-id', ?2, 'Title', '', '', NULL, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+                  'title', 7, 0, 42)",
+        params![source.to_string_lossy(), source_project.to_string_lossy()],
+    )?;
+    connection.execute(
+        "INSERT INTO composer_sessions(
+           target, text, cursor, selection_start, selection_end, history_json, updated_ms
+         ) VALUES(?1, 'draft', 5, 5, 5, '[]', 1)",
+        [format!("session:{}", source.display())],
+    )?;
+    drop(connection);
+
+    StateStore::open_at(&database)?
+        .relocate_session_paths(&[(source.clone(), target.clone())], &target_project)?;
+
+    let connection = Connection::open(&database)?;
+    assert_eq!(
+        connection.query_row(
+            "SELECT id FROM app_sessions WHERE session_path=?1",
+            [target.to_string_lossy()],
+            |row| row.get::<_, i64>(0),
+        )?,
+        42
+    );
+    assert_eq!(
+        connection.query_row(
+            "SELECT project FROM sessions WHERE path=?1",
+            [target.to_string_lossy()],
+            |row| row.get::<_, String>(0),
+        )?,
+        target_project.to_string_lossy()
+    );
+    assert_eq!(
+        connection.query_row(
+            "SELECT text FROM composer_sessions WHERE target=?1",
+            [format!("session:{}", target.display())],
+            |row| row.get::<_, String>(0),
+        )?,
+        "draft"
+    );
+    Ok(())
+}
+
+#[test]
 fn submitted_draft_without_session_path_survives_reopen() -> Result<(), Box<dyn std::error::Error>>
 {
     let temp = tempdir()?;

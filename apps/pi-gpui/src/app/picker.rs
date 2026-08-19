@@ -27,13 +27,17 @@ use crate::{
 
 pub(crate) const PICKER_KEY_CONTEXT: &str = "PiPicker";
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ProjectPickerIntent {
     NewSession,
     ChangeDraft,
+    MoveSession {
+        path: PathBuf,
+        source_project: PathBuf,
+    },
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum PickerScope {
     Actions,
     Projects(ProjectPickerIntent),
@@ -41,15 +45,16 @@ pub(crate) enum PickerScope {
 }
 
 impl PickerScope {
-    const fn label(self) -> &'static str {
+    const fn label(&self) -> &'static str {
         match self {
             Self::Actions => "Actions",
+            Self::Projects(ProjectPickerIntent::MoveSession { .. }) => "Move session",
             Self::Projects(_) => "Choose project",
             Self::Sessions => "Find session",
         }
     }
 
-    const fn placeholder(self) -> &'static str {
+    const fn placeholder(&self) -> &'static str {
         match self {
             Self::Actions => "Search actions…",
             Self::Projects(_) => "Search projects…",
@@ -66,6 +71,7 @@ enum PickerCommand {
     OpenWorkGraph,
     NewSession(PathBuf),
     ChangeDraftProject(PathBuf),
+    MoveSession { path: PathBuf, project: PathBuf },
     SelectSession { path: PathBuf, project: PathBuf },
     ResumeDraft { id: String, project: PathBuf },
 }
@@ -100,7 +106,7 @@ impl PiApp {
                 self.sheet_return_focus = None;
             }
         }
-        let (rows, commands) = self.picker_rows(scope);
+        let (rows, commands) = self.picker_rows(scope.clone());
         let (delegate, handles) = PickerDelegate::new(rows);
         let confirmed_id = handles.confirmed_id;
         let query = handles.query;
@@ -254,6 +260,10 @@ impl PiApp {
                 self.change_draft_project(project, cx);
                 self.composer_focus.focus(window, cx);
             }
+            PickerCommand::MoveSession { path, project } => {
+                self.close_picker(window, cx);
+                self.move_session(path, project, cx);
+            }
             PickerCommand::SelectSession { path, project } => {
                 self.close_picker(window, cx);
                 self.select_session(path, project, window, cx);
@@ -313,14 +323,21 @@ impl PiApp {
             PickerScope::Projects(intent) => {
                 let mut rows = ordered_projects(&self.projects, &self.all_sessions)
                     .into_iter()
+                    .filter(|project| project_is_available_for_intent(&intent, project))
                     .enumerate()
                     .map(|(index, project)| {
-                        let command = match intent {
+                        let command = match &intent {
                             ProjectPickerIntent::NewSession => {
                                 PickerCommand::NewSession(project.clone())
                             }
                             ProjectPickerIntent::ChangeDraft => {
                                 PickerCommand::ChangeDraftProject(project.clone())
+                            }
+                            ProjectPickerIntent::MoveSession { path, .. } => {
+                                PickerCommand::MoveSession {
+                                    path: path.clone(),
+                                    project: project.clone(),
+                                }
                             }
                         };
                         picker_row(
@@ -474,6 +491,13 @@ fn sort_projects_by_recency(
     ordered
 }
 
+fn project_is_available_for_intent(intent: &ProjectPickerIntent, project: &PathBuf) -> bool {
+    !matches!(
+        intent,
+        ProjectPickerIntent::MoveSession { source_project, .. } if source_project == project
+    )
+}
+
 fn project_label(project: &std::path::Path) -> String {
     project
         .file_name()
@@ -485,6 +509,19 @@ fn project_label(project: &std::path::Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn move_project_choices_exclude_the_source_project() {
+        let source = PathBuf::from("/work/source");
+        let target = PathBuf::from("/work/target");
+        let intent = ProjectPickerIntent::MoveSession {
+            path: PathBuf::from("/sessions/session.jsonl"),
+            source_project: source.clone(),
+        };
+
+        assert!(!project_is_available_for_intent(&intent, &source));
+        assert!(project_is_available_for_intent(&intent, &target));
+    }
 
     #[test]
     fn projects_with_recent_sessions_lead_then_registry_order_breaks_ties() {

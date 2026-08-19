@@ -558,6 +558,84 @@ impl StateStore {
             .map_err(|error| format!("commit session index: {error}"))
     }
 
+    pub(crate) fn has_queued_prompts_for(&self, paths: &[PathBuf]) -> Result<bool, String> {
+        for path in paths {
+            let queued = self
+                .connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM outbox WHERE session_path=?1 AND state='queued')",
+                    [path.to_string_lossy()],
+                    |row| row.get::<_, bool>(0),
+                )
+                .map_err(|error| format!("check queued prompts for {}: {error}", path.display()))?;
+            if queued {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    pub(crate) fn relocate_session_paths(
+        &mut self,
+        paths: &[(PathBuf, PathBuf)],
+        target_project: &Path,
+    ) -> Result<(), String> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| format!("start session path relocation: {error}"))?;
+        for (source, target) in paths {
+            let source_text = source.to_string_lossy();
+            let target_text = target.to_string_lossy();
+            let source_target = format!("session:{source_text}");
+            let target_target = format!("session:{target_text}");
+            transaction
+                .execute(
+                    "UPDATE app_sessions SET session_path=?2 WHERE session_path=?1",
+                    params![source_text, target_text],
+                )
+                .and_then(|_| {
+                    transaction.execute(
+                        "UPDATE sessions SET path=?2, project=?3 WHERE path=?1",
+                        params![source_text, target_text, target_project.to_string_lossy()],
+                    )
+                })
+                .and_then(|_| {
+                    transaction.execute(
+                        "UPDATE drafts SET session_path=?2, project=?3 WHERE session_path=?1",
+                        params![source_text, target_text, target_project.to_string_lossy()],
+                    )
+                })
+                .and_then(|_| {
+                    transaction.execute(
+                        "UPDATE outbox SET target=?2, project=?3, session_path=?4 WHERE target=?1",
+                        params![
+                            source_target,
+                            target_target,
+                            target_project.to_string_lossy(),
+                            target_text
+                        ],
+                    )
+                })
+                .and_then(|_| {
+                    transaction.execute(
+                        "UPDATE composer_sessions SET target=?2 WHERE target=?1",
+                        params![source_target, target_target],
+                    )
+                })
+                .map_err(|error| {
+                    format!(
+                        "relocate session state {} to {}: {error}",
+                        source.display(),
+                        target.display()
+                    )
+                })?;
+        }
+        transaction
+            .commit()
+            .map_err(|error| format!("commit session path relocation: {error}"))
+    }
+
     pub(crate) fn set_settled(&self, path: &Path, settled: bool) -> Result<(), String> {
         self.connection
             .execute(

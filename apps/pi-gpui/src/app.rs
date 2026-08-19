@@ -545,6 +545,13 @@ impl PiApp {
                         self.snapshot.selected_session != snapshot.selected_session;
                 }
                 RuntimeEvent::Sessions { .. } | RuntimeEvent::SessionsFailed { .. } => {}
+                RuntimeEvent::SessionMoved { .. } => {
+                    root_dirty = true;
+                    rail_dirty = true;
+                    transcript_dirty = true;
+                    composer_dirty = true;
+                    run_dirty = true;
+                }
                 RuntimeEvent::SessionStatus { .. } => rail_dirty = true,
                 RuntimeEvent::HistoryReset { .. } => transcript_dirty = true,
                 RuntimeEvent::SessionReset { .. } => {
@@ -680,6 +687,64 @@ impl PiApp {
                     workgraph_session_dirty |=
                         previous_workgraph_session != self.active_workgraph_session();
                     self.reconcile_submitted_drafts(cx);
+                }
+                RuntimeEvent::SessionMoved {
+                    target_root,
+                    target_project,
+                    paths,
+                } => {
+                    for (source, target) in paths.iter() {
+                        let source_target = session_target(source);
+                        let target_target = session_target(target);
+                        self.composer_sessions
+                            .promote(&source_target, target_target.clone());
+                        if let Some(images) = self.composer_images.remove(&source_target) {
+                            self.composer_images.insert(target_target.clone(), images);
+                        }
+                        if let Some(status) = self.run_statuses.remove(&source_target) {
+                            self.run_statuses.insert(target_target.clone(), status);
+                        }
+                        if let Some(completion) = self.recent_completions.remove(&source_target) {
+                            self.recent_completions
+                                .insert(target_target.clone(), completion);
+                        }
+                        if let Some(expiry) = self.recent_completion_expiries.remove(&source_target)
+                        {
+                            self.recent_completion_expiries
+                                .insert(target_target.clone(), expiry);
+                        }
+                        for draft in &mut self.drafts {
+                            if draft.session_path.as_deref() == Some(source.as_path()) {
+                                draft.session_path = Some(target.clone());
+                                draft.project = target_project.clone();
+                            }
+                        }
+                        for session_path in self.submitted_drafts.values_mut().flatten() {
+                            if session_path == source {
+                                *session_path = target.clone();
+                            }
+                        }
+                    }
+                    if let Some((session, project)) = self.system_notification_target.as_mut()
+                        && let Some(target) = paths.get(session)
+                    {
+                        *session = target.clone();
+                        *project = target_project.clone();
+                    }
+                    let selected_was_moved = self
+                        .snapshot
+                        .selected_session
+                        .as_ref()
+                        .or(self.snapshot.live_session.as_ref())
+                        .is_some_and(|path| paths.contains_key(path));
+                    if selected_was_moved {
+                        self.select_project(target_project.clone());
+                        self.send(RuntimeCommand::SelectSession {
+                            path: target_root,
+                            project: target_project,
+                        });
+                    }
+                    self.save_project_registry();
                 }
                 RuntimeEvent::SessionsFailed {
                     generation,
@@ -1003,6 +1068,9 @@ impl PiApp {
                         this.change_draft_project(project, cx);
                         this.composer_focus.focus(window, cx);
                     }
+                    Some(ProjectPickerIntent::MoveSession { path, .. }) => {
+                        this.move_session(path, project, cx);
+                    }
                     None => {}
                 }
             });
@@ -1123,6 +1191,32 @@ impl PiApp {
         self.notify_composer(cx);
         self.notify_run_panel(cx);
         cx.notify();
+    }
+
+    fn move_session(&mut self, path: PathBuf, target_project: PathBuf, cx: &mut Context<Self>) {
+        let Some(session) = self
+            .all_sessions
+            .iter()
+            .find(|session| session.path == path)
+        else {
+            self.sessions_error = Some("The session is no longer available to move".to_owned());
+            self.notify_session_rail(cx);
+            return;
+        };
+        if session.project == target_project {
+            return;
+        }
+        if session.is_running {
+            self.sessions_error = Some(
+                "Wait for the session to finish before moving it to another project".to_owned(),
+            );
+            self.notify_session_rail(cx);
+            return;
+        }
+        self.send(RuntimeCommand::MoveSession {
+            path,
+            target_project,
+        });
     }
 
     fn set_session_settled(&mut self, path: PathBuf, settled: bool, cx: &mut Context<Self>) {

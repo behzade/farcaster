@@ -17,7 +17,7 @@ use gpui_component::{
 };
 
 use super::{
-    super::PiApp,
+    super::{PiApp, PickerScope, ProjectPickerIntent},
     session_groups::{SessionRailItem, SessionRailKind},
 };
 use crate::{
@@ -291,6 +291,9 @@ pub(super) fn session_row_with_height(
     let edit_path = path.clone();
     let edit_project = project.clone();
     let edit_title = session.title.clone();
+    let move_path = session.path.clone();
+    let move_project = session.project.clone();
+    let move_entity = entity.clone();
     let settle_path = session.path.clone();
     let settle_entity = entity.clone();
     let target_app_session_id = session.app_session_id;
@@ -455,6 +458,54 @@ pub(super) fn session_row_with_height(
                                             .expect("fixed session shortcut must parse"),
                                     ))
                                 })
+                                .child(
+                                    div()
+                                        .id(format!("move-{}", session.id))
+                                        .role(Role::Button)
+                                        .aria_label("Move session to another project")
+                                        .tab_index(0)
+                                        .size(THEME.controls.icon_button)
+                                        .flex_none()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .rounded(THEME.radius)
+                                        .opacity(0.0)
+                                        .group_hover(
+                                            format!("session-actions-{}", session.id),
+                                            |button| button.opacity(1.0),
+                                        )
+                                        .focus(|button| {
+                                            button
+                                                .opacity(1.0)
+                                                .border(THEME.border)
+                                                .border_color(THEME.colors.accent)
+                                        })
+                                        .text_color(THEME.colors.muted)
+                                        .hover(|button| button.bg(THEME.colors.hover))
+                                        .tooltip(move |window, cx| {
+                                            Tooltip::new("Move to project…").build(window, cx)
+                                        })
+                                        .child(app_icon(
+                                            AppIcon::FolderDashed,
+                                            AppIconSize::Control,
+                                        ))
+                                        .on_click(move |_, window, cx| {
+                                            cx.stop_propagation();
+                                            let _ = move_entity.update(cx, |this, cx| {
+                                                this.open_picker(
+                                                    PickerScope::Projects(
+                                                        ProjectPickerIntent::MoveSession {
+                                                            path: move_path.clone(),
+                                                            source_project: move_project.clone(),
+                                                        },
+                                                    ),
+                                                    window,
+                                                    cx,
+                                                );
+                                            });
+                                        }),
+                                )
                                 .child(
                                     div()
                                         .id(format!("settle-{}", session.id))
