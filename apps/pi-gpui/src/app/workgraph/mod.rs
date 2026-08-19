@@ -8,3 +8,4 @@ pub(super) mod contract;
 pub(super) mod core;
 pub(super) mod layout;
 pub(super) mod persistence;
+pub(super) mod sidebar;

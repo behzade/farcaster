@@ -17,7 +17,7 @@ pub(crate) use composer_images::ComposerImage;
 use submissions::PendingSubmission;
 pub(crate) use views::OVERLAY_KEY_CONTEXT;
 use views::{ComposerView, RunPanelView, SessionRailView, TranscriptView, session_move_allowed};
-use workgraph::adapter::WorkGraphBoardView;
+use workgraph::{adapter::WorkGraphBoardView, sidebar::WorkGraphSidebarView};
 
 use std::{
     cell::RefCell,
@@ -128,6 +128,7 @@ pub(crate) struct PiApp {
     composer_view: Entity<ComposerView>,
     run_panel_view: Entity<RunPanelView>,
     workgraph_view: Entity<WorkGraphBoardView>,
+    workgraph_sidebar_view: Entity<WorkGraphSidebarView>,
     run_panel_scroll: ScrollHandle,
     composer_sessions: ComposerSessions,
     composer_history_marker: Option<(String, usize, String)>,
@@ -323,6 +324,9 @@ impl PiApp {
         let run_panel_view = cx.new(|_| RunPanelView::new(app.clone()));
         let workgraph_view =
             cx.new(|cx| WorkGraphBoardView::new(crate::state::state_path(), project.clone(), cx));
+        let workgraph_sidebar_view = cx.new(|cx| {
+            WorkGraphSidebarView::new(app.clone(), crate::state::state_path(), project.clone(), cx)
+        });
         transcript_list.set_scroll_handler(move |event, _, cx| {
             let following = event.is_following_tail;
             let app = app.clone();
@@ -387,6 +391,7 @@ impl PiApp {
             composer_view,
             run_panel_view,
             workgraph_view,
+            workgraph_sidebar_view,
             run_panel_scroll: ScrollHandle::new(),
             composer_sessions,
             composer_history_marker: None,
@@ -448,6 +453,7 @@ impl PiApp {
         let mut transcript_dirty = false;
         let mut composer_dirty = false;
         let mut run_dirty = performance_changed;
+        let mut workgraph_session_dirty = false;
         while let Ok(event) = self.runtime.try_recv() {
             match &event {
                 RuntimeEvent::Snapshot { snapshot, .. } => {
@@ -455,6 +461,8 @@ impl PiApp {
                         session_rail_snapshot_changed(&self.sessions, &self.snapshot, snapshot);
                     composer_dirty |= composer_snapshot_changed(&self.snapshot, snapshot);
                     run_dirty |= run_panel_snapshot_changed(&self.snapshot, snapshot);
+                    workgraph_session_dirty |=
+                        self.snapshot.selected_session != snapshot.selected_session;
                 }
                 RuntimeEvent::Sessions { .. } | RuntimeEvent::SessionsFailed { .. } => {}
                 RuntimeEvent::SessionStatus { .. } => {
@@ -582,6 +590,7 @@ impl PiApp {
                     }
                     rail_dirty |= catalog_changed || activities_changed;
                     run_dirty |= catalog_changed || activities_changed;
+                    workgraph_session_dirty |= catalog_changed;
                     self.reconcile_submitted_drafts(cx);
                 }
                 RuntimeEvent::SessionsFailed {
@@ -652,6 +661,9 @@ impl PiApp {
                 | RuntimeEvent::Sessions { .. }
                 | RuntimeEvent::SessionsFailed { .. } => {}
             }
+        }
+        if workgraph_session_dirty {
+            self.refresh_workgraph_sidebar(cx);
         }
         self.sync_notification_expiries(cx);
         self.sync_recent_completion_expiries(cx);

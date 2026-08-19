@@ -131,7 +131,7 @@ impl WorkGraphBoardView {
         }
     }
 
-    pub(super) fn select_issue(&mut self, number: u64, cx: &mut Context<Self>) {
+    pub(crate) fn select_issue(&mut self, number: u64, cx: &mut Context<Self>) {
         self.creating = false;
         self.editing = None;
         self.selected = Some(number);

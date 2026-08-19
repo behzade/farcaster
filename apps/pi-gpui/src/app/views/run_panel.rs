@@ -178,6 +178,7 @@ impl PiApp {
             .when(self.context_details_expanded, |run| {
                 run.child(render_accounting(aggregate, model, duration))
             })
+            .child(self.workgraph_sidebar_view.clone())
             .when_some(self.fps_monitor.clone(), |run, monitor| run.child(monitor))
             .when_some(self.performance_monitor.as_ref(), |run, monitor| {
                 run.child(render_performance(&monitor.summary))

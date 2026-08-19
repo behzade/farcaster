@@ -116,14 +116,43 @@ impl PiApp {
     }
 
     pub(super) fn open_workgraph_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.refresh_workgraph_board(cx);
+        self.open_sheet(AppSheet::WorkGraph, window, cx);
+    }
+
+    pub(super) fn open_workgraph_issue(
+        &mut self,
+        number: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.refresh_workgraph_board(cx);
+        self.workgraph_view
+            .update(cx, |view, cx| view.select_issue(number, cx));
+        self.open_sheet(AppSheet::WorkGraph, window, cx);
+    }
+
+    fn refresh_workgraph_board(&mut self, cx: &mut Context<Self>) {
         let project = self.project.clone();
-        let active_session =
-            root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
-                .map(|session| (session.id.clone(), session.path.display().to_string()));
+        let active_session = self.active_workgraph_session();
         self.workgraph_view.update(cx, |view, cx| {
             view.refresh_for(project, active_session, cx);
         });
-        self.open_sheet(AppSheet::WorkGraph, window, cx);
+    }
+
+    pub(super) fn refresh_workgraph_sidebar(&mut self, cx: &mut Context<Self>) {
+        let project = self.project.clone();
+        let session_id = self
+            .active_workgraph_session()
+            .map(|(session_id, _)| session_id);
+        self.workgraph_sidebar_view.update(cx, |view, cx| {
+            view.refresh_for(project, session_id, cx);
+        });
+    }
+
+    fn active_workgraph_session(&self) -> Option<(String, String)> {
+        root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
+            .map(|session| (session.id.clone(), session.path.display().to_string()))
     }
 
     pub(super) fn close_sessions_sheet_after_selection(
