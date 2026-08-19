@@ -141,6 +141,7 @@ craneLib.buildPackage (
       ln -s "$out/bin/pi-gpui" "$out/bin/pi-gui"
       mkdir -p "$out/lib/pi-gpui"
       cp -R ${../apps/pi-gpui/extensions/companion} "$out/lib/pi-gpui/companion"
+      chmod -R u+w "$out/lib/pi-gpui/companion"
     ''
     + lib.optionalString stdenv.hostPlatform.isDarwin ''
       app="$out/Applications/Pi.app"
