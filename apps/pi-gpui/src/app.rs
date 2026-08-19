@@ -52,6 +52,27 @@ use crate::{
 const MAX_EXTENSION_ERRORS: usize = 16;
 const SYSTEM_NOTIFICATION_TAG: &str = "pi-agent";
 pub(crate) const COMPOSER_KEY_CONTEXT: &str = "PiComposer";
+
+#[derive(Debug, Eq, PartialEq)]
+enum CurrentCloseTarget {
+    Draft(String),
+    Session(PathBuf),
+    None,
+}
+
+fn current_close_target(
+    selected_draft: Option<&str>,
+    selected_session: Option<&std::path::Path>,
+) -> CurrentCloseTarget {
+    if let Some(id) = selected_draft {
+        CurrentCloseTarget::Draft(id.to_owned())
+    } else if let Some(path) = selected_session {
+        CurrentCloseTarget::Session(path.to_owned())
+    } else {
+        CurrentCloseTarget::None
+    }
+}
+
 actions!(
     pi_gpui,
     [
@@ -76,7 +97,7 @@ actions!(
         ToggleArchivedSessions,
         SubmitPrompt,
         AbortRun,
-        SettleSession,
+        CloseCurrent,
         ComposerHistoryPrevious,
         ComposerHistoryNext,
         ShowKeybindings,

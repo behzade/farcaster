@@ -3,9 +3,9 @@
 use gpui::KeyBinding;
 
 use crate::app::{
-    AbortRun, AddProject, ComposerHistoryNext, ComposerHistoryPrevious, DismissSurface,
-    FocusComposer, FocusSessionSearch, NewSession, NextSession, OVERLAY_KEY_CONTEXT,
-    PreviousSession, QuitApplication, SettleSession, ShowKeybindings, ShowWorkGraph,
+    AbortRun, AddProject, CloseCurrent, ComposerHistoryNext, ComposerHistoryPrevious,
+    DismissSurface, FocusComposer, FocusSessionSearch, NewSession, NextSession,
+    OVERLAY_KEY_CONTEXT, PreviousSession, QuitApplication, ShowKeybindings, ShowWorkGraph,
     SubmitFollowUp, SubmitPrompt, SwitchSession1, SwitchSession2, SwitchSession3, SwitchSession4,
     SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8, SwitchSession9,
     ToggleArchivedSessions,
@@ -70,9 +70,9 @@ pub(crate) fn registry() -> Vec<Shortcut> {
         ),
         shortcut!(
             "Sessions",
-            "Toggle settled session",
+            "Close draft or session",
             "cmd-w",
-            SettleSession,
+            CloseCurrent,
             None
         ),
         Shortcut {
@@ -152,7 +152,7 @@ mod tests {
             shortcut.label == "Open work graph" && shortcut.keystroke == "cmd-shift-i"
         }));
         assert!(shortcuts.iter().any(|shortcut| {
-            shortcut.label == "Toggle settled session" && shortcut.keystroke == "cmd-w"
+            shortcut.label == "Close draft or session" && shortcut.keystroke == "cmd-w"
         }));
         assert!(
             shortcuts.iter().any(|shortcut| {

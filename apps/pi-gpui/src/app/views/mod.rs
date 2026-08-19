@@ -23,11 +23,11 @@ use gpui_base::TextSelection;
 use gpui_component::kbd::Kbd;
 
 use super::{
-    AbortRun, AddProject, DismissSurface, FocusComposer, FocusSessionSearch, NewSession,
-    NextSession, PiApp, PreviousSession, SettleSession, ShowKeybindings, ShowWorkGraph,
-    SubmitFollowUp, SubmitPrompt, SwitchSession1, SwitchSession2, SwitchSession3, SwitchSession4,
-    SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8, SwitchSession9,
-    ToggleArchivedSessions,
+    AbortRun, AddProject, CloseCurrent, CurrentCloseTarget, DismissSurface, FocusComposer,
+    FocusSessionSearch, NewSession, NextSession, PiApp, PreviousSession, ShowKeybindings,
+    ShowWorkGraph, SubmitFollowUp, SubmitPrompt, SwitchSession1, SwitchSession2, SwitchSession3,
+    SwitchSession4, SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8, SwitchSession9,
+    ToggleArchivedSessions, current_close_target,
 };
 pub(crate) const OVERLAY_KEY_CONTEXT: &str = "PiGpuiOverlay";
 
@@ -185,16 +185,23 @@ impl Render for PiApp {
                     this.send(crate::runtime::RuntimeCommand::Abort);
                 }
             }))
-            .on_action(cx.listener(|this, _: &SettleSession, _, cx| {
-                if let Some(path) = this.snapshot.selected_session.clone() {
-                    let settled = this
-                        .sessions
-                        .iter()
-                        .find(|session| session.path == path)
-                        .is_some_and(|session| session.settled);
-                    this.set_session_settled(path, !settled, cx);
-                }
-            }))
+            .on_action(cx.listener(
+                |this, _: &CloseCurrent, window, cx| match current_close_target(
+                    this.selected_draft.as_deref(),
+                    this.snapshot.selected_session.as_deref(),
+                ) {
+                    CurrentCloseTarget::Draft(id) => this.discard_draft(&id, window, cx),
+                    CurrentCloseTarget::Session(path) => {
+                        let settled = this
+                            .sessions
+                            .iter()
+                            .find(|session| session.path == path)
+                            .is_some_and(|session| session.settled);
+                        this.set_session_settled(path, !settled, cx);
+                    }
+                    CurrentCloseTarget::None => {}
+                },
+            ))
             .on_action(cx.listener(|this, _: &ShowKeybindings, window, cx| {
                 this.open_keybindings_help(window, cx);
             }))

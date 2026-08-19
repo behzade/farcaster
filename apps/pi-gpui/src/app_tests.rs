@@ -6,6 +6,20 @@ use crate::{
     sessions::UsageSummary,
 };
 
+#[test]
+fn close_targets_a_draft_before_its_backing_session() {
+    let session = std::path::Path::new("/tmp/session.jsonl");
+
+    assert_eq!(
+        current_close_target(Some("draft-1"), Some(session)),
+        CurrentCloseTarget::Draft("draft-1".into())
+    );
+    assert_eq!(
+        current_close_target(None, Some(session)),
+        CurrentCloseTarget::Session(session.into())
+    );
+}
+
 fn item(text: &str) -> TranscriptItem {
     TranscriptItem {
         kind: TranscriptKind::Assistant,
