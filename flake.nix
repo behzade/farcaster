@@ -186,6 +186,8 @@
           agent-extension-layout = pkgs.runCommand "pi-agent-extension-layout-test" { } ''
             test -f ${agent}/extensions/node_modules/effect/package.json
             test "$(readlink ${agent}/extensions/node_modules)" = ${coreExtensions}/node_modules
+            test -L ${agent}/prompts
+            test -f ${agent}/prompts/commit.md
             touch "$out"
           '';
           core-extensions = pkgs.runCommand "pi-core-extensions-test" { nativeBuildInputs = [ pkgs.nodejs ]; } ''

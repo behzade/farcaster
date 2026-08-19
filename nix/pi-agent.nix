@@ -19,7 +19,7 @@ stdenvNoCC.mkDerivation {
   installPhase = ''
     runHook preInstall
 
-    mkdir -p "$out/extensions" "$out/prompts" "$out/skills" "$out/themes"
+    mkdir -p "$out/extensions" "$out/skills" "$out/themes"
 
     substitute ${../SYSTEM.md} "$out/SYSTEM.md" \
       --replace-fail "@piCodingAgent@" "${piTerminal}/lib/pi-terminal/node_modules/@earendil-works/pi-coding-agent"
@@ -40,7 +40,7 @@ stdenvNoCC.mkDerivation {
     ln -s ${coreExtensions}/title-state.ts "$out/extensions/title-state.ts"
     ln -s ${coreExtensions}/user-input.ts "$out/extensions/user-input.ts"
 
-    ln -s ${../prompts/commit.md} "$out/prompts/commit.md"
+    ln -s ${../prompts} "$out/prompts"
     ln -s ${../themes/gruvbox-dark-hard.json} "$out/themes/gruvbox-dark-hard.json"
 
     for skill in ${../skills}/*; do
