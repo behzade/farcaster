@@ -1158,7 +1158,7 @@ fn run(
         }
     }
     if let Some(mut process) = owner.process.take() {
-        let _ = process.abort_and_terminate();
+        let _ = process.terminate();
     }
     let _ = owner.event_tx.send(RuntimeEvent::Stopped);
 }
@@ -1956,7 +1956,7 @@ mod tests {
     }
 
     #[test]
-    fn dropping_runtime_waits_for_owned_pi_processes_to_terminate() -> Result<(), String> {
+    fn dropping_runtime_waits_for_owned_pi_processes_to_handle_exit() -> Result<(), String> {
         let temp = tempdir().map_err(|error| error.to_string())?;
         let script = temp.path().join("fake-pi.sh");
         fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))
@@ -1994,8 +1994,8 @@ mod tests {
 
         assert_eq!(
             fs::read_to_string(&marker).map_err(|error| error.to_string())?,
-            "aborted\nterminated\n",
-            "runtime returned before Pi handled abort and SIGTERM"
+            "terminated\n",
+            "runtime returned before Pi handled application exit"
         );
         Ok(())
     }

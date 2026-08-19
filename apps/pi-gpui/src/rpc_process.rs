@@ -274,24 +274,6 @@ impl RpcProcess {
         }
     }
 
-    pub(crate) fn abort_and_terminate(&mut self) -> Result<(), String> {
-        if let Ok(id) = self.send_command(serde_json::json!({"type":"abort"})) {
-            let deadline = Instant::now() + Duration::from_secs(1);
-            while Instant::now() < deadline {
-                match self.try_next() {
-                    Some(ProcessItem::Response(response))
-                        if response.id.as_deref() == Some(&id) =>
-                    {
-                        break;
-                    }
-                    Some(ProcessItem::Failure(_)) => break,
-                    Some(_) | None => thread::sleep(Duration::from_millis(10)),
-                }
-            }
-        }
-        self.terminate()
-    }
-
     pub(crate) fn terminate(&mut self) -> Result<(), String> {
         let pid = {
             let mut child = self
