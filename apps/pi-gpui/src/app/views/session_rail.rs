@@ -36,7 +36,7 @@ use crate::{
         dropdown_icon_button, feedback, icon_button,
     },
     projects::DraftSession,
-    sessions::root_session_for_path,
+    sessions::{SessionSummary, root_session_for_path},
     theme::THEME,
 };
 
@@ -61,6 +61,7 @@ impl PiApp {
                 .map(|session| session.id.clone());
         let live_project = (!self.snapshot.project.as_os_str().is_empty())
             .then_some(self.snapshot.project.as_path());
+        let waiting_roots = roots_waiting_for_descendants(&self.all_sessions);
         let active_projects = resolved_active_projects(
             &self.sessions,
             &self.drafts,
@@ -111,6 +112,7 @@ impl PiApp {
         let active_live_root = live_root.clone();
         let active_live_status = self.snapshot.live_status.clone();
         let active_run_statuses = self.run_statuses.clone();
+        let active_waiting_roots = waiting_roots.clone();
         let active_row_entity = entity.clone();
         let active_editing_path = self
             .editing_session_title
@@ -142,6 +144,7 @@ impl PiApp {
                         active_run_statuses.get(&target).map(String::as_str),
                         active_live_root.as_deref(),
                         &active_live_status,
+                        active_waiting_roots.contains(&item.session.id),
                     );
                     let shortcut = shortcuts_visible
                         .then(|| session_shortcuts.get(&item.session.id).copied())
@@ -172,6 +175,7 @@ impl PiApp {
                     self.run_statuses.get(&target).map(String::as_str),
                     live_root.as_deref(),
                     &self.snapshot.live_status,
+                    waiting_roots.contains(&item.session.id),
                 );
                 let editing = self
                     .editing_session_title
@@ -190,6 +194,7 @@ impl PiApp {
             .collect::<Vec<_>>();
         let archived_live_status = self.snapshot.live_status.clone();
         let archived_run_statuses = self.run_statuses.clone();
+        let archived_waiting_roots = waiting_roots;
         let archived_row_entity = entity.clone();
         let archived_editing_path = self
             .editing_session_title
@@ -211,6 +216,7 @@ impl PiApp {
                             archived_run_statuses.get(&target).map(String::as_str),
                             live_root.as_deref(),
                             &archived_live_status,
+                            archived_waiting_roots.contains(&item.session.id),
                         );
                         let editing =
                             archived_editing_path.as_deref() == Some(item.session.path.as_path());
@@ -737,6 +743,31 @@ fn resolved_active_projects(
     }
 
     active
+}
+
+fn roots_waiting_for_descendants(sessions: &[SessionSummary]) -> HashSet<String> {
+    let parent_by_id = sessions
+        .iter()
+        .filter_map(|session| {
+            session
+                .parent_session
+                .as_ref()
+                .map(|parent| (session.id.as_str(), parent.as_str()))
+        })
+        .collect::<HashMap<_, _>>();
+    let mut waiting = HashSet::new();
+    for session in sessions.iter().filter(|session| session.is_running) {
+        let mut current = session.id.as_str();
+        let mut seen = HashSet::new();
+        while seen.insert(current) {
+            let Some(parent) = parent_by_id.get(current).copied() else {
+                break;
+            };
+            waiting.insert(parent.to_owned());
+            current = parent;
+        }
+    }
+    waiting
 }
 
 fn is_meaningful_active_status(status: &str) -> bool {

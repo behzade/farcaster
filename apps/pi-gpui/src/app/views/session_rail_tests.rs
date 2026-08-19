@@ -7,8 +7,8 @@ use std::{
 use super::{
     ActiveRailRow, ProjectGroup, SessionRailItem, SessionRailKind, is_meaningful_active_status,
     minimal_row_splice, recent_archived_sessions, resolved_active_projects,
-    selected_new_session_project, session_accessible_label, session_badge, session_rail_groups,
-    visible_session_shortcuts,
+    roots_waiting_for_descendants, selected_new_session_project, session_accessible_label,
+    session_badge, session_rail_groups, visible_session_shortcuts,
 };
 use crate::{
     composer_sessions::draft_target,
@@ -36,19 +36,19 @@ fn active_sessions_always_have_a_meaningful_state() {
     let running = item("running", "/project", SessionRailKind::Project, true);
 
     assert_eq!(
-        session_badge(&done, None, Some("other"), "Working"),
+        session_badge(&done, None, Some("other"), "Working", false),
         Some("Done".into())
     );
     assert_eq!(
-        session_badge(&done, Some("Ready"), None, ""),
+        session_badge(&done, Some("Ready"), None, "", false),
         Some("Done".into())
     );
     assert_eq!(
-        session_badge(&running, None, None, ""),
+        session_badge(&running, None, None, "", false),
         Some("Working".into())
     );
     assert_eq!(
-        session_badge(&done, None, Some("done"), "Needs input"),
+        session_badge(&done, None, Some("done"), "Needs input", false),
         Some("Needs input".into())
     );
 }
@@ -58,11 +58,28 @@ fn archived_sessions_suppress_done_but_keep_active_states() {
     let archived = item("archived", "/project", SessionRailKind::Settled, false);
     let running = item("running", "/project", SessionRailKind::Settled, true);
 
-    assert_eq!(session_badge(&archived, Some("Done"), None, ""), None);
-    assert_eq!(session_badge(&archived, None, None, ""), None);
     assert_eq!(
-        session_badge(&running, None, None, ""),
+        session_badge(&archived, Some("Done"), None, "", false),
+        None
+    );
+    assert_eq!(session_badge(&archived, None, None, "", false), None);
+    assert_eq!(
+        session_badge(&running, None, None, "", false),
         Some("Working".into())
+    );
+}
+
+#[test]
+fn completed_parent_waits_while_a_descendant_is_running() {
+    let parent = item("parent", "/project", SessionRailKind::Project, false);
+    let mut child = item("child", "/project", SessionRailKind::Project, true).session;
+    child.parent_session = Some(parent.session.id.clone());
+    let waiting = roots_waiting_for_descendants(&[parent.session.clone(), child]);
+
+    assert!(waiting.contains("parent"));
+    assert_eq!(
+        session_badge(&parent, Some("Done"), None, "", true),
+        Some("Waiting".into())
     );
 }
 

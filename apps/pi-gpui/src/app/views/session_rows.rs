@@ -206,14 +206,16 @@ pub(super) fn session_badge(
     explicit_status: Option<&str>,
     live_session_id: Option<&str>,
     live_status: &str,
+    waiting_for_descendant: bool,
 ) -> Option<String> {
+    let explicit_status = explicit_status.and_then(normalized_session_status);
+    let live_status = (live_session_id == Some(item.session.id.as_str()))
+        .then(|| normalized_session_status(live_status))
+        .flatten();
     let status = explicit_status
-        .and_then(normalized_session_status)
-        .or_else(|| {
-            (live_session_id == Some(item.session.id.as_str()))
-                .then(|| normalized_session_status(live_status))
-                .flatten()
-        })
+        .filter(|status| status != "Done" || !waiting_for_descendant)
+        .or_else(|| live_status.filter(|status| status != "Done" || !waiting_for_descendant))
+        .or_else(|| waiting_for_descendant.then(|| "Waiting".into()))
         .or_else(|| item.session.is_running.then(|| "Working".into()))
         .or_else(|| (item.kind == SessionRailKind::Project).then(|| "Done".into()));
     match (item.kind, status.as_deref()) {
