@@ -38,6 +38,7 @@ impl PiApp {
             exact_command,
             self.snapshot.conversation.running,
         );
+        let reserve_primary_action = primary_action.is_none();
         let mention_query = file_mentions::query_at_cursor(
             &self.composer.read(cx).value(),
             self.composer.read(cx).cursor(),
@@ -197,6 +198,9 @@ impl PiApp {
                             .flex_none()
                             .flex()
                             .gap(THEME.space.xs)
+                            .when(reserve_primary_action, |actions| {
+                                actions.child(div().size(THEME.controls.icon_button).flex_none())
+                            })
                             .when(self.snapshot.conversation.running, |actions| {
                                 actions.child(button_with_icon(
                                     "abort",
