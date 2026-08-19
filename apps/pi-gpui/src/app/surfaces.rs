@@ -2,14 +2,13 @@
 
 use gpui::{Context, Window};
 
-use super::PiApp;
+use super::{AppSurface, PiApp};
 use crate::{protocol::ExtensionUiRequest, runtime::RuntimeCommand};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AppSheet {
     Sessions,
     Run,
-    WorkGraph,
     Keybindings,
 }
 
@@ -17,7 +16,6 @@ enum AppSheet {
 struct SheetFlags {
     sessions: bool,
     run: bool,
-    workgraph: bool,
     keybindings: bool,
 }
 
@@ -25,14 +23,13 @@ const fn sheet_flags(active: Option<AppSheet>) -> SheetFlags {
     SheetFlags {
         sessions: matches!(active, Some(AppSheet::Sessions)),
         run: matches!(active, Some(AppSheet::Run)),
-        workgraph: matches!(active, Some(AppSheet::WorkGraph)),
         keybindings: matches!(active, Some(AppSheet::Keybindings)),
     }
 }
 
 impl SheetFlags {
     const fn any(self) -> bool {
-        self.sessions || self.run || self.workgraph || self.keybindings
+        self.sessions || self.run || self.keybindings
     }
 }
 
@@ -113,21 +110,42 @@ impl PiApp {
         self.open_sheet(AppSheet::Run, window, cx);
     }
 
-    pub(super) fn open_workgraph_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn toggle_workgraph_surface(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.surface.toggled() {
+            AppSurface::Chat => self.show_chat_surface(window, cx),
+            AppSurface::Work => self.open_workgraph_surface(cx),
+        }
+    }
+
+    pub(super) fn show_chat_surface(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.surface != AppSurface::Chat {
+            self.surface = AppSurface::Chat;
+            self.composer_focus.focus(window, cx);
+            cx.notify();
+        }
+    }
+
+    pub(super) fn open_workgraph_surface(&mut self, cx: &mut Context<Self>) {
         self.refresh_workgraph_board(cx);
-        self.open_sheet(AppSheet::WorkGraph, window, cx);
+        if self.surface != AppSurface::Work {
+            self.surface = AppSurface::Work;
+            cx.notify();
+        }
     }
 
     pub(super) fn open_workgraph_issue(
         &mut self,
         number: u64,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.refresh_workgraph_board(cx);
         self.workgraph_view
             .update(cx, |view, cx| view.select_issue(number, cx));
-        self.open_sheet(AppSheet::WorkGraph, window, cx);
+        if self.surface != AppSurface::Work {
+            self.surface = AppSurface::Work;
+            cx.notify();
+        }
     }
 
     fn refresh_workgraph_board(&mut self, cx: &mut Context<Self>) {
@@ -150,7 +168,7 @@ impl PiApp {
 
     pub(super) fn refresh_workgraph_data(&mut self, cx: &mut Context<Self>) {
         self.refresh_workgraph_sidebar(cx);
-        if self.workgraph_sheet {
+        if self.surface == AppSurface::Work {
             self.refresh_workgraph_board(cx);
         }
     }
@@ -191,7 +209,6 @@ impl PiApp {
         SheetFlags {
             sessions: self.sessions_sheet,
             run: self.run_sheet,
-            workgraph: self.workgraph_sheet,
             keybindings: self.keybindings_help,
         }
     }
@@ -199,7 +216,6 @@ impl PiApp {
     fn apply_sheet_flags(&mut self, flags: SheetFlags) {
         self.sessions_sheet = flags.sessions;
         self.run_sheet = flags.run;
-        self.workgraph_sheet = flags.workgraph;
         self.keybindings_help = flags.keybindings;
     }
 
@@ -219,11 +235,7 @@ impl PiApp {
             self.close_file_diff(window, cx);
         } else if self.extension.dialog.is_some() {
             self.cancel_dialog(window, cx);
-        } else if self.sessions_sheet
-            || self.run_sheet
-            || self.workgraph_sheet
-            || self.keybindings_help
-        {
+        } else if self.sessions_sheet || self.run_sheet || self.keybindings_help {
             self.close_sheet(window, cx);
         }
     }
@@ -234,24 +246,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn chat_and_work_are_peer_toggle_surfaces() {
+        assert_eq!(AppSurface::Chat.toggled(), AppSurface::Work);
+        assert_eq!(AppSurface::Work.toggled(), AppSurface::Chat);
+    }
+
+    #[test]
     fn activating_a_sheet_never_stacks_it_with_an_existing_sheet() {
-        for sheet in [
-            AppSheet::Sessions,
-            AppSheet::Run,
-            AppSheet::WorkGraph,
-            AppSheet::Keybindings,
-        ] {
+        for sheet in [AppSheet::Sessions, AppSheet::Run, AppSheet::Keybindings] {
             let flags = sheet_flags(Some(sheet));
             assert_eq!(
-                [
-                    flags.sessions,
-                    flags.run,
-                    flags.workgraph,
-                    flags.keybindings
-                ]
-                .into_iter()
-                .filter(|active| *active)
-                .count(),
+                [flags.sessions, flags.run, flags.keybindings]
+                    .into_iter()
+                    .filter(|active| *active)
+                    .count(),
                 1
             );
         }
@@ -265,7 +273,7 @@ mod tests {
             AppSheet::Sessions
         ))));
         assert!(!should_capture_return_focus(sheet_flags(Some(
-            AppSheet::WorkGraph
+            AppSheet::Run
         ))));
     }
 }

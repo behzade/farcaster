@@ -737,7 +737,14 @@ impl Render for WorkGraphBoardView {
             self.note_issue = self.selected;
         }
         let entity = cx.entity();
-        let layout = board_layout_mode(window.viewport_size().width);
+        let viewport_width = window.viewport_size().width;
+        let shell_layout = crate::layout::layout_mode(viewport_width);
+        let board_width = if crate::layout::shows_left_inline(shell_layout) {
+            viewport_width - THEME.layout.session_rail
+        } else {
+            viewport_width
+        };
+        let layout = board_layout_mode(board_width);
         div()
             .size_full()
             .min_h_0()

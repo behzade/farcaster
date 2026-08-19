@@ -23,11 +23,11 @@ use gpui_base::TextSelection;
 use gpui_component::kbd::Kbd;
 
 use super::{
-    AbortRun, AddProject, CloseCurrent, CurrentCloseTarget, DismissSurface, FocusComposer,
-    FocusSessionSearch, NewSession, NextSession, PiApp, PreviousSession, ShowKeybindings,
-    ShowWorkGraph, SubmitFollowUp, SubmitPrompt, SwitchSession1, SwitchSession2, SwitchSession3,
-    SwitchSession4, SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8, SwitchSession9,
-    ToggleArchivedSessions, current_close_target,
+    AbortRun, AddProject, AppSurface, CloseCurrent, CurrentCloseTarget, DismissSurface,
+    FocusComposer, FocusSessionSearch, NewSession, NextSession, PiApp, PreviousSession,
+    ShowKeybindings, ShowWorkGraph, SubmitFollowUp, SubmitPrompt, SwitchSession1, SwitchSession2,
+    SwitchSession3, SwitchSession4, SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8,
+    SwitchSession9, ToggleArchivedSessions, current_close_target,
 };
 pub(crate) const OVERLAY_KEY_CONTEXT: &str = "PiGpuiOverlay";
 
@@ -122,24 +122,47 @@ impl Render for PiApp {
             self.ensure_diff_highlight(full_diff_mode, cx);
         }
         let entity = cx.entity().downgrade();
-        let main = div()
-            .relative()
-            .flex_1()
-            .min_w_0()
-            .h_full()
-            .flex()
-            .flex_col()
-            .when(shows_run_sheet_button(mode), |main| {
-                main.child(self.render_navigation(shows_session_sheet_button(mode), entity.clone()))
-            })
-            .child(
-                div().flex_1().min_h_0().child(
-                    self.transcript_view
-                        .clone()
-                        .cached(gpui::StyleRefinement::default().size_full()),
-                ),
-            )
-            .child(self.composer_view.clone());
+        let work_active = self.surface == AppSurface::Work;
+        let main = if work_active {
+            div()
+                .relative()
+                .flex_1()
+                .min_w_0()
+                .h_full()
+                .flex()
+                .flex_col()
+                .child(self.render_navigation(
+                    shows_session_sheet_button(mode),
+                    true,
+                    entity.clone(),
+                ))
+                .child(div().flex_1().min_h_0().child(self.workgraph_view.clone()))
+                .into_any_element()
+        } else {
+            div()
+                .relative()
+                .flex_1()
+                .min_w_0()
+                .h_full()
+                .flex()
+                .flex_col()
+                .when(shows_run_sheet_button(mode), |main| {
+                    main.child(self.render_navigation(
+                        shows_session_sheet_button(mode),
+                        false,
+                        entity.clone(),
+                    ))
+                })
+                .child(
+                    div().flex_1().min_h_0().child(
+                        self.transcript_view
+                            .clone()
+                            .cached(gpui::StyleRefinement::default().size_full()),
+                    ),
+                )
+                .child(self.composer_view.clone())
+                .into_any_element()
+        };
         div()
             .relative()
             .size_full()
@@ -206,7 +229,7 @@ impl Render for PiApp {
                 this.open_keybindings_help(window, cx);
             }))
             .on_action(cx.listener(|this, _: &ShowWorkGraph, window, cx| {
-                this.open_workgraph_sheet(window, cx);
+                this.toggle_workgraph_surface(window, cx);
             }))
             .on_action(cx.listener(|this, _: &SwitchSession1, window, cx| {
                 this.switch_to_session_number(1, window, cx);
@@ -269,7 +292,7 @@ impl Render for PiApp {
                         )
                     })
                     .child(main)
-                    .when(shows_right_inline(mode), |shell| {
+                    .when(shows_right_inline(mode) && !work_active, |shell| {
                         shell.child(
                             div()
                                 .w(THEME.layout.run_panel)
@@ -339,27 +362,6 @@ impl Render for PiApp {
                                 .clone()
                                 .cached(gpui::StyleRefinement::default().size_full()),
                         )
-                    },
-                ))
-            })
-            .when(self.workgraph_sheet, |root| {
-                let close = entity.clone();
-                root.child(modal(
-                    "workgraph",
-                    "Work graph",
-                    &self.sheet_focus,
-                    OVERLAY_KEY_CONTEXT,
-                    move |window, cx| {
-                        let _ = close.update(cx, |this, cx| this.close_sheet(window, cx));
-                    },
-                    |surface| {
-                        surface
-                            .w_full()
-                            .max_w(gpui::px(1_180.0))
-                            .h_full()
-                            .max_h(gpui::relative(0.94))
-                            .overflow_hidden()
-                            .child(self.workgraph_view.clone())
                     },
                 ))
             })

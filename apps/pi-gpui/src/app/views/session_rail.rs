@@ -303,10 +303,10 @@ impl PiApp {
                                             ))
                                             .separator()
                                             .item(PopupMenuItem::new("Work graph").on_click(
-                                                move |_, window, cx| {
+                                                move |_, _, cx| {
                                                     let _ =
                                                         workgraph_entity.update(cx, |this, cx| {
-                                                            this.open_workgraph_sheet(window, cx);
+                                                            this.open_workgraph_surface(cx);
                                                         });
                                                 },
                                             ))

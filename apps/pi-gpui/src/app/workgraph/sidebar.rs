@@ -137,9 +137,8 @@ impl Render for WorkGraphSidebarView {
                         ButtonTone::Quiet,
                         {
                             let app = self.app.clone();
-                            move |window, cx| {
-                                let _ =
-                                    app.update(cx, |app, cx| app.open_workgraph_sheet(window, cx));
+                            move |_, cx| {
+                                let _ = app.update(cx, |app, cx| app.open_workgraph_surface(cx));
                             }
                         },
                     )),

@@ -12,9 +12,11 @@ impl PiApp {
     pub(super) fn render_navigation(
         &self,
         show_sessions: bool,
+        work_active: bool,
         entity: WeakEntity<Self>,
     ) -> impl IntoElement {
         let sessions_entity = entity.clone();
+        let chat_entity = entity.clone();
         div()
             .h(px(40.0))
             .flex_none()
@@ -42,29 +44,49 @@ impl PiApp {
                     .flex()
                     .items_center()
                     .gap(THEME.space.xs)
+                    .child(button(
+                        "show-chat-surface",
+                        "Chat",
+                        if work_active {
+                            ButtonTone::Quiet
+                        } else {
+                            ButtonTone::Neutral
+                        },
+                        true,
+                        move |window, cx| {
+                            let _ = chat_entity
+                                .update(cx, |this, cx| this.show_chat_surface(window, cx));
+                        },
+                    ))
                     .child({
                         let workgraph = entity.clone();
                         button(
-                            "open-workgraph",
-                            "Work graph",
-                            ButtonTone::Quiet,
+                            "show-workgraph-surface",
+                            "Work",
+                            if work_active {
+                                ButtonTone::Neutral
+                            } else {
+                                ButtonTone::Quiet
+                            },
                             true,
-                            move |window, cx| {
-                                let _ = workgraph.update(cx, |this, cx| {
-                                    this.open_workgraph_sheet(window, cx);
-                                });
+                            move |_, cx| {
+                                let _ = workgraph
+                                    .update(cx, |this, cx| this.open_workgraph_surface(cx));
                             },
                         )
                     })
-                    .child(button(
-                        "open-run",
-                        "Session details",
-                        ButtonTone::Quiet,
-                        true,
-                        move |window, cx| {
-                            let _ = entity.update(cx, |this, cx| this.open_run_sheet(window, cx));
-                        },
-                    )),
+                    .when(!work_active, |navigation| {
+                        navigation.child(button(
+                            "open-run",
+                            "Session details",
+                            ButtonTone::Quiet,
+                            true,
+                            move |window, cx| {
+                                let _ =
+                                    entity.update(cx, |this, cx| this.open_run_sheet(window, cx));
+                            },
+                        ))
+                    }),
             )
     }
 }
