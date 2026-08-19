@@ -14,15 +14,11 @@ use crate::{
 
 impl PiApp {
     pub(super) fn render_composer_controls(&self, entity: WeakEntity<Self>) -> AnyElement {
-        let selected_model = self
-            .snapshot
-            .session
-            .as_ref()
-            .and_then(|state| state.model.clone())
-            .or_else(|| self.snapshot.prefill_model.clone());
-        let selected_provider = selected_model
-            .as_ref()
-            .map(|model| model.provider.clone())
+        let identity = self.snapshot.session_identity();
+        let selected_model = identity.model;
+        let selected_provider = identity
+            .provider
+            .map(str::to_owned)
             .or_else(|| {
                 self.snapshot
                     .models
@@ -31,7 +27,6 @@ impl PiApp {
             })
             .unwrap_or_else(|| "Provider".into());
         let model_label = selected_model
-            .as_ref()
             .map(|model| bounded_label(&model.name, 24))
             .unwrap_or_else(|| "Model".into());
         let mut providers = self
@@ -47,9 +42,8 @@ impl PiApp {
         } else {
             format!("Provider: {}", bounded_label(&selected_provider, 14))
         };
-        let model_button_label = selected_model
-            .as_ref()
-            .map_or_else(|| "Model".into(), |_| format!("Model: {model_label}"));
+        let model_button_label =
+            selected_model.map_or_else(|| "Model".into(), |_| format!("Model: {model_label}"));
         let provider_models = self
             .snapshot
             .models
@@ -57,12 +51,7 @@ impl PiApp {
             .filter(|model| model.provider == selected_provider)
             .cloned()
             .collect::<Vec<_>>();
-        let effort = self
-            .snapshot
-            .session
-            .as_ref()
-            .map(|state| state.thinking_level.clone())
-            .or_else(|| self.snapshot.prefill_thinking_level.clone());
+        let effort = identity.effort;
         let efforts = self.snapshot.thinking_levels.clone();
         let projects = self.available_projects();
         let project_entity = entity.clone();
@@ -155,7 +144,7 @@ impl PiApp {
                     menu
                 }),
             )
-            .child(effort_selector(effort.as_deref(), &efforts, effort_entity))
+            .child(effort_selector(effort, &efforts, effort_entity))
             .into_any_element()
     }
 }

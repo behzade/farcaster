@@ -64,21 +64,6 @@ enum CurrentCloseTarget {
     None,
 }
 
-fn status_is_in_progress(status: &str) -> bool {
-    matches!(
-        status,
-        "Working"
-            | "Needs input"
-            | "Compacting"
-            | "Retrying"
-            | "Starting new session"
-            | "Resuming session"
-            | "Loading session"
-            | "Loading new session"
-            | "Stopping"
-    )
-}
-
 fn current_close_target(
     selected_draft: Option<&str>,
     selected_session: Option<&std::path::Path>,
@@ -243,16 +228,6 @@ pub(crate) struct PiApp {
 }
 
 impl PiApp {
-    pub(crate) fn has_active_work(&self) -> bool {
-        self.snapshot.conversation.running
-            || status_is_in_progress(&self.snapshot.status)
-            || status_is_in_progress(&self.snapshot.live_status)
-            || self
-                .run_statuses
-                .values()
-                .any(|status| status_is_in_progress(status))
-    }
-
     pub(crate) fn new(project: PathBuf, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (mut registry, mut project_registry_error) = match projects::load() {
             Ok(registry) => (registry, None),
@@ -1293,27 +1268,11 @@ fn session_rail_snapshot_changed(
 }
 
 fn composer_snapshot_changed(previous: &RuntimeSnapshot, next: &RuntimeSnapshot) -> bool {
-    fn composer_model(snapshot: &RuntimeSnapshot) -> Option<&Model> {
-        snapshot
-            .session
-            .as_ref()
-            .and_then(|session| session.model.as_ref())
-            .or(snapshot.prefill_model.as_ref())
-    }
-    fn thinking_level(snapshot: &RuntimeSnapshot) -> Option<&str> {
-        snapshot
-            .session
-            .as_ref()
-            .map(|session| session.thinking_level.as_str())
-            .or(snapshot.prefill_thinking_level.as_deref())
-    }
-
     previous.status != next.status
         || previous.commands != next.commands
         || previous.conversation.running != next.conversation.running
         || previous.conversation.queue != next.conversation.queue
-        || composer_model(previous) != composer_model(next)
-        || thinking_level(previous) != thinking_level(next)
+        || previous.session_identity() != next.session_identity()
         || previous.models != next.models
         || previous.thinking_levels != next.thinking_levels
 }

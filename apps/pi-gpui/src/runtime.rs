@@ -3,6 +3,7 @@
 mod catalog;
 mod documents;
 mod prompts;
+mod session_identity;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -28,6 +29,7 @@ use crate::{
     },
     state::StateStore,
 };
+use session_identity::SessionControlDefaults;
 
 const COALESCED_SESSION_REFRESH_DELAY: Duration = Duration::from_millis(100);
 const STREAM_PUBLISH_INTERVAL: Duration = Duration::from_millis(16);
@@ -395,7 +397,7 @@ fn run_supervisor(
     let mut needs_input = HashSet::<String>::new();
     let mut clock = 0_u64;
     let mut last_touch = HashMap::from([(initial_key.clone(), clock)]);
-    let mut session_controls = SessionControls::default();
+    let mut session_controls = SessionControlDefaults::default();
     let mut published_statuses = HashMap::<String, (Option<PathBuf>, String)>::new();
     if let Ok(state) = StateStore::open()
         && let Ok(prompts) = state.queued_prompts()
@@ -429,10 +431,7 @@ fn run_supervisor(
                 match event {
                     RuntimeEvent::Snapshot { snapshot, .. } => {
                         let mut snapshot = snapshot;
-                        prefill_session_controls(
-                            Arc::make_mut(&mut snapshot),
-                            &mut session_controls,
-                        );
+                        session_controls.apply(Arc::make_mut(&mut snapshot));
                         if snapshot.conversation.settled {
                             needs_input.remove(&key);
                             active_dialogs.remove(&key);
@@ -784,62 +783,6 @@ fn actor_key_for_command(
                 || snapshot.selected_session.as_deref() == Some(path.as_path())
         })
         .map_or_else(|| requested_key.to_owned(), |(key, _)| key.clone())
-}
-
-#[derive(Default)]
-struct SessionControls {
-    model: Option<Model>,
-    thinking_level: Option<String>,
-    models: Vec<Model>,
-    thinking_levels: Vec<String>,
-}
-
-fn resolve_history_model(models: &[Model], identity: Option<&(String, String)>) -> Option<Model> {
-    identity.map(|(provider, model_id)| {
-        models
-            .iter()
-            .find(|model| model.provider == *provider && model.id == *model_id)
-            .cloned()
-            .unwrap_or_else(|| Model {
-                id: model_id.clone(),
-                name: model_id.clone(),
-                provider: provider.clone(),
-                context_window: 0,
-                reasoning: false,
-            })
-    })
-}
-
-fn prefill_session_controls(snapshot: &mut RuntimeSnapshot, controls: &mut SessionControls) {
-    if snapshot.models.is_empty() {
-        snapshot.models.clone_from(&controls.models);
-    } else {
-        controls.models.clone_from(&snapshot.models);
-    }
-    if snapshot.thinking_levels.is_empty() {
-        snapshot
-            .thinking_levels
-            .clone_from(&controls.thinking_levels);
-    } else {
-        controls
-            .thinking_levels
-            .clone_from(&snapshot.thinking_levels);
-    }
-
-    if let Some(session) = &snapshot.session {
-        if let Some(model) = &session.model {
-            controls.model = controls
-                .models
-                .iter()
-                .find(|candidate| candidate.id == model.id && candidate.provider == model.provider)
-                .cloned()
-                .or_else(|| Some(model.clone()));
-        }
-        controls.thinking_level = Some(session.thinking_level.clone());
-    } else {
-        snapshot.prefill_model = controls.model.clone();
-        snapshot.prefill_thinking_level = controls.thinking_level.clone();
-    }
 }
 
 fn stable_session_stats(previous: &Value, next: Value, running: bool) -> Value {
@@ -1578,7 +1521,7 @@ impl RuntimeOwner {
             .map(|snapshot| snapshot.models.clone())
             .unwrap_or_default();
         let stats = historical_context_stats(&history.messages, &models);
-        let prefill_model = resolve_history_model(&models, history.model.as_ref());
+        let prefill_model = SessionControlDefaults::history_model(&models, history.model.as_ref());
         let mut conversation = ConversationState::default();
         conversation.replace_history(&history.messages);
         self.transcript_changed_from = Some(0);
@@ -2058,7 +2001,7 @@ mod tests {
         let identity = ("opencode-go".into(), "kimi-k3".into());
 
         assert_eq!(
-            resolve_history_model(&[], Some(&identity)),
+            SessionControlDefaults::history_model(&[], Some(&identity)),
             Some(Model {
                 id: "kimi-k3".into(),
                 name: "kimi-k3".into(),
@@ -3078,7 +3021,7 @@ mod tests {
             context_window: 200_000,
             reasoning: true,
         };
-        let mut controls = SessionControls::default();
+        let mut controls = SessionControlDefaults::default();
         let mut ready = RuntimeSnapshot {
             session: serde_json::from_value(json!({
                 "model": {
@@ -3101,16 +3044,72 @@ mod tests {
             thinking_levels: vec!["off".into(), "high".into()],
             ..RuntimeSnapshot::default()
         };
-        prefill_session_controls(&mut ready, &mut controls);
+        controls.apply(&mut ready);
 
         let mut starting = RuntimeSnapshot::default();
-        prefill_session_controls(&mut starting, &mut controls);
+        controls.apply(&mut starting);
 
         assert_eq!(starting.prefill_model, Some(model.clone()));
         assert_eq!(starting.prefill_thinking_level.as_deref(), Some("high"));
         assert_eq!(starting.models, vec![model]);
         assert_eq!(starting.thinking_levels, vec!["off", "high"]);
         assert!(starting.session.is_none());
+    }
+
+    #[test]
+    fn history_identity_overrides_draft_defaults_without_changing_them() {
+        let sol = Model {
+            id: "gpt-5.6-sol".into(),
+            name: "Sol".into(),
+            provider: "openai-codex".into(),
+            context_window: 200_000,
+            reasoning: true,
+        };
+        let luna = Model {
+            id: "gpt-5.6-luna".into(),
+            name: "Luna".into(),
+            provider: "openai-codex".into(),
+            context_window: 200_000,
+            reasoning: true,
+        };
+        let mut defaults = SessionControlDefaults::default();
+        let mut live_sol = RuntimeSnapshot {
+            session: serde_json::from_value(json!({
+                "model": sol,
+                "thinkingLevel": "high",
+                "isStreaming": false,
+                "isCompacting": false,
+                "sessionFile": "/sol",
+                "sessionId": "sol",
+                "autoCompactionEnabled": true,
+                "messageCount": 0,
+                "pendingMessageCount": 0
+            }))
+            .ok(),
+            models: vec![sol.clone(), luna.clone()],
+            thinking_levels: vec!["medium".into(), "high".into()],
+            ..RuntimeSnapshot::default()
+        };
+        defaults.apply(&mut live_sol);
+
+        let mut luna_history = RuntimeSnapshot {
+            prefill_model: Some(luna.clone()),
+            prefill_thinking_level: Some("medium".into()),
+            history_preview: true,
+            ..RuntimeSnapshot::default()
+        };
+        defaults.apply(&mut luna_history);
+
+        let history_identity = luna_history.session_identity();
+        assert_eq!(history_identity.provider, Some("openai-codex"));
+        assert_eq!(history_identity.model, Some(&luna));
+        assert_eq!(history_identity.effort, Some("medium"));
+
+        let mut empty_draft = RuntimeSnapshot::default();
+        defaults.apply(&mut empty_draft);
+        let draft_identity = empty_draft.session_identity();
+        assert_eq!(draft_identity.model, Some(&sol));
+        assert_eq!(draft_identity.effort, Some("high"));
     }
 
     #[test]

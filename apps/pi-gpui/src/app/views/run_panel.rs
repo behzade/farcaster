@@ -98,10 +98,8 @@ impl PiApp {
                 .sum::<usize>();
         let model = self
             .snapshot
-            .session
-            .as_ref()
-            .and_then(|session| session.model.as_ref())
-            .or(self.snapshot.prefill_model.as_ref())
+            .session_identity()
+            .model
             .map_or_else(|| "—".into(), |model| model.name.clone());
         let duration = root
             .and_then(|session| crate::agent_activity::parse_iso_timestamp(&session.timestamp))
