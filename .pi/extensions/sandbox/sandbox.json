@@ -21,6 +21,18 @@
     },
     {
       "kind": "network_host",
+      "host": "api.github.com"
+    },
+    {
+      "kind": "network_host",
+      "host": "codeload.github.com"
+    },
+    {
+      "kind": "network_host",
+      "host": "github.com"
+    },
+    {
+      "kind": "network_host",
       "host": "index.crates.io"
     },
     {
