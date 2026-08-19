@@ -4,7 +4,7 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 18] = [
+const ICON_PATHS: [&str; 19] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrow-counter-clockwise.svg",
     "icons/phosphor/arrow-square-out.svg",
@@ -12,6 +12,7 @@ const ICON_PATHS: [&str; 18] = [
     "icons/phosphor/caret-down.svg",
     "icons/phosphor/caret-right.svg",
     "icons/phosphor/check-circle.svg",
+    "icons/phosphor/dots-six-vertical.svg",
     "icons/phosphor/plus.svg",
     "icons/phosphor/question.svg",
     "icons/phosphor/folder.svg",
@@ -62,6 +63,9 @@ impl AssetSource for AppAssets {
             "icons/phosphor/check-circle.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/check-circle.svg"))
             }
+            "icons/phosphor/dots-six-vertical.svg" => Some(include_bytes!(
+                "../assets/phosphor-icons/dots-six-vertical.svg"
+            )),
             "icons/phosphor/plus.svg" => Some(include_bytes!("../assets/phosphor-icons/plus.svg")),
             "icons/phosphor/question.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/question.svg"))
@@ -116,6 +120,7 @@ pub(crate) enum AppIcon {
     CaretDown,
     CaretRight,
     CheckCircle,
+    DotsSixVertical,
     Plus,
     Question,
     Folder,
@@ -139,6 +144,7 @@ impl IconNamed for AppIcon {
             Self::CaretDown => "caret-down",
             Self::CaretRight => "caret-right",
             Self::CheckCircle => "check-circle",
+            Self::DotsSixVertical => "dots-six-vertical",
             Self::Plus => "plus",
             Self::Question => "question",
             Self::Folder => "folder",
@@ -184,6 +190,7 @@ mod tests {
             AppIcon::CaretDown,
             AppIcon::CaretRight,
             AppIcon::CheckCircle,
+            AppIcon::DotsSixVertical,
             AppIcon::Plus,
             AppIcon::Question,
             AppIcon::Folder,

@@ -270,6 +270,38 @@ impl StateStore {
         Ok(())
     }
 
+    pub(crate) fn load_app_session_order(&self) -> Result<Vec<i64>, String> {
+        let stored = self
+            .connection
+            .query_row(
+                "SELECT value FROM meta WHERE key='app_session_order'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| format!("load application session order: {error}"))?;
+        stored.map_or_else(
+            || Ok(Vec::new()),
+            |value| {
+                serde_json::from_str(&value)
+                    .map_err(|error| format!("decode application session order: {error}"))
+            },
+        )
+    }
+
+    pub(crate) fn save_app_session_order(&self, order: &[i64]) -> Result<(), String> {
+        let value = serde_json::to_string(order)
+            .map_err(|error| format!("encode application session order: {error}"))?;
+        self.connection
+            .execute(
+                "INSERT INTO meta(key, value) VALUES('app_session_order', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                [value],
+            )
+            .map(|_| ())
+            .map_err(|error| format!("save application session order: {error}"))
+    }
+
     pub(crate) fn allocate_app_session_id(
         &mut self,
         draft_id: &str,

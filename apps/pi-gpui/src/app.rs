@@ -143,6 +143,8 @@ pub(crate) struct PiApp {
     agent_activities: HashMap<String, AgentActivity>,
     agent_row_focus: HashMap<String, FocusHandle>,
     changes: changes::ChangesState,
+    session_order: Vec<i64>,
+    session_drop_target: Option<(i64, crate::primitives::ReorderPosition)>,
     run_statuses: HashMap<String, String>,
     recent_completions: HashMap<String, Instant>,
     recent_completion_expiries: HashMap<String, (Instant, Task<()>)>,
@@ -230,6 +232,15 @@ impl PiApp {
             Err(error) => (projects::Registry::default(), Some(error)),
         };
         projects::select(&mut registry.projects, project.clone());
+        let session_order = match projects::load_app_session_order() {
+            Ok(order) => order,
+            Err(error) => {
+                if project_registry_error.is_none() {
+                    project_registry_error = Some(error);
+                }
+                Vec::new()
+            }
+        };
         let initial_draft = match projects::new_draft(project.clone()) {
             Ok(draft) => draft,
             Err(error) => {
@@ -411,6 +422,8 @@ impl PiApp {
             agent_activities: HashMap::new(),
             agent_row_focus: HashMap::new(),
             changes: changes::ChangesState::new(cx),
+            session_order,
+            session_drop_target: None,
             run_statuses: HashMap::new(),
             recent_completions: HashMap::new(),
             recent_completion_expiries: HashMap::new(),

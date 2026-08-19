@@ -107,6 +107,14 @@ pub(crate) fn save(registry: &Registry) -> Result<(), String> {
     StateStore::open()?.save_registry(registry)
 }
 
+pub(crate) fn load_app_session_order() -> Result<Vec<i64>, String> {
+    StateStore::open()?.load_app_session_order()
+}
+
+pub(crate) fn save_app_session_order(order: &[i64]) -> Result<(), String> {
+    StateStore::open()?.save_app_session_order(order)
+}
+
 pub(crate) fn is_linked_worktree(project: &Path) -> bool {
     let Ok(pointer) = fs::read_to_string(project.join(".git")) else {
         return false;

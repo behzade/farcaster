@@ -18,7 +18,8 @@ use gpui_component::{
 use super::{
     super::PiApp,
     session_groups::{
-        ActiveSessionItem, SessionRailItem, recent_archived_sessions, session_rail_lists,
+        ActiveSessionItem, SessionRailItem, merge_visible_session_order, recent_archived_sessions,
+        reordered_session_ids, session_rail_lists,
     },
     session_rows::{
         draft_session_row, project_label, session_badge, session_row, session_row_with_height,
@@ -29,10 +30,10 @@ use super::{session_groups::SessionRailKind, session_rows::session_accessible_la
 use crate::{
     assets::AppIcon,
     primitives::{
-        AppIconSize, ButtonTone, FeedbackTone, app_icon, disclosure_button, dropdown_button,
-        dropdown_icon_button, feedback, icon_button,
+        AppIconSize, ButtonTone, FeedbackTone, ReorderPosition, app_icon, disclosure_button,
+        dropdown_button, dropdown_icon_button, feedback, icon_button,
     },
-    projects::DraftSession,
+    projects::{self, DraftSession},
     sessions::{SessionSummary, root_session_for_path},
     theme::THEME,
 };
@@ -46,6 +47,7 @@ impl PiApp {
         let add_project_entity = entity.clone();
         let menu_add_project_entity = entity.clone();
         let menu_workgraph_entity = entity.clone();
+        let cancel_drop_entity = entity.clone();
         let search_focus = self.search_focus.clone();
         let new_session_project =
             new_session_project(&self.project, self.session_project_filter.as_deref());
@@ -61,6 +63,7 @@ impl PiApp {
             &self.sessions,
             &self.drafts,
             self.session_project_filter.as_deref(),
+            &self.session_order,
         );
         let active_entry_count = lists.active.len();
         let archived_entry_count = lists.archived.len();
@@ -92,6 +95,7 @@ impl PiApp {
             .as_ref()
             .map(|edit| edit.path.clone());
         let active_title_input = self.session_title_input.clone();
+        let active_drop_target = self.session_drop_target;
         let shortcuts_visible = self.session_shortcuts_visible;
         let active_list = list(
             self.session_list.clone(),
@@ -106,11 +110,15 @@ impl PiApp {
                     let shortcut = shortcuts_visible
                         .then(|| session_shortcuts.get(&draft.app_session_id).copied())
                         .flatten();
+                    let drop_position = active_drop_target
+                        .filter(|(target, _)| *target == draft.app_session_id)
+                        .map(|(_, position)| position);
                     draft_session_row(
                         draft,
                         selected,
                         &status,
                         shortcut,
+                        drop_position,
                         active_row_entity.clone(),
                     )
                 }
@@ -130,11 +138,16 @@ impl PiApp {
                         .flatten();
                     let editing =
                         active_editing_path.as_deref() == Some(item.session.path.as_path());
+                    let drop_position = active_drop_target
+                        .filter(|(target, _)| *target == item.session.app_session_id)
+                        .map(|(_, position)| position);
                     session_row(
                         item,
                         selected,
                         badge,
                         shortcut,
+                        drop_position,
+                        true,
                         editing.then(|| active_title_input.clone()),
                         active_row_entity.clone(),
                     )
@@ -165,6 +178,8 @@ impl PiApp {
                     selected,
                     badge,
                     None,
+                    None,
+                    false,
                     editing.then(|| self.session_title_input.clone()),
                     THEME.controls.archived_preview_row,
                     entity.clone(),
@@ -201,6 +216,8 @@ impl PiApp {
                             selected,
                             badge,
                             None,
+                            None,
+                            false,
                             editing.then(|| archived_title_input.clone()),
                             archived_row_entity.clone(),
                         )
@@ -397,6 +414,10 @@ impl PiApp {
                     .flex()
                     .flex_col()
                     .overflow_y_hidden()
+                    .on_mouse_up_out(gpui::MouseButton::Left, move |_, _, cx| {
+                        let _ = cancel_drop_entity
+                            .update(cx, |this, cx| this.clear_session_drop_target(cx));
+                    })
                     .when(!archived_expanded, |lists| {
                         lists.child(
                             div()
@@ -613,6 +634,7 @@ impl PiApp {
             &self.sessions,
             &self.drafts,
             self.session_project_filter.as_deref(),
+            &self.session_order,
         )
         .active
         .into_iter()
@@ -624,6 +646,59 @@ impl PiApp {
             ActiveSessionItem::Draft(_) => None,
         })
         .collect()
+    }
+
+    pub(super) fn begin_session_drag(&mut self, cx: &mut gpui::Context<Self>) {
+        if self.session_drop_target.take().is_some() {
+            self.notify_session_rail(cx);
+        }
+    }
+
+    pub(super) fn update_session_drop_target(
+        &mut self,
+        target: i64,
+        position: ReorderPosition,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let next = Some((target, position));
+        if self.session_drop_target != next {
+            self.session_drop_target = next;
+            self.notify_session_rail(cx);
+        }
+    }
+
+    pub(super) fn clear_session_drop_target(&mut self, cx: &mut gpui::Context<Self>) {
+        if self.session_drop_target.take().is_some() {
+            self.notify_session_rail(cx);
+        }
+    }
+
+    pub(super) fn complete_session_drop(&mut self, source: i64, cx: &mut gpui::Context<Self>) {
+        let Some((target, position)) = self.session_drop_target.take() else {
+            return;
+        };
+        let visible = session_rail_lists(
+            &self.sessions,
+            &self.drafts,
+            self.session_project_filter.as_deref(),
+            &self.session_order,
+        )
+        .active
+        .iter()
+        .map(ActiveSessionItem::app_session_id)
+        .collect::<Vec<_>>();
+        if let Some(order) = reordered_session_ids(&visible, source, target, position) {
+            let all = session_rail_lists(&self.sessions, &self.drafts, None, &self.session_order)
+                .active
+                .iter()
+                .map(ActiveSessionItem::app_session_id)
+                .collect::<Vec<_>>();
+            self.session_order = merge_visible_session_order(&all, &order);
+            if let Err(error) = projects::save_app_session_order(&self.session_order) {
+                self.sessions_error = Some(error);
+            }
+        }
+        self.notify_session_rail(cx);
     }
 
     fn set_session_project_filter(
