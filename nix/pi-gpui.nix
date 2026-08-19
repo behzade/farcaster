@@ -156,7 +156,8 @@ craneLib.buildPackage (
     postFixup = ''
       wrapProgram "$out/bin/pi-gpui" \
         --set PI_GUI_PI_PATH ${piTerminal}/bin/pi \
-        --set PI_GUI_COMPANION_EXTENSION "$out/lib/pi-gpui/companion/index.ts"
+        --set PI_GUI_COMPANION_EXTENSION "$out/lib/pi-gpui/companion/index.ts" \
+        ${lib.optionalString stdenv.hostPlatform.isLinux "--prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ wayland ]}"}
     ''
     + lib.optionalString stdenv.hostPlatform.isDarwin ''
       # UNUserNotificationCenter rejects unsigned application bundles.
