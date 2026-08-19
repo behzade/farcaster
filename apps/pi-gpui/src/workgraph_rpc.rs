@@ -23,6 +23,11 @@ pub(crate) enum WorkGraphRpcError {
     Encode(#[from] serde_json::Error),
 }
 
+pub(crate) struct WorkGraphRpcResponse {
+    pub(crate) response: crate::protocol::ExtensionUiResponse,
+    pub(crate) changed: bool,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Output<T> {
@@ -42,18 +47,25 @@ struct BridgeRequest {
 pub(crate) fn response(
     request: &crate::protocol::ExtensionUiRequest,
     database: &Path,
-) -> Option<crate::protocol::ExtensionUiResponse> {
+) -> Option<WorkGraphRpcResponse> {
     let (id, payload) = request.workgraph_rpc()?;
-    let value = handle(payload, database).unwrap_or_else(|error| {
+    let is_edit = serde_json::from_str::<BridgeRequest>(payload)
+        .is_ok_and(|request| request.operation == "edit");
+    let result = handle(payload, database);
+    let changed = is_edit && result.is_ok();
+    let value = result.unwrap_or_else(|error| {
         serde_json::json!({
             "success": false,
             "error": error.to_string(),
         })
         .to_string()
     });
-    Some(crate::protocol::ExtensionUiResponse::Value {
-        id: id.to_owned(),
-        value,
+    Some(WorkGraphRpcResponse {
+        response: crate::protocol::ExtensionUiResponse::Value {
+            id: id.to_owned(),
+            value,
+        },
+        changed,
     })
 }
 
@@ -332,14 +344,36 @@ mod tests {
             placeholder: Some(payload),
             timeout: None,
         };
-        let response = response(&request, &directory.path().join("state.sqlite"));
-        let crate::protocol::ExtensionUiResponse::Value { id, value } =
-            response.expect("bridge response")
-        else {
+        let response =
+            response(&request, &directory.path().join("state.sqlite")).expect("bridge response");
+        assert!(response.changed);
+        let crate::protocol::ExtensionUiResponse::Value { id, value } = response.response else {
             panic!("value response");
         };
         assert_eq!(id, "bridge-1");
         assert!(value.contains("Agent-created issue"));
+    }
+
+    #[test]
+    fn successful_searches_do_not_report_a_workgraph_change() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let project = tempfile::tempdir().expect("project");
+        let payload = request(
+            "search",
+            project.path(),
+            serde_json::json!({ "view": "status" }),
+        );
+        let request = crate::protocol::ExtensionUiRequest::Input {
+            id: "bridge-search".into(),
+            title: crate::protocol::WORKGRAPH_RPC_TITLE.into(),
+            placeholder: Some(payload),
+            timeout: None,
+        };
+
+        let response =
+            response(&request, &directory.path().join("state.sqlite")).expect("bridge response");
+
+        assert!(!response.changed);
     }
 
     #[test]

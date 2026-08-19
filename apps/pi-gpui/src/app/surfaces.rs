@@ -3,9 +3,7 @@
 use gpui::{Context, Window};
 
 use super::PiApp;
-use crate::{
-    protocol::ExtensionUiRequest, runtime::RuntimeCommand, sessions::root_session_for_path,
-};
+use crate::{protocol::ExtensionUiRequest, runtime::RuntimeCommand};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AppSheet {
@@ -150,8 +148,19 @@ impl PiApp {
         });
     }
 
+    pub(super) fn refresh_workgraph_data(&mut self, cx: &mut Context<Self>) {
+        self.refresh_workgraph_sidebar(cx);
+        if self.workgraph_sheet {
+            self.refresh_workgraph_board(cx);
+        }
+    }
+
     fn active_workgraph_session(&self) -> Option<(String, String)> {
-        root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
+        let selected = self.snapshot.selected_session.as_deref()?;
+        self.all_sessions
+            .iter()
+            .chain(&self.sessions)
+            .find(|session| session.path == selected)
             .map(|session| (session.id.clone(), session.path.display().to_string()))
     }
 

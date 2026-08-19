@@ -457,6 +457,7 @@ impl PiApp {
         let mut composer_dirty = false;
         let mut run_dirty = performance_changed;
         let mut workgraph_session_dirty = false;
+        let mut workgraph_data_dirty = false;
         while let Ok(event) = self.runtime.try_recv() {
             match &event {
                 RuntimeEvent::Snapshot { snapshot, .. } => {
@@ -488,6 +489,10 @@ impl PiApp {
                     rail_dirty = true;
                     composer_dirty = true;
                     run_dirty = true;
+                }
+                RuntimeEvent::WorkGraphChanged { project, .. } => {
+                    workgraph_data_dirty |= project == &self.project;
+                    run_dirty |= project == &self.project;
                 }
                 RuntimeEvent::RefreshCatalog | RuntimeEvent::Stopped => run_dirty = true,
             }
@@ -655,6 +660,9 @@ impl PiApp {
                 RuntimeEvent::Stopped => {
                     Arc::make_mut(&mut self.snapshot).status = "Stopped".into()
                 }
+                RuntimeEvent::WorkGraphChanged { project, .. } => {
+                    workgraph_data_dirty |= project == self.project;
+                }
                 RuntimeEvent::Snapshot { .. }
                 | RuntimeEvent::RefreshCatalog
                 | RuntimeEvent::SessionReset { .. }
@@ -665,7 +673,9 @@ impl PiApp {
                 | RuntimeEvent::SessionsFailed { .. } => {}
             }
         }
-        if workgraph_session_dirty {
+        if workgraph_data_dirty {
+            self.refresh_workgraph_data(cx);
+        } else if workgraph_session_dirty {
             self.refresh_workgraph_sidebar(cx);
         }
         self.sync_notification_expiries(cx);

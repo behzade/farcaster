@@ -107,6 +107,9 @@ pub(crate) enum RuntimeEvent {
         message: String,
     },
     RefreshCatalog,
+    WorkGraphChanged {
+        project: PathBuf,
+    },
     ExtensionUi {
         generation: u64,
         request: crate::protocol::ExtensionUiRequest,
@@ -492,6 +495,9 @@ fn run_supervisor(
                         if let Some(catalog) = actors.get(&catalog_key) {
                             catalog.send(RuntimeCommand::RefreshSessions);
                         }
+                    }
+                    RuntimeEvent::WorkGraphChanged { project, .. } => {
+                        let _ = event_tx.send(RuntimeEvent::WorkGraphChanged { project });
                     }
                     event @ (RuntimeEvent::Sessions { .. }
                     | RuntimeEvent::SessionsFailed { .. }) => {
@@ -1292,17 +1298,26 @@ impl RuntimeOwner {
             }
             ProcessItem::ExtensionUi(request) => {
                 if request.workgraph_rpc().is_some() {
-                    let response = crate::state::state_path()
+                    let rpc = crate::state::state_path()
                         .ok()
-                        .and_then(|database| crate::workgraph_rpc::response(&request, &database))
-                        .unwrap_or_else(|| crate::protocol::ExtensionUiResponse::Value {
+                        .and_then(|database| crate::workgraph_rpc::response(&request, &database));
+                    let response = if let Some(rpc) = rpc {
+                        if rpc.changed {
+                            let _ = self.event_tx.send(RuntimeEvent::WorkGraphChanged {
+                                project: self.project.clone(),
+                            });
+                        }
+                        rpc.response
+                    } else {
+                        crate::protocol::ExtensionUiResponse::Value {
                             id: request.dialog_id().unwrap_or_default().to_owned(),
                             value: serde_json::json!({
                                 "success": false,
                                 "error": "work graph state is unavailable",
                             })
                             .to_string(),
-                        });
+                        }
+                    };
                     if let Some(process) = self.process.as_mut()
                         && let Err(error) = process.send_extension_response(response)
                     {
