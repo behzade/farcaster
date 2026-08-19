@@ -34,7 +34,17 @@ fn dialog_backdrop(
         .p(THEME.space.md)
         .bg(THEME.colors.backdrop)
         .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-        .on_click(move |_, window, cx| on_dismiss(window, cx))
+        .on_any_mouse_down(|_, _, cx| cx.stop_propagation())
+        .child(
+            div()
+                .id("modal-dismiss-layer")
+                .absolute()
+                .inset_0()
+                .on_click(move |_, window, cx| {
+                    cx.stop_propagation();
+                    on_dismiss(window, cx);
+                }),
+        )
 }
 
 fn dialog_surface(id: impl Into<gpui::ElementId>, label: impl Into<SharedString>) -> Stateful<Div> {
