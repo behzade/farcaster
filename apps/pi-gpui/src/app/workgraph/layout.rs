@@ -53,6 +53,11 @@ pub(crate) fn surface_board_layout(width: Pixels, external_detail: bool) -> Boar
 }
 
 #[must_use]
+pub(crate) const fn board_toolbar_stacks(layout: BoardLayoutMode) -> bool {
+    !matches!(layout, BoardLayoutMode::Wide)
+}
+
+#[must_use]
 pub(crate) const fn issue_detail_shell(layout: BoardLayoutMode) -> IssueDetailShell {
     match layout {
         BoardLayoutMode::Wide | BoardLayoutMode::Compact => IssueDetailShell::Embedded,
@@ -65,8 +70,8 @@ mod tests {
     use gpui::px;
 
     use super::{
-        BoardLayoutMode, IssueDetailShell, board_layout_mode, issue_detail_shell,
-        surface_board_layout,
+        BoardLayoutMode, IssueDetailShell, board_layout_mode, board_toolbar_stacks,
+        issue_detail_shell, surface_board_layout,
     };
 
     #[test]
@@ -92,6 +97,13 @@ mod tests {
             surface_board_layout(px(560.0), false),
             BoardLayoutMode::Narrow
         );
+    }
+
+    #[test]
+    fn toolbar_stacks_before_the_board_becomes_too_narrow_for_one_row() {
+        assert!(!board_toolbar_stacks(BoardLayoutMode::Wide));
+        assert!(board_toolbar_stacks(BoardLayoutMode::Compact));
+        assert!(board_toolbar_stacks(BoardLayoutMode::Narrow));
     }
 
     #[test]

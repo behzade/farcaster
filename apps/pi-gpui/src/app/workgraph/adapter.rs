@@ -8,7 +8,7 @@ use super::{
     components::{render_create, render_filter_rail, render_graph, render_groups},
     contract::{BoardFilter, BoardLoadState, BoardMode},
     core::{adjacent_issue_number, filter_count, matching_project_groups},
-    layout::{BoardLayoutMode, DETAIL_WIDTH, surface_board_layout},
+    layout::{BoardLayoutMode, DETAIL_WIDTH, board_toolbar_stacks, surface_board_layout},
     persistence::{
         add_dependency, add_issue_note, create_issue, link_session, load_issues, remove_dependency,
         update_issue_fields, update_issue_status,
@@ -496,6 +496,7 @@ impl Render for WorkGraphBoardView {
                     let refresh = entity.clone();
                     let active_count = filter_count(data, BoardFilter::Active);
                     let blocked_count = filter_count(data, BoardFilter::Blocked);
+                    let compact_toolbar = board_toolbar_stacks(layout);
                     div()
                         .size_full()
                         .min_h_0()
@@ -503,17 +504,26 @@ impl Render for WorkGraphBoardView {
                         .flex_col()
                         .child(
                             div()
-                                .h(px(52.0))
+                                .h(px(if compact_toolbar { 92.0 } else { 52.0 }))
                                 .flex_none()
                                 .px(THEME.space.md)
                                 .flex()
-                                .items_center()
-                                .justify_between()
+                                .when(compact_toolbar, |toolbar| {
+                                    toolbar
+                                        .flex_col()
+                                        .items_stretch()
+                                        .justify_center()
+                                        .gap(THEME.space.xs)
+                                })
+                                .when(!compact_toolbar, |toolbar| {
+                                    toolbar.items_center().justify_between()
+                                })
                                 .border_b(THEME.border)
                                 .border_color(THEME.colors.border)
                                 .bg(THEME.colors.panel)
                                 .child(
                                     div()
+                                        .min_w_0()
                                         .flex()
                                         .flex_col()
                                         .gap(THEME.space.xs)
@@ -536,6 +546,8 @@ impl Render for WorkGraphBoardView {
                                 )
                                 .child(
                                     div()
+                                        .min_w_0()
+                                        .when(compact_toolbar, |controls| controls.w_full())
                                         .flex()
                                         .items_center()
                                         .gap(THEME.space.xs)
@@ -545,7 +557,10 @@ impl Render for WorkGraphBoardView {
                                                     .as_ref()
                                                     .expect("workgraph search initialized"),
                                             )
-                                            .w(px(220.0)),
+                                            .when(compact_toolbar, |search| {
+                                                search.flex_1().min_w_0()
+                                            })
+                                            .when(!compact_toolbar, |search| search.w(px(220.0))),
                                         )
                                         .child(button(
                                             "workgraph-refresh",
@@ -608,12 +623,31 @@ impl Render for WorkGraphBoardView {
                                             || self.selected.is_none()),
                                     |board| {
                                         board.child(if groups.is_empty() {
-                                            feedback(
-                                                "workgraph-empty",
-                                                self.filter.empty_message(),
-                                                FeedbackTone::Info,
-                                            )
-                                            .into_any_element()
+                                            div()
+                                                .id("workgraph-empty")
+                                                .flex_1()
+                                                .min_w_0()
+                                                .h_full()
+                                                .flex()
+                                                .flex_col()
+                                                .items_center()
+                                                .justify_center()
+                                                .gap(THEME.space.xs)
+                                                .px(THEME.space.md)
+                                                .child(
+                                                    div()
+                                                        .text_size(THEME.type_scale.body)
+                                                        .font_weight(FontWeight::SEMIBOLD)
+                                                        .text_color(THEME.colors.muted)
+                                                        .child(self.filter.empty_message()),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_size(THEME.type_scale.caption)
+                                                        .text_color(THEME.colors.subtle)
+                                                        .child("Choose another work state or create an issue."),
+                                                )
+                                                .into_any_element()
                                         } else if self.mode == BoardMode::Graph {
                                             render_graph(
                                                 self.selected,

@@ -371,12 +371,28 @@ impl WorkGraphBoardView {
                         .children(session_action)
                         .into_any_element()
                 }
-                None => feedback(
-                    "workgraph-detail-empty",
-                    "Select an issue to inspect its dependencies.",
-                    FeedbackTone::Info,
-                )
-                .into_any_element(),
+                None => div()
+                    .id("workgraph-detail-empty")
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap(THEME.space.xs)
+                    .child(
+                        div()
+                            .text_size(THEME.type_scale.body)
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(THEME.colors.muted)
+                            .child("No issue selected"),
+                    )
+                    .child(
+                        div()
+                            .text_size(THEME.type_scale.caption)
+                            .text_color(THEME.colors.subtle)
+                            .child("Choose an issue to see its details and dependencies."),
+                    )
+                    .into_any_element(),
             })
     }
 
