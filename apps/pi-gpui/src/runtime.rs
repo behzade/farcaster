@@ -2031,7 +2031,7 @@ fn session_badge_status(conversation: &ConversationState) -> &'static str {
 mod tests {
     use std::{
         fs,
-        os::unix::fs::{PermissionsExt as _, symlink},
+        os::unix::fs::symlink,
         time::{Duration, Instant, SystemTime},
     };
 
@@ -2056,20 +2056,15 @@ mod tests {
         let script = temp.path().join("fake-pi.sh");
         fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))
             .map_err(|error| error.to_string())?;
-        let mut permissions = fs::metadata(&script)
-            .map_err(|error| error.to_string())?
-            .permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&script, permissions).map_err(|error| error.to_string())?;
         let marker = temp.path().join("terminated");
         let runtime = RuntimeHandle::spawn_with(
             temp.path().to_path_buf(),
             "shutdown-test".into(),
             None,
-            ProcessCommand {
-                program: script,
-                prefix_args: vec!["term-marker".into(), marker.to_string_lossy().into_owned()],
-            },
+            ProcessCommand::test_script(
+                &script,
+                vec!["term-marker".into(), marker.to_string_lossy().into_owned()],
+            ),
         );
         // RpcProcess permits up to 15 seconds for its readiness handshake. The
         // full test suite can also delay this supervisor under build-machine load.
@@ -2688,15 +2683,9 @@ mod tests {
         let temp = tempdir()?;
         let script = temp.path().join("fake-pi.sh");
         fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))?;
-        let mut permissions = fs::metadata(&script)?.permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&script, permissions)?;
         let session = temp.path().join("session.jsonl");
         let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
-        owner.process_command = ProcessCommand {
-            program: script,
-            prefix_args: vec!["quiet".into()],
-        };
+        owner.process_command = ProcessCommand::test_script(&script, vec!["quiet".into()]);
         owner.active_session = Some(session.clone());
         owner.snapshot.selected_session = Some(session.clone());
         let generation = owner.process_generation;
@@ -2719,14 +2708,8 @@ mod tests {
         let temp = tempdir()?;
         let script = temp.path().join("fake-pi.sh");
         fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))?;
-        let mut permissions = fs::metadata(&script)?.permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&script, permissions)?;
         let process = RpcProcess::spawn(
-            &ProcessCommand {
-                program: script,
-                prefix_args: vec!["quiet".into()],
-            },
+            &ProcessCommand::test_script(&script, vec!["quiet".into()]),
             temp.path(),
             None,
         )?;
@@ -2806,15 +2789,9 @@ mod tests {
         let new_project = tempdir()?;
         let script = old_project.path().join("fake-pi.sh");
         fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))?;
-        let mut permissions = fs::metadata(&script)?.permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&script, permissions)?;
         let (mut owner, _events, _discovery) =
             owner_without_process(old_project.path().to_path_buf());
-        owner.process_command = ProcessCommand {
-            program: script,
-            prefix_args: vec!["quiet".into()],
-        };
+        owner.process_command = ProcessCommand::test_script(&script, vec!["quiet".into()]);
 
         owner.apply_command(RuntimeCommand::NewSession {
             id: "draft-new".into(),
@@ -3450,15 +3427,7 @@ mod tests {
         let script = temp.path().join("fake-pi.sh");
         fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))
             .map_err(|error| error.to_string())?;
-        let mut permissions = fs::metadata(&script)
-            .map_err(|error| error.to_string())?
-            .permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&script, permissions).map_err(|error| error.to_string())?;
-        let process_command = ProcessCommand {
-            program: script,
-            prefix_args: vec!["quiet".into()],
-        };
+        let process_command = ProcessCommand::test_script(&script, vec!["quiet".into()]);
         let process = RpcProcess::spawn(&process_command, temp.path(), None)?;
         let (event_tx, event_rx) = test_event_channel();
         let (discovery_tx, _discovery_rx) = mpsc::channel();

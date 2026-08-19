@@ -33,6 +33,17 @@ impl Default for ProcessCommand {
 }
 
 impl ProcessCommand {
+    #[cfg(test)]
+    pub(crate) fn test_script(script: &Path, mut arguments: Vec<String>) -> Self {
+        let mut prefix_args = Vec::with_capacity(arguments.len() + 1);
+        prefix_args.push(script.to_string_lossy().into_owned());
+        prefix_args.append(&mut arguments);
+        Self {
+            program: PathBuf::from("sh"),
+            prefix_args,
+        }
+    }
+
     pub(crate) fn command(&self, project: &Path) -> Result<Command, String> {
         let mut process = Command::new(&self.program);
         process.args(&self.prefix_args).current_dir(project);
@@ -525,7 +536,7 @@ fn spawn_stderr_reader(mut stderr: impl std::io::Read + Send + 'static, sender: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{error::Error, fs, os::unix::fs::PermissionsExt as _};
+    use std::{error::Error, fs};
     use tempfile::tempdir;
 
     type TestResult<T = ()> = Result<T, Box<dyn Error>>;
@@ -534,16 +545,8 @@ mod tests {
         let temp = tempdir()?;
         let script = temp.path().join("fake.sh");
         fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))?;
-        let mut permissions = fs::metadata(&script)?.permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&script, permissions)?;
-        Ok((
-            temp,
-            ProcessCommand {
-                program: script,
-                prefix_args: vec![case.into()],
-            },
-        ))
+        let command = ProcessCommand::test_script(&script, vec![case.into()]);
+        Ok((temp, command))
     }
 
     #[test]
@@ -616,19 +619,17 @@ mod tests {
         let mut rpc = RpcProcess::spawn(&command, temp.path(), None)?;
         rpc.send_command(serde_json::json!({"type":"get_messages"}))?;
         let deadline = Instant::now() + Duration::from_secs(2);
-        let mut saw_stderr = false;
         let mut failure = String::new();
         while Instant::now() < deadline && failure.is_empty() {
             match rpc.try_next() {
-                Some(ProcessItem::Stderr(_)) => saw_stderr = true,
                 Some(ProcessItem::Failure(error)) => failure = error,
                 _ => {}
             }
             thread::sleep(Duration::from_millis(5));
         }
-        assert!(saw_stderr);
         assert!(failure.contains("pending request"));
         assert!(failure.contains("exit code 7"));
+        assert!(failure.contains("fake stderr before exit"));
         Ok(())
     }
 
