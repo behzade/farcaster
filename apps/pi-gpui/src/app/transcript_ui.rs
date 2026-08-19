@@ -35,6 +35,10 @@ impl PiApp {
         expanded: bool,
         cx: &mut Context<Self>,
     ) {
+        if expanded {
+            // Keep the disclosure header under the pointer while its detail grows below it.
+            self.transcript_list.pause_following_tail();
+        }
         self.transcript_disclosure_states.insert(key, expanded);
         if let Some(index) = self.transcript_rows.iter().position(|row| row.key() == key) {
             self.transcript_list
