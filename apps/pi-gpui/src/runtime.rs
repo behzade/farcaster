@@ -771,6 +771,22 @@ struct SessionControls {
     thinking_levels: Vec<String>,
 }
 
+fn resolve_history_model(models: &[Model], identity: Option<&(String, String)>) -> Option<Model> {
+    identity.map(|(provider, model_id)| {
+        models
+            .iter()
+            .find(|model| model.provider == *provider && model.id == *model_id)
+            .cloned()
+            .unwrap_or_else(|| Model {
+                id: model_id.clone(),
+                name: model_id.clone(),
+                provider: provider.clone(),
+                context_window: 0,
+                reasoning: false,
+            })
+    })
+}
+
 fn prefill_session_controls(snapshot: &mut RuntimeSnapshot, controls: &mut SessionControls) {
     if snapshot.models.is_empty() {
         snapshot.models.clone_from(&controls.models);
@@ -1537,12 +1553,7 @@ impl RuntimeOwner {
             .map(|snapshot| snapshot.models.clone())
             .unwrap_or_default();
         let stats = historical_context_stats(&history.messages, &models);
-        let prefill_model = history.model.as_ref().and_then(|(provider, model_id)| {
-            models
-                .iter()
-                .find(|model| model.provider == *provider && model.id == *model_id)
-                .cloned()
-        });
+        let prefill_model = resolve_history_model(&models, history.model.as_ref());
         let mut conversation = ConversationState::default();
         conversation.replace_history(&history.messages);
         self.transcript_changed_from = Some(0);
@@ -1970,6 +1981,22 @@ mod tests {
             event_rx,
             discovery_rx,
         )
+    }
+
+    #[test]
+    fn history_model_identity_survives_an_unavailable_catalog_entry() {
+        let identity = ("opencode-go".into(), "kimi-k3".into());
+
+        assert_eq!(
+            resolve_history_model(&[], Some(&identity)),
+            Some(Model {
+                id: "kimi-k3".into(),
+                name: "kimi-k3".into(),
+                provider: "opencode-go".into(),
+                context_window: 0,
+                reasoning: false,
+            })
+        );
     }
 
     #[test]

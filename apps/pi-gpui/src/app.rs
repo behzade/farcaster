@@ -1246,27 +1246,10 @@ fn composer_snapshot_changed(previous: &RuntimeSnapshot, next: &RuntimeSnapshot)
 }
 
 fn run_panel_snapshot_changed(previous: &RuntimeSnapshot, next: &RuntimeSnapshot) -> bool {
-    fn model(snapshot: &RuntimeSnapshot) -> Option<&Model> {
-        snapshot
-            .session
-            .as_ref()
-            .and_then(|session| session.model.as_ref())
-            .or(snapshot.prefill_model.as_ref())
-    }
-    fn effort(snapshot: &RuntimeSnapshot) -> Option<&str> {
-        snapshot
-            .session
-            .as_ref()
-            .map(|session| session.thinking_level.as_str())
-            .or(snapshot.prefill_thinking_level.as_deref())
-    }
-
     previous.selected_session != next.selected_session
         || previous.stats != next.stats
         || previous.conversation.running != next.conversation.running
         || previous.conversation.average_cache_hit_rate != next.conversation.average_cache_hit_rate
-        || model(previous) != model(next)
-        || effort(previous) != effort(next)
 }
 
 fn input_snapshot(input: &TextareaState) -> ComposerSnapshot {

@@ -73,6 +73,9 @@ export class PiSessionFactory implements ChildSessionFactory {
 		const manager = context === "fork"
 			? forkBeforeActiveToolCall(request.parentSessionFile!, request.cwd)
 			: SessionManager.create(request.cwd, undefined, { parentSession: request.parentSessionFile });
+		if (context === "fork") {
+			recordChildRuntimeIdentity(manager, model.provider, model.id, effort);
+		}
 		const services = await createAgentSessionServices({
 			cwd: request.cwd,
 			modelRuntime,
@@ -138,6 +141,16 @@ export class PiSessionFactory implements ChildSessionFactory {
 	}
 }
 
+function recordChildRuntimeIdentity(
+	manager: SessionManager,
+	provider: string,
+	model: string,
+	effort: ThinkingLevel,
+): void {
+	manager.appendModelChange(provider, model);
+	manager.appendThinkingLevelChange(effort);
+}
+
 function forkBeforeActiveToolCall(parentSessionFile: string, cwd: string): SessionManager {
 	const manager = SessionManager.forkFrom(parentSessionFile, cwd);
 	const leaf = manager.getLeafEntry();
@@ -152,4 +165,4 @@ function forkBeforeActiveToolCall(parentSessionFile: string, cwd: string): Sessi
 	return manager;
 }
 
-export { finalAssistantText, forkBeforeActiveToolCall };
+export { finalAssistantText, forkBeforeActiveToolCall, recordChildRuntimeIdentity };

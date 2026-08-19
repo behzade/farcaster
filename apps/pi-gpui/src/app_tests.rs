@@ -220,17 +220,6 @@ fn composer_and_run_panel_track_their_rendered_snapshot_inputs() {
     assert!(!run_panel_snapshot_changed(&previous, &composer));
     assert!(run_panel_snapshot_changed(&previous, &run_panel));
     assert!(!composer_snapshot_changed(&previous, &run_panel));
-
-    let mut child_identity = previous.clone();
-    child_identity.prefill_model = Some(Model {
-        id: "kimi-k3".into(),
-        name: "Kimi K3".into(),
-        provider: "opencode-go".into(),
-        context_window: 262_144,
-        reasoning: true,
-    });
-    child_identity.prefill_thinking_level = Some("high".into());
-    assert!(run_panel_snapshot_changed(&previous, &child_identity));
 }
 
 #[test]
