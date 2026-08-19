@@ -1,7 +1,7 @@
 use crate::theme::THEME;
 use gpui::{
     App, Div, FocusHandle, InteractiveElement as _, ParentElement as _, Role, SharedString,
-    Stateful, StatefulInteractiveElement as _, Styled as _, Window, div, px,
+    Stateful, StatefulInteractiveElement as _, Styled as _, Window, div,
 };
 use gpui_component::FocusTrapElement as _;
 
@@ -57,7 +57,7 @@ fn dialog_surface(id: impl Into<gpui::ElementId>, label: impl Into<SharedString>
         .max_w_full()
         .max_h(THEME.layout.dialog_max_height)
         .overflow_y_scroll()
-        .rounded(px(12.0))
+        .rounded(THEME.radius)
         .border(THEME.border)
         .border_color(THEME.colors.border)
         .bg(THEME.colors.panel)

@@ -20,9 +20,9 @@ use crate::{
     theme::THEME,
 };
 use gpui::{
-    AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
-    Render, StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div,
-    prelude::FluentBuilder as _, px,
+    AppContext as _, Context, Entity, FontWeight, InteractiveElement as _, IntoElement,
+    ParentElement as _, Render, StatefulInteractiveElement as _, Styled as _, Subscription, Task,
+    Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 
@@ -576,11 +576,12 @@ impl WorkGraphBoardView {
                                     div()
                                         .text_size(THEME.type_scale.caption)
                                         .text_color(THEME.colors.subtle)
-                                        .child(format!("ISSUE #{}", issue.number)),
+                                        .child(format!("Issue #{}", issue.number)),
                                 )
                                 .child(
                                     div()
-                                        .text_size(THEME.type_scale.display)
+                                        .text_size(THEME.type_scale.body)
+                                        .font_weight(FontWeight::SEMIBOLD)
                                         .text_color(THEME.colors.text)
                                         .child(issue.title.clone()),
                                 )
@@ -606,7 +607,7 @@ impl WorkGraphBoardView {
                                     div()
                                         .text_size(THEME.type_scale.caption)
                                         .text_color(THEME.colors.subtle)
-                                        .child("CHANGE STATUS"),
+                                        .child("Change status"),
                                 )
                                 .child(
                                     div()
@@ -617,7 +618,7 @@ impl WorkGraphBoardView {
                                 ),
                         )
                         .child(detail_section(
-                            "DESCRIPTION",
+                            "Description",
                             if issue.body.trim().is_empty() {
                                 "No description recorded.".into()
                             } else {
@@ -632,13 +633,13 @@ impl WorkGraphBoardView {
                         ))
                         .children(dependency_action)
                         .child(related_issue_section(
-                            "UNBLOCKS",
+                            "Unblocks",
                             "No dependent issues.",
                             dependents,
                             entity.clone(),
                         ))
                         .child(detail_section(
-                            "NOTES",
+                            "Notes",
                             if notes.is_empty() {
                                 "No progress notes yet.".into()
                             } else {
@@ -651,7 +652,7 @@ impl WorkGraphBoardView {
                         ))
                         .children(note_action)
                         .child(detail_section(
-                            "LINKED SESSIONS",
+                            "Linked sessions",
                             if sessions.is_empty() {
                                 "No sessions linked.".into()
                             } else {
@@ -792,7 +793,7 @@ impl Render for WorkGraphBoardView {
                         .flex_col()
                         .child(
                             div()
-                                .h(px(64.0))
+                                .h(px(52.0))
                                 .flex_none()
                                 .px(THEME.space.md)
                                 .flex()
@@ -800,7 +801,7 @@ impl Render for WorkGraphBoardView {
                                 .justify_between()
                                 .border_b(THEME.border)
                                 .border_color(THEME.colors.border)
-                                .bg(THEME.colors.canvas)
+                                .bg(THEME.colors.panel)
                                 .child(
                                     div()
                                         .flex()
@@ -808,7 +809,8 @@ impl Render for WorkGraphBoardView {
                                         .gap(THEME.space.xs)
                                         .child(
                                             div()
-                                                .text_size(THEME.type_scale.display)
+                                                .text_size(THEME.type_scale.body)
+                                                .font_weight(FontWeight::SEMIBOLD)
                                                 .text_color(THEME.colors.text)
                                                 .child("Project work"),
                                         )

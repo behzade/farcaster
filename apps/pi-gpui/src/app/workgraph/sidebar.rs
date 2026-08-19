@@ -222,15 +222,8 @@ fn render_summary(summary: SidebarSummary, app: WeakEntity<PiApp>) -> impl IntoE
             card.child(
                 div()
                     .id(("workgraph-sidebar-issue", number))
-                    .px(THEME.space.sm)
+                    .px(THEME.space.xs)
                     .py(THEME.space.xs)
-                    .border_l(px(2.0))
-                    .border_color(if linked.is_some() {
-                        THEME.colors.accent
-                    } else {
-                        THEME.colors.border
-                    })
-                    .bg(THEME.colors.canvas)
                     .flex()
                     .flex_col()
                     .gap(px(3.0))

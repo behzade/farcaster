@@ -1,5 +1,5 @@
 use gpui::{
-    Entity, InteractiveElement as _, IntoElement, ParentElement as _,
+    Entity, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::input::{Input, InputState, Textarea, TextareaState};
@@ -28,8 +28,8 @@ pub(super) fn render_filter_rail(
         .flex_col()
         .gap(THEME.space.xs)
         .px(THEME.space.sm)
-        .py(THEME.space.md)
-        .bg(THEME.colors.canvas)
+        .py(THEME.space.sm)
+        .bg(THEME.colors.panel)
         .border_r(THEME.border)
         .border_color(THEME.colors.border)
         .child(
@@ -38,7 +38,7 @@ pub(super) fn render_filter_rail(
                 .pb(THEME.space.sm)
                 .text_size(THEME.type_scale.caption)
                 .text_color(THEME.colors.subtle)
-                .child("WORK STATES"),
+                .child("Work states"),
         )
         .children(BoardFilter::ALL.into_iter().map(|item| {
             let selected = item == filter;
@@ -81,8 +81,8 @@ pub(super) fn render_groups(
         .overflow_y_scroll()
         .flex()
         .flex_col()
-        .gap(THEME.space.md)
-        .p(THEME.space.md)
+        .gap(THEME.space.sm)
+        .p(THEME.space.sm)
         .children(
             groups
                 .into_iter()
@@ -156,11 +156,12 @@ pub(super) fn render_create(
                     div()
                         .text_size(THEME.type_scale.caption)
                         .text_color(THEME.colors.subtle)
-                        .child("NEW ISSUE"),
+                        .child("New issue"),
                 )
                 .child(
                     div()
-                        .text_size(THEME.type_scale.display)
+                        .text_size(THEME.type_scale.body)
+                        .font_weight(FontWeight::SEMIBOLD)
                         .text_color(THEME.colors.text)
                         .child("Record concrete project work"),
                 ),
@@ -249,7 +250,7 @@ pub(super) fn render_edit_fields(
             div()
                 .text_size(THEME.type_scale.caption)
                 .text_color(THEME.colors.subtle)
-                .child(format!("EDIT ISSUE #{number}")),
+                .child(format!("Edit issue #{number}")),
         )
         .child(
             div()
@@ -286,7 +287,7 @@ pub(super) fn render_edit_fields(
                     div()
                         .text_size(THEME.type_scale.caption)
                         .text_color(THEME.colors.subtle)
-                        .child("PRIORITY"),
+                        .child("Priority"),
                 )
                 .child(Input::new(priority).w(px(120.0))),
         )
@@ -356,10 +357,8 @@ pub(super) fn related_issue_section(
             div()
                 .id(format!("workgraph-related-{label}-{number}"))
                 .cursor_pointer()
-                .rounded(THEME.radius)
-                .px(THEME.space.sm)
+                .px(THEME.space.xs)
                 .py(THEME.space.xs)
-                .bg(THEME.colors.surface)
                 .hover(|style| style.bg(THEME.colors.hover))
                 .text_size(THEME.type_scale.body_small)
                 .text_color(THEME.colors.link)
@@ -384,7 +383,7 @@ pub(super) fn dependency_issue_section(
             div()
                 .text_size(THEME.type_scale.caption)
                 .text_color(THEME.colors.subtle)
-                .child("DEPENDS ON"),
+                .child("Depends on"),
         )
         .when(dependencies.is_empty(), |section| {
             section.child(
@@ -409,10 +408,8 @@ pub(super) fn dependency_issue_section(
                         .flex_1()
                         .min_w_0()
                         .cursor_pointer()
-                        .rounded(THEME.radius)
-                        .px(THEME.space.sm)
+                        .px(THEME.space.xs)
                         .py(THEME.space.xs)
-                        .bg(THEME.colors.surface)
                         .hover(|style| style.bg(THEME.colors.hover))
                         .text_size(THEME.type_scale.body_small)
                         .text_color(THEME.colors.link)
@@ -518,17 +515,12 @@ fn render_issue_row(
         .id(format!("workgraph-issue-{number}"))
         .cursor_pointer()
         .on_click(move |_, _, cx| entity.update(cx, |this, cx| this.select_issue(number, cx)))
-        .rounded(THEME.radius)
-        .border(THEME.border)
-        .border_color(if is_selected {
-            THEME.colors.accent
-        } else {
-            THEME.colors.border
-        })
+        .border_b(THEME.border)
+        .border_color(THEME.colors.border)
         .bg(if is_selected {
-            THEME.colors.selection
-        } else {
             THEME.colors.surface
+        } else {
+            THEME.colors.panel
         })
         .hover(|style| style.bg(THEME.colors.hover))
         .px(THEME.space.sm)
@@ -557,11 +549,8 @@ fn render_issue_row(
                         .when(current_issue == Some(number), |meta| {
                             meta.child(
                                 div()
-                                    .rounded(THEME.radius)
-                                    .px(THEME.space.xs)
-                                    .bg(THEME.colors.accent_active)
                                     .text_size(THEME.type_scale.caption)
-                                    .text_color(THEME.colors.canvas)
+                                    .text_color(THEME.colors.accent)
                                     .child("Current session"),
                             )
                         })
