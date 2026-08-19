@@ -55,6 +55,7 @@ use crate::{
 
 impl Render for PiApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _timing = crate::performance::Timing::new("render.root");
         self.resolve_pending_submission(window, cx);
         if self.pending_session_reset {
             self.pending_session_reset = false;

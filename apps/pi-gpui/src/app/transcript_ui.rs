@@ -12,6 +12,7 @@ impl PiApp {
         &self,
         snapshot: &crate::runtime::RuntimeSnapshot,
     ) -> Vec<TranscriptRow> {
+        let _timing = crate::performance::Timing::new("transcript.project_rows");
         crate::transcript::update_rows_from(
             &self.transcript_rows,
             &self.snapshot.conversation.items,
@@ -72,6 +73,7 @@ impl PiApp {
     }
 
     pub(super) fn sync_transcript_rows(&mut self, next: Vec<TranscriptRow>) {
+        let _timing = crate::performance::Timing::new("transcript.sync_rows");
         let positions_unchanged = self.transcript_rows.len() == next.len()
             && self
                 .transcript_rows

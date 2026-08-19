@@ -61,6 +61,7 @@ impl WorkGraphDetailView {
 
 impl Render for SessionRailView {
     fn render(&mut self, _: &mut gpui::Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
+        let _timing = crate::performance::Timing::new("render.session_sidebar");
         let Some(app) = self.app.upgrade() else {
             return gpui::div().into_any_element();
         };
@@ -76,6 +77,7 @@ impl Render for TranscriptView {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) -> impl gpui::IntoElement {
+        let _timing = crate::performance::Timing::new("render.transcript");
         let Some(app) = self.app.upgrade() else {
             return gpui::div().into_any_element();
         };
@@ -113,6 +115,7 @@ impl Render for TranscriptView {
 
 impl Render for ComposerView {
     fn render(&mut self, _: &mut gpui::Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
+        let _timing = crate::performance::Timing::new("render.composer");
         let Some(app) = self.app.upgrade() else {
             return gpui::div().into_any_element();
         };
@@ -131,6 +134,7 @@ impl Render for WorkGraphDetailView {
 
 impl Render for RunPanelView {
     fn render(&mut self, _: &mut gpui::Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
+        let _timing = crate::performance::Timing::new("render.run_sidebar");
         let Some(app) = self.app.upgrade() else {
             return gpui::div().into_any_element();
         };

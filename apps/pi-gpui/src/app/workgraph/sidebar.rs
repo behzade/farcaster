@@ -105,6 +105,7 @@ fn prepare_refresh(state: &mut BoardLoadState) -> bool {
 
 impl Render for WorkGraphSidebarView {
     fn render(&mut self, _: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let _timing = crate::performance::Timing::new("render.workgraph_sidebar");
         let entity = cx.entity().downgrade();
         let header = div()
             .flex()

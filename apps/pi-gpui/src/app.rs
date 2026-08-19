@@ -64,6 +64,21 @@ enum CurrentCloseTarget {
     None,
 }
 
+fn status_is_in_progress(status: &str) -> bool {
+    matches!(
+        status,
+        "Working"
+            | "Needs input"
+            | "Compacting"
+            | "Retrying"
+            | "Starting new session"
+            | "Resuming session"
+            | "Loading session"
+            | "Loading new session"
+            | "Stopping"
+    )
+}
+
 fn current_close_target(
     selected_draft: Option<&str>,
     selected_session: Option<&std::path::Path>,
@@ -201,6 +216,7 @@ pub(crate) struct PiApp {
     last_transcript_count: usize,
     fps_monitor: Option<Entity<FpsMonitor>>,
     performance_monitor: Option<crate::performance::PerformanceMonitor>,
+    pending_session_switch: Option<(PathBuf, crate::performance::Timing)>,
     extension: ExtensionUiState,
     parked_extension: Option<ExtensionUiState>,
     notification_expiries: HashMap<(String, Instant), Task<()>>,
@@ -227,6 +243,16 @@ pub(crate) struct PiApp {
 }
 
 impl PiApp {
+    pub(crate) fn has_active_work(&self) -> bool {
+        self.snapshot.conversation.running
+            || status_is_in_progress(&self.snapshot.status)
+            || status_is_in_progress(&self.snapshot.live_status)
+            || self
+                .run_statuses
+                .values()
+                .any(|status| status_is_in_progress(status))
+    }
+
     pub(crate) fn new(project: PathBuf, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (mut registry, mut project_registry_error) = match projects::load() {
             Ok(registry) => (registry, None),
@@ -468,6 +494,7 @@ impl PiApp {
             last_transcript_count: 0,
             fps_monitor,
             performance_monitor,
+            pending_session_switch: None,
             extension: ExtensionUiState::default(),
             parked_extension: None,
             notification_expiries: HashMap::new(),
@@ -495,6 +522,7 @@ impl PiApp {
     }
 
     fn drain_runtime(&mut self, cx: &mut Context<Self>) {
+        let _timing = crate::performance::Timing::new("runtime.drain_events");
         let mut root_dirty = false;
         let performance_changed = self
             .performance_monitor
@@ -548,6 +576,15 @@ impl PiApp {
                     generation,
                     snapshot,
                 } if generation >= self.runtime_generation => {
+                    if self
+                        .pending_session_switch
+                        .as_ref()
+                        .is_some_and(|(path, _)| {
+                            snapshot.selected_session.as_deref() == Some(path.as_path())
+                        })
+                    {
+                        drop(self.pending_session_switch.take());
+                    }
                     let session_changed = generation > self.runtime_generation;
                     let transcript_preselected = session_changed
                         && self.snapshot.selected_session == snapshot.selected_session;
@@ -843,6 +880,7 @@ impl PiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let _timing = crate::performance::Timing::new("switch.session_request");
         if self.snapshot.selected_session.as_deref() == Some(path.as_path())
             && self.selected_draft.is_none()
         {
@@ -857,6 +895,13 @@ impl PiApp {
         self.switch_composer_target(session_target(&path), window, cx);
         self.selected_draft = None;
         self.select_project(project.clone());
+        if let Some((_, timing)) = self.pending_session_switch.take() {
+            timing.cancel();
+        }
+        self.pending_session_switch = Some((
+            path.clone(),
+            crate::performance::Timing::new("switch.session_total"),
+        ));
         self.send(RuntimeCommand::SelectSession { path, project });
         self.close_sessions_sheet_after_selection(window, cx);
         if previous_root != next_root {

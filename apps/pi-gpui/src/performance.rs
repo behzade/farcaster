@@ -1,14 +1,16 @@
 //! DEBUG-only summaries from GPUI's frame, task, and action profilers.
 
 use std::{
-    sync::atomic::{AtomicU64, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
     time::{Duration, Instant},
 };
 
 use gpui::{FrameTimingCollector, TasksIncluded, profiler};
 
 const SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
+const SLOW_OPERATION: Duration = Duration::from_millis(2);
 
+static ENABLED: AtomicBool = AtomicBool::new(false);
 static SNAPSHOTS_PUBLISHED: AtomicU64 = AtomicU64::new(0);
 static STREAM_EVENTS_COALESCED: AtomicU64 = AtomicU64::new(0);
 static TRANSCRIPT_ITEMS_EXAMINED: AtomicU64 = AtomicU64::new(0);
@@ -40,6 +42,41 @@ pub(crate) fn count_highlight_bytes(count: usize) {
     HIGHLIGHT_BYTES.fetch_add(count as u64, Ordering::Relaxed);
 }
 
+#[must_use]
+pub(crate) struct Timing {
+    name: &'static str,
+    started_at: Option<Instant>,
+}
+
+impl Timing {
+    pub(crate) fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            started_at: ENABLED.load(Ordering::Relaxed).then(Instant::now),
+        }
+    }
+
+    pub(crate) fn cancel(mut self) {
+        self.started_at = None;
+    }
+}
+
+impl Drop for Timing {
+    fn drop(&mut self) {
+        let Some(started_at) = self.started_at else {
+            return;
+        };
+        let elapsed = started_at.elapsed();
+        if should_log_duration(elapsed) {
+            zlog::info!(
+                "PERF operation={} elapsed_ms={:.2}",
+                self.name,
+                elapsed.as_secs_f64() * 1_000.0
+            );
+        }
+    }
+}
+
 pub(crate) struct PerformanceMonitor {
     frames: FrameTimingCollector,
     sampled_at: Instant,
@@ -66,6 +103,7 @@ pub(crate) struct PerformanceSummary {
 
 impl PerformanceMonitor {
     pub(crate) fn new() -> Self {
+        ENABLED.store(true, Ordering::Relaxed);
         profiler::set_trace_enabled(true);
         profiler::set_frame_trace_enabled(true);
         Self {
@@ -81,12 +119,14 @@ impl PerformanceMonitor {
         }
         self.sampled_at = Instant::now();
         self.summary = collect_summary(&mut self.frames);
+        log_summary(&self.summary);
         true
     }
 }
 
 impl Drop for PerformanceMonitor {
     fn drop(&mut self) {
+        ENABLED.store(false, Ordering::Relaxed);
         profiler::set_trace_enabled(false);
         profiler::set_frame_trace_enabled(false);
     }
@@ -149,6 +189,30 @@ fn collect_summary(frames: &mut FrameTimingCollector) -> PerformanceSummary {
     }
 }
 
+fn should_log_duration(duration: Duration) -> bool {
+    duration >= SLOW_OPERATION
+}
+
+fn log_summary(summary: &PerformanceSummary) {
+    zlog::info!(
+        "PERF interval=1s frames={} draw_p95_ms={:.2} draw_max_ms={:.2} dirty_to_draw_p95_ms={:.2} invalidations_avg={:.1} invalidations_max={} snapshots={} coalesced={} transcript_examined={} transcript_remeasured={} catalog_parses={} highlight_bytes={} slowest_task={:?} slowest_action={:?}",
+        summary.frame_count,
+        summary.draw_p95.as_secs_f64() * 1_000.0,
+        summary.draw_max.as_secs_f64() * 1_000.0,
+        summary.dirty_to_draw_p95.as_secs_f64() * 1_000.0,
+        summary.invalidations_average,
+        summary.invalidations_max,
+        summary.snapshots_published,
+        summary.stream_events_coalesced,
+        summary.transcript_items_examined,
+        summary.transcript_rows_remeasured,
+        summary.catalog_files_parsed,
+        summary.highlight_bytes,
+        summary.slowest_task,
+        summary.slowest_action,
+    );
+}
+
 fn percentile(values: &[Duration], percentile: usize) -> Duration {
     if values.is_empty() {
         return Duration::default();
@@ -175,5 +239,11 @@ mod tests {
         let values = (1..=100).map(Duration::from_millis).collect::<Vec<_>>();
         assert_eq!(percentile(&values, 95), Duration::from_millis(95));
         assert_eq!(percentile(&[], 95), Duration::default());
+    }
+
+    #[test]
+    fn individual_timing_logs_only_slow_operations() {
+        assert!(!should_log_duration(Duration::from_millis(1)));
+        assert!(should_log_duration(Duration::from_millis(2)));
     }
 }
