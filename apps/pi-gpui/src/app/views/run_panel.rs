@@ -1,9 +1,9 @@
 use std::time::{Duration, SystemTime};
 
 use gpui::{
-    AnyElement, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Role,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
-    relative,
+    Animation, AnimationExt as _, AnyElement, FontWeight, InteractiveElement as _, IntoElement,
+    ParentElement as _, Role, StatefulInteractiveElement as _, Styled as _, WeakEntity, div,
+    prelude::FluentBuilder as _, px, radians, relative,
 };
 
 use super::super::PiApp;
@@ -367,9 +367,9 @@ impl PiApp {
                         .text_size(THEME.type_scale.caption)
                         .whitespace_nowrap()
                         .text_color(lifecycle_color(displayed_lifecycle))
-                        .child(app_icon(
-                            lifecycle_icon(displayed_lifecycle),
-                            AppIconSize::Inline,
+                        .child(lifecycle_indicator(
+                            displayed_lifecycle,
+                            &activity.session_id,
                         ))
                         .child(elapsed),
                 )
@@ -746,6 +746,20 @@ fn lifecycle_icon(lifecycle: AgentLifecycle) -> AppIcon {
         AgentLifecycle::Unknown => AppIcon::Question,
         AgentLifecycle::Completed(AgentOutcome::Complete) => AppIcon::CheckCircle,
         AgentLifecycle::Completed(AgentOutcome::Failed) => AppIcon::XCircle,
+    }
+}
+
+fn lifecycle_indicator(lifecycle: AgentLifecycle, session_id: &str) -> AnyElement {
+    let icon = app_icon(lifecycle_icon(lifecycle), AppIconSize::Inline);
+    if matches!(lifecycle, AgentLifecycle::Working) {
+        icon.with_animation(
+            format!("agent-spinner-{session_id}"),
+            Animation::new(Duration::from_millis(800)).repeat(),
+            |icon, delta| icon.rotate(radians(delta * std::f32::consts::TAU)),
+        )
+        .into_any_element()
+    } else {
+        icon.into_any_element()
     }
 }
 
