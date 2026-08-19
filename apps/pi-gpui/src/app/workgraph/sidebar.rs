@@ -13,7 +13,8 @@ use super::{
 };
 use crate::{
     app::PiApp,
-    primitives::{ButtonTone, FeedbackTone, button, feedback, section_heading},
+    assets::AppIcon,
+    primitives::{ButtonTone, FeedbackTone, button, feedback, icon_button, section_heading},
     theme::THEME,
 };
 
@@ -103,11 +104,11 @@ impl Render for WorkGraphSidebarView {
                     .flex()
                     .items_center()
                     .gap(THEME.space.xs)
-                    .child(button(
+                    .child(icon_button(
                         "refresh-workgraph-sidebar",
-                        "Refresh",
+                        AppIcon::ArrowCounterClockwise,
+                        "Refresh work graph",
                         ButtonTone::Quiet,
-                        true,
                         {
                             let entity = cx.entity().downgrade();
                             move |_, cx| {
@@ -117,11 +118,11 @@ impl Render for WorkGraphSidebarView {
                             }
                         },
                     ))
-                    .child(button(
+                    .child(icon_button(
                         "open-workgraph-from-sidebar",
-                        "Open",
+                        AppIcon::ArrowSquareOut,
+                        "Open work graph",
                         ButtonTone::Quiet,
-                        true,
                         {
                             let app = self.app.clone();
                             move |window, cx| {

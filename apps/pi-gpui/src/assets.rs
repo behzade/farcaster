@@ -4,9 +4,10 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 17] = [
+const ICON_PATHS: [&str; 18] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrow-counter-clockwise.svg",
+    "icons/phosphor/arrow-square-out.svg",
     "icons/phosphor/arrow-up.svg",
     "icons/phosphor/caret-down.svg",
     "icons/phosphor/caret-right.svg",
@@ -45,6 +46,9 @@ impl AssetSource for AppAssets {
             }
             "icons/phosphor/arrow-counter-clockwise.svg" => Some(include_bytes!(
                 "../assets/phosphor-icons/arrow-counter-clockwise.svg"
+            )),
+            "icons/phosphor/arrow-square-out.svg" => Some(include_bytes!(
+                "../assets/phosphor-icons/arrow-square-out.svg"
             )),
             "icons/phosphor/arrow-up.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/arrow-up.svg"))
@@ -107,6 +111,7 @@ impl AssetSource for AppAssets {
 pub(crate) enum AppIcon {
     Archive,
     ArrowCounterClockwise,
+    ArrowSquareOut,
     ArrowUp,
     CaretDown,
     CaretRight,
@@ -129,6 +134,7 @@ impl IconNamed for AppIcon {
         let name = match self {
             Self::Archive => "archive",
             Self::ArrowCounterClockwise => "arrow-counter-clockwise",
+            Self::ArrowSquareOut => "arrow-square-out",
             Self::ArrowUp => "arrow-up",
             Self::CaretDown => "caret-down",
             Self::CaretRight => "caret-right",
@@ -173,6 +179,7 @@ mod tests {
         for icon in [
             AppIcon::Archive,
             AppIcon::ArrowCounterClockwise,
+            AppIcon::ArrowSquareOut,
             AppIcon::ArrowUp,
             AppIcon::CaretDown,
             AppIcon::CaretRight,
