@@ -1,16 +1,18 @@
 use std::time::{Duration, SystemTime};
 
 use gpui::{
-    Animation, AnimationExt as _, AnyElement, FontWeight, InteractiveElement as _, IntoElement,
-    ParentElement as _, Role, StatefulInteractiveElement as _, Styled as _, WeakEntity, div,
-    prelude::FluentBuilder as _, px, radians, relative,
+    AnyElement, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Role,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
+    relative,
 };
 
 use super::super::PiApp;
 use crate::{
     agent_activity::{AgentActivity, AgentLifecycle, AgentOutcome},
     assets::AppIcon,
-    primitives::{AppIconSize, app_icon, disclosure_button, panel, section_heading},
+    primitives::{
+        AppIconSize, app_icon, disclosure_button, panel, section_heading, spinning_app_icon,
+    },
     sessions::{UsageSummary, descendant_sessions, root_session_for_path},
     theme::THEME,
 };
@@ -752,12 +754,11 @@ fn lifecycle_icon(lifecycle: AgentLifecycle) -> AppIcon {
 fn lifecycle_indicator(lifecycle: AgentLifecycle, session_id: &str) -> AnyElement {
     let icon = app_icon(lifecycle_icon(lifecycle), AppIconSize::Inline);
     if matches!(lifecycle, AgentLifecycle::Working) {
-        icon.with_animation(
+        spinning_app_icon(
+            lifecycle_icon(lifecycle),
+            AppIconSize::Inline,
             format!("agent-spinner-{session_id}"),
-            Animation::new(Duration::from_millis(800)).repeat(),
-            |icon, delta| icon.rotate(radians(delta * std::f32::consts::TAU)),
         )
-        .into_any_element()
     } else {
         icon.into_any_element()
     }
