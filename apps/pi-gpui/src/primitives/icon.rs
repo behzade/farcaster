@@ -1,8 +1,9 @@
 use gpui::Pixels;
 use gpui::{
-    CursorStyle, Div, ElementId, InteractiveElement as _, Role, SharedString, Stateful,
-    StatefulInteractiveElement as _, Styled as _, div,
+    CursorStyle, Div, ElementId, InteractiveElement as _, MouseButton, Role, SharedString,
+    Stateful, StatefulInteractiveElement as _, Styled as _, div,
 };
+use gpui_base::GlobalState;
 use gpui_component::{Icon, IconNamed, Sizable as _, tooltip::Tooltip};
 
 use crate::theme::THEME;
@@ -51,5 +52,9 @@ pub(crate) fn icon_control(
                 .border_color(THEME.colors.accent)
         })
         .cursor(CursorStyle::PointingHand)
+        .on_mouse_down(MouseButton::Left, |_, window, cx| {
+            window.prevent_default();
+            GlobalState::suppress_text_selection(cx);
+        })
         .tooltip(move |window, cx| Tooltip::new(tooltip_label.clone()).build(window, cx))
 }
