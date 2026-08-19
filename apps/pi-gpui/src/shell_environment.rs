@@ -2,15 +2,16 @@
 
 use std::{
     ffi::OsString,
+    io::Write as _,
     os::unix::ffi::OsStringExt as _,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
 };
 
 const IMPORT_REQUESTED: &str = "PI_GUI_IMPORT_SHELL_ENV";
 const START_MARKER: &[u8] = b"\x1ePI_GPUI_ENV_START\x1f\0";
 const END_MARKER: &[u8] = b"\x1ePI_GPUI_ENV_END\x1f\0";
-const CAPTURE_COMMAND: &str = "/usr/bin/printf '\\036PI_GPUI_ENV_START\\037\\0'; /usr/bin/env -0; /usr/bin/printf '\\036PI_GPUI_ENV_END\\037\\0'";
+const CAPTURE_COMMAND: &str = "/bin/stty -echo -opost; /usr/bin/printf '\\036PI_GPUI_ENV_START\\037\\0'; /usr/bin/env -0; /usr/bin/printf '\\036PI_GPUI_ENV_END\\037\\0'; exit\n";
 
 type Environment = Vec<(OsString, OsString)>;
 
@@ -47,11 +48,28 @@ fn parse_account_login_shell(output: &[u8]) -> Option<PathBuf> {
 }
 
 fn capture_login_shell_environment(shell: &Path, project: &Path) -> Result<Environment, String> {
-    let output = Command::new(shell)
-        .args(["-l", "-i", "-c", CAPTURE_COMMAND])
+    let mut child = Command::new("/usr/bin/script")
+        .args(["-q", "/dev/null"])
+        .arg(shell)
+        .args(["-l", "-i"])
         .current_dir(project)
-        .output()
-        .map_err(|error| format!("start login shell {}: {error}", shell.display()))?;
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("start login shell {} in terminal: {error}", shell.display()))?;
+    let mut input = child
+        .stdin
+        .take()
+        .ok_or_else(|| "login shell terminal did not expose input".to_owned())?;
+    input
+        .write_all(CAPTURE_COMMAND.as_bytes())
+        .and_then(|()| input.flush())
+        .map_err(|error| format!("request login shell environment: {error}"))?;
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("wait for login shell {}: {error}", shell.display()))?;
+    drop(input);
     if !output.status.success() {
         return Err(format!(
             "login shell {} exited with {}",
@@ -144,8 +162,9 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
-    fn capture_runs_an_interactive_login_shell() -> TestResult {
+    fn capture_runs_a_real_interactive_login_shell() -> TestResult {
         let temp = tempdir()?;
         let shell = temp.path().join("shell");
         fs::write(
@@ -154,9 +173,16 @@ mod tests {
 set -eu
 test "$1" = "-l"
 test "$2" = "-i"
-test "$3" = "-c"
-printf 'profile output before environment\n'
-PATH=/login/bin:/usr/bin LOGIN_VALUE=loaded PROJECT_VALUE="$(/bin/pwd)" /bin/sh -c "$4"
+test "$#" = "2"
+test -t 0
+test -t 1
+export PATH=/login/bin:/usr/bin
+export LOGIN_VALUE=loaded
+export PROJECT_VALUE="$(/bin/pwd)"
+export MULTILINE_VALUE='left
+right'
+printf 'prompt hook output before environment\n'
+exec /bin/sh
 "#,
         )?;
         let mut permissions = fs::metadata(&shell)?.permissions();
@@ -174,6 +200,9 @@ PATH=/login/bin:/usr/bin LOGIN_VALUE=loaded PROJECT_VALUE="$(/bin/pwd)" /bin/sh 
                 .iter()
                 .any(|(name, value)| { name == "LOGIN_VALUE" && value == "loaded" })
         );
+        assert!(environment.iter().any(|(name, value)| {
+            name == "MULTILINE_VALUE" && value == &OsString::from("left\nright")
+        }));
         let project = environment
             .iter()
             .find(|(name, _)| name == "PROJECT_VALUE")
