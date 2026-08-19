@@ -13,7 +13,7 @@ use gpui_component::{
 
 use crate::{
     conversation::{EditDiffFormat, ToolPresentation},
-    syntax_highlight::{HighlightedText, highlight, language_for_path},
+    syntax_highlight::{HighlightedText, highlight_lines, language_for_path},
     theme::{MONO_FONT_FAMILY, THEME},
 };
 
@@ -58,8 +58,15 @@ pub(crate) struct PairedLine {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum PreparedToolChange {
-    Edit(Vec<PairedLine>),
-    Write(Vec<SideLine>),
+    Edit {
+        rows: Vec<PairedLine>,
+        additions: usize,
+        deletions: usize,
+    },
+    Write {
+        rows: Vec<SideLine>,
+        additions: usize,
+    },
 }
 
 pub(crate) fn render(
@@ -80,7 +87,19 @@ pub(crate) fn render(
                 let rows = diff
                     .as_deref()
                     .map_or_else(preparing_rows, |diff| parse_display_diff(diff, *format));
-                PreparedToolChange::Edit(pair_edit_rows(&rows, &language_for_path(path)))
+                let additions = rows
+                    .iter()
+                    .filter(|row| row.kind == ChangeKind::Addition)
+                    .count();
+                let deletions = rows
+                    .iter()
+                    .filter(|row| row.kind == ChangeKind::Deletion)
+                    .count();
+                PreparedToolChange::Edit {
+                    rows: pair_edit_rows(&rows, &language_for_path(path)),
+                    additions,
+                    deletions,
+                }
             }),
         ),
         ToolPresentation::Write {
@@ -90,19 +109,20 @@ pub(crate) fn render(
         } => (
             path,
             prepared.get_or_init(|| {
-                PreparedToolChange::Write(write_rows(content, &language_for_path(path)))
+                let rows = write_rows(content, &language_for_path(path));
+                let additions = rows.len();
+                PreparedToolChange::Write { rows, additions }
             }),
         ),
     };
-    let language = language_for_path(path);
     let mode = match prepared {
-        PreparedToolChange::Edit(_) => requested_mode,
-        PreparedToolChange::Write(_) => EmbeddedDiffMode::Unified,
+        PreparedToolChange::Edit { .. } => requested_mode,
+        PreparedToolChange::Write { .. } => EmbeddedDiffMode::Unified,
     };
     let metadata = diff_metadata(path, prepared, mode);
     let body = match prepared {
-        PreparedToolChange::Edit(rows) => render_edit_diff(rows, &language, key, mode),
-        PreparedToolChange::Write(rows) => render_write_diff(rows, &language, key),
+        PreparedToolChange::Edit { rows, .. } => render_edit_diff(rows, key, mode),
+        PreparedToolChange::Write { rows, .. } => render_write_diff(rows, key),
     };
     div()
         .id(("tool-change", key))
@@ -131,28 +151,12 @@ fn diff_metadata<'a>(
     mode: EmbeddedDiffMode,
 ) -> DiffMetadata<'a> {
     let (additions, deletions) = match prepared {
-        PreparedToolChange::Edit(rows) => rows.iter().fold((0, 0), |counts, row| {
-            (
-                counts.0
-                    + usize::from(
-                        row.new
-                            .as_ref()
-                            .is_some_and(|line| line.kind == ChangeKind::Addition),
-                    ),
-                counts.1
-                    + usize::from(
-                        row.old
-                            .as_ref()
-                            .is_some_and(|line| line.kind == ChangeKind::Deletion),
-                    ),
-            )
-        }),
-        PreparedToolChange::Write(rows) => (
-            rows.iter()
-                .filter(|line| line.kind == ChangeKind::Addition)
-                .count(),
-            0,
-        ),
+        PreparedToolChange::Edit {
+            additions,
+            deletions,
+            ..
+        } => (*additions, *deletions),
+        PreparedToolChange::Write { additions, .. } => (*additions, 0),
     };
     DiffMetadata {
         path,
@@ -232,7 +236,7 @@ fn preparing_rows() -> Vec<ChangeLine> {
 }
 
 fn write_rows(content: &str, language: &str) -> Vec<SideLine> {
-    content
+    let mut rows = content
         .lines()
         .enumerate()
         .map(|(index, line)| {
@@ -242,21 +246,18 @@ fn write_rows(content: &str, language: &str) -> Vec<SideLine> {
                 number: u64::try_from(index)
                     .ok()
                     .and_then(|value| value.checked_add(1)),
-                syntax: highlight(content.clone(), language),
+                syntax: HighlightedText::plain(content.clone()),
                 content,
             }
         })
-        .collect()
+        .collect::<Vec<_>>();
+    highlight_side_lines(rows.iter_mut().take(MAX_DIFF_LINES), language);
+    rows
 }
 
-fn render_edit_diff(
-    paired: &[PairedLine],
-    language: &str,
-    key: usize,
-    mode: EmbeddedDiffMode,
-) -> AnyElement {
+fn render_edit_diff(paired: &[PairedLine], key: usize, mode: EmbeddedDiffMode) -> AnyElement {
     if mode == EmbeddedDiffMode::Unified {
-        return render_unified_edit_diff(paired, language, key);
+        return render_unified_edit_diff(paired, key);
     }
     let truncated = paired.len() > MAX_DIFF_LINES;
     div()
@@ -268,7 +269,7 @@ fn render_edit_diff(
                 .iter()
                 .take(MAX_DIFF_LINES)
                 .enumerate()
-                .map(|(index, row)| render_paired_line(row, language, key, index)),
+                .map(|(index, row)| render_paired_line(row, key, index)),
         )
         .when(truncated, |body| {
             body.child(modal_limit_hint(paired.len() - MAX_DIFF_LINES))
@@ -276,48 +277,51 @@ fn render_edit_diff(
         .into_any_element()
 }
 
-fn render_unified_edit_diff(paired: &[PairedLine], language: &str, key: usize) -> AnyElement {
-    let rows = unified_edit_rows(paired);
-    let truncated = rows.len() > MAX_DIFF_LINES;
+fn render_unified_edit_diff(paired: &[PairedLine], key: usize) -> AnyElement {
+    let row_count = paired.iter().flat_map(unified_pair_rows).flatten().count();
+    let truncated = row_count > MAX_DIFF_LINES;
     div()
         .id(("unified-diff-body", key))
         .w_full()
         .min_w_0()
         .children(
-            rows.iter()
+            paired
+                .iter()
+                .flat_map(unified_pair_rows)
+                .flatten()
                 .take(MAX_DIFF_LINES)
                 .enumerate()
-                .map(|(index, row)| render_diff_side(Some(row), language, key, index, "unified")),
+                .map(|(index, row)| render_diff_side(Some(row), key, index, "unified")),
         )
         .when(truncated, |body| {
-            body.child(modal_limit_hint(rows.len() - MAX_DIFF_LINES))
+            body.child(modal_limit_hint(row_count - MAX_DIFF_LINES))
         })
         .into_any_element()
 }
 
-fn unified_edit_rows(paired: &[PairedLine]) -> Vec<SideLine> {
-    let mut rows = Vec::new();
-    for pair in paired {
-        match (&pair.old, &pair.new) {
-            (Some(old), Some(new))
-                if old.kind == new.kind
-                    && matches!(old.kind, ChangeKind::Context | ChangeKind::Ellipsis) =>
-            {
-                rows.push(old.clone());
-            }
-            (Some(old), Some(new)) => {
-                rows.push(old.clone());
-                rows.push(new.clone());
-            }
-            (Some(old), None) => rows.push(old.clone()),
-            (None, Some(new)) => rows.push(new.clone()),
-            (None, None) => {}
+fn unified_pair_rows(pair: &PairedLine) -> [Option<&SideLine>; 2] {
+    match (&pair.old, &pair.new) {
+        (Some(old), Some(new))
+            if old.kind == new.kind
+                && matches!(old.kind, ChangeKind::Context | ChangeKind::Ellipsis) =>
+        {
+            [Some(old), None]
         }
+        (old, new) => [old.as_ref(), new.as_ref()],
     }
-    rows
 }
 
-fn render_write_diff(rows: &[SideLine], language: &str, key: usize) -> AnyElement {
+#[cfg(test)]
+fn unified_edit_rows(paired: &[PairedLine]) -> Vec<SideLine> {
+    paired
+        .iter()
+        .flat_map(unified_pair_rows)
+        .flatten()
+        .cloned()
+        .collect()
+}
+
+fn render_write_diff(rows: &[SideLine], key: usize) -> AnyElement {
     let truncated = rows.len() > MAX_DIFF_LINES;
     div()
         .id(("write-diff-body", key))
@@ -327,7 +331,7 @@ fn render_write_diff(rows: &[SideLine], language: &str, key: usize) -> AnyElemen
             rows.iter()
                 .take(MAX_DIFF_LINES)
                 .enumerate()
-                .map(|(index, row)| render_diff_side(Some(row), language, key, index, "write")),
+                .map(|(index, row)| render_diff_side(Some(row), key, index, "write")),
         )
         .when(truncated, |body| {
             body.child(modal_limit_hint(rows.len() - MAX_DIFF_LINES))
@@ -346,39 +350,31 @@ fn modal_limit_hint(remaining: usize) -> impl IntoElement {
         .child(format!("{remaining} additional lines omitted"))
 }
 
-fn render_paired_line(row: &PairedLine, language: &str, key: usize, index: usize) -> AnyElement {
+fn render_paired_line(row: &PairedLine, key: usize, index: usize) -> AnyElement {
     div()
         .w_full()
         .min_w_0()
         .flex()
         .items_stretch()
-        .child(div().w_1_2().min_w_0().child(render_diff_side(
-            row.old.as_ref(),
-            language,
-            key,
-            index,
-            "old",
-        )))
+        .child(
+            div()
+                .w_1_2()
+                .min_w_0()
+                .child(render_diff_side(row.old.as_ref(), key, index, "old")),
+        )
         .child(
             div()
                 .w_1_2()
                 .min_w_0()
                 .border_l(THEME.border)
                 .border_color(THEME.colors.border)
-                .child(render_diff_side(
-                    row.new.as_ref(),
-                    language,
-                    key,
-                    index,
-                    "new",
-                )),
+                .child(render_diff_side(row.new.as_ref(), key, index, "new")),
         )
         .into_any_element()
 }
 
 fn render_diff_side(
     line: Option<&SideLine>,
-    _language: &str,
     key: usize,
     index: usize,
     side: &'static str,
@@ -459,16 +455,16 @@ fn pair_edit_rows(rows: &[ChangeLine], language: &str) -> Vec<PairedLine> {
     for row in rows {
         match row.kind {
             ChangeKind::Deletion => {
-                deletions.push(numbered_side(row, &mut old_number, language));
+                deletions.push(numbered_side(row, &mut old_number));
                 line_delta = line_delta.saturating_sub(1);
             }
             ChangeKind::Addition => {
-                additions.push(numbered_side(row, &mut new_number, language));
+                additions.push(numbered_side(row, &mut new_number));
                 line_delta = line_delta.saturating_add(1);
             }
             ChangeKind::Context => {
                 flush_changes(&mut paired, &mut deletions, &mut additions);
-                let old = numbered_side(row, &mut old_number, language);
+                let old = numbered_side(row, &mut old_number);
                 let new = if let Some(number) = row.number {
                     let number = apply_line_delta(number, line_delta);
                     new_number = number.saturating_add(1);
@@ -476,11 +472,11 @@ fn pair_edit_rows(rows: &[ChangeLine], language: &str) -> Vec<PairedLine> {
                     SideLine {
                         kind: row.kind,
                         number: Some(number),
-                        syntax: highlight(content.clone(), language),
+                        syntax: HighlightedText::plain(content.clone()),
                         content,
                     }
                 } else {
-                    numbered_side(row, &mut new_number, language)
+                    numbered_side(row, &mut new_number)
                 };
                 paired.push(PairedLine {
                     old: Some(old),
@@ -504,6 +500,20 @@ fn pair_edit_rows(rows: &[ChangeLine], language: &str) -> Vec<PairedLine> {
         }
     }
     flush_changes(&mut paired, &mut deletions, &mut additions);
+    highlight_side_lines(
+        paired
+            .iter_mut()
+            .take(MAX_DIFF_LINES)
+            .filter_map(|row| row.old.as_mut()),
+        language,
+    );
+    highlight_side_lines(
+        paired
+            .iter_mut()
+            .take(MAX_DIFF_LINES)
+            .filter_map(|row| row.new.as_mut()),
+        language,
+    );
     paired
 }
 
@@ -515,15 +525,32 @@ fn apply_line_delta(number: u64, delta: i64) -> u64 {
     }
 }
 
-fn numbered_side(row: &ChangeLine, next: &mut u64, language: &str) -> SideLine {
+fn numbered_side(row: &ChangeLine, next: &mut u64) -> SideLine {
     let number = row.number.unwrap_or(*next);
     *next = number.saturating_add(1);
     let content = replace_tabs(&row.content);
     SideLine {
         kind: row.kind,
         number: Some(number),
-        syntax: highlight(content.clone(), language),
+        syntax: HighlightedText::plain(content.clone()),
         content,
+    }
+}
+
+fn highlight_side_lines<'a>(lines: impl Iterator<Item = &'a mut SideLine>, language: &str) {
+    let lines = lines.collect::<Vec<_>>();
+    if lines.is_empty() {
+        return;
+    }
+    let highlighted = {
+        let source = lines
+            .iter()
+            .map(|line| line.content.as_str())
+            .collect::<Vec<_>>();
+        highlight_lines(&source, language)
+    };
+    for (line, syntax) in lines.into_iter().zip(highlighted) {
+        line.syntax = syntax;
     }
 }
 
@@ -626,6 +653,22 @@ mod tests {
     }
 
     #[test]
+    fn embedded_highlighting_stops_at_the_render_limit() {
+        let content = (0..=MAX_DIFF_LINES)
+            .map(|index| format!("let value_{index} = {index};"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let rows = write_rows(&content, "rs");
+
+        assert!(
+            rows[..MAX_DIFF_LINES]
+                .iter()
+                .all(|row| row.syntax.has_highlights())
+        );
+        assert!(!rows[MAX_DIFF_LINES].syntax.has_highlights());
+    }
+
+    #[test]
     fn edit_rows_pair_deletions_and_additions_with_independent_numbers() {
         let rows = parse_display_diff(
             " 10 context\n- 11 old one\n- 12 old two\n+ 11 new one\n 13 tail",
@@ -675,7 +718,11 @@ mod tests {
             " same\n- old one\n- old two\n+ new one",
             EditDiffFormat::Unnumbered,
         );
-        let prepared = PreparedToolChange::Edit(pair_edit_rows(&rows, "rs"));
+        let prepared = PreparedToolChange::Edit {
+            rows: pair_edit_rows(&rows, "rs"),
+            additions: 1,
+            deletions: 2,
+        };
 
         assert_eq!(
             diff_metadata("src/main.rs", &prepared, EmbeddedDiffMode::Unified),

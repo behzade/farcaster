@@ -8,7 +8,7 @@ use std::{
     time::SystemTime,
 };
 
-use gpui::{AppContext as _, Context, FocusHandle, ScrollHandle, Window, point, px};
+use gpui::{AppContext as _, Context, FocusHandle, UniformListScrollHandle, Window, px};
 
 use super::PiApp;
 use crate::{
@@ -137,7 +137,7 @@ pub(crate) struct ChangesState {
     diff_highlights: DiffHighlightCache,
     diff_highlights_in_flight: HashSet<DiffHighlightKey>,
     diff_highlight_requested: Option<DiffHighlightKey>,
-    pub diff_scroll: ScrollHandle,
+    pub diff_scroll: UniformListScrollHandle,
     pub diff_focus: FocusHandle,
     pub return_focus: Option<FocusHandle>,
     pub pending_diff_setup: bool,
@@ -155,7 +155,7 @@ impl ChangesState {
             diff_highlights: DiffHighlightCache::default(),
             diff_highlights_in_flight: HashSet::new(),
             diff_highlight_requested: None,
-            diff_scroll: ScrollHandle::new(),
+            diff_scroll: UniformListScrollHandle::new(),
             diff_focus: cx.focus_handle(),
             return_focus: None,
             pending_diff_setup: false,
@@ -250,7 +250,7 @@ impl PiApp {
         opener.focus(window, cx);
         self.changes.return_focus = Some(opener);
         self.changes.diff_generation = self.changes.diff_generation.saturating_add(1);
-        self.changes.diff_scroll.set_offset(point(px(0.0), px(0.0)));
+        self.changes.diff_scroll = UniformListScrollHandle::new();
         let surface = DiffSurface::Ready(file.clone(), file.diff.clone());
         self.changes.diff_syntax = None;
         self.changes.diff = Some(surface);
@@ -281,7 +281,7 @@ impl PiApp {
         focus.focus(window, cx);
         self.changes.return_focus = Some(focus);
         self.changes.diff_generation = self.changes.diff_generation.saturating_add(1);
-        self.changes.diff_scroll.set_offset(point(px(0.0), px(0.0)));
+        self.changes.diff_scroll = UniformListScrollHandle::new();
         let surface = load_tool_diff_surface(path, presentation);
         self.changes.diff_syntax = None;
         self.changes.diff = Some(surface);
@@ -438,7 +438,7 @@ mod tests {
     };
     use crate::{
         conversation::{EditDiffFormat, ToolPresentation},
-        syntax_highlight::{HighlightedDiff, HighlightedText},
+        syntax_highlight::HighlightedDiff,
     };
     use std::{path::PathBuf, sync::Arc};
 
@@ -489,15 +489,20 @@ mod tests {
         let split = diff_highlight_key("file.rs", "patch", FullDiffMode::Split);
         cache.insert(
             unified.clone(),
-            Arc::new(HighlightedDiff::Unified(HighlightedText::plain("patch"))),
+            Arc::new(HighlightedDiff::new(
+                "file.txt",
+                "patch",
+                crate::syntax_highlight::DiffHighlightMode::Unified,
+            )),
             DIFF_HIGHLIGHT_CACHE_BYTES / 2,
         );
         cache.insert(
             split.clone(),
-            Arc::new(HighlightedDiff::Split {
-                old: HighlightedText::plain("old"),
-                new: HighlightedText::plain("new"),
-            }),
+            Arc::new(HighlightedDiff::new(
+                "file.txt",
+                "patch",
+                crate::syntax_highlight::DiffHighlightMode::Split,
+            )),
             DIFF_HIGHLIGHT_CACHE_BYTES / 2 + 1,
         );
 
