@@ -1,6 +1,7 @@
 //! UI-neutral application runtime and active-session ownership.
 
 mod catalog;
+mod documents;
 mod prompts;
 
 use std::{
@@ -28,7 +29,6 @@ use crate::{
     state::StateStore,
 };
 
-const MAX_IDLE_PI_ACTORS: usize = 4;
 const COALESCED_SESSION_REFRESH_DELAY: Duration = Duration::from_millis(100);
 const STREAM_PUBLISH_INTERVAL: Duration = Duration::from_millis(16);
 
@@ -64,6 +64,10 @@ pub(crate) enum RuntimeCommand {
         project: PathBuf,
     },
     SelectSession {
+        path: PathBuf,
+        project: PathBuf,
+    },
+    RefreshSessionDocument {
         path: PathBuf,
         project: PathBuf,
     },
@@ -237,6 +241,7 @@ impl RuntimeHandle {
     }
 }
 
+use documents::reconcile_live_session_documents;
 use prompts::DeferredPrompt;
 
 #[derive(Clone)]
@@ -344,13 +349,29 @@ fn run_supervisor(
     if let Some(actor) = actors.get(&initial_key) {
         actor.send(initial_draft_command(
             draft_id,
-            initial_project,
-            initial_session,
+            initial_project.clone(),
+            initial_session.clone(),
         ));
     }
     let mut selected = initial_key.clone();
     let mut generation = 0_u64;
     let mut latest = HashMap::<String, Arc<RuntimeSnapshot>>::new();
+    if let Some(path) = initial_session.clone() {
+        latest.insert(
+            initial_key.clone(),
+            Arc::new(RuntimeSnapshot {
+                project: initial_project,
+                selected_session: Some(path),
+                history_preview: true,
+                ..RuntimeSnapshot::default()
+            }),
+        );
+    }
+    let mut actor_paths = initial_session
+        .map(|path| HashMap::from([(path, initial_key.clone())]))
+        .unwrap_or_default();
+    let mut interacted = HashSet::from([initial_key.clone()]);
+    let mut document_revisions = HashMap::new();
     let mut pending_extensions = HashMap::<String, Vec<crate::protocol::ExtensionUiRequest>>::new();
     let mut active_dialogs = HashMap::<String, Vec<crate::protocol::ExtensionUiRequest>>::new();
     let mut needs_input = HashSet::<String>::new();
@@ -413,6 +434,13 @@ fn run_supervisor(
                                 .or_else(|| snapshot.selected_session.clone()),
                             status,
                         );
+                        if let Some(path) = snapshot
+                            .live_session
+                            .clone()
+                            .or_else(|| snapshot.selected_session.clone())
+                        {
+                            actor_paths.insert(path, key.clone());
+                        }
                         latest.insert(key.clone(), snapshot.clone());
                         if key == selected {
                             let _ = event_tx.send(RuntimeEvent::Snapshot {
@@ -501,6 +529,22 @@ fn run_supervisor(
                     }
                     event @ (RuntimeEvent::Sessions { .. }
                     | RuntimeEvent::SessionsFailed { .. }) => {
+                        if key == catalog_key
+                            && let RuntimeEvent::Sessions { all_sessions, .. } = &event
+                        {
+                            reconcile_live_session_documents(
+                                all_sessions,
+                                &interacted,
+                                &selected,
+                                &mut actors,
+                                &mut latest,
+                                &mut last_touch,
+                                &mut document_revisions,
+                                &mut actor_paths,
+                                &process_command,
+                                &supervisor_thread,
+                            );
+                        }
                         match route_session_discovery(&key, &catalog_key, event) {
                             SupervisorSessionAction::Publish(event) => {
                                 let _ = event_tx.send(event);
@@ -519,7 +563,6 @@ fn run_supervisor(
                 }
             }
         }
-        evict_idle_actors(&mut actors, &mut latest, &mut last_touch, &selected);
         match command_rx.try_recv() {
             Ok(RuntimeCommand::Shutdown) => running = false,
             Ok(command) => {
@@ -562,9 +605,17 @@ fn run_supervisor(
                 }
                 let next = command_target(&command);
                 if let Some((requested_key, project)) = next {
-                    let key = actor_key_for_command(&command, &requested_key, &latest);
+                    let key = match &command {
+                        RuntimeCommand::SelectSession { path, .. } => {
+                            actor_paths.get(path).cloned().unwrap_or_else(|| {
+                                actor_key_for_command(&command, &requested_key, &latest)
+                            })
+                        }
+                        _ => requested_key,
+                    };
                     clock = clock.saturating_add(1);
                     last_touch.insert(key.clone(), clock);
+                    interacted.insert(key.clone());
                     let selection_changed = key != selected;
                     let view_only = is_view_only_selection(&command);
                     if selection_changed {
@@ -577,7 +628,10 @@ fn run_supervisor(
                             });
                         }
                     }
-                    let cached_snapshot = latest.get(&key).cloned();
+                    let resident_snapshot = latest.get(&key).cloned();
+                    if let RuntimeCommand::SelectSession { path, .. } = &command {
+                        actor_paths.insert(path.clone(), key.clone());
+                    }
                     let actor = actors.entry(key.clone()).or_insert_with(|| {
                         SessionRuntimeHandle::spawn(
                             project,
@@ -586,10 +640,10 @@ fn run_supervisor(
                             supervisor_thread.clone(),
                         )
                     });
-                    if !view_only || cached_snapshot.is_none() {
+                    if target_command_needs_actor_message(view_only, resident_snapshot.is_some()) {
                         actor.send(command);
                     }
-                    if let Some(mut snapshot) = cached_snapshot {
+                    if let Some(mut snapshot) = resident_snapshot {
                         if view_only {
                             Arc::make_mut(&mut snapshot).transcript_changed_from = None;
                         }
@@ -686,6 +740,10 @@ fn command_target(command: &RuntimeCommand) -> Option<(String, PathBuf)> {
 
 fn is_view_only_selection(command: &RuntimeCommand) -> bool {
     matches!(command, RuntimeCommand::SelectSession { .. })
+}
+
+fn target_command_needs_actor_message(view_only: bool, document_is_resident: bool) -> bool {
+    !view_only || !document_is_resident
 }
 
 fn actor_key_for_command(
@@ -884,44 +942,6 @@ fn semantic_status(snapshot: &RuntimeSnapshot) -> &'static str {
         "Failed"
     } else {
         "Done"
-    }
-}
-
-fn evict_idle_actors(
-    actors: &mut HashMap<String, SessionRuntimeHandle>,
-    latest: &mut HashMap<String, Arc<RuntimeSnapshot>>,
-    last_touch: &mut HashMap<String, u64>,
-    selected: &str,
-) {
-    let connected = latest
-        .iter()
-        .filter(|(_, snapshot)| snapshot.connected)
-        .count();
-    if connected <= MAX_IDLE_PI_ACTORS {
-        return;
-    }
-    let mut candidates = latest
-        .iter()
-        .filter(|(key, snapshot)| {
-            key.as_str() != selected && snapshot.connected && semantic_status(snapshot) == "Done"
-        })
-        .map(|(key, _)| {
-            (
-                last_touch.get(key).copied().unwrap_or_default(),
-                key.clone(),
-            )
-        })
-        .collect::<Vec<_>>();
-    candidates.sort_by_key(|(touch, _)| *touch);
-    for (_, key) in candidates
-        .into_iter()
-        .take(connected.saturating_sub(MAX_IDLE_PI_ACTORS))
-    {
-        if let Some(actor) = actors.remove(&key) {
-            actor.send(RuntimeCommand::Shutdown);
-        }
-        latest.remove(&key);
-        last_touch.remove(&key);
     }
 }
 
@@ -1223,6 +1243,9 @@ impl RuntimeOwner {
             }
             RuntimeCommand::ResumeDraft { project, .. } => self.resume_draft(project),
             RuntimeCommand::SelectSession { path, project } => self.select_history(path, project),
+            RuntimeCommand::RefreshSessionDocument { path, project } => {
+                self.refresh_history(path, project)
+            }
             RuntimeCommand::SetModel { provider, model_id } => {
                 self.send(json!({"type":"set_model","provider":provider,"modelId":model_id}))
             }
@@ -1438,6 +1461,14 @@ impl RuntimeOwner {
             }
             return;
         }
+        self.refresh_history(path, project);
+    }
+
+    fn refresh_history(&mut self, path: PathBuf, project: PathBuf) {
+        if self.active_session.as_deref() == Some(path.as_path()) && self.process.is_some() {
+            return;
+        }
+        self.history_generation = self.history_generation.saturating_add(1);
         let generation = self.history_generation;
         let sender = self.history_tx.clone();
         let wake = thread::current();
@@ -2009,6 +2040,33 @@ mod tests {
     }
 
     #[test]
+    fn session_documents_follow_interaction_archive_and_rpc_lifecycle() {
+        let mut session = SessionSummary::from_cached(
+            "one".into(),
+            PathBuf::from("/sessions/one.jsonl"),
+            PathBuf::from("/project"),
+            "One".into(),
+            "Question".into(),
+            String::new(),
+            None,
+            SystemTime::now(),
+            2,
+            crate::sessions::UsageSummary::default(),
+            false,
+            false,
+            String::new(),
+        );
+
+        assert!(!documents::session_document_is_live(&session, false, false));
+        assert!(documents::session_document_is_live(&session, true, false));
+        session.settled = true;
+        assert!(!documents::session_document_is_live(&session, true, false));
+        assert!(documents::session_document_is_live(&session, true, true));
+        session.is_running = true;
+        assert!(documents::session_document_is_live(&session, false, false));
+    }
+
+    #[test]
     fn running_stats_keep_the_last_meaningful_context_instead_of_flashing_zero() {
         let previous = json!({
             "contextUsage": {"tokens": 168_000, "contextWindow": 200_000, "percent": 84.0},
@@ -2191,6 +2249,112 @@ mod tests {
                 PathBuf::from("/background-project"),
             ))
         );
+    }
+
+    #[test]
+    fn interacted_session_document_hydrates_in_background_and_becomes_resident()
+    -> Result<(), String> {
+        let temp = tempdir().map_err(|error| error.to_string())?;
+        let path = temp.path().join("session.jsonl");
+        fs::write(
+            &path,
+            format!(
+                "{{\"type\":\"session\",\"id\":\"one\",\"cwd\":{},\"timestamp\":\"2026-08-19T00:00:00Z\"}}\n{{\"type\":\"message\",\"id\":\"message\",\"parentId\":null,\"message\":{{\"role\":\"user\",\"content\":\"resident\"}}}}\n",
+                serde_json::to_string(temp.path()).map_err(|error| error.to_string())?
+            ),
+        )
+        .map_err(|error| error.to_string())?;
+        let modified = fs::metadata(&path)
+            .and_then(|metadata| metadata.modified())
+            .map_err(|error| error.to_string())?;
+        let session = SessionSummary::from_cached(
+            "one".into(),
+            path.clone(),
+            temp.path().to_path_buf(),
+            "One".into(),
+            "resident".into(),
+            String::new(),
+            None,
+            modified,
+            1,
+            crate::sessions::UsageSummary::default(),
+            false,
+            false,
+            String::new(),
+        );
+        let key = format!("session:{}", path.display());
+        let mut actors = HashMap::new();
+        let mut documents = HashMap::new();
+        let mut touches = HashMap::new();
+        let mut revisions = HashMap::new();
+        let mut paths = HashMap::new();
+
+        reconcile_live_session_documents(
+            std::slice::from_ref(&session),
+            &HashSet::from([key.clone()]),
+            "other",
+            &mut actors,
+            &mut documents,
+            &mut touches,
+            &mut revisions,
+            &mut paths,
+            &ProcessCommand::default(),
+            &thread::current(),
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut resident = None;
+        while Instant::now() < deadline {
+            let Some(actor) = actors.get(&key) else {
+                return Err("document actor was not retained".into());
+            };
+            while let Ok(event) = actor.events.try_recv() {
+                if let RuntimeEvent::Snapshot { snapshot, .. } = event
+                    && snapshot.selected_session.as_deref() == Some(path.as_path())
+                    && snapshot
+                        .conversation
+                        .items
+                        .iter()
+                        .any(|item| item.text == "resident")
+                {
+                    resident = Some(snapshot);
+                    break;
+                }
+            }
+            if resident.is_some() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        let resident = resident.ok_or_else(|| "document did not hydrate".to_owned())?;
+        documents.insert(key.clone(), resident);
+        let mut archived = session;
+        archived.settled = true;
+        reconcile_live_session_documents(
+            &[archived],
+            &HashSet::from([key.clone()]),
+            "other",
+            &mut actors,
+            &mut documents,
+            &mut touches,
+            &mut revisions,
+            &mut paths,
+            &ProcessCommand::default(),
+            &thread::current(),
+        );
+
+        assert!(!actors.contains_key(&key));
+        assert!(!documents.contains_key(&key));
+        assert!(!paths.contains_key(&path));
+        assert!(!revisions.contains_key(&path));
+        Ok(())
+    }
+
+    #[test]
+    fn selecting_a_resident_document_does_not_reload_or_message_its_actor() {
+        assert!(!target_command_needs_actor_message(true, true));
+        assert!(target_command_needs_actor_message(true, false));
+        assert!(target_command_needs_actor_message(false, true));
     }
 
     #[test]

@@ -313,7 +313,7 @@ pub(crate) fn load_history(path: &Path) -> Result<LoadedHistory, String> {
     let mut reader = BufReader::new(file);
     let mut line = Vec::new();
     let mut entries = Vec::new();
-    for _ in 0..MAX_LINES_PER_FILE {
+    loop {
         line.clear();
         if reader
             .read_until(b'\n', &mut line)

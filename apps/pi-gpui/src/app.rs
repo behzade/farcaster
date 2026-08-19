@@ -147,7 +147,6 @@ pub(crate) struct PiApp {
     pending_sheet_setup: bool,
     transcript_list: ListState,
     transcript_rows: Arc<Vec<crate::transcript::TranscriptRow>>,
-    transcript_cache: HashMap<PathBuf, transcript_ui::TranscriptUiCache>,
     transcript_following: bool,
     transcript_unseen: usize,
     pub(crate) transcript_disclosure_states: HashMap<usize, bool>,
@@ -412,7 +411,6 @@ impl PiApp {
             pending_sheet_setup: false,
             transcript_list,
             transcript_rows: Arc::new(Vec::new()),
-            transcript_cache: HashMap::new(),
             transcript_following: true,
             transcript_unseen: 0,
             transcript_disclosure_states: HashMap::new(),
@@ -505,16 +503,10 @@ impl PiApp {
                     let transcript_preselected = session_changed
                         && self.snapshot.selected_session == snapshot.selected_session;
                     if session_changed {
-                        if !transcript_preselected {
-                            self.cache_current_transcript();
-                        }
                         self.reset_session_ui(generation, transcript_preselected);
                         root_dirty = true;
                     }
-                    let restored = session_changed && self.restore_cached_transcript(&snapshot);
-                    let next_rows = if restored {
-                        self.transcript_rows.as_ref().clone()
-                    } else if transcript_preselected {
+                    let next_rows = if transcript_preselected {
                         self.project_transcript_rows(&snapshot)
                     } else if session_changed {
                         crate::transcript::project_rows(&snapshot.conversation.items)
@@ -810,8 +802,6 @@ impl PiApp {
         self.switch_composer_target(session_target(&path), window, cx);
         self.selected_draft = None;
         self.select_project(project.clone());
-        self.cache_current_transcript();
-        self.preview_cached_session(&path, &project);
         self.send(RuntimeCommand::SelectSession { path, project });
         self.close_sessions_sheet_after_selection(window, cx);
         if previous_root != next_root {

@@ -717,6 +717,42 @@ fn history_matches_pi_compaction_order() {
 }
 
 #[test]
+fn loaded_history_is_not_truncated_at_the_catalog_scan_limit() -> TestResult {
+    let directory = tempdir()?;
+    let path = directory.path().join("long-session.jsonl");
+    let mut file = fs::File::create(&path)?;
+    writeln!(
+        file,
+        "{}",
+        serde_json::json!({"type":"session","version":3,"id":"session","cwd":"/project"})
+    )?;
+    for index in 0..10_050 {
+        let id = format!("message-{index}");
+        let parent = (index > 0).then(|| format!("message-{}", index - 1));
+        writeln!(
+            file,
+            "{}",
+            serde_json::json!({
+                "type":"message",
+                "id":id,
+                "parentId":parent,
+                "message":{"role":"user","content":format!("message {index}")}
+            })
+        )?;
+    }
+    drop(file);
+
+    let history = load_history(&path)?;
+
+    assert_eq!(history.messages.len(), 10_050);
+    assert_eq!(
+        history.messages.last().map(|message| &message["content"]),
+        Some(&serde_json::json!("message 10049"))
+    );
+    Ok(())
+}
+
+#[test]
 fn loaded_history_includes_active_branch_model_and_effort() -> TestResult {
     let directory = tempdir()?;
     let path = directory.path().join("session.jsonl");
