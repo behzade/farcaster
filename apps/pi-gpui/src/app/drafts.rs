@@ -427,7 +427,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn project_choices_only_include_registered_non_worktrees_and_current_project() {
+    fn project_choices_exclude_registered_and_current_worktrees() {
         let temp = tempfile::tempdir().expect("temporary project root");
         let project = temp.path().join("project");
         let other = temp.path().join("other");
@@ -450,7 +450,7 @@ mod tests {
         );
         assert_eq!(
             available_projects(&registered, &worktree),
-            vec![worktree, other, project]
+            vec![project, other]
         );
     }
 
