@@ -5,10 +5,11 @@ use std::{
 
 use super::{
     ActiveSessionItem, SessionRailItem, SessionRailKind, minimal_row_splice, new_session_project,
-    roots_waiting_for_descendants, session_accessible_label, session_badge,
+    roots_waiting_for_descendants, session_accessible_label, session_badge, status_visual,
     visible_session_shortcuts,
 };
 use crate::{
+    assets::AppIcon,
     projects::DraftSession,
     sessions::{SessionSummary, UsageSummary},
 };
@@ -111,6 +112,23 @@ fn new_session_uses_viewed_chat_project_independent_of_filter() {
         new_session_project(current, Some(Path::new("/filtered"))),
         PathBuf::from("/current")
     );
+}
+
+#[test]
+fn session_states_use_semantic_icons() {
+    assert_eq!(
+        status_visual("Done").map(|(icon, _)| icon),
+        Some(AppIcon::CheckCircle)
+    );
+    assert_eq!(
+        status_visual("Working").map(|(icon, _)| icon),
+        Some(AppIcon::SpinnerGap)
+    );
+    assert_eq!(
+        status_visual("Needs input").map(|(icon, _)| icon),
+        Some(AppIcon::WarningCircle)
+    );
+    assert_eq!(status_visual("").map(|(icon, _)| icon), None);
 }
 
 #[test]

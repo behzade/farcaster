@@ -26,7 +26,10 @@ use super::{
     },
 };
 #[cfg(test)]
-use super::{session_groups::SessionRailKind, session_rows::session_accessible_label};
+use super::{
+    session_groups::SessionRailKind,
+    session_rows::{session_accessible_label, status_visual},
+};
 use crate::{
     assets::AppIcon,
     primitives::{
