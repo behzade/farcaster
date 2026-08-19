@@ -1917,7 +1917,6 @@ mod tests {
             ProcessCommand {
                 program: script,
                 prefix_args: vec!["term-marker".into(), marker.to_string_lossy().into_owned()],
-                direnv_program: None,
             },
         );
         // RpcProcess permits up to 15 seconds for its readiness handshake. The
@@ -1961,7 +1960,6 @@ mod tests {
                 process_command: ProcessCommand {
                     program: PathBuf::from("/definitely/missing/pi-gpui-test-command"),
                     prefix_args: Vec::new(),
-                    direnv_program: None,
                 },
                 process: None,
                 snapshot: RuntimeSnapshot {
@@ -2546,7 +2544,6 @@ mod tests {
         owner.process_command = ProcessCommand {
             program: script,
             prefix_args: vec!["quiet".into()],
-            direnv_program: None,
         };
         owner.active_session = Some(session.clone());
         owner.snapshot.selected_session = Some(session.clone());
@@ -2577,7 +2574,6 @@ mod tests {
             &ProcessCommand {
                 program: script,
                 prefix_args: vec!["quiet".into()],
-                direnv_program: None,
             },
             temp.path(),
             None,
@@ -2666,7 +2662,6 @@ mod tests {
         owner.process_command = ProcessCommand {
             program: script,
             prefix_args: vec!["quiet".into()],
-            direnv_program: None,
         };
 
         owner.apply_command(RuntimeCommand::NewSession {
@@ -3188,7 +3183,6 @@ mod tests {
             process_command: ProcessCommand {
                 program: PathBuf::from("/definitely/missing/pi-gpui-test-command"),
                 prefix_args: Vec::new(),
-                direnv_program: None,
             },
             process: None,
             snapshot: RuntimeSnapshot {
@@ -3312,7 +3306,6 @@ mod tests {
         let process_command = ProcessCommand {
             program: script,
             prefix_args: vec!["quiet".into()],
-            direnv_program: None,
         };
         let process = RpcProcess::spawn(&process_command, temp.path(), None)?;
         let (event_tx, event_rx) = test_event_channel();

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import applicationExit, { APPLICATION_EXIT_MESSAGE } from "./application-exit.ts";
+import applicationExit, { APPLICATION_EXIT_MESSAGE } from "./companion/application-exit.ts";
 
 function shutdownHandler() {
   let handler;

@@ -1,6 +1,5 @@
 {
   craneLib,
-  direnv,
   lib,
   makeWrapper,
   piTerminal,
@@ -140,16 +139,15 @@ craneLib.buildPackage (
 
     postInstall = ''
       ln -s "$out/bin/pi-gpui" "$out/bin/pi-gui"
-      install -Dm644 ${../apps/pi-gpui/extensions/companion.ts} "$out/lib/pi-gpui/companion.ts"
-      install -Dm644 ${../apps/pi-gpui/extensions/title-generation.ts} "$out/lib/pi-gpui/title-generation.ts"
-      install -Dm644 ${../apps/pi-gpui/extensions/workgraph.ts} "$out/lib/pi-gpui/workgraph.ts"
+      mkdir -p "$out/lib/pi-gpui"
+      cp -R ${../apps/pi-gpui/extensions/companion} "$out/lib/pi-gpui/companion"
     ''
     + lib.optionalString stdenv.hostPlatform.isDarwin ''
       app="$out/Applications/Pi.app"
       mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
       substitute ${../packaging/macos/Info.plist} "$app/Contents/Info.plist" \
         --replace-fail '@pi_path@' '${piTerminal}/bin/pi' \
-        --replace-fail '@companion_extension@' "$out/lib/pi-gpui/companion.ts"
+        --replace-fail '@companion_extension@' "$out/lib/pi-gpui/companion/index.ts"
       install -Dm644 ${../packaging/macos/Pi.icns} "$app/Contents/Resources/Pi.icns"
       install -Dm755 "$out/bin/pi-gpui" "$app/Contents/MacOS/pi-gpui"
     '';
@@ -157,8 +155,7 @@ craneLib.buildPackage (
     postFixup = ''
       wrapProgram "$out/bin/pi-gpui" \
         --set PI_GUI_PI_PATH ${piTerminal}/bin/pi \
-        --set PI_GUI_COMPANION_EXTENSION "$out/lib/pi-gpui/companion.ts" \
-        --prefix PATH : ${lib.makeBinPath [ direnv piTerminal ]}
+        --set PI_GUI_COMPANION_EXTENSION "$out/lib/pi-gpui/companion/index.ts"
     ''
     + lib.optionalString stdenv.hostPlatform.isDarwin ''
       # UNUserNotificationCenter rejects unsigned application bundles.

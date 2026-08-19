@@ -21,7 +21,6 @@ use crate::{
 pub(crate) struct ProcessCommand {
     pub program: PathBuf,
     pub prefix_args: Vec<String>,
-    pub direnv_program: Option<PathBuf>,
 }
 
 impl Default for ProcessCommand {
@@ -29,30 +28,19 @@ impl Default for ProcessCommand {
         Self {
             program: pi_program(std::env::var_os("PI_GUI_PI_PATH")),
             prefix_args: Vec::new(),
-            direnv_program: Some(PathBuf::from("direnv")),
         }
     }
 }
 
 impl ProcessCommand {
-    pub(crate) fn command(&self, project: &Path) -> Command {
-        let mut process = if let Some(direnv) = &self.direnv_program {
-            let mut process = Command::new(direnv);
-            process
-                .args(["exec"])
-                .arg(project)
-                .arg(&self.program)
-                .env("DIRENV_LOG_FORMAT", "");
-            process
-        } else {
-            Command::new(&self.program)
-        };
+    pub(crate) fn command(&self, project: &Path) -> Result<Command, String> {
+        let mut process = Command::new(&self.program);
         process.args(&self.prefix_args).current_dir(project);
         #[cfg(target_os = "macos")]
-        if let Some(environment) = crate::shell_environment::login_shell_environment() {
-            process.env_clear().envs(environment.iter().cloned());
+        if let Some(environment) = crate::shell_environment::project_shell_environment(project)? {
+            process.env_clear().envs(environment);
         }
-        process
+        Ok(process)
     }
 }
 
@@ -60,7 +48,8 @@ fn companion_extension() -> Option<PathBuf> {
     std::env::var_os("PI_GUI_COMPANION_EXTENSION")
         .map(PathBuf::from)
         .or_else(|| {
-            let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("extensions/companion.ts");
+            let path =
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("extensions/companion/index.ts");
             path.is_file().then_some(path)
         })
 }
@@ -137,7 +126,7 @@ impl RpcProcess {
         session: Option<&Path>,
         wake: Option<thread::Thread>,
     ) -> Result<Self, String> {
-        let mut process = command.command(project);
+        let mut process = command.command(project)?;
         process
             .args(["--mode", "rpc"])
             .env("PI_GPUI_NATIVE_NOTIFICATIONS", "1");
@@ -153,10 +142,9 @@ impl RpcProcess {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|error| {
-                let launcher = command.direnv_program.as_ref().unwrap_or(&command.program);
                 format!(
                     "start {} for {}: {error}",
-                    launcher.display(),
+                    command.program.display(),
                     project.display()
                 )
             })?;
@@ -554,37 +542,18 @@ mod tests {
             ProcessCommand {
                 program: script,
                 prefix_args: vec![case.into()],
-                direnv_program: None,
             },
         ))
     }
 
     #[test]
-    fn direnv_loads_the_environment_for_the_project_directory() -> TestResult {
-        let (temp, mut command) = fake("direnv")?;
-        let direnv = temp.path().join("fake-direnv.sh");
-        fs::write(
-            &direnv,
-            r#"#!/bin/sh
-set -eu
-test "$1" = "exec"
-test -d "$2"
-project=$2
-printf '%s' "$project" > "$project/direnv-project"
-shift 2
-export PI_GUI_DIRENV_MARKER=loaded
-exec "$@"
-"#,
-        )?;
-        let mut permissions = fs::metadata(&direnv)?.permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&direnv, permissions)?;
-        command.direnv_program = Some(direnv);
-
+    fn process_starts_directly_in_the_project_directory() -> TestResult {
+        let (temp, command) = fake("project-directory")?;
         let mut rpc = RpcProcess::spawn(&command, temp.path(), None)?;
+        let process_project = fs::read_to_string(temp.path().join("process-project"))?;
         assert_eq!(
-            fs::read_to_string(temp.path().join("direnv-project"))?,
-            temp.path().display().to_string(),
+            fs::canonicalize(process_project)?,
+            fs::canonicalize(temp.path())?,
         );
         rpc.terminate()?;
         Ok(())

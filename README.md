@@ -61,9 +61,10 @@ separate `nix-config` repo.
   client and the small Pi AI output-item hook needed for cached OpenAI
   compaction.
 - [`apps/pi-gpui`](apps/pi-gpui) is a native GPUI client for Pi's public RPC
-  mode. Each project RPC process starts through `direnv exec` for that project's
-  working directory. It is a distinct GPL-3.0-or-later module; the enclosing
-  repository's MIT license does not replace that module's license.
+  mode. On macOS, the app starts the user's login shell in the project directory
+  and gives the captured project environment to the RPC process. It is a
+  distinct GPL-3.0-or-later module; the enclosing repository's MIT license does
+  not replace that module's license.
 - [`patches`](patches) contains the local changes applied to third-party Pi
   extensions.
 - [`SYSTEM.md`](SYSTEM.md) is the base Pi system prompt. Nix fills its pinned

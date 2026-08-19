@@ -5,7 +5,6 @@ use std::{
     os::unix::ffi::OsStringExt as _,
     path::{Path, PathBuf},
     process::Command,
-    sync::OnceLock,
 };
 
 const IMPORT_REQUESTED: &str = "PI_GUI_IMPORT_SHELL_ENV";
@@ -15,15 +14,11 @@ const CAPTURE_COMMAND: &str = "/usr/bin/printf '\\036PI_GPUI_ENV_START\\037\\0';
 
 type Environment = Vec<(OsString, OsString)>;
 
-pub(crate) fn login_shell_environment() -> Option<&'static [(OsString, OsString)]> {
+pub(crate) fn project_shell_environment(project: &Path) -> Result<Option<Environment>, String> {
     if std::env::var(IMPORT_REQUESTED).as_deref() != Ok("1") {
-        return None;
+        return Ok(None);
     }
-
-    static ENVIRONMENT: OnceLock<Option<Environment>> = OnceLock::new();
-    ENVIRONMENT
-        .get_or_init(|| capture_login_shell_environment(&default_login_shell()).ok())
-        .as_deref()
+    capture_login_shell_environment(&default_login_shell(), project).map(Some)
 }
 
 fn default_login_shell() -> PathBuf {
@@ -51,9 +46,10 @@ fn parse_account_login_shell(output: &[u8]) -> Option<PathBuf> {
     Some(PathBuf::from(OsString::from_vec(shell.to_vec())))
 }
 
-fn capture_login_shell_environment(shell: &Path) -> Result<Environment, String> {
+fn capture_login_shell_environment(shell: &Path, project: &Path) -> Result<Environment, String> {
     let output = Command::new(shell)
         .args(["-l", "-i", "-c", CAPTURE_COMMAND])
+        .current_dir(project)
         .output()
         .map_err(|error| format!("start login shell {}: {error}", shell.display()))?;
     if !output.status.success() {
@@ -160,14 +156,14 @@ test "$1" = "-l"
 test "$2" = "-i"
 test "$3" = "-c"
 printf 'profile output before environment\n'
-PATH=/login/bin:/usr/bin LOGIN_VALUE=loaded /bin/sh -c "$4"
+PATH=/login/bin:/usr/bin LOGIN_VALUE=loaded PROJECT_VALUE="$(/bin/pwd)" /bin/sh -c "$4"
 "#,
         )?;
         let mut permissions = fs::metadata(&shell)?.permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&shell, permissions)?;
 
-        let environment = capture_login_shell_environment(&shell)?;
+        let environment = capture_login_shell_environment(&shell, temp.path())?;
         assert!(
             environment
                 .iter()
@@ -178,6 +174,12 @@ PATH=/login/bin:/usr/bin LOGIN_VALUE=loaded /bin/sh -c "$4"
                 .iter()
                 .any(|(name, value)| { name == "LOGIN_VALUE" && value == "loaded" })
         );
+        let project = environment
+            .iter()
+            .find(|(name, _)| name == "PROJECT_VALUE")
+            .map(|(_, value)| PathBuf::from(value))
+            .ok_or("PROJECT_VALUE was not captured")?;
+        assert_eq!(fs::canonicalize(project)?, fs::canonicalize(temp.path())?);
         Ok(())
     }
 
