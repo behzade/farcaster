@@ -69,6 +69,7 @@ impl PiApp {
         let controls_entity = entity.clone();
         let abort_entity = entity;
         div()
+            .w_full()
             .flex_none()
             .min_h(THEME.layout.composer_min)
             .when(floating, |composer| {

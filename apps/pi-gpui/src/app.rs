@@ -280,7 +280,7 @@ impl PiApp {
         let runtime = RuntimeHandle::spawn(project.clone(), selected_draft.clone(), None);
         let composer = cx.new(|cx| {
             TextareaState::new(window, cx)
-                .auto_grow(2, 8)
+                .auto_grow(3, 8)
                 .submit_on_enter(true)
                 .placeholder("Ask Pi")
         });
