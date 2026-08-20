@@ -183,6 +183,7 @@ pub(crate) struct PiApp {
     workgraph_sidebar_view: Entity<WorkGraphSidebarView>,
     surface: AppSurface,
     run_panel_scroll: ScrollHandle,
+    composer_footer_scroll: ScrollHandle,
     composer_sessions: ComposerSessions,
     composer_history_marker: Option<(String, usize, String)>,
     composer_images: HashMap<String, Vec<ComposerImage>>,
@@ -227,7 +228,6 @@ pub(crate) struct PiApp {
     project_trust_error: Option<String>,
     project_trust_project: Option<PathBuf>,
     pending_project_trust_command: Option<RuntimeCommand>,
-    context_details_expanded: bool,
     completed_agents_expanded: bool,
     limited_agents_expanded: bool,
     session_shortcuts_visible: bool,
@@ -478,6 +478,7 @@ impl PiApp {
             workgraph_sidebar_view,
             surface: AppSurface::Chat,
             run_panel_scroll: ScrollHandle::new(),
+            composer_footer_scroll: ScrollHandle::new(),
             composer_sessions,
             composer_history_marker: None,
             composer_images: HashMap::new(),
@@ -522,7 +523,6 @@ impl PiApp {
             project_trust_error: None,
             project_trust_project: None,
             pending_project_trust_command: None,
-            context_details_expanded: false,
             completed_agents_expanded: false,
             limited_agents_expanded: false,
             session_shortcuts_visible: false,
@@ -671,6 +671,11 @@ impl PiApp {
                         &all_sessions,
                         self.snapshot.selected_session.as_deref(),
                     );
+                    let composer_usage_changed = composer_usage_sessions_changed(
+                        &self.all_sessions,
+                        &all_sessions,
+                        self.snapshot.selected_session.as_deref(),
+                    );
                     let previous_workgraph_session = self.active_workgraph_session();
                     let visible_activities_changed = run_panel_activities_changed(
                         &self.agent_activities,
@@ -699,6 +704,7 @@ impl PiApp {
                             .or_insert_with(|| cx.focus_handle());
                     }
                     rail_dirty |= catalog_changed;
+                    composer_dirty |= composer_usage_changed;
                     run_dirty |= run_catalog_changed || visible_activities_changed;
                     workgraph_session_dirty |=
                         previous_workgraph_session != self.active_workgraph_session();
@@ -1440,17 +1446,37 @@ fn run_panel_sessions_changed(
     next: &[SessionSummary],
     selected: Option<&Path>,
 ) -> bool {
-    fn visible_session_eq(left: &SessionSummary, right: &SessionSummary) -> bool {
+    visible_sessions_changed(current, next, selected, |left, right| {
         left.id == right.id
             && left.path == right.path
             && left.project == right.project
             && left.timestamp == right.timestamp
             && left.parent_session == right.parent_session
+            && left.is_running == right.is_running
+    })
+}
+
+fn composer_usage_sessions_changed(
+    current: &[SessionSummary],
+    next: &[SessionSummary],
+    selected: Option<&Path>,
+) -> bool {
+    visible_sessions_changed(current, next, selected, |left, right| {
+        left.id == right.id
+            && left.path == right.path
+            && left.timestamp == right.timestamp
+            && left.parent_session == right.parent_session
             && left.message_count == right.message_count
             && left.usage == right.usage
-            && left.is_running == right.is_running
-    }
+    })
+}
 
+fn visible_sessions_changed(
+    current: &[SessionSummary],
+    next: &[SessionSummary],
+    selected: Option<&Path>,
+    equal: impl Fn(&SessionSummary, &SessionSummary) -> bool,
+) -> bool {
     fn visible<'a>(
         sessions: &'a [SessionSummary],
         selected: Option<&Path>,
@@ -1462,6 +1488,7 @@ fn run_panel_sessions_changed(
         result.extend(descendant_sessions(sessions, &root.id));
         result
     }
+
     let current = visible(current, selected);
     let next = visible(next, selected);
     current.len() != next.len()
@@ -1469,7 +1496,7 @@ fn run_panel_sessions_changed(
             .iter()
             .zip(next)
             .any(|((left, left_depth), (right, right_depth))| {
-                left_depth != &right_depth || !visible_session_eq(left, right)
+                left_depth != &right_depth || !equal(left, right)
             })
 }
 
@@ -1539,6 +1566,9 @@ fn composer_snapshot_changed(previous: &RuntimeSnapshot, next: &RuntimeSnapshot)
         || previous.commands != next.commands
         || previous.conversation.running != next.conversation.running
         || previous.conversation.queue != next.conversation.queue
+        || previous.conversation.average_cache_hit_rate
+            != next.conversation.average_cache_hit_rate
+        || previous.stats != next.stats
         || previous.pending_question != next.pending_question
         || previous.session_identity() != next.session_identity()
         || previous.models != next.models
@@ -1547,9 +1577,6 @@ fn composer_snapshot_changed(previous: &RuntimeSnapshot, next: &RuntimeSnapshot)
 
 fn run_panel_snapshot_changed(previous: &RuntimeSnapshot, next: &RuntimeSnapshot) -> bool {
     previous.selected_session != next.selected_session
-        || previous.stats != next.stats
-        || previous.conversation.running != next.conversation.running
-        || previous.conversation.average_cache_hit_rate != next.conversation.average_cache_hit_rate
 }
 
 fn input_snapshot(input: &TextareaState) -> ComposerSnapshot {

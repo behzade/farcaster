@@ -17,7 +17,7 @@ use crate::{
     assets::AppIcon,
     composer_sessions::ComposerSnapshot,
     conversation::QueueState,
-    primitives::{ButtonTone, button, button_with_icon, prominent_icon_button},
+    primitives::{ButtonTone, button, icon_button, prominent_icon_button},
     protocol::ExtensionUiRequest,
     runtime::RuntimeCommand,
     theme::{MONO_FONT_FAMILY, THEME},
@@ -235,29 +235,26 @@ impl PiApp {
                             .flex()
                             .items_center()
                             .gap(THEME.space.xs)
-                            .pl(THEME.space.md)
                             .pr(THEME.space.md)
-                            .border_l(THEME.border)
-                            .border_color(THEME.colors.border)
-                            .when(reserve_primary_action, |actions| {
+                            .child(super::models::footer_separator())
+                            .when(!self.snapshot.conversation.running, |actions| {
                                 actions.child(div().size(THEME.controls.icon_button).flex_none())
                             })
                             .when(self.snapshot.conversation.running, |actions| {
-                                actions.child(
-                                    button_with_icon(
-                                        "abort",
-                                        AppIcon::Stop,
-                                        "Abort",
-                                        ButtonTone::Quiet,
-                                        true,
-                                        move |_, cx| {
-                                            let _ = abort_entity.update(cx, |this, _| {
-                                                this.send(RuntimeCommand::Abort)
-                                            });
-                                        },
-                                    )
-                                    .text_color(THEME.colors.error),
-                                )
+                                actions.child(icon_button(
+                                    "abort",
+                                    AppIcon::Stop,
+                                    "Abort",
+                                    ButtonTone::Danger,
+                                    move |_, cx| {
+                                        let _ = abort_entity.update(cx, |this, _| {
+                                            this.send(RuntimeCommand::Abort)
+                                        });
+                                    },
+                                ))
+                            })
+                            .when(reserve_primary_action, |actions| {
+                                actions.child(div().size(THEME.controls.icon_button).flex_none())
                             })
                             .when_some(primary_action, |actions, label| {
                                 actions.child(prominent_icon_button(

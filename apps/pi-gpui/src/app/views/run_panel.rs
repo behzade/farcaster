@@ -3,7 +3,6 @@ use std::time::{Duration, SystemTime};
 use gpui::{
     AnyElement, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Role,
     StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
-    relative,
 };
 
 use super::super::PiApp;
@@ -13,7 +12,7 @@ use crate::{
     primitives::{
         AppIconSize, app_icon, disclosure_button, panel, section_heading, spinning_app_icon,
     },
-    sessions::{UsageSummary, descendant_sessions, root_session_for_path},
+    sessions::{descendant_sessions, root_session_for_path},
     theme::THEME,
 };
 
@@ -30,7 +29,10 @@ pub(super) struct ContextSummary {
     pub warning: bool,
 }
 
-fn visible_context_stats(stats: &serde_json::Value, running: bool) -> Option<&serde_json::Value> {
+pub(super) fn visible_context_stats(
+    stats: &serde_json::Value,
+    running: bool,
+) -> Option<&serde_json::Value> {
     let context = stats.get("contextUsage");
     let meaningful = context
         .and_then(|context| context.get("tokens"))
@@ -85,27 +87,6 @@ impl PiApp {
         let descendants = root
             .map(|root| descendant_sessions(&self.all_sessions, &root.id))
             .unwrap_or_default();
-        let mut aggregate = root.map(|root| root.usage).unwrap_or_default();
-        for (session, _) in &descendants {
-            aggregate.add(session.usage);
-        }
-        let context = context_summary(
-            visible_context_stats(&self.snapshot.stats, self.snapshot.conversation.running),
-            aggregate.cost_micros,
-        );
-        let message_count = root.map_or(0, |session| session.message_count)
-            + descendants
-                .iter()
-                .map(|(session, _)| session.message_count)
-                .sum::<usize>();
-        let model = self
-            .snapshot
-            .session_identity()
-            .model
-            .map_or_else(|| "—".into(), |model| model.name.clone());
-        let duration = root
-            .and_then(|session| crate::agent_activity::parse_iso_timestamp(&session.timestamp))
-            .and_then(|started| SystemTime::now().duration_since(started).ok());
         let main = root.and_then(|session| {
             self.agent_activities
                 .get(&session.id)
@@ -138,13 +119,6 @@ impl PiApp {
         completed.sort_by(by_created_at);
         limited.sort_by(by_created_at);
 
-        let context_control = disclosure_control(
-            "toggle-context-details",
-            "Usage details",
-            self.context_details_expanded,
-            RunDisclosure::Context,
-            entity.clone(),
-        );
         let completed_control = disclosure_control(
             "toggle-completed-agents",
             "Completed agents",
@@ -169,15 +143,6 @@ impl PiApp {
             .gap(THEME.space.sm)
             .overflow_y_scroll()
             .track_scroll(&self.run_panel_scroll)
-            .child(render_context_summary(
-                &context,
-                self.snapshot.conversation.average_cache_hit_rate,
-                message_count,
-                context_control,
-            ))
-            .when(self.context_details_expanded, |run| {
-                run.child(render_accounting(aggregate, model, duration))
-            })
             .child(self.workgraph_sidebar_view.clone())
             .when_some(self.fps_monitor.clone(), |run, monitor| run.child(monitor))
             .when_some(self.performance_monitor.as_ref(), |run, monitor| {
@@ -411,7 +376,6 @@ fn agent_section(lifecycle: AgentLifecycle, limited: bool, is_running: bool) -> 
 
 #[derive(Clone, Copy)]
 enum RunDisclosure {
-    Context,
     Completed,
     Limited,
 }
@@ -431,9 +395,6 @@ fn disclosure_control(
 impl PiApp {
     fn toggle_run_disclosure(&mut self, disclosure: RunDisclosure, cx: &mut gpui::Context<Self>) {
         match disclosure {
-            RunDisclosure::Context => {
-                self.context_details_expanded = !self.context_details_expanded
-            }
             RunDisclosure::Completed => {
                 self.completed_agents_expanded = !self.completed_agents_expanded
             }
@@ -441,168 +402,6 @@ impl PiApp {
         }
         self.notify_run_panel(cx);
     }
-}
-
-fn render_context_summary(
-    summary: &ContextSummary,
-    cache_hit_rate: Option<f64>,
-    message_count: usize,
-    control: AnyElement,
-) -> impl IntoElement {
-    let percent = summary
-        .percent
-        .map_or_else(|| "—".into(), |percent| format!("{percent:.0}%"));
-    let usage = match (summary.used, summary.remaining) {
-        (Some(used), Some(remaining)) => format!(
-            "{} used · {} remaining",
-            compact_number(used),
-            compact_number(remaining)
-        ),
-        (Some(used), None) => format!("{} used", compact_number(used)),
-        _ => "Context usage unavailable".into(),
-    };
-    let progress_color = if summary.warning {
-        THEME.colors.warning
-    } else if summary.percent.is_some() {
-        THEME.colors.accent
-    } else {
-        THEME.colors.border
-    };
-    div()
-        .flex()
-        .flex_col()
-        .gap(THEME.space.xs)
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .child(
-                    div()
-                        .text_size(THEME.type_scale.caption)
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(THEME.colors.subtle)
-                        .child("CONTEXT"),
-                )
-                .child(
-                    div()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(if summary.warning {
-                            THEME.colors.warning
-                        } else {
-                            THEME.colors.text
-                        })
-                        .child(percent),
-                ),
-        )
-        .child(
-            div()
-                .h(px(6.0))
-                .w_full()
-                .rounded_full()
-                .overflow_hidden()
-                .bg(THEME.colors.border)
-                .child(
-                    div()
-                        .h_full()
-                        .w(relative(
-                            summary.percent.unwrap_or(0.0).clamp(0.0, 100.0) as f32 / 100.0,
-                        ))
-                        .rounded_full()
-                        .bg(progress_color),
-                ),
-        )
-        .child(
-            div()
-                .text_size(THEME.type_scale.caption)
-                .text_color(THEME.colors.subtle)
-                .child(usage),
-        )
-        .child(
-            div()
-                .mt(THEME.space.xs)
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap(THEME.space.xs)
-                .text_size(THEME.type_scale.caption)
-                .text_color(THEME.colors.muted)
-                .child(format!("{} session", format_cost(summary.cost_micros)))
-                .child(cache_hit_rate.map_or_else(
-                    || "— cache hit".into(),
-                    |rate| format!("{rate:.0}% cache hit"),
-                ))
-                .child(format!("{message_count} messages")),
-        )
-        .child(control)
-}
-
-fn render_accounting(
-    usage: UsageSummary,
-    model: String,
-    duration: Option<Duration>,
-) -> impl IntoElement {
-    div()
-        .p(THEME.space.sm)
-        .border(THEME.border)
-        .border_color(THEME.colors.border)
-        .bg(THEME.colors.canvas)
-        .flex()
-        .flex_col()
-        .gap(THEME.space.xs)
-        .child(section_heading("Usage details"))
-        .child(detail_pair(
-            "Input",
-            compact_number(usage.input),
-            "Output",
-            compact_number(usage.output),
-        ))
-        .child(detail_pair(
-            "Cache read",
-            compact_number(usage.cache_read),
-            "Cache write",
-            compact_number(usage.cache_write),
-        ))
-        .child(detail_pair(
-            "Model",
-            model,
-            "Duration",
-            format_duration(duration),
-        ))
-}
-
-fn detail_pair(
-    left_label: &'static str,
-    left_value: String,
-    right_label: &'static str,
-    right_value: String,
-) -> impl IntoElement {
-    div()
-        .flex()
-        .gap(THEME.space.md)
-        .child(detail_metric(left_label, left_value))
-        .child(detail_metric(right_label, right_value))
-}
-
-fn detail_metric(label: &'static str, value: String) -> impl IntoElement {
-    div()
-        .min_w_0()
-        .flex_1()
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap(THEME.space.xs)
-        .text_size(THEME.type_scale.caption)
-        .child(div().text_color(THEME.colors.subtle).child(label))
-        .child(
-            div()
-                .min_w_0()
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .text_color(THEME.colors.muted)
-                .font_weight(FontWeight::MEDIUM)
-                .child(value),
-        )
 }
 
 fn render_performance(summary: &crate::performance::PerformanceSummary) -> impl IntoElement {
@@ -787,7 +586,7 @@ fn elapsed_label(activity: &AgentActivity, now: SystemTime) -> String {
     format_duration(duration)
 }
 
-fn format_duration(duration: Option<Duration>) -> String {
+pub(super) fn format_duration(duration: Option<Duration>) -> String {
     let Some(duration) = duration else {
         return "—".into();
     };

@@ -9,8 +9,9 @@ pub(crate) enum LayoutMode {
     Narrow,
 }
 
-pub(crate) const WIDE_MIN_WIDTH: f32 = 1_180.0;
-pub(crate) const COMPACT_MIN_WIDTH: f32 = 960.0;
+// Preserve a 956px chat canvas for the fixed-width composer footer when sidebars are inline.
+pub(crate) const WIDE_MIN_WIDTH: f32 = 1_540.0;
+pub(crate) const COMPACT_MIN_WIDTH: f32 = 1_240.0;
 pub(crate) const SPLIT_DIFF_MIN_WIDTH: f32 = 760.0;
 
 pub(crate) fn layout_mode(width: Pixels) -> LayoutMode {
@@ -51,10 +52,22 @@ mod tests {
 
     #[test]
     fn exact_layout_boundaries_are_stable() {
-        assert_eq!(layout_mode(px(959.0)), LayoutMode::Narrow);
-        assert_eq!(layout_mode(px(960.0)), LayoutMode::Compact);
-        assert_eq!(layout_mode(px(1_179.0)), LayoutMode::Compact);
-        assert_eq!(layout_mode(px(1_180.0)), LayoutMode::Wide);
+        assert_eq!(layout_mode(px(1_239.0)), LayoutMode::Narrow);
+        assert_eq!(layout_mode(px(1_240.0)), LayoutMode::Compact);
+        assert_eq!(layout_mode(px(1_539.0)), LayoutMode::Compact);
+        assert_eq!(layout_mode(px(1_540.0)), LayoutMode::Wide);
+    }
+
+    #[test]
+    fn inline_sidebars_preserve_the_fixed_composer_footer() {
+        let wide_chat = WIDE_MIN_WIDTH
+            - f32::from(crate::theme::THEME.layout.session_rail)
+            - f32::from(crate::theme::THEME.layout.run_panel);
+        let compact_chat =
+            COMPACT_MIN_WIDTH - f32::from(crate::theme::THEME.layout.session_rail);
+
+        assert!(wide_chat >= 956.0);
+        assert!(compact_chat >= 956.0);
     }
 
     #[test]

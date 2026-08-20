@@ -77,7 +77,7 @@ fn unchanged_catalog_poll_does_not_invalidate_session_regions() {
 }
 
 #[test]
-fn run_panel_ignores_non_visible_session_catalog_churn() {
+fn session_catalog_changes_invalidate_only_the_regions_that_render_them() {
     let session = |modified, usage| {
         SessionSummary::from_cached(
             "root".into(),
@@ -98,10 +98,10 @@ fn run_panel_ignores_non_visible_session_catalog_churn() {
     let current = vec![session(SystemTime::UNIX_EPOCH, UsageSummary::default())];
     let touched = vec![session(SystemTime::now(), UsageSummary::default())];
 
-    assert!(!run_panel_sessions_changed(
-        &current,
-        &touched,
-        Some(std::path::Path::new("/root.jsonl")),
+    let selected = Some(std::path::Path::new("/root.jsonl"));
+    assert!(!run_panel_sessions_changed(&current, &touched, selected));
+    assert!(!composer_usage_sessions_changed(
+        &current, &touched, selected,
     ));
 
     let changed = vec![session(
@@ -111,10 +111,9 @@ fn run_panel_ignores_non_visible_session_catalog_churn() {
             ..UsageSummary::default()
         },
     )];
-    assert!(run_panel_sessions_changed(
-        &current,
-        &changed,
-        Some(std::path::Path::new("/root.jsonl")),
+    assert!(!run_panel_sessions_changed(&current, &changed, selected));
+    assert!(composer_usage_sessions_changed(
+        &current, &changed, selected,
     ));
 }
 
@@ -295,15 +294,24 @@ fn invisible_status_transitions_do_not_invalidate_the_composer() {
 #[test]
 fn composer_and_run_panel_track_their_rendered_snapshot_inputs() {
     let previous = RuntimeSnapshot::default();
-    let mut composer = previous.clone();
-    composer.status = "Working".into();
+    let mut composer_status = previous.clone();
+    composer_status.status = "Working".into();
+    let mut composer_usage = previous.clone();
+    Arc::make_mut(&mut composer_usage.conversation).average_cache_hit_rate = Some(0.5);
+    let mut composer_context = previous.clone();
+    composer_context.stats = serde_json::json!({
+        "contextUsage": {"tokens": 10_000, "contextWindow": 200_000}
+    });
     let mut run_panel = previous.clone();
-    Arc::make_mut(&mut run_panel.conversation).average_cache_hit_rate = Some(0.5);
+    run_panel.selected_session = Some(PathBuf::from("/root.jsonl"));
 
-    assert!(composer_snapshot_changed(&previous, &composer));
-    assert!(!run_panel_snapshot_changed(&previous, &composer));
+    assert!(composer_snapshot_changed(&previous, &composer_status));
+    assert!(!run_panel_snapshot_changed(&previous, &composer_status));
+    assert!(composer_snapshot_changed(&previous, &composer_usage));
+    assert!(!run_panel_snapshot_changed(&previous, &composer_usage));
+    assert!(composer_snapshot_changed(&previous, &composer_context));
+    assert!(!run_panel_snapshot_changed(&previous, &composer_context));
     assert!(run_panel_snapshot_changed(&previous, &run_panel));
-    assert!(!composer_snapshot_changed(&previous, &run_panel));
 }
 
 #[test]
