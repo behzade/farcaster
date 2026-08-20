@@ -19,7 +19,8 @@ use crate::{
     agent_activity::AgentActivity,
     conversation::{ConversationState, TranscriptItem, TranscriptKind},
     protocol::{
-        ExtensionUiResponse, Model, PromptImage, PromptMode, SessionState, SlashCommand, command,
+        ExtensionUiRequest, ExtensionUiResponse, Model, PromptImage, PromptMode, SessionState,
+        SlashCommand, command,
     },
     rpc_process::{ProcessCommand, ProcessItem, RpcProcess},
     session_transfer::{self, TransferMember},
@@ -164,6 +165,7 @@ pub(crate) struct RuntimeSnapshot {
     pub stderr: String,
     pub auto_retry: bool,
     pub history_preview: bool,
+    pub pending_question: Option<ExtensionUiRequest>,
     pub transcript_changed_from: Option<usize>,
 }
 
@@ -1687,6 +1689,7 @@ impl RuntimeOwner {
             stats,
             auto_retry,
             history_preview: true,
+            pending_question: history.pending_question,
             prefill_model,
             prefill_thinking_level: history.thinking_level,
             ..RuntimeSnapshot::default()
@@ -3482,6 +3485,7 @@ mod tests {
                 messages: vec![json!({"role":"user","content":"previewed"})],
                 model: None,
                 thinking_level: None,
+                pending_question: None,
             }),
         });
         assert!(!owner.snapshot.history_preview);
@@ -3493,11 +3497,18 @@ mod tests {
                 messages: vec![json!({"role":"user","content":"previewed"})],
                 model: None,
                 thinking_level: None,
+                pending_question: Some(ExtensionUiRequest::Input {
+                    id: "restored-question:one".into(),
+                    title: "Continue?".into(),
+                    placeholder: None,
+                    timeout: None,
+                }),
             }),
         });
 
         assert!(owner.process.is_some());
         assert!(owner.snapshot.history_preview);
+        assert!(owner.snapshot.pending_question.is_some());
         assert_eq!(owner.snapshot.project, new_project);
         assert_eq!(owner.project, owner.snapshot.project);
         assert_eq!(owner.snapshot.selected_session, Some(new_path.clone()));
@@ -3519,6 +3530,7 @@ mod tests {
         );
         assert!(owner.snapshot.history_preview);
         assert_eq!(owner.snapshot.conversation.items[0].text, "previewed");
+        assert!(owner.snapshot.pending_question.is_none());
         assert_eq!(owner.active_session, Some(new_path.clone()));
         assert!(owner.deferred_prompt.is_some());
         let resume_events = event_rx.try_iter().collect::<Vec<_>>();
@@ -3543,6 +3555,7 @@ mod tests {
                 })
                 .all(|snapshot| {
                     snapshot.history_preview
+                        && snapshot.pending_question.is_none()
                         && snapshot
                             .conversation
                             .items

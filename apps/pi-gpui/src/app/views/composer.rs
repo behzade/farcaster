@@ -274,12 +274,12 @@ impl PiApp {
                             index == 0,
                             move |window, cx| {
                                 let _ = choice_entity.update(cx, |this, cx| {
-                                    if let Some(response) =
-                                        this.extension.respond_value(&id, value.clone())
-                                    {
-                                        this.send(RuntimeCommand::ExtensionResponse(response));
-                                        this.advance_or_restore_dialog(window, cx);
-                                    }
+                                    this.respond_dialog_value(
+                                        id.clone(),
+                                        value.clone(),
+                                        window,
+                                        cx,
+                                    );
                                 });
                             },
                         )

@@ -7,7 +7,12 @@ impl RuntimeOwner {
         self.session_query = query;
         if let Some(state) = &self.state {
             match state.cached_sessions("") {
-                Ok(all_sessions) => {
+                Ok(mut all_sessions) => {
+                    if self.session_generation == 0 {
+                        for session in &mut all_sessions {
+                            session.is_running = false;
+                        }
+                    }
                     let sessions = crate::sessions::filter_session_tree(
                         all_sessions.clone(),
                         &self.session_query,

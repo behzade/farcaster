@@ -3,7 +3,10 @@
 use gpui::{Context, Window};
 
 use super::{AppSurface, PiApp};
-use crate::{protocol::ExtensionUiRequest, runtime::RuntimeCommand};
+use crate::{
+    protocol::{ExtensionUiRequest, PromptMode},
+    runtime::RuntimeCommand,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AppSheet {
@@ -45,6 +48,19 @@ impl PiApp {
         cx: &mut Context<Self>,
     ) {
         let value = self.dialog_input.read(cx).value().to_string();
+        self.respond_dialog_value(id, value, window, cx);
+    }
+
+    pub(super) fn respond_dialog_value(
+        &mut self,
+        id: String,
+        value: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.respond_to_restored_dialog(&id, value.clone(), window, cx) {
+            return;
+        }
         if let Some(response) = self.extension.respond_value(&id, value) {
             self.send(RuntimeCommand::ExtensionResponse(response));
             self.advance_or_restore_dialog(window, cx);
@@ -58,10 +74,38 @@ impl PiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.respond_to_restored_dialog(
+            &id,
+            if confirmed { "Yes" } else { "No" }.to_owned(),
+            window,
+            cx,
+        ) {
+            return;
+        }
         if let Some(response) = self.extension.respond_confirm(&id, confirmed) {
             self.send(RuntimeCommand::ExtensionResponse(response));
             self.advance_or_restore_dialog(window, cx);
         }
+    }
+
+    fn respond_to_restored_dialog(
+        &mut self,
+        id: &str,
+        value: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.restored_dialog_id.as_deref() != Some(id) {
+            return false;
+        }
+        if !self.can_submit() {
+            return true;
+        }
+        let _ = self.extension.cancel(id);
+        self.restored_dialog_id = None;
+        self.dismissed_restored_dialog_id = Some(id.to_owned());
+        self.submit(value, PromptMode::Normal, window, cx);
+        true
     }
 
     pub(super) fn cancel_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -74,7 +118,12 @@ impl PiApp {
         else {
             return;
         };
-        if let Some(response) = self.extension.cancel(&id) {
+        if self.restored_dialog_id.as_deref() == Some(id.as_str()) {
+            let _ = self.extension.cancel(&id);
+            self.restored_dialog_id = None;
+            self.dismissed_restored_dialog_id = Some(id);
+            self.advance_or_restore_dialog(window, cx);
+        } else if let Some(response) = self.extension.cancel(&id) {
             self.send(RuntimeCommand::ExtensionResponse(response));
             self.advance_or_restore_dialog(window, cx);
         }

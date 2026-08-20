@@ -12,7 +12,10 @@ use std::{
 
 use serde_json::Value;
 
-use crate::agent_activity::{ActivityBuilder, AgentActivity, parse_iso_timestamp};
+use crate::{
+    agent_activity::{ActivityBuilder, AgentActivity, parse_iso_timestamp},
+    protocol::ExtensionUiRequest,
+};
 
 const MAX_CANDIDATES: usize = 2_000;
 const MAX_DIRECTORIES: usize = 2_000;
@@ -312,6 +315,7 @@ pub(crate) struct LoadedHistory {
     pub messages: Vec<Value>,
     pub model: Option<(String, String)>,
     pub thinking_level: Option<String>,
+    pub pending_question: Option<ExtensionUiRequest>,
 }
 
 /// Read the visible, active branch of a session without starting Pi.
@@ -353,7 +357,103 @@ pub(crate) fn load_history(path: &Path) -> Result<LoadedHistory, String> {
         messages: project_history_from_branch(&branch),
         model,
         thinking_level,
+        pending_question: pending_question_from_branch(&branch),
     })
+}
+
+fn pending_question_from_branch(branch: &[&Value]) -> Option<ExtensionUiRequest> {
+    let mut answered = HashSet::new();
+    let mut application_exited = false;
+    for entry in branch.iter().rev() {
+        if entry.get("type").and_then(Value::as_str) == Some("custom_message")
+            && entry.get("customType").and_then(Value::as_str)
+                == Some("pi-gpui-application-exit")
+        {
+            application_exited = true;
+            continue;
+        }
+        let Some(message) = entry.get("message") else {
+            continue;
+        };
+        match message.get("role").and_then(Value::as_str) {
+            Some("toolResult") => {
+                if let Some(id) = message.get("toolCallId").and_then(Value::as_str) {
+                    answered.insert(id);
+                }
+                continue;
+            }
+            Some("assistant") => {}
+            Some("user") => return None,
+            _ => continue,
+        }
+        if !application_exited
+            || message.get("stopReason").and_then(Value::as_str) != Some("toolUse")
+        {
+            return None;
+        }
+        let Some(blocks) = message.get("content").and_then(Value::as_array) else {
+            return None;
+        };
+        for block in blocks.iter().rev() {
+            if block.get("type").and_then(Value::as_str) != Some("toolCall")
+                || block.get("name").and_then(Value::as_str) != Some("request_user_input")
+            {
+                continue;
+            }
+            let Some(tool_call_id) = block.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            if answered.contains(tool_call_id) {
+                continue;
+            }
+            let Some(arguments) = block.get("arguments") else {
+                continue;
+            };
+            let owned_arguments;
+            let arguments = if let Some(raw) = arguments.as_str() {
+                let Ok(parsed) = serde_json::from_str::<Value>(raw) else {
+                    continue;
+                };
+                owned_arguments = parsed;
+                &owned_arguments
+            } else {
+                arguments
+            };
+            let Some(question) = arguments.get("question").and_then(Value::as_str) else {
+                continue;
+            };
+            let question = question.trim();
+            if question.is_empty() {
+                continue;
+            }
+            let options = arguments
+                .get("options")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            let id = format!("restored-question:{tool_call_id}");
+            return Some(if options.is_empty() {
+                ExtensionUiRequest::Input {
+                    id,
+                    title: question.to_owned(),
+                    placeholder: None,
+                    timeout: None,
+                }
+            } else {
+                ExtensionUiRequest::Select {
+                    id,
+                    title: question.to_owned(),
+                    options,
+                    timeout: None,
+                }
+            });
+        }
+        return None;
+    }
+    None
 }
 
 fn project_history(entries: &[Value]) -> Vec<Value> {
@@ -736,16 +836,21 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
                     append_bounded(&mut search, &text);
                 }
             }
-            Some("custom_message")
-                if entry.get("display").and_then(Value::as_bool) == Some(true) =>
-            {
-                append_bounded(
-                    &mut search,
-                    entry
-                        .get("content")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default(),
-                )
+            Some("custom_message") => {
+                if entry.get("customType").and_then(Value::as_str)
+                    == Some("pi-gpui-application-exit")
+                {
+                    is_running = false;
+                }
+                if entry.get("display").and_then(Value::as_bool) == Some(true) {
+                    append_bounded(
+                        &mut search,
+                        entry
+                            .get("content")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default(),
+                    );
+                }
             }
             _ => {}
         }

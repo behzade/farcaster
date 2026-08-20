@@ -753,6 +753,75 @@ fn loaded_history_is_not_truncated_at_the_catalog_scan_limit() -> TestResult {
 }
 
 #[test]
+fn unanswered_request_user_input_is_restored_from_history() {
+    let entries = vec![
+        serde_json::json!({
+            "type":"message","id":"one","parentId":null,
+            "message":{"role":"assistant","stopReason":"toolUse","content":[{
+                "type":"toolCall","id":"question-1","name":"request_user_input",
+                "arguments":{"question":"Run this command?","options":["Run", "Cancel"]}
+            }]}
+        }),
+        serde_json::json!({
+            "type":"custom_message","id":"two","parentId":"one",
+            "customType":"pi-gpui-application-exit","content":"interrupted","display":true
+        }),
+    ];
+    let branch = active_branch_entries(&entries);
+
+    assert_eq!(
+        pending_question_from_branch(&branch),
+        Some(crate::protocol::ExtensionUiRequest::Select {
+            id: "restored-question:question-1".into(),
+            title: "Run this command?".into(),
+            options: vec!["Run".into(), "Cancel".into()],
+            timeout: None,
+        })
+    );
+
+    let mut answered = entries;
+    answered.push(serde_json::json!({
+        "type":"message","id":"three","parentId":"two",
+        "message":{"role":"toolResult","toolCallId":"question-1","toolName":"request_user_input"}
+    }));
+    assert_eq!(
+        pending_question_from_branch(&active_branch_entries(&answered)),
+        None
+    );
+}
+
+#[test]
+fn application_exit_ends_stale_running_catalog_state() -> TestResult {
+    let root = tempdir()?;
+    let project = tempdir()?;
+    session(root.path(), "interrupted", project.path(), None, "Question")?;
+    let path = root.path().join("custom/nested/interrupted.jsonl");
+    let mut file = fs::OpenOptions::new().append(true).open(path)?;
+    writeln!(file)?;
+    writeln!(
+        file,
+        "{}",
+        serde_json::json!({
+            "type":"message","message":{"role":"assistant","stopReason":"toolUse","content":[]}
+        })
+    )?;
+    writeln!(
+        file,
+        "{}",
+        serde_json::json!({
+            "type":"custom_message","customType":"pi-gpui-application-exit",
+            "content":"interrupted","display":true
+        })
+    )?;
+
+    let sessions = discover_in(root.path(), "")?;
+
+    assert_eq!(sessions.len(), 1);
+    assert!(!sessions[0].is_running);
+    Ok(())
+}
+
+#[test]
 fn loaded_history_includes_active_branch_model_and_effort() -> TestResult {
     let directory = tempdir()?;
     let path = directory.path().join("session.jsonl");

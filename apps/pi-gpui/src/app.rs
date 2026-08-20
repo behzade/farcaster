@@ -208,6 +208,8 @@ pub(crate) struct PiApp {
     pending_session_switch: Option<(PathBuf, crate::performance::Timing)>,
     extension: ExtensionUiState,
     parked_extension: Option<ExtensionUiState>,
+    restored_dialog_id: Option<String>,
+    dismissed_restored_dialog_id: Option<String>,
     notification_expiries: HashMap<(String, Instant), Task<()>>,
     pending_dialog_setup: bool,
     pending_title: Option<(u64, String)>,
@@ -497,6 +499,8 @@ impl PiApp {
             pending_session_switch: None,
             extension: ExtensionUiState::default(),
             parked_extension: None,
+            restored_dialog_id: None,
+            dismissed_restored_dialog_id: None,
             notification_expiries: HashMap::new(),
             pending_dialog_setup: false,
             pending_title: None,
@@ -540,6 +544,7 @@ impl PiApp {
                     rail_dirty |=
                         session_rail_snapshot_changed(&self.sessions, &self.snapshot, snapshot);
                     composer_dirty |= composer_snapshot_changed(&self.snapshot, snapshot);
+                    root_dirty |= self.snapshot.pending_question != snapshot.pending_question;
                     run_dirty |= run_panel_snapshot_changed(&self.snapshot, snapshot);
                     workgraph_session_dirty |=
                         self.snapshot.selected_session != snapshot.selected_session;
@@ -614,6 +619,7 @@ impl PiApp {
                         self.dialog_return_focus = None;
                     } else if !snapshot.history_preview && self.snapshot.history_preview {
                         root_dirty = true;
+                        self.clear_restored_dialog();
                         restore_extension_surface(&mut self.extension, &mut self.parked_extension);
                         self.pending_dialog_setup = self.extension.dialog.is_some();
                         self.dialog_return_focus = None;
@@ -621,6 +627,7 @@ impl PiApp {
                     self.sync_transcript_rows(next_rows);
                     self.last_transcript_count = count;
                     self.snapshot = snapshot;
+                    self.sync_restored_dialog();
                     self.sync_composer_history();
                     self.reconcile_submitted_drafts(cx);
                 }
@@ -873,6 +880,8 @@ impl PiApp {
         self.runtime_generation = generation;
         self.extension.reset();
         self.parked_extension = None;
+        self.restored_dialog_id = None;
+        self.dismissed_restored_dialog_id = None;
         self.notification_expiries.clear();
         self.pending_dialog_setup = false;
         self.pending_title = Some((generation, "Pi".into()));
@@ -886,6 +895,37 @@ impl PiApp {
         self.extension_errors.clear();
         if !preserve_submission {
             self.reset_transcript_ui();
+        }
+    }
+
+    fn sync_restored_dialog(&mut self) {
+        let Some(request) = self.snapshot.pending_question.clone() else {
+            self.clear_restored_dialog();
+            return;
+        };
+        let Some(id) = request.dialog_id().map(str::to_owned) else {
+            return;
+        };
+        if self.restored_dialog_id.as_deref() == Some(id.as_str()) {
+            return;
+        }
+        self.clear_restored_dialog();
+        if self.dismissed_restored_dialog_id.as_deref() == Some(id.as_str()) {
+            return;
+        }
+        self.dismissed_restored_dialog_id = None;
+        if self.extension.dialog.is_some() {
+            return;
+        }
+        if matches!(self.extension.apply(request), ExtensionEffect::DialogOpened) {
+            self.restored_dialog_id = Some(id);
+            self.pending_dialog_setup = true;
+        }
+    }
+
+    fn clear_restored_dialog(&mut self) {
+        if let Some(id) = self.restored_dialog_id.take() {
+            let _ = self.extension.cancel(&id);
         }
     }
 
@@ -1420,6 +1460,7 @@ fn composer_snapshot_changed(previous: &RuntimeSnapshot, next: &RuntimeSnapshot)
         || previous.commands != next.commands
         || previous.conversation.running != next.conversation.running
         || previous.conversation.queue != next.conversation.queue
+        || previous.pending_question != next.pending_question
         || previous.session_identity() != next.session_identity()
         || previous.models != next.models
         || previous.thinking_levels != next.thinking_levels

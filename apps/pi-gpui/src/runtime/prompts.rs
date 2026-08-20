@@ -56,6 +56,7 @@ impl RuntimeOwner {
             }
         };
         self.pending_prompt_target = Some(target);
+        self.snapshot.pending_question = None;
         let conversation = Arc::make_mut(&mut self.snapshot.conversation);
         self.pending_prompt_item =
             (!was_running).then(|| conversation.push_local_user(message.clone(), images.len()));

@@ -243,6 +243,22 @@ fn transcript_only_snapshot_changes_do_not_invalidate_other_regions() {
 }
 
 #[test]
+fn restored_questions_invalidate_the_composer() {
+    let previous = RuntimeSnapshot::default();
+    let next = RuntimeSnapshot {
+        pending_question: Some(ExtensionUiRequest::Input {
+            id: "restored-question:one".into(),
+            title: "Which command?".into(),
+            placeholder: None,
+            timeout: None,
+        }),
+        ..previous.clone()
+    };
+
+    assert!(composer_snapshot_changed(&previous, &next));
+}
+
+#[test]
 fn invisible_status_transitions_do_not_invalidate_the_composer() {
     let previous = RuntimeSnapshot {
         status: "Ready".into(),
