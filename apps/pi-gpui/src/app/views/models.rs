@@ -1,17 +1,18 @@
 use gpui::{
-    Anchor, AnyElement, IntoElement as _, ParentElement as _, Styled as _, WeakEntity, div, px,
+    Anchor, AnyElement, FontWeight, IntoElement as _, ParentElement as _, Styled as _, WeakEntity,
+    div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
 
 use super::super::PiApp;
 use crate::{
-    primitives::{ButtonTone, button, dropdown_button},
-    theme::THEME,
+    primitives::{ButtonTone, dropdown_button},
+    theme::{MONO_FONT_FAMILY, THEME},
 };
 
-const PROVIDER_CONTROL_WIDTH: f32 = 180.0;
-const MODEL_CONTROL_WIDTH: f32 = 260.0;
-const EFFORT_CONTROL_WIDTH: f32 = 160.0;
+const PROVIDER_CONTROL_WIDTH: f32 = 150.0;
+const MODEL_CONTROL_WIDTH: f32 = 210.0;
+const EFFORT_CONTROL_WIDTH: f32 = 120.0;
 
 impl PiApp {
     pub(super) fn render_composer_controls(&self, entity: WeakEntity<Self>) -> AnyElement {
@@ -41,10 +42,9 @@ impl PiApp {
         let provider_button_label = if providers.is_empty() {
             "Provider".into()
         } else {
-            format!("Provider: {}", bounded_label(&selected_provider, 14))
+            bounded_label(&selected_provider, 14)
         };
-        let model_button_label =
-            selected_model.map_or_else(|| "Model".into(), |_| format!("Model: {model_label}"));
+        let model_button_label = selected_model.map_or_else(|| "Model".into(), |_| model_label);
         let provider_models = self
             .snapshot
             .models
@@ -58,72 +58,84 @@ impl PiApp {
         let model_entity = entity.clone();
         let effort_entity = entity;
 
+        let provider = dropdown_button(
+            "select-provider",
+            provider_button_label,
+            ButtonTone::Quiet,
+            !providers.is_empty(),
+        )
+        .w_full()
+        .font_family(MONO_FONT_FAMILY)
+        .text_color(THEME.colors.text)
+        .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+            let mut menu = menu
+                .min_w(px(PROVIDER_CONTROL_WIDTH))
+                .max_h(px(420.0))
+                .label("Provider");
+            for provider in &providers {
+                let target = provider.clone();
+                let entity = provider_entity.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(provider.clone()).on_click(move |_, _, cx| {
+                        let _ = entity.update(cx, |this, cx| {
+                            this.select_provider(&target, cx);
+                        });
+                    }),
+                );
+            }
+            menu
+        });
+        let model = dropdown_button(
+            "select-model",
+            model_button_label,
+            ButtonTone::Quiet,
+            !provider_models.is_empty(),
+        )
+        .w_full()
+        .font_family(MONO_FONT_FAMILY)
+        .text_color(THEME.colors.text)
+        .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+            let mut menu = menu
+                .min_w(px(MODEL_CONTROL_WIDTH))
+                .max_h(px(480.0))
+                .label("Model");
+            for model in &provider_models {
+                let target = model.clone();
+                let entity = model_entity.clone();
+                menu = menu.item(PopupMenuItem::new(model.name.clone()).on_click(
+                    move |_, _, cx| {
+                        let _ = entity.update(cx, |this, cx| {
+                            this.select_model(&target, cx);
+                        });
+                    },
+                ));
+            }
+            menu
+        });
+
         div()
             .min_w_0()
             .flex_1()
             .flex()
-            .flex_wrap()
-            .items_center()
-            .gap(THEME.space.xs)
-            .child(
-                button(
-                    "select-provider",
-                    provider_button_label,
-                    ButtonTone::Neutral,
-                    !providers.is_empty(),
-                    |_, _| {},
-                )
-                .w(px(PROVIDER_CONTROL_WIDTH))
-                .flex_none()
-                .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
-                    let mut menu = menu
-                        .min_w(px(PROVIDER_CONTROL_WIDTH))
-                        .max_h(px(420.0))
-                        .label("Provider");
-                    for provider in &providers {
-                        let target = provider.clone();
-                        let entity = provider_entity.clone();
-                        menu = menu.item(PopupMenuItem::new(provider.clone()).on_click(
-                            move |_, _, cx| {
-                                let _ = entity.update(cx, |this, cx| {
-                                    this.select_provider(&target, cx);
-                                });
-                            },
-                        ));
-                    }
-                    menu
-                }),
-            )
-            .child(
-                button(
-                    "select-model",
-                    model_button_label,
-                    ButtonTone::Neutral,
-                    !provider_models.is_empty(),
-                    |_, _| {},
-                )
-                .w(px(MODEL_CONTROL_WIDTH))
-                .flex_none()
-                .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
-                    let mut menu = menu
-                        .min_w(px(MODEL_CONTROL_WIDTH))
-                        .max_h(px(480.0))
-                        .label("Model");
-                    for model in &provider_models {
-                        let target = model.clone();
-                        let entity = model_entity.clone();
-                        menu = menu.item(PopupMenuItem::new(model.name.clone()).on_click(
-                            move |_, _, cx| {
-                                let _ = entity.update(cx, |this, cx| {
-                                    this.select_model(&target, cx);
-                                });
-                            },
-                        ));
-                    }
-                    menu
-                }),
-            )
-            .child(effort_selector(effort, &efforts, effort_entity))
+            .items_stretch()
+            .child(control_cell(
+                "PROVIDER",
+                PROVIDER_CONTROL_WIDTH,
+                provider.into_any_element(),
+                true,
+            ))
+            .child(control_cell(
+                "MODEL",
+                MODEL_CONTROL_WIDTH,
+                model.into_any_element(),
+                true,
+            ))
+            .child(control_cell(
+                "EFFORT",
+                EFFORT_CONTROL_WIDTH,
+                effort_selector(effort, &efforts, effort_entity),
+                false,
+            ))
             .into_any_element()
     }
 }
@@ -133,10 +145,7 @@ fn effort_selector(
     efforts: &[String],
     entity: WeakEntity<PiApp>,
 ) -> AnyElement {
-    let label = selected.map_or_else(
-        || "Effort".into(),
-        |level| format!("Effort: {}", effort_label(level)),
-    );
+    let label = selected.map_or_else(|| "Effort".into(), effort_label);
     let efforts = efforts.to_vec();
 
     dropdown_button(
@@ -145,8 +154,8 @@ fn effort_selector(
         ButtonTone::Quiet,
         !efforts.is_empty(),
     )
-    .w(px(EFFORT_CONTROL_WIDTH))
-    .flex_none()
+    .w_full()
+    .font_family(MONO_FONT_FAMILY)
     .text_color(effort_color(selected.unwrap_or("off")))
     .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
         let mut menu = menu
@@ -167,6 +176,35 @@ fn effort_selector(
         menu
     })
     .into_any_element()
+}
+
+fn control_cell(
+    label: &'static str,
+    width: f32,
+    control: AnyElement,
+    separated: bool,
+) -> AnyElement {
+    div()
+        .w(px(width))
+        .flex_none()
+        .flex()
+        .flex_col()
+        .justify_center()
+        .gap(px(2.0))
+        .px(THEME.space.md)
+        .when(separated, |cell| {
+            cell.border_r(THEME.border)
+                .border_color(THEME.colors.border)
+        })
+        .child(
+            div()
+                .text_size(THEME.type_scale.caption)
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(THEME.colors.subtle)
+                .child(label),
+        )
+        .child(control)
+        .into_any_element()
 }
 
 fn effort_color(level: &str) -> gpui::Rgba {

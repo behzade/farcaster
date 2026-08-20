@@ -180,7 +180,7 @@ pub(crate) const THEME: Theme = Theme {
         run_panel_min: px(288.0),
         run_panel_max: px(344.0),
         transcript_overdraw: px(160.0),
-        composer_min: px(80.0),
+        composer_min: px(248.0),
         dialog_width: px(560.0),
         dialog_max_height: px(680.0),
         tool_max_height: px(220.0),

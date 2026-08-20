@@ -182,7 +182,7 @@ impl Render for PiApp {
                                 .child(
                                     div()
                                         .w_full()
-                                        .max_w(gpui::px(720.0))
+                                        .max_w(gpui::px(1080.0))
                                         .flex()
                                         .flex_col()
                                         .items_center()

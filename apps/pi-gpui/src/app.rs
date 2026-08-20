@@ -1456,7 +1456,26 @@ fn visible_composer_status(status: &str) -> Option<&str> {
 }
 
 fn composer_snapshot_changed(previous: &RuntimeSnapshot, next: &RuntimeSnapshot) -> bool {
+    fn session_id(snapshot: &RuntimeSnapshot) -> Option<&str> {
+        snapshot
+            .session
+            .as_ref()
+            .map(|session| session.session_id.as_str())
+    }
+    fn turn_count(snapshot: &RuntimeSnapshot) -> usize {
+        snapshot
+            .conversation
+            .items
+            .iter()
+            .filter(|item| item.kind == crate::conversation::TranscriptKind::User)
+            .count()
+    }
+
     visible_composer_status(&previous.status) != visible_composer_status(&next.status)
+        || previous.connected != next.connected
+        || previous.project != next.project
+        || session_id(previous) != session_id(next)
+        || turn_count(previous) != turn_count(next)
         || previous.commands != next.commands
         || previous.conversation.running != next.conversation.running
         || previous.conversation.queue != next.conversation.queue

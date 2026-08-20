@@ -4,7 +4,7 @@
 
 **Scope:** visual hierarchy, proportions, information design, and component behavior
 
-**Constraint:** preserve the existing left / center / right structure and bottom composer
+**Constraint:** preserve the existing left / center / right structure and the composer's bottom placement
 
 ## 1. Agreed direction
 
@@ -16,10 +16,10 @@ Keep:
 - the central chronological event timeline;
 - the right session-information sidebar;
 - the composer at the bottom of the center;
+- all current composer input, queue, attachment, picker, and submission behavior;
 - the current dark theme and its existing color character;
 - the current selected/unselected session treatment;
-- the existing Done, Working, and Needs input session states;
-- the current composer layout and visual size.
+- the existing Done, Working, and Needs input session states.
 
 Change:
 
@@ -35,6 +35,7 @@ Change:
 - separate completed subagents similarly to Archived sessions;
 - add session-wide changed files and full-file diff viewing;
 - use a clear sans-serif for interface and prose, reserving monospace for technical content;
+- rebuild the composer as a three-band terminal console with session context, a generous input surface, and labeled controls;
 - correct the composer's cursor-reveal behavior for long input.
 
 ## 2. Information hierarchy
@@ -113,7 +114,7 @@ The center and right content begin at the top of the window. They do not reserve
 - Left sidebar: `272px` preferred, `248–304px` resizable.
 - Right sidebar: `312px` preferred, `288–344px` resizable.
 - Center: consumes all remaining width.
-- Composer: retain its current height and internal organization.
+- Composer: `248px` minimum height, organized as a `40px` status strip, flexible input body, and `64px` control footer.
 - Standard outer padding: `16px` in sidebars, `20–24px` in the timeline.
 - Base spacing unit: `4px`; use `8 / 12 / 16 / 24 / 32px` steps.
 
@@ -497,15 +498,30 @@ Rules:
 
 ## 7. Composer
 
-Keep the current composer layout, dimensions, labels, and action placement.
+Use a restrained terminal-console treatment built from three edge-to-edge bands:
 
-Do not redesign:
+```text
+┌───────────────────────────────────────────────────────────────────────┐
+│ ● WORKING · project · Session 01a01be7 · turn 1                     │
+├───────────────────────────────────────────────────────────────────────┤
+│ Ask Pi                                                                │
+│                                                                       │
+├───────────────────────────────────────────────────────────────────────┤
+│ PROVIDER        MODEL                 EFFORT                Abort/Send │
+│ openai-codex    GPT-5.6 Sol           High                            │
+└───────────────────────────────────────────────────────────────────────┘
+```
 
-- the working/session line;
-- the main text-entry area;
-- provider, model, and effort controls;
-- Abort / Steer or Send placement;
-- the current overall height.
+Rules:
+
+- The status strip shows semantic state, project, compact session ID, and user-turn count from real runtime data.
+- Do not invent memory, sandbox, or lock metadata that the runtime does not expose.
+- The input body is the dominant region and keeps the existing textarea behavior and `Ask Pi` placeholder.
+- Provider, model, and effort are vertically labeled cells with their existing keyboard-accessible dropdown behavior.
+- Keep Abort and Send/Steer at the far right; Abort uses the existing Phosphor stop icon and danger color.
+- Use the theme's system font for labels and Lilex for technical metadata, input, and selected values.
+- Preserve queues, extension widgets and status, attachments, slash commands, file mentions, image paste, history, and submission behavior.
+- Empty composers use the complete rounded frame. Attached composers retain the edge treatment needed to join the transcript cleanly.
 
 ### Cursor and scrolling correction
 
@@ -667,6 +683,7 @@ Keep prominent:
 
 ### Phase 4 — composer behavior and polish
 
+- Build the three-band composer and widen the empty-state frame.
 - Correct caret reveal and scrolling for long input.
 - Verify keyboard focus restoration from the diff modal.
 - Test long paths, many agents, many projects, and large diffs.
@@ -689,7 +706,7 @@ The redesign is aligned when:
 11. Completed subagents are separated and collapsed similarly to Archived sessions.
 12. The Changes section shows session-wide net file counts and per-file `+ / −` values.
 13. Clicking a changed file opens its complete diff in a keyboard-accessible modal.
-14. The composer retains its current visual design.
+14. The composer has a status strip, dominant input body, and labeled control footer without losing existing behavior.
 15. Long composer input keeps the caret visible without per-keystroke scroll creep.
 16. Nontechnical interface and prose use sans-serif; code, diffs, commands, and raw tool output use monospace.
 17. The existing theme remains recognizable and materially unchanged.

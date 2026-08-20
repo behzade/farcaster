@@ -243,6 +243,26 @@ fn transcript_only_snapshot_changes_do_not_invalidate_other_regions() {
 }
 
 #[test]
+fn composer_header_metadata_invalidates_the_composer() {
+    let previous = RuntimeSnapshot::default();
+    let mut connected = previous.clone();
+    connected.connected = true;
+    assert!(composer_snapshot_changed(&previous, &connected));
+
+    let mut project = previous.clone();
+    project.project = PathBuf::from("/work/pi");
+    assert!(composer_snapshot_changed(&previous, &project));
+
+    let mut turn = previous.clone();
+    let mut user = item("new request");
+    user.kind = TranscriptKind::User;
+    Arc::make_mut(&mut turn.conversation)
+        .items
+        .push(Arc::new(user));
+    assert!(composer_snapshot_changed(&previous, &turn));
+}
+
+#[test]
 fn restored_questions_invalidate_the_composer() {
     let previous = RuntimeSnapshot::default();
     let next = RuntimeSnapshot {

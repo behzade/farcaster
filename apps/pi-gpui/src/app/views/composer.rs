@@ -1,6 +1,6 @@
 use gpui::{
     AnyElement, App, CursorStyle, ElementId, FontWeight, InteractiveElement as _, IntoElement,
-    KeyDownEvent, MouseButton, ParentElement as _, Role, SharedString,
+    KeyDownEvent, MouseButton, ParentElement as _, Rgba, Role, SharedString,
     StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div, point,
     prelude::FluentBuilder as _, px,
 };
@@ -75,6 +75,9 @@ impl PiApp {
             .w_full()
             .flex_none()
             .min_h(THEME.layout.composer_min)
+            .flex()
+            .flex_col()
+            .overflow_hidden()
             .when(floating, |composer| {
                 composer
                     .rounded(THEME.radius)
@@ -87,146 +90,174 @@ impl PiApp {
                     .border_color(THEME.colors.border)
             })
             .bg(THEME.colors.panel)
-            .p(THEME.space.sm)
-            .when_some(widgets_above, |composer, widgets| composer.child(widgets))
-            .when_some(
-                queued_messages(&self.snapshot.conversation.queue),
-                |composer, queue| composer.child(queue),
-            )
-            .when_some(composer_status(self), |composer, status| {
-                composer.child(status)
-            })
-            .when_some(
-                super::attachments::render(self, attachments_entity),
-                |composer, attachments| composer.child(attachments),
-            )
-            .when(!command_suggestions.is_empty(), |composer| {
-                composer.child(slash_command_menu(command_suggestions, command_entity))
-            })
-            .when_some(
-                mention_query
-                    .clone()
-                    .filter(|_| !file_suggestions.is_empty()),
-                |composer, query| {
-                    composer.child(file_mention_menu(
-                        file_suggestions,
-                        mention_selection,
-                        query,
-                        mention_entity,
-                    ))
-                },
-            )
+            .child(composer_header(self))
             .child(
                 div()
-                    .id("composer-input")
-                    .key_context(super::super::COMPOSER_KEY_CONTEXT)
-                    .text_size(THEME.type_scale.body)
-                    .line_height(THEME.type_scale.line_body)
-                    .px(THEME.space.sm)
-                    .capture_action(move |_: &Paste, _, cx| {
-                        if paste_entity
-                            .update(cx, |this, cx| this.paste_composer_image(cx))
-                            .unwrap_or(false)
-                        {
-                            cx.stop_propagation();
-                            return;
-                        }
-
-                        let composer = composer_for_paste.clone();
-                        cx.defer(move |cx| {
-                            composer.update(cx, |input, cx| {
-                                let offset = input.scroll_offset();
-                                input.set_scroll_offset(point(offset.x, px(-1.0e9)), cx);
-                            });
-                        });
-                    })
-                    .on_action(move |_: &ComposerHistoryPrevious, window, cx| {
-                        let handled = previous_history_entity
-                            .update(cx, |this, cx| {
-                                if mention_suggestion_count > 0 {
-                                    this.composer_mention_selection = this
-                                        .composer_mention_selection
-                                        .checked_sub(1)
-                                        .unwrap_or(mention_suggestion_count - 1);
-                                    this.notify_composer(cx);
-                                    true
-                                } else {
-                                    this.handle_composer_history_key("up", window, cx)
-                                }
-                            })
-                            .unwrap_or(false);
-                        if !handled {
-                            window.dispatch_action(Box::new(MoveUp), cx);
-                        }
-                        cx.stop_propagation();
-                    })
-                    .on_action(move |_: &ComposerHistoryNext, window, cx| {
-                        let handled = next_history_entity
-                            .update(cx, |this, cx| {
-                                if mention_suggestion_count > 0 {
-                                    this.composer_mention_selection =
-                                        (this.composer_mention_selection + 1)
-                                            % mention_suggestion_count;
-                                    this.notify_composer(cx);
-                                    true
-                                } else {
-                                    this.handle_composer_history_key("down", window, cx)
-                                }
-                            })
-                            .unwrap_or(false);
-                        if !handled {
-                            window.dispatch_action(Box::new(MoveDown), cx);
-                        }
-                        cx.stop_propagation();
-                    })
-                    .capture_key_down(move |event: &KeyDownEvent, window, cx| {
-                        if event.keystroke.key == "enter"
-                            && !event.keystroke.modifiers.shift
-                            && let (Some(query), Some(path)) =
-                                (mention_for_key.clone(), selected_file_suggestion.clone())
-                        {
-                            fill_file_mention(mention_key_entity.clone(), query, path, window, cx);
-                            window.prevent_default();
-                            cx.stop_propagation();
-                            return;
-                        }
-                        capture_after_input(mention_key_entity.clone(), cx);
-                    })
-                    .on_mouse_up(MouseButton::Left, move |_, _, cx| {
-                        capture_after_input(cursor_entity.clone(), cx);
-                    })
-                    .child(Textarea::new(&self.composer).w_full().appearance(false)),
-            )
-            .when_some(widgets_below, |composer, widgets| composer.child(widgets))
-            .child(
-                div()
-                    .mt(THEME.space.sm)
+                    .flex_1()
+                    .min_h_0()
                     .flex()
-                    .flex_wrap()
-                    .items_center()
+                    .flex_col()
+                    .p(THEME.space.sm)
+                    .when_some(widgets_above, |composer, widgets| composer.child(widgets))
+                    .when_some(
+                        queued_messages(&self.snapshot.conversation.queue),
+                        |composer, queue| composer.child(queue),
+                    )
+                    .when_some(composer_status(self), |composer, status| {
+                        composer.child(status)
+                    })
+                    .when_some(
+                        super::attachments::render(self, attachments_entity),
+                        |composer, attachments| composer.child(attachments),
+                    )
+                    .when(!command_suggestions.is_empty(), |composer| {
+                        composer.child(slash_command_menu(command_suggestions, command_entity))
+                    })
+                    .when_some(
+                        mention_query
+                            .clone()
+                            .filter(|_| !file_suggestions.is_empty()),
+                        |composer, query| {
+                            composer.child(file_mention_menu(
+                                file_suggestions,
+                                mention_selection,
+                                query,
+                                mention_entity,
+                            ))
+                        },
+                    )
+                    .child(
+                        div()
+                            .id("composer-input")
+                            .key_context(super::super::COMPOSER_KEY_CONTEXT)
+                            .flex_1()
+                            .min_h(px(112.0))
+                            .font_family(MONO_FONT_FAMILY)
+                            .text_size(THEME.type_scale.body)
+                            .line_height(THEME.type_scale.line_composer)
+                            .px(THEME.space.sm)
+                            .py(THEME.space.sm)
+                            .capture_action(move |_: &Paste, _, cx| {
+                                if paste_entity
+                                    .update(cx, |this, cx| this.paste_composer_image(cx))
+                                    .unwrap_or(false)
+                                {
+                                    cx.stop_propagation();
+                                    return;
+                                }
+
+                                let composer = composer_for_paste.clone();
+                                cx.defer(move |cx| {
+                                    composer.update(cx, |input, cx| {
+                                        let offset = input.scroll_offset();
+                                        input.set_scroll_offset(point(offset.x, px(-1.0e9)), cx);
+                                    });
+                                });
+                            })
+                            .on_action(move |_: &ComposerHistoryPrevious, window, cx| {
+                                let handled = previous_history_entity
+                                    .update(cx, |this, cx| {
+                                        if mention_suggestion_count > 0 {
+                                            this.composer_mention_selection = this
+                                                .composer_mention_selection
+                                                .checked_sub(1)
+                                                .unwrap_or(mention_suggestion_count - 1);
+                                            this.notify_composer(cx);
+                                            true
+                                        } else {
+                                            this.handle_composer_history_key("up", window, cx)
+                                        }
+                                    })
+                                    .unwrap_or(false);
+                                if !handled {
+                                    window.dispatch_action(Box::new(MoveUp), cx);
+                                }
+                                cx.stop_propagation();
+                            })
+                            .on_action(move |_: &ComposerHistoryNext, window, cx| {
+                                let handled = next_history_entity
+                                    .update(cx, |this, cx| {
+                                        if mention_suggestion_count > 0 {
+                                            this.composer_mention_selection =
+                                                (this.composer_mention_selection + 1)
+                                                    % mention_suggestion_count;
+                                            this.notify_composer(cx);
+                                            true
+                                        } else {
+                                            this.handle_composer_history_key("down", window, cx)
+                                        }
+                                    })
+                                    .unwrap_or(false);
+                                if !handled {
+                                    window.dispatch_action(Box::new(MoveDown), cx);
+                                }
+                                cx.stop_propagation();
+                            })
+                            .capture_key_down(move |event: &KeyDownEvent, window, cx| {
+                                if event.keystroke.key == "enter"
+                                    && !event.keystroke.modifiers.shift
+                                    && let (Some(query), Some(path)) =
+                                        (mention_for_key.clone(), selected_file_suggestion.clone())
+                                {
+                                    fill_file_mention(
+                                        mention_key_entity.clone(),
+                                        query,
+                                        path,
+                                        window,
+                                        cx,
+                                    );
+                                    window.prevent_default();
+                                    cx.stop_propagation();
+                                    return;
+                                }
+                                capture_after_input(mention_key_entity.clone(), cx);
+                            })
+                            .on_mouse_up(MouseButton::Left, move |_, _, cx| {
+                                capture_after_input(cursor_entity.clone(), cx);
+                            })
+                            .child(Textarea::new(&self.composer).w_full().appearance(false)),
+                    )
+                    .when_some(widgets_below, |composer, widgets| composer.child(widgets)),
+            )
+            .child(
+                div()
+                    .min_h(px(64.0))
+                    .flex_none()
+                    .flex()
+                    .items_stretch()
                     .justify_between()
-                    .gap(THEME.space.sm)
+                    .border_t(THEME.border)
+                    .border_color(THEME.colors.border)
                     .child(self.render_composer_controls(controls_entity))
                     .child(
                         div()
                             .flex_none()
                             .flex()
+                            .items_center()
                             .gap(THEME.space.xs)
+                            .pl(THEME.space.md)
+                            .pr(THEME.space.md)
+                            .border_l(THEME.border)
+                            .border_color(THEME.colors.border)
                             .when(reserve_primary_action, |actions| {
                                 actions.child(div().size(THEME.controls.icon_button).flex_none())
                             })
                             .when(self.snapshot.conversation.running, |actions| {
-                                actions.child(button_with_icon(
-                                    "abort",
-                                    AppIcon::Stop,
-                                    "Abort",
-                                    ButtonTone::Danger,
-                                    true,
-                                    move |_, cx| {
-                                        let _ = abort_entity
-                                            .update(cx, |this, _| this.send(RuntimeCommand::Abort));
-                                    },
-                                ))
+                                actions.child(
+                                    button_with_icon(
+                                        "abort",
+                                        AppIcon::Stop,
+                                        "Abort",
+                                        ButtonTone::Quiet,
+                                        true,
+                                        move |_, cx| {
+                                            let _ = abort_entity.update(cx, |this, _| {
+                                                this.send(RuntimeCommand::Abort)
+                                            });
+                                        },
+                                    )
+                                    .text_color(THEME.colors.error),
+                                )
                             })
                             .when_some(primary_action, |actions, label| {
                                 actions.child(prominent_icon_button(
@@ -702,12 +733,102 @@ pub(super) fn composer_primary_action(
     })
 }
 
-fn composer_status(app: &PiApp) -> Option<AnyElement> {
-    let mut parts = Vec::new();
-    if let Some(status) = super::super::visible_composer_status(&app.snapshot.status) {
-        parts.push(status.to_owned());
+fn composer_header(app: &PiApp) -> AnyElement {
+    let (status, status_color) = composer_header_status(app);
+    let project = super::session_rows::project_label(&app.snapshot.project);
+    let session = app
+        .snapshot
+        .session
+        .as_ref()
+        .map(|session| abbreviated_session_id(&session.session_id))
+        .unwrap_or_else(|| "Draft".into());
+    let turn = app
+        .snapshot
+        .conversation
+        .items
+        .iter()
+        .filter(|item| item.kind == crate::conversation::TranscriptKind::User)
+        .count();
+
+    div()
+        .h(px(40.0))
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap(THEME.space.sm)
+        .px(THEME.space.md)
+        .border_b(THEME.border)
+        .border_color(THEME.colors.border)
+        .font_family(MONO_FONT_FAMILY)
+        .text_size(THEME.type_scale.caption)
+        .text_color(THEME.colors.muted)
+        .child(
+            div()
+                .size(px(7.0))
+                .flex_none()
+                .rounded_full()
+                .bg(status_color),
+        )
+        .child(
+            div()
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(status_color)
+                .child(status.to_ascii_uppercase()),
+        )
+        .child(separator())
+        .child(
+            div()
+                .min_w_0()
+                .max_w(px(240.0))
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .text_color(THEME.colors.text)
+                .child(project),
+        )
+        .child(separator())
+        .child(format!("Session {session}"))
+        .child(separator())
+        .child(format!("turn {turn}"))
+        .into_any_element()
+}
+
+fn composer_header_status(app: &PiApp) -> (String, Rgba) {
+    if app.snapshot.status == "Failed" || !app.extension_errors.is_empty() {
+        return ("Failed".into(), THEME.colors.error);
     }
-    parts.extend(app.extension.statuses.values().cloned());
+    if app.extension.dialog.is_some() || app.snapshot.status == "Needs input" {
+        return ("Needs input".into(), THEME.colors.warning);
+    }
+    if app.snapshot.conversation.running {
+        return ("Working".into(), THEME.colors.accent);
+    }
+    if !app.snapshot.connected {
+        return ("Connecting".into(), THEME.colors.warning);
+    }
+    if let Some(status) = super::super::visible_composer_status(&app.snapshot.status) {
+        return (status.to_owned(), THEME.colors.warning);
+    }
+    ("Ready".into(), THEME.colors.success)
+}
+
+fn separator() -> AnyElement {
+    div()
+        .text_color(THEME.colors.subtle)
+        .child("·")
+        .into_any_element()
+}
+
+pub(super) fn abbreviated_session_id(session_id: &str) -> String {
+    let mut value = session_id.chars().take(8).collect::<String>();
+    if value.is_empty() {
+        value.push_str("pending");
+    }
+    value
+}
+
+fn composer_status(app: &PiApp) -> Option<AnyElement> {
+    let mut parts = app.extension.statuses.values().cloned().collect::<Vec<_>>();
     if let Some(error) = app.extension_errors.last() {
         parts.push(error.chars().take(120).collect());
     }
@@ -737,10 +858,7 @@ fn capture_after_input(entity: WeakEntity<PiApp>, cx: &mut App) {
     });
 }
 
-fn selectable_dialog_text(
-    id: impl Into<ElementId>,
-    text: impl Into<SharedString>,
-) -> TextView {
+fn selectable_dialog_text(id: impl Into<ElementId>, text: impl Into<SharedString>) -> TextView {
     TextView::markdown(id, text)
         .selectable(true)
         .w_full()
