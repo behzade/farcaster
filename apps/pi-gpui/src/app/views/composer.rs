@@ -444,7 +444,6 @@ impl PiApp {
                         },
                     )),
             )
-            .on_mouse_down(MouseButton::Left, move |_, _, cx| cx.stop_propagation())
             .into_any_element()
     }
 }
