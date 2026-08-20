@@ -31,6 +31,7 @@ mod syntax_highlight;
 mod theme;
 mod tool_changes;
 mod transcript;
+mod transcript_markdown;
 mod workgraph_rpc;
 
 fn main() -> std::process::ExitCode {

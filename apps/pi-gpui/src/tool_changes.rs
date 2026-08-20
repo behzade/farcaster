@@ -17,7 +17,8 @@ use crate::{
     theme::{MONO_FONT_FAMILY, THEME},
 };
 
-const MAX_DIFF_LINES: usize = 140;
+// Keep every embedded edit and write preview bounded; Expand shows the full diff.
+const MAX_DIFF_LINES: usize = 12;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum EmbeddedDiffMode {

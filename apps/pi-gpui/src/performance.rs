@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use gpui::{FrameTimingCollector, TasksIncluded, profiler};
+use gpui::{FrameTimingCollector, TasksIncluded, WindowId, profiler};
 
 const SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
 const SLOW_OPERATION: Duration = Duration::from_millis(2);
@@ -79,12 +79,14 @@ impl Drop for Timing {
 
 pub(crate) struct PerformanceMonitor {
     frames: FrameTimingCollector,
+    window_id: WindowId,
     sampled_at: Instant,
     pub(crate) summary: PerformanceSummary,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct PerformanceSummary {
+    pub(crate) sample_interval: Duration,
     pub(crate) frame_count: usize,
     pub(crate) draw_p95: Duration,
     pub(crate) draw_max: Duration,
@@ -102,23 +104,26 @@ pub(crate) struct PerformanceSummary {
 }
 
 impl PerformanceMonitor {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(window_id: WindowId) -> Self {
         ENABLED.store(true, Ordering::Relaxed);
         profiler::set_trace_enabled(true);
         profiler::set_frame_trace_enabled(true);
         Self {
             frames: FrameTimingCollector::new(),
+            window_id,
             sampled_at: Instant::now(),
             summary: PerformanceSummary::default(),
         }
     }
 
     pub(crate) fn sample_if_due(&mut self) -> bool {
-        if self.sampled_at.elapsed() < SAMPLE_INTERVAL {
+        let now = Instant::now();
+        let sample_interval = now.duration_since(self.sampled_at);
+        if sample_interval < SAMPLE_INTERVAL {
             return false;
         }
-        self.sampled_at = Instant::now();
-        self.summary = collect_summary(&mut self.frames);
+        self.sampled_at = now;
+        self.summary = collect_summary(&mut self.frames, self.window_id, sample_interval);
         log_summary(&self.summary);
         true
     }
@@ -132,8 +137,16 @@ impl Drop for PerformanceMonitor {
     }
 }
 
-fn collect_summary(frames: &mut FrameTimingCollector) -> PerformanceSummary {
-    let frames = frames.collect_unseen();
+fn collect_summary(
+    frames: &mut FrameTimingCollector,
+    window_id: WindowId,
+    sample_interval: Duration,
+) -> PerformanceSummary {
+    let frames = frames
+        .collect_unseen()
+        .into_iter()
+        .filter(|frame| frame.window_id == window_id)
+        .collect::<Vec<_>>();
     let mut draw = frames
         .iter()
         .map(|frame| frame.draw_duration())
@@ -168,6 +181,7 @@ fn collect_summary(frames: &mut FrameTimingCollector) -> PerformanceSummary {
         .map(|timing| format!("{} · {}", duration_label(timing.runtime()), timing.name));
 
     PerformanceSummary {
+        sample_interval,
         frame_count: frames.len(),
         draw_p95: percentile(&draw, 95),
         draw_max: draw.last().copied().unwrap_or_default(),
@@ -195,7 +209,8 @@ fn should_log_duration(duration: Duration) -> bool {
 
 fn log_summary(summary: &PerformanceSummary) {
     zlog::info!(
-        "PERF interval=1s frames={} draw_p95_ms={:.2} draw_max_ms={:.2} dirty_to_draw_p95_ms={:.2} invalidations_avg={:.1} invalidations_max={} snapshots={} coalesced={} transcript_examined={} transcript_remeasured={} catalog_parses={} highlight_bytes={} slowest_task={:?} slowest_action={:?}",
+        "PERF interval_ms={:.2} frames={} draw_p95_ms={:.2} draw_max_ms={:.2} dirty_to_draw_p95_ms={:.2} invalidations_avg={:.1} invalidations_max={} snapshots={} coalesced={} transcript_examined={} transcript_remeasured={} catalog_parses={} highlight_bytes={} slowest_task={:?} slowest_action={:?}",
+        summary.sample_interval.as_secs_f64() * 1_000.0,
         summary.frame_count,
         summary.draw_p95.as_secs_f64() * 1_000.0,
         summary.draw_max.as_secs_f64() * 1_000.0,

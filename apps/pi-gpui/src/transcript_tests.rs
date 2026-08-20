@@ -134,6 +134,23 @@ fn changed_item_revision_invalidates_an_equal_length_row() {
 }
 
 #[test]
+fn reconstructed_equal_history_reuses_existing_rows() {
+    let previous_items = vec![
+        item(TranscriptKind::User, "", "question"),
+        item(TranscriptKind::Assistant, "", "answer"),
+    ];
+    let previous_rows = project_rows(&previous_items);
+    let reconstructed = previous_items
+        .iter()
+        .map(|item| Arc::new(item.as_ref().clone()))
+        .collect::<Vec<_>>();
+
+    let rows = update_rows_from(&previous_rows, &previous_items, &reconstructed, Some(0));
+
+    assert_eq!(rows, previous_rows);
+}
+
+#[test]
 fn appended_reads_merge_with_the_existing_read_group() {
     let previous_items = vec![item(TranscriptKind::Tool, "Read", "Path: one")];
     let previous_rows = project_rows(&previous_items);

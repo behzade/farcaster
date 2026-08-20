@@ -10,6 +10,7 @@ pub(crate) struct SessionRailView {
 
 pub(crate) struct TranscriptView {
     app: WeakEntity<PiApp>,
+    markdown_cache: crate::transcript_markdown::TranscriptMarkdownCache,
 }
 
 pub(crate) struct ComposerView {
@@ -33,7 +34,10 @@ impl SessionRailView {
 
 impl TranscriptView {
     pub(crate) fn new(app: WeakEntity<PiApp>) -> Self {
-        Self { app }
+        Self {
+            app,
+            markdown_cache: crate::transcript_markdown::TranscriptMarkdownCache::default(),
+        }
     }
 }
 
@@ -107,6 +111,7 @@ impl Render for TranscriptView {
             app.transcript_rows.clone(),
             app.snapshot.clone(),
             app.transcript_disclosure_states.clone(),
+            self.markdown_cache.clone(),
             self.app.clone(),
         )
         .into_any_element()

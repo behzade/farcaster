@@ -353,7 +353,10 @@ fn render_performance(summary: &crate::performance::PerformanceSummary) -> impl 
         .flex()
         .flex_col()
         .gap(THEME.space.xs)
-        .child(section_heading("GPUI profiler · 1 second"))
+        .child(section_heading(format!(
+            "GPUI profiler · {:.2} s sample",
+            summary.sample_interval.as_secs_f64()
+        )))
         .child(metric_row(
             "Frames",
             format!("{} sampled", summary.frame_count),

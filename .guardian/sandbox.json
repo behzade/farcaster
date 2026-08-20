@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "rights": [
+    {
+      "kind": "filesystem",
+      "access": "read",
+      "path": "~/.cargo",
+      "scope": "tree"
+    },
+    {
+      "kind": "filesystem",
+      "access": "read",
+      "path": "~/.pi/agent/sessions",
+      "scope": "tree"
+    },
+    {
+      "kind": "filesystem",
+      "access": "read",
+      "path": "~/Projects/personal/pi-guardian",
+      "scope": "tree"
+    },
+    {
+      "kind": "filesystem",
+      "access": "write",
+      "path": "~/.cargo/.package-cache",
+      "scope": "file"
+    }
+  ]
+}

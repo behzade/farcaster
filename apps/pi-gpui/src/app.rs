@@ -388,11 +388,13 @@ impl PiApp {
         let fps_monitor = debug.then(|| {
             cx.new(|cx| {
                 FpsMonitor::new(window, cx)
-                    .continuous(true)
+                    .continuous(false)
                     .show_resources(false)
             })
         });
-        let performance_monitor = debug.then(crate::performance::PerformanceMonitor::new);
+        let performance_monitor = debug.then(|| {
+            crate::performance::PerformanceMonitor::new(window.window_handle().window_id())
+        });
         let app = cx.entity().downgrade();
         let session_rail_view = cx.new(|_| SessionRailView::new(app.clone()));
         let transcript_view = cx.new(|_| TranscriptView::new(app.clone()));

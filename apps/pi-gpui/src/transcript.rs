@@ -7,13 +7,13 @@ use std::{
 };
 
 use gpui::{
-    AnyElement, FontWeight, HighlightStyle, InteractiveElement as _, IntoElement as _,
+    AnyElement, Entity, FontWeight, HighlightStyle, InteractiveElement as _, IntoElement as _,
     ListSizingBehavior, ListState, Overflow, ParentElement as _, Pixels, StyleRefinement,
     Styled as _, WeakEntity, div, list, prelude::FluentBuilder as _, px, rems,
 };
 use gpui_component::{
     highlighter::HighlightTheme,
-    text::{TextView, TextViewStyle},
+    text::{TextView, TextViewState, TextViewStyle},
 };
 
 use crate::{
@@ -22,6 +22,7 @@ use crate::{
     primitives::{ButtonTone, button, disclosure_button},
     theme::{MONO_FONT_FAMILY, THEME},
     tool_changes::EmbeddedDiffMode,
+    transcript_markdown::{MarkdownStateKey, TranscriptMarkdownCache},
 };
 
 const MARKDOWN_CHUNK_TARGET_BYTES: usize = 2 * 1024;
@@ -166,16 +167,18 @@ pub(crate) fn update_rows_from(
     items: &[Arc<TranscriptItem>],
     changed_from: Option<usize>,
 ) -> Vec<TranscriptRow> {
-    let unchanged_items = changed_from.map_or_else(
-        || {
-            previous_items
-                .iter()
-                .zip(items)
-                .take_while(|(previous, next)| Arc::ptr_eq(previous, next))
-                .count()
-        },
-        |changed_from| changed_from.min(previous_items.len()).min(items.len()),
-    );
+    let unchanged_hint = changed_from
+        .unwrap_or_default()
+        .min(previous_items.len())
+        .min(items.len());
+    let unchanged_items = unchanged_hint
+        + previous_items[unchanged_hint..]
+            .iter()
+            .zip(&items[unchanged_hint..])
+            .take_while(|(previous, next)| {
+                Arc::ptr_eq(previous, next) || previous.as_ref() == next.as_ref()
+            })
+            .count();
     crate::performance::count_transcript_items(
         unchanged_items.saturating_add(usize::from(unchanged_items < items.len())),
     );
@@ -392,6 +395,7 @@ pub(crate) fn render(
     rows: std::sync::Arc<Vec<TranscriptRow>>,
     snapshot: std::sync::Arc<crate::runtime::RuntimeSnapshot>,
     disclosure_states: std::collections::HashMap<usize, bool>,
+    markdown_cache: TranscriptMarkdownCache,
     entity: WeakEntity<PiApp>,
 ) -> AnyElement {
     if rows.is_empty() {
@@ -400,14 +404,13 @@ pub(crate) fn render(
 
     let jump = entity.clone();
     let row_entity = entity;
-    let view = list(list_state.clone(), move |index, _, _| {
+    let view = list(list_state.clone(), move |index, _, cx| {
         let Some(row) = rows.get(index).copied() else {
             return div().into_any_element();
         };
         let expanded = resolved_expanded(row, &snapshot.conversation.items, &disclosure_states);
         let reserves_tail = index + 1 == rows.len()
             && latest_allows_tail_reserve(row, &snapshot.conversation.items, expanded);
-        let follows_tool = message_follows_tool(row, &snapshot.conversation.items);
         div()
             .w_full()
             .when(reserves_tail, |row| row.pb(viewport.tail_reserve))
@@ -415,9 +418,10 @@ pub(crate) fn render(
                 row,
                 &snapshot.conversation.items,
                 expanded,
-                follows_tool,
                 viewport.diff_mode,
+                &markdown_cache,
                 row_entity.clone(),
+                cx,
             ))
             .into_any_element()
     })
@@ -486,11 +490,13 @@ fn render_row(
     row: TranscriptRow,
     items: &[Arc<TranscriptItem>],
     expanded: bool,
-    follows_tool: bool,
     diff_mode: EmbeddedDiffMode,
+    markdown_cache: &TranscriptMarkdownCache,
     entity: WeakEntity<PiApp>,
+    cx: &mut gpui::App,
 ) -> AnyElement {
     let key = row.key();
+    let follows_tool = message_follows_tool(row, items);
     match row {
         TranscriptRow::ReadGroup { start, len, .. } => {
             render_read_group(key, &items[start..start + len], expanded, entity)
@@ -500,30 +506,46 @@ fn render_row(
             start,
             end,
             block,
+            revision,
             first,
             last,
-            ..
         } => render_message_chunk(
             key,
             block,
             &items[index],
-            &items[index].text[start..end],
             first,
             last,
             follows_tool,
+            markdown_cache.state(
+                MarkdownStateKey::message_chunk(index, block, revision),
+                &items[index].text[start..end],
+                cx,
+            ),
         ),
         TranscriptRow::StreamChunk {
             index,
             chunk,
+            revision,
             first,
             last,
-            ..
         } => {
             let text = items[index]
                 .stream_chunks
                 .get(chunk)
                 .map_or(items[index].text.as_str(), |chunk| chunk.as_ref());
-            render_message_chunk(key, chunk, &items[index], text, first, last, follows_tool)
+            render_message_chunk(
+                key,
+                chunk,
+                &items[index],
+                first,
+                last,
+                follows_tool,
+                markdown_cache.state(
+                    MarkdownStateKey::stream_chunk(index, chunk, revision),
+                    text,
+                    cx,
+                ),
+            )
         }
         TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Tool => {
             render_tool(key, &items[index], expanded, diff_mode, entity)
@@ -531,11 +553,25 @@ fn render_row(
         TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Thinking => {
             render_thinking(key, &items[index], expanded, entity)
         }
-        TranscriptRow::Item { index, .. } => render_message(key, &items[index], follows_tool),
+        TranscriptRow::Item { index, revision } => {
+            let markdown_state = (items[index].kind == TranscriptKind::Assistant).then(|| {
+                markdown_cache.state(
+                    MarkdownStateKey::item(index, revision),
+                    &items[index].text,
+                    cx,
+                )
+            });
+            render_message(key, &items[index], follows_tool, markdown_state)
+        }
     }
 }
 
-fn render_message(key: usize, item: &TranscriptItem, follows_tool: bool) -> AnyElement {
+fn render_message(
+    key: usize,
+    item: &TranscriptItem,
+    follows_tool: bool,
+    markdown_state: Option<Entity<TextViewState>>,
+) -> AnyElement {
     let user = item.kind == TranscriptKind::User;
     let role = message_role_label(item.kind);
     div()
@@ -553,7 +589,11 @@ fn render_message(key: usize, item: &TranscriptItem, follows_tool: bool) -> AnyE
         })
         .children(role.map(|role| message_role(role, user)))
         .child(
-            selectable_text(("transcript-text", key), &item.text)
+            markdown_state
+                .map_or_else(
+                    || selectable_text(("transcript-text", key), &item.text),
+                    |state| selectable_text_state(&state),
+                )
                 .text_color(item_color(item))
                 .when(user, |text| text.font_weight(FontWeight::MEDIUM)),
         )
@@ -564,10 +604,10 @@ fn render_message_chunk(
     key: usize,
     block: usize,
     item: &TranscriptItem,
-    text: &str,
     first: bool,
     last: bool,
     follows_tool: bool,
+    markdown_state: Entity<TextViewState>,
 ) -> AnyElement {
     div()
         .id(format!("transcript-row-{key}-{block}"))
@@ -582,10 +622,7 @@ fn render_message_chunk(
         .when(first, |row| {
             row.children(message_role_label(item.kind).map(|role| message_role(role, false)))
         })
-        .child(
-            selectable_text(format!("transcript-text-{key}-{block}"), text)
-                .text_color(item_color(item)),
-        )
+        .child(selectable_text_state(&markdown_state).text_color(item_color(item)))
         .into_any_element()
 }
 
@@ -869,8 +906,15 @@ fn selectable_text(
     id: impl Into<gpui::ElementId>,
     text: impl Into<gpui::SharedString>,
 ) -> TextView {
-    TextView::markdown(id, text)
-        .style(transcript_markdown_style())
+    styled_selectable_text(TextView::markdown(id, text))
+}
+
+fn selectable_text_state(state: &Entity<TextViewState>) -> TextView {
+    styled_selectable_text(TextView::new(state))
+}
+
+fn styled_selectable_text(text: TextView) -> TextView {
+    text.style(transcript_markdown_style())
         .selectable(true)
         .w_full()
         .min_w_0()
