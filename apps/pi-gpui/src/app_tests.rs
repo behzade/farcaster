@@ -231,7 +231,10 @@ fn run_panel_ignores_activity_changes_outside_the_selected_tree() {
 
 #[test]
 fn transcript_only_snapshot_changes_do_not_invalidate_other_regions() {
-    let previous = RuntimeSnapshot::default();
+    let mut previous = RuntimeSnapshot::default();
+    Arc::make_mut(&mut previous.conversation)
+        .items
+        .push(Arc::new(item("existing")));
     let mut next = previous.clone();
     Arc::make_mut(&mut next.conversation)
         .items
@@ -242,23 +245,17 @@ fn transcript_only_snapshot_changes_do_not_invalidate_other_regions() {
 }
 
 #[test]
-fn composer_header_metadata_invalidates_the_composer() {
+fn composer_variant_tracks_empty_to_nonempty_conversations() {
     let previous = RuntimeSnapshot::default();
     let mut connected = previous.clone();
     connected.connected = true;
-    assert!(composer_snapshot_changed(&previous, &connected));
+    assert!(!composer_snapshot_changed(&previous, &connected));
 
-    let mut project = previous.clone();
-    project.project = PathBuf::from("/work/pi");
-    assert!(composer_snapshot_changed(&previous, &project));
-
-    let mut turn = previous.clone();
-    let mut user = item("new request");
-    user.kind = TranscriptKind::User;
-    Arc::make_mut(&mut turn.conversation)
+    let mut conversation = previous.clone();
+    Arc::make_mut(&mut conversation.conversation)
         .items
-        .push(Arc::new(user));
-    assert!(composer_snapshot_changed(&previous, &turn));
+        .push(Arc::new(item("first response")));
+    assert!(composer_snapshot_changed(&previous, &conversation));
 }
 
 #[test]
@@ -278,20 +275,6 @@ fn restored_questions_invalidate_the_composer() {
 }
 
 #[test]
-fn invisible_status_transitions_do_not_invalidate_the_composer() {
-    let previous = RuntimeSnapshot {
-        status: "Ready".into(),
-        ..RuntimeSnapshot::default()
-    };
-    let next = RuntimeSnapshot {
-        status: "Done".into(),
-        ..previous.clone()
-    };
-
-    assert!(!composer_snapshot_changed(&previous, &next));
-}
-
-#[test]
 fn composer_and_run_panel_track_their_rendered_snapshot_inputs() {
     let previous = RuntimeSnapshot::default();
     let mut composer_status = previous.clone();
@@ -305,12 +288,13 @@ fn composer_and_run_panel_track_their_rendered_snapshot_inputs() {
     let mut run_panel = previous.clone();
     run_panel.selected_session = Some(PathBuf::from("/root.jsonl"));
 
-    assert!(composer_snapshot_changed(&previous, &composer_status));
+    assert!(!composer_snapshot_changed(&previous, &composer_status));
     assert!(!run_panel_snapshot_changed(&previous, &composer_status));
     assert!(composer_snapshot_changed(&previous, &composer_usage));
     assert!(!run_panel_snapshot_changed(&previous, &composer_usage));
     assert!(composer_snapshot_changed(&previous, &composer_context));
     assert!(!run_panel_snapshot_changed(&previous, &composer_context));
+    assert!(composer_snapshot_changed(&previous, &run_panel));
     assert!(run_panel_snapshot_changed(&previous, &run_panel));
 }
 

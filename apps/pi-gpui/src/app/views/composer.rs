@@ -1,6 +1,6 @@
 use gpui::{
     AnyElement, App, CursorStyle, ElementId, FontWeight, InteractiveElement as _, IntoElement,
-    KeyDownEvent, MouseButton, ParentElement as _, Rgba, Role, SharedString,
+    KeyDownEvent, MouseButton, ParentElement as _, Role, SharedString,
     StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div, point,
     prelude::FluentBuilder as _, px,
 };
@@ -14,12 +14,10 @@ use super::super::{
 };
 use crate::{
     app::{file_mentions::MentionQuery, slash_commands::SlashCommandSuggestion},
-    assets::AppIcon,
     composer_sessions::ComposerSnapshot,
     conversation::QueueState,
-    primitives::{ButtonTone, button, icon_button, prominent_icon_button},
+    primitives::{ButtonTone, button},
     protocol::ExtensionUiRequest,
-    runtime::RuntimeCommand,
     theme::{MONO_FONT_FAMILY, THEME},
 };
 
@@ -28,7 +26,7 @@ impl PiApp {
         if self.extension.dialog.is_some() {
             return self.render_composer_request(entity);
         }
-        let floating = self.snapshot.conversation.items.is_empty();
+        let floating = self.selected_draft_is_empty_and_unsubmitted();
         let composer_value = self.composer.read(cx).value().trim().to_owned();
         let command_suggestions =
             slash_commands::suggestions(&composer_value, &self.snapshot.commands)
@@ -42,7 +40,6 @@ impl PiApp {
             exact_command,
             self.snapshot.conversation.running,
         );
-        let reserve_primary_action = primary_action.is_none();
         let mention_query = file_mentions::query_at_cursor(
             &self.composer.read(cx).value(),
             self.composer.read(cx).cursor(),
@@ -53,7 +50,6 @@ impl PiApp {
             .unwrap_or_default();
         let widgets_above = widget_region("above", &self.extension.above_widgets);
         let widgets_below = widget_region("below", &self.extension.below_widgets);
-        let send_entity = entity.clone();
         let previous_history_entity = entity.clone();
         let next_history_entity = entity.clone();
         let paste_entity = entity.clone();
@@ -70,7 +66,7 @@ impl PiApp {
         let selected_file_suggestion = file_suggestions.get(mention_selection).cloned();
         let mention_suggestion_count = file_suggestions.len();
         let controls_entity = entity.clone();
-        let abort_entity = entity;
+        let actions_entity = entity;
         div()
             .w_full()
             .flex_none()
@@ -90,7 +86,6 @@ impl PiApp {
                     .border_color(THEME.colors.border)
             })
             .bg(THEME.colors.panel)
-            .child(composer_header(self))
             .child(
                 div()
                     .flex_1()
@@ -103,9 +98,6 @@ impl PiApp {
                         queued_messages(&self.snapshot.conversation.queue),
                         |composer, queue| composer.child(queue),
                     )
-                    .when_some(composer_status(self), |composer, status| {
-                        composer.child(status)
-                    })
                     .when_some(
                         super::attachments::render(self, attachments_entity),
                         |composer, attachments| composer.child(attachments),
@@ -221,59 +213,17 @@ impl PiApp {
             )
             .child(
                 div()
-                    .min_h(px(64.0))
+                    .min_h(THEME.controls.utility_row)
                     .flex_none()
                     .flex()
-                    .items_stretch()
+                    .items_center()
                     .justify_between()
+                    .px(THEME.space.md)
+                    .py(THEME.space.sm)
                     .border_t(THEME.border)
                     .border_color(THEME.colors.border)
-                    .child(self.render_composer_controls(controls_entity))
-                    .child(
-                        div()
-                            .flex_none()
-                            .flex()
-                            .items_center()
-                            .gap(THEME.space.xs)
-                            .pr(THEME.space.md)
-                            .child(super::models::footer_separator())
-                            .when(!self.snapshot.conversation.running, |actions| {
-                                actions.child(div().size(THEME.controls.icon_button).flex_none())
-                            })
-                            .when(self.snapshot.conversation.running, |actions| {
-                                actions.child(icon_button(
-                                    "abort",
-                                    AppIcon::Stop,
-                                    "Abort",
-                                    ButtonTone::Danger,
-                                    move |_, cx| {
-                                        let _ = abort_entity.update(cx, |this, _| {
-                                            this.send(RuntimeCommand::Abort)
-                                        });
-                                    },
-                                ))
-                            })
-                            .when(reserve_primary_action, |actions| {
-                                actions.child(div().size(THEME.controls.icon_button).flex_none())
-                            })
-                            .when_some(primary_action, |actions, label| {
-                                actions.child(prominent_icon_button(
-                                    "send",
-                                    AppIcon::ArrowUp,
-                                    label,
-                                    ButtonTone::Accent,
-                                    move |window, cx| {
-                                        let _ = send_entity.update(cx, |this, cx| {
-                                            let value =
-                                                this.composer.read(cx).value().trim().to_owned();
-                                            if !value.is_empty() || this.has_composer_images() {
-                                                this.submit(value, this.enter_mode(), window, cx);
-                                            }
-                                        });
-                                    },
-                                ))
-                            }),
-                    ),
+                    .child(self.render_composer_controls(controls_entity, !floating))
+                    .child(self.render_composer_actions(actions_entity, primary_action)),
             )
             .into_any_element()
     }
@@ -728,125 +678,6 @@ pub(super) fn composer_primary_action(
     } else {
         "Send"
     })
-}
-
-fn composer_header(app: &PiApp) -> AnyElement {
-    let (status, status_color) = composer_header_status(app);
-    let project = super::session_rows::project_label(&app.snapshot.project);
-    let session = app
-        .snapshot
-        .session
-        .as_ref()
-        .map(|session| abbreviated_session_id(&session.session_id))
-        .unwrap_or_else(|| "Draft".into());
-    let turn = app
-        .snapshot
-        .conversation
-        .items
-        .iter()
-        .filter(|item| item.kind == crate::conversation::TranscriptKind::User)
-        .count();
-
-    div()
-        .h(px(40.0))
-        .flex_none()
-        .flex()
-        .items_center()
-        .gap(THEME.space.sm)
-        .px(THEME.space.md)
-        .border_b(THEME.border)
-        .border_color(THEME.colors.border)
-        .font_family(MONO_FONT_FAMILY)
-        .text_size(THEME.type_scale.caption)
-        .text_color(THEME.colors.muted)
-        .child(
-            div()
-                .size(px(7.0))
-                .flex_none()
-                .rounded_full()
-                .bg(status_color),
-        )
-        .child(
-            div()
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(status_color)
-                .child(status.to_ascii_uppercase()),
-        )
-        .child(separator())
-        .child(
-            div()
-                .min_w_0()
-                .max_w(px(240.0))
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .text_color(THEME.colors.text)
-                .child(project),
-        )
-        .child(separator())
-        .child(format!("Session {session}"))
-        .child(separator())
-        .child(format!("turn {turn}"))
-        .into_any_element()
-}
-
-fn composer_header_status(app: &PiApp) -> (String, Rgba) {
-    if app.snapshot.status == "Failed" || !app.extension_errors.is_empty() {
-        return ("Failed".into(), THEME.colors.error);
-    }
-    if app.extension.dialog.is_some() || app.snapshot.status == "Needs input" {
-        return ("Needs input".into(), THEME.colors.warning);
-    }
-    if app.snapshot.conversation.running {
-        return ("Working".into(), THEME.colors.accent);
-    }
-    if !app.snapshot.connected {
-        return ("Connecting".into(), THEME.colors.warning);
-    }
-    if let Some(status) = super::super::visible_composer_status(&app.snapshot.status) {
-        return (status.to_owned(), THEME.colors.warning);
-    }
-    ("Ready".into(), THEME.colors.success)
-}
-
-fn separator() -> AnyElement {
-    div()
-        .text_color(THEME.colors.subtle)
-        .child("·")
-        .into_any_element()
-}
-
-pub(super) fn abbreviated_session_id(session_id: &str) -> String {
-    let mut value = session_id.chars().take(8).collect::<String>();
-    if value.is_empty() {
-        value.push_str("pending");
-    }
-    value
-}
-
-fn composer_status(app: &PiApp) -> Option<AnyElement> {
-    let mut parts = app.extension.statuses.values().cloned().collect::<Vec<_>>();
-    if let Some(error) = app.extension_errors.last() {
-        parts.push(error.chars().take(120).collect());
-    }
-    if parts.is_empty() {
-        return None;
-    }
-    Some(
-        div()
-            .px(THEME.space.sm)
-            .pb(THEME.space.xs)
-            .text_size(THEME.type_scale.caption)
-            .text_color(
-                if app.snapshot.status == "Failed" || !app.extension_errors.is_empty() {
-                    THEME.colors.error
-                } else {
-                    THEME.colors.subtle
-                },
-            )
-            .child(parts.join(" · "))
-            .into_any_element(),
-    )
 }
 
 fn capture_after_input(entity: WeakEntity<PiApp>, cx: &mut App) {

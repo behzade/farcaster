@@ -53,7 +53,6 @@ use crate::{
     sessions::{SessionSummary, descendant_sessions, root_session_for_path},
 };
 
-const MAX_EXTENSION_ERRORS: usize = 16;
 const SYSTEM_NOTIFICATION_TAG: &str = "pi-agent";
 pub(crate) const COMPOSER_KEY_CONTEXT: &str = "PiComposer";
 
@@ -219,7 +218,6 @@ pub(crate) struct PiApp {
     pending_submission: Option<PendingSubmission>,
     pending_submission_result: Option<(String, bool, Option<PathBuf>)>,
     pending_session_reset: bool,
-    extension_errors: Vec<String>,
     sessions_sheet: bool,
     archived_sessions_expanded: bool,
     run_sheet: bool,
@@ -514,7 +512,6 @@ impl PiApp {
             pending_submission: None,
             pending_submission_result: None,
             pending_session_reset: false,
-            extension_errors: Vec::new(),
             sessions_sheet: false,
             archived_sessions_expanded: false,
             run_sheet: false,
@@ -907,7 +904,6 @@ impl PiApp {
         self.run_sheet = false;
         self.sheet_return_focus = None;
         self.pending_sheet_setup = false;
-        self.extension_errors.clear();
         if !preserve_submission {
             self.reset_transcript_ui();
         }
@@ -951,18 +947,12 @@ impl PiApp {
             ExtensionEffect::SetEditorText(text) => {
                 self.pending_editor_text = Some((generation, text))
             }
-            ExtensionEffect::PersistError(message) => {
-                self.extension_errors.push(message);
-                if self.extension_errors.len() > MAX_EXTENSION_ERRORS {
-                    self.extension_errors.remove(0);
-                }
-            }
+            ExtensionEffect::PersistError(_) | ExtensionEffect::None => {}
             ExtensionEffect::Diagnostic(message) => {
                 Arc::make_mut(&mut Arc::make_mut(&mut self.snapshot).conversation)
                     .diagnostics
                     .push(message)
             }
-            ExtensionEffect::None => {}
         }
     }
 
@@ -1464,9 +1454,7 @@ fn composer_usage_sessions_changed(
     visible_sessions_changed(current, next, selected, |left, right| {
         left.id == right.id
             && left.path == right.path
-            && left.timestamp == right.timestamp
             && left.parent_session == right.parent_session
-            && left.message_count == right.message_count
             && left.usage == right.usage
     })
 }
@@ -1538,31 +1526,9 @@ fn session_rail_snapshot_changed(
         || previous.live_status != next.live_status
 }
 
-fn visible_composer_status(status: &str) -> Option<&str> {
-    (!matches!(status, "" | "Ready" | "Idle" | "Done")).then_some(status)
-}
-
 fn composer_snapshot_changed(previous: &RuntimeSnapshot, next: &RuntimeSnapshot) -> bool {
-    fn session_id(snapshot: &RuntimeSnapshot) -> Option<&str> {
-        snapshot
-            .session
-            .as_ref()
-            .map(|session| session.session_id.as_str())
-    }
-    fn turn_count(snapshot: &RuntimeSnapshot) -> usize {
-        snapshot
-            .conversation
-            .items
-            .iter()
-            .filter(|item| item.kind == crate::conversation::TranscriptKind::User)
-            .count()
-    }
-
-    visible_composer_status(&previous.status) != visible_composer_status(&next.status)
-        || previous.connected != next.connected
-        || previous.project != next.project
-        || session_id(previous) != session_id(next)
-        || turn_count(previous) != turn_count(next)
+    previous.conversation.items.is_empty() != next.conversation.items.is_empty()
+        || previous.selected_session != next.selected_session
         || previous.commands != next.commands
         || previous.conversation.running != next.conversation.running
         || previous.conversation.queue != next.conversation.queue

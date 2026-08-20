@@ -16,67 +16,7 @@ use crate::{
     theme::THEME,
 };
 
-const CONTEXT_WARNING_PERCENT: f64 = 80.0;
 const MAX_VISIBLE_COMPLETED_AGENTS: usize = 5;
-
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct ContextSummary {
-    pub percent: Option<f64>,
-    pub used: Option<u64>,
-    pub total: Option<u64>,
-    pub remaining: Option<u64>,
-    pub cost_micros: u64,
-    pub warning: bool,
-}
-
-pub(super) fn visible_context_stats(
-    stats: &serde_json::Value,
-    running: bool,
-) -> Option<&serde_json::Value> {
-    let context = stats.get("contextUsage");
-    let meaningful = context
-        .and_then(|context| context.get("tokens"))
-        .and_then(serde_json::Value::as_u64)
-        .is_some_and(|tokens| tokens > 0)
-        || context
-            .and_then(|context| context.get("percent"))
-            .and_then(serde_json::Value::as_f64)
-            .is_some_and(|percent| percent.is_finite() && percent > 0.0);
-    (!running || meaningful).then_some(stats)
-}
-
-pub(super) fn context_summary(
-    stats: Option<&serde_json::Value>,
-    cost_micros: u64,
-) -> ContextSummary {
-    let context = stats.and_then(|stats| stats.get("contextUsage"));
-    let used = context
-        .and_then(|context| context.get("tokens"))
-        .and_then(serde_json::Value::as_u64);
-    let total = context
-        .and_then(|context| context.get("contextWindow"))
-        .and_then(serde_json::Value::as_u64)
-        .filter(|total| *total > 0);
-    let percent = context
-        .and_then(|context| context.get("percent"))
-        .and_then(serde_json::Value::as_f64)
-        .filter(|percent| percent.is_finite())
-        .or_else(|| match (used, total) {
-            (Some(used), Some(total)) => Some(used as f64 * 100.0 / total as f64),
-            _ => None,
-        })
-        .map(|percent| percent.clamp(0.0, 100.0));
-    ContextSummary {
-        percent,
-        used,
-        total,
-        remaining: used
-            .zip(total)
-            .map(|(used, total)| total.saturating_sub(used)),
-        cost_micros,
-        warning: percent.is_some_and(|percent| percent >= CONTEXT_WARNING_PERCENT),
-    }
-}
 
 impl PiApp {
     pub(super) fn render_run_panel(&self, entity: WeakEntity<Self>) -> impl IntoElement {
@@ -487,35 +427,6 @@ fn metric_row(label: &'static str, value: String) -> impl IntoElement {
         )
 }
 
-pub(super) fn compact_number(value: u64) -> String {
-    if value >= 1_000_000 {
-        compact_scaled(value, 1_000_000, "m")
-    } else if value >= 1_000 {
-        compact_scaled(value, 1_000, "k")
-    } else {
-        value.to_string()
-    }
-}
-
-fn compact_scaled(value: u64, scale: u64, suffix: &str) -> String {
-    if value.is_multiple_of(scale) {
-        format!("{}{suffix}", value / scale)
-    } else {
-        format!("{:.1}{suffix}", value as f64 / scale as f64)
-    }
-}
-
-pub(super) fn format_cost(micros: u64) -> String {
-    let dollars = micros as f64 / 1_000_000.0;
-    if micros == 0 {
-        "$0".into()
-    } else if dollars < 0.01 {
-        format!("${dollars:.4}")
-    } else {
-        format!("${dollars:.2}")
-    }
-}
-
 fn role_glyph(role: &str) -> String {
     match role.to_ascii_lowercase().as_str() {
         "reviewer" => "✓",
@@ -586,7 +497,7 @@ fn elapsed_label(activity: &AgentActivity, now: SystemTime) -> String {
     format_duration(duration)
 }
 
-pub(super) fn format_duration(duration: Option<Duration>) -> String {
+fn format_duration(duration: Option<Duration>) -> String {
     let Some(duration) = duration else {
         return "—".into();
     };

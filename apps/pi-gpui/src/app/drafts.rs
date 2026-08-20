@@ -17,6 +17,14 @@ impl PiApp {
         available_projects(&self.projects, &self.project)
     }
 
+    pub(super) fn selected_draft_is_empty_and_unsubmitted(&self) -> bool {
+        self.snapshot.conversation.items.is_empty()
+            && self
+                .selected_draft
+                .as_ref()
+                .is_some_and(|id| !self.submitted_drafts.contains_key(id))
+    }
+
     pub(super) fn editable_draft_project(&self) -> Option<PathBuf> {
         let id = self.selected_draft.as_deref()?;
         let target = draft_target(id);

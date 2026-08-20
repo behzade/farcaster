@@ -1,6 +1,5 @@
 use super::composer::{
-    QueuedMessageKind, abbreviated_session_id, choice_copy, composer_primary_action, dialog_copy,
-    queued_message_groups,
+    QueuedMessageKind, choice_copy, composer_primary_action, dialog_copy, queued_message_groups,
 };
 use crate::conversation::QueueState;
 
@@ -21,13 +20,6 @@ fn primary_action_only_appears_for_submit_ready_content() {
         composer_primary_action(true, true, true, false),
         Some("Run")
     );
-}
-
-#[test]
-fn session_ids_are_compact_without_breaking_unicode() {
-    assert_eq!(abbreviated_session_id("01a01be7-1234"), "01a01be7");
-    assert_eq!(abbreviated_session_id("جلسه-۱۲۳۴۵"), "جلسه-۱۲۳");
-    assert_eq!(abbreviated_session_id(""), "pending");
 }
 
 #[test]

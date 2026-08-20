@@ -1,5 +1,6 @@
 mod attachments;
 mod composer;
+mod composer_footer;
 #[cfg(test)]
 mod composer_tests;
 mod diff_modal;
@@ -12,6 +13,7 @@ mod session_groups;
 mod session_rail;
 mod session_rows;
 mod shell;
+mod usage;
 
 pub(super) use regions::{
     ComposerView, RunPanelView, SessionRailView, TranscriptView, WorkGraphDetailView,
@@ -129,7 +131,7 @@ impl Render for PiApp {
         }
         let entity = cx.entity().downgrade();
         let work_active = self.surface == AppSurface::Work;
-        let has_conversation = !self.snapshot.conversation.items.is_empty();
+        let has_conversation = !self.selected_draft_is_empty_and_unsubmitted();
         let editable_draft_project = (!has_conversation)
             .then(|| self.editable_draft_project())
             .flatten();
