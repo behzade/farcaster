@@ -14,7 +14,8 @@ use std::{
 use crate::{
     app::{PiApp, QuitApplication},
     assets::AppAssets,
-    keybindings,
+    keybindings, project_trust,
+    project_trust_view::ProjectTrustView,
     state::{StateStore, WindowPlacement, WindowState},
     theme::{THEME, install_component_theme},
 };
@@ -32,6 +33,8 @@ pub(crate) enum LaunchError {
     },
     #[error("project path is not a directory: {0}")]
     NotDirectory(PathBuf),
+    #[error("resolve project trust: {0}")]
+    ProjectTrust(String),
     #[error("the bundled fonts could not be loaded")]
     BundledFonts,
     #[error("the native Pi window could not open")]
@@ -60,6 +63,8 @@ pub(crate) fn run(project: PathBuf) -> Result<(), LaunchError> {
     const FONT_FAILURE: u8 = 1;
     const WINDOW_FAILURE: u8 = 2;
 
+    let startup_trust =
+        project_trust::startup_trust(&project).map_err(LaunchError::ProjectTrust)?;
     let failure = Arc::new(AtomicU8::new(0));
     let failure_in_app = failure.clone();
     gpui_platform::application()
@@ -124,9 +129,16 @@ pub(crate) fn run(project: PathBuf) -> Result<(), LaunchError> {
                     ..WindowOptions::default()
                 },
                 move |window, cx| {
-                    let app = cx.new(|cx| PiApp::new(project.clone(), window, cx));
-                    *notification_app.borrow_mut() = Some(app.downgrade());
-                    cx.new(|cx| gpui_component::Root::new(app, window, cx))
+                    let launch = cx.new(|cx| {
+                        ProjectTrustView::new(
+                            project.clone(),
+                            startup_trust,
+                            notification_app.clone(),
+                            window,
+                            cx,
+                        )
+                    });
+                    cx.new(|cx| gpui_component::Root::new(launch, window, cx))
                 },
             );
             if result.is_err() {

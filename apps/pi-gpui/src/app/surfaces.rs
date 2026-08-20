@@ -13,6 +13,7 @@ enum AppSheet {
     Sessions,
     Run,
     Keybindings,
+    ProjectTrust,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -20,6 +21,7 @@ struct SheetFlags {
     sessions: bool,
     run: bool,
     keybindings: bool,
+    project_trust: bool,
 }
 
 const fn sheet_flags(active: Option<AppSheet>) -> SheetFlags {
@@ -27,12 +29,13 @@ const fn sheet_flags(active: Option<AppSheet>) -> SheetFlags {
         sessions: matches!(active, Some(AppSheet::Sessions)),
         run: matches!(active, Some(AppSheet::Run)),
         keybindings: matches!(active, Some(AppSheet::Keybindings)),
+        project_trust: matches!(active, Some(AppSheet::ProjectTrust)),
     }
 }
 
 impl SheetFlags {
     const fn any(self) -> bool {
-        self.sessions || self.run || self.keybindings
+        self.sessions || self.run || self.keybindings || self.project_trust
     }
 }
 
@@ -249,6 +252,13 @@ impl PiApp {
         self.open_sheet(AppSheet::Keybindings, window, cx);
     }
 
+    pub(super) fn open_project_trust(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.project_trust_error = None;
+        self.project_trust_project = Some(self.project.clone());
+        self.pending_project_trust_command = None;
+        self.open_sheet(AppSheet::ProjectTrust, window, cx);
+    }
+
     fn open_sheet(&mut self, sheet: AppSheet, window: &mut Window, cx: &mut Context<Self>) {
         if self.picker.take().is_some() {
             self.picker_return_focus = None;
@@ -266,6 +276,7 @@ impl PiApp {
             sessions: self.sessions_sheet,
             run: self.run_sheet,
             keybindings: self.keybindings_help,
+            project_trust: self.project_trust_sheet,
         }
     }
 
@@ -273,6 +284,7 @@ impl PiApp {
         self.sessions_sheet = flags.sessions;
         self.run_sheet = flags.run;
         self.keybindings_help = flags.keybindings;
+        self.project_trust_sheet = flags.project_trust;
     }
 
     pub(super) fn close_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -293,6 +305,8 @@ impl PiApp {
             self.close_file_diff(window, cx);
         } else if self.extension.dialog.is_some() {
             self.cancel_dialog(window, cx);
+        } else if self.project_trust_sheet {
+            self.dismiss_project_trust(window, cx);
         } else if self.sessions_sheet || self.run_sheet || self.keybindings_help {
             self.close_sheet(window, cx);
         }
@@ -311,13 +325,23 @@ mod tests {
 
     #[test]
     fn activating_a_sheet_never_stacks_it_with_an_existing_sheet() {
-        for sheet in [AppSheet::Sessions, AppSheet::Run, AppSheet::Keybindings] {
+        for sheet in [
+            AppSheet::Sessions,
+            AppSheet::Run,
+            AppSheet::Keybindings,
+            AppSheet::ProjectTrust,
+        ] {
             let flags = sheet_flags(Some(sheet));
             assert_eq!(
-                [flags.sessions, flags.run, flags.keybindings]
-                    .into_iter()
-                    .filter(|active| *active)
-                    .count(),
+                [
+                    flags.sessions,
+                    flags.run,
+                    flags.keybindings,
+                    flags.project_trust,
+                ]
+                .into_iter()
+                .filter(|active| *active)
+                .count(),
                 1
             );
         }

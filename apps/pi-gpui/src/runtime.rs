@@ -75,6 +75,10 @@ pub(crate) enum RuntimeCommand {
         path: PathBuf,
         project: PathBuf,
     },
+    RestartSession {
+        path: PathBuf,
+        project: PathBuf,
+    },
     RefreshSessionDocument {
         path: PathBuf,
         project: PathBuf,
@@ -777,7 +781,8 @@ fn run_supervisor(
                     let _selection_timing = is_view_only_selection(&command)
                         .then(|| crate::performance::Timing::new("switch.runtime_route"));
                     let key = match &command {
-                        RuntimeCommand::SelectSession { path, .. } => {
+                        RuntimeCommand::SelectSession { path, .. }
+                        | RuntimeCommand::RestartSession { path, .. } => {
                             actor_paths.get(path).cloned().unwrap_or_else(|| {
                                 actor_key_for_command(&command, &requested_key, &latest)
                             })
@@ -800,7 +805,9 @@ fn run_supervisor(
                         }
                     }
                     let resident_snapshot = latest.get(&key).cloned();
-                    if let RuntimeCommand::SelectSession { path, .. } = &command {
+                    if let RuntimeCommand::SelectSession { path, .. }
+                    | RuntimeCommand::RestartSession { path, .. } = &command
+                    {
                         actor_paths.insert(path.clone(), key.clone());
                     }
                     let actor = actors.entry(key.clone()).or_insert_with(|| {
@@ -906,7 +913,8 @@ fn command_target(command: &RuntimeCommand) -> Option<(String, PathBuf)> {
         | RuntimeCommand::ResumeDraft { id, project } => {
             Some((format!("draft:{id}"), project.clone()))
         }
-        RuntimeCommand::SelectSession { path, project } => {
+        RuntimeCommand::SelectSession { path, project }
+        | RuntimeCommand::RestartSession { path, project } => {
             Some((format!("session:{}", path.display()), project.clone()))
         }
         _ => None,
@@ -926,8 +934,10 @@ fn actor_key_for_command(
     requested_key: &str,
     latest: &HashMap<String, Arc<RuntimeSnapshot>>,
 ) -> String {
-    let RuntimeCommand::SelectSession { path, .. } = command else {
-        return requested_key.to_owned();
+    let path = match command {
+        RuntimeCommand::SelectSession { path, .. }
+        | RuntimeCommand::RestartSession { path, .. } => path,
+        _ => return requested_key.to_owned(),
     };
     latest
         .iter()
@@ -1379,6 +1389,10 @@ impl RuntimeOwner {
             }
             RuntimeCommand::ResumeDraft { project, .. } => self.resume_draft(project),
             RuntimeCommand::SelectSession { path, project } => self.select_history(path, project),
+            RuntimeCommand::RestartSession { path, project } => {
+                self.project = project;
+                self.start_process(Some(path));
+            }
             RuntimeCommand::RefreshSessionDocument { path, project } => {
                 self.refresh_history(path, project)
             }
@@ -2565,6 +2579,16 @@ mod tests {
         assert!(is_view_only_selection(&command));
         assert_eq!(
             actor_key_for_command(&command, &format!("session:{}", path.display()), &latest,),
+            "draft:one"
+        );
+
+        let restart = RuntimeCommand::RestartSession {
+            path: path.clone(),
+            project: PathBuf::from("/project"),
+        };
+        assert!(!is_view_only_selection(&restart));
+        assert_eq!(
+            actor_key_for_command(&restart, &format!("session:{}", path.display()), &latest,),
             "draft:one"
         );
     }

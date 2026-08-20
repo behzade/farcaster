@@ -185,8 +185,8 @@ fn control_cell(
     separated: bool,
 ) -> AnyElement {
     div()
-        .w(px(width))
-        .flex_none()
+        .min_w(px(width))
+        .flex_1()
         .flex()
         .flex_col()
         .justify_center()

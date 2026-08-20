@@ -257,12 +257,12 @@ impl PiApp {
             }
             PickerCommand::ChangeDraftProject(project) => {
                 self.close_picker(window, cx);
-                self.change_draft_project(project, cx);
+                self.change_draft_project(project, window, cx);
                 self.composer_focus.focus(window, cx);
             }
             PickerCommand::MoveSession { path, project } => {
                 self.close_picker(window, cx);
-                self.move_session(path, project, cx);
+                self.move_session(path, project, window, cx);
             }
             PickerCommand::SelectSession { path, project } => {
                 self.close_picker(window, cx);

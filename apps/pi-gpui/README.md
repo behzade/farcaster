@@ -8,6 +8,11 @@ not replace or modify Pi: normal settings, context files, extensions, skills,
 prompt templates, authentication, and sandbox behavior load in the selected
 project directory.
 
+Before opening a project with local Pi resources, the app honors saved trust
+and `defaultProjectTrust`, or asks for a project, parent, or deny decision.
+`/trust` opens the same persistent trust manager. Changes made for an
+already-running project take effect after restarting Pi GPUI.
+
 ## Run
 
 ```sh

@@ -12,6 +12,7 @@ mod slash_commands;
 mod submissions;
 mod surfaces;
 mod transcript_ui;
+mod trust;
 mod views;
 mod workgraph;
 pub(crate) use composer_images::ComposerImage;
@@ -222,6 +223,10 @@ pub(crate) struct PiApp {
     archived_sessions_expanded: bool,
     run_sheet: bool,
     keybindings_help: bool,
+    project_trust_sheet: bool,
+    project_trust_error: Option<String>,
+    project_trust_project: Option<PathBuf>,
+    pending_project_trust_command: Option<RuntimeCommand>,
     context_details_expanded: bool,
     completed_agents_expanded: bool,
     limited_agents_expanded: bool,
@@ -513,6 +518,10 @@ impl PiApp {
             archived_sessions_expanded: false,
             run_sheet: false,
             keybindings_help: false,
+            project_trust_sheet: false,
+            project_trust_error: None,
+            project_trust_project: None,
+            pending_project_trust_command: None,
             context_details_expanded: false,
             completed_agents_expanded: false,
             limited_agents_expanded: false,
@@ -982,6 +991,9 @@ impl PiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.pending_project_trust_command.is_some() {
+            return;
+        }
         let _timing = crate::performance::Timing::new("switch.session_request");
         if self.snapshot.selected_session.as_deref() == Some(path.as_path())
             && self.selected_draft.is_none()
@@ -1004,7 +1016,15 @@ impl PiApp {
             path.clone(),
             crate::performance::Timing::new("switch.session_total"),
         ));
-        self.send(RuntimeCommand::SelectSession { path, project });
+        self.send_project_command(
+            &project,
+            RuntimeCommand::SelectSession {
+                path,
+                project: project.clone(),
+            },
+            window,
+            cx,
+        );
         self.close_sessions_sheet_after_selection(window, cx);
         if previous_root != next_root {
             self.run_panel_scroll.set_offset(point(px(0.0), px(0.0)));
@@ -1017,6 +1037,9 @@ impl PiApp {
     }
 
     fn new_session(&mut self, project: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pending_project_trust_command.is_some() {
+            return;
+        }
         self.run_panel_scroll.set_offset(point(px(0.0), px(0.0)));
         let draft = match projects::new_draft(project.clone()) {
             Ok(draft) => draft,
@@ -1034,10 +1057,15 @@ impl PiApp {
             .insert(draft.id.clone(), draft.app_session_id);
         self.drafts.push(draft.clone());
         self.save_project_registry();
-        self.send(RuntimeCommand::NewSession {
-            id: draft.id,
-            project: project.clone(),
-        });
+        self.send_project_command(
+            &project,
+            RuntimeCommand::NewSession {
+                id: draft.id,
+                project: project.clone(),
+            },
+            window,
+            cx,
+        );
         self.select_project(project);
         self.search
             .update(cx, |input, cx| input.set_value("", window, cx));
@@ -1056,6 +1084,9 @@ impl PiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.pending_project_trust_command.is_some() {
+            return;
+        }
         if self.selected_draft.as_deref() == Some(id.as_str()) && !self.snapshot.history_preview {
             self.close_sessions_sheet_after_selection(window, cx);
             return;
@@ -1064,11 +1095,18 @@ impl PiApp {
         self.switch_composer_target(draft_target(&id), window, cx);
         self.selected_draft = Some(id.clone());
         self.select_project(project.clone());
-        if let Some(Some(path)) = self.submitted_drafts.get(&id).cloned() {
-            self.send(RuntimeCommand::SelectSession { path, project });
+        let command = if let Some(Some(path)) = self.submitted_drafts.get(&id).cloned() {
+            RuntimeCommand::SelectSession {
+                path,
+                project: project.clone(),
+            }
         } else {
-            self.send(RuntimeCommand::ResumeDraft { id, project });
-        }
+            RuntimeCommand::ResumeDraft {
+                id,
+                project: project.clone(),
+            }
+        };
+        self.send_project_command(&project, command, window, cx);
         self.close_sessions_sheet_after_selection(window, cx);
         self.notify_session_rail(cx);
         self.notify_transcript(cx);
@@ -1105,11 +1143,11 @@ impl PiApp {
                         this.new_session(project, window, cx);
                     }
                     Some(ProjectPickerIntent::ChangeDraft) => {
-                        this.change_draft_project(project, cx);
+                        this.change_draft_project(project, window, cx);
                         this.composer_focus.focus(window, cx);
                     }
                     Some(ProjectPickerIntent::MoveSession { path, .. }) => {
-                        this.move_session(path, project, cx);
+                        this.move_session(path, project, window, cx);
                     }
                     None => {}
                 }
@@ -1195,6 +1233,9 @@ impl PiApp {
     }
 
     fn discard_draft(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pending_project_trust_command.is_some() {
+            return;
+        }
         let was_selected = self.selected_draft.as_deref() == Some(id);
         let target = draft_target(id);
         self.composer_images.remove(&target);
@@ -1212,10 +1253,15 @@ impl PiApp {
                     .composer_sessions
                     .discard_and_switch(&target, session_target(&session.path));
                 self.apply_composer_snapshot(snapshot, window, cx);
-                self.send(RuntimeCommand::SelectSession {
-                    path: session.path,
-                    project: session.project,
-                });
+                self.send_project_command(
+                    &session.project,
+                    RuntimeCommand::SelectSession {
+                        path: session.path,
+                        project: session.project.clone(),
+                    },
+                    window,
+                    cx,
+                );
             } else {
                 let snapshot = self
                     .composer_sessions
@@ -1233,7 +1279,16 @@ impl PiApp {
         cx.notify();
     }
 
-    fn move_session(&mut self, path: PathBuf, target_project: PathBuf, cx: &mut Context<Self>) {
+    fn move_session(
+        &mut self,
+        path: PathBuf,
+        target_project: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.pending_project_trust_command.is_some() {
+            return;
+        }
         let Some(session) = self
             .all_sessions
             .iter()
@@ -1253,10 +1308,15 @@ impl PiApp {
             self.notify_session_rail(cx);
             return;
         }
-        self.send(RuntimeCommand::MoveSession {
-            path,
-            target_project,
-        });
+        self.send_project_command(
+            &target_project,
+            RuntimeCommand::MoveSession {
+                path,
+                target_project: target_project.clone(),
+            },
+            window,
+            cx,
+        );
     }
 
     fn set_session_settled(&mut self, path: PathBuf, settled: bool, cx: &mut Context<Self>) {

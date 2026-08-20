@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, path::PathBuf};
 
-use gpui::Context;
+use gpui::{Context, Window};
 
 use super::PiApp;
 use crate::{
@@ -35,7 +35,15 @@ impl PiApp {
         )
     }
 
-    pub(super) fn change_draft_project(&mut self, project: PathBuf, cx: &mut Context<Self>) {
+    pub(super) fn change_draft_project(
+        &mut self,
+        project: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.pending_project_trust_command.is_some() {
+            return;
+        }
         let Some(id) = self.selected_draft.clone() else {
             return;
         };
@@ -57,7 +65,15 @@ impl PiApp {
             return;
         }
         self.select_project(project.clone());
-        self.send(RuntimeCommand::NewSession { id, project });
+        self.send_project_command(
+            &project,
+            RuntimeCommand::NewSession {
+                id,
+                project: project.clone(),
+            },
+            window,
+            cx,
+        );
         self.notify_session_rail(cx);
         self.notify_composer(cx);
         cx.notify();

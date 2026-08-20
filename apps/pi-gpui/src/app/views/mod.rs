@@ -4,6 +4,7 @@ mod composer;
 mod composer_tests;
 mod diff_modal;
 mod models;
+mod project_trust;
 mod regions;
 mod run_panel;
 mod run_panel_changes;
@@ -396,6 +397,9 @@ impl Render for PiApp {
                     }),
             )
             .when_some(picker, |root, picker| root.child(picker))
+            .when(self.project_trust_sheet, |root| {
+                root.child(project_trust::render(self, entity.clone()))
+            })
             .when(self.keybindings_help, |root| {
                 let close = entity.clone();
                 root.child(modal(

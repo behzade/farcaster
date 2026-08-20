@@ -12,6 +12,8 @@ mod launch;
 mod layout;
 mod performance;
 mod primitives;
+mod project_trust;
+mod project_trust_view;
 mod projects;
 mod protocol;
 mod rpc_process;
