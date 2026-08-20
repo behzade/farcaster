@@ -1,6 +1,6 @@
 use gpui::{
     Anchor, AnyElement, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _,
-    Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px, relative,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, px, relative,
 };
 use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
 

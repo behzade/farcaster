@@ -3,8 +3,8 @@
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
 use gpui::{
-    AppContext as _, Context, Entity, FocusHandle, Focusable as _, InteractiveElement as _,
-    IntoElement as _, ParentElement as _, Render, Role, StatefulInteractiveElement as _,
+    AppContext as _, Context, Entity, FocusHandle, InteractiveElement as _, IntoElement as _,
+    ParentElement as _, Render, Role, StatefulInteractiveElement as _,
     Styled as _, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
 };
 
