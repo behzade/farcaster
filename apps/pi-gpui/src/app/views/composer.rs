@@ -4,7 +4,10 @@ use gpui::{
     StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div, point,
     prelude::FluentBuilder as _, px,
 };
-use gpui_component::input::{MoveDown, MoveUp, Paste, Textarea};
+use gpui_component::{
+    input::{MoveDown, MoveUp, Paste, Textarea},
+    text::TextView,
+};
 
 use super::super::{
     ComposerHistoryNext, ComposerHistoryPrevious, PiApp, file_mentions, slash_commands,
@@ -291,11 +294,10 @@ impl PiApp {
                         .gap(THEME.space.md)
                         .when_some(prompt, |body, prompt| {
                             body.child(
-                                div()
+                                selectable_dialog_text("dialog-select-prompt", prompt)
                                     .text_size(THEME.type_scale.body)
                                     .text_color(THEME.colors.muted)
-                                    .line_height(THEME.type_scale.line_composer)
-                                    .child(prompt),
+                                    .line_height(THEME.type_scale.line_composer),
                             )
                         })
                         .child(
@@ -319,7 +321,10 @@ impl PiApp {
                         .flex()
                         .flex_col()
                         .gap(THEME.space.md)
-                        .child(div().child(message.clone()))
+                        .child(selectable_dialog_text(
+                            "dialog-confirm-message",
+                            message.clone(),
+                        ))
                         .child(
                             div()
                                 .flex()
@@ -369,10 +374,9 @@ impl PiApp {
                         .gap(THEME.space.md)
                         .when_some(placeholder.clone(), |body, hint| {
                             body.child(
-                                div()
+                                selectable_dialog_text("dialog-input-hint", hint)
                                     .text_size(THEME.type_scale.caption)
-                                    .text_color(THEME.colors.subtle)
-                                    .child(hint),
+                                    .text_color(THEME.colors.subtle),
                             )
                         })
                         .child(
@@ -416,9 +420,11 @@ impl PiApp {
                     .px(THEME.space.md)
                     .pt(THEME.space.sm)
                     .pb(THEME.space.xs)
-                    .text_size(THEME.type_scale.body)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(title),
+                    .child(
+                        selectable_dialog_text("extension-composer-request-title", title)
+                            .text_size(THEME.type_scale.body)
+                            .font_weight(FontWeight::SEMIBOLD),
+                    ),
             )
             .child(div().px(THEME.space.md).pb(THEME.space.sm).child(body))
             .child(
@@ -730,6 +736,17 @@ fn capture_after_input(entity: WeakEntity<PiApp>, cx: &mut App) {
     cx.defer(move |cx| {
         let _ = entity.update(cx, |this, cx| this.capture_composer_session(cx));
     });
+}
+
+fn selectable_dialog_text(
+    id: impl Into<ElementId>,
+    text: impl Into<SharedString>,
+) -> TextView {
+    TextView::markdown(id, text)
+        .selectable(true)
+        .w_full()
+        .min_w_0()
+        .line_height(THEME.type_scale.line_body)
 }
 
 fn dialog_choice(
