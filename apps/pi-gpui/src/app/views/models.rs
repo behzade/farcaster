@@ -9,6 +9,10 @@ use crate::{
     theme::THEME,
 };
 
+const PROVIDER_CONTROL_WIDTH: f32 = 180.0;
+const MODEL_CONTROL_WIDTH: f32 = 260.0;
+const EFFORT_CONTROL_WIDTH: f32 = 160.0;
+
 impl PiApp {
     pub(super) fn render_composer_controls(&self, entity: WeakEntity<Self>) -> AnyElement {
         let identity = self.snapshot.session_identity();
@@ -69,8 +73,13 @@ impl PiApp {
                     !providers.is_empty(),
                     |_, _| {},
                 )
+                .w(px(PROVIDER_CONTROL_WIDTH))
+                .flex_none()
                 .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
-                    let mut menu = menu.min_w(px(180.0)).max_h(px(420.0)).label("Provider");
+                    let mut menu = menu
+                        .min_w(px(PROVIDER_CONTROL_WIDTH))
+                        .max_h(px(420.0))
+                        .label("Provider");
                     for provider in &providers {
                         let target = provider.clone();
                         let entity = provider_entity.clone();
@@ -93,8 +102,13 @@ impl PiApp {
                     !provider_models.is_empty(),
                     |_, _| {},
                 )
+                .w(px(MODEL_CONTROL_WIDTH))
+                .flex_none()
                 .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
-                    let mut menu = menu.min_w(px(260.0)).max_h(px(480.0)).label("Model");
+                    let mut menu = menu
+                        .min_w(px(MODEL_CONTROL_WIDTH))
+                        .max_h(px(480.0))
+                        .label("Model");
                     for model in &provider_models {
                         let target = model.clone();
                         let entity = model_entity.clone();
@@ -131,9 +145,14 @@ fn effort_selector(
         ButtonTone::Quiet,
         !efforts.is_empty(),
     )
+    .w(px(EFFORT_CONTROL_WIDTH))
+    .flex_none()
     .text_color(effort_color(selected.unwrap_or("off")))
     .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
-        let mut menu = menu.min_w(px(160.0)).max_h(px(420.0)).label("Effort");
+        let mut menu = menu
+            .min_w(px(EFFORT_CONTROL_WIDTH))
+            .max_h(px(420.0))
+            .label("Effort");
         for effort in &efforts {
             let target = effort.clone();
             let click_entity = entity.clone();
