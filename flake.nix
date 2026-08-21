@@ -30,7 +30,12 @@
           pkgs = pkgsFor system;
           coreExtensions = pkgs.callPackage ./nix/pi-core-extensions.nix { };
           mcpCli = pkgs.callPackage ./nix/pi-mcp-cli.nix { };
-          sandbox = guardian.packages.${system}.guardian;
+          sandbox = pkgs.callPackage "${guardian}/nix/pi-sandbox-extension.nix" {
+            inherit mcpCli;
+            nono = pkgs.nono;
+            bubblewrap = if pkgs.stdenv.hostPlatform.isLinux then pkgs.bubblewrap else null;
+            piCodingAgent = "${piTerminal}/lib/pi-terminal/node_modules/@earendil-works/pi-coding-agent";
+          };
           denseTools = pkgs.callPackage ./nix/pi-dense-tools.nix { };
           sessionAgents = pkgs.callPackage ./nix/pi-session-agents.nix { };
           webAccess = pkgs.callPackage ./nix/pi-web-access.nix { };
@@ -156,7 +161,12 @@
           coreExtensions = pkgs.callPackage ./nix/pi-core-extensions.nix { };
           denseTools = pkgs.callPackage ./nix/pi-dense-tools.nix { };
           mcpCli = pkgs.callPackage ./nix/pi-mcp-cli.nix { };
-          sandbox = guardian.packages.${system}.guardian;
+          sandbox = pkgs.callPackage "${guardian}/nix/pi-sandbox-extension.nix" {
+            inherit mcpCli;
+            nono = pkgs.nono;
+            bubblewrap = if pkgs.stdenv.hostPlatform.isLinux then pkgs.bubblewrap else null;
+            piCodingAgent = "${piTerminal}/lib/pi-terminal/node_modules/@earendil-works/pi-coding-agent";
+          };
           openaiServerCompaction = pkgs.callPackage ./nix/pi-openai-server-compaction.nix { };
           projectTools = pkgs.callPackage ./nix/pi-project-tools.nix { };
           piTerminal = pkgs.callPackage ./nix/pi-terminal.nix { };
@@ -214,8 +224,6 @@
             chmod -R u+w node_modules
             mkdir -p node_modules/@earendil-works
             ln -s ${piTerminal}/lib/pi-terminal/node_modules/@earendil-works/pi-ai node_modules/@earendil-works/pi-ai
-            ln -s ${piTerminal}/lib/pi-terminal/node_modules/@earendil-works/pi-coding-agent node_modules/@earendil-works/pi-coding-agent
-            ln -s ${piTerminal}/lib/pi-terminal/node_modules/typebox node_modules/typebox
             node --import ./test-setup.ts --test \
               background-jobs.test.ts \
               sandbox-policy.test.ts \
