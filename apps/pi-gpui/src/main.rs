@@ -35,6 +35,11 @@ mod transcript_markdown;
 mod workgraph_rpc;
 
 fn main() -> std::process::ExitCode {
+    #[cfg(target_os = "linux")]
+    if let Err(error) = relaunch_with_linux_vulkan_driver_policy() {
+        return fail(error);
+    }
+
     zlog::init();
     zlog::init_output_stderr();
     if let Err(error) = init_log_file() {
@@ -46,6 +51,55 @@ fn main() -> std::process::ExitCode {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => fail(error),
     }
+}
+
+#[cfg(target_os = "linux")]
+const VULKAN_DRIVER_CONFIGURATION: [&str; 5] = [
+    "VK_DRIVER_FILES",
+    "VK_ICD_FILENAMES",
+    "VK_ADD_DRIVER_FILES",
+    "VK_LOADER_DRIVERS_SELECT",
+    "VK_LOADER_DRIVERS_DISABLE",
+];
+
+#[cfg(target_os = "linux")]
+fn relaunch_with_linux_vulkan_driver_policy() -> Result<(), String> {
+    use std::os::unix::process::CommandExt as _;
+
+    let is_wsl = std::env::var_os("WSL_INTEROP").is_some()
+        || std::env::var_os("WSL_DISTRO_NAME").is_some()
+        || ["/proc/sys/kernel/osrelease", "/proc/version"]
+            .into_iter()
+            .any(|path| {
+                std::fs::read_to_string(path)
+                    .is_ok_and(|version| kernel_version_reports_wsl(&version))
+            });
+    if !should_disable_dzn(is_wsl, |name| std::env::var_os(name).is_some()) {
+        return Ok(());
+    }
+
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("resolve pi-gpui executable for Vulkan setup: {error}"))?;
+    let error = std::process::Command::new(executable)
+        .args(std::env::args_os().skip(1))
+        .env("VK_LOADER_DRIVERS_DISABLE", "*dzn*")
+        .exec();
+    Err(format!(
+        "relaunch pi-gpui with the Mesa DZN Vulkan ICD disabled: {error}"
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn should_disable_dzn(is_wsl: bool, mut environment_is_set: impl FnMut(&str) -> bool) -> bool {
+    !is_wsl
+        && !VULKAN_DRIVER_CONFIGURATION
+            .into_iter()
+            .any(&mut environment_is_set)
+}
+
+#[cfg(target_os = "linux")]
+fn kernel_version_reports_wsl(version: &str) -> bool {
+    version.to_ascii_lowercase().contains("microsoft")
 }
 
 fn init_log_file() -> Result<(), String> {
@@ -84,5 +138,25 @@ mod main_tests {
             fail_to(Vec::new(), "failed"),
             std::process::ExitCode::from(1)
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_linux_disables_dzn_without_overriding_driver_configuration() {
+        assert!(should_disable_dzn(false, |_| false));
+        assert!(!should_disable_dzn(true, |_| false));
+        for configured_name in VULKAN_DRIVER_CONFIGURATION {
+            assert!(!should_disable_dzn(false, |name| name == configured_name));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn recognizes_wsl_kernel_versions() {
+        assert!(kernel_version_reports_wsl(
+            "5.15.90.1-microsoft-standard-WSL2"
+        ));
+        assert!(kernel_version_reports_wsl("4.4.0-Microsoft"));
+        assert!(!kernel_version_reports_wsl("7.1.4"));
     }
 }
