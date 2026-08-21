@@ -3,8 +3,7 @@ use pi_gpui::diff_plan::{DiffLayout, DiffPlanOptions, DiffPlanRow, DiffRenderPla
 const SMALL_PATCH: &str = include_str!("fixtures/diff_plan/small-pi-ai.patch");
 const MEDIUM_PATCH: &str = include_str!("fixtures/diff_plan/medium-pi-web.patch");
 const STRESS_PATCH: &str = include_str!("fixtures/diff_plan/stress-pierre.patch");
-const MIXED_PATCH: &str =
-    include_str!("../../pi-terminal/patches/@earendil-works%2Fpi-coding-agent@0.84.2.patch");
+const MIXED_PATCH: &str = include_str!("fixtures/diff_plan/mixed-pi-coding-agent.patch");
 
 #[test]
 fn real_corpora_match_independent_counts_in_both_layouts() {
