@@ -151,6 +151,28 @@ fn reconstructed_equal_history_reuses_existing_rows() {
 }
 
 #[test]
+fn equal_snapshot_recovers_items_missing_from_the_row_cache() {
+    let rendered_items = vec![item(TranscriptKind::Assistant, "", "answer")];
+    let previous_rows = project_rows(&rendered_items);
+    let mut previous_items = rendered_items;
+    previous_items.push(item(TranscriptKind::User, "", "follow up"));
+    let reconstructed = previous_items
+        .iter()
+        .map(|item| Arc::new(item.as_ref().clone()))
+        .collect::<Vec<_>>();
+
+    let rows = update_rows_from(&previous_rows, &previous_items, &reconstructed, Some(1));
+
+    assert!(matches!(
+        rows.as_slice(),
+        [
+            TranscriptRow::Item { index: 0, .. },
+            TranscriptRow::Item { index: 1, .. }
+        ]
+    ));
+}
+
+#[test]
 fn appended_reads_merge_with_the_existing_read_group() {
     let previous_items = vec![item(TranscriptKind::Tool, "Read", "Path: one")];
     let previous_rows = project_rows(&previous_items);

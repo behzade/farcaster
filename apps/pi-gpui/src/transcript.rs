@@ -171,14 +171,19 @@ pub(crate) fn update_rows_from(
         .unwrap_or_default()
         .min(previous_items.len())
         .min(items.len());
-    let unchanged_items = unchanged_hint
+    let projected_items = previous_rows
+        .last()
+        .map_or(0, TranscriptRow::item_end)
+        .min(previous_items.len());
+    let unchanged_items = (unchanged_hint
         + previous_items[unchanged_hint..]
             .iter()
             .zip(&items[unchanged_hint..])
             .take_while(|(previous, next)| {
                 Arc::ptr_eq(previous, next) || previous.as_ref() == next.as_ref()
             })
-            .count();
+            .count())
+    .min(projected_items);
     crate::performance::count_transcript_items(
         unchanged_items.saturating_add(usize::from(unchanged_items < items.len())),
     );

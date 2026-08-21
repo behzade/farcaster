@@ -103,7 +103,7 @@ impl PiApp {
                 conversation.running = true;
                 snapshot.status = "Working".into();
                 if show_in_transcript {
-                    self.transcript_list.splice(index..index, 1);
+                    self.mark_transcript_changed(index, index == 0);
                 }
                 self.jump_to_latest(cx);
                 cx.notify();
@@ -112,7 +112,7 @@ impl PiApp {
                 let snapshot = Arc::make_mut(&mut self.snapshot);
                 let index = snapshot.conversation.items.len();
                 Arc::make_mut(&mut snapshot.conversation).push_transport_error(error);
-                self.transcript_list.splice(index..index, 1);
+                self.mark_transcript_changed(index, index == 0);
                 cx.notify();
             }
         }
@@ -275,7 +275,7 @@ impl PiApp {
         let snapshot = Arc::make_mut(&mut self.snapshot);
         let index = snapshot.conversation.items.len();
         Arc::make_mut(&mut snapshot.conversation).push_local_error(label, message.to_owned());
-        self.transcript_list.splice(index..index, 1);
+        self.mark_transcript_changed(index, index == 0);
         cx.notify();
     }
 

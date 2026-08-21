@@ -122,9 +122,13 @@ impl PiApp {
         self.transcript_rows = Arc::new(next);
     }
 
-    pub(super) fn mark_transcript_changed(&mut self, _index: usize, _was_empty: bool) {
-        let rows = crate::transcript::project_rows(&self.snapshot.conversation.items);
-        self.transcript_list.reset(rows.len());
-        self.transcript_rows = Arc::new(rows);
+    pub(super) fn mark_transcript_changed(&mut self, index: usize, _was_empty: bool) {
+        let rows = crate::transcript::update_rows_from(
+            &self.transcript_rows,
+            &self.snapshot.conversation.items,
+            &self.snapshot.conversation.items,
+            Some(index),
+        );
+        self.sync_transcript_rows(rows);
     }
 }
