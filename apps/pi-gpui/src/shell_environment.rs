@@ -1,33 +1,61 @@
-//! macOS login-shell environment import for app-bundle launches.
+//! Project login-shell environment import for desktop launches.
 
 use std::{
+    collections::HashMap,
     ffi::OsString,
     io::Write as _,
     os::unix::ffi::OsStringExt as _,
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::{Mutex, OnceLock},
 };
 
 const IMPORT_REQUESTED: &str = "PI_GUI_IMPORT_SHELL_ENV";
 const START_MARKER: &[u8] = b"\x1ePI_GPUI_ENV_START\x1f\0";
 const END_MARKER: &[u8] = b"\x1ePI_GPUI_ENV_END\x1f\0";
-const CAPTURE_COMMAND: &str = "/bin/stty -echo -opost; /usr/bin/printf '\\036PI_GPUI_ENV_START\\037\\0'; /usr/bin/env -0; /usr/bin/printf '\\036PI_GPUI_ENV_END\\037\\0'; exit\n";
+const CAPTURE_COMMAND: &str = "/bin/sh -c \"command stty -echo -opost; command printf '\\\\036PI_GPUI_ENV_START\\\\037\\\\0'; command env -0; command printf '\\\\036PI_GPUI_ENV_END\\\\037\\\\0'\" 2>/dev/null; exit\n";
 
 type Environment = Vec<(OsString, OsString)>;
+
+static PROJECT_ENVIRONMENTS: OnceLock<Mutex<HashMap<PathBuf, Environment>>> = OnceLock::new();
 
 pub(crate) fn project_shell_environment(project: &Path) -> Result<Option<Environment>, String> {
     if std::env::var(IMPORT_REQUESTED).as_deref() != Ok("1") {
         return Ok(None);
     }
-    capture_login_shell_environment(&default_login_shell(), project).map(Some)
+    let project_key = project
+        .canonicalize()
+        .unwrap_or_else(|_| project.to_path_buf());
+    let environments = PROJECT_ENVIRONMENTS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut environments = environments
+        .lock()
+        .map_err(|_| "project shell environment cache is poisoned".to_owned())?;
+    if let Some(environment) = environments.get(&project_key) {
+        return Ok(Some(environment.clone()));
+    }
+    let environment = capture_login_shell_environment(&default_login_shell(), project)?;
+    environments.insert(project_key, environment.clone());
+    Ok(Some(environment))
 }
 
 fn default_login_shell() -> PathBuf {
-    account_login_shell()
-        .or_else(|| std::env::var_os("SHELL").map(PathBuf::from))
-        .unwrap_or_else(|| PathBuf::from("/bin/zsh"))
+    #[cfg(target_os = "macos")]
+    let shell = account_login_shell().or_else(|| std::env::var_os("SHELL").map(PathBuf::from));
+    #[cfg(target_os = "linux")]
+    let shell = std::env::var_os("SHELL")
+        .map(PathBuf::from)
+        .or_else(account_login_shell);
+
+    shell.unwrap_or_else(|| {
+        if cfg!(target_os = "macos") {
+            PathBuf::from("/bin/zsh")
+        } else {
+            PathBuf::from("/bin/sh")
+        }
+    })
 }
 
+#[cfg(target_os = "macos")]
 fn account_login_shell() -> Option<PathBuf> {
     let output = Command::new("/usr/bin/id").arg("-P").output().ok()?;
     if !output.status.success() {
@@ -36,22 +64,41 @@ fn account_login_shell() -> Option<PathBuf> {
     parse_account_login_shell(&output.stdout)
 }
 
+#[cfg(target_os = "linux")]
+fn account_login_shell() -> Option<PathBuf> {
+    let user = std::env::var("USER").ok()?;
+    let passwd = std::fs::read("/etc/passwd").ok()?;
+    parse_passwd_login_shell(&passwd, &user)
+}
+
+fn parse_passwd_login_shell(passwd: &[u8], user: &str) -> Option<PathBuf> {
+    passwd.split(|byte| *byte == b'\n').find_map(|record| {
+        let mut fields = record.split(|byte| *byte == b':');
+        if fields.next() != Some(user.as_bytes()) {
+            return None;
+        }
+        fields.nth(5).and_then(absolute_path)
+    })
+}
+
 fn parse_account_login_shell(output: &[u8]) -> Option<PathBuf> {
-    let mut shell = output.rsplit(|byte| *byte == b':').next()?;
-    while matches!(shell.last(), Some(b'\n' | b'\r')) {
-        shell = &shell[..shell.len() - 1];
-    }
-    if shell.first() != Some(&b'/') {
+    let shell = output
+        .trim_ascii_end()
+        .rsplit(|byte| *byte == b':')
+        .next()?;
+    absolute_path(shell)
+}
+
+fn absolute_path(value: &[u8]) -> Option<PathBuf> {
+    if value.first() != Some(&b'/') {
         return None;
     }
-    Some(PathBuf::from(OsString::from_vec(shell.to_vec())))
+    Some(PathBuf::from(OsString::from_vec(value.to_vec())))
 }
 
 fn capture_login_shell_environment(shell: &Path, project: &Path) -> Result<Environment, String> {
-    let mut child = Command::new("/usr/bin/script")
-        .args(["-q", "/dev/null"])
-        .arg(shell)
-        .args(["-l", "-i"])
+    let mut command = script_command(shell)?;
+    let mut child = command
         .current_dir(project)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -78,6 +125,30 @@ fn capture_login_shell_environment(shell: &Path, project: &Path) -> Result<Envir
         ));
     }
     parse_environment(&output.stdout)
+}
+
+#[cfg(target_os = "macos")]
+fn script_command(shell: &Path) -> Result<Command, String> {
+    let mut command = Command::new("/usr/bin/script");
+    command
+        .args(["-q", "/dev/null"])
+        .arg(shell)
+        .args(["-l", "-i"]);
+    Ok(command)
+}
+
+#[cfg(target_os = "linux")]
+fn script_command(shell: &Path) -> Result<Command, String> {
+    let shell = shell
+        .to_str()
+        .ok_or_else(|| format!("login shell path is not UTF-8: {}", shell.display()))?;
+    let quoted_shell = format!("'{}'", shell.replace('\'', "'\\''"));
+    let mut command = Command::new("script");
+    command
+        .args(["-q", "-c"])
+        .arg(format!("exec {quoted_shell} -l -i"))
+        .arg("/dev/null");
+    Ok(command)
 }
 
 fn parse_environment(output: &[u8]) -> Result<Environment, String> {
@@ -135,6 +206,13 @@ mod tests {
             parse_account_login_shell(b"user:*:501:20::0:0:User:/Users/user:/opt/bin/fish\n"),
             Some(PathBuf::from("/opt/bin/fish"))
         );
+        assert_eq!(
+            parse_passwd_login_shell(
+                b"other:x:1000:1000::/home/other:/bin/bash\nuser:x:1001:100::/home/user:/bin/fish\n",
+                "user",
+            ),
+            Some(PathBuf::from("/bin/fish"))
+        );
         assert_eq!(parse_account_login_shell(b"malformed"), None);
     }
 
@@ -162,7 +240,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn capture_runs_a_real_interactive_login_shell() -> TestResult {
         let temp = tempdir()?;
@@ -176,9 +254,9 @@ test "$2" = "-i"
 test "$#" = "2"
 test -t 0
 test -t 1
-export PATH=/login/bin:/usr/bin
+export PATH=/login/bin:$PATH
 export LOGIN_VALUE=loaded
-export PROJECT_VALUE="$(/bin/pwd)"
+export PROJECT_VALUE="$PWD"
 export MULTILINE_VALUE='left
 right'
 printf 'prompt hook output before environment\n'
@@ -190,11 +268,9 @@ exec /bin/sh
         fs::set_permissions(&shell, permissions)?;
 
         let environment = capture_login_shell_environment(&shell, temp.path())?;
-        assert!(
-            environment
-                .iter()
-                .any(|(name, value)| { name == "PATH" && value == "/login/bin:/usr/bin" })
-        );
+        assert!(environment.iter().any(|(name, value)| {
+            name == "PATH" && value.to_string_lossy().starts_with("/login/bin:")
+        }));
         assert!(
             environment
                 .iter()

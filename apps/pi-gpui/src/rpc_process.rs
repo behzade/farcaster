@@ -47,7 +47,7 @@ impl ProcessCommand {
     pub(crate) fn command(&self, project: &Path) -> Result<Command, String> {
         let mut process = Command::new(&self.program);
         process.args(&self.prefix_args).current_dir(project);
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(environment) = crate::shell_environment::project_shell_environment(project)? {
             process.env_clear().envs(environment);
         }

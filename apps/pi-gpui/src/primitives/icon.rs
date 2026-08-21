@@ -1,5 +1,6 @@
 use gpui::{
-    CursorStyle, Div, InteractiveElement as _, MouseButton, Pixels, Role, SharedString, Stateful,
+    CursorStyle, Div, ElementId, InteractiveElement as _, MouseButton, Pixels, Role, SharedString,
+    Stateful,
     StatefulInteractiveElement as _, Styled as _, div,
 };
 use gpui_base::GlobalState;

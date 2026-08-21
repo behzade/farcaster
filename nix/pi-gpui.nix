@@ -1,4 +1,5 @@
 {
+  coreutils,
   craneLib,
   lib,
   makeWrapper,
@@ -34,6 +35,7 @@
   pango,
   pciutils,
   systemd,
+  util-linux,
   vulkan-loader,
   wayland,
 }:
@@ -162,7 +164,7 @@ craneLib.buildPackage (
       wrapProgram "$out/bin/pi-gpui" \
         --set PI_GUI_PI_PATH ${piTerminal}/bin/pi \
         --set PI_GUI_COMPANION_EXTENSION "$out/lib/pi-gpui/companion/index.ts" \
-        ${lib.optionalString stdenv.hostPlatform.isLinux "--prefix LD_LIBRARY_PATH : ${linuxRuntimeLibraryPath}"}
+        ${lib.optionalString stdenv.hostPlatform.isLinux "--set PI_GUI_IMPORT_SHELL_ENV 1 --prefix PATH : ${lib.makeBinPath [ coreutils util-linux ]} --prefix LD_LIBRARY_PATH : ${linuxRuntimeLibraryPath}"}
     ''
     + lib.optionalString stdenv.hostPlatform.isDarwin ''
       # UNUserNotificationCenter rejects unsigned application bundles.

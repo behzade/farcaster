@@ -23,7 +23,7 @@ mod session_changes;
 mod session_transfer;
 mod session_watcher;
 mod sessions;
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 mod shell_environment;
 mod state;
 #[cfg(test)]

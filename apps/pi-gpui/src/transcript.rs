@@ -8,8 +8,9 @@ use std::{
 
 use gpui::{
     AnyElement, Entity, FontWeight, HighlightStyle, InteractiveElement as _, IntoElement as _,
-    ListSizingBehavior, ListState, Overflow, ParentElement as _, Pixels, StyleRefinement,
-    Styled as _, WeakEntity, div, list, prelude::FluentBuilder as _, px, rems,
+    ListSizingBehavior, ListState, Overflow, ParentElement as _, Pixels,
+    StatefulInteractiveElement as _, StyleRefinement, Styled as _, WeakEntity, div, list,
+    prelude::FluentBuilder as _, px, rems,
 };
 use gpui_component::{
     highlighter::HighlightTheme,

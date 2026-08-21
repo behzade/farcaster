@@ -67,11 +67,11 @@ Deliver a usable root-session client with:
 8. Responsive, accessible GPUI presentation adapted from Issues.
 
 The binary accepts an optional project path and defaults to the current working
-directory. On macOS, start the user's login shell in that directory and capture
-its environment before spawning Pi directly. This keeps the environment and
-global/project settings, context, skills, prompt templates, packages, and
-extensions aligned with the terminal client without a second launcher. Do not
-inject product prompts or bypass Pi.
+directory. Linux and macOS desktop packaging starts the user's login shell in
+that directory and captures its environment before spawning Pi directly. This
+keeps the environment and global/project settings, context, skills, prompt
+templates, packages, and extensions aligned with the terminal client without a
+second launcher. Do not inject product prompts or bypass Pi.
 
 ## Explicit non-goals for this checkpoint
 
