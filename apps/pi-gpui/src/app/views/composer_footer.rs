@@ -12,7 +12,7 @@ use super::{
 };
 use crate::{
     assets::AppIcon,
-    primitives::{ButtonTone, button_with_icon, prominent_icon_button},
+    primitives::{ButtonTone, prominent_icon_button},
     runtime::RuntimeCommand,
     theme::{MONO_FONT_FAMILY, THEME},
 };
@@ -49,14 +49,12 @@ impl PiApp {
         entity: WeakEntity<Self>,
         primary_action: Option<&'static str>,
     ) -> AnyElement {
-        let show_action = primary_action.is_some() || self.snapshot.conversation.running;
         let send_entity = entity.clone();
         let abort_entity = entity;
-        let mut actions = div().flex_none().flex().items_center();
-        if show_action {
-            actions = actions.child(separator());
-        }
-        actions
+        div()
+            .flex_none()
+            .flex()
+            .items_center()
             .child(
                 div()
                     .flex_none()
@@ -81,16 +79,14 @@ impl PiApp {
                     })
                     .when(self.snapshot.conversation.running, |actions| {
                         actions.child(
-                            button_with_icon(
+                            prominent_icon_button(
                                 "abort",
                                 AppIcon::XCircle,
                                 "Abort",
                                 ButtonTone::Quiet,
-                                true,
                                 move |_, cx| {
-                                    let _ = abort_entity.update(cx, |this, _| {
-                                        this.send(RuntimeCommand::Abort)
-                                    });
+                                    let _ = abort_entity
+                                        .update(cx, |this, _| this.send(RuntimeCommand::Abort));
                                 },
                             )
                             .text_color(THEME.colors.error),

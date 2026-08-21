@@ -7,9 +7,7 @@ mod icon;
 mod picker;
 mod reorder;
 
-pub(crate) use button::{
-    ButtonTone, button, button_with_icon, dropdown_button, icon_button, prominent_icon_button,
-};
+pub(crate) use button::{ButtonTone, button, dropdown_button, icon_button, prominent_icon_button};
 pub(crate) use content::{panel, section_heading};
 pub(crate) use dialog::modal;
 pub(crate) use disclosure::disclosure_button;

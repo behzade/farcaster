@@ -164,7 +164,7 @@ pub(crate) const THEME: Theme = Theme {
     },
     controls: ControlScale {
         icon_button: px(28.0),
-        utility_row: px(40.0),
+        utility_row: px(44.0),
         archived_preview_row: px(52.0),
         agent_marker: px(20.0),
     },
@@ -273,5 +273,9 @@ mod tests {
         assert!(THEME.icons.control > THEME.icons.inline);
         assert!(THEME.icons.prominent >= THEME.icons.control);
         assert!(THEME.controls.icon_button > THEME.icons.prominent);
+        assert!(
+            THEME.controls.utility_row
+                >= THEME.controls.icon_button + THEME.space.sm + THEME.space.sm
+        );
     }
 }

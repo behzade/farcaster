@@ -35,23 +35,6 @@ pub(crate) fn button(
     tone_button(button, tone)
 }
 
-pub(crate) fn button_with_icon(
-    id: impl Into<ElementId>,
-    icon: impl IconNamed,
-    label: impl Into<SharedString>,
-    tone: ButtonTone,
-    enabled: bool,
-    on_press: impl Fn(&mut Window, &mut App) + 'static,
-) -> Button {
-    let button = Button::new(id)
-        .icon(app_icon(icon, AppIconSize::Inline))
-        .label(label)
-        .with_size(Size::Small)
-        .disabled(!enabled)
-        .on_click(move |_, window, cx| on_press(window, cx));
-    tone_button(button, tone)
-}
-
 pub(crate) fn dropdown_button(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
@@ -73,7 +56,7 @@ pub(crate) fn icon_button(
     tone: ButtonTone,
     on_press: impl Fn(&mut Window, &mut App) + 'static,
 ) -> AnyElement {
-    icon_button_with_size(id, icon, label, AppIconSize::Control, tone, on_press)
+    icon_button_with_size(id, icon, label, AppIconSize::Control, tone, on_press).into_any_element()
 }
 
 pub(crate) fn prominent_icon_button(
@@ -82,7 +65,7 @@ pub(crate) fn prominent_icon_button(
     label: impl Into<SharedString>,
     tone: ButtonTone,
     on_press: impl Fn(&mut Window, &mut App) + 'static,
-) -> AnyElement {
+) -> Stateful<Div> {
     icon_button_with_size(id, icon, label, AppIconSize::Prominent, tone, on_press)
 }
 
@@ -93,10 +76,9 @@ fn icon_button_with_size(
     size: AppIconSize,
     tone: ButtonTone,
     on_press: impl Fn(&mut Window, &mut App) + 'static,
-) -> AnyElement {
+) -> Stateful<Div> {
     tone_icon_control(icon_control(id, label).child(app_icon(icon, size)), tone)
         .on_click(move |_, window, cx| on_press(window, cx))
-        .into_any_element()
 }
 
 fn tone_icon_control(control: Stateful<Div>, tone: ButtonTone) -> Stateful<Div> {
