@@ -54,8 +54,8 @@ separate `nix-config` repo.
 - The loose entrypoints under [`extensions`](extensions) are packaged together by
   `pi-core-extensions`; notifications, title animation, user input, and feedback use the
   same pinned Effect v4 runtime while Pi callbacks remain boundary adapters. Type `$`
-  to autocomplete prompts or skills; leading invocations such as `$simplify $commit`
-  compose in order.
+  at a token boundary to autocomplete prompts or skills; invocations such as
+  `$simplify $commit` compose in order.
 - [`extensions/agent-feedback.ts`](extensions/agent-feedback.ts) exposes the
   non-blocking feedback tool to Pi sessions.
 - [`nix`](nix) contains the pinned builds for Pi and every packaged extension.

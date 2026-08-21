@@ -3,8 +3,6 @@ import { dirname } from "node:path";
 import type { ExtensionAPI, SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 import type { AutocompleteItem, AutocompleteProvider } from "@earendil-works/pi-tui";
 
-const INVOCATION_NAME = /^[a-z0-9][a-z0-9:_-]{0,127}$/;
-
 type InvocableCommand = SlashCommandInfo & { invocationName: string };
 
 export type InvocationStack = {
@@ -42,47 +40,35 @@ export function invocableCommands(commands: SlashCommandInfo[]): InvocableComman
 }
 
 export function parseInvocationStack(text: string, commands: SlashCommandInfo[]): InvocationStack | undefined {
-  if (!text.startsWith("$")) return undefined;
   const byName = new Map(invocableCommands(commands).map((command) => [command.invocationName, command]));
   const selected: InvocableCommand[] = [];
+  const arguments_: string[] = [];
+  const invocation = /(^|\s)\$([a-z0-9][a-z0-9:_-]{0,127})(?=\s|$)/g;
   let cursor = 0;
 
-  while (text[cursor] === "$") {
-    const nameStart = cursor + 1;
-    let nameEnd = nameStart;
-    while (nameEnd < text.length && /[a-z0-9:_-]/.test(text[nameEnd] ?? "")) nameEnd += 1;
-    const name = text.slice(nameStart, nameEnd);
-    if (!INVOCATION_NAME.test(name)) return undefined;
+  for (const match of text.matchAll(invocation)) {
+    const name = match[2] ?? "";
     const command = byName.get(name);
-    if (!command) return undefined;
-    if (nameEnd < text.length && !/\s/.test(text[nameEnd] ?? "")) return undefined;
+    if (!command) continue;
+    const start = (match.index ?? 0) + (match[1]?.length ?? 0);
+    const argument = text.slice(cursor, start).trim();
+    if (argument) arguments_.push(argument);
     selected.push(command);
-    cursor = nameEnd;
-    while (cursor < text.length && /[ \t]/.test(text[cursor] ?? "")) cursor += 1;
-    if (text[cursor] !== "$") break;
+    cursor = start + name.length + 1;
   }
+  if (selected.length === 0) return undefined;
+  const trailing = text.slice(cursor).trim();
+  if (trailing) arguments_.push(trailing);
 
   return {
     commands: selected,
     displayText: text,
-    argumentsText: text.slice(cursor).trim(),
+    argumentsText: arguments_.join(" "),
   };
 }
 
-function invocationQuery(beforeCursor: string, commands: SlashCommandInfo[]): string | undefined {
-  const match = beforeCursor.match(/^((?:\$[a-z0-9][a-z0-9:_-]*[ \t]+)*)\$([a-z0-9:_-]*)$/);
-  if (!match) return undefined;
-  const known = new Set(invocableCommands(commands).map((command) => command.invocationName));
-  const completed = (match[1] ?? "").match(/\$[a-z0-9][a-z0-9:_-]*/g) ?? [];
-  return completed.every((token) => known.has(token.slice(1))) ? match[2] : undefined;
-}
-
-function isTerminatedInvocationPrefix(beforeCursor: string, commands: SlashCommandInfo[]): boolean {
-  const match = beforeCursor.match(/^((?:\$[a-z0-9][a-z0-9:_-]*[ \t]+)+)$/);
-  if (!match) return false;
-  const known = new Set(invocableCommands(commands).map((command) => command.invocationName));
-  return (match[1].match(/\$[a-z0-9][a-z0-9:_-]*/g) ?? [])
-    .every((token) => known.has(token.slice(1)));
+function invocationQuery(beforeCursor: string): string | undefined {
+  return beforeCursor.match(/(?:^|[ \t])\$([a-z0-9:_-]*)$/)?.[1];
 }
 
 function invocationItem(command: InvocableCommand): AutocompleteItem {
@@ -100,9 +86,8 @@ function createAutocompleteProvider(pi: ExtensionAPI, current: AutocompleteProvi
     async getSuggestions(lines, cursorLine, cursorCol, options) {
       const beforeCursor = (lines[cursorLine] ?? "").slice(0, cursorCol);
       const commands = pi.getCommands();
-      const query = invocationQuery(beforeCursor, commands);
+      const query = invocationQuery(beforeCursor);
       if (query === undefined) {
-        if (isTerminatedInvocationPrefix(beforeCursor, commands)) return null;
         const suggestions = await current.getSuggestions(lines, cursorLine, cursorCol, options);
         if (!suggestions || !beforeCursor.trimStart().startsWith("/") || beforeCursor.includes(" ")) {
           return suggestions;
@@ -135,7 +120,7 @@ function createAutocompleteProvider(pi: ExtensionAPI, current: AutocompleteProvi
     },
     shouldTriggerFileCompletion(lines, cursorLine, cursorCol) {
       const beforeCursor = (lines[cursorLine] ?? "").slice(0, cursorCol);
-      if (invocationQuery(beforeCursor, pi.getCommands()) !== undefined) return true;
+      if (invocationQuery(beforeCursor) !== undefined) return true;
       return current.shouldTriggerFileCompletion?.(lines, cursorLine, cursorCol) ?? true;
     },
   };

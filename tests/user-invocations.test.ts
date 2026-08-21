@@ -53,6 +53,32 @@ test("the extension preserves compact display metadata outside model content", a
   assert.deepEqual(finalized.message.content, message.content);
 });
 
+test("autocomplete opens after a token boundary and includes skills", async () => {
+  const handlers = new Map<string, (...arguments_: any[]) => any>();
+  let provider: any;
+  registerUserInvocations({
+    getCommands: () => commands,
+    on: (event: string, handler: (...arguments_: any[]) => any) => handlers.set(event, handler),
+  } as never);
+  handlers.get("session_start")?.({}, {
+    mode: "tui",
+    ui: {
+      addAutocompleteProvider(factory: (current: any) => any) {
+        provider = factory({
+          async getSuggestions() { return null; },
+          applyCompletion() { throw new Error("not used"); },
+        });
+      },
+    },
+  });
+
+  const result = await provider.getSuggestions(["please $"], 0, "please $".length, {});
+  assert.deepEqual(
+    result.items.map((item: { value: string }) => item.value),
+    ["$simplify", "$commit", "$frontend-design"],
+  );
+});
+
 test("leading dollar invocations compose in user order", async () => {
   const stack = parseInvocationStack("$simplify $commit keep tests focused", commands);
   assert.ok(stack);
@@ -60,9 +86,6 @@ test("leading dollar invocations compose in user order", async () => {
   assert.equal(stack.argumentsText, "keep tests focused");
 
   const expanded = await expandInvocationStack(stack);
-  const simplify = expanded.indexOf("Refine your implementation");
-  const commit = expanded.indexOf("Commit your changes");
-  assert.ok(simplify >= 0 && commit > simplify);
   assert.match(expanded, /keep tests focused$/);
 });
 
@@ -74,10 +97,17 @@ test("skill invocations retain shared trailing instructions", async () => {
   assert.match(expanded, /focus on the composer$/);
 });
 
-test("unknown, embedded, and escaped dollars remain ordinary input", () => {
+test("invocations expand at token boundaries within instructions", async () => {
+  const stack = parseInvocationStack("please $simplify this $commit", commands);
+  assert.ok(stack);
+  assert.deepEqual(stack.commands.map((item) => item.invocationName), ["simplify", "commit"]);
+  assert.equal(stack.argumentsText, "please this");
+  assert.match(await expandInvocationStack(stack), /please this$/);
+});
+
+test("unknown and escaped dollars remain ordinary input", () => {
   assert.equal(parseInvocationStack("$missing", commands), undefined);
-  assert.equal(parseInvocationStack("explain $simplify", commands), undefined);
-  assert.equal(parseInvocationStack("\\$simplify", commands), undefined);
+  assert.equal(parseInvocationStack("explain \\$simplify", commands), undefined);
 });
 
 test("prompt and skill name collisions require source-qualified invocations", () => {

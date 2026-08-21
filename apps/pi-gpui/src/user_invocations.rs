@@ -11,11 +11,25 @@ pub(crate) struct ComposerSuggestion {
 
 pub(crate) fn suggestions(input: &str, commands: &[SlashCommand]) -> Vec<ComposerSuggestion> {
     let invocable = invocable_commands(commands);
-    let Some(query) = invocation_query(input, &invocable) else {
+    let Some(query) = invocation_query(input) else {
         return Vec::new();
     };
-    invocable
-        .iter()
+    let mut ordered = invocable.clone();
+    if query.is_empty()
+        && !ordered
+            .iter()
+            .take(8)
+            .any(|command| command.source == SlashCommandSource::Skill)
+        && let Some(index) = ordered
+            .iter()
+            .position(|command| command.source == SlashCommandSource::Skill)
+    {
+        let skill = ordered.remove(index);
+        let index = 7.min(ordered.len());
+        ordered.insert(index, skill);
+    }
+    ordered
+        .into_iter()
         .filter_map(|command| {
             let name = invocation_alias(command, &invocable);
             name.contains(query).then(|| {
@@ -55,32 +69,18 @@ pub(crate) fn complete(input: &str, cursor: usize, sigil: char, name: &str) -> (
     (text, cursor)
 }
 
-fn invocation_query<'a>(input: &'a str, commands: &[&SlashCommand]) -> Option<&'a str> {
-    if input.ends_with(char::is_whitespace) {
-        return None;
-    }
-    let mut tokens = input.split_whitespace().peekable();
-    let mut query = None;
-    while let Some(token) = tokens.next() {
-        let name = token.strip_prefix('$')?;
-        if name.chars().any(|character| {
-            !(character.is_ascii_lowercase()
+fn invocation_query(input: &str) -> Option<&str> {
+    let token = input
+        .rsplit_once(char::is_whitespace)
+        .map_or(input, |(_, token)| token);
+    let name = token.strip_prefix('$')?;
+    name.chars()
+        .all(|character| {
+            character.is_ascii_lowercase()
                 || character.is_ascii_digit()
-                || matches!(character, ':' | '_' | '-'))
-        }) {
-            return None;
-        }
-        if tokens.peek().is_none() {
-            query = Some(name);
-        } else if name.is_empty()
-            || !commands
-                .iter()
-                .any(|command| invocation_alias(command, commands) == name)
-        {
-            return None;
-        }
-    }
-    query
+                || matches!(character, ':' | '_' | '-')
+        })
+        .then_some(name)
 }
 
 fn invocable_commands(commands: &[SlashCommand]) -> Vec<&SlashCommand> {
@@ -157,7 +157,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["simplify", "commit"]
         );
-        let suggestion = suggestions("$simplify $com", &commands)
+        let suggestion = suggestions("please $com", &commands)
             .into_iter()
             .next()
             .expect("commit suggestion");
@@ -171,8 +171,23 @@ mod tests {
             ),
             ("$simplify $commit later".into(), "$simplify $commit ".len())
         );
-        assert!(suggestions("explain $com", &commands).is_empty());
-        assert!(suggestions("$missing $com", &commands).is_empty());
+        assert_eq!(suggestions("please $", &commands).len(), 2);
+        assert!(suggestions("please$com", &commands).is_empty());
+    }
+
+    #[test]
+    fn initial_suggestions_reserve_space_for_a_skill() {
+        let mut commands = (0..8)
+            .map(|index| command(&format!("prompt-{index}"), SlashCommandSource::Prompt))
+            .collect::<Vec<_>>();
+        commands.push(command("skill:review", SlashCommandSource::Skill));
+
+        assert!(
+            suggestions("$", &commands)
+                .into_iter()
+                .take(8)
+                .any(|suggestion| suggestion.name == "review")
+        );
     }
 
     #[test]

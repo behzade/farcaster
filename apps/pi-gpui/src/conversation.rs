@@ -128,6 +128,7 @@ pub(crate) struct ConversationState {
     dirty_content: std::collections::BTreeSet<usize>,
     projected_content: std::collections::BTreeSet<usize>,
     tools: HashMap<String, usize>,
+    optimistic_user: Option<Arc<TranscriptItem>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -170,6 +171,7 @@ impl ConversationState {
             tool_presentation: None,
         });
         self.items.push(item.clone());
+        self.optimistic_user = Some(item.clone());
         item
     }
 
@@ -182,6 +184,13 @@ impl ConversationState {
             return false;
         };
         self.items.remove(index);
+        if self
+            .optimistic_user
+            .as_ref()
+            .is_some_and(|item| Arc::ptr_eq(item, optimistic))
+        {
+            self.optimistic_user = None;
+        }
         true
     }
 
@@ -201,6 +210,7 @@ impl ConversationState {
         self.dirty_content.clear();
         self.projected_content.clear();
         self.tools.clear();
+        self.optimistic_user = None;
     }
 
     fn project_history_message(&mut self, message: &Value) {
@@ -417,20 +427,18 @@ impl ConversationState {
             return;
         }
         let mut projected = message.map(project_message_items).unwrap_or_default();
+        if projected.len() == 1
+            && projected[0].kind == TranscriptKind::User
+            && self.optimistic_user.is_some()
+        {
+            self.live_message = Some(LiveMessage {
+                start: self.items.len(),
+                len: 0,
+            });
+            return;
+        }
         for item in &mut projected {
             item.streaming = true;
-        }
-        if projected.len() == 1
-            && self.items.last().is_some_and(|last| {
-                last.kind == TranscriptKind::User
-                    && last.text == projected[0].text
-                    && !last.streaming
-            })
-        {
-            let start = self.items.len().saturating_sub(1);
-            self.items[start] = Arc::new(projected.remove(0));
-            self.live_message = Some(LiveMessage { start, len: 1 });
-            return;
         }
         let start = self.items.len();
         let len = projected.len();
@@ -575,11 +583,23 @@ impl ConversationState {
             .into_iter()
             .map(Arc::new)
             .collect::<Vec<_>>();
+        let finalizes_user = final_items
+            .iter()
+            .any(|item| item.kind == TranscriptKind::User);
         if let Some(live) = self.live_message.take() {
             self.items
                 .splice(live.start..live.start + live.len, final_items);
         } else {
             self.items.extend(final_items);
+        }
+        if finalizes_user
+            && let Some(optimistic) = self.optimistic_user.take()
+            && let Some(index) = self
+                .items
+                .iter()
+                .position(|item| Arc::ptr_eq(item, &optimistic))
+        {
+            self.items.remove(index);
         }
         self.content.clear();
         self.dirty_content.clear();
