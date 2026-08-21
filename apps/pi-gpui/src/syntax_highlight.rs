@@ -2,7 +2,7 @@
 
 use std::{ops::Range, sync::Arc};
 
-use gpui::{HighlightStyle, SharedString, StyledText};
+use gpui::{HighlightStyle, SharedString};
 use gpui_component::highlighter::{HighlightTheme, SyntaxHighlighter};
 use ropey::Rope;
 
@@ -20,8 +20,32 @@ impl HighlightedText {
         }
     }
 
-    pub(crate) fn element(&self) -> StyledText {
-        StyledText::new(self.text.clone()).with_highlights(self.highlights.iter().cloned())
+    pub(crate) fn shared_text(&self) -> SharedString {
+        self.text.clone()
+    }
+
+    pub(crate) fn runs(&self, default_style: &gpui::TextStyle) -> Vec<gpui::TextRun> {
+        let mut runs = Vec::new();
+        let mut offset = 0;
+        for (range, highlight) in self.highlights.iter() {
+            debug_assert!(self.text.is_char_boundary(range.start));
+            debug_assert!(self.text.is_char_boundary(range.end));
+            debug_assert!(offset <= range.start);
+            if offset < range.start {
+                runs.push(default_style.to_run(range.start - offset));
+            }
+            runs.push(
+                default_style
+                    .clone()
+                    .highlight(*highlight)
+                    .to_run(range.len()),
+            );
+            offset = range.end;
+        }
+        if offset < self.text.len() {
+            runs.push(default_style.to_run(self.text.len() - offset));
+        }
+        runs
     }
 
     fn into_lines(self) -> Vec<Self> {
@@ -268,6 +292,18 @@ mod tests {
         let text = highlight("fn main() { let answer = 42; }".into(), "rs");
         assert_eq!(text.text(), "fn main() { let answer = 42; }");
         assert!(!text.highlights.is_empty());
+    }
+
+    #[test]
+    fn direct_paint_runs_cover_the_complete_source() {
+        let text = highlight("fn main() {}".into(), "rs");
+        let runs = text.runs(&gpui::TextStyle::default());
+
+        assert_eq!(
+            runs.iter().map(|run| run.len).sum::<usize>(),
+            text.text.len()
+        );
+        assert!(runs.len() > 1);
     }
 
     #[test]

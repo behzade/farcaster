@@ -1,8 +1,8 @@
 //! Focus-trapped view of file operations retained in Pi session records.
 
 use gpui::{
-    AnyElement, FontWeight, IntoElement, ParentElement as _, Styled as _, UniformListScrollHandle,
-    WeakEntity, div, prelude::FluentBuilder as _, px, uniform_list,
+    AnyElement, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, ScrollHandle,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
 };
 
 use super::super::{
@@ -11,6 +11,7 @@ use super::super::{
 };
 use crate::{
     assets::AppIcon,
+    diff_element::{DiffCell, DiffElement, DiffPaintRow, DiffTone},
     primitives::{ButtonTone, button, icon_button, section_heading},
     session_changes::FileChangeKind,
     syntax_highlight::{DiffLineKind, HighlightedDiff, HighlightedDiffLine},
@@ -200,99 +201,54 @@ impl PiApp {
 fn render_patch(
     syntax: Option<&HighlightedDiff>,
     mode: FullDiffMode,
-    scroll: &UniformListScrollHandle,
+    scroll: &ScrollHandle,
 ) -> AnyElement {
     let Some(syntax) = syntax else {
         return div().child("Preparing diff…").into_any_element();
     };
-    match (mode, syntax) {
+    let diff = match (mode, syntax) {
         (FullDiffMode::Unified, HighlightedDiff::Unified(lines)) => {
-            let lines = lines.clone();
-            let count = lines.len();
-            uniform_list("full-unified-diff", count, move |range, _, _| {
-                range
-                    .filter_map(|index| lines.get(index))
-                    .map(render_diff_line)
-                    .collect::<Vec<_>>()
-            })
-            .track_scroll(scroll)
-            .flex_1()
-            .min_w_0()
-            .min_h_0()
-            .bg(THEME.colors.canvas)
-            .into_any_element()
+            let rows = lines.clone();
+            DiffElement::unified(
+                rows.len(),
+                THEME.type_scale.line_body,
+                px(0.0),
+                move |index| rows.get(index).map(full_diff_cell),
+            )
         }
         (FullDiffMode::Split, HighlightedDiff::Split { old, new }) => {
             let old = old.clone();
             let new = new.clone();
             let count = old.len().max(new.len());
-            uniform_list("full-split-diff", count, move |range, _, _| {
-                range
-                    .map(|index| render_split_diff_line(old.get(index), new.get(index)))
-                    .collect::<Vec<_>>()
+            DiffElement::split(count, THEME.type_scale.line_body, px(0.0), move |index| {
+                DiffPaintRow {
+                    old: old.get(index).map(full_diff_cell),
+                    new: new.get(index).map(full_diff_cell),
+                }
             })
-            .track_scroll(scroll)
-            .flex_1()
-            .min_w_0()
-            .min_h_0()
-            .bg(THEME.colors.canvas)
-            .into_any_element()
         }
-        _ => div().child("Preparing diff…").into_any_element(),
-    }
-}
-
-fn render_split_diff_line(
-    old: Option<&HighlightedDiffLine>,
-    new: Option<&HighlightedDiffLine>,
-) -> AnyElement {
-    div()
-        .w_full()
-        .min_w_0()
-        .h(THEME.type_scale.line_body)
-        .flex()
-        .child(
-            div()
-                .w_1_2()
-                .min_w_0()
-                .child(render_optional_diff_line(old)),
-        )
-        .child(
-            div()
-                .w_1_2()
-                .min_w_0()
-                .border_l(THEME.border)
-                .border_color(THEME.colors.border)
-                .child(render_optional_diff_line(new)),
-        )
-        .into_any_element()
-}
-
-fn render_optional_diff_line(line: Option<&HighlightedDiffLine>) -> AnyElement {
-    line.map_or_else(
-        || div().size_full().bg(THEME.colors.canvas).into_any_element(),
-        render_diff_line,
-    )
-}
-
-fn render_diff_line(line: &HighlightedDiffLine) -> AnyElement {
-    let background = match line.kind {
-        DiffLineKind::Context => THEME.colors.canvas,
-        DiffLineKind::Addition => THEME.colors.diff_added,
-        DiffLineKind::Deletion => THEME.colors.diff_deleted,
+        _ => return div().child("Preparing diff…").into_any_element(),
     };
     div()
-        .w_full()
+        .id("full-diff-scroll")
+        .flex_1()
         .min_w_0()
-        .h(THEME.type_scale.line_body)
-        .overflow_hidden()
-        .whitespace_nowrap()
-        .px(THEME.space.xs)
-        .bg(background)
-        .font_family(MONO_FONT_FAMILY)
-        .text_size(THEME.type_scale.body_small)
-        .line_height(THEME.type_scale.line_body)
-        .text_color(THEME.colors.text)
-        .child(line.text.element())
+        .min_h_0()
+        .overflow_y_scroll()
+        .track_scroll(scroll)
+        .bg(THEME.colors.canvas)
+        .child(diff)
         .into_any_element()
+}
+
+fn full_diff_cell(line: &HighlightedDiffLine) -> DiffCell {
+    DiffCell {
+        gutter: None,
+        text: line.text.clone(),
+        tone: match line.kind {
+            DiffLineKind::Context => DiffTone::Context,
+            DiffLineKind::Addition => DiffTone::Addition,
+            DiffLineKind::Deletion => DiffTone::Deletion,
+        },
+    }
 }

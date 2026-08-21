@@ -16,7 +16,19 @@
     {
       "kind": "filesystem",
       "access": "read",
+      "path": "~/Projects/personal/engram",
+      "scope": "tree"
+    },
+    {
+      "kind": "filesystem",
+      "access": "read",
       "path": "~/Projects/personal/pi-guardian",
+      "scope": "tree"
+    },
+    {
+      "kind": "filesystem",
+      "access": "write",
+      "path": ".git",
       "scope": "tree"
     },
     {
@@ -24,6 +36,30 @@
       "access": "write",
       "path": "~/.cargo/.package-cache",
       "scope": "file"
+    },
+    {
+      "kind": "filesystem",
+      "access": "write",
+      "path": "~/Projects/personal/pi-guardian",
+      "scope": "tree"
+    },
+    {
+      "kind": "filesystem",
+      "access": "write",
+      "path": "~/Projects/personal/pi-guardian/.git",
+      "scope": "tree"
+    },
+    {
+      "kind": "network_host",
+      "host": "github.com"
+    },
+    {
+      "kind": "network_host",
+      "host": "index.crates.io"
+    },
+    {
+      "kind": "network_host",
+      "host": "static.crates.io"
     }
   ]
 }

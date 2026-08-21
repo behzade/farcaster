@@ -8,7 +8,7 @@ use std::{
     time::SystemTime,
 };
 
-use gpui::{AppContext as _, Context, FocusHandle, UniformListScrollHandle, Window, px};
+use gpui::{AppContext as _, Context, FocusHandle, ScrollHandle, Window, px};
 
 use super::PiApp;
 use crate::{
@@ -137,7 +137,7 @@ pub(crate) struct ChangesState {
     diff_highlights: DiffHighlightCache,
     diff_highlights_in_flight: HashSet<DiffHighlightKey>,
     diff_highlight_requested: Option<DiffHighlightKey>,
-    pub diff_scroll: UniformListScrollHandle,
+    pub diff_scroll: ScrollHandle,
     pub diff_focus: FocusHandle,
     pub return_focus: Option<FocusHandle>,
     pub pending_diff_setup: bool,
@@ -155,7 +155,7 @@ impl ChangesState {
             diff_highlights: DiffHighlightCache::default(),
             diff_highlights_in_flight: HashSet::new(),
             diff_highlight_requested: None,
-            diff_scroll: UniformListScrollHandle::new(),
+            diff_scroll: ScrollHandle::new(),
             diff_focus: cx.focus_handle(),
             return_focus: None,
             pending_diff_setup: false,
@@ -250,7 +250,7 @@ impl PiApp {
         opener.focus(window, cx);
         self.changes.return_focus = Some(opener);
         self.changes.diff_generation = self.changes.diff_generation.saturating_add(1);
-        self.changes.diff_scroll = UniformListScrollHandle::new();
+        self.changes.diff_scroll = ScrollHandle::new();
         let surface = DiffSurface::Ready(file.clone(), file.diff.clone());
         self.changes.diff_syntax = None;
         self.changes.diff = Some(surface);
@@ -281,7 +281,7 @@ impl PiApp {
         focus.focus(window, cx);
         self.changes.return_focus = Some(focus);
         self.changes.diff_generation = self.changes.diff_generation.saturating_add(1);
-        self.changes.diff_scroll = UniformListScrollHandle::new();
+        self.changes.diff_scroll = ScrollHandle::new();
         let surface = load_tool_diff_surface(path, presentation);
         self.changes.diff_syntax = None;
         self.changes.diff = Some(surface);

@@ -1,6 +1,6 @@
-//! Native, selectable presentations for file mutation tools.
+//! Native presentations for file mutation tools.
 
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 
 use gpui::{
     AnyElement, App, InteractiveElement as _, IntoElement, ParentElement as _, Styled as _, Window,
@@ -13,6 +13,7 @@ use gpui_component::{
 
 use crate::{
     conversation::{EditDiffFormat, ToolPresentation},
+    diff_element::{DiffCell, DiffElement, DiffPaintRow, DiffTone},
     syntax_highlight::{HighlightedText, highlight_lines, language_for_path},
     theme::{MONO_FONT_FAMILY, THEME},
 };
@@ -60,12 +61,12 @@ pub(crate) struct PairedLine {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum PreparedToolChange {
     Edit {
-        rows: Vec<PairedLine>,
+        rows: Arc<Vec<PairedLine>>,
         additions: usize,
         deletions: usize,
     },
     Write {
-        rows: Vec<SideLine>,
+        rows: Arc<Vec<SideLine>>,
         additions: usize,
     },
 }
@@ -97,7 +98,7 @@ pub(crate) fn render(
                     .filter(|row| row.kind == ChangeKind::Deletion)
                     .count();
                 PreparedToolChange::Edit {
-                    rows: pair_edit_rows(&rows, &language_for_path(path)),
+                    rows: Arc::new(pair_edit_rows(&rows, &language_for_path(path))),
                     additions,
                     deletions,
                 }
@@ -112,7 +113,10 @@ pub(crate) fn render(
             prepared.get_or_init(|| {
                 let rows = write_rows(content, &language_for_path(path));
                 let additions = rows.len();
-                PreparedToolChange::Write { rows, additions }
+                PreparedToolChange::Write {
+                    rows: Arc::new(rows),
+                    additions,
+                }
             }),
         ),
     };
@@ -122,8 +126,8 @@ pub(crate) fn render(
     };
     let metadata = diff_metadata(path, prepared, mode);
     let body = match prepared {
-        PreparedToolChange::Edit { rows, .. } => render_edit_diff(rows, key, mode),
-        PreparedToolChange::Write { rows, .. } => render_write_diff(rows, key),
+        PreparedToolChange::Edit { rows, .. } => render_edit_diff(rows, mode),
+        PreparedToolChange::Write { rows, .. } => render_write_diff(rows),
     };
     div()
         .id(("tool-change", key))
@@ -256,45 +260,55 @@ fn write_rows(content: &str, language: &str) -> Vec<SideLine> {
     rows
 }
 
-fn render_edit_diff(paired: &[PairedLine], key: usize, mode: EmbeddedDiffMode) -> AnyElement {
+fn render_edit_diff(paired: &Arc<Vec<PairedLine>>, mode: EmbeddedDiffMode) -> AnyElement {
     if mode == EmbeddedDiffMode::Unified {
-        return render_unified_edit_diff(paired, key);
+        return render_unified_edit_diff(paired);
     }
-    let truncated = paired.len() > MAX_DIFF_LINES;
+    let visible_count = paired.len().min(MAX_DIFF_LINES);
+    let rows = paired.clone();
     div()
-        .id(("split-diff-body", key))
         .w_full()
         .min_w_0()
-        .children(
-            paired
-                .iter()
-                .take(MAX_DIFF_LINES)
-                .enumerate()
-                .map(|(index, row)| render_paired_line(row, key, index)),
-        )
-        .when(truncated, |body| {
+        .child(DiffElement::split(
+            visible_count,
+            px(28.0),
+            px(48.0),
+            move |index| {
+                rows.get(index)
+                    .map_or_else(DiffPaintRow::default, |row| DiffPaintRow {
+                        old: row.old.as_ref().map(diff_cell),
+                        new: row.new.as_ref().map(diff_cell),
+                    })
+            },
+        ))
+        .when(paired.len() > MAX_DIFF_LINES, |body| {
             body.child(modal_limit_hint(paired.len() - MAX_DIFF_LINES))
         })
         .into_any_element()
 }
 
-fn render_unified_edit_diff(paired: &[PairedLine], key: usize) -> AnyElement {
+fn render_unified_edit_diff(paired: &Arc<Vec<PairedLine>>) -> AnyElement {
     let row_count = paired.iter().flat_map(unified_pair_rows).flatten().count();
-    let truncated = row_count > MAX_DIFF_LINES;
+    let rows = Arc::new(
+        paired
+            .iter()
+            .flat_map(unified_pair_rows)
+            .flatten()
+            .take(MAX_DIFF_LINES)
+            .cloned()
+            .collect::<Vec<_>>(),
+    );
+    let visible_count = rows.len();
     div()
-        .id(("unified-diff-body", key))
         .w_full()
         .min_w_0()
-        .children(
-            paired
-                .iter()
-                .flat_map(unified_pair_rows)
-                .flatten()
-                .take(MAX_DIFF_LINES)
-                .enumerate()
-                .map(|(index, row)| render_diff_side(Some(row), key, index, "unified")),
-        )
-        .when(truncated, |body| {
+        .child(DiffElement::unified(
+            visible_count,
+            px(28.0),
+            px(48.0),
+            move |index| rows.get(index).map(diff_cell),
+        ))
+        .when(row_count > MAX_DIFF_LINES, |body| {
             body.child(modal_limit_hint(row_count - MAX_DIFF_LINES))
         })
         .into_any_element()
@@ -322,19 +336,19 @@ fn unified_edit_rows(paired: &[PairedLine]) -> Vec<SideLine> {
         .collect()
 }
 
-fn render_write_diff(rows: &[SideLine], key: usize) -> AnyElement {
-    let truncated = rows.len() > MAX_DIFF_LINES;
+fn render_write_diff(rows: &Arc<Vec<SideLine>>) -> AnyElement {
+    let visible_count = rows.len().min(MAX_DIFF_LINES);
+    let source = rows.clone();
     div()
-        .id(("write-diff-body", key))
         .w_full()
         .min_w_0()
-        .children(
-            rows.iter()
-                .take(MAX_DIFF_LINES)
-                .enumerate()
-                .map(|(index, row)| render_diff_side(Some(row), key, index, "write")),
-        )
-        .when(truncated, |body| {
+        .child(DiffElement::unified(
+            visible_count,
+            px(28.0),
+            px(48.0),
+            move |index| source.get(index).map(diff_cell),
+        ))
+        .when(rows.len() > MAX_DIFF_LINES, |body| {
             body.child(modal_limit_hint(rows.len() - MAX_DIFF_LINES))
         })
         .into_any_element()
@@ -351,81 +365,18 @@ fn modal_limit_hint(remaining: usize) -> impl IntoElement {
         .child(format!("{remaining} additional lines omitted"))
 }
 
-fn render_paired_line(row: &PairedLine, key: usize, index: usize) -> AnyElement {
-    div()
-        .w_full()
-        .min_w_0()
-        .flex()
-        .items_stretch()
-        .child(
-            div()
-                .w_1_2()
-                .min_w_0()
-                .child(render_diff_side(row.old.as_ref(), key, index, "old")),
-        )
-        .child(
-            div()
-                .w_1_2()
-                .min_w_0()
-                .border_l(THEME.border)
-                .border_color(THEME.colors.border)
-                .child(render_diff_side(row.new.as_ref(), key, index, "new")),
-        )
-        .into_any_element()
-}
-
-fn render_diff_side(
-    line: Option<&SideLine>,
-    key: usize,
-    index: usize,
-    side: &'static str,
-) -> AnyElement {
-    let Some(line) = line else {
-        return div()
-            .min_h(px(28.0))
-            .w_full()
-            .bg(THEME.colors.canvas)
-            .into_any_element();
+fn diff_cell(line: &SideLine) -> DiffCell {
+    let (marker, tone) = match line.kind {
+        ChangeKind::Context => (" ", DiffTone::Context),
+        ChangeKind::Addition => ("+", DiffTone::Addition),
+        ChangeKind::Deletion => ("-", DiffTone::Deletion),
+        ChangeKind::Ellipsis => ("", DiffTone::Muted),
     };
-    let (marker, background, foreground) = line_colors(line.kind);
-    let line_number = gutter_label(marker, line.number);
-    div()
-        .w_full()
-        .min_w_0()
-        .min_h(px(28.0))
-        .flex()
-        .items_start()
-        .bg(background)
-        .font_family(MONO_FONT_FAMILY)
-        .text_size(THEME.type_scale.body_small)
-        .child(
-            div()
-                .w(px(48.0))
-                .flex_none()
-                .px(THEME.space.xs)
-                .py(THEME.space.xs)
-                .text_align(gpui::TextAlign::Right)
-                .text_color(if line.kind == ChangeKind::Context {
-                    THEME.colors.subtle
-                } else {
-                    foreground
-                })
-                .child(line_number),
-        )
-        .child(
-            div()
-                .id(format!("change-diff-{key}-{index}-{side}"))
-                .min_w_0()
-                .flex_1()
-                .overflow_hidden()
-                .whitespace_normal()
-                .px(THEME.space.xs)
-                .py(px(2.0))
-                .line_height(THEME.type_scale.line_body)
-                .text_color(foreground)
-                .child(line.syntax.element()),
-        )
-        .into_any_element()
+    DiffCell {
+        gutter: Some(gutter_label(marker, line.number)),
+        text: line.syntax.clone(),
+        tone,
+    }
 }
 
 fn gutter_label(marker: &str, number: Option<u64>) -> String {
@@ -433,15 +384,6 @@ fn gutter_label(marker: &str, number: Option<u64>) -> String {
         ("", None) => String::new(),
         (marker, None) => marker.to_owned(),
         (marker, Some(number)) => format!("{marker}{number}"),
-    }
-}
-
-fn line_colors(kind: ChangeKind) -> (&'static str, gpui::Rgba, gpui::Rgba) {
-    match kind {
-        ChangeKind::Context => (" ", THEME.colors.canvas, THEME.colors.text),
-        ChangeKind::Addition => ("+", THEME.colors.diff_added, THEME.colors.success),
-        ChangeKind::Deletion => ("-", THEME.colors.diff_deleted, THEME.colors.error),
-        ChangeKind::Ellipsis => ("", THEME.colors.surface, THEME.colors.subtle),
     }
 }
 
@@ -720,7 +662,7 @@ mod tests {
             EditDiffFormat::Unnumbered,
         );
         let prepared = PreparedToolChange::Edit {
-            rows: pair_edit_rows(&rows, "rs"),
+            rows: Arc::new(pair_edit_rows(&rows, "rs")),
             additions: 1,
             deletions: 2,
         };
