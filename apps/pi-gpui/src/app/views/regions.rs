@@ -8,6 +8,10 @@ pub(crate) struct SessionRailView {
     app: WeakEntity<PiApp>,
 }
 
+pub(crate) struct ArchivedSessionRailView {
+    app: WeakEntity<PiApp>,
+}
+
 pub(crate) struct TranscriptView {
     app: WeakEntity<PiApp>,
     markdown_cache: crate::transcript_markdown::TranscriptMarkdownCache,
@@ -27,6 +31,12 @@ pub(crate) struct WorkGraphDetailView {
 }
 
 impl SessionRailView {
+    pub(crate) fn new(app: WeakEntity<PiApp>) -> Self {
+        Self { app }
+    }
+}
+
+impl ArchivedSessionRailView {
     pub(crate) fn new(app: WeakEntity<PiApp>) -> Self {
         Self { app }
     }
@@ -71,6 +81,18 @@ impl Render for SessionRailView {
         };
         app.read(cx)
             .render_sessions(self.app.clone())
+            .into_any_element()
+    }
+}
+
+impl Render for ArchivedSessionRailView {
+    fn render(&mut self, _: &mut gpui::Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
+        let _timing = crate::performance::Timing::new("render.archived_session_sidebar");
+        let Some(app) = self.app.upgrade() else {
+            return gpui::div().into_any_element();
+        };
+        app.read(cx)
+            .render_archived_sessions(self.app.clone())
             .into_any_element()
     }
 }

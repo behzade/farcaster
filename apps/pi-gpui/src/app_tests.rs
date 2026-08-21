@@ -35,6 +35,24 @@ fn item(text: &str) -> TranscriptItem {
     }
 }
 
+fn session_summary(id: &str, parent: Option<&str>, settled: bool) -> SessionSummary {
+    SessionSummary::from_cached(
+        id.into(),
+        PathBuf::from(format!("/{id}.jsonl")),
+        PathBuf::from("/project"),
+        id.into(),
+        String::new(),
+        String::new(),
+        parent.map(str::to_owned),
+        SystemTime::UNIX_EPOCH,
+        0,
+        UsageSummary::default(),
+        settled,
+        false,
+        String::new(),
+    )
+}
+
 #[test]
 fn unchanged_scroll_follow_event_does_not_invalidate_transcript() {
     let mut following = true;
@@ -118,6 +136,58 @@ fn session_catalog_changes_invalidate_only_the_regions_that_render_them() {
 }
 
 #[test]
+fn switching_between_active_sessions_does_not_invalidate_archived_sessions() {
+    let sessions = vec![
+        session_summary("first", None, false),
+        session_summary("second", None, false),
+    ];
+    let previous = RuntimeSnapshot {
+        selected_session: Some(PathBuf::from("/first.jsonl")),
+        ..RuntimeSnapshot::default()
+    };
+    let next = RuntimeSnapshot {
+        selected_session: Some(PathBuf::from("/second.jsonl")),
+        ..RuntimeSnapshot::default()
+    };
+
+    assert!(!archived_session_rail_snapshot_changed(
+        &sessions, &previous, &next,
+    ));
+
+    let archived_sessions = vec![
+        session_summary("first", None, false),
+        session_summary("second", None, true),
+    ];
+    assert!(archived_session_rail_snapshot_changed(
+        &archived_sessions,
+        &previous,
+        &next,
+    ));
+}
+
+#[test]
+fn active_session_discovery_does_not_invalidate_archived_sessions() {
+    let archived = session_summary("archived", None, true);
+    let current = vec![archived.clone()];
+    let with_active = vec![session_summary("active", None, false), archived.clone()];
+
+    assert!(!archived_session_catalog_changed(
+        &current,
+        &current,
+        &with_active,
+        &with_active,
+    ));
+    let mut renamed = archived;
+    renamed.title = "Renamed".into();
+    assert!(archived_session_catalog_changed(
+        &current,
+        &current,
+        &[renamed],
+        &current,
+    ));
+}
+
+#[test]
 fn done_is_recent_only_after_an_active_status_transition() {
     assert!(!starts_recent_completion(None, "Done", false));
     assert!(!starts_recent_completion(Some("Done"), "Done", false));
@@ -128,24 +198,10 @@ fn done_is_recent_only_after_an_active_status_transition() {
 
 #[test]
 fn selecting_a_subagent_does_not_invalidate_the_session_rail() {
-    let session = |id: &str, parent: Option<&str>| {
-        SessionSummary::from_cached(
-            id.into(),
-            PathBuf::from(format!("/{id}.jsonl")),
-            PathBuf::from("/project"),
-            id.into(),
-            String::new(),
-            String::new(),
-            parent.map(str::to_owned),
-            SystemTime::UNIX_EPOCH,
-            0,
-            UsageSummary::default(),
-            false,
-            false,
-            String::new(),
-        )
-    };
-    let sessions = vec![session("root", None), session("child", Some("root"))];
+    let sessions = vec![
+        session_summary("root", None, false),
+        session_summary("child", Some("root"), false),
+    ];
     let previous = RuntimeSnapshot {
         selected_session: Some(PathBuf::from("/root.jsonl")),
         ..RuntimeSnapshot::default()
@@ -180,27 +236,10 @@ fn activity(id: &str, text: &str) -> AgentActivity {
 
 #[test]
 fn run_panel_ignores_activity_changes_outside_the_selected_tree() {
-    let session = |id: &str, parent: Option<&str>| {
-        SessionSummary::from_cached(
-            id.into(),
-            PathBuf::from(format!("/{id}.jsonl")),
-            PathBuf::from("/project"),
-            id.into(),
-            String::new(),
-            String::new(),
-            parent.map(str::to_owned),
-            SystemTime::UNIX_EPOCH,
-            0,
-            UsageSummary::default(),
-            false,
-            false,
-            String::new(),
-        )
-    };
     let sessions = vec![
-        session("root", None),
-        session("child", Some("root")),
-        session("other", None),
+        session_summary("root", None, false),
+        session_summary("child", Some("root"), false),
+        session_summary("other", None, false),
     ];
     let current = HashMap::from([
         ("child".into(), activity("child", "working")),

@@ -16,8 +16,10 @@ mod shell;
 mod usage;
 
 pub(super) use regions::{
-    ComposerView, RunPanelView, SessionRailView, TranscriptView, WorkGraphDetailView,
+    ArchivedSessionRailView, ComposerView, RunPanelView, SessionRailView, TranscriptView,
+    WorkGraphDetailView,
 };
+pub(super) use session_groups::roots_waiting_for_descendants;
 
 use gpui::{
     Context, Focusable as _, InteractiveElement as _, IntoElement, ParentElement as _, Render,

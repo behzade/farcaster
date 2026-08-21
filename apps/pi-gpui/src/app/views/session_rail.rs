@@ -1,9 +1,6 @@
 //! Session rail rendering and interaction.
 
-use std::{
-    collections::{HashMap, HashSet},
-    path::PathBuf,
-};
+use std::{collections::HashMap, path::PathBuf};
 
 use gpui::{
     Anchor, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
@@ -19,7 +16,7 @@ use super::{
     super::PiApp,
     session_groups::{
         ActiveSessionItem, SessionRailItem, merge_visible_session_order, recent_archived_sessions,
-        reordered_session_ids, session_rail_lists,
+        reordered_session_ids, roots_waiting_for_descendants, session_rail_lists,
     },
     session_rows::{
         draft_session_row, project_label, session_badge, session_row, session_row_with_height,
@@ -67,17 +64,10 @@ impl PiApp {
         let archived_entry_count = lists.archived.len();
         let active_rows = lists.active;
         let session_shortcuts = visible_session_shortcuts(&active_rows);
-        let archived_rows = lists.archived;
-        let archived_preview = recent_archived_sessions(&archived_rows, ARCHIVED_PREVIEW_LIMIT);
         reconcile_list_rows(
             &self.session_list,
             &self.session_list_rows,
             active_rows.iter().map(active_item_identity).collect(),
-        );
-        reconcile_list_rows(
-            &self.archived_session_list,
-            &self.archived_session_list_rows,
-            archived_rows.iter().map(archived_item_identity).collect(),
         );
 
         let selected_draft = self.selected_draft.clone();
@@ -155,78 +145,11 @@ impl PiApp {
         )
         .size_full();
 
-        let archived_preview_elements = archived_preview
-            .iter()
-            .map(|item| {
-                let selected = selected_root.as_deref() == Some(item.session.id.as_str());
-                let target = format!("session:{}", item.session.path.display());
-                let badge = session_badge(
-                    item,
-                    self.run_statuses.get(&target).map(String::as_str),
-                    live_root.as_deref(),
-                    &self.snapshot.live_status,
-                    waiting_roots.contains(&item.session.id),
-                );
-                let editing = self
-                    .editing_session_title
-                    .as_ref()
-                    .is_some_and(|edit| edit.path == item.session.path);
-                session_row_with_height(
-                    item,
-                    selected,
-                    badge,
-                    None,
-                    None,
-                    false,
-                    editing.then(|| self.session_title_input.clone()),
-                    THEME.controls.archived_preview_row,
-                    entity.clone(),
-                )
-            })
-            .collect::<Vec<_>>();
-        let archived_live_status = self.snapshot.live_status.clone();
-        let archived_run_statuses = self.run_statuses.clone();
-        let archived_waiting_roots = waiting_roots;
-        let archived_row_entity = entity.clone();
-        let archived_editing_path = self
-            .editing_session_title
-            .as_ref()
-            .map(|edit| edit.path.clone());
-        let archived_title_input = self.session_title_input.clone();
-        let archived_list =
-            list(
-                self.archived_session_list.clone(),
-                move |index, _, _| match archived_rows.get(index) {
-                    Some(item) => {
-                        let selected = selected_root.as_deref() == Some(item.session.id.as_str());
-                        let target = format!("session:{}", item.session.path.display());
-                        let badge = session_badge(
-                            item,
-                            archived_run_statuses.get(&target).map(String::as_str),
-                            live_root.as_deref(),
-                            &archived_live_status,
-                            archived_waiting_roots.contains(&item.session.id),
-                        );
-                        let editing =
-                            archived_editing_path.as_deref() == Some(item.session.path.as_path());
-                        session_row(
-                            item,
-                            selected,
-                            badge,
-                            None,
-                            None,
-                            false,
-                            editing.then(|| archived_title_input.clone()),
-                            archived_row_entity.clone(),
-                        )
-                    }
-                    None => div().into_any_element(),
-                },
-            )
-            .size_full();
-
         let archived_expanded = self.archived_sessions_expanded && archived_entry_count > 0;
-        let archive_toggle_entity = entity.clone();
+        let archived_session_rail = self
+            .archived_session_rail_view
+            .clone()
+            .cached(gpui::StyleRefinement::default());
         let projects = self.available_projects();
         let project_filter_entity = entity.clone();
         let filter_label = self
@@ -371,55 +294,7 @@ impl PiApp {
                         )
                     })
                     .when(archived_entry_count > 0, |lists| {
-                        lists.child(
-                            div()
-                                .id("archived-sessions")
-                                .min_h_0()
-                                .flex()
-                                .flex_col()
-                                .when(archived_expanded, |archived| archived.flex_1())
-                                .when(!archived_expanded, |archived| archived.flex_none())
-                                .child(
-                                    div()
-                                        .h(THEME.controls.utility_row)
-                                        .flex_none()
-                                        .flex()
-                                        .items_center()
-                                        .justify_between()
-                                        .px(THEME.space.md)
-                                        .border_t(THEME.border)
-                                        .border_color(THEME.colors.border)
-                                        .text_size(THEME.type_scale.caption)
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(THEME.colors.muted)
-                                        .child(format!("Archived · {archived_entry_count}"))
-                                        .child(disclosure_button(
-                                            "toggle-archived-sessions",
-                                            archived_expanded,
-                                            "Archived sessions",
-                                            move |_, cx| {
-                                                let _ =
-                                                    archive_toggle_entity.update(cx, |this, cx| {
-                                                        this.archived_sessions_expanded =
-                                                            !this.archived_sessions_expanded;
-                                                        this.notify_session_rail(cx);
-                                                    });
-                                            },
-                                        )),
-                                )
-                                .when(!archived_expanded, |archived| {
-                                    archived.children(archived_preview_elements)
-                                })
-                                .when(archived_expanded, |archived| {
-                                    archived.child(
-                                        div()
-                                            .flex_1()
-                                            .min_h_0()
-                                            .overflow_y_hidden()
-                                            .child(archived_list),
-                                    )
-                                }),
-                        )
+                        lists.child(archived_session_rail)
                     }),
             )
             .when(
@@ -437,6 +312,148 @@ impl PiApp {
                     )
                 },
             )
+            .into_any_element()
+    }
+
+    pub(super) fn render_archived_sessions(&self, entity: WeakEntity<Self>) -> impl IntoElement {
+        let selected_root =
+            root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
+                .map(|session| session.id.clone());
+        let live_root = root_session_for_path(&self.sessions, self.snapshot.live_session.as_deref())
+            .map(|session| session.id.clone());
+        let waiting_roots = roots_waiting_for_descendants(&self.all_sessions);
+        let archived_rows = session_rail_lists(
+            &self.sessions,
+            &self.drafts,
+            self.session_project_filter.as_deref(),
+            &self.session_order,
+        )
+        .archived;
+        let archived_entry_count = archived_rows.len();
+        let archived_preview = recent_archived_sessions(&archived_rows, ARCHIVED_PREVIEW_LIMIT);
+        reconcile_list_rows(
+            &self.archived_session_list,
+            &self.archived_session_list_rows,
+            archived_rows.iter().map(archived_item_identity).collect(),
+        );
+
+        let archived_preview_elements = archived_preview
+            .iter()
+            .map(|item| {
+                let selected = selected_root.as_deref() == Some(item.session.id.as_str());
+                let target = format!("session:{}", item.session.path.display());
+                let badge = session_badge(
+                    item,
+                    self.run_statuses.get(&target).map(String::as_str),
+                    live_root.as_deref(),
+                    &self.snapshot.live_status,
+                    waiting_roots.contains(&item.session.id),
+                );
+                let editing = self
+                    .editing_session_title
+                    .as_ref()
+                    .is_some_and(|edit| edit.path == item.session.path);
+                session_row_with_height(
+                    item,
+                    selected,
+                    badge,
+                    None,
+                    None,
+                    false,
+                    editing.then(|| self.session_title_input.clone()),
+                    THEME.controls.archived_preview_row,
+                    entity.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let archived_live_status = self.snapshot.live_status.clone();
+        let archived_run_statuses = self.run_statuses.clone();
+        let archived_waiting_roots = waiting_roots;
+        let archived_row_entity = entity.clone();
+        let archived_editing_path = self
+            .editing_session_title
+            .as_ref()
+            .map(|edit| edit.path.clone());
+        let archived_title_input = self.session_title_input.clone();
+        let archived_list = list(
+            self.archived_session_list.clone(),
+            move |index, _, _| match archived_rows.get(index) {
+                Some(item) => {
+                    let selected = selected_root.as_deref() == Some(item.session.id.as_str());
+                    let target = format!("session:{}", item.session.path.display());
+                    let badge = session_badge(
+                        item,
+                        archived_run_statuses.get(&target).map(String::as_str),
+                        live_root.as_deref(),
+                        &archived_live_status,
+                        archived_waiting_roots.contains(&item.session.id),
+                    );
+                    let editing =
+                        archived_editing_path.as_deref() == Some(item.session.path.as_path());
+                    session_row(
+                        item,
+                        selected,
+                        badge,
+                        None,
+                        None,
+                        false,
+                        editing.then(|| archived_title_input.clone()),
+                        archived_row_entity.clone(),
+                    )
+                }
+                None => div().into_any_element(),
+            },
+        )
+        .size_full();
+
+        let archived_expanded = self.archived_sessions_expanded && archived_entry_count > 0;
+        let archive_toggle_entity = entity;
+        div()
+            .id("archived-sessions")
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .when(archived_expanded, |archived| archived.flex_1())
+            .when(!archived_expanded, |archived| archived.flex_none())
+            .child(
+                div()
+                    .h(THEME.controls.utility_row)
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .px(THEME.space.md)
+                    .border_t(THEME.border)
+                    .border_color(THEME.colors.border)
+                    .text_size(THEME.type_scale.caption)
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(THEME.colors.muted)
+                    .child(format!("Archived · {archived_entry_count}"))
+                    .child(disclosure_button(
+                        "toggle-archived-sessions",
+                        archived_expanded,
+                        "Archived sessions",
+                        move |_, cx| {
+                            let _ = archive_toggle_entity.update(cx, |this, cx| {
+                                this.archived_sessions_expanded =
+                                    !this.archived_sessions_expanded;
+                                this.notify_session_rail(cx);
+                            });
+                        },
+                    )),
+            )
+            .when(!archived_expanded, |archived| {
+                archived.children(archived_preview_elements)
+            })
+            .when(archived_expanded, |archived| {
+                archived.child(
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_y_hidden()
+                        .child(archived_list),
+                )
+            })
             .into_any_element()
     }
 }
@@ -655,31 +672,6 @@ impl PiApp {
             self.notify_session_rail(cx);
         }
     }
-}
-
-fn roots_waiting_for_descendants(sessions: &[SessionSummary]) -> HashSet<String> {
-    let parent_by_id = sessions
-        .iter()
-        .filter_map(|session| {
-            session
-                .parent_session
-                .as_ref()
-                .map(|parent| (session.id.as_str(), parent.as_str()))
-        })
-        .collect::<HashMap<_, _>>();
-    let mut waiting = HashSet::new();
-    for session in sessions.iter().filter(|session| session.is_running) {
-        let mut current = session.id.as_str();
-        let mut seen = HashSet::new();
-        while seen.insert(current) {
-            let Some(parent) = parent_by_id.get(current).copied() else {
-                break;
-            };
-            waiting.insert(parent.to_owned());
-            current = parent;
-        }
-    }
-    waiting
 }
 
 #[cfg(test)]

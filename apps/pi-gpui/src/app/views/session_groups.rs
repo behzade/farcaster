@@ -1,6 +1,9 @@
 //! Pure session-rail ordering and project-filter policy.
 
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 
 use crate::{
     primitives::ReorderPosition,
@@ -46,6 +49,33 @@ pub(super) fn recent_archived_sessions(
     limit: usize,
 ) -> Vec<SessionRailItem> {
     sessions.iter().take(limit).cloned().collect()
+}
+
+pub(in crate::app) fn roots_waiting_for_descendants(
+    sessions: &[SessionSummary],
+) -> HashSet<String> {
+    let parent_by_id = sessions
+        .iter()
+        .filter_map(|session| {
+            session
+                .parent_session
+                .as_ref()
+                .map(|parent| (session.id.as_str(), parent.as_str()))
+        })
+        .collect::<HashMap<_, _>>();
+    let mut waiting = HashSet::new();
+    for session in sessions.iter().filter(|session| session.is_running) {
+        let mut current = session.id.as_str();
+        let mut seen = HashSet::new();
+        while seen.insert(current) {
+            let Some(parent) = parent_by_id.get(current).copied() else {
+                break;
+            };
+            waiting.insert(parent.to_owned());
+            current = parent;
+        }
+    }
+    waiting
 }
 
 pub(super) fn session_rail_lists(
