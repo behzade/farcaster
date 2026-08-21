@@ -22,11 +22,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1787312023,
-        "narHash": "sha256-ECePkalsLOPHy5I0HVw78ZTsGUn76NDZ+oL7CAYLLuc=",
+        "lastModified": 1787324387,
+        "narHash": "sha256-cTFwdUAc/2GqFRMFcOXkwng0ifq6Yit5EEjto1LYWyw=",
         "owner": "behzade",
         "repo": "pi-guardian",
-        "rev": "5eff0ad66f3f9f1470a8ace6048eec066d491bbe",
+        "rev": "e53546870f7b3e88c097448afe4010b8392fbc5a",
         "type": "github"
       },
       "original": {
