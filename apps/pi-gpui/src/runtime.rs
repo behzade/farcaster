@@ -27,8 +27,8 @@ use crate::{
     session_watcher::{SessionWatchEvent, SessionWatcher},
     sessions::{
         LoadedHistory, RUNNING_ACTIVITY_TIMEOUT, SessionDiscovery, SessionSummary,
-        configured_session_root, descendant_sessions, discover, load_history,
-        project_display_history, root_session_for_path,
+        configured_session_root, discover, load_history, project_display_history,
+        session_family_for_path,
     },
     state::StateStore,
 };
@@ -50,6 +50,9 @@ pub(crate) enum RuntimeCommand {
         allow_while_running: bool,
     },
     Abort,
+    StopSessionFamily {
+        path: PathBuf,
+    },
     Reload,
     Compact {
         custom_instructions: Option<String>,
@@ -667,25 +670,57 @@ fn run_supervisor(
         match command_rx.try_recv() {
             Ok(RuntimeCommand::Shutdown) => running = false,
             Ok(command) => {
+                if let RuntimeCommand::StopSessionFamily { path } = &command {
+                    if let Some(family) = session_family_for_path(&catalog_sessions, path) {
+                        let family_paths = family
+                            .iter()
+                            .map(|session| session.path.clone())
+                            .collect::<HashSet<_>>();
+                        let family_actor_keys = actor_paths
+                            .iter()
+                            .filter(|(path, key)| {
+                                family_paths.contains(*path) && *key != &catalog_key
+                            })
+                            .map(|(_, key)| key.clone())
+                            .collect::<HashSet<_>>();
+                        for key in &family_actor_keys {
+                            if let Some(actor) = actors.remove(key) {
+                                actor.send(RuntimeCommand::Shutdown);
+                                actor.join();
+                            }
+                            latest.remove(key);
+                            last_touch.remove(key);
+                            pending_extensions.remove(key);
+                            active_dialogs.remove(key);
+                            needs_input.remove(key);
+                            interacted.remove(key);
+                            published_statuses.remove(key);
+                        }
+                        document_revisions.retain(|path, _| !family_paths.contains(path));
+                        actor_paths.retain(|path, _| !family_paths.contains(path));
+                        if family_actor_keys.contains(&selected) {
+                            selected = catalog_key.clone();
+                        }
+                        if let Some(catalog) = actors.get(&catalog_key) {
+                            catalog.send(RuntimeCommand::RefreshSessions);
+                        }
+                    }
+                    continue;
+                }
                 if let RuntimeCommand::MoveSession {
                     path,
                     target_project,
                 } = &command
                 {
                     let result = (|| {
-                        let root = root_session_for_path(&catalog_sessions, Some(path.as_path()))
-                            .ok_or_else(|| {
-                            "The session is no longer available to move".to_owned()
-                        })?;
+                        let family =
+                            session_family_for_path(&catalog_sessions, path).ok_or_else(|| {
+                                "The session is no longer available to move".to_owned()
+                            })?;
+                        let root = family[0];
                         if root.path != *path {
                             return Err("Only a root session can be moved".to_owned());
                         }
-                        let mut family = vec![root];
-                        family.extend(
-                            descendant_sessions(&catalog_sessions, &root.id)
-                                .into_iter()
-                                .map(|(session, _)| session),
-                        );
                         if family.iter().any(|session| session.is_running) {
                             return Err(
                                 "Wait for the session family to finish before moving it".to_owned()
@@ -1401,15 +1436,8 @@ impl RuntimeOwner {
     }
 
     fn send_startup_queries(&mut self) {
-        for kind in [
-            "get_state",
-            "get_entries",
-            "get_session_stats",
-            "get_available_models",
-            "get_available_thinking_levels",
-            "get_commands",
-        ] {
-            self.send(command(kind));
+        for command in startup_commands() {
+            self.send(command);
         }
     }
 
@@ -1456,7 +1484,7 @@ impl RuntimeOwner {
                     });
                 }
             },
-            RuntimeCommand::MoveSession { .. } => {}
+            RuntimeCommand::MoveSession { .. } | RuntimeCommand::StopSessionFamily { .. } => {}
             RuntimeCommand::NewSession { project, .. } => {
                 self.project = project;
                 self.start_process(None);
@@ -2220,6 +2248,18 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
         truncated.push('…');
     }
     truncated
+}
+
+fn startup_commands() -> [Value; 7] {
+    [
+        json!({"type":"set_steering_mode","mode":"all"}),
+        command("get_state"),
+        command("get_entries"),
+        command("get_session_stats"),
+        command("get_available_models"),
+        command("get_available_thinking_levels"),
+        command("get_commands"),
+    ]
 }
 
 const fn can_send_prompt(mode: PromptMode, running: bool, allow_while_running: bool) -> bool {
@@ -3586,6 +3626,14 @@ mod tests {
         let identity = new_draft.session_identity();
         assert_eq!(identity.model, Some(&sol));
         assert_eq!(identity.effort, Some("high"));
+    }
+
+    #[test]
+    fn startup_delivers_all_composer_steers_at_one_turn_boundary() {
+        assert_eq!(
+            startup_commands()[0],
+            json!({"type":"set_steering_mode","mode":"all"})
+        );
     }
 
     #[test]

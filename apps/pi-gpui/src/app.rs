@@ -1,5 +1,6 @@
 //! Top-level GPUI composition for the active root session.
 
+mod archive;
 mod changes;
 mod composer_images;
 mod drafts;
@@ -204,6 +205,7 @@ pub(crate) struct PiApp {
     workgraph_detail_view: Entity<WorkGraphDetailView>,
     workgraph_sidebar_view: Entity<WorkGraphSidebarView>,
     surface: AppSurface,
+    workgraph_inspector_issue: Option<u64>,
     run_panel_scroll: ScrollHandle,
     composer_footer_scroll: ScrollHandle,
     composer_sessions: ComposerSessions,
@@ -242,6 +244,7 @@ pub(crate) struct PiApp {
     pending_session_reset: bool,
     sessions_sheet: bool,
     review_sessions_expanded: bool,
+    pending_archive: Option<archive::PendingArchive>,
     archived_sessions_expanded: bool,
     run_sheet: bool,
     keybindings_help: bool,
@@ -426,7 +429,7 @@ impl PiApp {
         let workgraph_view =
             cx.new(|cx| WorkGraphBoardView::new(crate::state::state_path(), project.clone(), cx));
         let workgraph_detail_view =
-            cx.new(|cx| WorkGraphDetailView::new(workgraph_view.clone(), cx));
+            cx.new(|cx| WorkGraphDetailView::new(app.clone(), workgraph_view.clone(), cx));
         let workgraph_sidebar_view = cx.new(|cx| {
             WorkGraphSidebarView::new(app.clone(), crate::state::state_path(), project.clone(), cx)
         });
@@ -520,6 +523,7 @@ impl PiApp {
             workgraph_detail_view,
             workgraph_sidebar_view,
             surface: AppSurface::Chat,
+            workgraph_inspector_issue: None,
             run_panel_scroll: ScrollHandle::new(),
             composer_footer_scroll: ScrollHandle::new(),
             composer_sessions,
@@ -558,6 +562,7 @@ impl PiApp {
             pending_session_reset: false,
             sessions_sheet: false,
             review_sessions_expanded: false,
+            pending_archive: None,
             archived_sessions_expanded: false,
             run_sheet: false,
             keybindings_help: false,
@@ -626,10 +631,16 @@ impl PiApp {
                     composer_dirty = true;
                     run_dirty = true;
                 }
-                RuntimeEvent::SessionStatus { .. } => {
+                RuntimeEvent::SessionStatus {
+                    target, session, ..
+                } => {
                     rail_dirty = true;
                     review_rail_dirty = true;
-                    archived_rail_dirty = true;
+                    archived_rail_dirty |= archive::session_event_affects_archived_rail(
+                        &self.sessions,
+                        target,
+                        session.as_deref(),
+                    );
                 }
                 RuntimeEvent::HistoryReset { .. } => transcript_dirty = true,
                 RuntimeEvent::SessionReset { .. } => {
@@ -639,11 +650,17 @@ impl PiApp {
                     run_dirty = true;
                 }
                 RuntimeEvent::ExtensionUi { .. } => {}
-                RuntimeEvent::PromptResult { .. } => {
+                RuntimeEvent::PromptResult {
+                    target, session, ..
+                } => {
                     root_dirty = true;
                     rail_dirty = true;
                     review_rail_dirty = true;
-                    archived_rail_dirty = true;
+                    archived_rail_dirty |= archive::session_event_affects_archived_rail(
+                        &self.sessions,
+                        target,
+                        session.as_deref(),
+                    );
                     composer_dirty = true;
                     run_dirty = true;
                 }

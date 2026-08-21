@@ -22,10 +22,8 @@ impl IssueDetailShell {
 
 pub(crate) const WIDE_BOARD_MIN_WIDTH: f32 = 1_180.0;
 pub(crate) const COMPACT_BOARD_MIN_WIDTH: f32 = 960.0;
-pub(crate) const EXTERNAL_DETAIL_FILTER_MIN_WIDTH: f32 = 560.0;
 pub(crate) const DETAIL_WIDTH: f32 = 400.0;
 pub(crate) const DETAIL_MIN_WIDTH: f32 = 360.0;
-pub(crate) const DETAIL_MAX_WIDTH: f32 = 440.0;
 
 #[must_use]
 pub(crate) fn board_layout_mode(width: Pixels) -> BoardLayoutMode {
@@ -36,19 +34,6 @@ pub(crate) fn board_layout_mode(width: Pixels) -> BoardLayoutMode {
         BoardLayoutMode::Compact
     } else {
         BoardLayoutMode::Narrow
-    }
-}
-
-#[must_use]
-pub(crate) fn surface_board_layout(width: Pixels, external_detail: bool) -> BoardLayoutMode {
-    let layout = board_layout_mode(width);
-    if external_detail
-        && layout == BoardLayoutMode::Narrow
-        && f32::from(width) >= EXTERNAL_DETAIL_FILTER_MIN_WIDTH
-    {
-        BoardLayoutMode::Compact
-    } else {
-        layout
     }
 }
 
@@ -71,7 +56,7 @@ mod tests {
 
     use super::{
         BoardLayoutMode, IssueDetailShell, board_layout_mode, board_toolbar_stacks,
-        issue_detail_shell, surface_board_layout,
+        issue_detail_shell,
     };
 
     #[test]
@@ -81,22 +66,6 @@ mod tests {
         assert_eq!(board_layout_mode(px(1_114.0)), BoardLayoutMode::Compact);
         assert_eq!(board_layout_mode(px(1_179.0)), BoardLayoutMode::Compact);
         assert_eq!(board_layout_mode(px(1_180.0)), BoardLayoutMode::Wide);
-    }
-
-    #[test]
-    fn external_detail_keeps_the_filter_rail_when_the_list_has_room() {
-        assert_eq!(
-            surface_board_layout(px(559.0), true),
-            BoardLayoutMode::Narrow
-        );
-        assert_eq!(
-            surface_board_layout(px(560.0), true),
-            BoardLayoutMode::Compact
-        );
-        assert_eq!(
-            surface_board_layout(px(560.0), false),
-            BoardLayoutMode::Narrow
-        );
     }
 
     #[test]

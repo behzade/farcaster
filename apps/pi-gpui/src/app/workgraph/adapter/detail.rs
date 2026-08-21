@@ -1,10 +1,13 @@
 //! Selected-issue detail presentation for the Work surface.
 
 use gpui::{
-    Context, Entity, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
+    Anchor, Context, Entity, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, div, prelude::FluentBuilder as _, px,
 };
-use gpui_component::input::{Input, Textarea};
+use gpui_component::{
+    input::{Input, Textarea},
+    menu::{DropdownMenu as _, PopupMenuItem},
+};
 
 use super::WorkGraphBoardView;
 use crate::{
@@ -17,7 +20,7 @@ use crate::{
         core::status_label,
         layout::{BoardLayoutMode, DETAIL_MIN_WIDTH, DETAIL_WIDTH, issue_detail_shell},
     },
-    primitives::{ButtonTone, FeedbackTone, button, feedback},
+    primitives::{ButtonTone, FeedbackTone, button, dropdown_button, feedback},
     theme::THEME,
 };
 
@@ -200,32 +203,43 @@ impl WorkGraphBoardView {
                             });
                         },
                     );
-                    let status_actions = [
-                        workgraph::contract::IssueStatus::Open,
-                        workgraph::contract::IssueStatus::InProgress,
-                        workgraph::contract::IssueStatus::Blocked,
-                        workgraph::contract::IssueStatus::Done,
-                        workgraph::contract::IssueStatus::Cancelled,
-                    ]
-                    .into_iter()
-                    .filter(|status| *status != issue.status)
-                    .map(|status| {
-                        let entity = entity.clone();
-                        let number = issue.number;
-                        let version = issue.version;
-                        button(
-                            format!("workgraph-status-{number}-{status:?}"),
-                            status_label(status),
-                            ButtonTone::Quiet,
-                            true,
-                            move |_, cx| {
-                                entity.update(cx, |this, cx| {
-                                    this.set_issue_status(number, status, version, cx);
-                                });
-                            },
-                        )
-                    })
-                    .collect::<Vec<_>>();
+                    let number = issue.number;
+                    let version = issue.version;
+                    let current_status = issue.status;
+                    let status_entity = entity.clone();
+                    let status_selector = dropdown_button(
+                        format!("workgraph-status-{number}"),
+                        status_label(current_status),
+                        ButtonTone::Quiet,
+                        true,
+                    )
+                    .dropdown_menu_with_anchor(
+                        Anchor::TopLeft,
+                        move |menu, _, _| {
+                            [
+                                workgraph::contract::IssueStatus::Open,
+                                workgraph::contract::IssueStatus::InProgress,
+                                workgraph::contract::IssueStatus::Blocked,
+                                workgraph::contract::IssueStatus::Done,
+                                workgraph::contract::IssueStatus::Cancelled,
+                            ]
+                            .into_iter()
+                            .filter(|status| *status != current_status)
+                            .fold(
+                                menu.label("Status"),
+                                |menu, status| {
+                                    let entity = status_entity.clone();
+                                    menu.item(PopupMenuItem::new(status_label(status)).on_click(
+                                        move |_, _, cx| {
+                                            entity.update(cx, |this, cx| {
+                                                this.set_issue_status(number, status, version, cx);
+                                            });
+                                        },
+                                    ))
+                                },
+                            )
+                        },
+                    );
                     let session_action = self.active_session.as_ref().map(|_| {
                         let number = issue.number;
                         let entity = entity.clone();
@@ -294,12 +308,16 @@ impl WorkGraphBoardView {
                                     div()
                                         .text_size(THEME.type_scale.caption)
                                         .text_color(status_color(issue.status))
-                                        .child(format!(
-                                            "{}  ·  Priority {}  ·  Version {}",
-                                            status_label(issue.status),
-                                            issue.priority,
-                                            issue.version
-                                        )),
+                                        .child(if issue.priority == 0 {
+                                            status_label(issue.status).to_owned()
+                                                + "  ·  Normal priority"
+                                        } else {
+                                            format!(
+                                                "{}  ·  Priority {}",
+                                                status_label(issue.status),
+                                                issue.priority
+                                            )
+                                        }),
                                 )
                                 .child(edit_action),
                         )
@@ -314,13 +332,7 @@ impl WorkGraphBoardView {
                                         .text_color(THEME.colors.subtle)
                                         .child("Change status"),
                                 )
-                                .child(
-                                    div()
-                                        .flex()
-                                        .flex_wrap()
-                                        .gap(THEME.space.xs)
-                                        .children(status_actions),
-                                ),
+                                .child(status_selector),
                         )
                         .child(detail_section(
                             "Description",

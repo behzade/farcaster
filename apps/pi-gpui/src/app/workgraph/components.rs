@@ -90,37 +90,6 @@ pub(super) fn render_groups(
         )
 }
 
-pub(super) fn render_graph(
-    selected: Option<u64>,
-    entity: Entity<WorkGraphBoardView>,
-    data: &BoardData,
-) -> impl IntoElement {
-    let issues = data.issues.clone();
-    let dependencies = data.dependencies.clone();
-    div()
-        .id("workgraph-dependency-list")
-        .flex_1()
-        .min_w_0()
-        .h_full()
-        .overflow_y_scroll()
-        .flex()
-        .flex_col()
-        .gap(THEME.space.xs)
-        .children(issues.into_iter().map(move |issue| {
-            let dependency_titles = dependencies
-                .iter()
-                .filter(|edge| edge.issue_number == issue.number)
-                .filter_map(|edge| {
-                    data.issues
-                        .iter()
-                        .find(|candidate| candidate.number == edge.depends_on)
-                        .map(|candidate| format!("#{} {}", candidate.number, candidate.title))
-                })
-                .collect::<Vec<_>>();
-            render_graph_row(issue, dependency_titles, selected, entity.clone())
-        }))
-}
-
 pub(super) fn render_create(
     title: &Entity<InputState>,
     body: &Entity<TextareaState>,
@@ -580,47 +549,4 @@ fn render_issue_row(
                     .child(row.issue.body.lines().next().unwrap_or_default().to_owned()),
             )
         })
-}
-
-pub(super) fn render_graph_row(
-    issue: workgraph::contract::Issue,
-    dependencies: Vec<String>,
-    selected: Option<u64>,
-    entity: Entity<WorkGraphBoardView>,
-) -> impl IntoElement {
-    let number = issue.number;
-    let is_selected = selected == Some(number);
-    div()
-        .id(format!("workgraph-graph-{number}"))
-        .cursor_pointer()
-        .on_click(move |_, _, cx| entity.update(cx, |this, cx| this.select_issue(number, cx)))
-        .px(THEME.space.md)
-        .py(THEME.space.sm)
-        .border_b(THEME.border)
-        .border_color(THEME.colors.border)
-        .bg(if is_selected {
-            THEME.colors.selection
-        } else {
-            THEME.colors.panel
-        })
-        .hover(|style| style.bg(THEME.colors.hover))
-        .flex()
-        .items_center()
-        .gap(THEME.space.md)
-        .child(
-            div()
-                .w(px(220.0))
-                .text_color(THEME.colors.text)
-                .child(format!("#{number}  {}", issue.title)),
-        )
-        .child(
-            div()
-                .text_size(THEME.type_scale.caption)
-                .text_color(THEME.colors.subtle)
-                .child(if dependencies.is_empty() {
-                    "Ready root".into()
-                } else {
-                    format!("← {}", dependencies.join(", "))
-                }),
-        )
 }

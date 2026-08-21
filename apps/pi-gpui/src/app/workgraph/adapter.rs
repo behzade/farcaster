@@ -5,10 +5,10 @@ mod detail;
 use std::path::PathBuf;
 
 use super::{
-    components::{render_create, render_filter_rail, render_graph, render_groups},
-    contract::{BoardFilter, BoardLoadState, BoardMode},
+    components::{render_create, render_filter_rail, render_groups},
+    contract::{BoardFilter, BoardLoadState},
     core::{adjacent_issue_number, filter_count, matching_project_groups},
-    layout::{BoardLayoutMode, DETAIL_WIDTH, board_toolbar_stacks, surface_board_layout},
+    layout::{BoardLayoutMode, board_layout_mode, board_toolbar_stacks},
     persistence::{
         add_dependency, add_issue_note, create_issue, link_session, load_issues, remove_dependency,
         update_issue_fields, update_issue_status,
@@ -34,7 +34,6 @@ pub(crate) struct WorkGraphBoardView {
     state: BoardLoadState,
     focus: FocusHandle,
     filter: BoardFilter,
-    mode: BoardMode,
     selected: Option<u64>,
     creating: bool,
     editing: Option<u64>,
@@ -69,7 +68,6 @@ impl WorkGraphBoardView {
             state,
             focus: cx.focus_handle(),
             filter: BoardFilter::Active,
-            mode: BoardMode::Kanban,
             selected: None,
             creating: false,
             editing: None,
@@ -124,13 +122,6 @@ impl WorkGraphBoardView {
     pub(super) fn set_filter(&mut self, filter: BoardFilter, cx: &mut Context<Self>) {
         if self.filter != filter {
             self.filter = filter;
-            cx.notify();
-        }
-    }
-
-    fn set_mode(&mut self, mode: BoardMode, cx: &mut Context<Self>) {
-        if self.mode != mode {
-            self.mode = mode;
             cx.notify();
         }
     }
@@ -473,16 +464,12 @@ impl Render for WorkGraphBoardView {
         let entity = cx.entity();
         let viewport_width = window.viewport_size().width;
         let shell_layout = crate::layout::layout_mode(viewport_width);
-        let mut board_width = if crate::layout::shows_left_inline(shell_layout) {
+        let board_width = if crate::layout::shows_left_inline(shell_layout) {
             viewport_width - THEME.layout.session_rail
         } else {
             viewport_width
         };
-        if matches!(shell_layout, crate::layout::LayoutMode::Wide) {
-            board_width -= px(DETAIL_WIDTH);
-        }
-        let external_detail = matches!(shell_layout, crate::layout::LayoutMode::Wide);
-        let layout = surface_board_layout(board_width, external_detail);
+        let layout = board_layout_mode(board_width);
         div()
             .size_full()
             .track_focus(&self.focus)
@@ -526,9 +513,6 @@ impl Render for WorkGraphBoardView {
                         .unwrap_or_default();
                     let groups = matching_project_groups(data, self.filter, &search);
                     let matching_count = groups.iter().map(|group| group.rows.len()).sum::<usize>();
-                    let mode = self.mode;
-                    let kanban = entity.clone();
-                    let graph = entity.clone();
                     let create = entity.clone();
                     let refresh = entity.clone();
                     let active_count = filter_count(data, BoardFilter::Active);
@@ -569,7 +553,7 @@ impl Render for WorkGraphBoardView {
                                                 .text_size(THEME.type_scale.body)
                                                 .font_weight(FontWeight::SEMIBOLD)
                                                 .text_color(THEME.colors.text)
-                                                .child("Project work"),
+                                                .child("Issues"),
                                         )
                                         .child(
                                             div()
@@ -616,29 +600,7 @@ impl Render for WorkGraphBoardView {
                                             move |_, cx| {
                                                 create.update(cx, |this, cx| this.start_create(cx));
                                             },
-                                        ))
-                                        .children([BoardMode::Kanban, BoardMode::Graph].map(|item| {
-                                            let target = if item == BoardMode::Kanban {
-                                                kanban.clone()
-                                            } else {
-                                                graph.clone()
-                                            };
-                                            button(
-                                                format!("workgraph-mode-{item:?}"),
-                                                item.label(),
-                                                if item == mode {
-                                                    ButtonTone::Neutral
-                                                } else {
-                                                    ButtonTone::Quiet
-                                                },
-                                                true,
-                                                move |_, cx| {
-                                                    target.update(cx, |this, cx| {
-                                                        this.set_mode(item, cx)
-                                                    })
-                                                },
-                                            )
-                                        })),
+                                        )),
                                 ),
                         )
                         .child(
@@ -655,8 +617,7 @@ impl Render for WorkGraphBoardView {
                                 })
                                 .when(
                                     !self.creating
-                                        && (external_detail
-                                            || layout != BoardLayoutMode::Narrow
+                                        && (layout != BoardLayoutMode::Narrow
                                             || self.selected.is_none()),
                                     |board| {
                                         board.child(if groups.is_empty() {
@@ -685,13 +646,6 @@ impl Render for WorkGraphBoardView {
                                                         .child("Choose another work state or create an issue."),
                                                 )
                                                 .into_any_element()
-                                        } else if self.mode == BoardMode::Graph {
-                                            render_graph(
-                                                self.selected,
-                                                entity.clone(),
-                                                data,
-                                            )
-                                            .into_any_element()
                                         } else {
                                             render_groups(
                                                 self.selected,
@@ -716,7 +670,6 @@ impl Render for WorkGraphBoardView {
                                 })
                                 .when(
                                     !self.creating
-                                        && !external_detail
                                         && (layout != BoardLayoutMode::Narrow
                                             || self.selected.is_some()),
                                     |board| {

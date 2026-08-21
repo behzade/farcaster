@@ -1,3 +1,4 @@
+mod archive_confirmation;
 mod attachments;
 mod composer;
 mod composer_footer;
@@ -48,7 +49,6 @@ fn session_shortcuts_visible(current: bool, requested: bool, has_text_selection:
 }
 
 use crate::{
-    app::workgraph::layout::{DETAIL_MAX_WIDTH, DETAIL_MIN_WIDTH, DETAIL_WIDTH},
     layout::{
         layout_mode, shows_left_inline, shows_right_inline, shows_run_sheet_button,
         shows_session_sheet_button,
@@ -161,11 +161,9 @@ impl Render for PiApp {
                 .h_full()
                 .flex()
                 .flex_col()
-                .child(self.render_navigation(
-                    shows_session_sheet_button(mode),
-                    true,
-                    entity.clone(),
-                ))
+                .child(
+                    self.render_work_navigation(shows_session_sheet_button(mode), entity.clone()),
+                )
                 .child(div().flex_1().min_h_0().child(self.workgraph_view.clone()))
                 .into_any_element()
         } else {
@@ -177,11 +175,12 @@ impl Render for PiApp {
                 .flex()
                 .flex_col()
                 .when(shows_run_sheet_button(mode), |main| {
-                    main.child(self.render_navigation(
-                        shows_session_sheet_button(mode),
-                        false,
-                        entity.clone(),
-                    ))
+                    main.child(
+                        self.render_chat_navigation(
+                            shows_session_sheet_button(mode),
+                            entity.clone(),
+                        ),
+                    )
                 })
                 .child(
                     div()
@@ -298,11 +297,7 @@ impl Render for PiApp {
                             .iter()
                             .find(|session| session.path == path)
                             .is_some_and(|session| session.archived);
-                        if archived {
-                            this.set_session_review(path, cx);
-                        } else {
-                            this.set_session_archived(path, cx);
-                        }
+                        this.request_session_archive(path, !archived, window, cx);
                     }
                     CurrentCloseTarget::None => {}
                 },
@@ -394,28 +389,16 @@ impl Render for PiApp {
                         )
                     })
                     .child(main)
-                    .when(shows_right_inline(mode), |shell| {
+                    .when(shows_right_inline(mode) && !work_active, |shell| {
                         shell.child(
                             div()
-                                .w(if work_active {
-                                    gpui::px(DETAIL_WIDTH)
-                                } else {
-                                    THEME.layout.run_panel
-                                })
-                                .min_w(if work_active {
-                                    gpui::px(DETAIL_MIN_WIDTH)
-                                } else {
-                                    THEME.layout.run_panel_min
-                                })
-                                .max_w(if work_active {
-                                    gpui::px(DETAIL_MAX_WIDTH)
-                                } else {
-                                    THEME.layout.run_panel_max
-                                })
+                                .w(THEME.layout.run_panel)
+                                .min_w(THEME.layout.run_panel_min)
+                                .max_w(THEME.layout.run_panel_max)
                                 .flex_none()
                                 .border_l(THEME.border)
                                 .border_color(THEME.colors.border)
-                                .child(if work_active {
+                                .child(if self.workgraph_inspector_issue.is_some() {
                                     self.workgraph_detail_view.clone().into_any_element()
                                 } else {
                                     self.run_panel_view
@@ -427,6 +410,9 @@ impl Render for PiApp {
                     }),
             )
             .when_some(picker, |root, picker| root.child(picker))
+            .when(self.pending_archive.is_some(), |root| {
+                root.child(archive_confirmation::render(self, entity.clone()))
+            })
             .when(self.project_trust_sheet, |root| {
                 root.child(project_trust::render(self, entity.clone()))
             })
@@ -471,7 +457,11 @@ impl Render for PiApp {
                 let close = entity.clone();
                 root.child(modal(
                     "run",
-                    "Session details",
+                    if self.workgraph_inspector_issue.is_some() {
+                        "Issue details"
+                    } else {
+                        "Session details"
+                    },
                     &self.sheet_focus,
                     OVERLAY_KEY_CONTEXT,
                     move |window, cx| {
@@ -479,9 +469,14 @@ impl Render for PiApp {
                     },
                     |surface| {
                         surface.h_full().max_w_full().child(
-                            self.run_panel_view
-                                .clone()
-                                .cached(gpui::StyleRefinement::default().size_full()),
+                            if self.workgraph_inspector_issue.is_some() {
+                                self.workgraph_detail_view.clone().into_any_element()
+                            } else {
+                                self.run_panel_view
+                                    .clone()
+                                    .cached(gpui::StyleRefinement::default().size_full())
+                                    .into_any_element()
+                            },
                         )
                     },
                 ))

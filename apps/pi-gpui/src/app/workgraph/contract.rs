@@ -5,22 +5,6 @@ use std::collections::HashSet;
 use workgraph::contract::{Dependency, Issue, Note, SessionLink};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) enum BoardMode {
-    #[default]
-    Kanban,
-    Graph,
-}
-
-impl BoardMode {
-    pub(super) const fn label(self) -> &'static str {
-        match self {
-            Self::Kanban => "Kanban",
-            Self::Graph => "Dependencies",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) enum BoardFilter {
     #[default]
     Active,

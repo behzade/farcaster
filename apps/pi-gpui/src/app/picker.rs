@@ -348,10 +348,10 @@ impl PiApp {
                 ),
                 picker_row(
                     &mut commands,
-                    "action:work-graph",
+                    "action:project-work",
                     PickerCommand::OpenWorkGraph,
                     AppIcon::List,
-                    "Work graph",
+                    "Project work",
                     None,
                     None,
                     "issues tasks",

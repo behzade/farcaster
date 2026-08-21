@@ -261,6 +261,20 @@ pub(crate) fn descendant_sessions<'a>(
     descendants
 }
 
+pub(crate) fn session_family_for_path<'a>(
+    sessions: &'a [SessionSummary],
+    path: &Path,
+) -> Option<Vec<&'a SessionSummary>> {
+    let root = root_session_for_path(sessions, Some(path))?;
+    let mut family = vec![root];
+    family.extend(
+        descendant_sessions(sessions, &root.id)
+            .into_iter()
+            .map(|(session, _)| session),
+    );
+    Some(family)
+}
+
 pub(crate) fn configured_session_root() -> Result<PathBuf, String> {
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let agent = std::env::var_os("PI_CODING_AGENT_DIR").map(PathBuf::from);

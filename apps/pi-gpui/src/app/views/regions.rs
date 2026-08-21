@@ -1,8 +1,15 @@
-use gpui::{Context, Entity, IntoElement as _, Render, Subscription, WeakEntity};
+use gpui::{
+    Context, Entity, IntoElement as _, ParentElement as _, Render, Styled as _, Subscription,
+    WeakEntity, div,
+};
 
 use super::{PiApp, session_groups::SessionRailKind};
-use crate::app::workgraph::adapter::WorkGraphBoardView;
-use crate::transcript;
+use crate::{
+    app::workgraph::adapter::WorkGraphBoardView,
+    primitives::{ButtonTone, button},
+    theme::THEME,
+    transcript,
+};
 
 pub(crate) struct SessionRailView {
     app: WeakEntity<PiApp>,
@@ -27,6 +34,7 @@ pub(crate) struct RunPanelView {
 }
 
 pub(crate) struct WorkGraphDetailView {
+    app: WeakEntity<PiApp>,
     board: Entity<WorkGraphBoardView>,
     _board_subscription: Subscription,
 }
@@ -65,9 +73,14 @@ impl RunPanelView {
 }
 
 impl WorkGraphDetailView {
-    pub(crate) fn new(board: Entity<WorkGraphBoardView>, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(
+        app: WeakEntity<PiApp>,
+        board: Entity<WorkGraphBoardView>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let subscription = cx.observe(&board, |_, _, cx| cx.notify());
         Self {
+            app,
             board,
             _board_subscription: subscription,
         }
@@ -154,8 +167,36 @@ impl Render for ComposerView {
 
 impl Render for WorkGraphDetailView {
     fn render(&mut self, _: &mut gpui::Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
-        self.board
-            .update(cx, |board, cx| board.render_external_detail(cx))
+        let app = self.app.clone();
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .flex_none()
+                    .px(THEME.space.sm)
+                    .py(THEME.space.xs)
+                    .border_b(THEME.border)
+                    .border_color(THEME.colors.border)
+                    .child(button(
+                        "close-workgraph-inspector",
+                        "Back to session details",
+                        ButtonTone::Quiet,
+                        true,
+                        move |_, cx| {
+                            let _ = app.update(cx, |app, cx| {
+                                app.close_workgraph_inspector(cx);
+                            });
+                        },
+                    )),
+            )
+            .child(
+                div().flex_1().min_h_0().child(
+                    self.board
+                        .update(cx, |board, cx| board.render_external_detail(cx)),
+                ),
+            )
     }
 }
 

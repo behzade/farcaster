@@ -608,20 +608,15 @@ pub(super) fn session_row_with_height(
                                                 .build(window, cx)
                                         })
                                         .child(app_icon(archive_icon, AppIconSize::Control))
-                                        .on_click(move |_, _, cx| {
+                                        .on_click(move |_, window, cx| {
                                             cx.stop_propagation();
                                             let _ = archive_entity.update(cx, |this, cx| {
-                                                if is_archived {
-                                                    this.set_session_review(
-                                                        archive_path.clone(),
-                                                        cx,
-                                                    );
-                                                } else {
-                                                    this.set_session_archived(
-                                                        archive_path.clone(),
-                                                        cx,
-                                                    );
-                                                }
+                                                this.request_session_archive(
+                                                    archive_path.clone(),
+                                                    !is_archived,
+                                                    window,
+                                                    cx,
+                                                );
                                             });
                                         }),
                                 ),

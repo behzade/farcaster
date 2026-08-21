@@ -139,7 +139,7 @@ pub(crate) fn registry() -> Vec<Shortcut> {
         ),
         shortcut!(
             "Application",
-            "Toggle Chat / Work",
+            "Open / close project work",
             "cmd-shift-i",
             ShowWorkGraph,
             None
@@ -215,7 +215,7 @@ mod tests {
                 .any(|shortcut| shortcut.keystroke == "cmd-/")
         );
         assert!(shortcuts.iter().any(|shortcut| {
-            shortcut.label == "Toggle Chat / Work" && shortcut.keystroke == "cmd-shift-i"
+            shortcut.label == "Open / close project work" && shortcut.keystroke == "cmd-shift-i"
         }));
         assert!(shortcuts.iter().any(|shortcut| {
             shortcut.label == "Close draft or session" && shortcut.keystroke == "cmd-w"
