@@ -1,7 +1,8 @@
 use super::composer::{
-    QueuedMessageKind, choice_copy, composer_primary_action, dialog_copy, queued_message_groups,
+    QueuedMessageKind, choice_copy, composer_primary_action, default_dialog_selection, dialog_copy,
+    queued_message_groups,
 };
-use crate::conversation::QueueState;
+use crate::{conversation::QueueState, protocol::ExtensionUiRequest};
 
 #[test]
 fn primary_action_only_appears_for_submit_ready_content() {
@@ -58,4 +59,38 @@ fn choice_copy_preserves_extension_owned_copy() {
     let (label, detail) = choice_copy("Add to project policy");
     assert_eq!(label.as_ref(), "Add to project policy");
     assert_eq!(detail, None);
+}
+
+#[test]
+fn enter_defaults_to_the_primary_select_option() {
+    let request = ExtensionUiRequest::Select {
+        id: "question-1".into(),
+        title: "Choose".into(),
+        options: vec!["First".into(), "Second".into()],
+        timeout: None,
+    };
+
+    assert_eq!(
+        default_dialog_selection(&request),
+        Some(("question-1", "First"))
+    );
+}
+
+#[test]
+fn enter_has_no_default_for_an_empty_select_or_text_input() {
+    let empty = ExtensionUiRequest::Select {
+        id: "question-1".into(),
+        title: "Choose".into(),
+        options: Vec::new(),
+        timeout: None,
+    };
+    let input = ExtensionUiRequest::Input {
+        id: "question-2".into(),
+        title: "Explain".into(),
+        placeholder: None,
+        timeout: None,
+    };
+
+    assert_eq!(default_dialog_selection(&empty), None);
+    assert_eq!(default_dialog_selection(&input), None);
 }

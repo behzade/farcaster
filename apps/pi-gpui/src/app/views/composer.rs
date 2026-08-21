@@ -244,6 +244,10 @@ impl PiApp {
             return div().into_any_element();
         };
         let cancel_button_entity = entity.clone();
+        let enter_entity = entity.clone();
+        let enter_focus = self.dialog_focus.clone();
+        let enter_selection =
+            default_dialog_selection(dialog).map(|(id, value)| (id.to_owned(), value.to_owned()));
         let technical_editor = matches!(dialog, ExtensionUiRequest::Editor { .. });
         let (title, body) = match dialog {
             ExtensionUiRequest::Select { title, options, .. } => {
@@ -397,6 +401,19 @@ impl PiApp {
             .aria_label(title.clone())
             .track_focus(&self.dialog_focus)
             .key_context(super::OVERLAY_KEY_CONTEXT)
+            .capture_key_down(move |event: &KeyDownEvent, window, cx| {
+                if event.keystroke.key == "enter"
+                    && !event.keystroke.modifiers.modified()
+                    && enter_focus.is_focused(window)
+                    && let Some((id, value)) = enter_selection.clone()
+                {
+                    let _ = enter_entity.update(cx, |this, cx| {
+                        this.respond_dialog_value(id, value, window, cx);
+                    });
+                    window.prevent_default();
+                    cx.stop_propagation();
+                }
+            })
             .flex_none()
             .min_h(THEME.layout.composer_min)
             .max_h(THEME.layout.dialog_max_height)
@@ -790,6 +807,15 @@ pub(super) fn dialog_copy(value: &str) -> (SharedString, Option<SharedString>) {
 
 pub(super) fn choice_copy(value: &str) -> (SharedString, Option<SharedString>) {
     (value.to_owned().into(), None)
+}
+
+pub(super) fn default_dialog_selection(request: &ExtensionUiRequest) -> Option<(&str, &str)> {
+    match request {
+        ExtensionUiRequest::Select { id, options, .. } => {
+            options.first().map(|option| (id.as_str(), option.as_str()))
+        }
+        _ => None,
+    }
 }
 
 fn widget_region(
