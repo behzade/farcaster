@@ -9,9 +9,7 @@ use super::super::PiApp;
 use crate::{
     agent_activity::{AgentActivity, AgentLifecycle, AgentOutcome},
     assets::AppIcon,
-    primitives::{
-        AppIconSize, app_icon, disclosure_button, panel, section_heading, spinning_app_icon,
-    },
+    primitives::{AppIconSize, app_icon, disclosure_button, panel, section_heading},
     sessions::{descendant_sessions, root_session_for_path},
     theme::THEME,
 };
@@ -274,10 +272,7 @@ impl PiApp {
                         .text_size(THEME.type_scale.caption)
                         .whitespace_nowrap()
                         .text_color(lifecycle_color(displayed_lifecycle))
-                        .child(lifecycle_indicator(
-                            displayed_lifecycle,
-                            &activity.session_id,
-                        ))
+                        .child(lifecycle_indicator(displayed_lifecycle))
                         .child(elapsed),
                 )
                 .into_any_element(),
@@ -464,17 +459,8 @@ fn lifecycle_icon(lifecycle: AgentLifecycle) -> AppIcon {
     }
 }
 
-fn lifecycle_indicator(lifecycle: AgentLifecycle, session_id: &str) -> AnyElement {
-    let icon = app_icon(lifecycle_icon(lifecycle), AppIconSize::Inline);
-    if matches!(lifecycle, AgentLifecycle::Working) {
-        spinning_app_icon(
-            lifecycle_icon(lifecycle),
-            AppIconSize::Inline,
-            format!("agent-spinner-{session_id}"),
-        )
-    } else {
-        icon.into_any_element()
-    }
+fn lifecycle_indicator(lifecycle: AgentLifecycle) -> AnyElement {
+    app_icon(lifecycle_icon(lifecycle), AppIconSize::Inline).into_any_element()
 }
 
 fn lifecycle_color(lifecycle: AgentLifecycle) -> gpui::Rgba {

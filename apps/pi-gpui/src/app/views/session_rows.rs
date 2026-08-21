@@ -23,8 +23,7 @@ use super::{
 use crate::{
     assets::AppIcon,
     primitives::{
-        AppIconSize, ReorderPosition, ReorderTargetExt as _, app_icon, icon_control,
-        reorder_handle, spinning_app_icon,
+        AppIconSize, ReorderPosition, ReorderTargetExt as _, app_icon, icon_control, reorder_handle,
     },
     projects::DraftSession,
     theme::THEME,
@@ -573,15 +572,7 @@ pub(super) fn session_accessible_label(title: &str, state: &str, age: &str) -> S
 fn status_icon(app_session_id: i64, status: &str) -> Option<AnyElement> {
     let (icon, color) = status_visual(status)?;
     let tooltip = status.to_owned();
-    let icon = if status == "Working" {
-        spinning_app_icon(
-            icon,
-            AppIconSize::Inline,
-            format!("session-spinner-{app_session_id}"),
-        )
-    } else {
-        app_icon(icon, AppIconSize::Inline).into_any_element()
-    };
+    let icon = app_icon(icon, AppIconSize::Inline).into_any_element();
     Some(
         div()
             .id(format!("session-status-{app_session_id}"))

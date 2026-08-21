@@ -1,9 +1,6 @@
-use std::time::Duration;
-
 use gpui::{
-    Animation, AnimationExt as _, AnyElement, CursorStyle, Div, ElementId, InteractiveElement as _,
-    IntoElement as _, MouseButton, Pixels, Role, SharedString, Stateful,
-    StatefulInteractiveElement as _, Styled as _, div, radians,
+    CursorStyle, Div, InteractiveElement as _, MouseButton, Pixels, Role, SharedString, Stateful,
+    StatefulInteractiveElement as _, Styled as _, div,
 };
 use gpui_base::GlobalState;
 use gpui_component::{Icon, IconNamed, Sizable as _, tooltip::Tooltip};
@@ -29,20 +26,6 @@ impl AppIconSize {
 
 pub(crate) fn app_icon(icon: impl IconNamed, size: AppIconSize) -> Icon {
     Icon::new(icon).with_size(size.pixels())
-}
-
-pub(crate) fn spinning_app_icon(
-    icon: impl IconNamed,
-    size: AppIconSize,
-    animation_id: impl Into<ElementId>,
-) -> AnyElement {
-    app_icon(icon, size)
-        .with_animation(
-            animation_id,
-            Animation::new(Duration::from_millis(1_600)).repeat(),
-            |icon, delta| icon.rotate(radians(delta * std::f32::consts::TAU)),
-        )
-        .into_any_element()
 }
 
 pub(crate) fn icon_control(
