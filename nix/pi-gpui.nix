@@ -42,6 +42,11 @@ let
   pname = "pi-gpui";
   version = "0.1.0";
   sourceRoot = ../apps/pi-gpui;
+  linuxRuntimeLibraryPath = lib.makeLibraryPath [
+    libGL
+    vulkan-loader
+    wayland
+  ];
   src = lib.cleanSourceWith {
     src = sourceRoot;
     filter = path: type:
@@ -157,7 +162,7 @@ craneLib.buildPackage (
       wrapProgram "$out/bin/pi-gpui" \
         --set PI_GUI_PI_PATH ${piTerminal}/bin/pi \
         --set PI_GUI_COMPANION_EXTENSION "$out/lib/pi-gpui/companion/index.ts" \
-        ${lib.optionalString stdenv.hostPlatform.isLinux "--prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ wayland ]}"}
+        ${lib.optionalString stdenv.hostPlatform.isLinux "--prefix LD_LIBRARY_PATH : ${linuxRuntimeLibraryPath}"}
     ''
     + lib.optionalString stdenv.hostPlatform.isDarwin ''
       # UNUserNotificationCenter rejects unsigned application bundles.
