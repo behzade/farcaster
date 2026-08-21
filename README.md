@@ -102,7 +102,10 @@ shared Cargo target directory. Do not create another development shell, Cargo
 target directory, cache, or dependency folder.
 
 Choose only the checks that cover the changed area. Start with an exact test or
-package check; do not run this whole list for every change:
+package check; do not run this whole list for every change. Nix packaging and
+lock-input changes are the exception: use `make check-flake` to build every
+flake check before publishing them. Update Guardian with `make update-guardian`;
+it updates the input and immediately runs that gate.
 
 ```sh
 npm run check --prefix extensions/project-tools
@@ -118,10 +121,8 @@ node --test \
   tests/user-invocations.test.ts
 ```
 
-Sandbox and broker checks live in the pinned
-[Pi Guardian](https://github.com/behzade/pi-guardian) repository. Its full
-platform test requires an unsandboxed host because it observes real OS denials
-and binds local network fixtures.
+Sandbox checks live in the pinned
+[Pi Guardian](https://github.com/behzade/pi-guardian) repository.
 
 My Home Manager configuration consumes the default flake package and deploys
 it at `~/.pi/agent`.

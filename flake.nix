@@ -30,7 +30,6 @@
           pkgs = pkgsFor system;
           coreExtensions = pkgs.callPackage ./nix/pi-core-extensions.nix { };
           mcpCli = pkgs.callPackage ./nix/pi-mcp-cli.nix { };
-          sandboxBroker = guardian.packages.${system}.sandbox-broker;
           sandbox = guardian.packages.${system}.guardian;
           denseTools = pkgs.callPackage ./nix/pi-dense-tools.nix { };
           sessionAgents = pkgs.callPackage ./nix/pi-session-agents.nix { };
@@ -74,7 +73,6 @@
           inherit pi;
           pi-terminal = piTerminal;
           mcp-cli = mcpCli;
-          sandbox-broker = sandboxBroker;
           dense-tools = denseTools;
           openai-server-compaction = openaiServerCompaction;
           project-tools = projectTools;
@@ -158,7 +156,6 @@
           coreExtensions = pkgs.callPackage ./nix/pi-core-extensions.nix { };
           denseTools = pkgs.callPackage ./nix/pi-dense-tools.nix { };
           mcpCli = pkgs.callPackage ./nix/pi-mcp-cli.nix { };
-          sandboxBroker = guardian.packages.${system}.sandbox-broker;
           sandbox = guardian.packages.${system}.guardian;
           openaiServerCompaction = pkgs.callPackage ./nix/pi-openai-server-compaction.nix { };
           projectTools = pkgs.callPackage ./nix/pi-project-tools.nix { };
@@ -221,10 +218,9 @@
             ln -s ${piTerminal}/lib/pi-terminal/node_modules/typebox node_modules/typebox
             node --import ./test-setup.ts --test \
               background-jobs.test.ts \
-              broker-client.test.ts \
-              broker-policy.test.ts \
-              native-background-jobs.test.ts \
-              native-network-proxy.test.ts \
+              sandbox-policy.test.ts \
+              linux-deny-layer.test.ts \
+              nono-client.test.ts \
               network-policy.test.ts \
               sandbox-config.test.ts \
               development-caches.test.ts \
@@ -233,11 +229,11 @@
               io-policy.test.ts \
               native-sandbox-ops.test.ts \
               project-policy.test.ts \
+              session-policy-store.test.ts \
               approval-transport.test.ts
             touch "$out"
           '';
 
-          sandbox-broker = sandboxBroker;
           mcp-cli = pkgs.runCommand "pi-mcp-cli-test" { nativeBuildInputs = [ mcpCli ]; } ''
             test "$(mcp-cli --version)" = "mcp-cli v0.3.0"
             touch "$out"

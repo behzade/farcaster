@@ -24,8 +24,6 @@ diff. Keep unrelated work intact.
 
 - Start with the smallest check that covers the changed behavior. Do not run
   every command listed in the README.
-- For `sandbox-broker`, use Cargo with
-  `--manifest-path sandbox-broker/Cargo.toml`.
 - For `apps/pi-gpui`, use Cargo with
   `--manifest-path apps/pi-gpui/Cargo.toml`. Use `make check-gpui` only when the
   change needs the full GPUI check set.
