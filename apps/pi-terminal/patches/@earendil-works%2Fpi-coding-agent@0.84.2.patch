@@ -149,7 +149,7 @@ diff --git a/dist/modes/rpc/rpc-mode.js b/dist/modes/rpc/rpc-mode.js
 index d414633..aae7891 100644
 --- a/dist/modes/rpc/rpc-mode.js
 +++ b/dist/modes/rpc/rpc-mode.js
-@@ -222,6 +222,94 @@ export async function runRpcMode(runtimeHost) {
+@@ -222,6 +222,95 @@ export async function runRpcMode(runtimeHost) {
              // Tool expansion not supported in RPC mode - no TUI
          },
      });
@@ -190,9 +190,10 @@ index d414633..aae7891 100644
 +            throw new Error(normalizedRef ? `No login methods found for provider: ${providerRef}` : "No provider login methods are available");
 +        }
 +        methods.sort((a, b) => a.label.localeCompare(b.label));
-+        const selected = methods.length === 1
-+            ? methods[0]
-+            : methods.find((method) => method.label === await selectValue(normalizedRef ? "Select authentication method" : "Add provider", methods.map((method) => method.label)));
++        const selectedLabel = methods.length === 1
++            ? methods[0].label
++            : await selectValue(normalizedRef ? "Select authentication method" : "Add provider", methods.map((method) => method.label));
++        const selected = methods.find((method) => method.label === selectedLabel);
 +        if (!selected) {
 +            throw new Error("Login cancelled");
 +        }
@@ -244,7 +245,7 @@ index d414633..aae7891 100644
      runtimeHost.setRebindSession(async () => {
          await rebindSession();
      });
-@@ -381,6 +469,18 @@ export async function runRpcMode(runtimeHost) {
+@@ -381,6 +470,18 @@ export async function runRpcMode(runtimeHost) {
                  const models = session.modelRuntime.getAvailableSnapshot();
                  return success(id, "get_available_models", { models });
              }
