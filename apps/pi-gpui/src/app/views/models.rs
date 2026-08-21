@@ -81,6 +81,7 @@ pub(super) fn render(app: &PiApp, entity: WeakEntity<PiApp>) -> AnyElement {
         if !providers.is_empty() {
             menu = menu.separator();
         }
+        let add_provider_entity = add_provider_entity.clone();
         menu.item(PopupMenuItem::new("+ Add provider…").on_click(move |_, _, cx| {
             let _ = add_provider_entity.update(cx, |this, _| this.add_provider());
         }))

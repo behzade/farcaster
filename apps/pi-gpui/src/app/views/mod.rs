@@ -108,7 +108,9 @@ impl Render for PiApp {
             };
             cx.defer_in(window, move |_, window, cx| {
                 input.update(cx, |state, cx| {
-                    state.set_masked(masked, window, cx);
+                    if state.presentation().is_masked() != masked {
+                        state.toggle_masked(window, cx);
+                    }
                     state.set_value(prefill, window, cx);
                 });
                 focus.focus(window, cx);
