@@ -635,6 +635,7 @@ fn render_invocation(
         .when(expanded && resolved_ready, |row| {
             row.child(
                 div()
+                    .id(("invocation-detail-scroll", key))
                     .ml(px(22.0))
                     .mt(THEME.space.xs)
                     .max_h(THEME.layout.tool_max_height)
