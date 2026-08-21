@@ -14,22 +14,22 @@ const TARGET_SAMPLE_NANOS: f64 = 5_000_000.0;
 
 struct Corpus {
     name: &'static str,
-    patch: String,
+    patch: &'static str,
 }
 
 fn main() -> io::Result<()> {
     let corpora = [
         Corpus {
             name: "small-real-4.8KB",
-            patch: SMALL_PATCH.to_owned(),
+            patch: SMALL_PATCH,
         },
         Corpus {
             name: "medium-real-15KB",
-            patch: MEDIUM_PATCH.to_owned(),
+            patch: MEDIUM_PATCH,
         },
         Corpus {
             name: "stress-real-403KB",
-            patch: STRESS_PATCH.to_owned(),
+            patch: STRESS_PATCH,
         },
     ];
     let stdout = io::stdout();
@@ -59,15 +59,15 @@ fn run_case(
     let mut options = DiffPlanOptions::new(layout);
     options.max_rows_per_file = maximum;
     options.intraline_changes = intraline;
-    let initial = planned_or_panic(&corpus.patch, options);
+    let initial = planned_or_panic(corpus.patch, options);
     let metrics = plan_metrics(&initial);
     black_box(initial);
     for _ in 0..3 {
-        black_box(planned_or_panic(black_box(&corpus.patch), options));
+        black_box(planned_or_panic(black_box(corpus.patch), options));
     }
 
     let calibration_started = Instant::now();
-    black_box(planned_or_panic(black_box(&corpus.patch), options));
+    black_box(planned_or_panic(black_box(corpus.patch), options));
     let calibration_nanos = calibration_started.elapsed().as_nanos().max(1) as f64;
     let batch = (TARGET_SAMPLE_NANOS / calibration_nanos)
         .ceil()
@@ -76,7 +76,7 @@ fn run_case(
     for _ in 0..SAMPLE_COUNT {
         let started = Instant::now();
         for _ in 0..batch {
-            let plan = planned_or_panic(black_box(&corpus.patch), black_box(options));
+            let plan = planned_or_panic(black_box(corpus.patch), black_box(options));
             black_box(plan);
         }
         samples.push(started.elapsed().as_nanos() as f64 / batch as f64);

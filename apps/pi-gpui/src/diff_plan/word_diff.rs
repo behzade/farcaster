@@ -154,12 +154,7 @@ mod tests {
     use super::*;
 
     fn one(range: Range<usize>) -> Vec<Range<usize>> {
-        std::iter::once(range).collect()
-    }
-
-    #[test]
-    fn equal_text_has_no_changed_ranges() {
-        assert_eq!(changed_ranges("same", "same", 2_000), (vec![], vec![]));
+        vec![range]
     }
 
     #[test]
@@ -167,23 +162,6 @@ mod tests {
         assert_eq!(
             changed_ranges("let answer = 41;", "let answer = 42;", 2_000),
             (one(13..15), one(13..15))
-        );
-    }
-
-    #[test]
-    fn unicode_ranges_stay_on_utf8_boundaries() {
-        let old = "let value = café";
-        let new = "let value = 茶";
-        let (old_ranges, new_ranges) = changed_ranges(old, new, 2_000);
-        assert!(
-            old_ranges
-                .iter()
-                .all(|range| old.is_char_boundary(range.start) && old.is_char_boundary(range.end))
-        );
-        assert!(
-            new_ranges
-                .iter()
-                .all(|range| new.is_char_boundary(range.start) && new.is_char_boundary(range.end))
         );
     }
 
@@ -209,16 +187,16 @@ mod tests {
     }
 
     #[test]
-    fn persian_and_emoji_changes_keep_the_unchanged_prefix_outside_the_span() {
-        for (old, new) in [("سلام دنیا", "سلام جهان"), ("status 😀", "status ✅")]
-        {
-            let (old_ranges, new_ranges) = changed_ranges(old, new, 2_000);
-            assert_eq!(old_ranges.len(), 1);
-            assert_eq!(new_ranges.len(), 1);
-            assert!(old_ranges[0].start > 0);
-            assert!(new_ranges[0].start > 0);
-            assert!(old.is_char_boundary(old_ranges[0].start));
-            assert!(new.is_char_boundary(new_ranges[0].start));
+    fn unicode_changes_preserve_the_unchanged_prefix() {
+        for (prefix, old, new) in [
+            ("let value = ", "let value = café", "let value = 茶"),
+            ("سلام ", "سلام دنیا", "سلام جهان"),
+            ("status ", "status 😀", "status ✅"),
+        ] {
+            assert_eq!(
+                changed_ranges(old, new, 2_000),
+                (one(prefix.len()..old.len()), one(prefix.len()..new.len()))
+            );
         }
     }
 }

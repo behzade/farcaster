@@ -21,7 +21,7 @@ pub(super) fn collect_lines(patch: &str) -> Vec<PatchLine<'_>> {
         .split_inclusive('\n')
         .enumerate()
         .map(|(index, raw)| PatchLine {
-            number: index.saturating_add(1),
+            number: index + 1,
             raw,
         })
         .collect()
@@ -76,10 +76,7 @@ pub(super) fn file_sections(lines: &[PatchLine<'_>]) -> Vec<(usize, usize)> {
 }
 
 pub(super) fn parse_git_paths(line: &str) -> Option<(String, String)> {
-    let rest = line.strip_prefix("diff --git ")?;
-    let mut values = split_shellish_pair(rest)?;
-    let new = values.pop()?;
-    let old = values.pop()?;
+    let (old, new) = split_shellish_pair(line.strip_prefix("diff --git ")?)?;
     Some((strip_git_prefix(&old), strip_git_prefix(&new)))
 }
 
@@ -135,8 +132,8 @@ fn ranges_from_starts(starts: &[usize], end: usize) -> Vec<(usize, usize)> {
         .collect()
 }
 
-fn split_shellish_pair(value: &str) -> Option<Vec<String>> {
-    let mut fields = Vec::new();
+fn split_shellish_pair(value: &str) -> Option<(String, String)> {
+    let mut fields = Vec::with_capacity(2);
     let mut current = String::new();
     let mut quoted = false;
     let mut escaped = false;
@@ -160,7 +157,11 @@ fn split_shellish_pair(value: &str) -> Option<Vec<String>> {
     if !current.is_empty() {
         fields.push(current);
     }
-    (!quoted && fields.len() == 2).then_some(fields)
+    if quoted || fields.len() != 2 {
+        return None;
+    }
+    let mut fields = fields.into_iter();
+    Some((fields.next()?, fields.next()?))
 }
 
 fn strip_git_prefix(path: &str) -> String {

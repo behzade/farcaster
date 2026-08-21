@@ -18,29 +18,6 @@ fn split_pairs_replacements_and_preserves_line_numbers() {
 }
 
 #[test]
-fn unified_stacks_deletions_before_additions() {
-    let patch = "--- a.txt\n+++ a.txt\n@@ -1,2 +1,2 @@\n-old\n+new\n same\n";
-    let plan = plan_patch(patch, options(DiffLayout::Unified)).expect("valid patch");
-    let rows = &plan.files[0].rows;
-    assert!(matches!(
-        rows[1],
-        DiffPlanRow::Line(DiffPlanLine {
-            old: Some(_),
-            new: None,
-            ..
-        })
-    ));
-    assert!(matches!(
-        rows[2],
-        DiffPlanRow::Line(DiffPlanLine {
-            old: None,
-            new: Some(_),
-            ..
-        })
-    ));
-}
-
-#[test]
 fn unified_keeps_all_deletions_before_all_additions_in_a_change_block() {
     let patch = "--- a.txt\n+++ a.txt\n@@ -1,2 +1,2 @@\n-old one\n-old two\n+new one\n+new two\n";
     let plan = plan_patch(patch, options(DiffLayout::Unified)).expect("valid patch");
@@ -59,18 +36,19 @@ fn unified_keeps_all_deletions_before_all_additions_in_a_change_block() {
 }
 
 #[test]
-fn similarity_alignment_keeps_inserted_blank_above_edited_line() {
-    let patch = "--- a.ts\n+++ a.ts\n@@ -1 +1,2 @@\n-oldCall()\n+\n+oldCalls()\n";
-    let plan = plan_patch(patch, options(DiffLayout::Split)).expect("valid patch");
-    let rows = &plan.files[0].rows;
-    let DiffPlanRow::Line(insert) = &rows[1] else {
-        panic!("expected insert");
+fn similarity_alignment_keeps_extra_blanks_above_edited_lines() {
+    let added_blank = "--- a.ts\n+++ a.ts\n@@ -1 +1,2 @@\n-oldCall()\n+\n+oldCalls()\n";
+    let plan = plan_patch(added_blank, options(DiffLayout::Split)).expect("valid patch");
+    let [
+        DiffPlanRow::Hunk { .. },
+        DiffPlanRow::Line(blank),
+        DiffPlanRow::Line(pair),
+    ] = plan.files[0].rows.as_slice()
+    else {
+        panic!("expected blank then aligned pair");
     };
-    let DiffPlanRow::Line(pair) = &rows[2] else {
-        panic!("expected pair");
-    };
-    assert!(insert.old.is_none());
-    assert_eq!(insert.new.as_ref().map(|cell| cell.text.as_str()), Some(""));
+    assert!(blank.old.is_none());
+    assert_eq!(blank.new.as_ref().map(|cell| cell.text.as_str()), Some(""));
     assert_eq!(
         pair.old.as_ref().map(|cell| cell.text.as_str()),
         Some("oldCall()")
@@ -78,6 +56,27 @@ fn similarity_alignment_keeps_inserted_blank_above_edited_line() {
     assert_eq!(
         pair.new.as_ref().map(|cell| cell.text.as_str()),
         Some("oldCalls()")
+    );
+
+    let removed_blank = "--- a.ts\n+++ a.ts\n@@ -1,2 +1 @@\n-\n-oldCalls()\n+oldCall()\n";
+    let plan = plan_patch(removed_blank, options(DiffLayout::Split)).expect("valid patch");
+    let [
+        DiffPlanRow::Hunk { .. },
+        DiffPlanRow::Line(blank),
+        DiffPlanRow::Line(pair),
+    ] = plan.files[0].rows.as_slice()
+    else {
+        panic!("expected blank then aligned pair");
+    };
+    assert!(blank.new.is_none());
+    assert_eq!(blank.old.as_ref().map(|cell| cell.text.as_str()), Some(""));
+    assert_eq!(
+        pair.old.as_ref().map(|cell| cell.text.as_str()),
+        Some("oldCalls()")
+    );
+    assert_eq!(
+        pair.new.as_ref().map(|cell| cell.text.as_str()),
+        Some("oldCall()")
     );
 }
 

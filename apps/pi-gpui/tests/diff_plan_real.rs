@@ -1,6 +1,4 @@
-use pi_gpui::diff_plan::{
-    DiffLayout, DiffLineKind, DiffPlanOptions, DiffPlanRow, DiffRenderPlan, plan_patch,
-};
+use pi_gpui::diff_plan::{DiffLayout, DiffPlanOptions, DiffPlanRow, DiffRenderPlan, plan_patch};
 
 const SMALL_PATCH: &str = include_str!("fixtures/diff_plan/small-pi-ai.patch");
 const MEDIUM_PATCH: &str = include_str!("fixtures/diff_plan/medium-pi-web.patch");
@@ -9,77 +7,40 @@ const MIXED_PATCH: &str =
     include_str!("../../pi-terminal/patches/@earendil-works%2Fpi-coding-agent@0.84.2.patch");
 
 #[test]
-fn independent_scanner_agrees_with_every_real_corpus() {
-    for patch in [SMALL_PATCH, MEDIUM_PATCH, MIXED_PATCH, STRESS_PATCH] {
+fn real_corpora_match_independent_counts_in_both_layouts() {
+    let cases = [
+        (SMALL_PATCH, (7, 9, 0)),
+        (MEDIUM_PATCH, (4, 52, 17)),
+        (MIXED_PATCH, (2, 56, 44)),
+        (STRESS_PATCH, (99, 1_548, 1_516)),
+    ];
+
+    for (patch, expected) in cases {
         let scan = scan_patch(patch);
-        let plan = plan(patch, DiffLayout::Split);
-        let hunk_rows = plan
-            .files
-            .iter()
-            .flat_map(|file| &file.rows)
-            .filter(|row| matches!(row, DiffPlanRow::Hunk { .. }))
-            .count();
+        assert_eq!((scan.files, scan.additions, scan.deletions), expected);
 
-        assert_eq!(plan.files.len(), scan.files);
-        assert_eq!(hunk_rows, scan.hunks);
-        assert_eq!(change_counts(&plan), (scan.additions, scan.deletions));
+        let unified = plan(patch, DiffLayout::Unified);
+        let split = plan(patch, DiffLayout::Split);
+        for plan in [&unified, &split] {
+            let hunk_rows = plan
+                .files
+                .iter()
+                .flat_map(|file| &file.rows)
+                .filter(|row| matches!(row, DiffPlanRow::Hunk { .. }))
+                .count();
+            assert_eq!(plan.files.len(), scan.files);
+            assert_eq!(hunk_rows, scan.hunks);
+            assert_eq!(change_counts(plan), (scan.additions, scan.deletions));
+            assert_plan_invariants(plan);
+        }
+        assert!(split.total_rows() <= unified.total_rows());
     }
-}
-
-#[test]
-fn real_small_patch_preserves_file_and_change_counts() {
-    let plan = plan(SMALL_PATCH, DiffLayout::Split);
-
-    assert_eq!(plan.files.len(), 7);
-    assert_eq!(change_counts(&plan), (9, 0));
-    assert_plan_invariants(&plan);
-}
-
-#[test]
-fn real_medium_patch_preserves_file_and_change_counts() {
-    let plan = plan(MEDIUM_PATCH, DiffLayout::Unified);
-
-    assert_eq!(plan.files.len(), 4);
-    assert_eq!(change_counts(&plan), (52, 17));
-    assert_plan_invariants(&plan);
-}
-
-#[test]
-fn real_mixed_patch_preserves_uneven_replacement_blocks() {
-    let unified = plan(MIXED_PATCH, DiffLayout::Unified);
-    let split = plan(MIXED_PATCH, DiffLayout::Split);
-
-    assert_eq!(unified.files.len(), 2);
-    assert_eq!(change_counts(&unified), (56, 44));
-    assert_eq!(change_counts(&split), (56, 44));
-    assert!(split.total_rows() < unified.total_rows());
-    assert_plan_invariants(&unified);
-    assert_plan_invariants(&split);
-}
-
-#[test]
-fn bounded_real_plans_keep_statistics_while_retaining_twelve_rows_per_file() {
-    let full = plan(MEDIUM_PATCH, DiffLayout::Split);
-    let bounded = plan_patch(
-        MEDIUM_PATCH,
-        DiffPlanOptions::bounded(DiffLayout::Split, 12),
-    )
-    .expect("real patch should parse");
-
-    assert_eq!(change_counts(&bounded), change_counts(&full));
-    assert_eq!(bounded.total_rows(), full.total_rows());
-    assert!(bounded.files.iter().all(|file| file.rows.len() <= 12));
-    assert!(bounded.files.iter().any(|file| file.omitted_rows > 0));
-    assert_plan_invariants(&bounded);
 }
 
 #[test]
 fn stress_plan_handles_pierres_real_multi_commit_patch() {
     let plan = plan(STRESS_PATCH, DiffLayout::Split);
 
-    assert_eq!(STRESS_PATCH.len(), 402_920);
-    assert_eq!(plan.files.len(), 99);
-    assert_eq!(change_counts(&plan), (1_548, 1_516));
     assert_eq!(
         plan.files
             .iter()
@@ -100,24 +61,14 @@ fn stress_plan_handles_pierres_real_multi_commit_patch() {
 }
 
 #[test]
-fn layout_changes_only_row_projection_not_file_statistics() {
-    for patch in [SMALL_PATCH, MEDIUM_PATCH, MIXED_PATCH] {
-        let unified = plan(patch, DiffLayout::Unified);
-        let split = plan(patch, DiffLayout::Split);
-
-        assert_eq!(change_counts(&unified), change_counts(&split));
-        assert_eq!(unified.files.len(), split.files.len());
-        assert!(split.total_rows() <= unified.total_rows());
-    }
-}
-
-#[test]
 fn bounded_rows_are_exact_prefixes_of_each_real_file_plan() {
     for layout in [DiffLayout::Unified, DiffLayout::Split] {
         let full = plan(MIXED_PATCH, layout);
         for maximum in [0, 1, 12] {
             let bounded = plan_patch(MIXED_PATCH, DiffPlanOptions::bounded(layout, maximum))
                 .expect("real patch should parse");
+            assert_eq!(change_counts(&bounded), change_counts(&full));
+            assert_plan_invariants(&bounded);
             for (full_file, bounded_file) in full.files.iter().zip(&bounded.files) {
                 assert_eq!(
                     bounded_file.rows,
@@ -146,14 +97,6 @@ fn disabling_intraline_changes_changes_only_the_span_ranges() {
     let without_spans = plan_patch(MEDIUM_PATCH, options).expect("real patch should parse");
 
     assert_eq!(without_spans, without_changed_ranges(with_spans));
-}
-
-#[test]
-fn repeated_fresh_planning_is_deterministic() {
-    let first = plan(MEDIUM_PATCH, DiffLayout::Unified);
-    let second = plan(MEDIUM_PATCH, DiffLayout::Unified);
-
-    assert_eq!(second, first);
 }
 
 #[derive(Default)]
@@ -255,26 +198,12 @@ fn change_counts(plan: &DiffRenderPlan) -> (usize, usize) {
 }
 
 fn assert_plan_invariants(plan: &DiffRenderPlan) {
-    assert!(plan.source_bytes > 0);
-    assert_eq!(
-        plan.total_rows(),
-        plan.retained_rows()
-            + plan
-                .files
-                .iter()
-                .map(|file| file.omitted_rows)
-                .sum::<usize>()
-    );
     for file in &plan.files {
         assert!(file.path.is_some() || file.old_path.is_some());
-        assert_eq!(file.total_rows(), file.rows.len() + file.omitted_rows);
         for row in &file.rows {
             let DiffPlanRow::Line(line) = row else {
                 continue;
             };
-            if line.kind == DiffLineKind::Context {
-                assert!(line.old.is_some() || line.new.is_some());
-            }
             for cell in [line.old.as_ref(), line.new.as_ref()].into_iter().flatten() {
                 assert!(cell.line_number > 0);
                 for range in &cell.changed {

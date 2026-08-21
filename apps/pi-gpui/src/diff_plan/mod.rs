@@ -31,7 +31,7 @@ pub struct DiffPlanOptions {
     /// Maximum rows retained per file. Parsing and statistics remain complete.
     pub max_rows_per_file: Option<usize>,
     pub intraline_changes: bool,
-    /// Lines above this byte length receive one whole-line changed range.
+    /// Lines above this byte length skip intraline analysis.
     pub max_intraline_bytes: usize,
 }
 

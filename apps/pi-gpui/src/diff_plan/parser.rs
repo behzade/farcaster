@@ -137,7 +137,7 @@ fn plan_file(
             planner.push(DiffPlanRow::Hunk {
                 header: text.to_owned(),
             });
-            index = plan_hunk(lines, index.saturating_add(1), header, &mut planner)?;
+            index = plan_hunk(lines, index + 1, header, &mut planner)?;
             continue;
         }
         index += 1;
@@ -204,19 +204,8 @@ fn plan_hunk(
                     std::mem::take(&mut pending_old),
                     std::mem::take(&mut pending_new),
                 );
-                let text = trim_line_end(content).to_owned();
-                let retained = planner.push_context(
-                    RawCell {
-                        line_number: old_number,
-                        text: text.clone(),
-                        no_newline: false,
-                    },
-                    RawCell {
-                        line_number: new_number,
-                        text,
-                        no_newline: false,
-                    },
-                );
+                let retained =
+                    planner.push_context(old_number, new_number, trim_line_end(content).to_owned());
                 old_number = old_number.saturating_add(1);
                 new_number = new_number.saturating_add(1);
                 consumed_old += 1;
@@ -227,11 +216,7 @@ fn plan_hunk(
                 if consumed_old >= header.old_count {
                     return Err(too_many_lines(line.number));
                 }
-                pending_old.push(RawCell {
-                    line_number: old_number,
-                    text: trim_line_end(content).to_owned(),
-                    no_newline: false,
-                });
+                pending_old.push(RawCell::new(old_number, trim_line_end(content).to_owned()));
                 old_number = old_number.saturating_add(1);
                 consumed_old += 1;
                 planner.plan.deletions = planner.plan.deletions.saturating_add(1);
@@ -241,11 +226,7 @@ fn plan_hunk(
                 if consumed_new >= header.new_count {
                     return Err(too_many_lines(line.number));
                 }
-                pending_new.push(RawCell {
-                    line_number: new_number,
-                    text: trim_line_end(content).to_owned(),
-                    no_newline: false,
-                });
+                pending_new.push(RawCell::new(new_number, trim_line_end(content).to_owned()));
                 new_number = new_number.saturating_add(1);
                 consumed_new += 1;
                 planner.plan.additions = planner.plan.additions.saturating_add(1);
