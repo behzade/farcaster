@@ -27,6 +27,10 @@ zlog = { path = "third_party/zed-gpui-cc053a4/crates/zlog" }
 [dev-dependencies]
 tempfile = "3.27.0"
 
+[[bench]]
+name = "diff_plan"
+harness = false
+
 [patch."https://github.com/zed-industries/zed"]
 collections = { path = "third_party/zed-gpui-cc053a4/crates/collections" }
 derive_refineable = { path = "third_party/zed-gpui-cc053a4/crates/refineable/derive_refineable" }

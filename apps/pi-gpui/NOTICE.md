@@ -32,6 +32,15 @@ the SIL Open Font License 1.1. Its license is included at
 `assets/vazirmatn/OFL.txt`; the font files remain under that license. Upstream:
 <https://github.com/rastikerdar/vazirmatn>.
 
+The renderer-neutral diff planning structure, patch parsing behavior, split-row
+alignment, and intraline-span behavior in `src/diff_plan` were adapted from
+`@pierre/diffs` by Pierre Computer Company at commit
+`55a941914056af44c78c4ba607b37130f189fb70`. They were rewritten in Rust to
+produce immutable native render plans instead of HAST, CSS, or DOM output.
+Pierre Diffs is distributed under Apache-2.0; its license is included at
+`THIRD_PARTY_LICENSES/PIERRE_DIFFS_APACHE-2.0.txt`. Upstream:
+<https://github.com/pierrecomputer/pierre/tree/55a941914056af44c78c4ba607b37130f189fb70/packages/diffs>.
+
 The direct Longbridge GPUI Component dependencies `gpui-component`,
 `gpui-component-assets`, and `gpui-fps` are pinned to commit
 `bd833291311289f3468479d31b629d3de279d3d4` and distributed under Apache-2.0.

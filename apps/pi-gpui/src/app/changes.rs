@@ -134,6 +134,7 @@ pub(crate) struct ChangesState {
     pub diff: Option<DiffSurface>,
     pub diff_syntax: Option<Arc<HighlightedDiff>>,
     diff_generation: u64,
+    diff_open_timing: Option<crate::performance::Timing>,
     diff_highlights: DiffHighlightCache,
     diff_highlights_in_flight: HashSet<DiffHighlightKey>,
     diff_highlight_requested: Option<DiffHighlightKey>,
@@ -152,6 +153,7 @@ impl ChangesState {
             diff: None,
             diff_syntax: None,
             diff_generation: 0,
+            diff_open_timing: None,
             diff_highlights: DiffHighlightCache::default(),
             diff_highlights_in_flight: HashSet::new(),
             diff_highlight_requested: None,
@@ -174,6 +176,7 @@ impl PiApp {
             self.changes.set = ChangeSet::default();
             self.changes.row_focus.clear();
             self.changes.diff_generation = self.changes.diff_generation.saturating_add(1);
+            cancel_timing(&mut self.changes.diff_open_timing);
             self.changes.diff = None;
             self.changes.diff_syntax = None;
             self.changes.return_focus = None;
@@ -250,6 +253,10 @@ impl PiApp {
         opener.focus(window, cx);
         self.changes.return_focus = Some(opener);
         self.changes.diff_generation = self.changes.diff_generation.saturating_add(1);
+        cancel_timing(&mut self.changes.diff_open_timing);
+        self.changes.diff_open_timing = Some(crate::performance::Timing::new_always(
+            "diff.open_to_highlight_ready",
+        ));
         self.changes.diff_scroll = ScrollHandle::new();
         let surface = DiffSurface::Ready(file.clone(), file.diff.clone());
         self.changes.diff_syntax = None;
@@ -281,8 +288,15 @@ impl PiApp {
         focus.focus(window, cx);
         self.changes.return_focus = Some(focus);
         self.changes.diff_generation = self.changes.diff_generation.saturating_add(1);
+        cancel_timing(&mut self.changes.diff_open_timing);
+        self.changes.diff_open_timing = Some(crate::performance::Timing::new_always(
+            "diff.open_to_highlight_ready",
+        ));
         self.changes.diff_scroll = ScrollHandle::new();
-        let surface = load_tool_diff_surface(path, presentation);
+        let surface = {
+            let _timing = crate::performance::Timing::new_always("diff.reconstruct_tool_surface");
+            load_tool_diff_surface(path, presentation)
+        };
         self.changes.diff_syntax = None;
         self.changes.diff = Some(surface);
         self.changes.pending_diff_setup = true;
@@ -303,14 +317,24 @@ impl PiApp {
             return;
         };
         let Some((path, patch)) = surface_diff(surface) else {
+            drop(self.changes.diff_open_timing.take());
             return;
         };
-        let path = path.to_string_lossy().into_owned();
-        let patch = patch.to_owned();
-        let key = diff_highlight_key(&path, &patch, mode);
+        let (path, patch, key) = {
+            let _timing = crate::performance::Timing::new_always("diff.prepare_highlight_input");
+            let path = path.to_string_lossy().into_owned();
+            let patch = patch.to_owned();
+            let key = diff_highlight_key(&path, &patch, mode);
+            (path, patch, key)
+        };
         self.changes.diff_highlight_requested = Some(key.clone());
-        if let Some(syntax) = self.changes.diff_highlights.get(&key) {
+        let cached = {
+            let _timing = crate::performance::Timing::new_always("diff.highlight_cache_lookup");
+            self.changes.diff_highlights.get(&key)
+        };
+        if let Some(syntax) = cached {
             self.changes.diff_syntax = Some(syntax);
+            drop(self.changes.diff_open_timing.take());
             return;
         }
         if !self.changes.diff_highlights_in_flight.insert(key.clone()) {
@@ -322,11 +346,13 @@ impl PiApp {
             .len()
             .saturating_mul(if mode == FullDiffMode::Split { 2 } else { 1 });
         let task = cx.background_spawn(async move {
+            let _timing = crate::performance::Timing::new_always("diff.highlight_compute");
             Arc::new(HighlightedDiff::new(&path, &patch, highlight_mode))
         });
         cx.spawn(async move |weak, cx| {
             let syntax = task.await;
             let _ = weak.update(cx, |this, cx| {
+                let _timing = crate::performance::Timing::new_always("diff.publish_highlight");
                 this.changes.diff_highlights_in_flight.remove(&key);
                 this.changes
                     .diff_highlights
@@ -336,6 +362,7 @@ impl PiApp {
                     && this.changes.diff.is_some()
                 {
                     this.changes.diff_syntax = Some(syntax);
+                    drop(this.changes.diff_open_timing.take());
                     cx.notify();
                 }
             });
@@ -345,6 +372,7 @@ impl PiApp {
 
     pub(crate) fn close_file_diff(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.changes.diff_generation = self.changes.diff_generation.saturating_add(1);
+        cancel_timing(&mut self.changes.diff_open_timing);
         self.changes.diff = None;
         self.changes.diff_syntax = None;
         self.changes.diff_highlight_requested = None;
@@ -382,6 +410,12 @@ fn diff_highlight_key(path: &str, patch: &str, mode: FullDiffMode) -> DiffHighli
         path: path.to_owned(),
         patch_hash: hasher.finish(),
         mode,
+    }
+}
+
+fn cancel_timing(timing: &mut Option<crate::performance::Timing>) {
+    if let Some(timing) = timing.take() {
+        timing.cancel();
     }
 }
 

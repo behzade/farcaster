@@ -136,6 +136,11 @@ impl Element for DiffElement {
         window: &mut Window,
         _cx: &mut App,
     ) -> Self::PrepaintState {
+        let _timing = crate::performance::Timing::new(if self.split {
+            "diff.prepaint_split"
+        } else {
+            "diff.prepaint_unified"
+        });
         let visible = visible_row_range(
             self.row_count,
             self.line_height,
@@ -210,6 +215,11 @@ impl Element for DiffElement {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let _timing = crate::performance::Timing::new(if self.split {
+            "diff.paint_split"
+        } else {
+            "diff.paint_unified"
+        });
         for quad in prepaint.quads.drain(..) {
             window.paint_quad(quad);
         }

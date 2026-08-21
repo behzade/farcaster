@@ -46,13 +46,24 @@ pub(crate) fn count_highlight_bytes(count: usize) {
 pub(crate) struct Timing {
     name: &'static str,
     started_at: Option<Instant>,
+    include_fast: bool,
 }
 
 impl Timing {
     pub(crate) fn new(name: &'static str) -> Self {
+        Self::start(name, false)
+    }
+
+    /// Record even sub-threshold operations while the DEBUG monitor is enabled.
+    pub(crate) fn new_always(name: &'static str) -> Self {
+        Self::start(name, true)
+    }
+
+    fn start(name: &'static str, include_fast: bool) -> Self {
         Self {
             name,
             started_at: ENABLED.load(Ordering::Relaxed).then(Instant::now),
+            include_fast,
         }
     }
 
@@ -67,7 +78,7 @@ impl Drop for Timing {
             return;
         };
         let elapsed = started_at.elapsed();
-        if should_log_duration(elapsed) {
+        if self.include_fast || should_log_duration(elapsed) {
             zlog::info!(
                 "PERF operation={} elapsed_ms={:.2}",
                 self.name,
