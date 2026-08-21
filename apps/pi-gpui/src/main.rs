@@ -33,6 +33,7 @@ mod theme;
 mod tool_changes;
 mod transcript;
 mod transcript_markdown;
+mod user_invocations;
 mod workgraph_rpc;
 
 fn main() -> std::process::ExitCode {

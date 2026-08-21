@@ -15,6 +15,7 @@ let
     ../extensions/session-hooks.ts
     ../extensions/title-state.ts
     ../extensions/user-input.ts
+    ../extensions/user-invocations.ts
     ../extensions/lib
   ];
   source = lib.fileset.toSource {

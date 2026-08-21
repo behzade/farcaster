@@ -13,12 +13,13 @@ use super::super::{
     ComposerHistoryNext, ComposerHistoryPrevious, PiApp, file_mentions, slash_commands,
 };
 use crate::{
-    app::{file_mentions::MentionQuery, slash_commands::SlashCommandSuggestion},
+    app::file_mentions::MentionQuery,
     composer_sessions::ComposerSnapshot,
     conversation::QueueState,
     primitives::{ButtonTone, button},
     protocol::ExtensionUiRequest,
     theme::{MONO_FONT_FAMILY, THEME},
+    user_invocations::{self, ComposerSuggestion},
 };
 
 impl PiApp {
@@ -27,10 +28,17 @@ impl PiApp {
             return self.render_composer_request(entity);
         }
         let floating = self.selected_draft_is_empty_and_unsubmitted();
-        let composer_value = self.composer.read(cx).value().trim().to_owned();
+        let composer = self.composer.read(cx);
+        let composer_text = composer.value().to_string();
+        let composer_cursor = composer.cursor().min(composer_text.len());
+        let composer_value = composer_text.trim().to_owned();
         let command_suggestions =
             slash_commands::suggestions(&composer_value, &self.snapshot.commands)
                 .into_iter()
+                .chain(user_invocations::suggestions(
+                    &composer_text[..composer_cursor],
+                    &self.snapshot.commands,
+                ))
                 .take(8)
                 .collect::<Vec<_>>();
         let exact_command = slash_commands::is_exact(&composer_value, &self.snapshot.commands);
@@ -103,7 +111,7 @@ impl PiApp {
                         |composer, attachments| composer.child(attachments),
                     )
                     .when(!command_suggestions.is_empty(), |composer| {
-                        composer.child(slash_command_menu(command_suggestions, command_entity))
+                        composer.child(command_menu(command_suggestions, command_entity))
                     })
                     .when_some(
                         mention_query
@@ -497,14 +505,11 @@ fn fill_file_mention(
     });
 }
 
-fn slash_command_menu(
-    commands: Vec<SlashCommandSuggestion>,
-    entity: WeakEntity<PiApp>,
-) -> AnyElement {
+fn command_menu(commands: Vec<ComposerSuggestion>, entity: WeakEntity<PiApp>) -> AnyElement {
     let mut menu = div()
-        .id("slash-command-menu")
+        .id("command-menu")
         .role(Role::Group)
-        .aria_label("Slash commands")
+        .aria_label("Commands and user invocations")
         .max_h(px(220.0))
         .overflow_y_scroll()
         .mb(THEME.space.sm)
@@ -515,12 +520,14 @@ fn slash_command_menu(
         .p(THEME.space.xs);
     for (index, command) in commands.into_iter().enumerate() {
         let name = command.name;
+        let sigil = command.sigil;
         let click_entity = entity.clone();
+        let click_name = name.clone();
         menu = menu.child(
             div()
-                .id(("slash-command", index))
+                .id(("composer-command", index))
                 .role(Role::Button)
-                .aria_label(format!("Use /{name}"))
+                .aria_label(format!("Use {sigil}{name}"))
                 .tab_index(0)
                 .flex()
                 .items_center()
@@ -536,7 +543,7 @@ fn slash_command_menu(
                         .flex_none()
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(THEME.colors.accent)
-                        .child(format!("/{name}")),
+                        .child(format!("{sigil}{name}")),
                 )
                 .when_some(command.description, |row, description| {
                     row.child(
@@ -552,17 +559,24 @@ fn slash_command_menu(
                     )
                 })
                 .on_click(move |_, window, cx| {
-                    fill_slash_command(click_entity.clone(), name.clone(), window, cx);
+                    fill_command(click_entity.clone(), sigil, click_name.clone(), window, cx);
                 }),
         );
     }
     menu.into_any_element()
 }
 
-fn fill_slash_command(entity: WeakEntity<PiApp>, name: String, window: &mut Window, cx: &mut App) {
+fn fill_command(
+    entity: WeakEntity<PiApp>,
+    sigil: char,
+    name: String,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let _ = entity.update(cx, |this, cx| {
-        let text = format!("/{name} ");
-        let cursor = text.len();
+        let composer = this.composer.read(cx);
+        let (text, cursor) =
+            user_invocations::complete(&composer.value(), composer.cursor(), sigil, &name);
         this.apply_composer_snapshot(
             ComposerSnapshot::new(text, cursor, cursor..cursor),
             window,

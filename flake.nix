@@ -205,6 +205,7 @@
                 import("./session-hooks.ts"),
                 import("./title-state.ts"),
                 import("./user-input.ts"),
+                import("./user-invocations.ts"),
               ])
             '
             touch "$out"
@@ -325,7 +326,8 @@
               ${self}/tests/theme-and-rendering.test.ts \
               ${self}/tests/theme-selection.test.ts \
               ${self}/tests/tui-only.test.ts \
-              ${self}/tests/terminal-text.test.ts
+              ${self}/tests/terminal-text.test.ts \
+              ${self}/tests/user-invocations.test.ts
             touch "$out"
           '';
         }

@@ -39,6 +39,7 @@ stdenvNoCC.mkDerivation {
     ln -s ${coreExtensions}/session-hooks.ts "$out/extensions/session-hooks.ts"
     ln -s ${coreExtensions}/title-state.ts "$out/extensions/title-state.ts"
     ln -s ${coreExtensions}/user-input.ts "$out/extensions/user-input.ts"
+    ln -s ${coreExtensions}/user-invocations.ts "$out/extensions/user-invocations.ts"
 
     ln -s ${../prompts} "$out/prompts"
     ln -s ${../themes/gruvbox-dark-hard.json} "$out/themes/gruvbox-dark-hard.json"

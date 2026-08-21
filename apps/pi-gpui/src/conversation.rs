@@ -855,7 +855,11 @@ fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
             kind
         },
         label,
-        text: message_text(message),
+        text: if kind == TranscriptKind::User {
+            projected_user_message_text(message)
+        } else {
+            message_text(message)
+        },
         stream_chunks: Arc::default(),
         streaming: false,
         is_error,
@@ -894,6 +898,20 @@ fn message_text(message: &Value) -> String {
         .or_else(|| message.get("output").and_then(Value::as_str))
         .unwrap_or_default()
         .to_owned()
+}
+
+fn projected_user_message_text(message: &Value) -> String {
+    let Some(display) = message.get("piUserInvocation").and_then(Value::as_str) else {
+        return message_text(message);
+    };
+    let image_count = message
+        .get("content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|block| block.get("type").and_then(Value::as_str) == Some("image"))
+        .count();
+    user_message_text(display, image_count)
 }
 
 fn user_message_text(message: &str, image_count: usize) -> String {

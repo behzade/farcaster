@@ -1,6 +1,9 @@
 //! Slash-command matching against Pi's built-in and RPC command catalogs.
 
-use crate::protocol::{SlashCommand, SlashCommandSource};
+use crate::{
+    protocol::{SlashCommand, SlashCommandSource},
+    user_invocations::ComposerSuggestion,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum BuiltinSlashCommand {
@@ -33,12 +36,6 @@ pub(super) struct BuiltinInvocation<'a> {
     pub(super) command: BuiltinSlashCommand,
     pub(super) name: &'static str,
     pub(super) arguments: Option<&'a str>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct SlashCommandSuggestion {
-    pub(super) name: String,
-    pub(super) description: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -213,7 +210,7 @@ pub(super) fn is_exact(input: &str, commands: &[SlashCommand]) -> bool {
     builtin_invocation(input).is_some() || exact(input, commands).is_some()
 }
 
-pub(super) fn suggestions(input: &str, commands: &[SlashCommand]) -> Vec<SlashCommandSuggestion> {
+pub(super) fn suggestions(input: &str, commands: &[SlashCommand]) -> Vec<ComposerSuggestion> {
     let Some(query) = input.strip_prefix('/') else {
         return Vec::new();
     };
@@ -225,18 +222,21 @@ pub(super) fn suggestions(input: &str, commands: &[SlashCommand]) -> Vec<SlashCo
         .iter()
         .filter(|command| command.name.starts_with(query))
     {
-        matches.push(SlashCommandSuggestion {
+        matches.push(ComposerSuggestion {
             name: command.name.into(),
             description: Some(command.description.into()),
+            sigil: '/',
         });
     }
     for command in commands {
-        if command.name.starts_with(query)
+        if command.source == SlashCommandSource::Extension
+            && command.name.starts_with(query)
             && !matches.iter().any(|existing| existing.name == command.name)
         {
-            matches.push(SlashCommandSuggestion {
+            matches.push(ComposerSuggestion {
                 name: command.name.clone(),
                 description: command.description.clone(),
+                sigil: '/',
             });
         }
     }
@@ -358,7 +358,7 @@ mod tests {
                 .into_iter()
                 .map(|command| command.name)
                 .collect::<Vec<_>>(),
-            ["resume", "reload", "review"]
+            ["resume", "reload"]
         );
         assert_eq!(suggestions("/", &[]).len(), 22);
         assert!(suggestions("/re now", &commands).is_empty());

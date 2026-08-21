@@ -53,7 +53,9 @@ separate `nix-config` repo.
   Effect-backed tools start, message, and control children.
 - The loose entrypoints under [`extensions`](extensions) are packaged together by
   `pi-core-extensions`; notifications, title animation, user input, and feedback use the
-  same pinned Effect v4 runtime while Pi callbacks remain boundary adapters.
+  same pinned Effect v4 runtime while Pi callbacks remain boundary adapters. Type `$`
+  to autocomplete prompts or skills; leading invocations such as `$simplify $commit`
+  compose in order.
 - [`extensions/agent-feedback.ts`](extensions/agent-feedback.ts) exposes the
   non-blocking feedback tool to Pi sessions.
 - [`nix`](nix) contains the pinned builds for Pi and every packaged extension.
@@ -112,7 +114,8 @@ node --test \
   tests/prompt-contract.test.ts \
   tests/prompt-inspector.test.ts \
   tests/theme-and-rendering.test.ts \
-  tests/terminal-text.test.ts
+  tests/terminal-text.test.ts \
+  tests/user-invocations.test.ts
 ```
 
 Sandbox and broker checks live in the pinned

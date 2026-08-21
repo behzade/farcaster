@@ -4,6 +4,20 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn authoritative_invocation_reuses_the_compact_optimistic_user_item() {
+    let mut state = ConversationState::default();
+    state.push_local_user("$commit".into(), 0);
+    state.start_message(Some(&json!({
+        "role":"user",
+        "piUserInvocation":"$commit",
+        "content":[{"type":"text","text":"expanded commit prompt"}]
+    })));
+
+    assert_eq!(state.items.len(), 1);
+    assert_eq!(state.items[0].text, "$commit");
+}
+
+#[test]
 fn optimistic_user_item_rolls_back_by_identity_only() {
     let mut state = ConversationState::default();
     state.push_local_user("same text".into(), 0);
@@ -223,6 +237,16 @@ fn user_images_are_visible_even_without_prompt_text() {
 
     state.push_local_user("look".into(), 2);
     assert_eq!(state.items[1].text, "look\n\nAttached 2 images");
+
+    state.replace_history(&[json!({
+        "role":"user",
+        "piUserInvocation":"$simplify",
+        "content":[
+            {"type":"text","text":"expanded"},
+            {"type":"image","data":"a","mimeType":"image/png"}
+        ]
+    })]);
+    assert_eq!(state.items[0].text, "$simplify\n\nAttached image");
 }
 
 #[test]
