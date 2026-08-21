@@ -1,12 +1,18 @@
 PROJECT ?= $(CURDIR)
 CARGO_TARGET_DIR ?= $(CURDIR)/target
 
-.PHONY: run debug check-gpui
+.PHONY: run debug release release-debug check-gpui
 run:
 	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo run --manifest-path apps/pi-gpui/Cargo.toml -- "$(PROJECT)"
 
 debug:
 	DEBUG=true CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo run --manifest-path apps/pi-gpui/Cargo.toml -- "$(PROJECT)"
+
+release:
+	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo run --release --manifest-path apps/pi-gpui/Cargo.toml -- "$(PROJECT)"
+
+release-debug:
+	DEBUG=true CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo run --release --manifest-path apps/pi-gpui/Cargo.toml -- "$(PROJECT)"
 
 check-gpui:
 	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo fmt --manifest-path apps/pi-gpui/Cargo.toml --check
