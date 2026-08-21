@@ -96,6 +96,8 @@ let
       makeWrapper
       pkg-config
       rustPlatform.bindgenHook
+    ] ++ lib.optionals stdenv.hostPlatform.isLinux [
+      util-linux
     ];
 
     buildInputs = lib.optionals stdenv.hostPlatform.isLinux [
