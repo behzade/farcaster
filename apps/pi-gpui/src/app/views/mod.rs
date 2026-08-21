@@ -21,9 +21,9 @@ pub(super) use regions::{
 
 use gpui::{
     Context, Focusable as _, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    Styled as _, Window, div, prelude::FluentBuilder as _,
+    StatefulInteractiveElement as _, Styled as _, Window, div, prelude::FluentBuilder as _,
 };
-use gpui_base::TextSelection;
+use gpui_base::{Button as BaseButton, TextSelection};
 use gpui_component::kbd::Kbd;
 
 use super::{
@@ -51,7 +51,7 @@ use crate::{
         layout_mode, shows_left_inline, shows_right_inline, shows_run_sheet_button,
         shows_session_sheet_button,
     },
-    primitives::{ButtonTone, FeedbackTone, button, feedback, modal},
+    primitives::{FeedbackTone, feedback, modal},
     protocol::ExtensionUiRequest,
     theme::{THEME, ui_font},
 };
@@ -523,12 +523,17 @@ fn render_draft_heading(
         .text_color(THEME.colors.text)
         .child("What needs doing in ")
         .child(
-            button(
-                "draft-project",
-                label,
-                ButtonTone::Quiet,
-                true,
-                move |window, cx| {
+            BaseButton::new("draft-project")
+                .accessibility_label(label.clone())
+                .flex()
+                .items_center()
+                .cursor_pointer()
+                .text_size(THEME.type_scale.display)
+                .text_color(THEME.colors.accent)
+                .hover(|button| button.text_color(THEME.colors.accent_hover))
+                .active(|button| button.text_color(THEME.colors.accent_active))
+                .focus(|button| button.text_decoration_1())
+                .on_click(move |_, window, cx| {
                     let _ = entity.update(cx, |this, cx| {
                         this.open_picker(
                             PickerScope::Projects(ProjectPickerIntent::ChangeDraft),
@@ -536,10 +541,8 @@ fn render_draft_heading(
                             cx,
                         );
                     });
-                },
-            )
-            .text_size(THEME.type_scale.display)
-            .text_color(THEME.colors.accent),
+                })
+                .child(label),
         )
         .child("?")
 }
