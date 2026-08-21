@@ -14,6 +14,7 @@ use gpui::{
 };
 use gpui_component::{
     IndexPath,
+    input::Backspace,
     list::{List, ListEvent, ListState as ComponentListState},
 };
 
@@ -163,6 +164,8 @@ impl PiApp {
             return;
         };
         if !picker.query.borrow().is_empty() {
+            window.dispatch_action(Box::new(Backspace), cx);
+            cx.stop_propagation();
             return;
         }
         if picker.scope == PickerScope::Actions {

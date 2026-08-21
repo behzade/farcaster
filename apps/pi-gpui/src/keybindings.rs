@@ -169,7 +169,7 @@ pub(crate) fn registry() -> Vec<Shortcut> {
             label: "Back in action picker",
             keystroke: "backspace",
             show_in_help: false,
-            binding: KeyBinding::new("backspace", PickerBack, Some(PICKER_KEY_CONTEXT)),
+            binding: KeyBinding::new("backspace", PickerBack, Some("PiPicker > Input")),
         },
         Shortcut {
             section: "Application",
