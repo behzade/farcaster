@@ -145,3 +145,154 @@ index 6f1ab9b..7dbed91 100644
      "extensions",
      "skills",
      "prompts",
+diff --git a/dist/modes/rpc/rpc-mode.js b/dist/modes/rpc/rpc-mode.js
+index d414633..aae7891 100644
+--- a/dist/modes/rpc/rpc-mode.js
++++ b/dist/modes/rpc/rpc-mode.js
+@@ -222,6 +222,94 @@ export async function runRpcMode(runtimeHost) {
+             // Tool expansion not supported in RPC mode - no TUI
+         },
+     });
++    const emitUi = (request) => output({
++        type: "extension_ui_request",
++        id: crypto.randomUUID(),
++        ...request,
++    });
++    const requireValue = async (request) => {
++        const value = await request;
++        if (value === undefined) {
++            throw new Error("Login cancelled");
++        }
++        return value;
++    };
++    const selectValue = (title, options, signal) => requireValue(createDialogPromise({ signal }, undefined, { method: "select", title, options }, (response) => "cancelled" in response && response.cancelled ? undefined : "value" in response ? response.value : undefined));
++    const inputValue = (prompt) => requireValue(createDialogPromise({ signal: prompt.signal }, undefined, {
++        method: "input",
++        title: prompt.message,
++        placeholder: prompt.placeholder,
++        secret: prompt.type === "secret",
++    }, (response) => "cancelled" in response && response.cancelled ? undefined : "value" in response ? response.value : undefined));
++    const login = async (providerRef) => {
++        const normalizedRef = providerRef?.trim().toLowerCase();
++        const methods = [];
++        for (const provider of session.modelRuntime.getProviders()) {
++            if (normalizedRef && provider.id.toLowerCase() !== normalizedRef && provider.name.toLowerCase() !== normalizedRef) {
++                continue;
++            }
++            if (provider.auth.oauth) {
++                methods.push({ provider, type: "oauth", label: `${provider.name} — ${provider.auth.oauth.loginLabel ?? "Account"}` });
++            }
++            if (provider.auth.apiKey?.login) {
++                methods.push({ provider, type: "api_key", label: `${provider.name} — API key` });
++            }
++        }
++        if (methods.length === 0) {
++            throw new Error(normalizedRef ? `No login methods found for provider: ${providerRef}` : "No provider login methods are available");
++        }
++        methods.sort((a, b) => a.label.localeCompare(b.label));
++        const selected = methods.length === 1
++            ? methods[0]
++            : methods.find((method) => method.label === await selectValue(normalizedRef ? "Select authentication method" : "Add provider", methods.map((method) => method.label)));
++        if (!selected) {
++            throw new Error("Login cancelled");
++        }
++        const statusKey = "pi-provider-login";
++        const setStatus = (statusText) => emitUi({ method: "setStatus", statusKey, statusText });
++        const openAuth = (url, message) => {
++            emitUi({ method: "authUrl", url, message });
++            setStatus(message);
++        };
++        setStatus(`Connecting ${selected.provider.name}…`);
++        try {
++            await session.modelRuntime.login(selected.provider.id, selected.type, {
++                prompt: async (prompt) => {
++                    if (prompt.type !== "select") {
++                        return inputValue(prompt);
++                    }
++                    const label = await selectValue(prompt.message, prompt.options.map((option) => option.label), prompt.signal);
++                    const option = prompt.options.find((candidate) => candidate.label === label);
++                    if (!option) {
++                        throw new Error("Login cancelled");
++                    }
++                    return option.id;
++                },
++                notify: (event) => {
++                    if (event.type === "auth_url") {
++                        openAuth(event.url, event.instructions ?? "Continue authentication in your browser.");
++                    }
++                    else if (event.type === "device_code") {
++                        openAuth(event.verificationUri, `Enter code ${event.userCode} in your browser.`);
++                    }
++                    else if (event.type === "info" && event.links?.[0]) {
++                        openAuth(event.links[0].url, event.message);
++                    }
++                    else {
++                        emitUi({ method: "notify", message: event.message, notifyType: "info" });
++                    }
++                },
++            });
++            return {
++                provider: selected.provider.id,
++                authType: selected.type,
++                models: session.modelRuntime.getAvailableSnapshot(),
++            };
++        }
++        finally {
++            setStatus(undefined);
++        }
++    };
+     runtimeHost.setRebindSession(async () => {
+         await rebindSession();
+     });
+@@ -381,6 +469,18 @@ export async function runRpcMode(runtimeHost) {
+                 const models = session.modelRuntime.getAvailableSnapshot();
+                 return success(id, "get_available_models", { models });
+             }
++            case "login": {
++                try {
++                    const result = await login(command.provider);
++                    return success(id, "login", result);
++                }
++                catch (loginError) {
++                    if (loginError instanceof Error && loginError.message === "Login cancelled") {
++                        return success(id, "login", { cancelled: true, models: session.modelRuntime.getAvailableSnapshot() });
++                    }
++                    throw loginError;
++                }
++            }
+             // =================================================================
+             // Thinking
+             // =================================================================
+diff --git a/dist/modes/rpc/rpc-types.d.ts b/dist/modes/rpc/rpc-types.d.ts
+index ce9aa9d..6868dd7 100644
+--- a/dist/modes/rpc/rpc-types.d.ts
++++ b/dist/modes/rpc/rpc-types.d.ts
+@@ -50,6 +50,10 @@ export type RpcCommand = {
+     id?: string;
+     type: "get_available_models";
+ } | {
++    id?: string;
++    type: "login";
++    provider?: string;
++} | {
+     id?: string;
+     type: "set_thinking_level";
+     level: ThinkingLevel;
+@@ -215,6 +219,17 @@ export type RpcResponse = {
+         models: Model<any>[];
+     };
+ } | {
++    id?: string;
++    type: "response";
++    command: "login";
++    success: true;
++    data: {
++        provider?: string;
++        authType?: "oauth" | "api_key";
++        cancelled?: boolean;
++        models: Model<any>[];
++    };
++} | {
+     id?: string;
+     type: "response";
+     command: "set_thinking_level";

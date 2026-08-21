@@ -221,6 +221,9 @@ impl PiApp {
             BuiltinSlashCommand::Resume => self.open_sessions_sheet(window, cx),
             BuiltinSlashCommand::Reload => self.send(RuntimeCommand::Reload),
             BuiltinSlashCommand::Trust => self.open_project_trust(window, cx),
+            BuiltinSlashCommand::Login => self.send(RuntimeCommand::Login(
+                invocation.arguments.map(str::to_owned),
+            )),
             BuiltinSlashCommand::Quit => cx.quit(),
             BuiltinSlashCommand::Settings
             | BuiltinSlashCommand::ScopedModels
@@ -231,7 +234,6 @@ impl PiApp {
             | BuiltinSlashCommand::Fork
             | BuiltinSlashCommand::Clone
             | BuiltinSlashCommand::Tree
-            | BuiltinSlashCommand::Login
             | BuiltinSlashCommand::Logout => self.push_builtin_error(
                 "Command unavailable",
                 &format!(

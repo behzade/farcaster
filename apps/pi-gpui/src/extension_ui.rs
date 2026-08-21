@@ -38,6 +38,7 @@ pub(crate) enum ExtensionEffect {
     DialogOpened,
     SetTitle(String),
     SetEditorText(String),
+    OpenUrl(String),
     PersistError(String),
     Diagnostic(String),
 }
@@ -48,6 +49,7 @@ impl ExtensionUiState {
             request @ (ExtensionUiRequest::Select { .. }
             | ExtensionUiRequest::Confirm { .. }
             | ExtensionUiRequest::Input { .. }
+            | ExtensionUiRequest::Secret { .. }
             | ExtensionUiRequest::Editor { .. }) => {
                 if self.dialog.is_none() {
                     self.dialog = Some(request);
@@ -61,20 +63,16 @@ impl ExtensionUiState {
                 if is_rpc_capability_notice(&message) {
                     return ExtensionEffect::None;
                 }
-                self.notifications.push_back(Notification {
-                    id,
-                    message: message.clone(),
-                    tone,
-                    expires_at: Instant::now() + NOTIFICATION_LIFETIME,
-                });
-                while self.notifications.len() > MAX_NOTIFICATIONS {
-                    self.notifications.pop_front();
-                }
+                self.push_notification(id, message.clone(), tone);
                 if tone == NotifyTone::Error {
                     ExtensionEffect::PersistError(message)
                 } else {
                     ExtensionEffect::None
                 }
+            }
+            ExtensionUiRequest::AuthUrl { id, url, message } => {
+                self.push_notification(id, message, NotifyTone::Info);
+                ExtensionEffect::OpenUrl(url)
             }
             ExtensionUiRequest::SetStatus { key, text, .. } => {
                 if let Some(text) = text {
@@ -113,6 +111,18 @@ impl ExtensionUiState {
             ExtensionUiRequest::Unknown { method, .. } => {
                 ExtensionEffect::Diagnostic(format!("Unknown extension UI method: {method}"))
             }
+        }
+    }
+
+    fn push_notification(&mut self, id: String, message: String, tone: NotifyTone) {
+        self.notifications.push_back(Notification {
+            id,
+            message,
+            tone,
+            expires_at: Instant::now() + NOTIFICATION_LIFETIME,
+        });
+        while self.notifications.len() > MAX_NOTIFICATIONS {
+            self.notifications.pop_front();
         }
     }
 

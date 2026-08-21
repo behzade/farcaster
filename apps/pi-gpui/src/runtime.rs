@@ -88,6 +88,7 @@ pub(crate) enum RuntimeCommand {
         provider: String,
         model_id: String,
     },
+    Login(Option<String>),
     SetThinking(String),
     ExtensionResponse(ExtensionUiResponse),
     DeliverQueued(crate::state::QueuedPrompt),
@@ -1400,6 +1401,9 @@ impl RuntimeOwner {
             RuntimeCommand::SetModel { provider, model_id } => {
                 self.send(json!({"type":"set_model","provider":provider,"modelId":model_id}))
             }
+            RuntimeCommand::Login(provider) => {
+                self.send(optional_string_command("login", "provider", provider))
+            }
             RuntimeCommand::SetThinking(level) => {
                 self.send(json!({"type":"set_thinking_level","level":level}))
             }
@@ -1812,13 +1816,22 @@ impl RuntimeOwner {
                 conversation_mut(self.active_snapshot_mut()).replace_history(&messages);
                 self.startup_history_loaded = true;
             }
-            "get_available_models" => {
-                self.active_snapshot_mut().models = response
+            "get_available_models" | "login" => {
+                let cancelled = response.data.get("cancelled").and_then(Value::as_bool);
+                let snapshot = self.active_snapshot_mut();
+                snapshot.models = response
                     .data
                     .get("models")
                     .cloned()
                     .and_then(|value| serde_json::from_value(value).ok())
                     .unwrap_or_default();
+                if response.command == "login" {
+                    snapshot.status = if cancelled == Some(true) {
+                        "Ready".into()
+                    } else {
+                        "Provider added".into()
+                    };
+                }
             }
             "get_available_thinking_levels" => {
                 self.active_snapshot_mut().thinking_levels = response

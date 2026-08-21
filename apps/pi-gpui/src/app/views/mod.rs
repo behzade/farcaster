@@ -91,9 +91,15 @@ impl Render for PiApp {
                 Some(ExtensionUiRequest::Editor { prefill, .. }) => {
                     (prefill.clone().unwrap_or_default(), true)
                 }
-                Some(ExtensionUiRequest::Input { .. }) => (String::new(), true),
+                Some(ExtensionUiRequest::Input { .. } | ExtensionUiRequest::Secret { .. }) => {
+                    (String::new(), true)
+                }
                 _ => (String::new(), false),
             };
+            let masked = matches!(
+                self.extension.dialog.as_ref(),
+                Some(ExtensionUiRequest::Secret { .. })
+            );
             let input = self.dialog_input.clone();
             let focus = if uses_input {
                 input.read(cx).focus_handle(cx)
@@ -101,7 +107,10 @@ impl Render for PiApp {
                 self.dialog_focus.clone()
             };
             cx.defer_in(window, move |_, window, cx| {
-                input.update(cx, |state, cx| state.set_value(prefill, window, cx));
+                input.update(cx, |state, cx| {
+                    state.set_masked(masked, window, cx);
+                    state.set_value(prefill, window, cx);
+                });
                 focus.focus(window, cx);
             });
         }

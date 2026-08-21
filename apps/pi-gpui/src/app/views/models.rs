@@ -51,13 +51,14 @@ pub(super) fn render(app: &PiApp, entity: WeakEntity<PiApp>) -> AnyElement {
     let efforts = app.snapshot.thinking_levels.clone();
     let effort = identity.effort;
     let provider_entity = entity.clone();
+    let add_provider_entity = entity.clone();
     let model_entity = entity.clone();
 
     let provider = dropdown_button(
         "select-provider",
         provider_label,
         ButtonTone::Quiet,
-        !providers.is_empty(),
+        true,
     )
     .flex_none()
     .font_family(MONO_FONT_FAMILY)
@@ -77,7 +78,12 @@ pub(super) fn render(app: &PiApp, entity: WeakEntity<PiApp>) -> AnyElement {
                 }),
             );
         }
-        menu
+        if !providers.is_empty() {
+            menu = menu.separator();
+        }
+        menu.item(PopupMenuItem::new("+ Add provider…").on_click(move |_, _, cx| {
+            let _ = add_provider_entity.update(cx, |this, _| this.add_provider());
+        }))
     });
     let model = dropdown_button(
         "select-model",

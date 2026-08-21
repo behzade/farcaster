@@ -345,6 +345,9 @@ impl PiApp {
             ExtensionUiRequest::Input {
                 title, placeholder, ..
             }
+            | ExtensionUiRequest::Secret {
+                title, placeholder, ..
+            }
             | ExtensionUiRequest::Editor {
                 title,
                 prefill: placeholder,

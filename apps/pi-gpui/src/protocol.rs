@@ -107,6 +107,12 @@ pub(crate) enum ExtensionUiRequest {
         placeholder: Option<String>,
         timeout: Option<u64>,
     },
+    Secret {
+        id: String,
+        title: String,
+        placeholder: Option<String>,
+        timeout: Option<u64>,
+    },
     Editor {
         id: String,
         title: String,
@@ -116,6 +122,11 @@ pub(crate) enum ExtensionUiRequest {
         id: String,
         message: String,
         tone: NotifyTone,
+    },
+    AuthUrl {
+        id: String,
+        url: String,
+        message: String,
     },
     SetStatus {
         id: String,
@@ -169,6 +180,7 @@ impl ExtensionUiRequest {
             Self::Select { id, .. }
             | Self::Confirm { id, .. }
             | Self::Input { id, .. }
+            | Self::Secret { id, .. }
             | Self::Editor { id, .. } => Some(id),
             _ => None,
         }
@@ -267,14 +279,27 @@ fn parse_extension_request(value: &Value) -> ExtensionUiRequest {
             message: string(value, "message"),
             timeout,
         },
-        "input" => ExtensionUiRequest::Input {
-            id,
-            title: string(value, "title"),
-            placeholder: value
+        "input" => {
+            let title = string(value, "title");
+            let placeholder = value
                 .get("placeholder")
                 .and_then(Value::as_str)
-                .map(str::to_owned),
-            timeout,
+                .map(str::to_owned);
+            if value.get("secret").and_then(Value::as_bool) == Some(true) {
+                ExtensionUiRequest::Secret {
+                    id,
+                    title,
+                    placeholder,
+                    timeout,
+                }
+            } else {
+                ExtensionUiRequest::Input {
+                    id,
+                    title,
+                    placeholder,
+                    timeout,
+                }
+            }
         },
         "editor" => ExtensionUiRequest::Editor {
             id,
@@ -292,6 +317,11 @@ fn parse_extension_request(value: &Value) -> ExtensionUiRequest {
                 Some("error") => NotifyTone::Error,
                 _ => NotifyTone::Info,
             },
+        },
+        "authUrl" => ExtensionUiRequest::AuthUrl {
+            id,
+            url: string(value, "url"),
+            message: string(value, "message"),
         },
         "setStatus" => ExtensionUiRequest::SetStatus {
             id,
@@ -406,6 +436,15 @@ mod tests {
                 },
             ),
             (
+                r#"{"type":"extension_ui_request","id":"3s","method":"input","title":"Key","placeholder":"sk-...","secret":true}"#,
+                ExtensionUiRequest::Secret {
+                    id: "3s".into(),
+                    title: "Key".into(),
+                    placeholder: Some("sk-...".into()),
+                    timeout: None,
+                },
+            ),
+            (
                 r#"{"type":"extension_ui_request","id":"4","method":"editor","title":"T","prefill":"P"}"#,
                 ExtensionUiRequest::Editor {
                     id: "4".into(),
@@ -419,6 +458,14 @@ mod tests {
                     id: "5".into(),
                     message: "M".into(),
                     tone: NotifyTone::Error,
+                },
+            ),
+            (
+                r#"{"type":"extension_ui_request","id":"5a","method":"authUrl","url":"https://example.com/login","message":"Continue in your browser"}"#,
+                ExtensionUiRequest::AuthUrl {
+                    id: "5a".into(),
+                    url: "https://example.com/login".into(),
+                    message: "Continue in your browser".into(),
                 },
             ),
             (

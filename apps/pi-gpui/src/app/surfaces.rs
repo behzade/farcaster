@@ -141,6 +141,10 @@ impl PiApp {
             self.pending_dialog_setup = true;
             cx.notify();
         } else {
+            self.dialog_input.update(cx, |input, cx| {
+                input.set_masked(false, window, cx);
+                input.set_value(String::new(), window, cx);
+            });
             self.restore_dialog_focus(window, cx);
         }
     }

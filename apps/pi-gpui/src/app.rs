@@ -818,7 +818,7 @@ impl PiApp {
                     } else if let Some(extension) = self.parked_extension.as_mut() {
                         let _ = extension.apply(request);
                     } else {
-                        self.apply_extension_request(request, generation);
+                        self.apply_extension_request(request, generation, cx);
                         root_dirty = true;
                         composer_dirty = true;
                     }
@@ -970,13 +970,19 @@ impl PiApp {
         }
     }
 
-    fn apply_extension_request(&mut self, request: ExtensionUiRequest, generation: u64) {
+    fn apply_extension_request(
+        &mut self,
+        request: ExtensionUiRequest,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) {
         match self.extension.apply(request) {
             ExtensionEffect::DialogOpened => self.pending_dialog_setup = true,
             ExtensionEffect::SetTitle(title) => self.pending_title = Some((generation, title)),
             ExtensionEffect::SetEditorText(text) => {
                 self.pending_editor_text = Some((generation, text))
             }
+            ExtensionEffect::OpenUrl(url) => cx.open_url(&url),
             ExtensionEffect::PersistError(_) | ExtensionEffect::None => {}
             ExtensionEffect::Diagnostic(message) => {
                 Arc::make_mut(&mut Arc::make_mut(&mut self.snapshot).conversation)
@@ -1434,6 +1440,10 @@ impl PiApp {
             model_id: model.id.clone(),
         });
         cx.notify();
+    }
+
+    fn add_provider(&mut self) {
+        self.send(RuntimeCommand::Login(None));
     }
 
     fn set_thinking_level(&mut self, level: String, cx: &mut Context<Self>) {
