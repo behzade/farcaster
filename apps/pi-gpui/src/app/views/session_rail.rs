@@ -146,10 +146,22 @@ impl PiApp {
         .size_full();
 
         let archived_expanded = self.archived_sessions_expanded && archived_entry_count > 0;
+        let archived_session_rail_style = if archived_expanded {
+            gpui::StyleRefinement::default()
+                .size_full()
+                .flex_1()
+        } else {
+            gpui::StyleRefinement::default()
+                .w_full()
+                .h(THEME.controls.utility_row
+                    + THEME.controls.archived_preview_row
+                        * archived_entry_count.min(ARCHIVED_PREVIEW_LIMIT))
+                .flex_none()
+        };
         let archived_session_rail = self
             .archived_session_rail_view
             .clone()
-            .cached(gpui::StyleRefinement::default());
+            .cached(archived_session_rail_style);
         let projects = self.available_projects();
         let project_filter_entity = entity.clone();
         let filter_label = self
@@ -410,11 +422,10 @@ impl PiApp {
         let archive_toggle_entity = entity;
         div()
             .id("archived-sessions")
+            .size_full()
             .min_h_0()
             .flex()
             .flex_col()
-            .when(archived_expanded, |archived| archived.flex_1())
-            .when(!archived_expanded, |archived| archived.flex_none())
             .child(
                 div()
                     .h(THEME.controls.utility_row)
