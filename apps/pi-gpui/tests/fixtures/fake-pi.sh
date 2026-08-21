@@ -61,6 +61,9 @@ while IFS= read -r line; do
     get_messages)
       data='{"messages":[]}'
       ;;
+    get_entries)
+      data='{"entries":[],"leafId":null}'
+      ;;
     get_available_models)
       data='{"models":[]}'
       ;;

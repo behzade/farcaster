@@ -546,6 +546,7 @@ mod tests {
             "new_session",
             "get_state",
             "get_messages",
+            "get_entries",
             "get_session_stats",
             "get_available_models",
             "get_available_thinking_levels",

@@ -27,7 +27,8 @@ use crate::{
     session_watcher::{SessionWatchEvent, SessionWatcher},
     sessions::{
         LoadedHistory, SessionDiscovery, SessionSummary, configured_session_root,
-        descendant_sessions, discover, load_history, root_session_for_path,
+        descendant_sessions, discover, load_history, project_display_history,
+        root_session_for_path,
     },
     state::StateStore,
 };
@@ -1329,7 +1330,7 @@ impl RuntimeOwner {
     fn send_startup_queries(&mut self) {
         for kind in [
             "get_state",
-            "get_messages",
+            "get_entries",
             "get_session_stats",
             "get_available_models",
             "get_available_thinking_levels",
@@ -1748,7 +1749,7 @@ impl RuntimeOwner {
         }
         if !response.success {
             let blocks_resume = self.deferred_prompt.is_some()
-                && matches!(response.command.as_str(), "get_state" | "get_messages");
+                && matches!(response.command.as_str(), "get_state" | "get_entries");
             let snapshot = self.active_snapshot_mut();
             conversation_mut(snapshot).push_local_error(
                 "Command failed",
@@ -1800,13 +1801,14 @@ impl RuntimeOwner {
                     return;
                 }
             },
-            "get_messages" => {
-                let messages = response
+            "get_entries" => {
+                let entries = response
                     .data
-                    .get("messages")
+                    .get("entries")
                     .and_then(Value::as_array)
                     .cloned()
                     .unwrap_or_default();
+                let messages = project_display_history(&entries);
                 conversation_mut(self.active_snapshot_mut()).replace_history(&messages);
                 self.startup_history_loaded = true;
             }
@@ -1903,7 +1905,7 @@ impl RuntimeOwner {
             }
             _ => {}
         }
-        if matches!(response_command.as_str(), "get_state" | "get_messages") {
+        if matches!(response_command.as_str(), "get_state" | "get_entries") {
             self.maybe_send_deferred_prompt();
         }
         if self.parked_snapshot.is_none() {

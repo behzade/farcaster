@@ -691,7 +691,7 @@ fn history_follows_the_current_branch_and_projects_display_entries() {
         serde_json::json!({"type":"custom_message","id":"three","parentId":"two","customType":"note","content":"visible","display":true}),
     ];
 
-    let history = project_history(&entries);
+    let history = project_display_history(&entries);
 
     assert_eq!(history.len(), 3);
     assert_eq!(history[0]["content"], "root");
@@ -700,7 +700,7 @@ fn history_follows_the_current_branch_and_projects_display_entries() {
 }
 
 #[test]
-fn history_matches_pi_compaction_order() {
+fn display_history_keeps_messages_before_compaction() {
     let entries = vec![
         serde_json::json!({"type":"message","id":"one","parentId":null,"message":{"role":"user","content":"summarized"}}),
         serde_json::json!({"type":"message","id":"two","parentId":"one","message":{"role":"user","content":"kept"}}),
@@ -708,12 +708,13 @@ fn history_matches_pi_compaction_order() {
         serde_json::json!({"type":"message","id":"four","parentId":"three","message":{"role":"user","content":"after"}}),
     ];
 
-    let history = project_history(&entries);
+    let history = project_display_history(&entries);
 
-    assert_eq!(history.len(), 3);
-    assert_eq!(history[0]["role"], "compactionSummary");
+    assert_eq!(history.len(), 4);
+    assert_eq!(history[0]["content"], "summarized");
     assert_eq!(history[1]["content"], "kept");
-    assert_eq!(history[2]["content"], "after");
+    assert_eq!(history[2]["role"], "compactionSummary");
+    assert_eq!(history[3]["content"], "after");
 }
 
 #[test]

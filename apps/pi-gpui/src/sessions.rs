@@ -354,7 +354,7 @@ pub(crate) fn load_history(path: &Path) -> Result<LoadedHistory, String> {
             .then(|| entry.get("thinkingLevel")?.as_str().map(str::to_owned))?
     });
     Ok(LoadedHistory {
-        messages: project_history_from_branch(&branch),
+        messages: project_display_history_from_branch(&branch),
         model,
         thinking_level,
         pending_question: pending_question_from_branch(&branch),
@@ -456,33 +456,15 @@ fn pending_question_from_branch(branch: &[&Value]) -> Option<ExtensionUiRequest>
     None
 }
 
-fn project_history(entries: &[Value]) -> Vec<Value> {
-    project_history_from_branch(&active_branch_entries(entries))
+pub(crate) fn project_display_history(entries: &[Value]) -> Vec<Value> {
+    project_display_history_from_branch(&active_branch_entries(entries))
 }
 
-fn project_history_from_branch(branch: &[&Value]) -> Vec<Value> {
-    let context = if let Some((index, compaction)) = branch
+fn project_display_history_from_branch(branch: &[&Value]) -> Vec<Value> {
+    branch
         .iter()
-        .enumerate()
-        .rev()
-        .find(|(_, entry)| entry.get("type").and_then(Value::as_str) == Some("compaction"))
-    {
-        let first_kept = compaction.get("firstKeptEntryId").and_then(Value::as_str);
-        let mut projected = vec![*compaction];
-        if let Some(first_kept) = first_kept
-            && let Some(kept_index) = branch[..index]
-                .iter()
-                .position(|entry| entry.get("id").and_then(Value::as_str) == Some(first_kept))
-        {
-            projected.extend_from_slice(&branch[kept_index..index]);
-        }
-        projected.extend_from_slice(&branch[index + 1..]);
-        projected
-    } else {
-        branch.to_vec()
-    };
-
-    context.into_iter().filter_map(entry_message).collect()
+        .filter_map(|entry| entry_message(entry))
+        .collect()
 }
 
 fn active_branch_entries(entries: &[Value]) -> Vec<&Value> {
