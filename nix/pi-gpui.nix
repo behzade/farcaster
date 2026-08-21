@@ -42,6 +42,7 @@ let
   pname = "pi-gpui";
   version = "0.1.0";
   sourceRoot = ../apps/pi-gpui;
+  mixedPatch = ../apps/pi-terminal/patches + "/@earendil-works%2Fpi-coding-agent@0.84.2.patch";
   src = lib.cleanSourceWith {
     src = sourceRoot;
     filter = path: type:
@@ -136,6 +137,11 @@ craneLib.buildPackage (
   commonArgs
   // {
     inherit cargoArtifacts;
+
+    preCheck = ''
+      install -Dm644 ${mixedPatch} \
+        ../pi-terminal/patches/@earendil-works%2Fpi-coding-agent@0.84.2.patch
+    '';
 
     postInstall = ''
       ln -s "$out/bin/pi-gpui" "$out/bin/pi-gui"
