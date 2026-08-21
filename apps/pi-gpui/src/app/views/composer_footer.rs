@@ -61,6 +61,21 @@ impl PiApp {
                     .flex()
                     .items_center()
                     .gap(THEME.space.xs)
+                    .when(self.snapshot.conversation.running, |actions| {
+                        actions.child(
+                            prominent_icon_button(
+                                "abort",
+                                AppIcon::XCircle,
+                                "Abort",
+                                ButtonTone::Quiet,
+                                move |_, cx| {
+                                    let _ = abort_entity
+                                        .update(cx, |this, _| this.send(RuntimeCommand::Abort));
+                                },
+                            )
+                            .text_color(THEME.colors.error),
+                        )
+                    })
                     .when_some(primary_action, |actions, label| {
                         actions.child(prominent_icon_button(
                             "send",
@@ -76,21 +91,6 @@ impl PiApp {
                                 });
                             },
                         ))
-                    })
-                    .when(self.snapshot.conversation.running, |actions| {
-                        actions.child(
-                            prominent_icon_button(
-                                "abort",
-                                AppIcon::XCircle,
-                                "Abort",
-                                ButtonTone::Quiet,
-                                move |_, cx| {
-                                    let _ = abort_entity
-                                        .update(cx, |this, _| this.send(RuntimeCommand::Abort));
-                                },
-                            )
-                            .text_color(THEME.colors.error),
-                        )
                     }),
             )
             .into_any_element()
