@@ -11,6 +11,7 @@ fn item(kind: TranscriptKind, label: &str, text: &str) -> Arc<TranscriptItem> {
         tool_call_id: None,
         tool_output: String::new(),
         tool_presentation: None,
+        invocation: None,
     })
 }
 
@@ -19,6 +20,18 @@ fn tail_reserve_is_responsive_but_bounded() {
     assert_eq!(tail_reserve(px(100.0)), px(72.0));
     assert_eq!(tail_reserve(px(500.0)), px(160.0));
     assert_eq!(tail_reserve(px(2_000.0)), px(280.0));
+}
+
+#[test]
+fn invocation_badges_distinguish_skills_prompts_and_stacks() {
+    assert_eq!(
+        invocation_kind("$review", "<skill name=\"review\">body</skill>"),
+        "Skill"
+    );
+    assert_eq!(invocation_kind("please $review", "Review this change"), "Prompt");
+    assert_eq!(invocation_kind("$review $commit", "resolved"), "Stack");
+    assert_eq!(invocation_kind("cost $100 then $review", "resolved"), "Prompt");
+    assert_eq!(invocation_kind("$review", ""), "Invocation");
 }
 
 #[test]

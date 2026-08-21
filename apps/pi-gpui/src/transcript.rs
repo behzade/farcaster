@@ -552,6 +552,9 @@ fn render_row(
                 ),
             )
         }
+        TranscriptRow::Item { index, .. } if items[index].invocation.is_some() => {
+            render_invocation(key, &items[index], expanded, entity)
+        }
         TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Tool => {
             render_tool(key, &items[index], expanded, diff_mode, entity)
         }
@@ -568,6 +571,108 @@ fn render_row(
             });
             render_message(key, &items[index], follows_tool, markdown_state)
         }
+    }
+}
+
+fn render_invocation(
+    key: usize,
+    item: &TranscriptItem,
+    expanded: bool,
+    entity: WeakEntity<PiApp>,
+) -> AnyElement {
+    let resolved = item.invocation.as_deref().unwrap_or_default();
+    let kind = invocation_kind(&item.text, resolved);
+    let resolved_ready = !resolved.is_empty();
+    div()
+        .id(("invocation-row", key))
+        .w_full()
+        .px(THEME.space.md)
+        .py(THEME.space.sm)
+        .flex()
+        .flex_col()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(THEME.space.xs)
+                .child(
+                    technical_text(("invocation-name", key), item.text.clone())
+                        .flex_1()
+                        .min_w_0()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(THEME.colors.accent),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .px(THEME.space.xs)
+                        .py(px(1.0))
+                        .rounded(THEME.radius)
+                        .border(THEME.border)
+                        .border_color(THEME.colors.border)
+                        .bg(THEME.colors.panel)
+                        .text_size(THEME.type_scale.caption)
+                        .text_color(THEME.colors.muted)
+                        .child(kind),
+                )
+                .child(button(
+                    ("invocation-toggle", key),
+                    if resolved_ready {
+                        if expanded { "Hide" } else { "View" }
+                    } else {
+                        "Resolving…"
+                    },
+                    ButtonTone::Quiet,
+                    resolved_ready,
+                    move |_, cx| {
+                        let _ = entity.update(cx, |this, cx| {
+                            this.set_transcript_item_expanded(key, !expanded, cx)
+                        });
+                    },
+                )),
+        )
+        .when(expanded && resolved_ready, |row| {
+            row.child(
+                div()
+                    .ml(px(22.0))
+                    .mt(THEME.space.xs)
+                    .max_h(THEME.layout.tool_max_height)
+                    .overflow_y_scroll()
+                    .border_l(THEME.border)
+                    .border_color(THEME.colors.accent)
+                    .pl(THEME.space.sm)
+                    .py(THEME.space.xs)
+                    .child(
+                        selectable_text(("invocation-detail", key), fenced_text(resolved))
+                            .font_family(MONO_FONT_FAMILY)
+                            .text_size(THEME.type_scale.body_small)
+                            .text_color(THEME.colors.muted),
+                    ),
+            )
+        })
+        .into_any_element()
+}
+
+fn invocation_kind(display: &str, resolved: &str) -> &'static str {
+    let count = display
+        .split_whitespace()
+        .filter(|token| {
+            token
+                .strip_prefix('$')
+                .is_some_and(|name| {
+                    name.chars()
+                        .any(|character| character.is_ascii_lowercase())
+                })
+        })
+        .count();
+    if count > 1 {
+        "Stack"
+    } else if resolved.contains("<skill name=") {
+        "Skill"
+    } else if resolved.is_empty() {
+        "Invocation"
+    } else {
+        "Prompt"
     }
 }
 

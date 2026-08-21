@@ -12,6 +12,7 @@ use crate::{
     protocol::{PromptImage, PromptMode},
     runtime::RuntimeCommand,
     sessions::{SessionSummary, normalize_session_path},
+    user_invocations,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -94,11 +95,13 @@ impl PiApp {
                 {
                     self.apply_composer_snapshot(ComposerSnapshot::default(), window, cx);
                 }
+                let invocation =
+                    user_invocations::contains_invocation(&value, &self.snapshot.commands);
                 let snapshot = Arc::make_mut(&mut self.snapshot);
                 let index = snapshot.conversation.items.len();
                 let conversation = Arc::make_mut(&mut snapshot.conversation);
                 if show_in_transcript {
-                    conversation.push_local_user(value, image_count);
+                    conversation.push_local_user(value, image_count, invocation);
                 }
                 conversation.running = true;
                 snapshot.status = "Working".into();

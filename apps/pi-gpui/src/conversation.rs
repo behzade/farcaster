@@ -83,6 +83,7 @@ pub(crate) struct TranscriptItem {
     pub tool_call_id: Option<String>,
     pub tool_output: String,
     pub tool_presentation: Option<ToolPresentation>,
+    pub invocation: Option<String>,
 }
 
 impl TranscriptItem {
@@ -158,6 +159,7 @@ impl ConversationState {
         &mut self,
         message: String,
         image_count: usize,
+        invocation: bool,
     ) -> Arc<TranscriptItem> {
         let item = Arc::new(TranscriptItem {
             kind: TranscriptKind::User,
@@ -169,6 +171,7 @@ impl ConversationState {
             tool_call_id: None,
             tool_output: String::new(),
             tool_presentation: None,
+            invocation: invocation.then(String::new),
         });
         self.items.push(item.clone());
         self.optimistic_user = Some(item.clone());
@@ -373,6 +376,7 @@ impl ConversationState {
             tool_call_id: None,
             tool_output: String::new(),
             tool_presentation: None,
+            invocation: None,
         }));
     }
 
@@ -387,6 +391,7 @@ impl ConversationState {
             tool_call_id: None,
             tool_output: String::new(),
             tool_presentation: None,
+            invocation: None,
         }));
     }
 
@@ -401,6 +406,7 @@ impl ConversationState {
             tool_call_id: None,
             tool_output: String::new(),
             tool_presentation: None,
+            invocation: None,
         }));
     }
 
@@ -546,6 +552,7 @@ impl ConversationState {
             tool_call_id: None,
             tool_output: String::new(),
             tool_presentation: None,
+            invocation: None,
         });
         if content_existed {
             self.items[live.start + position] = projected;
@@ -644,6 +651,7 @@ impl ConversationState {
             tool_call_id: Some(id.clone()),
             tool_output: String::new(),
             tool_presentation: presentation,
+            invocation: None,
         }));
         self.tools.insert(id, self.items.len() - 1);
     }
@@ -695,6 +703,7 @@ impl ConversationState {
             tool_call_id: None,
             tool_output: String::new(),
             tool_presentation: None,
+            invocation: None,
         }));
     }
 
@@ -816,6 +825,7 @@ fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
                                     .get("arguments")
                                     .and_then(|arguments| tool_presentation(name, arguments))
                             }),
+                            invocation: None,
                         })
                     })
                     .collect()
@@ -838,6 +848,7 @@ fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
                 tool_call_id: None,
                 tool_output: String::new(),
                 tool_presentation: None,
+                invocation: None,
             });
         }
         return items;
@@ -868,6 +879,14 @@ fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
     if !display {
         return Vec::new();
     }
+    let invocation = if kind == TranscriptKind::User {
+        message
+            .get("piUserInvocation")
+            .and_then(Value::as_str)
+            .map(|_| message_text(message))
+    } else {
+        None
+    };
     vec![TranscriptItem {
         kind: if is_error && kind != TranscriptKind::Tool {
             TranscriptKind::Error
@@ -889,6 +908,7 @@ fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
             .map(str::to_owned),
         tool_output: String::new(),
         tool_presentation: None,
+        invocation,
     }]
 }
 

@@ -6,13 +6,14 @@ use serde_json::json;
 #[test]
 fn invocation_keeps_one_compact_user_item_through_finalization() {
     let mut state = ConversationState::default();
-    state.push_local_user("$commit".into(), 0);
+    state.push_local_user("$commit".into(), 0, true);
     state.start_message(Some(&json!({
         "role":"user",
         "content":[{"type":"text","text":"expanded commit prompt"}]
     })));
     assert_eq!(state.items.len(), 1);
     assert_eq!(state.items[0].text, "$commit");
+    assert_eq!(state.items[0].invocation.as_deref(), Some(""));
 
     state.end_message(Some(&json!({
         "role":"user",
@@ -22,13 +23,17 @@ fn invocation_keeps_one_compact_user_item_through_finalization() {
 
     assert_eq!(state.items.len(), 1);
     assert_eq!(state.items[0].text, "$commit");
+    assert_eq!(
+        state.items[0].invocation.as_deref(),
+        Some("expanded commit prompt")
+    );
 }
 
 #[test]
 fn optimistic_user_item_rolls_back_by_identity_only() {
     let mut state = ConversationState::default();
-    state.push_local_user("same text".into(), 0);
-    let optimistic = state.push_local_user("same text".into(), 0);
+    state.push_local_user("same text".into(), 0, false);
+    let optimistic = state.push_local_user("same text".into(), 0, false);
 
     assert!(state.rollback_local_user(&optimistic));
     assert_eq!(state.items.len(), 1);
@@ -39,7 +44,7 @@ fn optimistic_user_item_rolls_back_by_identity_only() {
 #[test]
 fn cloned_conversations_share_unchanged_transcript_items() {
     let mut state = ConversationState::default();
-    state.push_local_user("a long message".repeat(1_000), 0);
+    state.push_local_user("a long message".repeat(1_000), 0, false);
 
     let cloned = state.clone();
 
@@ -242,7 +247,7 @@ fn user_images_are_visible_even_without_prompt_text() {
     })]);
     assert_eq!(state.items[0].text, "Attached image");
 
-    state.push_local_user("look".into(), 2);
+    state.push_local_user("look".into(), 2, false);
     assert_eq!(state.items[1].text, "look\n\nAttached 2 images");
 
     state.replace_history(&[json!({
@@ -254,6 +259,10 @@ fn user_images_are_visible_even_without_prompt_text() {
         ]
     })]);
     assert_eq!(state.items[0].text, "$simplify\n\nAttached image");
+    assert_eq!(
+        state.items[0].invocation.as_deref(),
+        Some("expanded\n\nAttached image")
+    );
 }
 
 #[test]
