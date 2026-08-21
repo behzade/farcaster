@@ -28,9 +28,15 @@ fn invocation_badges_distinguish_skills_prompts_and_stacks() {
         invocation_kind("$review", "<skill name=\"review\">body</skill>"),
         "Skill"
     );
-    assert_eq!(invocation_kind("please $review", "Review this change"), "Prompt");
+    assert_eq!(
+        invocation_kind("please $review", "Review this change"),
+        "Prompt"
+    );
     assert_eq!(invocation_kind("$review $commit", "resolved"), "Stack");
-    assert_eq!(invocation_kind("cost $100 then $review", "resolved"), "Prompt");
+    assert_eq!(
+        invocation_kind("cost $100 then $review", "resolved"),
+        "Prompt"
+    );
     assert_eq!(invocation_kind("$review", ""), "Invocation");
 }
 

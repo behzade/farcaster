@@ -2,20 +2,17 @@
 
 use std::{rc::Rc, sync::Arc};
 
+use crate::{
+    assets::AppIcon,
+    conversation::{EditDiffFormat, ToolPresentation},
+    diff_element::{DiffCell, DiffElement, DiffPaintRow, DiffTone},
+    primitives::{ButtonTone, icon_button},
+    syntax_highlight::{HighlightedText, highlight_lines, language_for_path},
+    theme::{MONO_FONT_FAMILY, THEME},
+};
 use gpui::{
     AnyElement, App, InteractiveElement as _, IntoElement, ParentElement as _, Styled as _, Window,
     div, prelude::FluentBuilder as _, px,
-};
-use gpui_component::{
-    Sizable as _, Size,
-    button::{Button, ButtonVariants as _},
-};
-
-use crate::{
-    conversation::{EditDiffFormat, ToolPresentation},
-    diff_element::{DiffCell, DiffElement, DiffPaintRow, DiffTone},
-    syntax_highlight::{HighlightedText, highlight_lines, language_for_path},
-    theme::{MONO_FONT_FAMILY, THEME},
 };
 
 // Keep every embedded edit and write preview bounded; Expand shows the full diff.
@@ -124,7 +121,7 @@ pub(crate) fn render(
         PreparedToolChange::Edit { .. } => requested_mode,
         PreparedToolChange::Write { .. } => EmbeddedDiffMode::Unified,
     };
-    let metadata = diff_metadata(path, prepared, mode);
+    let metadata = diff_metadata(path, prepared);
     let body = match prepared {
         PreparedToolChange::Edit { rows, .. } => render_edit_diff(rows, mode),
         PreparedToolChange::Write { rows, .. } => render_write_diff(rows),
@@ -147,14 +144,9 @@ struct DiffMetadata<'a> {
     path: &'a str,
     additions: usize,
     deletions: usize,
-    mode: EmbeddedDiffMode,
 }
 
-fn diff_metadata<'a>(
-    path: &'a str,
-    prepared: &PreparedToolChange,
-    mode: EmbeddedDiffMode,
-) -> DiffMetadata<'a> {
+fn diff_metadata<'a>(path: &'a str, prepared: &PreparedToolChange) -> DiffMetadata<'a> {
     let (additions, deletions) = match prepared {
         PreparedToolChange::Edit {
             additions,
@@ -167,7 +159,6 @@ fn diff_metadata<'a>(
         path,
         additions,
         deletions,
-        mode,
     }
 }
 
@@ -177,11 +168,13 @@ fn render_diff_header(
     on_expand: Option<ExpandHandler>,
 ) -> impl IntoElement {
     let expand = on_expand.map(|handler| {
-        Button::new(("expand-tool-change", key))
-            .label("Expand")
-            .with_size(Size::XSmall)
-            .ghost()
-            .on_click(move |_, window, cx| handler(window, cx))
+        icon_button(
+            ("expand-tool-change", key),
+            AppIcon::ArrowsOut,
+            "Expand diff",
+            ButtonTone::Quiet,
+            move |window, cx| handler(window, cx),
+        )
     });
     div()
         .w_full()
@@ -219,15 +212,6 @@ fn render_diff_header(
                 .text_size(THEME.type_scale.caption)
                 .text_color(THEME.colors.error)
                 .child(format!("-{}", metadata.deletions)),
-        )
-        .child(
-            div()
-                .text_size(THEME.type_scale.caption)
-                .text_color(THEME.colors.muted)
-                .child(match metadata.mode {
-                    EmbeddedDiffMode::Split => "Split",
-                    EmbeddedDiffMode::Unified => "Unified",
-                }),
         )
         .children(expand)
 }
@@ -656,7 +640,7 @@ mod tests {
     }
 
     #[test]
-    fn metadata_counts_changes_and_reports_the_actual_view() {
+    fn metadata_counts_changes() {
         let rows = parse_display_diff(
             " same\n- old one\n- old two\n+ new one",
             EditDiffFormat::Unnumbered,
@@ -668,12 +652,11 @@ mod tests {
         };
 
         assert_eq!(
-            diff_metadata("src/main.rs", &prepared, EmbeddedDiffMode::Unified),
+            diff_metadata("src/main.rs", &prepared),
             DiffMetadata {
                 path: "src/main.rs",
                 additions: 1,
                 deletions: 2,
-                mode: EmbeddedDiffMode::Unified,
             }
         );
     }

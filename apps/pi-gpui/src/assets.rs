@@ -4,8 +4,9 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 19] = [
+const ICON_PATHS: [&str; 20] = [
     "icons/phosphor/archive.svg",
+    "icons/phosphor/arrows-out.svg",
     "icons/phosphor/arrow-counter-clockwise.svg",
     "icons/phosphor/arrow-square-out.svg",
     "icons/phosphor/arrow-up.svg",
@@ -48,6 +49,9 @@ impl AssetSource for AppAssets {
         let bytes: Option<&'static [u8]> = match path {
             "icons/phosphor/archive.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/archive.svg"))
+            }
+            "icons/phosphor/arrows-out.svg" => {
+                Some(include_bytes!("../assets/phosphor-icons/arrows-out.svg"))
             }
             "icons/phosphor/arrow-counter-clockwise.svg" => Some(include_bytes!(
                 "../assets/phosphor-icons/arrow-counter-clockwise.svg"
@@ -118,6 +122,7 @@ impl AssetSource for AppAssets {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AppIcon {
     Archive,
+    ArrowsOut,
     ArrowCounterClockwise,
     ArrowSquareOut,
     ArrowUp,
@@ -142,6 +147,7 @@ impl IconNamed for AppIcon {
     fn path(self) -> SharedString {
         let name = match self {
             Self::Archive => "archive",
+            Self::ArrowsOut => "arrows-out",
             Self::ArrowCounterClockwise => "arrow-counter-clockwise",
             Self::ArrowSquareOut => "arrow-square-out",
             Self::ArrowUp => "arrow-up",
@@ -192,6 +198,7 @@ mod tests {
     fn phosphor_icons_are_embedded_and_themeable() {
         for icon in [
             AppIcon::Archive,
+            AppIcon::ArrowsOut,
             AppIcon::ArrowCounterClockwise,
             AppIcon::ArrowSquareOut,
             AppIcon::ArrowUp,

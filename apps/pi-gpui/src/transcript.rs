@@ -20,7 +20,7 @@ use gpui_component::{
 use crate::{
     app::PiApp,
     conversation::{TranscriptItem, TranscriptKind},
-    primitives::{ButtonTone, button, disclosure_button},
+    primitives::{ButtonTone, button, disclosure_button, disclosure_indicator},
     theme::{MONO_FONT_FAMILY, THEME},
     tool_changes::EmbeddedDiffMode,
     transcript_markdown::{MarkdownStateKey, TranscriptMarkdownCache},
@@ -596,6 +596,27 @@ fn render_invocation(
                 .flex()
                 .items_center()
                 .gap(THEME.space.xs)
+                .when(resolved_ready, |row| {
+                    row.child(transcript_disclosure_button(
+                        ("invocation-toggle", key),
+                        expanded,
+                        format!("resolved {kind}"),
+                        key,
+                        entity,
+                    ))
+                })
+                .when(!resolved_ready, |row| {
+                    row.child(
+                        div()
+                            .size(THEME.controls.icon_button)
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_color(THEME.colors.subtle)
+                            .child(disclosure_indicator(false)),
+                    )
+                })
                 .child(
                     technical_text(("invocation-name", key), item.text.clone())
                         .flex_1()
@@ -614,23 +635,8 @@ fn render_invocation(
                         .bg(THEME.colors.panel)
                         .text_size(THEME.type_scale.caption)
                         .text_color(THEME.colors.muted)
-                        .child(kind),
-                )
-                .child(button(
-                    ("invocation-toggle", key),
-                    if resolved_ready {
-                        if expanded { "Hide" } else { "View" }
-                    } else {
-                        "Resolving…"
-                    },
-                    ButtonTone::Quiet,
-                    resolved_ready,
-                    move |_, cx| {
-                        let _ = entity.update(cx, |this, cx| {
-                            this.set_transcript_item_expanded(key, !expanded, cx)
-                        });
-                    },
-                )),
+                        .child(if resolved_ready { kind } else { "Resolving" }),
+                ),
         )
         .when(expanded && resolved_ready, |row| {
             row.child(
@@ -661,10 +667,7 @@ fn invocation_kind(display: &str, resolved: &str) -> &'static str {
         .filter(|token| {
             token
                 .strip_prefix('$')
-                .is_some_and(|name| {
-                    name.chars()
-                        .any(|character| character.is_ascii_lowercase())
-                })
+                .is_some_and(|name| name.chars().any(|character| character.is_ascii_lowercase()))
         })
         .count();
     if count > 1 {
@@ -916,13 +919,15 @@ fn render_tool(
                 .flex()
                 .items_center()
                 .gap(THEME.space.xs)
-                .child(transcript_disclosure_button(
-                    ("tool-toggle", key),
-                    expanded,
-                    disclosure_label,
-                    key,
-                    entity.clone(),
-                ))
+                .when(presentation.is_none(), |row| {
+                    row.child(transcript_disclosure_button(
+                        ("tool-toggle", key),
+                        expanded,
+                        disclosure_label,
+                        key,
+                        entity.clone(),
+                    ))
+                })
                 .child(
                     div()
                         .text_size(THEME.type_scale.body_small)
@@ -946,7 +951,7 @@ fn render_tool(
                         .child(state.glyph)
                 })),
         )
-        .when(expanded, |tool| {
+        .when(expanded && presentation.is_none(), |tool| {
             tool.child(
                 div()
                     .ml(px(22.0))
@@ -963,17 +968,12 @@ fn render_tool(
                     this.open_tool_diff(source.clone(), opener, window, cx)
                 });
             });
-            tool.child(
-                div()
-                    .ml(px(22.0))
-                    .mt(THEME.space.xs)
-                    .child(crate::tool_changes::render(
-                        presentation,
-                        item.tool_call_id.as_ref().map_or(0, |id| stable_key(id)),
-                        diff_mode,
-                        Some(on_expand),
-                    )),
-            )
+            tool.child(div().mt(THEME.space.xs).child(crate::tool_changes::render(
+                presentation,
+                item.tool_call_id.as_ref().map_or(0, |id| stable_key(id)),
+                diff_mode,
+                Some(on_expand),
+            )))
         })
         .into_any_element()
 }
