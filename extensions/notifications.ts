@@ -6,7 +6,6 @@ import { Effect, type Fiber } from "effect";
 import { NotificationCoalescer, osc9Sequence, preview } from "./lib/notification-core.ts";
 type Condition = "always" | "unfocused" | "never";
 type NotificationType =
-  | "agent-feedback"
   | "agent-turn-complete"
   | "approval-command"
   | "approval-file-write"
@@ -27,7 +26,7 @@ interface PendingNotification {
 
 const defaults: NotificationConfig = {
   condition: "unfocused",
-  types: ["agent-feedback", "agent-turn-complete", "approval-command", "approval-file-write", "user-input"],
+  types: ["agent-turn-complete", "approval-command", "approval-file-write", "user-input"],
   method: "auto",
 };
 
@@ -39,7 +38,7 @@ function loadConfig(): NotificationConfig {
     return {
       ...defaults,
       ...configured,
-      types: [...new Set(["agent-feedback" as const, ...(configured.types ?? defaults.types)])],
+      types: [...new Set(configured.types ?? defaults.types)],
     };
   } catch (error) {
     console.error(`Could not load notification settings ${path}: ${error}`);
@@ -125,16 +124,6 @@ export default function (pi: ExtensionAPI) {
       : "user-input";
     enqueue({ type, title: request.title ?? "Pi needs approval", message: request.summary ?? "Input needed", priority: type === "user-input" ? 3 : 2 });
   });
-  const unsubscribeFeedback = pi.events.on("agent-feedback:reported", (data: unknown) => {
-    const feedback = data as { title?: string; message?: string };
-    enqueue({
-      type: "agent-feedback",
-      title: feedback.title ?? "Pi agent feedback",
-      message: feedback.message ?? "New Pi feedback recorded",
-      priority: 3,
-    });
-  });
-
   pi.on("session_start", (_event, ctx) => {
     terminalFocused = ctx.mode === "tui";
     if (process.env.PI_GPUI_NATIVE_NOTIFICATIONS === "1") {
@@ -163,7 +152,6 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_shutdown", () => {
     postGpuiNotification = undefined;
     unsubscribeApproval();
-    unsubscribeFeedback();
     flushFiber?.interruptUnsafe();
     flushFiber = undefined;
     if (focusReporting) {

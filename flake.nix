@@ -196,7 +196,6 @@
             ln -s ${piTerminal}/lib/pi-terminal/node_modules/typebox node_modules/typebox
             timeout 60 node --experimental-strip-types -e '
               await Promise.all([
-                import("./agent-feedback.ts"),
                 import("./notifications.ts"),
                 import("./codex-web-search.ts"),
                 import("./prompt-inspector.ts"),
@@ -287,7 +286,6 @@
           '';
           governance = pkgs.runCommand "pi-governance-tests" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
             node --test \
-              ${self}/tests/agent-feedback.test.ts \
               ${self}/tests/governance.test.ts \
               ${self}/tests/codex-web-search.test.ts \
               ${self}/tests/session-agents-package.test.ts \

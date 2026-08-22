@@ -9,7 +9,6 @@ let
   files = lib.fileset.unions [
     ../extensions/package.json
     ../extensions/package-lock.json
-    ../extensions/agent-feedback.ts
     ../extensions/notifications.ts
     ../extensions/codex-web-search.ts
     ../extensions/codex-web-search-core.ts

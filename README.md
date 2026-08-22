@@ -27,8 +27,8 @@ separate `nix-config` repo.
   cancellation, and resource lifetimes; pure parsers, policies, and renderers stay synchronous.
 - Trusted project-scoped Effect v4 tools loaded from `.pi/project-tools` with full host
   rights after project trust.
-- A global `report_pi_feedback` tool that records concrete agent-environment
-  friction in `~/.pi/agent/agent-feedback.jsonl` and notifies without blocking.
+- A shared `/tmp/pi-agent-feedback.md` path where every agent can append concrete
+  agent-environment friction without a dedicated model tool.
 - A Gruvbox dark-hard theme and small hooks for notifications, titles, user
   input, and session state.
 
@@ -54,12 +54,10 @@ separate `nix-config` repo.
   sessions. Child completion automatically reprompts the parent; three
   Effect-backed tools start, message, and control children.
 - The loose entrypoints under [`extensions`](extensions) are packaged together by
-  `pi-core-extensions`; notifications, title animation, user input, and feedback use the
-  same pinned Effect v4 runtime while Pi callbacks remain boundary adapters. Type `$`
+  `pi-core-extensions`; notifications, title animation, and user input use the same
+  pinned Effect v4 runtime while Pi callbacks remain boundary adapters. Type `$`
   at a token boundary to autocomplete prompts or skills; invocations such as
   `$simplify $commit` compose in order.
-- [`extensions/agent-feedback.ts`](extensions/agent-feedback.ts) exposes the
-  non-blocking feedback tool to Pi sessions.
 - [`nix`](nix) contains the pinned builds for Pi and every packaged extension.
 - [`apps/pi-terminal`](apps/pi-terminal) pins the upstream Pi 0.84.2 terminal
   client and the small Pi AI output-item hook needed for cached OpenAI

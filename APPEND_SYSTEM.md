@@ -31,6 +31,11 @@
 - Never run a Nix command unless the user asks for that exact check. The project environment already provides Cargo and other build tools; use them directly and keep the shared build directories.
 - Run narrow checks first, then broader checks by risk. Report unrelated failures; do not fix them.
 
+## Pi Feedback
+
+- Append Pi harness, sandbox, tool, or setup problems to `/tmp/pi-agent-feedback.md`; every agent can read/write it. Create it if missing and never overwrite entries.
+- Include UTC time, project path, severity, summary, evidence, and workaround. Exclude secrets and irrelevant user data. Record each issue once, continue with a safe workaround, and do not wait for a response.
+
 ## Conduct
 
 - Separate fact from preference. Give recommendation and consequence; user decides.

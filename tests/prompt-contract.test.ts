@@ -18,5 +18,7 @@ test("static prompt sources stay compact and opt into active tool guidance once"
   assert.match(systemPrompt, /Do not run nested `nix develop` commands/);
   assert.match(systemPrompt, /Do not run any Nix command unless the user asks for that exact check/);
   assert.match(appendSystemPrompt, /Never run a Nix command unless the user asks for that exact check/);
+  assert.match(appendSystemPrompt, /\/tmp\/pi-agent-feedback\.md/);
+  assert.match(appendSystemPrompt, /every agent can read\/write/);
   assert.match(systemPrompt, /report the environment defect/);
 });
