@@ -30,10 +30,7 @@ impl PiApp {
         let target = draft_target(id);
         if self.composer_sessions.current_target() != target
             || self.submitted_drafts.contains_key(id)
-            || self
-                .pending_submission
-                .as_ref()
-                .is_some_and(|pending| pending.target == target)
+            || self.pending_submissions.contains_key(&target)
         {
             return None;
         }
@@ -56,11 +53,7 @@ impl PiApp {
             return;
         };
         let target = draft_target(&id);
-        if self.submitted_drafts.contains_key(&id)
-            || self
-                .pending_submission
-                .as_ref()
-                .is_some_and(|pending| pending.target == target)
+        if self.submitted_drafts.contains_key(&id) || self.pending_submissions.contains_key(&target)
         {
             return;
         }
@@ -120,10 +113,7 @@ impl PiApp {
         if changed {
             self.save_project_registry();
         }
-        let submission_pending = self
-            .pending_submission
-            .as_ref()
-            .is_some_and(|pending| pending.target == target);
+        let submission_pending = self.pending_submissions.contains_key(target);
         if !has_content && !submission_pending {
             self.composer_images.remove(target);
         }
@@ -190,12 +180,7 @@ impl PiApp {
             return;
         }
         let session = session.map(|path| normalize_session_path(&path));
-        if status == "Working"
-            && self
-                .pending_submission
-                .as_ref()
-                .is_some_and(|pending| pending.target == target)
-        {
+        if status == "Working" && self.pending_submissions.contains_key(&target) {
             establish_submission(&mut self.submitted_drafts, &target, true, session.clone());
         }
         let associated_path =
@@ -242,15 +227,9 @@ impl PiApp {
         self.composer_sessions
             .promote(&draft_key, session_key.clone());
         self.promote_composer_images(&draft_key, &session_key);
-        if let Some(pending) = self.pending_submission.as_mut()
-            && pending.target == draft_key
-        {
-            pending.target = session_key.clone();
-        }
-        if let Some((target, _, _)) = self.pending_submission_result.as_mut()
-            && *target == draft_key
-        {
-            *target = session_key.clone();
+        if let Some(pending) = self.pending_submissions.remove(&draft_key) {
+            self.pending_submissions
+                .insert(session_key.clone(), pending);
         }
         self.canonicalize_draft_status(id, path);
         self.submitted_drafts.remove(id);

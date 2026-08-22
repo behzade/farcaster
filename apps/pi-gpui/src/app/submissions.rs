@@ -17,16 +17,9 @@ use crate::{
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct PendingSubmission {
-    pub(super) target: String,
     pub(super) text: String,
     pub(super) images: Vec<ComposerImage>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SubmissionResolution {
-    Accepted,
-    Rejected,
-    Ignore,
+    pub(super) result: Option<(bool, Option<std::path::PathBuf>)>,
 }
 
 impl PiApp {
@@ -83,11 +76,14 @@ impl PiApp {
                 self.composer_sessions.record_submission(&target, &value);
                 let pending_images = self.composer_images.remove(&target).unwrap_or_default();
                 let image_count = pending_images.len();
-                self.pending_submission = Some(PendingSubmission {
-                    target: target.clone(),
-                    text: editor_text.clone(),
-                    images: pending_images,
-                });
+                self.pending_submissions.insert(
+                    target.clone(),
+                    PendingSubmission {
+                        text: editor_text.clone(),
+                        images: pending_images,
+                        result: None,
+                    },
+                );
                 if self
                     .composer_sessions
                     .clear_submitted_text(&target, &editor_text)
@@ -285,7 +281,10 @@ impl PiApp {
     }
 
     pub(crate) fn can_submit(&self) -> bool {
-        self.pending_submission.is_none()
+        can_submit_to(
+            &self.pending_submissions,
+            self.composer_sessions.current_target(),
+        )
     }
 
     pub(crate) fn enter_mode(&self) -> PromptMode {
@@ -304,45 +303,56 @@ impl PiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((target, accepted, session)) = self.pending_submission_result.take() else {
-            return;
-        };
-        let resolution = submission_resolution(self.pending_submission.as_ref(), &target, accepted);
-        if resolution == SubmissionResolution::Ignore {
-            return;
-        }
-        let Some(pending) = self.pending_submission.take() else {
-            return;
-        };
-        if resolution == SubmissionResolution::Accepted {
-            return;
-        }
+        let completed = self
+            .pending_submissions
+            .iter()
+            .filter_map(|(target, pending)| {
+                pending
+                    .result
+                    .clone()
+                    .map(|(accepted, session)| (target.clone(), accepted, session))
+            })
+            .collect::<Vec<_>>();
+        for (target, accepted, session) in completed {
+            let Some(pending) = self.pending_submissions.remove(&target) else {
+                continue;
+            };
+            if accepted {
+                continue;
+            }
 
-        let restored = self
-            .composer_sessions
-            .restore_submitted_text(&pending.target, pending.text.clone());
-        if !pending.images.is_empty() {
-            self.composer_images
-                .entry(pending.target.clone())
-                .or_insert_with(|| pending.images.clone());
-        }
-        if let Some(snapshot) = restored
-            && self.composer_sessions.current_target() == pending.target
-        {
-            self.apply_composer_snapshot(snapshot, window, cx);
-        }
-        if let Some(session_key) = rejected_attachment_target(
-            &pending.text,
-            !pending.images.is_empty(),
-            &pending.target,
-            self.composer_sessions.current_target(),
-            session.as_deref(),
-        ) {
-            self.composer_sessions
-                .promote(&pending.target, session_key.clone());
-            self.promote_composer_images(&pending.target, &session_key);
+            let restored = self
+                .composer_sessions
+                .restore_submitted_text(&target, pending.text.clone());
+            if !pending.images.is_empty() {
+                self.composer_images
+                    .entry(target.clone())
+                    .or_insert_with(|| pending.images.clone());
+            }
+            if let Some(snapshot) = restored
+                && self.composer_sessions.current_target() == target
+            {
+                self.apply_composer_snapshot(snapshot, window, cx);
+            }
+            if let Some(session_key) = rejected_attachment_target(
+                &pending.text,
+                !pending.images.is_empty(),
+                &target,
+                self.composer_sessions.current_target(),
+                session.as_deref(),
+            ) {
+                self.composer_sessions.promote(&target, session_key.clone());
+                self.promote_composer_images(&target, &session_key);
+            }
         }
     }
+}
+
+fn can_submit_to(
+    pending: &std::collections::HashMap<String, PendingSubmission>,
+    target: &str,
+) -> bool {
+    !pending.contains_key(target)
 }
 
 fn archived_session_for_target(
@@ -372,21 +382,6 @@ fn rejected_attachment_target(
         .then(|| session.map(normalize_session_path))
         .flatten()
         .map(|path| session_target(&path))
-}
-
-fn submission_resolution(
-    pending: Option<&PendingSubmission>,
-    target: &str,
-    accepted: bool,
-) -> SubmissionResolution {
-    let Some(_) = pending.filter(|pending| pending.target == target) else {
-        return SubmissionResolution::Ignore;
-    };
-    if accepted {
-        SubmissionResolution::Accepted
-    } else {
-        SubmissionResolution::Rejected
-    }
 }
 
 fn prompt_mode_for_enter(running: bool) -> PromptMode {
@@ -424,23 +419,10 @@ mod tests {
 
     fn pending() -> PendingSubmission {
         PendingSubmission {
-            target: "session:test".into(),
             text: "submitted".into(),
             images: Vec::new(),
+            result: None,
         }
-    }
-
-    #[test]
-    fn submission_results_distinguish_acceptance_and_rejection() {
-        let pending = pending();
-        assert_eq!(
-            submission_resolution(Some(&pending), "session:test", true),
-            SubmissionResolution::Accepted
-        );
-        assert_eq!(
-            submission_resolution(Some(&pending), "session:test", false),
-            SubmissionResolution::Rejected
-        );
     }
 
     #[test]
@@ -480,12 +462,12 @@ mod tests {
     }
 
     #[test]
-    fn stale_submission_result_is_ignored() {
-        let pending = pending();
-        assert_eq!(
-            submission_resolution(Some(&pending), "session:other", false),
-            SubmissionResolution::Ignore
-        );
+    fn pending_submission_only_blocks_its_own_composer() {
+        let pending = std::collections::HashMap::from([("session:compacting".into(), pending())]);
+
+        assert!(!can_submit_to(&pending, "session:compacting"));
+        assert!(can_submit_to(&pending, "session:other"));
+        assert!(can_submit_to(&pending, "draft:new"));
     }
 
     #[test]

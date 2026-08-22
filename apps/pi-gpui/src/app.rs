@@ -59,6 +59,15 @@ use crate::{
 const SYSTEM_NOTIFICATION_TAG: &str = "pi-agent";
 pub(crate) const COMPOSER_KEY_CONTEXT: &str = "PiComposer";
 
+fn transcript_list_state() -> ListState {
+    ListState::new(
+        0,
+        ListAlignment::Top,
+        crate::theme::THEME.layout.transcript_overdraw,
+    )
+    .with_uniform_item_height(crate::transcript::TRANSCRIPT_ROW_HEIGHT_HINT)
+}
+
 #[derive(Debug, Eq, PartialEq)]
 enum CurrentCloseTarget {
     Draft(String),
@@ -226,8 +235,7 @@ pub(crate) struct PiApp {
     pending_dialog_setup: bool,
     pending_title: Option<(u64, String)>,
     pending_editor_text: Option<(u64, String)>,
-    pending_submission: Option<PendingSubmission>,
-    pending_submission_result: Option<(String, bool, Option<PathBuf>)>,
+    pending_submissions: HashMap<String, PendingSubmission>,
     pending_session_reset: bool,
     sessions_sheet: bool,
     archived_sessions_expanded: bool,
@@ -389,11 +397,7 @@ impl PiApp {
                 }
             }
         });
-        let transcript_list = ListState::new(
-            0,
-            ListAlignment::Top,
-            crate::theme::THEME.layout.transcript_overdraw,
-        );
+        let transcript_list = transcript_list_state();
         transcript_list.set_follow_mode(FollowMode::Tail);
         let debug = std::env::var("DEBUG").ok().as_deref() == Some("true");
         let fps_monitor = debug.then(|| {
@@ -537,8 +541,7 @@ impl PiApp {
             pending_dialog_setup: false,
             pending_title: None,
             pending_editor_text: None,
-            pending_submission: None,
-            pending_submission_result: None,
+            pending_submissions: HashMap::new(),
             pending_session_reset: false,
             sessions_sheet: false,
             archived_sessions_expanded: false,
@@ -852,12 +855,8 @@ impl PiApp {
                     if !accepted {
                         self.run_statuses.insert(target.clone(), "Failed".into());
                     }
-                    if self
-                        .pending_submission
-                        .as_ref()
-                        .is_some_and(|pending| pending.target == target)
-                    {
-                        self.pending_submission_result = Some((target, accepted, session));
+                    if let Some(pending) = self.pending_submissions.get_mut(&target) {
+                        pending.result = Some((accepted, session));
                     }
                     self.reconcile_submitted_drafts(cx);
                 }
