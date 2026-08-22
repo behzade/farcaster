@@ -89,10 +89,7 @@ fn invocation_treatment_uses_distinct_skill_and_prompt_palettes() {
     assert_ne!(THEME.colors.skill, THEME.colors.success);
     let skill = invocation_transcript_markdown_style("<skill name=\"review\">body</skill>");
     assert_eq!(skill.inline_code.color, Some(THEME.colors.skill.into()));
-    assert_eq!(
-        skill.inline_code.background_color,
-        Some(THEME.colors.skill_surface.into())
-    );
+    assert_eq!(skill.inline_code.background_color, None);
 
     let prompt = invocation_transcript_markdown_style("expanded prompt");
     assert_eq!(prompt.inline_code.color, Some(THEME.colors.accent.into()));

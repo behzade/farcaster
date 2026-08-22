@@ -1,6 +1,7 @@
 //! Selectable, compact transcript projection.
 
 use std::{
+    borrow::Cow,
     hash::{Hash, Hasher},
     rc::Rc,
     sync::Arc,
@@ -43,6 +44,23 @@ pub(crate) struct TranscriptViewport {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FenceContinuation {
+    opening_start: usize,
+    opening_end: usize,
+    marker: char,
+    marker_len: usize,
+    prepend: bool,
+    append: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MarkdownChunk {
+    start: usize,
+    end: usize,
+    fence: Option<FenceContinuation>,
+}
+
 pub(crate) enum TranscriptRow {
     Item {
         index: usize,
@@ -56,6 +74,7 @@ pub(crate) enum TranscriptRow {
         revision: usize,
         first: bool,
         last: bool,
+        fence: Option<FenceContinuation>,
     },
     StreamChunk {
         index: usize,
@@ -1339,14 +1358,11 @@ fn invocation_transcript_markdown_style(resolved: &str) -> TextViewStyle {
             }
             .into(),
         ),
-        background_color: Some(
-            if skill {
-                THEME.colors.skill_surface
-            } else {
-                THEME.colors.panel
-            }
-            .into(),
-        ),
+        background_color: if skill {
+            None
+        } else {
+            Some(THEME.colors.panel.into())
+        },
         font_weight: Some(FontWeight::SEMIBOLD),
         ..HighlightStyle::default()
     })
