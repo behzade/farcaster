@@ -2,6 +2,100 @@
 
 use super::*;
 
+/// Coalesces external transcript writes into active and dormant catalog transitions.
+#[derive(Default)]
+pub(super) struct ExternalActivityTracker {
+    deadlines: HashMap<PathBuf, Instant>,
+}
+
+impl ExternalActivityTracker {
+    pub(super) fn observe_files(
+        &mut self,
+        catalog: &[SessionSummary],
+        owned: &HashSet<PathBuf>,
+        paths: &[PathBuf],
+        now: Instant,
+    ) -> bool {
+        let mut refresh = false;
+        for candidate in paths {
+            if owned.contains(candidate) {
+                continue;
+            }
+            let known = catalog
+                .iter()
+                .find(|session| session.path == candidate.as_path());
+            let (path, is_running) = if let Some(session) = known {
+                (session.path.clone(), session.is_running)
+            } else {
+                let path = if self.deadlines.contains_key(candidate) {
+                    candidate.clone()
+                } else {
+                    crate::sessions::normalize_session_path(candidate)
+                };
+                let is_running = catalog
+                    .iter()
+                    .any(|session| session.path == path && session.is_running);
+                (path, is_running)
+            };
+            if owned.contains(&path) {
+                continue;
+            }
+            let became_active = self
+                .deadlines
+                .insert(path, now + RUNNING_ACTIVITY_TIMEOUT)
+                .is_none();
+            refresh |= became_active && !is_running;
+        }
+        refresh
+    }
+
+    pub(super) fn remove_owned(&mut self, owned: &HashSet<PathBuf>) {
+        self.deadlines.retain(|path, _| !owned.contains(path));
+    }
+
+    pub(super) fn sync_catalog(
+        &mut self,
+        sessions: &[SessionSummary],
+        exhaustive: bool,
+        owned: &HashSet<PathBuf>,
+        now: Instant,
+        wall_now: SystemTime,
+    ) {
+        let mut seen = HashSet::new();
+        for session in sessions {
+            let path = session.path.clone();
+            seen.insert(path.clone());
+            if owned.contains(&path) || !session.is_running {
+                self.deadlines.remove(&path);
+                continue;
+            }
+            let remaining = wall_now
+                .duration_since(session.modified)
+                .map_or(RUNNING_ACTIVITY_TIMEOUT, |age| {
+                    RUNNING_ACTIVITY_TIMEOUT.saturating_sub(age)
+                });
+            let due = now + remaining;
+            self.deadlines
+                .entry(path)
+                .and_modify(|current| *current = (*current).max(due))
+                .or_insert(due);
+        }
+        if exhaustive {
+            self.deadlines.retain(|path, _| seen.contains(path));
+        }
+    }
+
+    pub(super) fn take_expired(&mut self, now: Instant) -> bool {
+        let previous_len = self.deadlines.len();
+        self.deadlines.retain(|_, due| *due > now);
+        self.deadlines.len() != previous_len
+    }
+
+    pub(super) fn next_deadline(&self) -> Option<Instant> {
+        self.deadlines.values().copied().min()
+    }
+}
+
 impl RuntimeOwner {
     pub(super) fn load_sessions(&mut self, query: String) {
         self.session_query = query;
@@ -146,5 +240,86 @@ impl RuntimeOwner {
         }
         self.session_refresh_due = None;
         self.refresh_sessions();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::*;
+
+    fn summary(path: &Path, modified: SystemTime, is_running: bool) -> SessionSummary {
+        SessionSummary::from_cached(
+            "external".into(),
+            path.to_path_buf(),
+            PathBuf::from("/project"),
+            "External".into(),
+            String::new(),
+            String::new(),
+            None,
+            modified,
+            0,
+            crate::sessions::UsageSummary::default(),
+            false,
+            is_running,
+            String::new(),
+        )
+    }
+
+    #[test]
+    fn heartbeats_refresh_only_at_activity_boundaries() {
+        let path = PathBuf::from("/sessions/external.jsonl");
+        let dormant = summary(&path, SystemTime::now(), false);
+        let start = Instant::now();
+        let mut activity = ExternalActivityTracker::default();
+
+        assert!(activity.observe_files(
+            std::slice::from_ref(&dormant),
+            &HashSet::new(),
+            std::slice::from_ref(&path),
+            start,
+        ));
+        assert!(!activity.observe_files(
+            std::slice::from_ref(&dormant),
+            &HashSet::new(),
+            std::slice::from_ref(&path),
+            start + Duration::from_secs(1),
+        ));
+        assert!(!activity.take_expired(start + RUNNING_ACTIVITY_TIMEOUT));
+        assert!(activity.take_expired(start + Duration::from_secs(1) + RUNNING_ACTIVITY_TIMEOUT));
+
+        let mut running = dormant.clone();
+        running.is_running = true;
+        let mut active = ExternalActivityTracker::default();
+        assert!(!active.observe_files(
+            &[running],
+            &HashSet::new(),
+            std::slice::from_ref(&path),
+            start,
+        ));
+        assert!(active.take_expired(start + RUNNING_ACTIVITY_TIMEOUT));
+
+        let mut owned = ExternalActivityTracker::default();
+        let owned_paths = HashSet::from([path.clone()]);
+        assert!(!owned.observe_files(&[dormant], &owned_paths, &[path], start));
+        assert!(!owned.take_expired(start + RUNNING_ACTIVITY_TIMEOUT));
+    }
+
+    #[test]
+    fn catalog_sync_seeds_the_remaining_activity_deadline() {
+        let wall_now = SystemTime::now();
+        let now = Instant::now();
+        let session = summary(
+            Path::new("/sessions/external.jsonl"),
+            wall_now - Duration::from_secs(5),
+            true,
+        );
+        let mut activity = ExternalActivityTracker::default();
+
+        activity.sync_catalog(&[session], true, &HashSet::new(), now, wall_now);
+
+        assert!(!activity.take_expired(now + RUNNING_ACTIVITY_TIMEOUT - Duration::from_secs(6)));
+        assert!(activity.take_expired(now + RUNNING_ACTIVITY_TIMEOUT - Duration::from_secs(5)));
     }
 }
