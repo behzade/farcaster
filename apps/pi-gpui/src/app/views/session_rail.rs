@@ -73,14 +73,23 @@ fn inactive_session_badge(
     )
 }
 
-fn inactive_rail_style(expanded: bool, count: usize) -> gpui::StyleRefinement {
+fn collapsed_inactive_rail_height(count: usize, leading_gap: bool) -> gpui::Pixels {
+    let rows = THEME.controls.utility_row
+        + THEME.controls.archived_preview_row * count.min(INACTIVE_PREVIEW_LIMIT);
+    if leading_gap {
+        rows + THEME.space.md
+    } else {
+        rows
+    }
+}
+
+fn inactive_rail_style(expanded: bool, count: usize, leading_gap: bool) -> gpui::StyleRefinement {
     if expanded {
         gpui::StyleRefinement::default().size_full().flex_1()
     } else {
         gpui::StyleRefinement::default()
             .w_full()
-            .h(THEME.controls.utility_row
-                + THEME.controls.archived_preview_row * count.min(INACTIVE_PREVIEW_LIMIT))
+            .h(collapsed_inactive_rail_height(count, leading_gap))
             .flex_none()
     }
 }
@@ -194,13 +203,14 @@ impl PiApp {
 
         let review_expanded = self.review_sessions_expanded && review_entry_count > 0;
         let archived_expanded = self.archived_sessions_expanded && archived_entry_count > 0;
-        let review_session_rail_style = inactive_rail_style(review_expanded, review_entry_count);
+        let review_session_rail_style =
+            inactive_rail_style(review_expanded, review_entry_count, false);
         let review_session_rail = self
             .review_session_rail_view
             .clone()
             .cached(review_session_rail_style);
         let archived_session_rail_style =
-            inactive_rail_style(archived_expanded, archived_entry_count);
+            inactive_rail_style(archived_expanded, archived_entry_count, true);
         let archived_session_rail = self
             .archived_session_rail_view
             .clone()
@@ -500,6 +510,9 @@ impl PiApp {
             .min_h_0()
             .flex()
             .flex_col()
+            .when(kind == SessionRailKind::Archived && !expanded, |section| {
+                section.pt(THEME.space.md)
+            })
             .child(
                 div()
                     .h(THEME.controls.utility_row)
