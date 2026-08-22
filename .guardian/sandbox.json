@@ -10,6 +10,24 @@
     {
       "kind": "filesystem",
       "access": "read",
+      "path": "~/.pi/agent/gui-state.sqlite3-shm",
+      "scope": "file"
+    },
+    {
+      "kind": "filesystem",
+      "access": "read",
+      "path": "~/.pi/agent/gui-state.sqlite3-wal",
+      "scope": "file"
+    },
+    {
+      "kind": "filesystem",
+      "access": "read",
+      "path": "~/.pi/agent/gui-state.sqlite3",
+      "scope": "file"
+    },
+    {
+      "kind": "filesystem",
+      "access": "read",
       "path": "~/.pi/agent/sessions",
       "scope": "tree"
     },

@@ -20,11 +20,11 @@
         "nixpkgs": "nixpkgs"
       },
       "locked": {
-        "lastModified": 1787394758,
-        "narHash": "sha256-T746OCpSENx2E1SILQ313Tt3TjR2AnrMDhnLEh2VUN4=",
+        "lastModified": 1787403784,
+        "narHash": "sha256-y/p0yVEhv//mNblg2G5yqvUYdP+ufdpxGIpci5aQLUw=",
         "owner": "behzade",
         "repo": "pi-guardian",
-        "rev": "9da0d33352d2a364ab3e43e271182035de1a6d53",
+        "rev": "ac7689126200c9279b6433e8d168a8b5f6b615c8",
         "type": "github"
       },
       "original": {
