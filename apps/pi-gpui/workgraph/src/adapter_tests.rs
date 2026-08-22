@@ -1,6 +1,6 @@
 use crate::{
     adapter::SqliteAdapter,
-    contract::{EditAction, EditRequest, EditResult, SearchRequest, SearchResult},
+    contract::{CompletionRequirement, EditAction, EditRequest, EditResult, SearchRequest, SearchResult},
     core::WorkGraph,
 };
 
@@ -32,15 +32,14 @@ fn sqlite_schema_coexists_with_gui_state_tables() {
     );
     assert_eq!(
         connection
-            .query_row("SELECT count(*) FROM projects", [], |row| row
-                .get::<_, i64>(0))
+            .query_row("SELECT count(*) FROM projects", [], |row| row.get::<_, i64>(0))
             .expect("GUI projects"),
         0
     );
 }
 
 #[test]
-fn unsupported_future_schema_is_rejected_without_creating_tables() {
+fn unsupported_future_schema_is_rejected_without_creating_plan_tables() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let path = directory.path().join("gui-state.sqlite3");
     let connection = rusqlite::Connection::open(&path).expect("database");
@@ -57,129 +56,98 @@ fn unsupported_future_schema_is_rejected_without_creating_tables() {
     let connection = rusqlite::Connection::open(path).expect("database");
     let created = connection
         .query_row(
-            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name LIKE 'wg_%'",
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('wg_plan_store', 'wg_plan_receipts')",
             [],
             |row| row.get::<_, i64>(0),
         )
-        .expect("workgraph table count");
+        .expect("plan table count");
     assert_eq!(created, 0);
 }
 
 #[test]
-fn version_one_database_upgrades_without_losing_issues() {
+fn version_two_upgrade_retains_legacy_rows_without_reinterpreting_them() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let path = directory.path().join("gui-state.sqlite3");
-    let mut graph = WorkGraph::new(SqliteAdapter::open(&path).expect("adapter"));
-    let _created = graph
-        .edit(&EditRequest {
-            project: "/project".into(),
-            idempotency_key: "upgrade-create".into(),
-            action: EditAction::Create {
-                title: "Keep me".into(),
-                body: String::new(),
-                priority: 0,
-            },
-        })
-        .expect("create");
-    drop(graph);
     let connection = rusqlite::Connection::open(&path).expect("database");
     connection
-        .execute("UPDATE meta SET value='1' WHERE key='workgraph_schema_version'", [])
-        .expect("downgrade marker");
-    connection
-        .execute("DROP TABLE wg_session_links", [])
-        .expect("version one shape");
+        .execute_batch(
+            "CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             INSERT INTO meta VALUES('workgraph_schema_version', '2');
+             CREATE TABLE wg_issues(project_id INTEGER, number INTEGER, title TEXT);
+             INSERT INTO wg_issues VALUES(1, 1, 'Legacy issue');",
+        )
+        .expect("version two fixture");
     drop(connection);
 
-    let mut reopened = WorkGraph::new(SqliteAdapter::open(&path).expect("upgrade"));
-    let result = reopened
-        .search(&SearchRequest::Graph {
+    let mut graph = WorkGraph::new(SqliteAdapter::open(&path).expect("upgrade"));
+    let result = graph
+        .search(&SearchRequest::Project {
             project: "/project".into(),
         })
-        .expect("graph");
-    assert!(matches!(result, SearchResult::Graph(graph) if graph.issues.len() == 1));
+        .expect("new project graph");
+    assert!(matches!(result, SearchResult::Project(graph) if graph.plans.is_empty()));
+    drop(graph);
+
+    let connection = rusqlite::Connection::open(path).expect("database");
+    assert_eq!(
+        connection
+            .query_row("SELECT count(*) FROM wg_issues", [], |row| row.get::<_, i64>(0))
+            .expect("legacy rows"),
+        1
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT value FROM meta WHERE key='workgraph_schema_version'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("schema version"),
+        "3"
+    );
 }
 
 #[test]
-fn session_link_moves_between_issues_and_appears_in_details() {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let path = directory.path().join("gui-state.sqlite3");
-    let mut graph = WorkGraph::new(SqliteAdapter::open(path).expect("adapter"));
-    let mut issues = Vec::new();
-    for (key, title) in [("first", "First"), ("second", "Second")] {
-        let EditResult::Issue(issue) = graph
-            .edit(&EditRequest {
-                project: "/project".into(),
-                idempotency_key: key.into(),
-                action: EditAction::Create {
-                    title: title.into(),
-                    body: String::new(),
-                    priority: 0,
-                },
-            })
-            .expect("create")
-        else {
-            panic!("issue result");
-        };
-        issues.push(issue);
-    }
-    for (key, issue) in [("link-one", &issues[0]), ("link-two", &issues[1])] {
-        graph
-            .edit(&EditRequest {
-                project: "/project".into(),
-                idempotency_key: key.into(),
-                action: EditAction::LinkSession {
-                    number: issue.number,
-                    session_id: "session-1".into(),
-                    session_path: "/sessions/one.jsonl".into(),
-                    expected_version: Some(issue.version),
-                },
-            })
-            .expect("link");
-    }
-    let detail = graph
-        .search(&SearchRequest::Issue {
-            project: "/project".into(),
-            number: issues[1].number,
-        })
-        .expect("detail");
-    assert!(matches!(detail, SearchResult::Issue(detail) if detail.sessions.len() == 1));
-    let first = graph
-        .search(&SearchRequest::Issue {
-            project: "/project".into(),
-            number: issues[0].number,
-        })
-        .expect("detail");
-    assert!(matches!(first, SearchResult::Issue(detail) if detail.sessions.is_empty()));
-}
-
-#[test]
-fn sqlite_adapter_persists_core_results_across_instances() {
+fn sqlite_adapter_persists_plan_walk_and_session_across_instances() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let path = directory.path().join("gui-state.sqlite3");
     let mut graph = WorkGraph::new(SqliteAdapter::open(&path).expect("adapter"));
-    let EditResult::Issue(created) = graph
+    let EditResult::Plan(snapshot) = graph
         .edit(&EditRequest {
             project: "/project".into(),
-            idempotency_key: "create".into(),
-            action: EditAction::Create {
-                title: "Persisted".into(),
-                body: String::new(),
-                priority: 0,
+            idempotency_key: "create-plan".into(),
+            action: EditAction::CreatePlan {
+                title: "VCS integration".into(),
+                root_title: "Current product".into(),
+                files: vec!["apps/pi-gpui".into()],
+                completion: CompletionRequirement::RevisionOrObservation,
             },
         })
-        .expect("create")
+        .expect("create plan")
     else {
-        panic!("issue result");
+        panic!("plan result");
     };
+    let walk = snapshot.walk.expect("default walk");
+    graph
+        .edit(&EditRequest {
+            project: "/project".into(),
+            idempotency_key: "link".into(),
+            action: EditAction::LinkSession {
+                walk: walk.number,
+                session_id: "session-1".into(),
+                session_path: "/sessions/one.jsonl".into(),
+            },
+        })
+        .expect("link session");
     drop(graph);
 
     let mut reopened = WorkGraph::new(SqliteAdapter::open(path).expect("reopen adapter"));
     let result = reopened
-        .search(&SearchRequest::Issue {
+        .search(&SearchRequest::Plan {
             project: "/project".into(),
-            number: created.number,
+            plan: snapshot.plan.number,
+            walk: Some(walk.number),
         })
-        .expect("read issue");
-    assert!(matches!(result, SearchResult::Issue(detail) if detail.issue == created));
+        .expect("read plan");
+    assert!(matches!(result, SearchResult::Plan(plan) if plan.nodes.len() == 1 && plan.sessions.len() == 1));
 }

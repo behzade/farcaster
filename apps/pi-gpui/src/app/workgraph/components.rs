@@ -1,115 +1,149 @@
 use gpui::{
-    AnyElement, Div, Entity, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
+    Div, Entity, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Role,
     StatefulInteractiveElement as _, Styled as _, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::input::{Input, InputState, Textarea, TextareaState};
 
-use super::{
-    adapter::WorkGraphBoardView,
-    contract::{BoardData, BoardFilter, IssueGroup, IssueRow},
-    core::{
-        DescriptionCopy, InspectorNote, InspectorSession, filter_count, format_relative_issue_time,
-        status_label,
-    },
-    layout::{BoardLayoutMode, issue_detail_shell},
-};
+use super::{adapter::WorkGraphBoardView, contract::PlanRow};
 use crate::{
-    primitives::{ButtonTone, button},
+    assets::AppIcon,
+    primitives::{AppIconSize, ButtonTone, app_icon, button},
     theme::THEME,
 };
 
-pub(super) fn render_filter_rail(
-    filter: BoardFilter,
-    entity: Entity<WorkGraphBoardView>,
-    data: &BoardData,
-) -> impl IntoElement {
-    div()
-        .w(px(216.0))
-        .min_w(px(216.0))
-        .flex_none()
-        .flex()
-        .flex_col()
-        .gap(THEME.space.xs)
-        .px(THEME.space.sm)
-        .py(THEME.space.sm)
-        .bg(THEME.colors.panel)
-        .border_r(THEME.border)
-        .border_color(THEME.colors.border)
-        .child(
-            div()
-                .px(THEME.space.sm)
-                .pb(THEME.space.sm)
-                .text_size(THEME.type_scale.caption)
-                .text_color(THEME.colors.subtle)
-                .child("Work states"),
-        )
-        .children(BoardFilter::ALL.into_iter().map(|item| {
-            let selected = item == filter;
-            let count = filter_count(data, item);
-            let entity = entity.clone();
-            button(
-                format!("workgraph-filter-{item:?}"),
-                format!("{}  {count}", item.label()),
-                if selected {
-                    ButtonTone::Neutral
-                } else {
-                    ButtonTone::Quiet
-                },
-                true,
-                move |_, cx| {
-                    entity.update(cx, |this, cx| this.set_filter(item, cx));
-                },
-            )
-        }))
-}
-
-pub(super) fn render_groups(
+pub(super) fn render_plan_list(
+    rows: Vec<PlanRow>,
     selected: Option<u64>,
-    active_session_id: Option<&str>,
     entity: Entity<WorkGraphBoardView>,
-    groups: Vec<IssueGroup>,
-    data: &BoardData,
 ) -> impl IntoElement {
-    let current_issue = active_session_id.and_then(|session_id| {
-        data.sessions
-            .iter()
-            .find(|link| link.session_id == session_id)
-            .map(|link| link.issue_number)
-    });
     div()
-        .id("workgraph-issue-list")
+        .id("workgraph-plan-list")
         .flex_1()
         .min_w_0()
         .h_full()
         .overflow_y_scroll()
         .flex()
         .flex_col()
-        .gap(THEME.space.sm)
-        .p(THEME.space.sm)
+        .p(THEME.space.md)
         .children(
-            groups
-                .into_iter()
-                .map(|group| render_group(group, selected, current_issue, entity.clone())),
+            rows.into_iter()
+                .map(|row| render_plan_row(row, selected, entity.clone())),
+        )
+}
+
+fn render_plan_row(
+    row: PlanRow,
+    selected: Option<u64>,
+    entity: Entity<WorkGraphBoardView>,
+) -> impl IntoElement {
+    let number = row.node.number;
+    let is_selected = selected == Some(number);
+    let title_color = if row.detached || row.reached {
+        THEME.colors.subtle
+    } else {
+        THEME.colors.text
+    };
+    div()
+        .id(format!("workgraph-node-{number}"))
+        .role(Role::Button)
+        .aria_label(format!("Open plan node {}", row.node.title))
+        .tab_index(0)
+        .cursor_pointer()
+        .on_click(move |_, _, cx| entity.update(cx, |this, cx| this.select_node(number, cx)))
+        .ml(px((row.depth.min(8) * 18) as f32))
+        .border_l(px(if row.current { 3.0 } else { 1.0 }))
+        .border_color(if row.current {
+            THEME.colors.accent
+        } else {
+            THEME.colors.border
+        })
+        .bg(if is_selected {
+            THEME.colors.surface
+        } else {
+            THEME.colors.panel
+        })
+        .hover(|style| style.bg(THEME.colors.hover))
+        .px(THEME.space.sm)
+        .py(THEME.space.sm)
+        .flex()
+        .items_start()
+        .gap(THEME.space.sm)
+        .child(
+            div()
+                .w(px(22.0))
+                .h(px(22.0))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(if row.reached {
+                    THEME.colors.success
+                } else if row.current {
+                    THEME.colors.accent
+                } else {
+                    THEME.colors.subtle
+                })
+                .when(row.reached, |marker| {
+                    marker.child(app_icon(AppIcon::CheckCircle, AppIconSize::Inline))
+                })
+                .when(!row.reached, |marker| {
+                    marker.child(
+                        div()
+                            .text_size(THEME.type_scale.caption)
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(format!("{number}")),
+                    )
+                }),
+        )
+        .child(
+            div()
+                .min_w_0()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .gap(px(3.0))
+                .child(
+                    div()
+                        .text_size(THEME.type_scale.body)
+                        .font_weight(if row.current {
+                            FontWeight::SEMIBOLD
+                        } else {
+                            FontWeight::NORMAL
+                        })
+                        .text_color(title_color)
+                        .when(row.reached, |title| title.line_through())
+                        .child(row.node.title),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(THEME.space.xs)
+                        .text_size(THEME.type_scale.caption)
+                        .text_color(THEME.colors.subtle)
+                        .when(row.current, |meta| meta.child("Current"))
+                        .when(row.detached, |meta| meta.child("Detached"))
+                        .when(!row.node.files.is_empty(), |meta| {
+                            meta.child(format!("{} path(s)", row.node.files.len()))
+                        }),
+                ),
         )
 }
 
 pub(super) fn render_create(
     title: &Entity<InputState>,
-    body: &Entity<TextareaState>,
+    detail: &Entity<TextareaState>,
+    has_plan: bool,
     entity: Entity<WorkGraphBoardView>,
-    layout: BoardLayoutMode,
 ) -> impl IntoElement {
     let submit_title = title.clone();
-    let submit_body = body.clone();
+    let submit_detail = detail.clone();
     let submit = entity.clone();
     let cancel = entity;
-    let narrow = issue_detail_shell(layout).shows_sheet(false);
     div()
         .id("workgraph-create")
-        .w(px(400.0))
+        .w(px(420.0))
         .min_w(px(360.0))
-        .when(narrow, |form| form.w_full().min_w_0())
-        .flex_none()
         .h_full()
         .overflow_y_scroll()
         .p(THEME.space.md)
@@ -128,49 +162,28 @@ pub(super) fn render_create(
                     div()
                         .text_size(THEME.type_scale.caption)
                         .text_color(THEME.colors.subtle)
-                        .child("New issue"),
+                        .child(if has_plan { "NEW NODE" } else { "NEW PLAN" }),
                 )
                 .child(
                     div()
                         .text_size(THEME.type_scale.body)
                         .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(THEME.colors.text)
-                        .child("Record concrete project work"),
+                        .child(if has_plan {
+                            "Add the next verifiable state"
+                        } else {
+                            "Name the outcome and its current state"
+                        }),
                 ),
         )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(THEME.space.xs)
-                .child(
-                    div()
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.subtle)
-                        .child("TITLE"),
-                )
-                .child(Input::new(title).w_full()),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(THEME.space.xs)
-                .child(
-                    div()
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.subtle)
-                        .child("DESCRIPTION"),
-                )
-                .child(Textarea::new(body).w_full()),
-        )
+        .child(Input::new(title).w_full())
+        .child(Textarea::new(detail).w_full())
         .child(
             div()
                 .flex()
                 .gap(THEME.space.xs)
                 .child(button(
                     "workgraph-create-submit",
-                    "Create issue",
+                    if has_plan { "Add node" } else { "Create plan" },
                     ButtonTone::Neutral,
                     true,
                     move |window, cx| {
@@ -178,14 +191,14 @@ pub(super) fn render_create(
                         if title.is_empty() {
                             return;
                         }
-                        let body = submit_body.read(cx).value().trim().to_owned();
+                        let detail = submit_detail.read(cx).value().trim().to_owned();
                         submit_title.update(cx, |input, cx| {
                             input.set_value(String::new(), window, cx);
                         });
-                        submit_body.update(cx, |input, cx| {
+                        submit_detail.update(cx, |input, cx| {
                             input.set_value(String::new(), window, cx);
                         });
-                        submit.update(cx, |this, cx| this.create_issue(title, body, cx));
+                        submit.update(cx, |this, cx| this.submit_create(title, detail, cx));
                     },
                 ))
                 .child(button(
@@ -193,108 +206,7 @@ pub(super) fn render_create(
                     "Cancel",
                     ButtonTone::Quiet,
                     true,
-                    move |_, cx| {
-                        cancel.update(cx, |this, cx| this.clear_selection(cx));
-                    },
-                )),
-        )
-}
-
-pub(super) fn render_edit_fields(
-    issue: workgraph::contract::Issue,
-    title: &Entity<InputState>,
-    body: &Entity<TextareaState>,
-    priority: &Entity<InputState>,
-    entity: Entity<WorkGraphBoardView>,
-) -> impl IntoElement {
-    let submit_title = title.clone();
-    let submit_body = body.clone();
-    let submit_priority = priority.clone();
-    let submit = entity.clone();
-    let cancel = entity;
-    let number = issue.number;
-    let version = issue.version;
-    div()
-        .flex()
-        .flex_col()
-        .gap(THEME.space.md)
-        .child(
-            div()
-                .text_size(THEME.type_scale.caption)
-                .text_color(THEME.colors.subtle)
-                .child(format!("Edit issue #{number}")),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(THEME.space.xs)
-                .child(
-                    div()
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.subtle)
-                        .child("TITLE"),
-                )
-                .child(Input::new(title).w_full()),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(THEME.space.xs)
-                .child(
-                    div()
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.subtle)
-                        .child("DESCRIPTION"),
-                )
-                .child(Textarea::new(body).w_full()),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(THEME.space.xs)
-                .child(
-                    div()
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.subtle)
-                        .child("Priority"),
-                )
-                .child(Input::new(priority).w(px(120.0))),
-        )
-        .child(
-            div()
-                .flex()
-                .gap(THEME.space.xs)
-                .child(button(
-                    format!("workgraph-edit-save-{number}"),
-                    "Save changes",
-                    ButtonTone::Neutral,
-                    true,
-                    move |_, cx| {
-                        let title = submit_title.read(cx).value().trim().to_owned();
-                        let body = submit_body.read(cx).value().to_string();
-                        let Ok(priority) = submit_priority.read(cx).value().trim().parse::<u64>()
-                        else {
-                            return;
-                        };
-                        if title.is_empty() {
-                            return;
-                        }
-                        submit.update(cx, |this, cx| {
-                            this.update_issue_fields(number, title, body, priority, version, cx);
-                        });
-                    },
-                ))
-                .child(button(
-                    format!("workgraph-edit-cancel-{number}"),
-                    "Cancel",
-                    ButtonTone::Quiet,
-                    true,
-                    move |_, cx| {
-                        cancel.update(cx, |this, cx| this.set_editing(None, cx));
-                    },
+                    move |_, cx| cancel.update(cx, |this, cx| this.cancel_create(cx)),
                 )),
         )
 }
@@ -319,361 +231,22 @@ pub(super) fn detail_label(label: &'static str) -> Div {
         .child(label)
 }
 
-pub(super) fn related_issue_section(
-    label: &'static str,
-    empty: &'static str,
-    issues: Vec<workgraph::contract::Issue>,
-    entity: Entity<WorkGraphBoardView>,
-) -> impl IntoElement {
-    detail_card()
-        .child(detail_label(label))
-        .when(issues.is_empty(), |section| {
-            section.child(
-                div()
-                    .text_size(THEME.type_scale.body_small)
-                    .text_color(THEME.colors.muted)
-                    .child(empty),
-            )
-        })
-        .children(issues.into_iter().map(|issue| {
-            let number = issue.number;
-            let entity = entity.clone();
-            related_issue_row(
-                format!("workgraph-related-{label}-{number}"),
-                number,
-                issue.title,
-                issue.status,
-            )
-            .on_click(move |_, _, cx| {
-                entity.update(cx, |this, cx| this.select_issue(number, cx));
-            })
-        }))
-}
-
-pub(super) fn dependency_issue_section(
-    issue_number: u64,
-    issue_version: u64,
-    dependencies: Vec<workgraph::contract::Issue>,
-    entity: Entity<WorkGraphBoardView>,
-    action: Option<AnyElement>,
-) -> impl IntoElement {
-    detail_card()
-        .child(detail_label("Depends on"))
-        .when(dependencies.is_empty(), |section| {
-            section.child(
-                div()
-                    .text_size(THEME.type_scale.body_small)
-                    .text_color(THEME.colors.muted)
-                    .child("Nothing — this issue can move independently."),
-            )
-        })
-        .children(dependencies.into_iter().map(|dependency| {
-            let depends_on = dependency.number;
-            let open = entity.clone();
-            let remove = entity.clone();
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap(THEME.space.xs)
-                .child(
-                    related_issue_row(
-                        format!("workgraph-dependency-{issue_number}-{depends_on}"),
-                        depends_on,
-                        dependency.title,
-                        dependency.status,
-                    )
-                    .flex_1()
-                    .min_w_0()
-                    .on_click(move |_, _, cx| {
-                        open.update(cx, |this, cx| this.select_issue(depends_on, cx));
-                    }),
-                )
-                .child(button(
-                    format!("workgraph-remove-dependency-{issue_number}-{depends_on}"),
-                    "Remove",
-                    ButtonTone::Quiet,
-                    true,
-                    move |_, cx| {
-                        remove.update(cx, |this, cx| {
-                            this.change_dependency(
-                                issue_number,
-                                depends_on,
-                                issue_version,
-                                false,
-                                cx,
-                            );
-                        });
-                    },
-                ))
-        }))
-        .children(action)
-}
-
-pub(super) fn description_section(copy: DescriptionCopy) -> impl IntoElement {
-    detail_card().child(detail_label("Description")).child(
-        div()
-            .text_size(THEME.type_scale.body_small)
-            .text_color(if copy.empty {
-                THEME.colors.muted
-            } else {
-                THEME.colors.text
-            })
-            .line_height(THEME.type_scale.line_body)
-            .child(copy.text),
-    )
-}
-
-pub(super) fn notes_section(
-    notes: Vec<InspectorNote>,
-    action: Option<AnyElement>,
-) -> impl IntoElement {
-    detail_card()
-        .child(detail_label("Notes"))
-        .when(notes.is_empty(), |section| {
-            section.child(
-                div()
-                    .text_size(THEME.type_scale.body_small)
-                    .text_color(THEME.colors.muted)
-                    .child("No progress notes yet."),
-            )
-        })
-        .children(notes.into_iter().enumerate().map(|(index, note)| {
-            div()
-                .id(format!("workgraph-note-{index}"))
-                .flex()
-                .flex_col()
-                .gap(px(2.0))
-                .child(
-                    div()
-                        .text_size(THEME.type_scale.body_small)
-                        .text_color(THEME.colors.text)
-                        .line_height(THEME.type_scale.line_body)
-                        .child(note.body),
-                )
-                .child(
-                    div()
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.subtle)
-                        .child(note.created_label),
-                )
-        }))
-        .children(action)
-}
-
-pub(super) fn sessions_section(
-    sessions: Vec<InspectorSession>,
-    action: Option<AnyElement>,
-) -> impl IntoElement {
-    detail_card()
-        .child(detail_label("Sessions"))
-        .when(sessions.is_empty(), |section| {
-            section.child(
-                div()
-                    .text_size(THEME.type_scale.body_small)
-                    .text_color(THEME.colors.muted)
-                    .child("No sessions linked."),
-            )
-        })
-        .children(sessions.into_iter().enumerate().map(|(index, session)| {
-            div()
-                .id(format!("workgraph-session-{index}"))
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap(THEME.space.sm)
-                .child(
-                    div()
-                        .min_w_0()
-                        .text_size(THEME.type_scale.body_small)
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(THEME.colors.text)
-                        .child(session.title),
-                )
-                .child(
-                    div()
-                        .flex_none()
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.subtle)
-                        .child(session.meta),
-                )
-        }))
-        .children(action)
-}
-
-fn related_issue_row(
-    id: String,
-    number: u64,
-    title: String,
-    status: workgraph::contract::IssueStatus,
-) -> gpui::Stateful<Div> {
-    div()
-        .id(id)
-        .cursor_pointer()
-        .px(THEME.space.xs)
-        .py(THEME.space.xs)
-        .rounded(THEME.radius)
-        .hover(|style| style.bg(THEME.colors.hover))
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap(THEME.space.sm)
-        .child(
-            div()
-                .min_w_0()
-                .flex()
-                .items_baseline()
-                .gap(THEME.space.xs)
-                .child(
-                    div()
-                        .flex_none()
-                        .text_size(THEME.type_scale.caption)
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(THEME.colors.code)
-                        .child(format!("#{number}")),
-                )
-                .child(
-                    div()
-                        .min_w_0()
-                        .text_size(THEME.type_scale.body_small)
-                        .text_color(THEME.colors.text)
-                        .child(title),
-                ),
-        )
-        .child(status_pill(status))
-}
-
-pub(super) fn status_color(status: workgraph::contract::IssueStatus) -> gpui::Rgba {
-    match status {
-        workgraph::contract::IssueStatus::Blocked => THEME.colors.warning,
-        workgraph::contract::IssueStatus::Done => THEME.colors.success,
-        workgraph::contract::IssueStatus::Cancelled => THEME.colors.subtle,
-        workgraph::contract::IssueStatus::InProgress => THEME.colors.accent,
-        workgraph::contract::IssueStatus::Open => THEME.colors.link,
+pub(super) const fn requirement_label(
+    requirement: workgraph::contract::CompletionRequirement,
+) -> &'static str {
+    match requirement {
+        workgraph::contract::CompletionRequirement::RevisionOrObservation => {
+            "Revision or verified observation"
+        }
+        workgraph::contract::CompletionRequirement::File => "File artifact",
+        workgraph::contract::CompletionRequirement::Observation => "Verified observation",
     }
 }
 
-pub(super) fn status_pill(status: workgraph::contract::IssueStatus) -> Div {
-    div()
-        .px(THEME.space.xs)
-        .rounded(THEME.radius)
-        .bg(THEME.colors.surface)
-        .text_size(THEME.type_scale.caption)
-        .font_weight(FontWeight::SEMIBOLD)
-        .text_color(status_color(status))
-        .child(status_label(status))
-}
-
-pub(super) fn render_group(
-    group: IssueGroup,
-    selected: Option<u64>,
-    current_issue: Option<u64>,
-    entity: Entity<WorkGraphBoardView>,
-) -> impl IntoElement {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()
-        .and_then(|duration| i64::try_from(duration.as_millis()).ok())
-        .unwrap_or_default();
-    div()
-        .flex()
-        .flex_col()
-        .gap(THEME.space.xs)
-        .child(
-            div()
-                .text_size(THEME.type_scale.caption)
-                .text_color(THEME.colors.subtle)
-                .child(format!("{}  {}", group.group.label(), group.rows.len())),
-        )
-        .children(
-            group
-                .rows
-                .into_iter()
-                .map(|row| render_issue_row(row, selected, current_issue, now, entity.clone())),
-        )
-}
-
-fn render_issue_row(
-    row: IssueRow,
-    selected: Option<u64>,
-    current_issue: Option<u64>,
-    now: i64,
-    entity: Entity<WorkGraphBoardView>,
-) -> impl IntoElement {
-    let row_status_color = if row.status_label.starts_with("Blocked") {
-        THEME.colors.warning
-    } else {
-        status_color(row.issue.status)
-    };
-    let number = row.issue.number;
-    let is_selected = selected == Some(number);
-    div()
-        .id(format!("workgraph-issue-{number}"))
-        .cursor_pointer()
-        .on_click(move |_, _, cx| entity.update(cx, |this, cx| this.select_issue(number, cx)))
-        .border_b(THEME.border)
-        .border_color(THEME.colors.border)
-        .bg(if is_selected {
-            THEME.colors.surface
-        } else {
-            THEME.colors.panel
-        })
-        .hover(|style| style.bg(THEME.colors.hover))
-        .px(THEME.space.sm)
-        .py(THEME.space.sm)
-        .flex()
-        .flex_col()
-        .gap(THEME.space.xs)
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap(THEME.space.sm)
-                .child(
-                    div()
-                        .min_w_0()
-                        .text_color(THEME.colors.text)
-                        .child(format!("#{}  {}", row.issue.number, row.issue.title)),
-                )
-                .child(
-                    div()
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .gap(THEME.space.xs)
-                        .when(current_issue == Some(number), |meta| {
-                            meta.child(
-                                div()
-                                    .text_size(THEME.type_scale.caption)
-                                    .text_color(THEME.colors.accent)
-                                    .child("Current session"),
-                            )
-                        })
-                        .child(
-                            div()
-                                .text_size(THEME.type_scale.caption)
-                                .text_color(THEME.colors.muted)
-                                .child(format!(
-                                    "{}  ·  {}",
-                                    row.priority_label,
-                                    format_relative_issue_time(row.issue.updated_at, now)
-                                )),
-                        ),
-                ),
-        )
-        .child(
-            div()
-                .text_size(THEME.type_scale.caption)
-                .text_color(row_status_color)
-                .child(row.status_label),
-        )
-        .when(!row.issue.body.trim().is_empty(), |item| {
-            item.child(
-                div()
-                    .text_size(THEME.type_scale.body_small)
-                    .text_color(THEME.colors.muted)
-                    .child(row.issue.body.lines().next().unwrap_or_default().to_owned()),
-            )
-        })
+pub(super) const fn evidence_label(kind: workgraph::contract::EvidenceKind) -> &'static str {
+    match kind {
+        workgraph::contract::EvidenceKind::Revision => "Revision",
+        workgraph::contract::EvidenceKind::File => "File",
+        workgraph::contract::EvidenceKind::Observation => "Observation",
+    }
 }

@@ -38,11 +38,6 @@ pub(crate) fn board_layout_mode(width: Pixels) -> BoardLayoutMode {
 }
 
 #[must_use]
-pub(crate) const fn board_toolbar_stacks(layout: BoardLayoutMode) -> bool {
-    !matches!(layout, BoardLayoutMode::Wide)
-}
-
-#[must_use]
 pub(crate) const fn issue_detail_shell(layout: BoardLayoutMode) -> IssueDetailShell {
     match layout {
         BoardLayoutMode::Wide | BoardLayoutMode::Compact => IssueDetailShell::Embedded,
@@ -54,10 +49,7 @@ pub(crate) const fn issue_detail_shell(layout: BoardLayoutMode) -> IssueDetailSh
 mod tests {
     use gpui::px;
 
-    use super::{
-        BoardLayoutMode, IssueDetailShell, board_layout_mode, board_toolbar_stacks,
-        issue_detail_shell,
-    };
+    use super::{BoardLayoutMode, IssueDetailShell, board_layout_mode, issue_detail_shell};
 
     #[test]
     fn layout_thresholds_use_the_narrow_sheet_only_below_960() {
@@ -66,13 +58,6 @@ mod tests {
         assert_eq!(board_layout_mode(px(1_114.0)), BoardLayoutMode::Compact);
         assert_eq!(board_layout_mode(px(1_179.0)), BoardLayoutMode::Compact);
         assert_eq!(board_layout_mode(px(1_180.0)), BoardLayoutMode::Wide);
-    }
-
-    #[test]
-    fn toolbar_stacks_before_the_board_becomes_too_narrow_for_one_row() {
-        assert!(!board_toolbar_stacks(BoardLayoutMode::Wide));
-        assert!(board_toolbar_stacks(BoardLayoutMode::Compact));
-        assert!(board_toolbar_stacks(BoardLayoutMode::Narrow));
     }
 
     #[test]

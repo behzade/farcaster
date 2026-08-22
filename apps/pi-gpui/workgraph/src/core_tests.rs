@@ -1,9 +1,9 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::HashMap;
 
 use crate::{
     contract::{
-        Dependency, EditAction, EditRequest, EditResult, IdempotencyReceipt, Issue, IssueStatus,
-        Note, PlanningView, ProjectRecordId, SearchRequest, SearchResult, SessionLink,
+        CompletionRequirement, EditAction, EditRequest, EditResult, Evidence, EvidenceKind,
+        IdempotencyReceipt, Outcome, SearchRequest, SearchResult, StoredProject,
     },
     core::{
         Persistence, PersistenceError, TransactionMode, WorkGraph, WorkGraphError,
@@ -13,15 +13,8 @@ use crate::{
 
 #[derive(Default)]
 struct MemoryPersistence {
-    project_ids: HashMap<String, ProjectRecordId>,
-    next_project_id: i64,
-    next_numbers: HashMap<ProjectRecordId, u64>,
-    issues: BTreeMap<(ProjectRecordId, u64), Issue>,
-    notes: BTreeMap<(ProjectRecordId, u64), Vec<Note>>,
-    dependencies: BTreeSet<(ProjectRecordId, u64, u64)>,
+    projects: HashMap<String, StoredProject>,
     receipts: HashMap<String, IdempotencyReceipt>,
-    session_links: BTreeMap<(ProjectRecordId, String), SessionLink>,
-    next_note_id: i64,
 }
 
 struct MemoryTransaction<'a> {
@@ -61,306 +54,17 @@ impl WorkGraphTransaction for MemoryTransaction<'_> {
         Ok(())
     }
 
-    fn ensure_project(&mut self, project: &str) -> Result<ProjectRecordId, PersistenceError> {
-        if let Some(id) = self.state.project_ids.get(project) {
-            return Ok(*id);
-        }
-        self.state.next_project_id += 1;
-        let id = ProjectRecordId::from_storage(self.state.next_project_id);
-        self.state.project_ids.insert(project.to_owned(), id);
-        self.state.next_numbers.insert(id, 1);
-        Ok(id)
+    fn project(&self, project: &str) -> Result<Option<StoredProject>, PersistenceError> {
+        Ok(self.state.projects.get(project).cloned())
     }
 
-    fn project_id(&self, project: &str) -> Result<Option<ProjectRecordId>, PersistenceError> {
-        Ok(self.state.project_ids.get(project).copied())
-    }
-
-    fn next_issue_number(&mut self, project: ProjectRecordId) -> Result<u64, PersistenceError> {
-        let next = self
-            .state
-            .next_numbers
-            .get_mut(&project)
-            .ok_or_else(|| PersistenceError::new("project missing"))?;
-        let number = *next;
-        *next += 1;
-        Ok(number)
-    }
-
-    fn insert_issue(
+    fn save_project(
         &mut self,
-        project: ProjectRecordId,
-        issue: &Issue,
+        project: &str,
+        value: &StoredProject,
+        _updated_at: i64,
     ) -> Result<(), PersistenceError> {
-        self.state
-            .issues
-            .insert((project, issue.number), issue.clone());
-        Ok(())
-    }
-
-    fn issue(
-        &self,
-        _project_path: &str,
-        project: ProjectRecordId,
-        number: u64,
-    ) -> Result<Option<Issue>, PersistenceError> {
-        Ok(self.state.issues.get(&(project, number)).cloned())
-    }
-
-    fn issues(
-        &self,
-        _project_path: &str,
-        project: ProjectRecordId,
-        status: Option<IssueStatus>,
-    ) -> Result<Vec<Issue>, PersistenceError> {
-        let mut issues = self
-            .state
-            .issues
-            .iter()
-            .filter(|((id, _), issue)| *id == project && status.is_none_or(|s| issue.status == s))
-            .map(|(_, issue)| issue.clone())
-            .collect::<Vec<_>>();
-        issues.sort_by_key(|issue| (issue.priority, issue.created_at, issue.number));
-        Ok(issues)
-    }
-
-    fn set_fields(
-        &mut self,
-        project: ProjectRecordId,
-        number: u64,
-        title: Option<&str>,
-        body: Option<&str>,
-        priority: Option<u64>,
-        expected_version: Option<u64>,
-        updated_at: i64,
-    ) -> Result<bool, PersistenceError> {
-        let Some(issue) = self.state.issues.get_mut(&(project, number)) else {
-            return Ok(false);
-        };
-        if expected_version.is_some_and(|version| version != issue.version) {
-            return Ok(false);
-        }
-        if let Some(title) = title {
-            issue.title = title.to_owned();
-        }
-        if let Some(body) = body {
-            issue.body = body.to_owned();
-        }
-        if let Some(priority) = priority {
-            issue.priority = priority;
-        }
-        issue.version += 1;
-        issue.updated_at = updated_at;
-        Ok(true)
-    }
-
-    fn set_status(
-        &mut self,
-        project: ProjectRecordId,
-        number: u64,
-        status: IssueStatus,
-        expected_version: Option<u64>,
-        updated_at: i64,
-    ) -> Result<bool, PersistenceError> {
-        let Some(issue) = self.state.issues.get_mut(&(project, number)) else {
-            return Ok(false);
-        };
-        if expected_version.is_some_and(|version| version != issue.version) {
-            return Ok(false);
-        }
-        issue.status = status;
-        issue.version += 1;
-        issue.updated_at = updated_at;
-        Ok(true)
-    }
-
-    fn bump_version(
-        &mut self,
-        project: ProjectRecordId,
-        number: u64,
-        expected_version: Option<u64>,
-        updated_at: i64,
-    ) -> Result<bool, PersistenceError> {
-        let Some(issue) = self.state.issues.get_mut(&(project, number)) else {
-            return Ok(false);
-        };
-        if expected_version.is_some_and(|version| version != issue.version) {
-            return Ok(false);
-        }
-        issue.version += 1;
-        issue.updated_at = updated_at;
-        Ok(true)
-    }
-
-    fn insert_note(
-        &mut self,
-        project: ProjectRecordId,
-        number: u64,
-        body: &str,
-        created_at: i64,
-    ) -> Result<Note, PersistenceError> {
-        self.state.next_note_id += 1;
-        let note = Note {
-            id: self.state.next_note_id,
-            issue_number: number,
-            body: body.to_owned(),
-            created_at,
-        };
-        self.state
-            .notes
-            .entry((project, number))
-            .or_default()
-            .push(note.clone());
-        Ok(note)
-    }
-
-    fn notes(&self, project: ProjectRecordId, number: u64) -> Result<Vec<Note>, PersistenceError> {
-        Ok(self
-            .state
-            .notes
-            .get(&(project, number))
-            .cloned()
-            .unwrap_or_default())
-    }
-
-    fn all_notes(&self, project: ProjectRecordId) -> Result<Vec<Note>, PersistenceError> {
-        Ok(self
-            .state
-            .notes
-            .iter()
-            .filter(|((id, _), _)| *id == project)
-            .flat_map(|(_, notes)| notes.iter().cloned())
-            .collect())
-    }
-
-    fn dependencies(
-        &self,
-        project: ProjectRecordId,
-        number: u64,
-    ) -> Result<Vec<u64>, PersistenceError> {
-        Ok(self
-            .state
-            .dependencies
-            .iter()
-            .filter(|(id, issue, _)| *id == project && *issue == number)
-            .map(|(_, _, dependency)| *dependency)
-            .collect())
-    }
-
-    fn all_dependencies(
-        &self,
-        project: ProjectRecordId,
-    ) -> Result<Vec<Dependency>, PersistenceError> {
-        Ok(self
-            .state
-            .dependencies
-            .iter()
-            .filter(|(id, _, _)| *id == project)
-            .map(|(_, issue_number, depends_on)| Dependency {
-                issue_number: *issue_number,
-                depends_on: *depends_on,
-            })
-            .collect())
-    }
-
-    fn dependency_reaches(
-        &self,
-        project: ProjectRecordId,
-        from: u64,
-        target: u64,
-    ) -> Result<bool, PersistenceError> {
-        let mut pending = vec![from];
-        let mut seen = BTreeSet::new();
-        while let Some(number) = pending.pop() {
-            if !seen.insert(number) {
-                continue;
-            }
-            for (_, _, dependency) in self
-                .state
-                .dependencies
-                .iter()
-                .filter(|(id, issue, _)| *id == project && *issue == number)
-            {
-                if *dependency == target {
-                    return Ok(true);
-                }
-                pending.push(*dependency);
-            }
-        }
-        Ok(false)
-    }
-
-    fn add_dependency(
-        &mut self,
-        project: ProjectRecordId,
-        number: u64,
-        depends_on: u64,
-    ) -> Result<(), PersistenceError> {
-        self.state
-            .dependencies
-            .insert((project, number, depends_on));
-        Ok(())
-    }
-
-    fn remove_dependency(
-        &mut self,
-        project: ProjectRecordId,
-        number: u64,
-        depends_on: u64,
-    ) -> Result<(), PersistenceError> {
-        self.state
-            .dependencies
-            .remove(&(project, number, depends_on));
-        Ok(())
-    }
-
-    fn session_link(
-        &self,
-        project: ProjectRecordId,
-        session_id: &str,
-    ) -> Result<Option<SessionLink>, PersistenceError> {
-        Ok(self
-            .state
-            .session_links
-            .get(&(project, session_id.to_owned()))
-            .cloned())
-    }
-
-    fn session_links(
-        &self,
-        project: ProjectRecordId,
-        issue_number: Option<u64>,
-    ) -> Result<Vec<SessionLink>, PersistenceError> {
-        Ok(self
-            .state
-            .session_links
-            .iter()
-            .filter(|((id, _), link)| {
-                *id == project && issue_number.is_none_or(|number| link.issue_number == number)
-            })
-            .map(|(_, link)| link.clone())
-            .collect())
-    }
-
-    fn upsert_session_link(
-        &mut self,
-        project: ProjectRecordId,
-        link: &SessionLink,
-    ) -> Result<(), PersistenceError> {
-        self.state
-            .session_links
-            .insert((project, link.session_id.clone()), link.clone());
-        Ok(())
-    }
-
-    fn remove_session_link(
-        &mut self,
-        project: ProjectRecordId,
-        session_id: &str,
-    ) -> Result<(), PersistenceError> {
-        self.state
-            .session_links
-            .remove(&(project, session_id.to_owned()));
+        self.state.projects.insert(project.to_owned(), value.clone());
         Ok(())
     }
 
@@ -369,195 +73,277 @@ impl WorkGraphTransaction for MemoryTransaction<'_> {
     }
 }
 
-fn create(graph: &mut WorkGraph<MemoryPersistence>, key: &str, title: &str) -> Issue {
-    create_with_priority(graph, key, title, 0)
-}
-
-fn create_with_priority(
-    graph: &mut WorkGraph<MemoryPersistence>,
-    key: &str,
-    title: &str,
-    priority: u64,
-) -> Issue {
-    let EditResult::Issue(issue) = graph
-        .edit(&EditRequest {
-            project: "/project".into(),
-            idempotency_key: key.into(),
-            action: EditAction::Create {
-                title: title.into(),
-                body: String::new(),
-                priority,
-            },
-        })
-        .expect("create issue")
-    else {
-        panic!("issue result");
-    };
-    issue
-}
-
-#[test]
-fn core_runs_against_a_non_sqlite_persistence() {
-    let mut graph = WorkGraph::new(MemoryPersistence::default());
-    let first = create(&mut graph, "first", "First");
-    let second = create(&mut graph, "second", "Second");
+fn edit(graph: &mut WorkGraph<MemoryPersistence>, key: &str, action: EditAction) -> EditResult {
     graph
         .edit(&EditRequest {
             project: "/project".into(),
-            idempotency_key: "dependency".into(),
-            action: EditAction::AddDependency {
-                number: second.number,
-                depends_on: first.number,
-                expected_version: Some(second.version),
-            },
+            idempotency_key: key.into(),
+            action,
         })
-        .expect("add dependency");
-    let blocked = graph
-        .search(&SearchRequest::Planning {
+        .expect("edit")
+}
+
+fn create_plan(graph: &mut WorkGraph<MemoryPersistence>) -> (u64, u64, u64) {
+    let EditResult::Plan(snapshot) = edit(
+        graph,
+        "plan",
+        EditAction::CreatePlan {
+            title: "VCS integration".into(),
+            root_title: "Current product".into(),
+            files: vec!["apps/pi-gpui".into()],
+            completion: CompletionRequirement::RevisionOrObservation,
+        },
+    ) else {
+        panic!("plan result");
+    };
+    (
+        snapshot.plan.number,
+        snapshot.plan.root_node,
+        snapshot.walk.expect("default walk").number,
+    )
+}
+
+fn add_node(
+    graph: &mut WorkGraph<MemoryPersistence>,
+    key: &str,
+    plan: u64,
+    title: &str,
+    after: Option<u64>,
+) -> u64 {
+    let EditResult::Node(node) = edit(
+        graph,
+        key,
+        EditAction::AddNode {
+            plan,
+            title: title.into(),
+            files: Vec::new(),
+            completion: CompletionRequirement::RevisionOrObservation,
+            after,
+        },
+    ) else {
+        panic!("node result");
+    };
+    node.number
+}
+
+fn outcome(kind: EvidenceKind, reference: &str) -> Outcome {
+    Outcome {
+        note: "Verified state".into(),
+        evidence: Evidence {
+            kind,
+            reference: reference.into(),
+        },
+    }
+}
+
+fn advance(
+    graph: &mut WorkGraph<MemoryPersistence>,
+    key: &str,
+    walk: u64,
+    number: u64,
+    next: Option<u64>,
+    version: u64,
+) -> u64 {
+    let EditResult::Step(step) = edit(
+        graph,
+        key,
+        EditAction::Advance {
+            walk,
+            number,
+            next,
+            outcome: outcome(EvidenceKind::Revision, "git:abc123"),
+            expected_version: Some(version),
+        },
+    ) else {
+        panic!("step result");
+    };
+    step.id
+}
+
+#[test]
+fn plan_walk_advances_only_across_direct_edges_and_persists_cursor() {
+    let mut graph = WorkGraph::new(MemoryPersistence::default());
+    let (plan, root, walk) = create_plan(&mut graph);
+    let git = add_node(&mut graph, "git", plan, "Git backend", Some(root));
+    let final_node = add_node(&mut graph, "final", plan, "Both backends", Some(git));
+
+    let invalid = graph.edit(&EditRequest {
+        project: "/project".into(),
+        idempotency_key: "skip".into(),
+        action: EditAction::Advance {
+            walk,
+            number: root,
+            next: Some(final_node),
+            outcome: outcome(EvidenceKind::Revision, "git:abc123"),
+            expected_version: Some(1),
+        },
+    });
+    assert!(matches!(invalid, Err(WorkGraphError::InvalidSuccessor)));
+
+    advance(&mut graph, "advance-root", walk, root, None, 1);
+    let SearchResult::Plan(snapshot) = graph
+        .search(&SearchRequest::Plan {
             project: "/project".into(),
-            planning: PlanningView::Blocked,
+            plan,
+            walk: Some(walk),
         })
-        .expect("blocked planning");
-    assert!(
-        matches!(blocked, SearchResult::Planning(items) if items.len() == 1 && items[0].number == second.number)
+        .expect("snapshot")
+    else {
+        panic!("plan search");
+    };
+    assert_eq!(snapshot.walk.expect("walk").current_node, Some(git));
+    assert_eq!(snapshot.steps.len(), 1);
+}
+
+#[test]
+fn branching_requires_a_successor_and_rewind_preserves_abandoned_history() {
+    let mut graph = WorkGraph::new(MemoryPersistence::default());
+    let (plan, root, walk) = create_plan(&mut graph);
+    let git = add_node(&mut graph, "git", plan, "Git first", Some(root));
+    let jj = add_node(&mut graph, "jj", plan, "jj first", Some(root));
+
+    let ambiguous = graph.edit(&EditRequest {
+        project: "/project".into(),
+        idempotency_key: "ambiguous".into(),
+        action: EditAction::Advance {
+            walk,
+            number: root,
+            next: None,
+            outcome: outcome(EvidenceKind::Revision, "git:abc123"),
+            expected_version: Some(1),
+        },
+    });
+    assert!(matches!(ambiguous, Err(WorkGraphError::AmbiguousSuccessor)));
+
+    let root_step = advance(&mut graph, "choose-git", walk, root, Some(git), 1);
+    advance(&mut graph, "finish-git", walk, git, None, 2);
+    let EditResult::Walk(rewound) = edit(
+        &mut graph,
+        "rewind",
+        EditAction::Rewind {
+            walk,
+            number: root,
+            expected_version: Some(3),
+        },
+    ) else {
+        panic!("walk result");
+    };
+    assert_eq!(rewound.current_node, Some(root));
+    assert_eq!(rewound.head_step, None);
+    advance(&mut graph, "choose-jj", walk, root, Some(jj), 4);
+
+    let SearchResult::Plan(snapshot) = graph
+        .search(&SearchRequest::Plan {
+            project: "/project".into(),
+            plan,
+            walk: Some(walk),
+        })
+        .expect("snapshot")
+    else {
+        panic!("plan search");
+    };
+    assert_eq!(snapshot.steps.len(), 3);
+    assert!(snapshot.steps.iter().any(|step| step.id == root_step));
+    assert_eq!(snapshot.walk.expect("walk").current_node, Some(jj));
+}
+
+#[test]
+fn reusable_plan_walks_advance_independently() {
+    let mut graph = WorkGraph::new(MemoryPersistence::default());
+    let (plan, root, first_walk) = create_plan(&mut graph);
+    let next = add_node(&mut graph, "next", plan, "Integrated", Some(root));
+    let EditResult::Walk(second_walk) = edit(
+        &mut graph,
+        "second-walk",
+        EditAction::CreateWalk { plan },
+    ) else {
+        panic!("walk result");
+    };
+
+    advance(&mut graph, "first-advance", first_walk, root, None, 1);
+    let SearchResult::Project(project) = graph
+        .search(&SearchRequest::Project {
+            project: "/project".into(),
+        })
+        .expect("project")
+    else {
+        panic!("project search");
+    };
+    assert_eq!(
+        project
+            .walks
+            .iter()
+            .find(|walk| walk.number == first_walk)
+            .and_then(|walk| walk.current_node),
+        Some(next)
+    );
+    assert_eq!(
+        project
+            .walks
+            .iter()
+            .find(|walk| walk.number == second_walk.number)
+            .and_then(|walk| walk.current_node),
+        Some(root)
     );
 }
 
 #[test]
-fn next_uses_canonical_lowest_priority_then_creation_order() {
+fn observation_is_valid_when_a_code_state_already_exists() {
     let mut graph = WorkGraph::new(MemoryPersistence::default());
-    let later = create_with_priority(&mut graph, "later", "Later", 2);
-    let next = create_with_priority(&mut graph, "next", "Next", 0);
-    let middle = create_with_priority(&mut graph, "middle", "Middle", 1);
-
-    let ready = graph
-        .search(&SearchRequest::Planning {
-            project: "/project".into(),
-            planning: PlanningView::Ready,
-        })
-        .expect("ready planning");
-    assert!(matches!(
-        ready,
-        SearchResult::Planning(items)
-            if items.iter().map(|issue| issue.number).collect::<Vec<_>>()
-                == vec![next.number, middle.number, later.number]
-    ));
-    let first = graph
-        .search(&SearchRequest::Planning {
-            project: "/project".into(),
-            planning: PlanningView::Next,
-        })
-        .expect("next planning");
-    assert!(matches!(first, SearchResult::Planning(items) if items[0].number == next.number));
-}
-
-#[test]
-fn graph_snapshot_includes_notes_for_native_board_details() {
-    let mut graph = WorkGraph::new(MemoryPersistence::default());
-    let issue = create(&mut graph, "first", "First");
-    graph
-        .edit(&EditRequest {
-            project: "/project".into(),
-            idempotency_key: "note".into(),
-            action: EditAction::AddNote {
-                number: issue.number,
-                body: "Concrete progress".into(),
-                expected_version: Some(issue.version),
-            },
-        })
-        .expect("add note");
-
-    let result = graph
-        .search(&SearchRequest::Graph {
-            project: "/project".into(),
-        })
-        .expect("graph");
-    assert!(matches!(
-        result,
-        SearchResult::Graph(snapshot)
-            if snapshot.notes.len() == 1
-                && snapshot.notes[0].issue_number == issue.number
-                && snapshot.notes[0].body == "Concrete progress"
-    ));
-}
-
-#[test]
-fn set_fields_and_priority_follow_the_issues_version_contract() {
-    let mut graph = WorkGraph::new(MemoryPersistence::default());
-    let issue = create(&mut graph, "first", "First");
-    let EditResult::Issue(updated) = graph
-        .edit(&EditRequest {
-            project: "/project".into(),
-            idempotency_key: "fields".into(),
-            action: EditAction::SetFields {
-                number: issue.number,
-                title: Some(" Renamed ".into()),
-                body: Some("Useful context".into()),
-                priority: None,
-                expected_version: Some(issue.version),
-            },
-        })
-        .expect("set fields")
-    else {
-        panic!("issue result");
-    };
-    assert_eq!(updated.title, "Renamed");
-    assert_eq!(updated.body, "Useful context");
-
-    let EditResult::Issue(reprioritized) = graph
-        .edit(&EditRequest {
-            project: "/project".into(),
-            idempotency_key: "priority".into(),
-            action: EditAction::SetPriority {
-                number: issue.number,
-                priority: 4,
-                expected_version: Some(updated.version),
-            },
-        })
-        .expect("set priority")
-    else {
-        panic!("issue result");
-    };
-    assert_eq!(reprioritized.priority, 4);
-    assert_eq!(reprioritized.version, issue.version + 2);
-}
-
-#[test]
-fn core_owns_idempotency_cycles_and_version_invariants() {
-    let mut graph = WorkGraph::new(MemoryPersistence::default());
-    let first = create(&mut graph, "first", "First");
-    assert_eq!(first, create(&mut graph, "first", "First"));
-    let conflict = graph.edit(&EditRequest {
-        project: "/project".into(),
-        idempotency_key: "first".into(),
-        action: EditAction::Create {
-            title: "Changed".into(),
-            body: String::new(),
-            priority: 0,
+    let (_plan, root, walk) = create_plan(&mut graph);
+    let EditResult::Step(step) = edit(
+        &mut graph,
+        "observed",
+        EditAction::Advance {
+            walk,
+            number: root,
+            next: None,
+            outcome: outcome(
+                EvidenceKind::Observation,
+                "Existing implementation at git:abc123; focused test passed",
+            ),
+            expected_version: Some(1),
         },
-    });
-    assert!(matches!(conflict, Err(WorkGraphError::IdempotencyConflict)));
+    ) else {
+        panic!("step result");
+    };
+    assert_eq!(step.outcome.evidence.kind, EvidenceKind::Observation);
+}
 
-    let second = create(&mut graph, "second", "Second");
-    graph
-        .edit(&EditRequest {
-            project: "/project".into(),
-            idempotency_key: "one-two".into(),
-            action: EditAction::AddDependency {
-                number: first.number,
-                depends_on: second.number,
-                expected_version: Some(first.version),
-            },
-        })
-        .expect("first dependency");
+#[test]
+fn core_rejects_cycles_stale_walks_and_idempotency_conflicts() {
+    let mut graph = WorkGraph::new(MemoryPersistence::default());
+    let (plan, root, walk) = create_plan(&mut graph);
+    let next = add_node(&mut graph, "next", plan, "Next", Some(root));
     let cycle = graph.edit(&EditRequest {
         project: "/project".into(),
-        idempotency_key: "two-one".into(),
-        action: EditAction::AddDependency {
-            number: second.number,
-            depends_on: first.number,
-            expected_version: Some(second.version),
+        idempotency_key: "cycle".into(),
+        action: EditAction::AddEdge {
+            plan,
+            from: next,
+            to: root,
         },
     });
     assert!(matches!(cycle, Err(WorkGraphError::DependencyCycle)));
+
+    advance(&mut graph, "advance", walk, root, None, 1);
+    let stale = graph.edit(&EditRequest {
+        project: "/project".into(),
+        idempotency_key: "stale".into(),
+        action: EditAction::Advance {
+            walk,
+            number: next,
+            next: None,
+            outcome: outcome(EvidenceKind::Revision, "git:def456"),
+            expected_version: Some(1),
+        },
+    });
+    assert!(matches!(stale, Err(WorkGraphError::VersionConflict)));
+
+    let conflict = graph.edit(&EditRequest {
+        project: "/project".into(),
+        idempotency_key: "plan".into(),
+        action: EditAction::CreateWalk { plan },
+    });
+    assert!(matches!(conflict, Err(WorkGraphError::IdempotencyConflict)));
 }

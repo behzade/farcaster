@@ -1,183 +1,69 @@
-use workgraph::{
-    adapter::SqliteAdapter,
-    contract::{EditAction, EditRequest, EditResult, IssueStatus},
-    core::WorkGraph,
-};
-
-use super::persistence::{
-    add_dependency, add_issue_note, create_issue, load_issues, remove_dependency,
-    update_issue_fields, update_issue_status,
-};
+use super::persistence::{add_node, create_plan, link_session, load_plan};
 
 #[test]
-fn board_loader_reads_issues_from_the_shared_gui_database() {
+fn native_plan_adapter_round_trips_nodes_walk_and_session() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let database = directory.path().join("gui-state.sqlite3");
     let project = directory.path().join("project");
     std::fs::create_dir(&project).expect("project directory");
     let _state = crate::state::StateStore::open_at(&database).expect("GUI state");
-    let adapter = SqliteAdapter::open(&database).expect("workgraph adapter");
-    let mut graph = WorkGraph::new(adapter);
-    let project_key = project
-        .canonicalize()
-        .expect("canonical project")
-        .into_os_string()
-        .into_string()
-        .expect("UTF-8 project");
-    let EditResult::Issue(prerequisite) = graph
-        .edit(&EditRequest {
-            project: project_key.clone(),
-            idempotency_key: "prerequisite".into(),
-            action: EditAction::Create {
-                title: "Prerequisite".into(),
-                body: String::new(),
-                priority: 2,
-            },
-        })
-        .expect("create prerequisite")
-    else {
-        panic!("issue result");
-    };
-    let EditResult::Issue(blocked) = graph
-        .edit(&EditRequest {
-            project: project_key.clone(),
-            idempotency_key: "blocked".into(),
-            action: EditAction::Create {
-                title: "Blocked issue".into(),
-                body: String::new(),
-                priority: 0,
-            },
-        })
-        .expect("create blocked issue")
-    else {
-        panic!("issue result");
-    };
-    graph
-        .edit(&EditRequest {
-            project: project_key.clone(),
-            idempotency_key: "note".into(),
-            action: EditAction::AddNote {
-                number: prerequisite.number,
-                body: "Ready for the next session".into(),
-                expected_version: Some(prerequisite.version),
-            },
-        })
-        .expect("add note");
-    graph
-        .edit(&EditRequest {
-            project: project_key,
-            idempotency_key: "dependency".into(),
-            action: EditAction::AddDependency {
-                number: blocked.number,
-                depends_on: prerequisite.number,
-                expected_version: Some(blocked.version),
-            },
-        })
-        .expect("add dependency");
 
-    let loaded = load_issues(database.clone(), project.clone()).expect("board load");
-    assert_eq!(loaded.issues.len(), 2);
-    assert_eq!(loaded.notes.len(), 1);
-    assert_eq!(loaded.notes[0].body, "Ready for the next session");
-    assert!(loaded.ready.contains(&prerequisite.number));
-    assert!(loaded.blocked.contains(&blocked.number));
-    assert_eq!(loaded.next, Some(prerequisite.number));
-
-    let prerequisite_version = loaded
-        .issues
-        .iter()
-        .find(|issue| issue.number == prerequisite.number)
-        .expect("loaded prerequisite")
-        .version;
-    let with_note = add_issue_note(
+    let (created, root) = create_plan(
         database.clone(),
         project.clone(),
-        prerequisite.number,
-        prerequisite_version,
-        "Second durable note".into(),
+        "Git and jj integration".into(),
+        "Current product".into(),
     )
-    .expect("native note update");
-    assert_eq!(with_note.notes.len(), 2);
-    let updated_version = with_note
-        .issues
-        .iter()
-        .find(|issue| issue.number == prerequisite.number)
-        .expect("updated prerequisite")
-        .version;
-    let updated = update_issue_status(
+    .expect("create plan");
+    let snapshot = created.snapshot.expect("snapshot");
+    assert_eq!(snapshot.nodes.len(), 1);
+    assert_eq!(snapshot.plan.root_node, root);
+    let walk = snapshot.walk.expect("default walk");
+
+    let (with_node, node) = add_node(
         database.clone(),
         project.clone(),
-        prerequisite.number,
-        IssueStatus::InProgress,
-        updated_version,
+        snapshot.plan.number,
+        "Both backends expose repository state".into(),
+        vec!["apps/pi-gpui/src/vcs".into()],
+        Some(root),
+        None,
     )
-    .expect("native status update");
+    .expect("add node");
     assert_eq!(
-        updated
-            .issues
+        with_node.snapshot.as_ref().map(|plan| plan.nodes.len()),
+        Some(2)
+    );
+    assert!(
+        with_node
+            .snapshot
+            .as_ref()
+            .expect("snapshot")
+            .edges
             .iter()
-            .find(|issue| issue.number == prerequisite.number)
-            .map(|issue| issue.status),
-        Some(IssueStatus::InProgress)
+            .any(|edge| edge.from == root && edge.to == node)
     );
 
-    let (with_created, created_number) = create_issue(
-        database,
-        project,
-        "Created in the native board".into(),
-        "Persist the issue without leaving Pi".into(),
+    let linked = link_session(
+        database.clone(),
+        project.clone(),
+        walk.number,
+        "session-1".into(),
+        "/sessions/one.jsonl".into(),
     )
-    .expect("native issue create");
-    assert_eq!(with_created.issues.len(), 3);
-    let created = with_created
-        .issues
-        .iter()
-        .find(|issue| issue.number == created_number)
-        .expect("native created issue");
-    assert_eq!(created.title, "Created in the native board");
-    let with_fields = update_issue_fields(
-        directory.path().join("gui-state.sqlite3"),
-        directory.path().join("project"),
-        created_number,
-        "Edited in the native board".into(),
-        "Updated durable context".into(),
-        3,
-        created.version,
-    )
-    .expect("native field update");
-    let edited = with_fields
-        .issues
-        .iter()
-        .find(|issue| issue.number == created_number)
-        .expect("native edited issue");
-    assert_eq!(edited.title, "Edited in the native board");
-    assert_eq!(edited.priority, 3);
-    let with_dependency = add_dependency(
-        directory.path().join("gui-state.sqlite3"),
-        directory.path().join("project"),
-        created_number,
-        prerequisite.number,
-        edited.version,
-    )
-    .expect("native dependency add");
-    assert!(with_dependency.dependencies.iter().any(|edge| {
-        edge.issue_number == created_number && edge.depends_on == prerequisite.number
-    }));
-    let created_version = with_dependency
-        .issues
-        .iter()
-        .find(|issue| issue.number == created_number)
-        .expect("created issue after dependency")
-        .version;
-    let without_dependency = remove_dependency(
-        directory.path().join("gui-state.sqlite3"),
-        directory.path().join("project"),
-        created_number,
-        prerequisite.number,
-        created_version,
-    )
-    .expect("native dependency remove");
-    assert!(!without_dependency.dependencies.iter().any(|edge| {
-        edge.issue_number == created_number && edge.depends_on == prerequisite.number
-    }));
+    .expect("link session");
+    assert_eq!(
+        linked.session_link.as_ref().map(|link| link.walk_number),
+        Some(walk.number)
+    );
+
+    let loaded = load_plan(database, project, Some("session-1")).expect("load linked plan");
+    assert_eq!(
+        loaded.snapshot.as_ref().map(|plan| plan.plan.number),
+        Some(snapshot.plan.number)
+    );
+    assert_eq!(
+        loaded.snapshot.as_ref().map(|plan| plan.nodes.len()),
+        Some(2)
+    );
 }

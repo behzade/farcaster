@@ -1,18 +1,15 @@
-//! GPUI and SQLite adapters for the workgraph board.
+//! GPUI and SQLite adapters for the workgraph plan list.
 
 mod detail;
 
 use std::path::PathBuf;
 
 use super::{
-    components::{render_create, render_filter_rail, render_groups},
-    contract::{BoardFilter, BoardLoadState},
-    core::{adjacent_issue_number, filter_count, matching_project_groups},
-    layout::{BoardLayoutMode, board_layout_mode, board_toolbar_stacks},
-    persistence::{
-        add_dependency, add_issue_note, create_issue, link_session, load_issues, remove_dependency,
-        update_issue_fields, update_issue_status,
-    },
+    components::{render_create, render_plan_list},
+    contract::PlanLoadState,
+    core::{adjacent_node_number, plan_rows},
+    layout::{BoardLayoutMode, board_layout_mode},
+    persistence::{add_node, create_plan, link_session, load_plan},
 };
 use crate::{
     primitives::{ButtonTone, FeedbackTone, button, feedback},
@@ -31,22 +28,14 @@ pub(crate) const WORKGRAPH_NAV_KEY_CONTEXT: &str = "PiWorkGraph && !Input";
 pub(crate) struct WorkGraphBoardView {
     database: PathBuf,
     project: PathBuf,
-    state: BoardLoadState,
+    pub(super) state: PlanLoadState,
     focus: FocusHandle,
-    filter: BoardFilter,
-    selected: Option<u64>,
+    pub(super) selected: Option<u64>,
     creating: bool,
-    editing: Option<u64>,
-    active_session: Option<(String, String)>,
+    pub(super) active_session: Option<(String, String)>,
     search: Option<Entity<InputState>>,
     create_title: Option<Entity<InputState>>,
-    create_body: Option<Entity<TextareaState>>,
-    edit_title: Option<Entity<InputState>>,
-    edit_body: Option<Entity<TextareaState>>,
-    edit_priority: Option<Entity<InputState>>,
-    dependency: Option<Entity<InputState>>,
-    note: Option<Entity<TextareaState>>,
-    note_issue: Option<u64>,
+    create_detail: Option<Entity<TextareaState>>,
     refresh: Option<Task<()>>,
     subscriptions: Vec<Subscription>,
 }
@@ -58,29 +47,21 @@ impl WorkGraphBoardView {
         cx: &mut Context<Self>,
     ) -> Self {
         let (database, state) = match database {
-            Ok(database) => (database, BoardLoadState::Loading),
-            Err(error) => (PathBuf::new(), BoardLoadState::Failed(error)),
+            Ok(database) => (database, PlanLoadState::Loading),
+            Err(error) => (PathBuf::new(), PlanLoadState::Failed(error)),
         };
-        let should_refresh = matches!(state, BoardLoadState::Loading);
+        let should_refresh = matches!(state, PlanLoadState::Loading);
         let mut view = Self {
             database,
             project,
             state,
             focus: cx.focus_handle(),
-            filter: BoardFilter::Active,
             selected: None,
             creating: false,
-            editing: None,
             active_session: None,
             search: None,
             create_title: None,
-            create_body: None,
-            edit_title: None,
-            edit_body: None,
-            edit_priority: None,
-            dependency: None,
-            note: None,
-            note_issue: None,
+            create_detail: None,
             refresh: None,
             subscriptions: Vec::new(),
         };
@@ -102,39 +83,52 @@ impl WorkGraphBoardView {
     }
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
-        self.state = BoardLoadState::Loading;
+        self.state = PlanLoadState::Loading;
         let database = self.database.clone();
         let project = self.project.clone();
-        let load = cx.background_spawn(async move { load_issues(database, project) });
+        let session_id = self.active_session.as_ref().map(|(id, _)| id.clone());
+        let load =
+            cx.background_spawn(async move { load_plan(database, project, session_id.as_deref()) });
         self.refresh = Some(cx.spawn(async move |weak, cx| {
             let state = match load.await {
-                Ok(issues) => BoardLoadState::Ready(issues),
-                Err(error) => BoardLoadState::Failed(error),
+                Ok(data) => PlanLoadState::Ready(Box::new(data)),
+                Err(error) => PlanLoadState::Failed(error),
             };
             let _ = weak.update(cx, |this, cx| {
                 this.state = state;
+                if let PlanLoadState::Ready(data) = &this.state
+                    && let Some(snapshot) = &data.snapshot
+                    && !snapshot
+                        .nodes
+                        .iter()
+                        .any(|node| Some(node.number) == this.selected)
+                {
+                    this.selected = snapshot
+                        .walk
+                        .as_ref()
+                        .and_then(|walk| walk.current_node)
+                        .or(Some(snapshot.plan.root_node));
+                }
                 cx.notify();
             });
         }));
         cx.notify();
     }
 
-    pub(super) fn set_filter(&mut self, filter: BoardFilter, cx: &mut Context<Self>) {
-        if self.filter != filter {
-            self.filter = filter;
+    pub(crate) fn select_node(&mut self, number: u64, cx: &mut Context<Self>) {
+        if self.selected != Some(number) || self.creating {
+            self.selected = Some(number);
+            self.creating = false;
             cx.notify();
         }
     }
 
     pub(crate) fn select_issue(&mut self, number: u64, cx: &mut Context<Self>) {
-        if replace_work_state(
-            &mut self.selected,
-            &mut self.creating,
-            &mut self.editing,
-            Some(number),
-            false,
-            None,
-        ) {
+        self.select_node(number, cx);
+    }
+
+    pub(super) fn clear_selection(&mut self, cx: &mut Context<Self>) {
+        if self.selected.take().is_some() {
             cx.notify();
         }
     }
@@ -152,7 +146,10 @@ impl WorkGraphBoardView {
     }
 
     pub(crate) fn move_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
-        let BoardLoadState::Ready(data) = &self.state else {
+        let PlanLoadState::Ready(data) = &self.state else {
+            return;
+        };
+        let Some(snapshot) = &data.snapshot else {
             return;
         };
         let search = self
@@ -160,17 +157,15 @@ impl WorkGraphBoardView {
             .as_ref()
             .map(|input| input.read(cx).value().to_string())
             .unwrap_or_default();
-        let numbers = matching_project_groups(data, self.filter, &search)
-            .into_iter()
-            .flat_map(|group| group.rows.into_iter().map(|row| row.issue.number))
-            .collect::<Vec<_>>();
-        if let Some(number) = adjacent_issue_number(&numbers, self.selected, delta) {
-            self.select_issue(number, cx);
+        let rows = plan_rows(snapshot, &search);
+        if let Some(number) = adjacent_node_number(&rows, self.selected, delta) {
+            self.select_node(number, cx);
         }
     }
 
     pub(crate) fn dismiss_work_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.editing.take().is_some() || std::mem::take(&mut self.creating) {
+        if self.creating {
+            self.creating = false;
             cx.notify();
             return;
         }
@@ -182,94 +177,68 @@ impl WorkGraphBoardView {
             });
             return;
         }
-        self.clear_selection(cx);
-    }
-
-    pub(super) fn clear_selection(&mut self, cx: &mut Context<Self>) {
-        if replace_work_state(
-            &mut self.selected,
-            &mut self.creating,
-            &mut self.editing,
-            None,
-            false,
-            None,
-        ) {
+        if self.selected.take().is_some() {
             cx.notify();
         }
     }
 
     pub(crate) fn start_create(&mut self, cx: &mut Context<Self>) {
-        if replace_work_state(
-            &mut self.selected,
-            &mut self.creating,
-            &mut self.editing,
-            None,
-            true,
-            None,
-        ) {
+        if !self.creating {
+            self.creating = true;
             cx.notify();
         }
     }
 
-    pub(super) fn set_editing(&mut self, number: Option<u64>, cx: &mut Context<Self>) {
-        if self.editing != number {
-            self.editing = number;
+    pub(super) fn cancel_create(&mut self, cx: &mut Context<Self>) {
+        if self.creating {
+            self.creating = false;
             cx.notify();
         }
     }
 
-    pub(super) fn update_issue_fields(
-        &mut self,
-        number: u64,
-        title: String,
-        body: String,
-        priority: u64,
-        expected_version: u64,
-        cx: &mut Context<Self>,
-    ) {
+    pub(super) fn submit_create(&mut self, title: String, detail: String, cx: &mut Context<Self>) {
         let database = self.database.clone();
         let project = self.project.clone();
+        let session_id = self.active_session.as_ref().map(|(id, _)| id.clone());
+        let operation = match &self.state {
+            PlanLoadState::Ready(data) => data.snapshot.as_ref().map(|snapshot| {
+                let plan = snapshot.plan.number;
+                let after = self
+                    .selected
+                    .or_else(|| snapshot.walk.as_ref().and_then(|walk| walk.current_node));
+                let files = detail
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>();
+                (plan, after, files)
+            }),
+            PlanLoadState::Loading | PlanLoadState::Failed(_) => return,
+        };
         let edit = cx.background_spawn(async move {
-            update_issue_fields(
-                database,
-                project,
-                number,
-                title,
-                body,
-                priority,
-                expected_version,
-            )
+            if let Some((plan, after, files)) = operation {
+                add_node(database, project, plan, title, files, after, session_id)
+            } else {
+                let root = if detail.trim().is_empty() {
+                    "Current state".to_owned()
+                } else {
+                    detail
+                };
+                create_plan(database, project, title, root)
+            }
         });
-        self.state = BoardLoadState::Loading;
-        self.refresh = Some(cx.spawn(async move |weak, cx| {
-            let state = match edit.await {
-                Ok(data) => BoardLoadState::Ready(data),
-                Err(error) => BoardLoadState::Failed(error),
-            };
-            let _ = weak.update(cx, |this, cx| {
-                this.state = state;
-                this.editing = None;
-                cx.notify();
-            });
-        }));
-        cx.notify();
-    }
-
-    pub(super) fn create_issue(&mut self, title: String, body: String, cx: &mut Context<Self>) {
-        let database = self.database.clone();
-        let project = self.project.clone();
-        let edit = cx.background_spawn(async move { create_issue(database, project, title, body) });
-        self.state = BoardLoadState::Loading;
+        self.state = PlanLoadState::Loading;
         self.refresh = Some(cx.spawn(async move |weak, cx| {
             let result = edit.await;
             let _ = weak.update(cx, |this, cx| {
                 match result {
                     Ok((data, number)) => {
-                        this.state = BoardLoadState::Ready(data);
+                        this.state = PlanLoadState::Ready(Box::new(data));
                         this.selected = Some(number);
                         this.creating = false;
                     }
-                    Err(error) => this.state = BoardLoadState::Failed(error),
+                    Err(error) => this.state = PlanLoadState::Failed(error),
                 }
                 cx.notify();
             });
@@ -277,103 +246,20 @@ impl WorkGraphBoardView {
         cx.notify();
     }
 
-    fn set_issue_status(
-        &mut self,
-        number: u64,
-        status: workgraph::contract::IssueStatus,
-        expected_version: u64,
-        cx: &mut Context<Self>,
-    ) {
-        let database = self.database.clone();
-        let project = self.project.clone();
-        let edit = cx.background_spawn(async move {
-            update_issue_status(database, project, number, status, expected_version)
-        });
-        self.state = BoardLoadState::Loading;
-        self.refresh = Some(cx.spawn(async move |weak, cx| {
-            let state = match edit.await {
-                Ok(data) => BoardLoadState::Ready(data),
-                Err(error) => BoardLoadState::Failed(error),
-            };
-            let _ = weak.update(cx, |this, cx| {
-                this.state = state;
-                cx.notify();
-            });
-        }));
-        cx.notify();
-    }
-
-    pub(super) fn change_dependency(
-        &mut self,
-        number: u64,
-        depends_on: u64,
-        expected_version: u64,
-        add: bool,
-        cx: &mut Context<Self>,
-    ) {
-        let database = self.database.clone();
-        let project = self.project.clone();
-        let edit = cx.background_spawn(async move {
-            if add {
-                add_dependency(database, project, number, depends_on, expected_version)
-            } else {
-                remove_dependency(database, project, number, depends_on, expected_version)
-            }
-        });
-        self.state = BoardLoadState::Loading;
-        self.refresh = Some(cx.spawn(async move |weak, cx| {
-            let state = match edit.await {
-                Ok(data) => BoardLoadState::Ready(data),
-                Err(error) => BoardLoadState::Failed(error),
-            };
-            let _ = weak.update(cx, |this, cx| {
-                this.state = state;
-                cx.notify();
-            });
-        }));
-        cx.notify();
-    }
-
-    fn add_note(
-        &mut self,
-        number: u64,
-        expected_version: u64,
-        body: String,
-        cx: &mut Context<Self>,
-    ) {
-        let database = self.database.clone();
-        let project = self.project.clone();
-        let edit = cx.background_spawn(async move {
-            add_issue_note(database, project, number, expected_version, body)
-        });
-        self.state = BoardLoadState::Loading;
-        self.refresh = Some(cx.spawn(async move |weak, cx| {
-            let state = match edit.await {
-                Ok(data) => BoardLoadState::Ready(data),
-                Err(error) => BoardLoadState::Failed(error),
-            };
-            let _ = weak.update(cx, |this, cx| {
-                this.state = state;
-                cx.notify();
-            });
-        }));
-        cx.notify();
-    }
-
-    fn link_active_session(&mut self, number: u64, cx: &mut Context<Self>) {
+    pub(super) fn link_active_session(&mut self, walk: u64, cx: &mut Context<Self>) {
         let Some((session_id, session_path)) = self.active_session.clone() else {
             return;
         };
         let database = self.database.clone();
         let project = self.project.clone();
         let edit = cx.background_spawn(async move {
-            link_session(database, project, number, session_id, session_path)
+            link_session(database, project, walk, session_id, session_path)
         });
-        self.state = BoardLoadState::Loading;
+        self.state = PlanLoadState::Loading;
         self.refresh = Some(cx.spawn(async move |weak, cx| {
             let state = match edit.await {
-                Ok(data) => BoardLoadState::Ready(data),
-                Err(error) => BoardLoadState::Failed(error),
+                Ok(data) => PlanLoadState::Ready(Box::new(data)),
+                Err(error) => PlanLoadState::Failed(error),
             };
             let _ = weak.update(cx, |this, cx| {
                 this.state = state;
@@ -384,27 +270,10 @@ impl WorkGraphBoardView {
     }
 }
 
-fn replace_work_state(
-    selected: &mut Option<u64>,
-    creating: &mut bool,
-    editing: &mut Option<u64>,
-    next_selected: Option<u64>,
-    next_creating: bool,
-    next_editing: Option<u64>,
-) -> bool {
-    if (*selected, *creating, *editing) == (next_selected, next_creating, next_editing) {
-        return false;
-    }
-    *selected = next_selected;
-    *creating = next_creating;
-    *editing = next_editing;
-    true
-}
-
 impl Render for WorkGraphBoardView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.search.is_none() {
-            let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search issues"));
+            let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search plan"));
             self.subscriptions.push(cx.subscribe_in(
                 &search,
                 window,
@@ -413,53 +282,16 @@ impl Render for WorkGraphBoardView {
             self.search = Some(search);
         }
         if self.create_title.is_none() {
-            self.create_title = Some(
-                cx.new(|cx| InputState::new(window, cx).placeholder("What needs to be done?")),
-            );
+            self.create_title =
+                Some(cx.new(|cx| InputState::new(window, cx).placeholder("Outcome title")));
         }
-        if self.create_body.is_none() {
-            self.create_body = Some(cx.new(|cx| {
+        if self.create_detail.is_none() {
+            self.create_detail = Some(cx.new(|cx| {
                 TextareaState::new(window, cx)
-                    .auto_grow(4, 10)
+                    .auto_grow(3, 8)
                     .submit_on_enter(false)
-                    .placeholder("Context, expected result, and useful constraints")
+                    .placeholder("Current state, or one scoped path per line")
             }));
-        }
-        if self.edit_title.is_none() {
-            self.edit_title =
-                Some(cx.new(|cx| InputState::new(window, cx).placeholder("Issue title")));
-        }
-        if self.edit_body.is_none() {
-            self.edit_body = Some(cx.new(|cx| {
-                TextareaState::new(window, cx)
-                    .auto_grow(4, 10)
-                    .submit_on_enter(false)
-                    .placeholder("Issue description")
-            }));
-        }
-        if self.edit_priority.is_none() {
-            self.edit_priority =
-                Some(cx.new(|cx| InputState::new(window, cx).placeholder("Priority")));
-        }
-        if self.dependency.is_none() {
-            self.dependency =
-                Some(cx.new(|cx| InputState::new(window, cx).placeholder("Issue number")));
-        }
-        if self.note.is_none() {
-            self.note = Some(cx.new(|cx| {
-                TextareaState::new(window, cx)
-                    .auto_grow(2, 5)
-                    .submit_on_enter(false)
-                    .placeholder("Add a progress or handoff note")
-            }));
-        }
-        if self.note_issue != self.selected {
-            if let Some(note) = &self.note {
-                note.update(cx, |input, cx| {
-                    input.set_value(String::new(), window, cx);
-                });
-            }
-            self.note_issue = self.selected;
         }
         let entity = cx.entity();
         let viewport_width = window.viewport_size().width;
@@ -477,13 +309,13 @@ impl Render for WorkGraphBoardView {
             .min_h_0()
             .bg(THEME.colors.panel)
             .child(match &self.state {
-                BoardLoadState::Loading => feedback(
+                PlanLoadState::Loading => feedback(
                     "workgraph-loading",
-                    "Loading work graph…",
+                    "Loading plan…",
                     FeedbackTone::Info,
                 )
                 .into_any_element(),
-                BoardLoadState::Failed(error) => {
+                PlanLoadState::Failed(error) => {
                     let retry = entity.clone();
                     div()
                         .flex()
@@ -499,25 +331,32 @@ impl Render for WorkGraphBoardView {
                             "Try again",
                             ButtonTone::Neutral,
                             true,
-                            move |_, cx| {
-                                retry.update(cx, |this, cx| this.refresh(cx));
-                            },
+                            move |_, cx| retry.update(cx, |this, cx| this.refresh(cx)),
                         ))
                         .into_any_element()
                 }
-                BoardLoadState::Ready(data) => {
+                PlanLoadState::Ready(data) => {
                     let search = self
                         .search
                         .as_ref()
                         .map(|input| input.read(cx).value().to_string())
                         .unwrap_or_default();
-                    let groups = matching_project_groups(data, self.filter, &search);
-                    let matching_count = groups.iter().map(|group| group.rows.len()).sum::<usize>();
-                    let create = entity.clone();
+                    let rows = data
+                        .snapshot
+                        .as_ref()
+                        .map(|snapshot| plan_rows(snapshot, &search))
+                        .unwrap_or_default();
+                    let reached = rows.iter().filter(|row| row.reached).count();
+                    let total = data
+                        .snapshot
+                        .as_ref()
+                        .map_or(0, |snapshot| snapshot.nodes.len());
+                    let title = data
+                        .snapshot
+                        .as_ref()
+                        .map_or("Plans", |snapshot| snapshot.plan.title.as_str());
                     let refresh = entity.clone();
-                    let active_count = filter_count(data, BoardFilter::Active);
-                    let blocked_count = filter_count(data, BoardFilter::Blocked);
-                    let compact_toolbar = board_toolbar_stacks(layout);
+                    let create = entity.clone();
                     div()
                         .size_full()
                         .min_h_0()
@@ -525,50 +364,43 @@ impl Render for WorkGraphBoardView {
                         .flex_col()
                         .child(
                             div()
-                                .h(px(if compact_toolbar { 92.0 } else { 52.0 }))
+                                .h(px(58.0))
                                 .flex_none()
                                 .px(THEME.space.md)
                                 .flex()
-                                .when(compact_toolbar, |toolbar| {
-                                    toolbar
-                                        .flex_col()
-                                        .items_stretch()
-                                        .justify_center()
-                                        .gap(THEME.space.xs)
-                                })
-                                .when(!compact_toolbar, |toolbar| {
-                                    toolbar.items_center().justify_between()
-                                })
+                                .items_center()
+                                .justify_between()
                                 .border_b(THEME.border)
                                 .border_color(THEME.colors.border)
-                                .bg(THEME.colors.panel)
                                 .child(
                                     div()
                                         .min_w_0()
                                         .flex()
                                         .flex_col()
-                                        .gap(THEME.space.xs)
+                                        .gap(px(2.0))
                                         .child(
                                             div()
                                                 .text_size(THEME.type_scale.body)
                                                 .font_weight(FontWeight::SEMIBOLD)
-                                                .text_color(THEME.colors.text)
-                                                .child("Issues"),
+                                                .child(title.to_owned()),
                                         )
                                         .child(
                                             div()
                                                 .text_size(THEME.type_scale.caption)
                                                 .text_color(THEME.colors.subtle)
-                                                .child(format!(
-                                                    "{matching_count} shown  ·  {active_count} active  ·  {blocked_count} need attention  ·  {} total",
-                                                    data.issues.len()
-                                                )),
+                                                .child(if total == 0 {
+                                                    "Create a plan to establish the current state."
+                                                        .to_owned()
+                                                } else {
+                                                    format!(
+                                                        "{reached} of {total} states reached · {} plan(s)",
+                                                        data.plans.len()
+                                                    )
+                                                }),
                                         ),
                                 )
                                 .child(
                                     div()
-                                        .min_w_0()
-                                        .when(compact_toolbar, |controls| controls.w_full())
                                         .flex()
                                         .items_center()
                                         .gap(THEME.space.xs)
@@ -576,12 +408,9 @@ impl Render for WorkGraphBoardView {
                                             Input::new(
                                                 self.search
                                                     .as_ref()
-                                                    .expect("workgraph search initialized"),
+                                                    .expect("plan search initialized"),
                                             )
-                                            .when(compact_toolbar, |search| {
-                                                search.flex_1().min_w_0()
-                                            })
-                                            .when(!compact_toolbar, |search| search.w(px(220.0))),
+                                            .w(px(210.0)),
                                         )
                                         .child(button(
                                             "workgraph-refresh",
@@ -594,7 +423,11 @@ impl Render for WorkGraphBoardView {
                                         ))
                                         .child(button(
                                             "workgraph-create-open",
-                                            "New issue",
+                                            if data.snapshot.is_some() {
+                                                "Add node"
+                                            } else {
+                                                "New plan"
+                                            },
                                             ButtonTone::Neutral,
                                             true,
                                             move |_, cx| {
@@ -608,53 +441,39 @@ impl Render for WorkGraphBoardView {
                                 .flex_1()
                                 .min_h_0()
                                 .flex()
-                                .when(layout != BoardLayoutMode::Narrow, |board| {
-                                    board.child(render_filter_rail(
-                                        self.filter,
-                                        entity.clone(),
-                                        data,
-                                    ))
-                                })
                                 .when(
                                     !self.creating
                                         && (layout != BoardLayoutMode::Narrow
                                             || self.selected.is_none()),
                                     |board| {
-                                        board.child(if groups.is_empty() {
+                                        board.child(if data.snapshot.is_none() {
                                             div()
                                                 .id("workgraph-empty")
                                                 .flex_1()
-                                                .min_w_0()
                                                 .h_full()
                                                 .flex()
                                                 .flex_col()
                                                 .items_center()
                                                 .justify_center()
                                                 .gap(THEME.space.xs)
-                                                .px(THEME.space.md)
                                                 .child(
                                                     div()
                                                         .text_size(THEME.type_scale.body)
                                                         .font_weight(FontWeight::SEMIBOLD)
-                                                        .text_color(THEME.colors.muted)
-                                                        .child(self.filter.empty_message()),
+                                                        .child("No plan yet"),
                                                 )
                                                 .child(
                                                     div()
                                                         .text_size(THEME.type_scale.caption)
                                                         .text_color(THEME.colors.subtle)
-                                                        .child("Choose another work state or create an issue."),
+                                                        .child("Start with the product as it is now."),
                                                 )
                                                 .into_any_element()
                                         } else {
-                                            render_groups(
+                                            render_plan_list(
+                                                rows,
                                                 self.selected,
-                                                self.active_session
-                                                    .as_ref()
-                                                    .map(|(session_id, _)| session_id.as_str()),
                                                 entity.clone(),
-                                                groups,
-                                                data,
                                             )
                                             .into_any_element()
                                         })
@@ -662,19 +481,27 @@ impl Render for WorkGraphBoardView {
                                 )
                                 .when(self.creating, |board| {
                                     board.child(render_create(
-                                        self.create_title.as_ref().expect("create title initialized"),
-                                        self.create_body.as_ref().expect("create body initialized"),
+                                        self.create_title
+                                            .as_ref()
+                                            .expect("create title initialized"),
+                                        self.create_detail
+                                            .as_ref()
+                                            .expect("create detail initialized"),
+                                        data.snapshot.is_some(),
                                         entity.clone(),
-                                        layout,
                                     ))
                                 })
                                 .when(
                                     !self.creating
+                                        && data.snapshot.is_some()
                                         && (layout != BoardLayoutMode::Narrow
                                             || self.selected.is_some()),
                                     |board| {
                                         board.child(self.render_detail(
-                                            entity, data, layout, false,
+                                            entity,
+                                            data,
+                                            layout,
+                                            false,
                                         ))
                                     },
                                 ),
@@ -682,42 +509,5 @@ impl Render for WorkGraphBoardView {
                         .into_any_element()
                 }
             })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::replace_work_state;
-
-    #[test]
-    fn identical_work_state_does_not_request_a_rerender() {
-        let mut selected = Some(7);
-        let mut creating = false;
-        let mut editing = None;
-
-        assert!(!replace_work_state(
-            &mut selected,
-            &mut creating,
-            &mut editing,
-            Some(7),
-            false,
-            None,
-        ));
-        assert!(replace_work_state(
-            &mut selected,
-            &mut creating,
-            &mut editing,
-            None,
-            true,
-            None,
-        ));
-        assert!(!replace_work_state(
-            &mut selected,
-            &mut creating,
-            &mut editing,
-            None,
-            true,
-            None,
-        ));
     }
 }

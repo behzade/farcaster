@@ -7,9 +7,10 @@ use gpui::{
 };
 
 use super::{
-    components::{detail_card, detail_label, status_pill},
-    contract::{BoardData, BoardLoadState},
-    persistence::load_issues,
+    components::{detail_card, detail_label},
+    contract::{PlanData, PlanLoadState},
+    core::active_steps,
+    persistence::load_plan,
 };
 use crate::{
     app::PiApp,
@@ -23,13 +24,16 @@ pub(crate) struct WorkGraphSidebarView {
     database: PathBuf,
     project: PathBuf,
     session_id: Option<String>,
-    state: BoardLoadState,
+    state: PlanLoadState,
     refresh: Option<Task<()>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SidebarSummary {
-    linked: Option<workgraph::contract::Issue>,
+    plan_title: Option<String>,
+    node: Option<workgraph::contract::Node>,
+    complete: bool,
+    attached: bool,
 }
 
 impl WorkGraphSidebarView {
@@ -40,10 +44,10 @@ impl WorkGraphSidebarView {
         cx: &mut gpui::Context<Self>,
     ) -> Self {
         let (database, state) = match database {
-            Ok(database) => (database, BoardLoadState::Loading),
-            Err(error) => (PathBuf::new(), BoardLoadState::Failed(error)),
+            Ok(database) => (database, PlanLoadState::Loading),
+            Err(error) => (PathBuf::new(), PlanLoadState::Failed(error)),
         };
-        let should_refresh = matches!(state, BoardLoadState::Loading);
+        let should_refresh = matches!(state, PlanLoadState::Loading);
         let mut view = Self {
             app,
             database,
@@ -73,11 +77,13 @@ impl WorkGraphSidebarView {
         let notify_loading = prepare_refresh(&mut self.state);
         let database = self.database.clone();
         let project = self.project.clone();
-        let load = cx.background_spawn(async move { load_issues(database, project) });
+        let session_id = self.session_id.clone();
+        let load =
+            cx.background_spawn(async move { load_plan(database, project, session_id.as_deref()) });
         self.refresh = Some(cx.spawn(async move |weak, cx| {
             let state = match load.await {
-                Ok(data) => BoardLoadState::Ready(data),
-                Err(error) => BoardLoadState::Failed(error),
+                Ok(data) => PlanLoadState::Ready(Box::new(data)),
+                Err(error) => PlanLoadState::Failed(error),
             };
             let _ = weak.update(cx, |this, cx| {
                 if this.state != state {
@@ -92,11 +98,11 @@ impl WorkGraphSidebarView {
     }
 }
 
-fn prepare_refresh(state: &mut BoardLoadState) -> bool {
-    if matches!(state, BoardLoadState::Ready(_) | BoardLoadState::Loading) {
+fn prepare_refresh(state: &mut PlanLoadState) -> bool {
+    if matches!(state, PlanLoadState::Ready(_) | PlanLoadState::Loading) {
         return false;
     }
-    *state = BoardLoadState::Loading;
+    *state = PlanLoadState::Loading;
     true
 }
 
@@ -108,7 +114,7 @@ impl Render for WorkGraphSidebarView {
             .flex()
             .items_center()
             .justify_between()
-            .child(section_heading("Current work"))
+            .child(section_heading("Current plan"))
             .child(
                 div()
                     .flex()
@@ -117,7 +123,7 @@ impl Render for WorkGraphSidebarView {
                     .child(icon_button(
                         "refresh-workgraph-sidebar",
                         AppIcon::ArrowCounterClockwise,
-                        "Refresh work graph",
+                        "Refresh plan",
                         ButtonTone::Quiet,
                         {
                             let entity = cx.entity().downgrade();
@@ -131,7 +137,7 @@ impl Render for WorkGraphSidebarView {
                     .child(icon_button(
                         "open-workgraph-from-sidebar",
                         AppIcon::ArrowSquareOut,
-                        "View all project work",
+                        "View project plan",
                         ButtonTone::Quiet,
                         {
                             let app = self.app.clone();
@@ -149,13 +155,13 @@ impl Render for WorkGraphSidebarView {
             .gap(THEME.space.xs)
             .child(header)
             .child(match &self.state {
-                BoardLoadState::Loading => feedback(
+                PlanLoadState::Loading => feedback(
                     "workgraph-sidebar-loading",
-                    "Loading project work…",
+                    "Loading plan…",
                     FeedbackTone::Info,
                 )
                 .into_any_element(),
-                BoardLoadState::Failed(_) => div()
+                PlanLoadState::Failed(_) => div()
                     .flex()
                     .items_center()
                     .justify_between()
@@ -164,7 +170,7 @@ impl Render for WorkGraphSidebarView {
                         div()
                             .text_size(THEME.type_scale.caption)
                             .text_color(THEME.colors.subtle)
-                            .child("Project work unavailable"),
+                            .child("Plan unavailable"),
                     )
                     .child(button(
                         "workgraph-sidebar-retry",
@@ -178,45 +184,67 @@ impl Render for WorkGraphSidebarView {
                         },
                     ))
                     .into_any_element(),
-                BoardLoadState::Ready(data) => render_summary(
-                    sidebar_summary(data, self.session_id.as_deref()),
-                    self.app.clone(),
-                )
-                .into_any_element(),
+                PlanLoadState::Ready(data) => {
+                    render_summary(sidebar_summary(data), self.app.clone()).into_any_element()
+                }
             })
     }
 }
 
-fn sidebar_summary(data: &BoardData, session_id: Option<&str>) -> SidebarSummary {
-    let linked_number = session_id.and_then(|session_id| {
-        data.sessions
-            .iter()
-            .find(|link| link.session_id == session_id)
-            .map(|link| link.issue_number)
-    });
+fn sidebar_summary(data: &PlanData) -> SidebarSummary {
+    let Some(snapshot) = &data.snapshot else {
+        return SidebarSummary {
+            plan_title: None,
+            node: None,
+            complete: false,
+            attached: false,
+        };
+    };
+    let complete = snapshot
+        .walk
+        .as_ref()
+        .is_some_and(|walk| walk.current_node.is_none());
+    let number = snapshot
+        .walk
+        .as_ref()
+        .and_then(|walk| walk.current_node)
+        .or_else(|| active_steps(snapshot).last().map(|step| step.node_number));
     SidebarSummary {
-        linked: linked_number
-            .and_then(|number| data.issues.iter().find(|issue| issue.number == number))
-            .cloned(),
+        plan_title: Some(snapshot.plan.title.clone()),
+        node: number.and_then(|number| {
+            snapshot
+                .nodes
+                .iter()
+                .find(|node| node.number == number)
+                .cloned()
+        }),
+        complete,
+        attached: data.session_link.is_some(),
     }
 }
 
 fn render_summary(summary: SidebarSummary, app: WeakEntity<PiApp>) -> impl IntoElement {
-    let has_linked = summary.linked.is_some();
-    let choose_issue = app.clone();
+    let SidebarSummary {
+        plan_title,
+        node,
+        complete,
+        attached,
+    } = summary;
+    let has_plan = plan_title.is_some();
+    let open_plan = app.clone();
     div()
         .flex()
         .flex_col()
         .gap(THEME.space.xs)
-        .when_some(summary.linked, |card, issue| {
-            let number = issue.number;
+        .when_some(node, |card, node| {
+            let number = node.number;
             card.child(
                 div()
-                    .id(("workgraph-sidebar-issue", number))
+                    .id(("workgraph-sidebar-node", number))
                     .p(THEME.space.sm)
                     .flex()
                     .flex_col()
-                    .gap(THEME.space.sm)
+                    .gap(THEME.space.xs)
                     .rounded(THEME.radius)
                     .border(THEME.border)
                     .border_color(THEME.colors.border)
@@ -230,51 +258,61 @@ fn render_summary(summary: SidebarSummary, app: WeakEntity<PiApp>) -> impl IntoE
                     })
                     .child(
                         div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .child(
-                                div()
-                                    .text_size(THEME.type_scale.caption)
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(THEME.colors.muted)
-                                    .child(format!("Issue #{}", issue.number)),
-                            )
-                            .child(status_pill(issue.status)),
+                            .text_size(THEME.type_scale.caption)
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(if complete {
+                                THEME.colors.success
+                            } else {
+                                THEME.colors.accent
+                            })
+                            .child(if complete {
+                                "Outcome reached"
+                            } else {
+                                "Current node"
+                            }),
                     )
                     .child(
                         div()
                             .line_clamp(2)
                             .text_size(THEME.type_scale.body_small)
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(THEME.colors.text)
-                            .child(issue.title),
+                            .child(node.title),
                     )
-                    .child(
-                        div()
-                            .text_size(THEME.type_scale.caption)
-                            .text_color(THEME.colors.link)
-                            .child("Open issue details"),
-                    ),
+                    .when_some(plan_title, |card, title| {
+                        card.child(
+                            div()
+                                .text_size(THEME.type_scale.caption)
+                                .text_color(THEME.colors.subtle)
+                                .child(title),
+                        )
+                    })
+                    .when(!attached, |card| {
+                        card.child(
+                            div()
+                                .text_size(THEME.type_scale.caption)
+                                .text_color(THEME.colors.warning)
+                                .child("Session not attached"),
+                        )
+                    }),
             )
         })
-        .when(!has_linked, |card| {
+        .when(!has_plan, |card| {
             card.child(
                 detail_card()
-                    .child(detail_label("No linked issue"))
+                    .child(detail_label("No plan"))
                     .child(
                         div()
                             .text_size(THEME.type_scale.body_small)
                             .text_color(THEME.colors.muted)
-                            .child("Attach this session to project work."),
+                            .child("Create a plan from the product's current state."),
                     )
                     .child(button(
-                        "choose-current-work",
-                        "Choose issue",
+                        "open-empty-plan",
+                        "Create plan",
                         ButtonTone::Quiet,
                         true,
                         move |window, cx| {
-                            let _ = choose_issue.update(cx, |app, cx| {
+                            let _ = open_plan.update(cx, |app, cx| {
                                 app.open_workgraph_surface(window, cx);
                             });
                         },
@@ -285,68 +323,72 @@ fn render_summary(summary: SidebarSummary, app: WeakEntity<PiApp>) -> impl IntoE
 
 #[cfg(test)]
 mod tests {
-    use workgraph::contract::{Issue, IssueStatus, SessionLink};
+    use workgraph::contract::{CompletionRequirement, Node, Plan, PlanSnapshot, SessionLink, Walk};
 
     use super::*;
 
-    fn issue(number: u64, status: IssueStatus) -> Issue {
-        Issue {
+    fn data(attached: bool) -> PlanData {
+        let link = SessionLink {
+            session_id: "session-1".into(),
+            session_path: "/sessions/1.jsonl".into(),
+            plan_number: 1,
+            walk_number: 1,
+            linked_at: 0,
+        };
+        let plan = Plan {
             project: "/project".into(),
-            number,
-            title: format!("Issue {number}"),
-            body: String::new(),
-            status,
-            priority: 0,
+            number: 1,
+            title: "VCS integration".into(),
+            root_node: 1,
             version: 1,
             created_at: 0,
             updated_at: 0,
+        };
+        PlanData {
+            plans: vec![plan.clone()],
+            snapshot: Some(PlanSnapshot {
+                plan,
+                nodes: vec![Node {
+                    plan_number: 1,
+                    number: 1,
+                    title: "Current product".into(),
+                    files: Vec::new(),
+                    completion: CompletionRequirement::Observation,
+                    version: 1,
+                    created_at: 0,
+                    updated_at: 0,
+                }],
+                edges: Vec::new(),
+                walk: Some(Walk {
+                    plan_number: 1,
+                    number: 1,
+                    current_node: Some(1),
+                    head_step: None,
+                    version: 1,
+                    created_at: 0,
+                    updated_at: 0,
+                }),
+                steps: Vec::new(),
+                sessions: attached.then(|| link.clone()).into_iter().collect(),
+            }),
+            session_link: attached.then_some(link),
         }
     }
 
     #[test]
     fn ready_content_remains_visible_while_refreshing() {
-        let data = BoardData {
-            issues: vec![issue(1, IssueStatus::Open)],
-            ..BoardData::default()
-        };
-        let mut state = BoardLoadState::Ready(data.clone());
-
+        let data = data(false);
+        let mut state = PlanLoadState::Ready(Box::new(data.clone()));
         assert!(!prepare_refresh(&mut state));
-        assert_eq!(state, BoardLoadState::Ready(data));
-
-        let mut failed = BoardLoadState::Failed("unavailable".into());
-        assert!(prepare_refresh(&mut failed));
-        assert_eq!(failed, BoardLoadState::Loading);
+        assert_eq!(state, PlanLoadState::Ready(Box::new(data)));
     }
 
     #[test]
-    fn summary_contains_only_the_current_sessions_linked_issue() {
-        let data = BoardData {
-            issues: vec![
-                issue(1, IssueStatus::Open),
-                issue(2, IssueStatus::InProgress),
-            ],
-            sessions: vec![SessionLink {
-                session_id: "session-1".into(),
-                session_path: "/sessions/1.jsonl".into(),
-                issue_number: 2,
-                linked_at: 0,
-            }],
-            next: Some(1),
-            ..BoardData::default()
-        };
-
-        let summary = sidebar_summary(&data, Some("session-1"));
-
-        assert_eq!(summary.linked.as_ref().map(|issue| issue.number), Some(2));
-        assert_eq!(
-            summary.linked.as_ref().map(|issue| issue.status),
-            Some(IssueStatus::InProgress)
-        );
-        assert_eq!(
-            summary.linked.as_ref().map(|issue| issue.title.as_str()),
-            Some("Issue 2")
-        );
-        assert_eq!(sidebar_summary(&data, Some("unlinked")).linked, None);
+    fn summary_uses_the_linked_walk_current_node() {
+        let summary = sidebar_summary(&data(true));
+        assert_eq!(summary.node.as_ref().map(|node| node.number), Some(1));
+        assert_eq!(summary.plan_title.as_deref(), Some("VCS integration"));
+        assert!(summary.attached);
+        assert!(!summary.complete);
     }
 }
