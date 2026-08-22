@@ -1,7 +1,7 @@
 //! Session-rail row presentation and row-local interaction.
 
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     time::{Duration, SystemTime},
 };
 
@@ -31,10 +31,28 @@ use crate::{
 };
 
 #[derive(Clone)]
-struct DraggedSession {
-    app_session_id: i64,
+pub(super) struct DraggedSession {
+    pub(super) app_session_id: i64,
+    pub(super) path: Option<PathBuf>,
+    kind: SessionRailKind,
+    element_id: String,
     title: String,
     project: String,
+}
+
+impl DraggedSession {
+    pub(super) fn can_move_to(&self, kind: SessionRailKind) -> bool {
+        self.path.is_some() && self.kind != kind
+    }
+
+    fn can_drop_on(&self, kind: SessionRailKind, target: i64) -> bool {
+        self.can_move_to(kind)
+            || (kind == SessionRailKind::Project
+                && self.kind == kind
+                && self.app_session_id > 0
+                && target > 0
+                && self.app_session_id != target)
+    }
 }
 
 impl Render for DraggedSession {
@@ -67,10 +85,16 @@ impl Render for DraggedSession {
 }
 
 fn session_drag_handle(drag: DraggedSession, entity: WeakEntity<PiApp>) -> AnyElement {
-    let id = drag.app_session_id;
+    let element_id = drag.element_id.clone();
+    let category_movable = drag.path.is_some();
+    let label = if category_movable {
+        "Drag to move session"
+    } else {
+        "Drag to reorder session"
+    };
     reorder_handle(
-        format!("drag-session-{id}"),
-        "Drag to reorder session",
+        format!("drag-session-{element_id}"),
+        label,
         drag,
         move |cx| {
             let _ = entity.update(cx, |this, cx| this.begin_session_drag(cx));
@@ -94,6 +118,9 @@ pub(super) fn draft_session_row(
     let target_app_session_id = draft.app_session_id;
     let drag = DraggedSession {
         app_session_id: target_app_session_id,
+        path: draft.session_path.clone(),
+        kind: SessionRailKind::Project,
+        element_id: draft.id.clone(),
         title: title.clone(),
         project: project_label(&draft.project),
     };
@@ -133,6 +160,11 @@ pub(super) fn draft_session_row(
                     .hover(|row| row.bg(THEME.colors.hover))
                     .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
                     .cursor(CursorStyle::PointingHand)
+                    .can_drop(move |value, _, _| {
+                        value.downcast_ref::<DraggedSession>().is_some_and(|drag| {
+                            drag.can_drop_on(SessionRailKind::Project, target_app_session_id)
+                        })
+                    })
                     .reorder_target::<DraggedSession>(
                         drop_position,
                         THEME.colors.accent,
@@ -146,10 +178,15 @@ pub(super) fn draft_session_row(
                                 );
                             });
                         },
-                        move |drag, _, cx| {
+                        move |drag, window, cx| {
                             cx.stop_propagation();
                             let _ = drop_entity.update(cx, |this, cx| {
-                                this.complete_session_drop(drag.app_session_id, cx);
+                                this.complete_session_row_drop(
+                                    drag,
+                                    SessionRailKind::Project,
+                                    window,
+                                    cx,
+                                );
                             });
                         },
                     )
@@ -320,6 +357,9 @@ pub(super) fn session_row_with_height(
     let target_app_session_id = session.app_session_id;
     let drag = DraggedSession {
         app_session_id: target_app_session_id,
+        path: Some(session.path.clone()),
+        kind: item.kind,
+        element_id: session.id.clone(),
         title: session.title.clone(),
         project: project_label(&session.project),
     };
@@ -327,8 +367,9 @@ pub(super) fn session_row_with_height(
     let drop_entity = entity.clone();
     let drag_handle_entity = entity.clone();
     let age = relative_age(session.modified);
-    let is_review = item.kind == SessionRailKind::Review;
-    let is_archived = item.kind == SessionRailKind::Archived;
+    let target_kind = item.kind;
+    let is_review = target_kind == SessionRailKind::Review;
+    let is_archived = target_kind == SessionRailKind::Archived;
     let status_text = status.unwrap_or_default();
     let accessible_state = if is_archived {
         "Archived"
@@ -373,7 +414,12 @@ pub(super) fn session_row_with_height(
         .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
         .cursor(CursorStyle::PointingHand)
         .when(draggable, move |row| {
-            row.reorder_target::<DraggedSession>(
+            row.can_drop(move |value, _, _| {
+                value
+                    .downcast_ref::<DraggedSession>()
+                    .is_some_and(|drag| drag.can_drop_on(target_kind, target_app_session_id))
+            })
+            .reorder_target::<DraggedSession>(
                 drop_position,
                 THEME.colors.accent,
                 THEME.colors.hover,
@@ -382,10 +428,10 @@ pub(super) fn session_row_with_height(
                         this.update_session_drop_target(target_app_session_id, position, cx);
                     });
                 },
-                move |drag, _, cx| {
+                move |drag, window, cx| {
                     cx.stop_propagation();
                     let _ = drop_entity.update(cx, |this, cx| {
-                        this.complete_session_drop(drag.app_session_id, cx);
+                        this.complete_session_row_drop(drag, target_kind, window, cx);
                     });
                 },
             )

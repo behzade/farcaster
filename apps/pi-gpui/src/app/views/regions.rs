@@ -94,7 +94,7 @@ impl Render for SessionRailView {
             return gpui::div().into_any_element();
         };
         app.read(cx)
-            .render_sessions(self.app.clone())
+            .render_sessions(self.app.clone(), cx.has_active_drag())
             .into_any_element()
     }
 }

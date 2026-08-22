@@ -6,8 +6,8 @@ use std::{
 };
 
 use gpui::{
-    Anchor, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, list,
+    Anchor, AnyElement, CursorStyle, FontWeight, InteractiveElement as _, IntoElement,
+    ParentElement as _, Role, StatefulInteractiveElement as _, Styled as _, WeakEntity, div, list,
     prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
@@ -24,7 +24,8 @@ use super::{
         reordered_session_ids, roots_waiting_for_descendants, session_rail_lists,
     },
     session_rows::{
-        draft_session_row, project_label, session_badge, session_row, session_row_with_height,
+        DraggedSession, draft_session_row, project_label, session_badge, session_row,
+        session_row_with_height,
     },
 };
 use crate::{
@@ -40,6 +41,72 @@ use crate::{
 };
 
 const INACTIVE_PREVIEW_LIMIT: usize = 3;
+
+fn session_category_drop_target(
+    kind: SessionRailKind,
+    label: &'static str,
+    entity: WeakEntity<PiApp>,
+) -> AnyElement {
+    div()
+        .id(format!("drop-session-category-{label}"))
+        .role(Role::Button)
+        .aria_label(format!("Move session to {label}"))
+        .h(THEME.controls.utility_row)
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(THEME.radius)
+        .border(THEME.border)
+        .border_color(THEME.colors.border)
+        .text_size(THEME.type_scale.caption)
+        .text_color(THEME.colors.muted)
+        .cursor(CursorStyle::PointingHand)
+        .can_drop(move |value, _, _| {
+            value
+                .downcast_ref::<DraggedSession>()
+                .is_some_and(|drag| drag.can_move_to(kind))
+        })
+        .drag_over::<DraggedSession>(move |target, drag, _, _| {
+            if drag.can_move_to(kind) {
+                target
+                    .bg(THEME.colors.hover)
+                    .border_color(THEME.colors.accent)
+                    .text_color(THEME.colors.text)
+            } else {
+                target
+            }
+        })
+        .on_drop(move |drag: &DraggedSession, window, cx| {
+            cx.stop_propagation();
+            let _ = entity.update(cx, |this, cx| {
+                this.complete_session_category_drop(drag, kind, window, cx);
+            });
+        })
+        .child(label)
+        .into_any_element()
+}
+
+fn session_category_drop_targets(entity: WeakEntity<PiApp>) -> AnyElement {
+    div()
+        .absolute()
+        .top(px(0.0))
+        .left(px(0.0))
+        .right(px(0.0))
+        .flex()
+        .gap(THEME.space.xs)
+        .px(THEME.space.sm)
+        .py(THEME.space.xs)
+        .border_b(THEME.border)
+        .border_color(THEME.colors.border)
+        .bg(THEME.colors.panel)
+        .children([
+            session_category_drop_target(SessionRailKind::Project, "Active", entity.clone()),
+            session_category_drop_target(SessionRailKind::Review, "Review", entity.clone()),
+            session_category_drop_target(SessionRailKind::Archived, "Archive", entity),
+        ])
+        .into_any_element()
+}
 
 /// Direct subagent (child session) count per parent session id.
 fn subagent_counts(sessions: &[SessionSummary]) -> HashMap<String, usize> {
@@ -95,10 +162,16 @@ fn inactive_rail_style(expanded: bool, count: usize, leading_gap: bool) -> gpui:
 }
 
 impl PiApp {
-    pub(super) fn render_sessions(&self, entity: WeakEntity<Self>) -> impl IntoElement {
+    pub(super) fn render_sessions(
+        &self,
+        entity: WeakEntity<Self>,
+        session_drag_active: bool,
+    ) -> impl IntoElement {
         let new_entity = entity.clone();
         let actions_entity = entity.clone();
         let cancel_drop_entity = entity.clone();
+        let cancel_drop_out_entity = entity.clone();
+        let category_drop_entity = entity.clone();
         let search_focus = self.search_focus.clone();
         let selected_root =
             root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
@@ -340,13 +413,18 @@ impl PiApp {
             .child(
                 div()
                     .id("session-list-scroll")
+                    .relative()
                     .flex_1()
                     .min_h_0()
                     .flex()
                     .flex_col()
                     .overflow_y_hidden()
-                    .on_mouse_up_out(gpui::MouseButton::Left, move |_, _, cx| {
+                    .on_mouse_up(gpui::MouseButton::Left, move |_, _, cx| {
                         let _ = cancel_drop_entity
+                            .update(cx, |this, cx| this.clear_session_drop_target(cx));
+                    })
+                    .on_mouse_up_out(gpui::MouseButton::Left, move |_, _, cx| {
+                        let _ = cancel_drop_out_entity
                             .update(cx, |this, cx| this.clear_session_drop_target(cx));
                     })
                     .when(!review_expanded && !archived_expanded, |lists| {
@@ -363,6 +441,9 @@ impl PiApp {
                     })
                     .when(archived_entry_count > 0 && !review_expanded, |lists| {
                         lists.child(archived_session_rail)
+                    })
+                    .when(session_drag_active, |lists| {
+                        lists.child(session_category_drop_targets(category_drop_entity))
                     }),
             )
             .when(
@@ -459,7 +540,7 @@ impl PiApp {
                     badge,
                     None,
                     None,
-                    false,
+                    true,
                     editing.then(|| self.session_title_input.clone()),
                     counts.get(item.session.id.as_str()).copied().unwrap_or(0),
                     THEME.controls.archived_preview_row,
@@ -493,7 +574,7 @@ impl PiApp {
                     badge,
                     None,
                     None,
-                    false,
+                    true,
                     editing.then(|| title_input.clone()),
                     counts.get(item.session.id.as_str()).copied().unwrap_or(0),
                     row_entity.clone(),
@@ -720,9 +801,8 @@ impl PiApp {
     }
 
     pub(super) fn begin_session_drag(&mut self, cx: &mut gpui::Context<Self>) {
-        if self.session_drop_target.take().is_some() {
-            self.notify_session_rail(cx);
-        }
+        self.session_drop_target = None;
+        self.notify_session_rail(cx);
     }
 
     pub(super) fn update_session_drop_target(
@@ -739,13 +819,27 @@ impl PiApp {
     }
 
     pub(super) fn clear_session_drop_target(&mut self, cx: &mut gpui::Context<Self>) {
-        if self.session_drop_target.take().is_some() {
-            self.notify_session_rail(cx);
-        }
+        self.session_drop_target = None;
+        self.notify_session_rail(cx);
     }
 
-    pub(super) fn complete_session_drop(&mut self, source: i64, cx: &mut gpui::Context<Self>) {
+    pub(super) fn complete_session_row_drop(
+        &mut self,
+        drag: &DraggedSession,
+        target_kind: SessionRailKind,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if drag.can_move_to(target_kind) {
+            self.complete_session_category_drop(drag, target_kind, window, cx);
+            return;
+        }
+        if target_kind != SessionRailKind::Project {
+            self.clear_session_drop_target(cx);
+            return;
+        }
         let Some((target, position)) = self.session_drop_target.take() else {
+            self.clear_session_drop_target(cx);
             return;
         };
         let visible = session_rail_lists(
@@ -758,18 +852,44 @@ impl PiApp {
         .iter()
         .map(ActiveSessionItem::app_session_id)
         .collect::<Vec<_>>();
-        if let Some(order) = reordered_session_ids(&visible, source, target, position) {
+        if let Some(order) = reordered_session_ids(&visible, drag.app_session_id, target, position)
+        {
             let all = session_rail_lists(&self.sessions, &self.drafts, None, &self.session_order)
                 .active
                 .iter()
                 .map(ActiveSessionItem::app_session_id)
                 .collect::<Vec<_>>();
-            self.session_order = merge_visible_session_order(&all, &order);
+            let active_order = merge_visible_session_order(&all, &order);
+            let active_ids = all.into_iter().collect::<HashSet<_>>();
+            self.session_order.retain(|id| !active_ids.contains(id));
+            self.session_order.extend(active_order);
             if let Err(error) = projects::save_app_session_order(&self.session_order) {
                 self.sessions_error = Some(error);
             }
         }
         self.notify_session_rail(cx);
+    }
+
+    pub(super) fn complete_session_category_drop(
+        &mut self,
+        drag: &DraggedSession,
+        target_kind: SessionRailKind,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.session_drop_target = None;
+        let Some(path) = drag.path.clone() else {
+            self.notify_session_rail(cx);
+            return;
+        };
+        match target_kind {
+            SessionRailKind::Project => self.set_session_active(path, cx),
+            SessionRailKind::Review => self.set_session_review(path, cx),
+            SessionRailKind::Archived => {
+                self.notify_session_rail(cx);
+                self.request_session_archive(path, true, window, cx);
+            }
+        }
     }
 
     fn set_session_project_filter(
