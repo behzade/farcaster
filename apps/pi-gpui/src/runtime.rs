@@ -36,6 +36,8 @@ use session_identity::SessionControlDefaults;
 
 const COALESCED_SESSION_REFRESH_DELAY: Duration = Duration::from_millis(100);
 const STREAM_PUBLISH_INTERVAL: Duration = Duration::from_millis(16);
+const MAX_FAILURE_DETAILS_CHARS: usize = 12_000;
+const MAX_FAILURE_SUMMARY_CHARS: usize = 240;
 
 #[derive(Clone, Debug)]
 pub(crate) enum RuntimeCommand {
@@ -1986,6 +1988,8 @@ impl RuntimeOwner {
     }
 
     fn fail_login(&mut self, error: String) {
+        let details = failure_details(&error);
+        zlog::error!("Pi provider login failed: {details}");
         self.finish_login_process();
         let snapshot = if self.parked_snapshot.is_some() {
             &mut self.snapshot
@@ -1994,8 +1998,12 @@ impl RuntimeOwner {
         };
         snapshot.status = "Failed".into();
         let conversation = conversation_mut(snapshot);
-        conversation.diagnostics.push(error);
-        conversation.push_local_error("Couldn’t add provider", "Try again.".into());
+        conversation.diagnostics.push(details.clone());
+        conversation.push_local_error_with_details(
+            "Couldn’t add provider",
+            failure_summary(&details),
+            details,
+        );
         self.publish();
     }
 
@@ -2004,6 +2012,10 @@ impl RuntimeOwner {
             self.fail_login(error);
             return;
         }
+        let starting = !self.startup_state_loaded || !self.startup_history_loaded;
+        let details = failure_details(&error);
+        zlog::error!("Pi runtime failed: {details}");
+        self.mark_outbox_failed(&details);
         self.pending_prompt_id = None;
         self.deferred_prompt = None;
         self.rollback_pending_prompt();
@@ -2019,8 +2031,16 @@ impl RuntimeOwner {
         snapshot.connected = false;
         snapshot.status = "Failed".into();
         let conversation = conversation_mut(snapshot);
-        conversation.diagnostics.push(error);
-        conversation.push_local_error("Couldn’t send", "Try again from the composer.".into());
+        conversation.diagnostics.push(details.clone());
+        conversation.push_local_error_with_details(
+            if starting {
+                "Couldn’t start Pi"
+            } else {
+                "Pi stopped"
+            },
+            failure_summary(&details),
+            details,
+        );
         if previewing && let Some(snapshot) = self.parked_snapshot.take() {
             self.snapshot = snapshot;
         }
@@ -2030,8 +2050,9 @@ impl RuntimeOwner {
     fn mark_outbox_failed(&mut self, error: &str) {
         if let Some(id) = self.pending_outbox_id.take()
             && let Some(state) = &self.state
+            && let Err(database_error) = state.fail_prompt(id, error)
         {
-            let _ = state.fail_prompt(id, error);
+            zlog::error!("Failed to mark queued prompt {id} as failed: {database_error}");
         }
     }
 
@@ -2093,6 +2114,43 @@ fn optional_string_command(kind: &str, field: &str, value: Option<String>) -> Va
     Value::Object(command)
 }
 
+fn failure_details(error: &str) -> String {
+    let cleaned = error
+        .chars()
+        .filter(|character| !character.is_control() || matches!(character, '\n' | '\r' | '\t'))
+        .collect::<String>();
+    truncate_chars(cleaned.trim(), MAX_FAILURE_DETAILS_CHARS)
+}
+
+fn failure_summary(details: &str) -> String {
+    let preferred = details.lines().rev().find_map(|line| {
+        line.trim()
+            .strip_prefix("Error:")
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+    });
+    let fallback = details.lines().rev().find_map(|line| {
+        let line = line.trim();
+        (!line.is_empty() && !line.starts_with("Warning:") && !line.starts_with("Hint:"))
+            .then_some(line)
+    });
+    truncate_chars(
+        preferred
+            .or(fallback)
+            .unwrap_or("Pi exited without an error message."),
+        MAX_FAILURE_SUMMARY_CHARS,
+    )
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    let mut characters = value.chars();
+    let mut truncated = characters.by_ref().take(max_chars).collect::<String>();
+    if characters.next().is_some() {
+        truncated.push('…');
+    }
+    truncated
+}
+
 const fn can_send_prompt(mode: PromptMode, running: bool, allow_while_running: bool) -> bool {
     allow_while_running || !running || !matches!(mode, PromptMode::Normal)
 }
@@ -2152,6 +2210,29 @@ mod tests {
             },
             receiver,
         )
+    }
+
+    #[test]
+    fn runtime_failure_summary_prefers_the_child_error() {
+        let failure = "Pi closed stdout (exit code 1). Stderr:\n\
+            Warning: settings were unavailable\n\
+            Error: Failed to load extension codex-web-search-core.ts\n\
+            Hint: Start without extensions";
+
+        assert_eq!(
+            failure_summary(failure),
+            "Failed to load extension codex-web-search-core.ts"
+        );
+    }
+
+    #[test]
+    fn runtime_failure_details_remove_controls_and_bound_output() {
+        let failure = format!("bad\u{1b}value {}", "x".repeat(MAX_FAILURE_DETAILS_CHARS));
+        let details = failure_details(&failure);
+
+        assert!(!details.contains('\u{1b}'));
+        assert!(details.ends_with('…'));
+        assert_eq!(details.chars().count(), MAX_FAILURE_DETAILS_CHARS + 1);
     }
 
     #[test]
@@ -3537,13 +3618,15 @@ mod tests {
         assert!(latest.commands.is_empty());
         assert!(latest.stderr.is_empty());
         assert!(latest.conversation.queue.steering.is_empty());
-        assert!(
-            latest
-                .conversation
-                .items
-                .iter()
-                .any(|item| item.text == "Try again from the composer.")
-        );
+        let error = latest
+            .conversation
+            .items
+            .iter()
+            .find(|item| item.kind == TranscriptKind::Error)
+            .expect("failed process should publish a visible error");
+        assert_eq!(error.label, "Couldn’t start Pi");
+        assert!(error.text.contains("definitely/missing"));
+        assert!(error.tool_output.contains("definitely/missing"));
         assert!(
             latest
                 .conversation
@@ -3551,6 +3634,45 @@ mod tests {
                 .iter()
                 .any(|item| item.contains("definitely/missing"))
         );
+    }
+
+    #[test]
+    fn failed_start_marks_the_deferred_prompt_failed() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempdir()?;
+        let database = temp.path().join("gui-state.sqlite3");
+        let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
+        owner.process_command = ProcessCommand {
+            program: PathBuf::from("/definitely/missing/pi-gpui-test-command"),
+            prefix_args: Vec::new(),
+        };
+        owner.state = Some(StateStore::open_at(&database)?);
+
+        owner.send_prompt(
+            "draft:failed-start".into(),
+            PromptMode::Normal,
+            "hello".into(),
+            Vec::new(),
+            false,
+        );
+
+        assert!(
+            owner
+                .state
+                .as_ref()
+                .expect("state")
+                .queued_prompts()?
+                .is_empty()
+        );
+        assert!(owner.pending_outbox_id.is_none());
+        let connection = rusqlite::Connection::open(database)?;
+        let (state, error) = connection.query_row(
+            "SELECT state, error FROM outbox ORDER BY id DESC LIMIT 1",
+            [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )?;
+        assert_eq!(state, "failed");
+        assert!(error.contains("definitely/missing"));
+        Ok(())
     }
 
     #[test]

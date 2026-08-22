@@ -407,6 +407,15 @@ impl ConversationState {
     }
 
     pub(crate) fn push_local_error(&mut self, label: &str, message: String) {
+        self.push_local_error_with_details(label, message, String::new());
+    }
+
+    pub(crate) fn push_local_error_with_details(
+        &mut self,
+        label: &str,
+        message: String,
+        details: String,
+    ) {
         self.items.push(Arc::new(TranscriptItem {
             kind: TranscriptKind::Error,
             label: label.into(),
@@ -415,7 +424,7 @@ impl ConversationState {
             streaming: false,
             is_error: true,
             tool_call_id: None,
-            tool_output: String::new(),
+            tool_output: details,
             tool_presentation: None,
             invocation: None,
         }));

@@ -488,7 +488,7 @@ fn latest_allows_tail_reserve(
             !expanded
                 || !matches!(
                     items[index].kind,
-                    TranscriptKind::Tool | TranscriptKind::Thinking
+                    TranscriptKind::Tool | TranscriptKind::Thinking | TranscriptKind::Error
                 )
         }
         TranscriptRow::ReadGroup { .. } => !expanded,
@@ -555,6 +555,9 @@ fn render_row(
                     cx,
                 ),
             )
+        }
+        TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Error => {
+            render_error(key, &items[index], expanded, entity)
         }
         TranscriptRow::Item { index, .. }
             if items[index].invocation.as_ref().is_some_and(|resolved| {
@@ -860,6 +863,65 @@ fn render_message_chunk(
                 .text_color(item_color(item))
                 .when(user, |text| text.font_weight(FontWeight::MEDIUM)),
         )
+        .into_any_element()
+}
+
+fn render_error(
+    key: usize,
+    item: &TranscriptItem,
+    expanded: bool,
+    entity: WeakEntity<PiApp>,
+) -> AnyElement {
+    let has_details = !item.tool_output.is_empty();
+    div()
+        .id(("error-row", key))
+        .w_full()
+        .px(THEME.space.md)
+        .py(THEME.space.sm)
+        .flex()
+        .flex_col()
+        .child(
+            div()
+                .flex()
+                .items_start()
+                .gap(THEME.space.xs)
+                .when(has_details, |row| {
+                    row.child(transcript_disclosure_button(
+                        ("error-toggle", key),
+                        expanded,
+                        format!("technical details for {}", item.label),
+                        key,
+                        entity,
+                    ))
+                })
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap(THEME.space.xs)
+                        .child(
+                            div()
+                                .text_size(THEME.type_scale.caption)
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(THEME.colors.error)
+                                .child(item.label.clone()),
+                        )
+                        .child(
+                            selectable_text(("error-text", key), &item.text)
+                                .text_color(THEME.colors.error),
+                        ),
+                ),
+        )
+        .when(expanded && has_details, |error| {
+            error.child(
+                div().ml(px(22.0)).mt(THEME.space.xs).child(
+                    technical_text(("error-details", key), fenced_text(&item.tool_output))
+                        .text_color(THEME.colors.muted),
+                ),
+            )
+        })
         .into_any_element()
 }
 
