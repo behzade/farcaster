@@ -27,6 +27,9 @@ impl PiApp {
         if self.extension.dialog.is_some() {
             return self.render_composer_request(entity);
         }
+        if self.extension.provider_auth.is_some() {
+            return self.render_provider_auth();
+        }
         let floating = self.selected_draft_is_empty_and_unsubmitted();
         let composer = self.composer.read(cx);
         let composer_text = composer.value().to_string();
@@ -233,6 +236,51 @@ impl PiApp {
                     .child(self.render_composer_controls(controls_entity, !floating))
                     .child(self.render_composer_actions(actions_entity, primary_action)),
             )
+            .into_any_element()
+    }
+
+    fn render_provider_auth(&self) -> AnyElement {
+        let Some(auth) = self.extension.provider_auth.as_ref() else {
+            return div().into_any_element();
+        };
+        let url = auth.url.clone();
+        div()
+            .id("provider-auth-request")
+            .role(Role::Group)
+            .aria_label("Complete provider sign-in")
+            .flex_none()
+            .min_h(THEME.layout.composer_min)
+            .border_t(THEME.border)
+            .border_color(THEME.colors.accent)
+            .bg(THEME.colors.panel)
+            .p(THEME.space.md)
+            .flex()
+            .flex_col()
+            .gap(THEME.space.md)
+            .child(
+                div()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("Complete provider sign-in"),
+            )
+            .child(selectable_dialog_text(
+                "provider-auth-instructions",
+                auth.message.clone(),
+            ))
+            .child(
+                div()
+                    .text_size(THEME.type_scale.caption)
+                    .text_color(THEME.colors.subtle)
+                    .child(
+                        "Waiting for browser authorization. This panel closes automatically when sign-in finishes.",
+                    ),
+            )
+            .child(div().flex().justify_end().child(button(
+                "provider-auth-open-browser",
+                "Open browser",
+                ButtonTone::Accent,
+                true,
+                move |_, cx| cx.open_url(&url),
+            )))
             .into_any_element()
     }
 
