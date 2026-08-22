@@ -414,6 +414,26 @@ impl ConversationState {
         self.content.clear();
         self.dirty_content.clear();
         self.projected_content.clear();
+        if let Some(message) = message
+            && message.get("role").and_then(Value::as_str) == Some("user")
+        {
+            let text = message_text(message);
+            if let Some(index) = self
+                .queue
+                .steering
+                .iter()
+                .position(|queued| queued == &text)
+            {
+                self.queue.steering.remove(index);
+            } else if let Some(index) = self
+                .queue
+                .follow_up
+                .iter()
+                .position(|queued| queued == &text)
+            {
+                self.queue.follow_up.remove(index);
+            }
+        }
         if message.is_some_and(|message| {
             message.get("role").and_then(Value::as_str) == Some("toolResult")
                 && message

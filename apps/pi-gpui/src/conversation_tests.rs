@@ -465,3 +465,24 @@ fn queue_retry_compaction_and_settlement_project_correctly() {
     assert!(!state.running);
     assert_eq!(state.queue.steering, ["a"]);
 }
+
+#[test]
+fn delivered_user_message_is_removed_from_the_visible_queue() {
+    let mut state = ConversationState::default();
+    state.reduce(&json!({
+        "type": "queue_update",
+        "steering": [],
+        "followUp": ["do it", "then test"]
+    }));
+
+    state.reduce(&json!({
+        "type": "message_start",
+        "message": {"role": "user", "content": "do it"}
+    }));
+
+    assert_eq!(state.queue.follow_up, ["then test"]);
+    assert_eq!(
+        state.items.last().map(|item| item.text.as_str()),
+        Some("do it")
+    );
+}
