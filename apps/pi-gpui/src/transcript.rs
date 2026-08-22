@@ -251,7 +251,10 @@ fn project_rows_from(items: &[Arc<TranscriptItem>], mut index: usize) -> Vec<Tra
                     last: chunk + 1 == chunk_count,
                 }
             }));
-        } else if items[index].kind == TranscriptKind::Assistant
+        } else if matches!(
+            items[index].kind,
+            TranscriptKind::User | TranscriptKind::Assistant
+        ) && items[index].invocation.is_none()
             && (items[index].text.len() > MARKDOWN_CHUNK_HARD_BYTES
                 || (items[index].streaming
                     && items[index].text.len() > MARKDOWN_CHUNK_TARGET_BYTES))
@@ -816,20 +819,29 @@ fn render_message_chunk(
     follows_tool: bool,
     markdown_state: Entity<TextViewState>,
 ) -> AnyElement {
+    let user = item.kind == TranscriptKind::User;
     div()
         .id(format!("transcript-row-{key}-{block}"))
         .w_full()
         .px(THEME.space.md)
+        .when(user, |row| row.bg(THEME.colors.selection))
         .when(first, |row| row.pt(THEME.space.sm))
+        .when(first && user, |row| {
+            row.mt(THEME.space.sm).pt(THEME.space.md)
+        })
         .when(first && follows_tool, |row| {
             row.mt(THEME.space.md).pt(THEME.space.sm)
         })
         .when(!first, |row| row.pt(THEME.space.xs))
         .when(last, |row| row.pb(THEME.space.md))
         .when(first, |row| {
-            row.children(message_role_label(item.kind).map(|role| message_role(role, false)))
+            row.children(message_role_label(item.kind).map(|role| message_role(role, user)))
         })
-        .child(selectable_text_state(&markdown_state).text_color(item_color(item)))
+        .child(
+            selectable_text_state(&markdown_state)
+                .text_color(item_color(item))
+                .when(user, |text| text.font_weight(FontWeight::MEDIUM)),
+        )
         .into_any_element()
 }
 

@@ -125,6 +125,29 @@ fn long_assistant_messages_become_independently_virtualized_rows() {
 }
 
 #[test]
+fn link_heavy_user_messages_become_independently_virtualized_rows() {
+    let text = (0..200)
+        .map(|line| {
+            format!(
+                "frame_{line} @ http://localhost:3000/ai/node_modules/.vite/deps/library.js?v=50efe34d:{line}\n"
+            )
+        })
+        .collect::<String>();
+    let user = item(TranscriptKind::User, "", &text);
+    let rows = project_rows(std::slice::from_ref(&user));
+
+    assert!(rows.len() > 1);
+    let reconstructed = rows
+        .iter()
+        .map(|row| match row {
+            TranscriptRow::MessageChunk { start, end, .. } => &text[*start..*end],
+            _ => panic!("expected only message chunks"),
+        })
+        .collect::<String>();
+    assert_eq!(reconstructed, text);
+}
+
+#[test]
 fn a_giant_plain_paragraph_is_split_at_word_boundaries() {
     let text = "word ".repeat(5_000);
     let chunks = markdown_chunk_ranges(&text);
