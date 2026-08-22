@@ -50,7 +50,14 @@ impl PiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let value = self.dialog_input.read(cx).value().to_string();
+        let value = if matches!(
+            self.extension.dialog.as_ref(),
+            Some(ExtensionUiRequest::Secret { .. })
+        ) {
+            self.dialog_secret_input.read(cx).value().to_string()
+        } else {
+            self.dialog_input.read(cx).value().to_string()
+        };
         self.respond_dialog_value(id, value, window, cx);
     }
 
@@ -142,9 +149,9 @@ impl PiApp {
             cx.notify();
         } else {
             self.dialog_input.update(cx, |input, cx| {
-                if input.presentation().is_masked() {
-                    input.toggle_masked(window, cx);
-                }
+                input.set_value(String::new(), window, cx);
+            });
+            self.dialog_secret_input.update(cx, |input, cx| {
                 input.set_value(String::new(), window, cx);
             });
             self.restore_dialog_focus(window, cx);

@@ -218,6 +218,7 @@ pub(crate) struct PiApp {
     editing_session_title: Option<SessionTitleEdit>,
     pending_session_title_focus: bool,
     dialog_input: Entity<TextareaState>,
+    dialog_secret_input: Entity<InputState>,
     composer_focus: FocusHandle,
     dialog_focus: FocusHandle,
     dialog_return_focus: Option<FocusHandle>,
@@ -329,6 +330,7 @@ impl PiApp {
                 .auto_grow(2, 12)
                 .submit_on_enter(false)
         });
+        let dialog_secret_input = cx.new(|cx| InputState::new(window, cx).masked(true));
         let composer_focus = composer.read(cx).focus_handle(cx);
         let dialog_focus = cx.focus_handle();
         let composer_subscription = cx.subscribe_in(
@@ -530,6 +532,7 @@ impl PiApp {
             editing_session_title: None,
             pending_session_title_focus: false,
             dialog_input,
+            dialog_secret_input,
             composer_focus,
             dialog_focus,
             dialog_return_focus: None,

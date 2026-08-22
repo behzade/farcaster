@@ -5,7 +5,7 @@ use gpui::{
     prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
-    input::{MoveDown, MoveUp, Paste, Textarea},
+    input::{Input, MoveDown, MoveUp, Paste, Textarea},
     text::TextView,
 };
 
@@ -279,6 +279,7 @@ impl PiApp {
         let enter_selection =
             default_dialog_selection(dialog).map(|(id, value)| (id.to_owned(), value.to_owned()));
         let technical_editor = matches!(dialog, ExtensionUiRequest::Editor { .. });
+        let secret_input = matches!(dialog, ExtensionUiRequest::Secret { .. });
         let (title, body) = match dialog {
             ExtensionUiRequest::Select { title, options, .. } => {
                 let choices = options
@@ -407,7 +408,15 @@ impl PiApp {
                                 .when(technical_editor, |input| {
                                     input.font_family(MONO_FONT_FAMILY)
                                 })
-                                .child(Textarea::new(&self.dialog_input).w_full()),
+                                .child(if secret_input {
+                                    Input::new(&self.dialog_secret_input)
+                                        .w_full()
+                                        .into_any_element()
+                                } else {
+                                    Textarea::new(&self.dialog_input)
+                                        .w_full()
+                                        .into_any_element()
+                                }),
                         )
                         .child(div().flex().justify_end().child(button(
                             "dialog-submit",

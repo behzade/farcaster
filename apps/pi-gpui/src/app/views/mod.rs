@@ -93,32 +93,37 @@ impl Render for PiApp {
             if self.dialog_return_focus.is_none() {
                 self.dialog_return_focus = window.focused(cx);
             }
-            let (prefill, uses_input) = match self.extension.dialog.as_ref() {
+            let dialog = self.extension.dialog.as_ref();
+            let prefill = match dialog {
                 Some(ExtensionUiRequest::Editor { prefill, .. }) => {
-                    (prefill.clone().unwrap_or_default(), true)
+                    prefill.clone().unwrap_or_default()
                 }
-                Some(ExtensionUiRequest::Input { .. } | ExtensionUiRequest::Secret { .. }) => {
-                    (String::new(), true)
-                }
-                _ => (String::new(), false),
+                _ => String::new(),
             };
-            let masked = matches!(
-                self.extension.dialog.as_ref(),
-                Some(ExtensionUiRequest::Secret { .. })
+            let secret = matches!(dialog, Some(ExtensionUiRequest::Secret { .. }));
+            let uses_textarea = matches!(
+                dialog,
+                Some(ExtensionUiRequest::Input { .. } | ExtensionUiRequest::Editor { .. })
             );
             let input = self.dialog_input.clone();
-            let focus = if uses_input {
+            let secret_input = self.dialog_secret_input.clone();
+            let focus = if secret {
+                secret_input.read(cx).focus_handle(cx)
+            } else if uses_textarea {
                 input.read(cx).focus_handle(cx)
             } else {
                 self.dialog_focus.clone()
             };
             cx.defer_in(window, move |_, window, cx| {
-                input.update(cx, |state, cx| {
-                    if state.presentation().is_masked() != masked {
-                        state.toggle_masked(window, cx);
-                    }
-                    state.set_value(prefill, window, cx);
-                });
+                if secret {
+                    secret_input.update(cx, |state, cx| {
+                        state.set_value(String::new(), window, cx);
+                    });
+                } else if uses_textarea {
+                    input.update(cx, |state, cx| {
+                        state.set_value(prefill, window, cx);
+                    });
+                }
                 focus.focus(window, cx);
             });
         }
