@@ -164,6 +164,7 @@ pub(crate) struct PiApp {
     sessions_error: Option<String>,
     session_project_filter: Option<PathBuf>,
     picker: Option<picker::PickerState>,
+    pending_extension_picker: Option<PickerScope>,
     picker_return_focus: Option<FocusHandle>,
     session_list: ListState,
     session_list_rows: RefCell<Vec<String>>,
@@ -455,6 +456,7 @@ impl PiApp {
             sessions_error: project_registry_error,
             session_project_filter: None,
             picker: None,
+            pending_extension_picker: None,
             picker_return_focus: None,
             session_list: ListState::new(
                 0,
@@ -922,6 +924,7 @@ impl PiApp {
         self.runtime_generation = generation;
         self.extension.reset();
         self.parked_extension = None;
+        self.pending_extension_picker = None;
         self.restored_dialog_id = None;
         self.dismissed_restored_dialog_id = None;
         self.notification_expiries.clear();
@@ -976,6 +979,10 @@ impl PiApp {
         generation: u64,
         cx: &mut Context<Self>,
     ) {
+        if let Some(scope) = picker::provider_login_scope(&request) {
+            self.pending_extension_picker = Some(scope);
+            return;
+        }
         match self.extension.apply(request) {
             ExtensionEffect::DialogOpened => self.pending_dialog_setup = true,
             ExtensionEffect::SetTitle(title) => self.pending_title = Some((generation, title)),

@@ -22,6 +22,8 @@ use super::PiApp;
 use crate::{
     assets::AppIcon,
     primitives::{PickerDelegate, PickerRow, modal},
+    protocol::{ExtensionUiRequest, ExtensionUiResponse},
+    runtime::RuntimeCommand,
     sessions::SessionSummary,
     theme::THEME,
 };
@@ -43,23 +45,31 @@ pub(crate) enum PickerScope {
     Actions,
     Projects(ProjectPickerIntent),
     Sessions,
+    ProviderLogin {
+        id: String,
+        title: String,
+        options: Vec<String>,
+    },
 }
 
 impl PickerScope {
-    const fn label(&self) -> &'static str {
+    fn label(&self) -> &str {
         match self {
             Self::Actions => "Actions",
             Self::Projects(ProjectPickerIntent::MoveSession { .. }) => "Move session",
             Self::Projects(_) => "Choose project",
             Self::Sessions => "Find session",
+            Self::ProviderLogin { title, .. } => title,
         }
     }
 
-    const fn placeholder(&self) -> &'static str {
+    fn placeholder(&self) -> &'static str {
         match self {
             Self::Actions => "Search actions…",
             Self::Projects(_) => "Search projects…",
             Self::Sessions => "Search sessions…",
+            Self::ProviderLogin { title, .. } if title == "Add provider" => "Search providers…",
+            Self::ProviderLogin { .. } => "Search methods…",
         }
     }
 }
@@ -75,6 +85,7 @@ enum PickerCommand {
     MoveSession { path: PathBuf, project: PathBuf },
     SelectSession { path: PathBuf, project: PathBuf },
     ResumeDraft { id: String, project: PathBuf },
+    ProviderLogin { id: String, value: String },
 }
 
 pub(super) struct PickerState {
@@ -149,8 +160,25 @@ impl PiApp {
     }
 
     pub(super) fn close_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.picker.take().is_none() {
+        self.finish_picker(None, window, cx);
+    }
+
+    fn finish_picker(
+        &mut self,
+        response: Option<ExtensionUiResponse>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(picker) = self.picker.take() else {
             return;
+        };
+        if let PickerScope::ProviderLogin { id, .. } = picker.scope {
+            self.send(RuntimeCommand::ExtensionResponse(response.unwrap_or(
+                ExtensionUiResponse::Cancelled {
+                    id,
+                    cancelled: true,
+                },
+            )));
         }
         self.picker_return_focus
             .take()
@@ -168,7 +196,10 @@ impl PiApp {
             cx.stop_propagation();
             return;
         }
-        if picker.scope == PickerScope::Actions {
+        if matches!(
+            picker.scope,
+            PickerScope::Actions | PickerScope::ProviderLogin { .. }
+        ) {
             self.close_picker(window, cx);
         } else {
             self.open_picker(PickerScope::Actions, window, cx);
@@ -274,6 +305,9 @@ impl PiApp {
             PickerCommand::ResumeDraft { id, project } => {
                 self.close_picker(window, cx);
                 self.resume_draft(id, project, window, cx);
+            }
+            PickerCommand::ProviderLogin { id, value } => {
+                self.finish_picker(Some(ExtensionUiResponse::Value { id, value }), window, cx);
             }
         }
     }
@@ -435,9 +469,50 @@ impl PiApp {
                     })
                     .collect()
             }
+            PickerScope::ProviderLogin {
+                id,
+                title: _,
+                options,
+            } => options
+                .into_iter()
+                .enumerate()
+                .map(|(index, option)| {
+                    picker_row(
+                        &mut commands,
+                        &format!("provider-login:{index}"),
+                        PickerCommand::ProviderLogin {
+                            id: id.clone(),
+                            value: option.clone(),
+                        },
+                        AppIcon::Question,
+                        &option,
+                        None,
+                        None,
+                        &option,
+                    )
+                })
+                .collect(),
         };
         (rows, commands)
     }
+}
+
+pub(super) fn provider_login_scope(request: &ExtensionUiRequest) -> Option<PickerScope> {
+    let ExtensionUiRequest::Select {
+        id, title, options, ..
+    } = request
+    else {
+        return None;
+    };
+    matches!(
+        title.as_str(),
+        "Add provider" | "Select authentication method"
+    )
+    .then(|| PickerScope::ProviderLogin {
+        id: id.clone(),
+        title: title.clone(),
+        options: options.clone(),
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -512,6 +587,27 @@ fn project_label(project: &std::path::Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn provider_login_selects_use_the_native_picker() {
+        let request = ExtensionUiRequest::Select {
+            id: "login".into(),
+            title: "Add provider".into(),
+            options: vec!["xAI — Account".into(), "xAI — API key".into()],
+            timeout: None,
+        };
+
+        assert!(matches!(
+            provider_login_scope(&request),
+            Some(PickerScope::ProviderLogin { id, title, options })
+                if id == "login" && title == "Add provider" && options.len() == 2
+        ));
+        let mut ordinary = request;
+        if let ExtensionUiRequest::Select { title, .. } = &mut ordinary {
+            *title = "Choose a branch".into();
+        }
+        assert_eq!(provider_login_scope(&ordinary), None);
+    }
 
     #[test]
     fn move_project_choices_exclude_the_source_project() {

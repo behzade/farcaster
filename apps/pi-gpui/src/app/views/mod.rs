@@ -62,6 +62,11 @@ impl Render for PiApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _timing = crate::performance::Timing::new("render.root");
         self.resolve_pending_submission(window, cx);
+        if let Some(scope) = self.pending_extension_picker.take() {
+            cx.defer_in(window, move |this, window, cx| {
+                this.open_picker(scope, window, cx);
+            });
+        }
         if self.pending_session_reset {
             self.pending_session_reset = false;
             let focus = self.composer_focus.clone();
