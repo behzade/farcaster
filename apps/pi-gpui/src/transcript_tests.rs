@@ -41,6 +41,45 @@ fn invocation_badges_distinguish_skills_prompts_and_stacks() {
 }
 
 #[test]
+fn skill_invocations_choose_standalone_or_user_message_treatment() {
+    let resolved = "<skill name=\"review\">body</skill>";
+
+    assert!(!is_mixed_skill_message("$review", resolved));
+    assert!(!is_mixed_skill_message("$review $commit", resolved));
+    assert!(is_mixed_skill_message("please $review this", resolved));
+    assert!(!is_mixed_skill_message(
+        "please $review this",
+        "Review this"
+    ));
+}
+
+#[test]
+fn mixed_user_messages_highlight_only_resolved_skill_tokens() {
+    let resolved = "<skill name=\"review\">body</skill>\nPrompt body";
+
+    assert_eq!(
+        highlighted_skill_markdown("Please $review then $commit", resolved),
+        "Please `$review` then $commit"
+    );
+    assert_eq!(
+        highlighted_skill_markdown("Use $skill:review\nnow", resolved),
+        "Use `$skill:review`\nnow"
+    );
+}
+
+#[test]
+fn skill_treatment_has_a_dedicated_non_green_palette() {
+    assert_ne!(THEME.colors.skill, THEME.colors.accent);
+    assert_ne!(THEME.colors.skill, THEME.colors.success);
+    let style = skill_transcript_markdown_style();
+    assert_eq!(style.inline_code.color, Some(THEME.colors.skill.into()));
+    assert_eq!(
+        style.inline_code.background_color,
+        Some(THEME.colors.skill_surface.into())
+    );
+}
+
+#[test]
 fn markdown_inline_code_uses_the_reading_palette() {
     let style = transcript_markdown_style();
 

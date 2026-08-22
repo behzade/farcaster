@@ -553,6 +553,17 @@ fn render_row(
                 ),
             )
         }
+        TranscriptRow::Item { index, .. }
+            if is_mixed_skill_message(&items[index].text, invocation_resolution(&items[index])) =>
+        {
+            render_message(
+                key,
+                &items[index],
+                follows_tool,
+                None,
+                Some(invocation_resolution(&items[index])),
+            )
+        }
         TranscriptRow::Item { index, .. } if items[index].invocation.is_some() => {
             render_invocation(key, &items[index], expanded, entity)
         }
@@ -570,7 +581,7 @@ fn render_row(
                     cx,
                 )
             });
-            render_message(key, &items[index], follows_tool, markdown_state)
+            render_message(key, &items[index], follows_tool, markdown_state, None)
         }
     }
 }
@@ -581,9 +592,10 @@ fn render_invocation(
     expanded: bool,
     entity: WeakEntity<PiApp>,
 ) -> AnyElement {
-    let resolved = item.invocation.as_deref().unwrap_or_default();
+    let resolved = invocation_resolution(item);
     let kind = invocation_kind(&item.text, resolved);
     let resolved_ready = !resolved.is_empty();
+    let skill = kind == "Skill";
     div()
         .id(("invocation-row", key))
         .w_full()
@@ -622,7 +634,11 @@ fn render_invocation(
                         .flex_1()
                         .min_w_0()
                         .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(THEME.colors.accent),
+                        .text_color(if skill {
+                            THEME.colors.skill
+                        } else {
+                            THEME.colors.accent
+                        }),
                 )
                 .child(
                     div()
@@ -632,9 +648,17 @@ fn render_invocation(
                         .rounded(THEME.radius)
                         .border(THEME.border)
                         .border_color(THEME.colors.border)
-                        .bg(THEME.colors.panel)
+                        .bg(if skill {
+                            THEME.colors.skill_surface
+                        } else {
+                            THEME.colors.panel
+                        })
                         .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.muted)
+                        .text_color(if skill {
+                            THEME.colors.skill
+                        } else {
+                            THEME.colors.muted
+                        })
                         .child(if resolved_ready { kind } else { "Resolving" }),
                 ),
         )
@@ -647,7 +671,11 @@ fn render_invocation(
                     .max_h(THEME.layout.tool_max_height)
                     .overflow_y_scroll()
                     .border_l(THEME.border)
-                    .border_color(THEME.colors.accent)
+                    .border_color(if skill {
+                        THEME.colors.skill
+                    } else {
+                        THEME.colors.accent
+                    })
                     .pl(THEME.space.sm)
                     .py(THEME.space.xs)
                     .child(
@@ -681,11 +709,66 @@ fn invocation_kind(display: &str, resolved: &str) -> &'static str {
     }
 }
 
+fn invocation_resolution(item: &TranscriptItem) -> &str {
+    item.invocation.as_deref().unwrap_or_default()
+}
+
+fn resolved_contains_skill(resolved: &str) -> bool {
+    resolved.contains("<skill name=")
+}
+
+fn is_mixed_skill_message(display: &str, resolved: &str) -> bool {
+    resolved_contains_skill(resolved)
+        && display
+            .split_whitespace()
+            .any(|token| !is_invocation_token(token))
+}
+
+fn is_invocation_token(token: &str) -> bool {
+    token.strip_prefix('$').is_some_and(|name| {
+        !name.is_empty()
+            && name.chars().all(|character| {
+                character.is_ascii_lowercase()
+                    || character.is_ascii_digit()
+                    || matches!(character, ':' | '_' | '-')
+            })
+    })
+}
+
+fn skill_names(resolved: &str) -> Vec<&str> {
+    resolved
+        .match_indices("<skill name=\"")
+        .filter_map(|(start, marker)| {
+            let name = &resolved[start + marker.len()..];
+            name.split_once('"').map(|(name, _)| name)
+        })
+        .collect()
+}
+
+fn highlighted_skill_markdown(display: &str, resolved: &str) -> String {
+    let skill_names = skill_names(resolved);
+    display
+        .split_inclusive(char::is_whitespace)
+        .map(|chunk| {
+            let token = chunk.trim_end_matches(char::is_whitespace);
+            let whitespace = &chunk[token.len()..];
+            let name = token.strip_prefix('$').unwrap_or_default();
+            let bare_name = name.strip_prefix("skill:").unwrap_or(name);
+            if skill_names.contains(&bare_name) {
+                format!("`{token}`{whitespace}")
+            } else {
+                chunk.to_owned()
+            }
+        })
+        .collect()
+}
+
 fn render_message(
     key: usize,
     item: &TranscriptItem,
     follows_tool: bool,
     markdown_state: Option<Entity<TextViewState>>,
+    skill_resolution: Option<&str>,
 ) -> AnyElement {
     let user = item.kind == TranscriptKind::User;
     let role = message_role_label(item.kind);
@@ -704,11 +787,20 @@ fn render_message(
         })
         .children(role.map(|role| message_role(role, user)))
         .child(
-            markdown_state
-                .map_or_else(
-                    || selectable_text(("transcript-text", key), &item.text),
-                    |state| selectable_text_state(&state),
-                )
+            skill_resolution
+                .map(|resolved| {
+                    styled_selectable_text(TextView::markdown(
+                        ("transcript-text", key),
+                        highlighted_skill_markdown(&item.text, resolved),
+                    ))
+                    .style(skill_transcript_markdown_style())
+                })
+                .unwrap_or_else(|| {
+                    markdown_state.map_or_else(
+                        || selectable_text(("transcript-text", key), &item.text),
+                        |state| selectable_text_state(&state),
+                    )
+                })
                 .text_color(item_color(item))
                 .when(user, |text| text.font_weight(FontWeight::MEDIUM)),
         )
@@ -1041,6 +1133,23 @@ fn technical_text(id: impl Into<gpui::ElementId>, text: impl Into<gpui::SharedSt
 }
 
 fn transcript_markdown_style() -> TextViewStyle {
+    transcript_markdown_style_with_inline_code(HighlightStyle {
+        color: Some(THEME.colors.code.into()),
+        background_color: Some(THEME.colors.panel.into()),
+        ..HighlightStyle::default()
+    })
+}
+
+fn skill_transcript_markdown_style() -> TextViewStyle {
+    transcript_markdown_style_with_inline_code(HighlightStyle {
+        color: Some(THEME.colors.skill.into()),
+        background_color: Some(THEME.colors.skill_surface.into()),
+        font_weight: Some(FontWeight::SEMIBOLD),
+        ..HighlightStyle::default()
+    })
+}
+
+fn transcript_markdown_style_with_inline_code(inline_code: HighlightStyle) -> TextViewStyle {
     let mut code_block = StyleRefinement::default();
     code_block.overflow.x = Some(Overflow::Scroll);
     code_block.restrict_scroll_to_axis = Some(true);
@@ -1049,11 +1158,7 @@ fn transcript_markdown_style() -> TextViewStyle {
         heading_base_font_size: THEME.type_scale.body,
         highlight_theme: HighlightTheme::default_dark(),
         code_block,
-        inline_code: HighlightStyle {
-            color: Some(THEME.colors.code.into()),
-            background_color: Some(THEME.colors.panel.into()),
-            ..HighlightStyle::default()
-        },
+        inline_code,
         is_dark: true,
         ..TextViewStyle::default()
     }
