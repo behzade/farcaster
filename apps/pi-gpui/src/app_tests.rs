@@ -55,31 +55,24 @@ fn session_summary(id: &str, parent: Option<&str>, archived: bool) -> SessionSum
 }
 
 #[test]
-fn unchanged_scroll_follow_event_does_not_invalidate_transcript() {
-    let mut following = true;
-    let mut unseen = 0;
-    assert!(!update_transcript_follow_state(
-        &mut following,
-        &mut unseen,
-        true,
-    ));
+fn unchanged_scroll_follow_event_does_not_enqueue_an_app_update() {
+    assert!(!transcript_follow_state_needs_update(true, 0, true));
+    assert!(!transcript_follow_state_needs_update(false, 3, false));
+    assert!(transcript_follow_state_needs_update(true, 0, false));
+    assert!(transcript_follow_state_needs_update(false, 3, true));
 
-    unseen = 3;
+    let mut following = true;
+    let mut unseen = 3;
     assert!(update_transcript_follow_state(
         &mut following,
         &mut unseen,
         true,
     ));
     assert_eq!(unseen, 0);
-    assert!(update_transcript_follow_state(
-        &mut following,
-        &mut unseen,
-        false,
-    ));
     assert!(!update_transcript_follow_state(
         &mut following,
         &mut unseen,
-        false,
+        true,
     ));
 }
 

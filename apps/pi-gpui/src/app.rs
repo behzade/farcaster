@@ -416,6 +416,17 @@ impl PiApp {
         });
         transcript_list.set_scroll_handler(move |event, _, cx| {
             let following = event.is_following_tail;
+            let needs_update = app.upgrade().is_some_and(|app| {
+                let app = app.read(cx);
+                transcript_follow_state_needs_update(
+                    app.transcript_following,
+                    app.transcript_unseen,
+                    following,
+                )
+            });
+            if !needs_update {
+                return;
+            }
             let app = app.clone();
             cx.defer(move |cx| {
                 let _ = app.update(cx, |this, cx| {
@@ -1459,8 +1470,12 @@ impl PiApp {
     }
 }
 
+fn transcript_follow_state_needs_update(current: bool, unseen: usize, following: bool) -> bool {
+    current != following || (following && unseen != 0)
+}
+
 fn update_transcript_follow_state(current: &mut bool, unseen: &mut usize, following: bool) -> bool {
-    let changed = *current != following || (following && *unseen != 0);
+    let changed = transcript_follow_state_needs_update(*current, *unseen, following);
     *current = following;
     if following {
         *unseen = 0;
