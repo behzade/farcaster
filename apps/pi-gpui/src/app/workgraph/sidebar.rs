@@ -2,20 +2,22 @@ use std::path::PathBuf;
 
 use gpui::{
     AppContext as _, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    StatefulInteractiveElement as _, Styled as _, Task, WeakEntity, div,
-    prelude::FluentBuilder as _,
+    Role, StatefulInteractiveElement as _, Styled as _, Task, WeakEntity, div,
+    prelude::FluentBuilder as _, px,
 };
 
 use super::{
-    components::{detail_card, detail_label},
-    contract::{PlanData, PlanLoadState},
-    core::active_steps,
+    contract::{PlanLoadState, PlanRow},
+    core::plan_rows,
     persistence::load_plan,
 };
 use crate::{
     app::PiApp,
     assets::AppIcon,
-    primitives::{ButtonTone, FeedbackTone, button, feedback, icon_button, section_heading},
+    primitives::{
+        AppIconSize, ButtonTone, FeedbackTone, app_icon, button, feedback, icon_button,
+        section_heading,
+    },
     theme::THEME,
 };
 
@@ -26,14 +28,6 @@ pub(crate) struct WorkGraphSidebarView {
     session_id: Option<String>,
     state: PlanLoadState,
     refresh: Option<Task<()>>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct SidebarSummary {
-    plan_title: Option<String>,
-    node: Option<workgraph::contract::Node>,
-    complete: bool,
-    attached: bool,
 }
 
 impl WorkGraphSidebarView {
@@ -68,6 +62,9 @@ impl WorkGraphSidebarView {
         session_id: Option<String>,
         cx: &mut gpui::Context<Self>,
     ) {
+        if self.project != project || self.session_id != session_id {
+            self.state = PlanLoadState::Ready(Box::default());
+        }
         self.project = project;
         self.session_id = session_id;
         self.refresh(cx);
@@ -149,246 +146,173 @@ impl Render for WorkGraphSidebarView {
                         },
                     )),
             );
-        div()
-            .flex()
-            .flex_col()
-            .gap(THEME.space.xs)
-            .child(header)
-            .child(match &self.state {
-                PlanLoadState::Loading => feedback(
-                    "workgraph-sidebar-loading",
-                    "Loading plan…",
-                    FeedbackTone::Info,
-                )
-                .into_any_element(),
-                PlanLoadState::Failed(_) => div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap(THEME.space.sm)
-                    .child(
-                        div()
-                            .text_size(THEME.type_scale.caption)
-                            .text_color(THEME.colors.subtle)
-                            .child("Plan unavailable"),
-                    )
-                    .child(button(
-                        "workgraph-sidebar-retry",
-                        "Retry",
-                        ButtonTone::Quiet,
-                        true,
-                        move |_, cx| {
-                            if let Some(entity) = entity.upgrade() {
-                                entity.update(cx, |this, cx| this.refresh(cx));
-                            }
-                        },
-                    ))
-                    .into_any_element(),
-                PlanLoadState::Ready(data) => {
-                    render_summary(sidebar_summary(data), self.app.clone()).into_any_element()
-                }
-            })
-    }
-}
-
-fn sidebar_summary(data: &PlanData) -> SidebarSummary {
-    let Some(snapshot) = &data.snapshot else {
-        return SidebarSummary {
-            plan_title: None,
-            node: None,
-            complete: false,
-            attached: false,
-        };
-    };
-    let complete = snapshot
-        .walk
-        .as_ref()
-        .is_some_and(|walk| walk.current_node.is_none());
-    let number = snapshot
-        .walk
-        .as_ref()
-        .and_then(|walk| walk.current_node)
-        .or_else(|| active_steps(snapshot).last().map(|step| step.node_number));
-    SidebarSummary {
-        plan_title: Some(snapshot.plan.title.clone()),
-        node: number.and_then(|number| {
-            snapshot
-                .nodes
-                .iter()
-                .find(|node| node.number == number)
-                .cloned()
-        }),
-        complete,
-        attached: data.session_link.is_some(),
-    }
-}
-
-fn render_summary(summary: SidebarSummary, app: WeakEntity<PiApp>) -> impl IntoElement {
-    let SidebarSummary {
-        plan_title,
-        node,
-        complete,
-        attached,
-    } = summary;
-    let has_plan = plan_title.is_some();
-    let open_plan = app.clone();
-    div()
-        .flex()
-        .flex_col()
-        .gap(THEME.space.xs)
-        .when_some(node, |card, node| {
-            let number = node.number;
-            card.child(
-                div()
-                    .id(("workgraph-sidebar-node", number))
-                    .p(THEME.space.sm)
+        div().when(
+            sidebar_visible(&self.state, self.session_id.is_some()),
+            |sidebar| {
+                sidebar
                     .flex()
                     .flex_col()
                     .gap(THEME.space.xs)
-                    .rounded(THEME.radius)
-                    .border(THEME.border)
-                    .border_color(THEME.colors.border)
-                    .bg(THEME.colors.canvas)
-                    .cursor_pointer()
-                    .hover(|card| card.bg(THEME.colors.surface))
-                    .on_click(move |_, window, cx| {
-                        let _ = app.update(cx, |app, cx| {
-                            app.inspect_workgraph_issue(number, window, cx);
-                        });
+                    .child(header)
+                    .child(match &self.state {
+                        PlanLoadState::Loading => feedback(
+                            "workgraph-sidebar-loading",
+                            "Loading plan…",
+                            FeedbackTone::Info,
+                        )
+                        .into_any_element(),
+                        PlanLoadState::Failed(_) => div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap(THEME.space.sm)
+                            .child(
+                                div()
+                                    .text_size(THEME.type_scale.caption)
+                                    .text_color(THEME.colors.subtle)
+                                    .child("Plan unavailable"),
+                            )
+                            .child(button(
+                                "workgraph-sidebar-retry",
+                                "Retry",
+                                ButtonTone::Quiet,
+                                true,
+                                move |_, cx| {
+                                    if let Some(entity) = entity.upgrade() {
+                                        entity.update(cx, |this, cx| this.refresh(cx));
+                                    }
+                                },
+                            ))
+                            .into_any_element(),
+                        PlanLoadState::Ready(data) => div()
+                            .flex()
+                            .flex_col()
+                            .children(
+                                data.snapshot
+                                    .as_ref()
+                                    .map(|snapshot| plan_rows(snapshot, ""))
+                                    .unwrap_or_default()
+                                    .into_iter()
+                                    .map(|row| render_sidebar_row(row, self.app.clone())),
+                            )
+                            .into_any_element(),
                     })
-                    .child(
+            },
+        )
+    }
+}
+
+fn sidebar_visible(state: &PlanLoadState, has_session: bool) -> bool {
+    has_session && !matches!(state, PlanLoadState::Ready(data) if data.session_link.is_none())
+}
+
+fn render_sidebar_row(row: PlanRow, app: WeakEntity<PiApp>) -> impl IntoElement {
+    let number = row.node.number;
+    let title_color = if row.reached {
+        THEME.colors.subtle
+    } else {
+        THEME.colors.text
+    };
+    div()
+        .id(("workgraph-sidebar-node", number))
+        .role(Role::Button)
+        .aria_label(format!("Open plan node {}", row.node.title))
+        .tab_index(0)
+        .cursor_pointer()
+        .ml(px((row.depth.min(8) * 12) as f32))
+        .px(THEME.space.xs)
+        .py(THEME.space.xs)
+        .flex()
+        .items_start()
+        .gap(THEME.space.xs)
+        .hover(|row| row.bg(THEME.colors.hover))
+        .on_click(move |_, window, cx| {
+            let _ = app.update(cx, |app, cx| {
+                app.open_workgraph_node(number, window, cx);
+            });
+        })
+        .child(
+            div()
+                .w(px(20.0))
+                .h(px(20.0))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(if row.reached {
+                    THEME.colors.success
+                } else if row.current {
+                    THEME.colors.accent
+                } else {
+                    THEME.colors.subtle
+                })
+                .when(row.reached, |marker| {
+                    marker.child(app_icon(AppIcon::CheckCircle, AppIconSize::Inline))
+                })
+                .when(!row.reached, |marker| {
+                    marker.child(
                         div()
                             .text_size(THEME.type_scale.caption)
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(if complete {
-                                THEME.colors.success
-                            } else {
-                                THEME.colors.accent
-                            })
-                            .child(if complete {
-                                "Outcome reached"
-                            } else {
-                                "Current node"
-                            }),
+                            .child(format!("{number}")),
                     )
-                    .child(
+                }),
+        )
+        .child(
+            div()
+                .min_w_0()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .gap(px(2.0))
+                .child(
+                    div()
+                        .line_clamp(2)
+                        .text_size(THEME.type_scale.body_small)
+                        .font_weight(if row.current {
+                            FontWeight::SEMIBOLD
+                        } else {
+                            FontWeight::NORMAL
+                        })
+                        .text_color(title_color)
+                        .when(row.reached, |title| title.line_through())
+                        .child(row.node.title),
+                )
+                .when(!row.node.files.is_empty(), |content| {
+                    content.child(
                         div()
-                            .line_clamp(2)
-                            .text_size(THEME.type_scale.body_small)
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(node.title),
+                            .text_size(THEME.type_scale.caption)
+                            .text_color(THEME.colors.subtle)
+                            .child(format!("{} path(s)", row.node.files.len())),
                     )
-                    .when_some(plan_title, |card, title| {
-                        card.child(
-                            div()
-                                .text_size(THEME.type_scale.caption)
-                                .text_color(THEME.colors.subtle)
-                                .child(title),
-                        )
-                    })
-                    .when(!attached, |card| {
-                        card.child(
-                            div()
-                                .text_size(THEME.type_scale.caption)
-                                .text_color(THEME.colors.warning)
-                                .child("Session not attached"),
-                        )
-                    }),
-            )
-        })
-        .when(!has_plan, |card| {
-            card.child(
-                detail_card()
-                    .child(detail_label("No plan"))
-                    .child(
-                        div()
-                            .text_size(THEME.type_scale.body_small)
-                            .text_color(THEME.colors.muted)
-                            .child("Create a plan from the product's current state."),
-                    )
-                    .child(button(
-                        "open-empty-plan",
-                        "Create plan",
-                        ButtonTone::Quiet,
-                        true,
-                        move |window, cx| {
-                            let _ = open_plan.update(cx, |app, cx| {
-                                app.open_workgraph_surface(window, cx);
-                            });
-                        },
-                    )),
-            )
-        })
+                }),
+        )
 }
 
 #[cfg(test)]
 mod tests {
-    use workgraph::contract::{CompletionRequirement, Node, Plan, PlanSnapshot, SessionLink, Walk};
+    use workgraph::contract::SessionLink;
 
     use super::*;
+    use crate::app::workgraph::contract::PlanData;
 
-    fn data(attached: bool) -> PlanData {
-        let link = SessionLink {
-            session_id: "session-1".into(),
-            session_path: "/sessions/1.jsonl".into(),
-            plan_number: 1,
-            walk_number: 1,
-            linked_at: 0,
-        };
-        let plan = Plan {
-            project: "/project".into(),
-            number: 1,
-            title: "VCS integration".into(),
-            root_node: 1,
-            version: 1,
-            created_at: 0,
-            updated_at: 0,
-        };
-        PlanData {
-            plans: vec![plan.clone()],
-            snapshot: Some(PlanSnapshot {
-                plan,
-                nodes: vec![Node {
-                    plan_number: 1,
-                    number: 1,
-                    title: "Current product".into(),
-                    files: Vec::new(),
-                    completion: CompletionRequirement::Observation,
-                    version: 1,
-                    created_at: 0,
-                    updated_at: 0,
-                }],
-                edges: Vec::new(),
-                walk: Some(Walk {
-                    plan_number: 1,
-                    number: 1,
-                    current_node: Some(1),
-                    head_step: None,
-                    version: 1,
-                    created_at: 0,
-                    updated_at: 0,
-                }),
-                steps: Vec::new(),
-                sessions: attached.then(|| link.clone()).into_iter().collect(),
+    fn state(attached: bool) -> PlanLoadState {
+        PlanLoadState::Ready(Box::new(PlanData {
+            session_link: attached.then_some(SessionLink {
+                session_id: "session-1".into(),
+                session_path: "/sessions/1.jsonl".into(),
+                plan_number: 1,
+                walk_number: 1,
+                linked_at: 0,
             }),
-            session_link: attached.then_some(link),
-        }
+            ..PlanData::default()
+        }))
     }
 
     #[test]
-    fn ready_content_remains_visible_while_refreshing() {
-        let data = data(false);
-        let mut state = PlanLoadState::Ready(Box::new(data.clone()));
-        assert!(!prepare_refresh(&mut state));
-        assert_eq!(state, PlanLoadState::Ready(Box::new(data)));
-    }
-
-    #[test]
-    fn summary_uses_the_linked_walk_current_node() {
-        let summary = sidebar_summary(&data(true));
-        assert_eq!(summary.node.as_ref().map(|node| node.number), Some(1));
-        assert_eq!(summary.plan_title.as_deref(), Some("VCS integration"));
-        assert!(summary.attached);
-        assert!(!summary.complete);
+    fn sidebar_requires_a_real_session_link() {
+        assert!(sidebar_visible(&state(true), true));
+        assert!(!sidebar_visible(&state(false), true));
+        assert!(!sidebar_visible(&state(true), false));
     }
 }

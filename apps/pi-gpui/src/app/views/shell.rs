@@ -66,46 +66,4 @@ impl PiApp {
                     )),
             )
     }
-
-    pub(super) fn render_work_navigation(
-        &self,
-        show_sessions: bool,
-        entity: WeakEntity<Self>,
-    ) -> impl IntoElement {
-        let sessions = entity.clone();
-        div()
-            .h(px(40.0))
-            .flex_none()
-            .flex()
-            .items_center()
-            .justify_between()
-            .px(THEME.space.sm)
-            .border_b(THEME.border)
-            .border_color(THEME.colors.border)
-            .bg(THEME.colors.panel)
-            .when(show_sessions, |navigation| {
-                navigation.child(button(
-                    "open-sessions-from-project-work",
-                    "Sessions",
-                    ButtonTone::Quiet,
-                    true,
-                    move |window, cx| {
-                        let _ = sessions.update(cx, |this, cx| {
-                            this.open_sessions_sheet(window, cx);
-                        });
-                    },
-                ))
-            })
-            .child(button(
-                "back-to-chat",
-                "Back to chat",
-                ButtonTone::Quiet,
-                true,
-                move |window, cx| {
-                    let _ = entity.update(cx, |this, cx| {
-                        this.show_chat_surface(window, cx);
-                    });
-                },
-            ))
-    }
 }

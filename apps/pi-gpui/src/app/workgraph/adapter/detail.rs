@@ -11,7 +11,7 @@ use crate::{
         components::{detail_card, detail_label, evidence_label, requirement_label},
         contract::{PlanData, PlanLoadState},
         core::active_outcome,
-        layout::{BoardLayoutMode, DETAIL_MIN_WIDTH, DETAIL_WIDTH, issue_detail_shell},
+        layout::{BoardLayoutMode, DETAIL_MIN_WIDTH, DETAIL_WIDTH},
     },
     primitives::{ButtonTone, FeedbackTone, button, feedback},
     theme::THEME,
@@ -30,7 +30,7 @@ impl WorkGraphBoardView {
             self.selected
                 .and_then(|number| snapshot.nodes.iter().find(|node| node.number == number))
         });
-        let narrow = issue_detail_shell(layout).shows_sheet(false);
+        let narrow = layout == BoardLayoutMode::Narrow;
         div()
             .id("workgraph-node-detail")
             .when(!external, |detail| {

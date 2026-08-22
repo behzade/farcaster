@@ -50,11 +50,12 @@ fn session_shortcuts_visible(current: bool, requested: bool, has_text_selection:
 }
 
 use crate::{
+    assets::AppIcon,
     layout::{
         layout_mode, shows_left_inline, shows_right_inline, shows_run_sheet_button,
         shows_session_sheet_button,
     },
-    primitives::{FeedbackTone, feedback, modal},
+    primitives::{ButtonTone, FeedbackTone, feedback, icon_button, modal},
     protocol::ExtensionUiRequest,
     theme::{THEME, ui_font},
 };
@@ -159,75 +160,55 @@ impl Render for PiApp {
         let editable_draft_project = (!has_conversation)
             .then(|| self.editable_draft_project())
             .flatten();
-        let main = if work_active {
-            div()
-                .relative()
-                .flex_1()
-                .min_w_0()
-                .h_full()
-                .flex()
-                .flex_col()
-                .child(
-                    self.render_work_navigation(shows_session_sheet_button(mode), entity.clone()),
+        let main = div()
+            .relative()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .flex()
+            .flex_col()
+            .when(shows_run_sheet_button(mode), |main| {
+                main.child(
+                    self.render_chat_navigation(shows_session_sheet_button(mode), entity.clone()),
                 )
-                .child(div().flex_1().min_h_0().child(self.workgraph_view.clone()))
-                .into_any_element()
-        } else {
-            div()
-                .relative()
-                .flex_1()
-                .min_w_0()
-                .h_full()
-                .flex()
-                .flex_col()
-                .when(shows_run_sheet_button(mode), |main| {
-                    main.child(
-                        self.render_chat_navigation(
-                            shows_session_sheet_button(mode),
-                            entity.clone(),
-                        ),
-                    )
-                })
-                .child(
-                    div()
-                        .flex_1()
-                        .min_h_0()
-                        .when(has_conversation, |body| {
-                            body.child(
-                                self.transcript_view
-                                    .clone()
-                                    .cached(gpui::StyleRefinement::default().size_full()),
+            })
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .when(has_conversation, |body| {
+                        body.child(
+                            self.transcript_view
+                                .clone()
+                                .cached(gpui::StyleRefinement::default().size_full()),
+                        )
+                    })
+                    .when(!has_conversation, |body| {
+                        let heading_entity = entity.clone();
+                        body.flex()
+                            .items_center()
+                            .justify_center()
+                            .px(THEME.space.md)
+                            .child(
+                                div()
+                                    .w_full()
+                                    .max_w(gpui::px(1080.0))
+                                    .flex()
+                                    .flex_col()
+                                    .items_center()
+                                    .gap(THEME.space.md)
+                                    .when_some(editable_draft_project, |draft, project| {
+                                        draft.child(render_draft_heading(project, heading_entity))
+                                    })
+                                    .child(self.composer_view.clone()),
                             )
-                        })
-                        .when(!has_conversation, |body| {
-                            let heading_entity = entity.clone();
-                            body.flex()
-                                .items_center()
-                                .justify_center()
-                                .px(THEME.space.md)
-                                .child(
-                                    div()
-                                        .w_full()
-                                        .max_w(gpui::px(1080.0))
-                                        .flex()
-                                        .flex_col()
-                                        .items_center()
-                                        .gap(THEME.space.md)
-                                        .when_some(editable_draft_project, |draft, project| {
-                                            draft.child(render_draft_heading(
-                                                project,
-                                                heading_entity,
-                                            ))
-                                        })
-                                        .child(self.composer_view.clone()),
-                                )
-                        }),
-                )
-                .when(has_conversation, |main| {
-                    main.child(self.composer_view.clone())
-                })
-                .into_any_element()
-        };
+                    }),
+            )
+            .when(has_conversation, |main| {
+                main.child(self.composer_view.clone())
+            })
+            .into_any_element();
+        let workgraph_focus = self.workgraph_view.read(cx).focus_handle();
         let picker = self.render_picker(entity.clone(), cx);
         div()
             .relative()
@@ -326,13 +307,17 @@ impl Render for PiApp {
                 this.workgraph_view
                     .update(cx, |view, cx| view.focus_search(window, cx));
             }))
-            .on_action(cx.listener(|this, _: &WorkCreateIssue, _, cx| {
+            .on_action(cx.listener(|this, _: &WorkCreateIssue, window, cx| {
                 this.workgraph_view
-                    .update(cx, |view, cx| view.start_create(cx));
+                    .update(cx, |view, cx| view.start_create(window, cx));
             }))
             .on_action(cx.listener(|this, _: &WorkDismiss, window, cx| {
-                this.workgraph_view
+                let handled = this
+                    .workgraph_view
                     .update(cx, |view, cx| view.dismiss_work_state(window, cx));
+                if !handled {
+                    this.show_chat_surface(window, cx);
+                }
             }))
             .on_action(cx.listener(|this, _: &SwitchSession1, window, cx| {
                 this.switch_to_session_number(1, window, cx);
@@ -395,7 +380,7 @@ impl Render for PiApp {
                         )
                     })
                     .child(main)
-                    .when(shows_right_inline(mode) && !work_active, |shell| {
+                    .when(shows_right_inline(mode), |shell| {
                         shell.child(
                             div()
                                 .w(THEME.layout.run_panel)
@@ -416,6 +401,62 @@ impl Render for PiApp {
                     }),
             )
             .when_some(picker, |root, picker| root.child(picker))
+            .when(work_active, |root| {
+                let close = entity.clone();
+                root.child(modal(
+                    "project-work",
+                    "Plans",
+                    &workgraph_focus,
+                    crate::app::workgraph::adapter::WORKGRAPH_KEY_CONTEXT,
+                    move |window, cx| {
+                        let _ = close.update(cx, |this, cx| {
+                            this.show_chat_surface(window, cx);
+                        });
+                    },
+                    |surface| {
+                        let close = entity.clone();
+                        surface
+                            .w(gpui::px(820.0))
+                            .max_w_full()
+                            .h(gpui::px(620.0))
+                            .max_h(gpui::relative(1.0))
+                            .overflow_hidden()
+                            .child(
+                                div()
+                                    .size_full()
+                                    .min_h_0()
+                                    .flex()
+                                    .flex_col()
+                                    .child(
+                                        div()
+                                            .h(gpui::px(48.0))
+                                            .flex_none()
+                                            .px(THEME.space.md)
+                                            .flex()
+                                            .items_center()
+                                            .justify_between()
+                                            .border_b(THEME.border)
+                                            .border_color(THEME.colors.border)
+                                            .child("Plans")
+                                            .child(icon_button(
+                                                "close-project-work",
+                                                AppIcon::X,
+                                                "Close plans",
+                                                ButtonTone::Quiet,
+                                                move |window, cx| {
+                                                    let _ = close.update(cx, |this, cx| {
+                                                        this.show_chat_surface(window, cx);
+                                                    });
+                                                },
+                                            )),
+                                    )
+                                    .child(
+                                        div().flex_1().min_h_0().child(self.workgraph_view.clone()),
+                                    ),
+                            )
+                    },
+                ))
+            })
             .when(self.pending_archive.is_some(), |root| {
                 root.child(archive_confirmation::render(self, entity.clone()))
             })
@@ -464,7 +505,7 @@ impl Render for PiApp {
                 root.child(modal(
                     "run",
                     if self.workgraph_inspector_issue.is_some() {
-                        "Issue details"
+                        "Node details"
                     } else {
                         "Session details"
                     },

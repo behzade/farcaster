@@ -104,28 +104,28 @@ pub(crate) fn registry() -> Vec<Shortcut> {
         shortcut!("Run", "Abort current run", "cmd-.", AbortRun, None),
         shortcut!(
             "Work",
-            "Previous issue",
+            "Previous node",
             "k",
             WorkPreviousIssue,
             Some(WORKGRAPH_NAV_KEY_CONTEXT)
         ),
         shortcut!(
             "Work",
-            "Next issue",
+            "Next node",
             "j",
             WorkNextIssue,
             Some(WORKGRAPH_NAV_KEY_CONTEXT)
         ),
         shortcut!(
             "Work",
-            "Search issues",
+            "Search plan",
             "/",
             WorkFocusSearch,
             Some(WORKGRAPH_NAV_KEY_CONTEXT)
         ),
         shortcut!(
             "Work",
-            "Create issue",
+            "Add plan node",
             "c",
             WorkCreateIssue,
             Some(WORKGRAPH_NAV_KEY_CONTEXT)

@@ -4,7 +4,10 @@ use gpui::{
 };
 use gpui_component::input::{Input, InputState, Textarea, TextareaState};
 
-use super::{adapter::WorkGraphBoardView, contract::PlanRow};
+use super::{
+    adapter::{CreateStage, WorkGraphBoardView},
+    contract::PlanRow,
+};
 use crate::{
     assets::AppIcon,
     primitives::{AppIconSize, ButtonTone, app_icon, button},
@@ -130,85 +133,176 @@ fn render_plan_row(
         )
 }
 
-pub(super) fn render_create(
+pub(super) fn render_create_step(
     title: &Entity<InputState>,
     detail: &Entity<TextareaState>,
-    has_plan: bool,
+    stage: CreateStage,
+    current_state_complete: bool,
+    can_submit: bool,
     entity: Entity<WorkGraphBoardView>,
 ) -> impl IntoElement {
-    let submit_title = title.clone();
-    let submit_detail = detail.clone();
-    let submit = entity.clone();
-    let cancel = entity;
+    let add_node = stage == CreateStage::Node;
+    let show_outcome = stage == CreateStage::Outcome;
+    let cancel = entity.clone();
+    let back = entity.clone();
+    let next = entity.clone();
+    let submit = entity;
+
     div()
-        .id("workgraph-create")
-        .w(px(420.0))
-        .min_w(px(360.0))
-        .h_full()
-        .overflow_y_scroll()
-        .p(THEME.space.md)
-        .bg(THEME.colors.panel)
-        .border_l(THEME.border)
-        .border_color(THEME.colors.border)
+        .size_full()
+        .min_h_0()
         .flex()
         .flex_col()
-        .gap(THEME.space.md)
         .child(
             div()
+                .h(px(52.0))
+                .flex_none()
+                .px(THEME.space.md)
                 .flex()
-                .flex_col()
-                .gap(THEME.space.xs)
-                .child(
-                    div()
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.subtle)
-                        .child(if has_plan { "NEW NODE" } else { "NEW PLAN" }),
-                )
+                .items_center()
+                .justify_between()
+                .border_b(THEME.border)
+                .border_color(THEME.colors.border)
                 .child(
                     div()
                         .text_size(THEME.type_scale.body)
                         .font_weight(FontWeight::SEMIBOLD)
-                        .child(if has_plan {
-                            "Add the next verifiable state"
-                        } else {
-                            "Name the outcome and its current state"
+                        .child(if add_node { "Add node" } else { "New plan" }),
+                )
+                .when(!add_node, |header| {
+                    header.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(THEME.space.xs)
+                            .child(step_marker("Current state", !show_outcome))
+                            .child(app_icon(AppIcon::CaretRight, AppIconSize::Inline))
+                            .child(step_marker("Outcome", show_outcome)),
+                    )
+                }),
+        )
+        .child(
+            div()
+                .id("workgraph-create-body")
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .px(THEME.space.md)
+                .py(THEME.space.md)
+                .flex()
+                .justify_center()
+                .child(
+                    div()
+                        .w_full()
+                        .max_w(px(520.0))
+                        .when(add_node, |form| {
+                            form.child(compact_field("Node", Input::new(title).w_full()))
+                                .child(div().mt(THEME.space.md).child(compact_field(
+                                    "Paths (optional)",
+                                    Textarea::new(detail).w_full().appearance(true),
+                                )))
+                        })
+                        .when(stage == CreateStage::CurrentState, |form| {
+                            form.child(compact_field(
+                                "Current state",
+                                Textarea::new(detail).w_full().appearance(true),
+                            ))
+                        })
+                        .when(show_outcome, |form| {
+                            form.child(compact_field("Outcome", Input::new(title).w_full()))
                         }),
                 ),
         )
-        .child(Input::new(title).w_full())
-        .child(Textarea::new(detail).w_full())
         .child(
             div()
+                .h(px(56.0))
+                .flex_none()
+                .px(THEME.space.md)
                 .flex()
-                .gap(THEME.space.xs)
-                .child(button(
-                    "workgraph-create-submit",
-                    if has_plan { "Add node" } else { "Create plan" },
-                    ButtonTone::Neutral,
-                    true,
-                    move |window, cx| {
-                        let title = submit_title.read(cx).value().trim().to_owned();
-                        if title.is_empty() {
-                            return;
-                        }
-                        let detail = submit_detail.read(cx).value().trim().to_owned();
-                        submit_title.update(cx, |input, cx| {
-                            input.set_value(String::new(), window, cx);
-                        });
-                        submit_detail.update(cx, |input, cx| {
-                            input.set_value(String::new(), window, cx);
-                        });
-                        submit.update(cx, |this, cx| this.submit_create(title, detail, cx));
-                    },
-                ))
-                .child(button(
-                    "workgraph-create-cancel",
-                    "Cancel",
-                    ButtonTone::Quiet,
-                    true,
-                    move |_, cx| cancel.update(cx, |this, cx| this.cancel_create(cx)),
-                )),
+                .items_center()
+                .justify_between()
+                .border_t(THEME.border)
+                .border_color(THEME.colors.border)
+                .child(if show_outcome {
+                    button(
+                        "workgraph-create-back",
+                        "Back",
+                        ButtonTone::Quiet,
+                        true,
+                        move |window, cx| {
+                            back.update(cx, |this, cx| {
+                                this.previous_create_step(window, cx);
+                            });
+                        },
+                    )
+                } else {
+                    button(
+                        "workgraph-create-cancel",
+                        "Cancel",
+                        ButtonTone::Quiet,
+                        true,
+                        move |window, cx| {
+                            cancel.update(cx, |this, cx| {
+                                this.cancel_create(window, cx);
+                            });
+                        },
+                    )
+                })
+                .child(if stage == CreateStage::CurrentState {
+                    button(
+                        "workgraph-create-next",
+                        "Next",
+                        ButtonTone::Accent,
+                        current_state_complete,
+                        move |window, cx| {
+                            next.update(cx, |this, cx| {
+                                this.next_create_step(window, cx);
+                            });
+                        },
+                    )
+                } else {
+                    button(
+                        "workgraph-create-submit",
+                        if add_node { "Add node" } else { "Create plan" },
+                        ButtonTone::Accent,
+                        can_submit,
+                        move |window, cx| {
+                            submit.update(cx, |this, cx| {
+                                this.submit_create_inputs(window, cx);
+                            });
+                        },
+                    )
+                }),
         )
+}
+
+fn step_marker(label: &'static str, active: bool) -> impl IntoElement {
+    div()
+        .px(THEME.space.xs)
+        .py(px(2.0))
+        .rounded(THEME.radius)
+        .text_size(THEME.type_scale.caption)
+        .text_color(if active {
+            THEME.colors.text
+        } else {
+            THEME.colors.subtle
+        })
+        .when(active, |marker| marker.bg(THEME.colors.surface))
+        .child(label)
+}
+
+fn compact_field(label: &'static str, control: impl IntoElement) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap(THEME.space.xs)
+        .child(
+            div()
+                .text_size(THEME.type_scale.body_small)
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(label),
+        )
+        .child(control)
 }
 
 pub(super) fn detail_card() -> Div {

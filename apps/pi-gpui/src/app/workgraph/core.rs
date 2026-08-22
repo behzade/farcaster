@@ -52,6 +52,10 @@ pub(super) fn active_outcome(snapshot: &PlanSnapshot, number: u64) -> Option<&Wa
         .find(|step| step.node_number == number)
 }
 
+pub(super) fn create_form_valid(has_plan: bool, title: &str, detail: &str) -> bool {
+    !title.trim().is_empty() && (has_plan || !detail.trim().is_empty())
+}
+
 pub(super) fn adjacent_node_number(
     rows: &[PlanRow],
     selected: Option<u64>,
@@ -282,5 +286,13 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].node.number, 3);
         assert_eq!(adjacent_node_number(&rows, None, 1), Some(3));
+    }
+
+    #[test]
+    fn plan_creation_requires_an_outcome_and_current_state() {
+        assert!(!create_form_valid(false, "", "Current product"));
+        assert!(!create_form_valid(false, "Git and jj", "  "));
+        assert!(create_form_valid(false, "Git and jj", "Current product"));
+        assert!(create_form_valid(true, "Add Git backend", ""));
     }
 }

@@ -183,10 +183,11 @@ impl PiApp {
     }
 
     pub(super) fn show_chat_surface(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let changed = self.surface != AppSurface::Chat || self.workgraph_inspector_issue.is_some();
+        let changed = self.surface != AppSurface::Chat;
         self.surface = AppSurface::Chat;
-        self.workgraph_inspector_issue = None;
         if changed {
+            self.workgraph_view
+                .update(cx, |view, cx| view.prepare_open(window, cx));
             self.composer_focus.focus(window, cx);
             cx.notify();
         }
@@ -196,36 +197,24 @@ impl PiApp {
         if self.run_sheet {
             self.close_sheet(window, cx);
         }
-        self.workgraph_inspector_issue = None;
         if self.surface != AppSurface::Work {
             self.refresh_workgraph_board(cx);
             self.surface = AppSurface::Work;
             cx.notify();
         }
         self.workgraph_view
-            .update(cx, |view, cx| view.focus(window, cx));
+            .update(cx, |view, cx| view.prepare_open(window, cx));
     }
 
-    pub(super) fn inspect_workgraph_issue(
+    pub(super) fn open_workgraph_node(
         &mut self,
         number: u64,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.refresh_workgraph_board(cx);
+        self.open_workgraph_surface(window, cx);
         self.workgraph_view
-            .update(cx, |view, cx| view.select_issue(number, cx));
-        self.workgraph_inspector_issue = Some(number);
-        self.surface = AppSurface::Chat;
-        if !self.run_sheet
-            && crate::layout::shows_run_sheet_button(crate::layout::layout_mode(
-                window.viewport_size().width,
-            ))
-        {
-            self.open_run_sheet(window, cx);
-        } else {
-            cx.notify();
-        }
+            .update(cx, |view, cx| view.select_node(number, cx));
     }
 
     pub(super) fn close_workgraph_inspector(&mut self, cx: &mut Context<Self>) {
@@ -318,9 +307,6 @@ impl PiApp {
     }
 
     pub(super) fn close_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.run_sheet {
-            self.workgraph_inspector_issue = None;
-        }
         self.apply_sheet_flags(sheet_flags(None));
         self.pending_sheet_setup = false;
         let focus = self
@@ -349,12 +335,6 @@ impl PiApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn project_work_shortcut_toggles_back_to_chat() {
-        assert_eq!(AppSurface::Chat.toggled(), AppSurface::Work);
-        assert_eq!(AppSurface::Work.toggled(), AppSurface::Chat);
-    }
 
     #[test]
     fn activating_a_sheet_never_stacks_it_with_an_existing_sheet() {
