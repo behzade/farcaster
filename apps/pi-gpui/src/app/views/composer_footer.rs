@@ -65,7 +65,7 @@ impl PiApp {
                         actions.child(
                             prominent_icon_button(
                                 "abort",
-                                AppIcon::XCircle,
+                                AppIcon::Stop,
                                 "Abort",
                                 ButtonTone::Quiet,
                                 move |_, cx| {

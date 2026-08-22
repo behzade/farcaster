@@ -122,7 +122,7 @@ impl Render for WorkGraphSidebarView {
                     .gap(THEME.space.xs)
                     .child(icon_button(
                         "refresh-workgraph-sidebar",
-                        AppIcon::ArrowCounterClockwise,
+                        AppIcon::ArrowsClockwise,
                         "Refresh plan",
                         ButtonTone::Quiet,
                         {
@@ -136,7 +136,7 @@ impl Render for WorkGraphSidebarView {
                     ))
                     .child(icon_button(
                         "open-workgraph-from-sidebar",
-                        AppIcon::ArrowSquareOut,
+                        AppIcon::ArrowsOut,
                         "View project plan",
                         ButtonTone::Quiet,
                         {

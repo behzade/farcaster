@@ -211,7 +211,7 @@ pub(super) fn draft_session_row(
                                             .group_hover(action_group, |button| button.opacity(1.0))
                                             .focus(|button| button.opacity(1.0))
                                             .hover(|button| button.bg(THEME.colors.hover))
-                                            .child(app_icon(AppIcon::X, AppIconSize::Control))
+                                            .child(app_icon(AppIcon::Trash, AppIconSize::Control))
                                             .on_click(
                                                 move |_, window, cx| {
                                                     cx.stop_propagation();
@@ -568,10 +568,7 @@ pub(super) fn session_row_with_height(
                                             .tooltip(move |window, cx| {
                                                 Tooltip::new("Move to review").build(window, cx)
                                             })
-                                            .child(app_icon(
-                                                AppIcon::CheckCircle,
-                                                AppIconSize::Control,
-                                            ))
+                                            .child(app_icon(AppIcon::Eye, AppIconSize::Control))
                                             .on_click(move |_, _, cx| {
                                                 cx.stop_propagation();
                                                 let _ = review_entity.update(cx, |this, cx| {
@@ -667,7 +664,8 @@ pub(super) fn status_visual(status: &str) -> Option<(AppIcon, Rgba)> {
     match status {
         "" => None,
         "Done" => Some((AppIcon::CheckCircle, THEME.colors.success)),
-        "Needs input" | "Waiting" => Some((AppIcon::WarningCircle, THEME.colors.warning)),
+        "Needs input" => Some((AppIcon::WarningCircle, THEME.colors.warning)),
+        "Waiting" => Some((AppIcon::Hourglass, THEME.colors.accent)),
         "Failed" => Some((AppIcon::XCircle, THEME.colors.error)),
         "Working" => Some((AppIcon::SpinnerGap, THEME.colors.accent)),
         _ => Some((AppIcon::Question, THEME.colors.subtle)),

@@ -200,7 +200,7 @@ impl PiApp {
         let state = lifecycle_label(displayed_lifecycle);
         let activity_text = activity.activity.clone();
         let role = role_override.unwrap_or(&activity.role).to_owned();
-        let marker = role_glyph(&role);
+        let marker = role_icon(&role);
         let elapsed = elapsed_label(activity, SystemTime::now());
         Some(
             div()
@@ -243,7 +243,7 @@ impl PiApp {
                         } else {
                             THEME.colors.muted
                         })
-                        .child(marker),
+                        .child(app_icon(marker, AppIconSize::Inline)),
                 )
                 .child(
                     div()
@@ -433,15 +433,14 @@ fn metric_row(label: &'static str, value: String) -> impl IntoElement {
         )
 }
 
-fn role_glyph(role: &str) -> String {
+fn role_icon(role: &str) -> AppIcon {
     match role.to_ascii_lowercase().as_str() {
-        "reviewer" => "✓",
-        "scout" => "⌕",
-        "researcher" => "◎",
-        "worker" => "⚒",
-        _ => "◆",
+        "reviewer" => AppIcon::Eye,
+        "scout" => AppIcon::Binoculars,
+        "researcher" => AppIcon::Microscope,
+        "worker" => AppIcon::Hammer,
+        _ => AppIcon::UserFocus,
     }
-    .into()
 }
 
 fn lifecycle_label(lifecycle: AgentLifecycle) -> &'static str {

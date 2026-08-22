@@ -33,6 +33,15 @@ fn every_lifecycle_has_a_compact_status_icon() {
 }
 
 #[test]
+fn agent_roles_use_semantic_icons() {
+    assert_eq!(role_icon("reviewer"), AppIcon::Eye);
+    assert_eq!(role_icon("scout"), AppIcon::Binoculars);
+    assert_eq!(role_icon("researcher"), AppIcon::Microscope);
+    assert_eq!(role_icon("worker"), AppIcon::Hammer);
+    assert_eq!(role_icon("other"), AppIcon::UserFocus);
+}
+
+#[test]
 fn active_agents_are_never_hidden_by_limited_history() {
     assert_eq!(
         agent_section(AgentLifecycle::Working, true, true),

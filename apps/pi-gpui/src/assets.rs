@@ -4,24 +4,36 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 20] = [
+const ICON_PATHS: [&str; 32] = [
     "icons/phosphor/archive.svg",
+    "icons/phosphor/arrows-clockwise.svg",
     "icons/phosphor/arrows-out.svg",
     "icons/phosphor/arrow-counter-clockwise.svg",
     "icons/phosphor/arrow-square-out.svg",
     "icons/phosphor/arrow-up.svg",
+    "icons/phosphor/binoculars.svg",
     "icons/phosphor/caret-down.svg",
     "icons/phosphor/caret-right.svg",
+    "icons/phosphor/chat-circle.svg",
+    "icons/phosphor/chat-circle-dots.svg",
     "icons/phosphor/check-circle.svg",
     "icons/phosphor/dots-six-vertical.svg",
-    "icons/phosphor/plus.svg",
-    "icons/phosphor/question.svg",
+    "icons/phosphor/eye.svg",
     "icons/phosphor/folder.svg",
     "icons/phosphor/folder-plus.svg",
+    "icons/phosphor/hammer.svg",
+    "icons/phosphor/hourglass.svg",
+    "icons/phosphor/key.svg",
     "icons/phosphor/list.svg",
     "icons/phosphor/magnifying-glass.svg",
+    "icons/phosphor/microscope.svg",
+    "icons/phosphor/plus.svg",
+    "icons/phosphor/question.svg",
+    "icons/phosphor/sign-in.svg",
     "icons/phosphor/spinner-gap.svg",
     "icons/phosphor/stop.svg",
+    "icons/phosphor/trash.svg",
+    "icons/phosphor/user-focus.svg",
     "icons/phosphor/warning-circle.svg",
     "icons/phosphor/x.svg",
     "icons/phosphor/x-circle.svg",
@@ -50,6 +62,9 @@ impl AssetSource for AppAssets {
             "icons/phosphor/archive.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/archive.svg"))
             }
+            "icons/phosphor/arrows-clockwise.svg" => Some(include_bytes!(
+                "../assets/phosphor-icons/arrows-clockwise.svg"
+            )),
             "icons/phosphor/arrows-out.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/arrows-out.svg"))
             }
@@ -62,18 +77,28 @@ impl AssetSource for AppAssets {
             "icons/phosphor/arrow-up.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/arrow-up.svg"))
             }
+            "icons/phosphor/binoculars.svg" => {
+                Some(include_bytes!("../assets/phosphor-icons/binoculars.svg"))
+            }
             "icons/phosphor/caret-down.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/caret-down.svg"))
             }
             "icons/phosphor/caret-right.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/caret-right.svg"))
             }
+            "icons/phosphor/chat-circle.svg" => {
+                Some(include_bytes!("../assets/phosphor-icons/chat-circle.svg"))
+            }
+            "icons/phosphor/chat-circle-dots.svg" => Some(include_bytes!(
+                "../assets/phosphor-icons/chat-circle-dots.svg"
+            )),
             "icons/phosphor/check-circle.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/check-circle.svg"))
             }
             "icons/phosphor/dots-six-vertical.svg" => Some(include_bytes!(
                 "../assets/phosphor-icons/dots-six-vertical.svg"
             )),
+            "icons/phosphor/eye.svg" => Some(include_bytes!("../assets/phosphor-icons/eye.svg")),
             "icons/phosphor/plus.svg" => Some(include_bytes!("../assets/phosphor-icons/plus.svg")),
             "icons/phosphor/question.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/question.svg"))
@@ -84,14 +109,33 @@ impl AssetSource for AppAssets {
             "icons/phosphor/folder-plus.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/folder-plus.svg"))
             }
+            "icons/phosphor/hammer.svg" => {
+                Some(include_bytes!("../assets/phosphor-icons/hammer.svg"))
+            }
+            "icons/phosphor/hourglass.svg" => {
+                Some(include_bytes!("../assets/phosphor-icons/hourglass.svg"))
+            }
+            "icons/phosphor/key.svg" => Some(include_bytes!("../assets/phosphor-icons/key.svg")),
             "icons/phosphor/list.svg" => Some(include_bytes!("../assets/phosphor-icons/list.svg")),
             "icons/phosphor/magnifying-glass.svg" => Some(include_bytes!(
                 "../assets/phosphor-icons/magnifying-glass.svg"
             )),
+            "icons/phosphor/microscope.svg" => {
+                Some(include_bytes!("../assets/phosphor-icons/microscope.svg"))
+            }
+            "icons/phosphor/sign-in.svg" => {
+                Some(include_bytes!("../assets/phosphor-icons/sign-in.svg"))
+            }
             "icons/phosphor/spinner-gap.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/spinner-gap.svg"))
             }
             "icons/phosphor/stop.svg" => Some(include_bytes!("../assets/phosphor-icons/stop.svg")),
+            "icons/phosphor/trash.svg" => {
+                Some(include_bytes!("../assets/phosphor-icons/trash.svg"))
+            }
+            "icons/phosphor/user-focus.svg" => {
+                Some(include_bytes!("../assets/phosphor-icons/user-focus.svg"))
+            }
             "icons/phosphor/warning-circle.svg" => Some(include_bytes!(
                 "../assets/phosphor-icons/warning-circle.svg"
             )),
@@ -122,22 +166,34 @@ impl AssetSource for AppAssets {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AppIcon {
     Archive,
+    ArrowsClockwise,
     ArrowsOut,
     ArrowCounterClockwise,
     ArrowSquareOut,
     ArrowUp,
+    Binoculars,
     CaretDown,
     CaretRight,
+    ChatCircle,
+    ChatCircleDots,
     CheckCircle,
     DotsSixVertical,
-    Plus,
-    Question,
+    Eye,
     Folder,
     FolderPlus,
+    Hammer,
+    Hourglass,
+    Key,
     List,
     MagnifyingGlass,
+    Microscope,
+    Plus,
+    Question,
+    SignIn,
     SpinnerGap,
     Stop,
+    Trash,
+    UserFocus,
     WarningCircle,
     X,
     XCircle,
@@ -147,22 +203,34 @@ impl IconNamed for AppIcon {
     fn path(self) -> SharedString {
         let name = match self {
             Self::Archive => "archive",
+            Self::ArrowsClockwise => "arrows-clockwise",
             Self::ArrowsOut => "arrows-out",
             Self::ArrowCounterClockwise => "arrow-counter-clockwise",
             Self::ArrowSquareOut => "arrow-square-out",
             Self::ArrowUp => "arrow-up",
+            Self::Binoculars => "binoculars",
             Self::CaretDown => "caret-down",
             Self::CaretRight => "caret-right",
+            Self::ChatCircle => "chat-circle",
+            Self::ChatCircleDots => "chat-circle-dots",
             Self::CheckCircle => "check-circle",
             Self::DotsSixVertical => "dots-six-vertical",
-            Self::Plus => "plus",
-            Self::Question => "question",
+            Self::Eye => "eye",
             Self::Folder => "folder",
             Self::FolderPlus => "folder-plus",
+            Self::Hammer => "hammer",
+            Self::Hourglass => "hourglass",
+            Self::Key => "key",
             Self::List => "list",
             Self::MagnifyingGlass => "magnifying-glass",
+            Self::Microscope => "microscope",
+            Self::Plus => "plus",
+            Self::Question => "question",
+            Self::SignIn => "sign-in",
             Self::SpinnerGap => "spinner-gap",
             Self::Stop => "stop",
+            Self::Trash => "trash",
+            Self::UserFocus => "user-focus",
             Self::WarningCircle => "warning-circle",
             Self::X => "x",
             Self::XCircle => "x-circle",
@@ -198,22 +266,34 @@ mod tests {
     fn phosphor_icons_are_embedded_and_themeable() {
         for icon in [
             AppIcon::Archive,
+            AppIcon::ArrowsClockwise,
             AppIcon::ArrowsOut,
             AppIcon::ArrowCounterClockwise,
             AppIcon::ArrowSquareOut,
             AppIcon::ArrowUp,
+            AppIcon::Binoculars,
             AppIcon::CaretDown,
             AppIcon::CaretRight,
+            AppIcon::ChatCircle,
+            AppIcon::ChatCircleDots,
             AppIcon::CheckCircle,
             AppIcon::DotsSixVertical,
-            AppIcon::Plus,
-            AppIcon::Question,
+            AppIcon::Eye,
             AppIcon::Folder,
             AppIcon::FolderPlus,
+            AppIcon::Hammer,
+            AppIcon::Hourglass,
+            AppIcon::Key,
             AppIcon::List,
             AppIcon::MagnifyingGlass,
+            AppIcon::Microscope,
+            AppIcon::Plus,
+            AppIcon::Question,
+            AppIcon::SignIn,
             AppIcon::SpinnerGap,
             AppIcon::Stop,
+            AppIcon::Trash,
+            AppIcon::UserFocus,
             AppIcon::WarningCircle,
             AppIcon::X,
             AppIcon::XCircle,

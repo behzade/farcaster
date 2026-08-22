@@ -440,13 +440,14 @@ impl PiApp {
                     .into_iter()
                     .enumerate()
                     .map(|(index, (_, title, project, session, draft_id))| {
-                        let (command, keywords) = if let Some((path, search)) = session {
+                        let (command, keywords, icon) = if let Some((path, search)) = session {
                             (
                                 PickerCommand::SelectSession {
                                     path,
                                     project: project.clone(),
                                 },
                                 search,
+                                AppIcon::ChatCircle,
                             )
                         } else {
                             (
@@ -455,13 +456,14 @@ impl PiApp {
                                     project: project.clone(),
                                 },
                                 "draft new session".into(),
+                                AppIcon::ChatCircleDots,
                             )
                         };
                         picker_row(
                             &mut commands,
                             &format!("session:{index}"),
                             command,
-                            AppIcon::List,
+                            icon,
                             &title,
                             Some(format!(
                                 "{} · {}",
@@ -482,6 +484,7 @@ impl PiApp {
                 .into_iter()
                 .enumerate()
                 .map(|(index, option)| {
+                    let icon = provider_login_option_icon(&option);
                     picker_row(
                         &mut commands,
                         &format!("provider-login:{index}"),
@@ -489,7 +492,7 @@ impl PiApp {
                             id: id.clone(),
                             value: option.clone(),
                         },
-                        AppIcon::Question,
+                        icon,
                         &option,
                         None,
                         None,
@@ -499,6 +502,14 @@ impl PiApp {
                 .collect(),
         };
         (rows, commands)
+    }
+}
+
+fn provider_login_option_icon(option: &str) -> AppIcon {
+    if option.to_ascii_lowercase().contains("api key") {
+        AppIcon::Key
+    } else {
+        AppIcon::SignIn
     }
 }
 
@@ -622,6 +633,12 @@ mod tests {
             *title = "Choose a branch".into();
         }
         assert_eq!(provider_login_scope(&ordinary), None);
+    }
+
+    #[test]
+    fn provider_login_options_use_authentication_icons() {
+        assert_eq!(provider_login_option_icon("xAI — Account"), AppIcon::SignIn);
+        assert_eq!(provider_login_option_icon("xAI — API key"), AppIcon::Key);
     }
 
     #[test]

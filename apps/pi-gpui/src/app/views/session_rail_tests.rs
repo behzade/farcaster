@@ -134,6 +134,10 @@ fn session_states_use_semantic_icons() {
         status_visual("Needs input").map(|(icon, _)| icon),
         Some(AppIcon::WarningCircle)
     );
+    assert_eq!(
+        status_visual("Waiting").map(|(icon, _)| icon),
+        Some(AppIcon::Hourglass)
+    );
     assert_eq!(status_visual("").map(|(icon, _)| icon), None);
 }
 
