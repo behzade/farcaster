@@ -112,6 +112,17 @@ pub(crate) struct QueueState {
     pub follow_up: Vec<String>,
 }
 
+impl QueueState {
+    fn acknowledge(&mut self, message: &str) {
+        for queue in [&mut self.steering, &mut self.follow_up] {
+            if let Some(index) = queue.iter().position(|queued| queued == message) {
+                queue.remove(index);
+                return;
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct ConversationState {
     pub items: Vec<Arc<TranscriptItem>>,
@@ -417,22 +428,7 @@ impl ConversationState {
         if let Some(message) = message
             && message.get("role").and_then(Value::as_str) == Some("user")
         {
-            let text = message_text(message);
-            if let Some(index) = self
-                .queue
-                .steering
-                .iter()
-                .position(|queued| queued == &text)
-            {
-                self.queue.steering.remove(index);
-            } else if let Some(index) = self
-                .queue
-                .follow_up
-                .iter()
-                .position(|queued| queued == &text)
-            {
-                self.queue.follow_up.remove(index);
-            }
+            self.queue.acknowledge(&message_text(message));
         }
         if message.is_some_and(|message| {
             message.get("role").and_then(Value::as_str) == Some("toolResult")

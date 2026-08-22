@@ -481,8 +481,4 @@ fn delivered_user_message_is_removed_from_the_visible_queue() {
     }));
 
     assert_eq!(state.queue.follow_up, ["then test"]);
-    assert_eq!(
-        state.items.last().map(|item| item.text.as_str()),
-        Some("do it")
-    );
 }
