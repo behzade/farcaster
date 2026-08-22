@@ -1,15 +1,16 @@
 use std::{path::PathBuf, time::SystemTime};
 
 use super::{
-    ActiveSessionItem, SessionRailItem, SessionRailKind, minimal_row_splice,
-    roots_waiting_for_descendants, session_accessible_label, session_badge, status_visual,
-    subagent_counts, visible_session_shortcuts,
+    ActiveSessionItem, SessionRailItem, SessionRailKind, collapsed_inactive_rail_height,
+    minimal_row_splice, roots_waiting_for_descendants, session_accessible_label, session_badge,
+    status_visual, subagent_counts, visible_session_shortcuts,
 };
 use crate::{
-    app::views::session_rows::session_tooltip_lines,
+    app::views::session_hover::session_tooltip_lines,
     assets::AppIcon,
     projects::DraftSession,
     sessions::{SessionSummary, UsageSummary},
+    theme::THEME,
 };
 
 #[test]
@@ -105,6 +106,21 @@ fn minimal_row_reconciliation_preserves_equal_prefix_and_suffix() {
 }
 
 #[test]
+fn collapsed_archived_rail_leaves_space_after_review() {
+    let review = collapsed_inactive_rail_height(2, false);
+    let archived = collapsed_inactive_rail_height(2, true);
+    assert_eq!(
+        f32::from(review),
+        f32::from(THEME.controls.utility_row)
+            + f32::from(THEME.controls.archived_preview_row) * 2.0
+    );
+    assert_eq!(
+        f32::from(archived) - f32::from(review),
+        f32::from(THEME.space.md)
+    );
+}
+
+#[test]
 fn session_states_use_semantic_icons() {
     assert_eq!(
         status_visual("Done").map(|(icon, _)| icon),
@@ -167,12 +183,14 @@ fn tooltips_report_model_effort_and_direct_subagent_counts() {
     let mut modelled = item("modelled", 1, "/project", SessionRailKind::Project, false);
     modelled.session.model = Some(("anthropic".into(), "claude-opus-4-5".into()));
     modelled.session.thinking_level = Some("high".into());
-    assert_eq!(
-        session_tooltip_lines(&modelled.session, 1),
-        ["anthropic/claude-opus-4-5", "effort: high", "1 subagent",]
-            .map(String::from)
-            .to_vec()
+    let lines = session_tooltip_lines(&modelled.session, 1);
+    assert!(
+        lines
+            .iter()
+            .any(|line| line == "Model: anthropic / claude-opus-4-5")
     );
+    assert!(lines.iter().any(|line| line == "Effort: High"));
+    assert!(lines.iter().any(|line| line == "Subagents: 1 subagent"));
 
     let mut parent = item("parent", 2, "/project", SessionRailKind::Project, false);
     parent.session.parent_session = Some("root".into());
@@ -187,8 +205,9 @@ fn tooltips_report_model_effort_and_direct_subagent_counts() {
     let counts = subagent_counts(&sessions);
 
     assert_eq!(counts.get("root"), Some(&2));
-    assert_eq!(
-        session_tooltip_lines(sessions.first().unwrap(), counts["root"]).len(),
-        1
+    assert!(
+        session_tooltip_lines(sessions.first().unwrap(), counts["root"])
+            .iter()
+            .any(|line| line == "Subagents: 2 subagents")
     );
 }

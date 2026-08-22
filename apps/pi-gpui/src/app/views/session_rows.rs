@@ -19,6 +19,7 @@ use gpui_component::{
 use super::{
     super::{PiApp, PickerScope, ProjectPickerIntent},
     session_groups::{SessionRailItem, SessionRailKind},
+    session_hover::{draft_hover_details, session_hover_details, session_hover_panel},
 };
 use crate::{
     assets::AppIcon,
@@ -26,7 +27,6 @@ use crate::{
         AppIconSize, ReorderPosition, ReorderTargetExt as _, app_icon, icon_control, reorder_handle,
     },
     projects::DraftSession,
-    sessions::SessionSummary,
     theme::THEME,
 };
 
@@ -101,122 +101,137 @@ pub(super) fn draft_session_row(
     let drop_entity = entity.clone();
     let drag_handle_entity = entity.clone();
     let action_group = format!("draft-actions-{id}");
-    div()
-        .h(THEME.layout.session_row_height)
-        .w_full()
-        .px(THEME.space.sm)
-        .child(
-            div()
-                .id(format!("session-{id}"))
-                .role(Role::Button)
-                .aria_label(format!("Open {status} session in {}", project.display()))
-                .aria_selected(selected)
-                .tab_index(0)
-                .size_full()
-                .h(THEME.layout.session_row_height)
-                .flex()
-                .items_center()
-                .gap(THEME.space.sm)
-                .px(THEME.space.sm)
-                .rounded(THEME.radius)
-                .group(action_group.clone())
-                .bg(if selected {
-                    THEME.colors.surface
-                } else {
-                    THEME.colors.panel
-                })
-                .hover(|row| row.bg(THEME.colors.hover))
-                .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
-                .cursor(CursorStyle::PointingHand)
-                .reorder_target::<DraggedSession>(
-                    drop_position,
-                    THEME.colors.accent,
-                    THEME.colors.hover,
-                    move |position, _, cx| {
-                        let _ = drag_move_entity.update(cx, |this, cx| {
-                            this.update_session_drop_target(target_app_session_id, position, cx);
+    let hover_id = format!("draft-hover-{id}");
+    let hover_details = draft_hover_details(draft, status);
+    session_hover_panel(
+        hover_id,
+        hover_details,
+        div()
+            .h(THEME.layout.session_row_height)
+            .w_full()
+            .px(THEME.space.sm)
+            .child(
+                div()
+                    .id(format!("session-{id}"))
+                    .role(Role::Button)
+                    .aria_label(format!("Open {status} session in {}", project.display()))
+                    .aria_selected(selected)
+                    .tab_index(0)
+                    .size_full()
+                    .h(THEME.layout.session_row_height)
+                    .flex()
+                    .items_center()
+                    .gap(THEME.space.sm)
+                    .px(THEME.space.sm)
+                    .rounded(THEME.radius)
+                    .group(action_group.clone())
+                    .bg(if selected {
+                        THEME.colors.surface
+                    } else {
+                        THEME.colors.panel
+                    })
+                    .hover(|row| row.bg(THEME.colors.hover))
+                    .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
+                    .cursor(CursorStyle::PointingHand)
+                    .reorder_target::<DraggedSession>(
+                        drop_position,
+                        THEME.colors.accent,
+                        THEME.colors.hover,
+                        move |position, _, cx| {
+                            let _ = drag_move_entity.update(cx, |this, cx| {
+                                this.update_session_drop_target(
+                                    target_app_session_id,
+                                    position,
+                                    cx,
+                                );
+                            });
+                        },
+                        move |drag, _, cx| {
+                            cx.stop_propagation();
+                            let _ = drop_entity.update(cx, |this, cx| {
+                                this.complete_session_drop(drag.app_session_id, cx);
+                            });
+                        },
+                    )
+                    .on_click(move |_, window, cx| {
+                        let _ = entity.update(cx, |this, cx| {
+                            this.resume_draft(id.clone(), project.clone(), window, cx);
                         });
-                    },
-                    move |drag, _, cx| {
-                        cx.stop_propagation();
-                        let _ = drop_entity.update(cx, |this, cx| {
-                            this.complete_session_drop(drag.app_session_id, cx);
-                        });
-                    },
-                )
-                .on_click(move |_, window, cx| {
-                    let _ = entity.update(cx, |this, cx| {
-                        this.resume_draft(id.clone(), project.clone(), window, cx);
-                    });
-                })
-                .child(session_drag_handle(drag, drag_handle_entity))
-                .child(
-                    div()
-                        .min_w_0()
-                        .flex_1()
-                        .flex()
-                        .flex_col()
-                        .gap(px(2.0))
-                        .overflow_hidden()
-                        .child(
-                            div()
-                                .whitespace_nowrap()
-                                .text_ellipsis()
-                                .text_size(THEME.type_scale.body_small)
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(THEME.colors.text)
-                                .child(title),
-                        )
-                        .child(
-                            div()
-                                .min_w_0()
-                                .flex()
-                                .items_center()
-                                .gap(THEME.space.xs)
-                                .child(
-                                    div()
-                                        .min_w_0()
-                                        .flex_1()
-                                        .child(project_badge(&draft.project)),
-                                )
-                                .child(draft_badge())
-                                .when(status != "Draft", |metadata| {
-                                    metadata.when_some(
-                                        status_icon(target_app_session_id, status),
-                                        |metadata, icon| metadata.child(icon),
+                    })
+                    .child(session_drag_handle(drag, drag_handle_entity))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.0))
+                            .overflow_hidden()
+                            .child(
+                                div()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .text_size(THEME.type_scale.body_small)
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(THEME.colors.text)
+                                    .child(title),
+                            )
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .flex()
+                                    .items_center()
+                                    .gap(THEME.space.xs)
+                                    .child(
+                                        div()
+                                            .min_w_0()
+                                            .flex_1()
+                                            .child(project_badge(&draft.project)),
                                     )
-                                })
-                                .when_some(shortcut, |metadata, number| {
-                                    metadata.child(Kbd::new(
-                                        gpui::Keystroke::parse(&format!("cmd-{number}"))
-                                            .expect("fixed session shortcut must parse"),
-                                    ))
-                                })
-                                .when(!draft.submitted, |metadata| {
-                                    metadata.child(
-                                        icon_control(
-                                            format!("discard-{discard_id}"),
-                                            "Discard draft",
+                                    .child(draft_badge())
+                                    .when(status != "Draft", |metadata| {
+                                        metadata.when_some(
+                                            status_icon(target_app_session_id, status),
+                                            |metadata, icon| metadata.child(icon),
                                         )
-                                        .opacity(0.0)
-                                        .group_hover(action_group, |button| button.opacity(1.0))
-                                        .focus(|button| button.opacity(1.0))
-                                        .hover(|button| button.bg(THEME.colors.hover))
-                                        .child(app_icon(AppIcon::X, AppIconSize::Control))
-                                        .on_click(
-                                            move |_, window, cx| {
-                                                cx.stop_propagation();
-                                                let _ = discard_entity.update(cx, |this, cx| {
-                                                    this.discard_draft(&discard_id, window, cx);
-                                                });
-                                            },
-                                        ),
-                                    )
-                                }),
-                        ),
-                ),
-        )
-        .into_any_element()
+                                    })
+                                    .when_some(shortcut, |metadata, number| {
+                                        metadata.child(Kbd::new(
+                                            gpui::Keystroke::parse(&format!("cmd-{number}"))
+                                                .expect("fixed session shortcut must parse"),
+                                        ))
+                                    })
+                                    .when(!draft.submitted, |metadata| {
+                                        metadata.child(
+                                            icon_control(
+                                                format!("discard-{discard_id}"),
+                                                "Discard draft",
+                                            )
+                                            .opacity(0.0)
+                                            .group_hover(action_group, |button| button.opacity(1.0))
+                                            .focus(|button| button.opacity(1.0))
+                                            .hover(|button| button.bg(THEME.colors.hover))
+                                            .child(app_icon(AppIcon::X, AppIconSize::Control))
+                                            .on_click(
+                                                move |_, window, cx| {
+                                                    cx.stop_propagation();
+                                                    let _ =
+                                                        discard_entity.update(cx, |this, cx| {
+                                                            this.discard_draft(
+                                                                &discard_id,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        });
+                                                },
+                                            ),
+                                        )
+                                    }),
+                            ),
+                    ),
+            )
+            .into_any_element(),
+    )
 }
 
 pub(super) fn session_badge(
@@ -287,7 +302,6 @@ pub(super) fn session_row_with_height(
     entity: WeakEntity<PiApp>,
 ) -> AnyElement {
     let session = &item.session;
-    let tooltip_lines = session_tooltip_lines(session, subagents);
     let path = session.path.clone();
     let project = session.project.clone();
     let open_entity = entity.clone();
@@ -334,6 +348,8 @@ pub(super) fn session_row_with_height(
     } else {
         AppIcon::Archive
     };
+    let hover_details = session_hover_details(session, accessible_state, &age, subagents);
+    let hover_id = format!("session-hover-{}", session.id);
     let row = div()
         .id(format!("session-{}", session.id))
         .role(Role::Button)
@@ -391,13 +407,6 @@ pub(super) fn session_row_with_height(
                     this.select_session(path.clone(), project.clone(), window, cx)
                 });
             }
-        })
-        .when(!tooltip_lines.is_empty(), |row| {
-            row.tooltip(move |window, cx| {
-                let lines = tooltip_lines.clone();
-                Tooltip::element(move |_, _| session_tooltip_element(lines.as_slice()))
-                    .build(window, cx)
-            })
         })
         .child(
             div()
@@ -623,46 +632,20 @@ pub(super) fn session_row_with_height(
                         ),
                 ),
         );
-    div()
-        .h(row_height)
-        .w_full()
-        .px(THEME.space.sm)
-        .child(row)
-        .into_any_element()
+    session_hover_panel(
+        hover_id,
+        hover_details,
+        div()
+            .h(row_height)
+            .w_full()
+            .px(THEME.space.sm)
+            .child(row)
+            .into_any_element(),
+    )
 }
 
 pub(super) fn session_accessible_label(title: &str, state: &str, age: &str) -> String {
     format!("Resume session: {title}. State: {state}. Updated {age}")
-}
-
-fn session_tooltip_element(lines: &[String]) -> AnyElement {
-    div()
-        .flex()
-        .flex_col()
-        .gap(px(2.0))
-        .children(lines.iter().map(|line| {
-            div()
-                .whitespace_nowrap()
-                .text_size(THEME.type_scale.caption)
-                .text_color(THEME.colors.text)
-                .child(line.clone())
-        }))
-        .into_any_element()
-}
-
-pub(super) fn session_tooltip_lines(session: &SessionSummary, subagents: usize) -> Vec<String> {
-    let mut lines = Vec::new();
-    if let Some((provider, model)) = &session.model {
-        lines.push(format!("{provider}/{model}"));
-    }
-    if let Some(level) = &session.thinking_level {
-        lines.push(format!("effort: {level}"));
-    }
-    if subagents > 0 {
-        let plural = if subagents == 1 { "" } else { "s" };
-        lines.push(format!("{subagents} subagent{plural}"));
-    }
-    lines
 }
 
 fn status_icon(app_session_id: i64, status: &str) -> Option<AnyElement> {

@@ -11,6 +11,7 @@ mod regions;
 mod run_panel;
 mod run_panel_changes;
 mod session_groups;
+mod session_hover;
 mod session_rail;
 mod session_rows;
 mod shell;
