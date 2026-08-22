@@ -211,7 +211,11 @@ fn oversized_fenced_code_is_split_into_bounded_valid_markdown() {
 
 #[test]
 fn unclosed_fences_keep_code_context_and_commonmark_boundaries() {
-    let text = format!("  ~~~~rust\r\n{}", "line\r\n".repeat(200));
+    let text = format!(
+        "  ~~~~rust\r\n{}  ~~~~not-a-close\r\n{}",
+        "line\r\n".repeat(100),
+        "tail\r\n".repeat(100)
+    );
     let chunks = markdown_chunks(&text);
 
     assert!(chunks.len() > 1);
