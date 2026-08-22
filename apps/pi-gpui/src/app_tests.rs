@@ -243,6 +243,31 @@ fn active_session_discovery_does_not_invalidate_archived_sessions() {
 }
 
 #[test]
+fn status_events_invalidate_only_visible_active_rows() {
+    let sessions = vec![
+        session_summary("active", None, false),
+        session_summary("review", None, false).with_review(true),
+    ];
+    let drafts = [projects::DraftSession::with_id(
+        "draft".into(),
+        PathBuf::from("/project"),
+    )];
+    let submitted = HashMap::from([("draft".into(), Some(PathBuf::from("/promoted.jsonl")))]);
+    let affects = |target, path| {
+        session_event_affects_active_rail(&drafts, &submitted, &sessions, target, path)
+    };
+
+    assert!(affects("session:/active.jsonl", None));
+    assert!(affects("draft:draft", None));
+    assert!(affects("session:/promoted.jsonl", None));
+    assert!(!affects(
+        "session:/new.jsonl",
+        Some(Path::new("/new.jsonl")),
+    ));
+    assert!(!affects("session:/review.jsonl", None));
+}
+
+#[test]
 fn done_is_recent_only_after_an_active_status_transition() {
     assert!(!starts_recent_completion(None, "Done", false));
     assert!(!starts_recent_completion(Some("Done"), "Done", false));

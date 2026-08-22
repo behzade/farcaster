@@ -632,8 +632,13 @@ impl PiApp {
                 RuntimeEvent::SessionStatus {
                     target, session, ..
                 } => {
-                    rail_dirty = true;
-                    review_rail_dirty = true;
+                    rail_dirty |= session_event_affects_active_rail(
+                        &self.drafts,
+                        &self.submitted_drafts,
+                        &self.sessions,
+                        &target,
+                        session.as_deref(),
+                    );
                     archived_rail_dirty |= archive::session_event_affects_archived_rail(
                         &self.sessions,
                         target,
@@ -652,8 +657,13 @@ impl PiApp {
                     target, session, ..
                 } => {
                     root_dirty = true;
-                    rail_dirty = true;
-                    review_rail_dirty = true;
+                    rail_dirty |= session_event_affects_active_rail(
+                        &self.drafts,
+                        &self.submitted_drafts,
+                        &self.sessions,
+                        target,
+                        session.as_deref(),
+                    );
                     archived_rail_dirty |= archive::session_event_affects_archived_rail(
                         &self.sessions,
                         target,
@@ -1649,6 +1659,35 @@ fn inactive_session_catalog_changed(
             .collect::<HashSet<_>>()
     };
     waiting(current_all) != waiting(next_all)
+}
+
+fn session_event_affects_active_rail(
+    drafts: &[projects::DraftSession],
+    submitted_drafts: &HashMap<String, Option<PathBuf>>,
+    sessions: &[SessionSummary],
+    target: &str,
+    session_path: Option<&Path>,
+) -> bool {
+    if target
+        .strip_prefix("draft:")
+        .is_some_and(|id| drafts.iter().any(|draft| draft.id == id))
+        || submitted_drafts
+            .values()
+            .flatten()
+            .any(|path| session_path == Some(path.as_path()) || session_target(path) == target)
+    {
+        return true;
+    }
+    let session = session_path
+        .and_then(|path| sessions.iter().find(|session| session.path == path))
+        .or_else(|| {
+            sessions
+                .iter()
+                .find(|session| session_target(&session.path) == target)
+        });
+    session
+        .and_then(|session| root_session_for_path(sessions, Some(&session.path)))
+        .is_some_and(|root| !root.in_review && !root.archived)
 }
 
 fn run_panel_sessions_changed(
