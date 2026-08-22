@@ -92,7 +92,7 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
             true,
             "literal_100% hello".into(),
         )])?;
-        store.set_settled(&catalog_session_path.canonicalize()?, true)?;
+        store.set_archived(&catalog_session_path.canonicalize()?, true)?;
     }
     let mut store = StateStore::open_at(&database)?;
     assert_eq!(
@@ -123,7 +123,7 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
         }]
     );
     assert_eq!(store.cached_sessions("literal_100%")?.len(), 1);
-    assert!(store.cached_sessions("")?[0].settled);
+    assert!(store.cached_sessions("")?[0].archived);
     assert!(store.cached_sessions("")?[0].is_running);
     store.begin_prompt(queued[0].id)?;
     store.complete_prompt(

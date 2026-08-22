@@ -236,7 +236,7 @@ pub(super) fn session_badge(
         .or_else(|| item.session.is_running.then(|| "Working".into()))
         .or_else(|| (item.kind == SessionRailKind::Project).then(|| "Done".into()));
     match (item.kind, status.as_deref()) {
-        (SessionRailKind::Settled, Some("Done")) | (_, None) => None,
+        (SessionRailKind::Archived, Some("Done")) | (_, None) => None,
         _ => status,
     }
 }
@@ -294,8 +294,8 @@ pub(super) fn session_row_with_height(
     let move_path = session.path.clone();
     let move_project = session.project.clone();
     let move_entity = entity.clone();
-    let settle_path = session.path.clone();
-    let settle_entity = entity.clone();
+    let archive_path = session.path.clone();
+    let archive_entity = entity.clone();
     let target_app_session_id = session.app_session_id;
     let drag = DraggedSession {
         app_session_id: target_app_session_id,
@@ -306,7 +306,7 @@ pub(super) fn session_row_with_height(
     let drop_entity = entity.clone();
     let drag_handle_entity = entity.clone();
     let age = relative_age(session.modified);
-    let is_settled = item.kind == SessionRailKind::Settled;
+    let is_archived = item.kind == SessionRailKind::Archived;
     let status_text = status.unwrap_or_default();
     let accessible_state = if status_text.is_empty() {
         "Archived"
@@ -314,8 +314,8 @@ pub(super) fn session_row_with_height(
         status_text.as_str()
     };
     let accessible_label = session_accessible_label(&session.title, accessible_state, &age);
-    let settle_label = if is_settled { "Restore" } else { "Settle" };
-    let settle_icon = if is_settled {
+    let archive_label = if is_archived { "Restore" } else { "Archive" };
+    let archive_icon = if is_archived {
         AppIcon::ArrowCounterClockwise
     } else {
         AppIcon::Archive
@@ -415,12 +415,12 @@ pub(super) fn session_row_with_height(
                                 .whitespace_nowrap()
                                 .text_ellipsis()
                                 .text_size(THEME.type_scale.body_small)
-                                .font_weight(if selected || !is_settled {
+                                .font_weight(if selected || !is_archived {
                                     FontWeight::SEMIBOLD
                                 } else {
                                     FontWeight::NORMAL
                                 })
-                                .text_color(if is_settled && !selected {
+                                .text_color(if is_archived && !selected {
                                     THEME.colors.muted
                                 } else {
                                     THEME.colors.text
@@ -511,9 +511,9 @@ pub(super) fn session_row_with_height(
                                 })
                                 .child(
                                     div()
-                                        .id(format!("settle-{}", session.id))
+                                        .id(format!("archive-{}", session.id))
                                         .role(Role::Button)
-                                        .aria_label(format!("{settle_label} session"))
+                                        .aria_label(format!("{archive_label} session"))
                                         .tab_index(0)
                                         .size(THEME.controls.icon_button)
                                         .flex_none()
@@ -532,23 +532,23 @@ pub(super) fn session_row_with_height(
                                                 .border(THEME.border)
                                                 .border_color(THEME.colors.accent)
                                         })
-                                        .text_color(if is_settled {
+                                        .text_color(if is_archived {
                                             THEME.colors.success
                                         } else {
                                             THEME.colors.muted
                                         })
                                         .hover(|button| button.bg(THEME.colors.hover))
                                         .tooltip(move |window, cx| {
-                                            Tooltip::new(format!("{settle_label} session"))
+                                            Tooltip::new(format!("{archive_label} session"))
                                                 .build(window, cx)
                                         })
-                                        .child(app_icon(settle_icon, AppIconSize::Control))
+                                        .child(app_icon(archive_icon, AppIconSize::Control))
                                         .on_click(move |_, _, cx| {
                                             cx.stop_propagation();
-                                            let _ = settle_entity.update(cx, |this, cx| {
-                                                this.set_session_settled(
-                                                    settle_path.clone(),
-                                                    !is_settled,
+                                            let _ = archive_entity.update(cx, |this, cx| {
+                                                this.set_session_archived(
+                                                    archive_path.clone(),
+                                                    !is_archived,
                                                     cx,
                                                 );
                                             });

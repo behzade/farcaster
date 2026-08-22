@@ -287,12 +287,12 @@ impl Render for PiApp {
                 ) {
                     CurrentCloseTarget::Draft(id) => this.discard_draft(&id, window, cx),
                     CurrentCloseTarget::Session(path) => {
-                        let settled = this
+                        let archived = this
                             .sessions
                             .iter()
                             .find(|session| session.path == path)
-                            .is_some_and(|session| session.settled);
-                        this.set_session_settled(path, !settled, cx);
+                            .is_some_and(|session| session.archived);
+                        this.set_session_archived(path, !archived, cx);
                     }
                     CurrentCloseTarget::None => {}
                 },

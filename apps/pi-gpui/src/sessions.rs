@@ -59,7 +59,7 @@ pub(crate) struct SessionSummary {
     pub modified: SystemTime,
     pub message_count: usize,
     pub usage: UsageSummary,
-    pub settled: bool,
+    pub archived: bool,
     pub is_running: bool,
     search: String,
 }
@@ -77,7 +77,7 @@ impl SessionSummary {
         modified: SystemTime,
         message_count: usize,
         usage: UsageSummary,
-        settled: bool,
+        archived: bool,
         is_running: bool,
         search: String,
     ) -> Self {
@@ -97,7 +97,7 @@ impl SessionSummary {
             modified,
             message_count,
             usage,
-            settled,
+            archived,
             is_running,
             search,
         }
@@ -887,7 +887,7 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
             modified,
             message_count,
             usage,
-            settled: false,
+            archived: false,
             is_running,
             search: search.to_lowercase(),
         },

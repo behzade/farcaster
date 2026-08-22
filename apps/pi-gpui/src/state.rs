@@ -636,17 +636,17 @@ impl StateStore {
             .map_err(|error| format!("commit session path relocation: {error}"))
     }
 
-    pub(crate) fn set_settled(&self, path: &Path, settled: bool) -> Result<(), String> {
+    pub(crate) fn set_archived(&self, path: &Path, archived: bool) -> Result<(), String> {
         self.connection
             .execute(
                 "UPDATE sessions SET settled_ms=?2 WHERE path=?1",
                 params![
                     path.to_string_lossy(),
-                    settled.then_some(now_ms()).map(u64_to_i64)
+                    archived.then_some(now_ms()).map(u64_to_i64)
                 ],
             )
             .map(|_| ())
-            .map_err(|error| format!("update settled state for {}: {error}", path.display()))
+            .map_err(|error| format!("update archived state for {}: {error}", path.display()))
     }
 
     pub(crate) fn enqueue_prompt(

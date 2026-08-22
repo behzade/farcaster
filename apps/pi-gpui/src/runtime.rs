@@ -92,9 +92,9 @@ pub(crate) enum RuntimeCommand {
     SetThinking(String),
     ExtensionResponse(ExtensionUiResponse),
     DeliverQueued(crate::state::QueuedPrompt),
-    SetSettled {
+    SetArchived {
         path: PathBuf,
-        settled: bool,
+        archived: bool,
     },
     LoadSessions(String),
     RefreshSessions,
@@ -855,7 +855,7 @@ fn run_supervisor(
                         &command,
                         RuntimeCommand::LoadSessions(_)
                             | RuntimeCommand::RefreshSessions
-                            | RuntimeCommand::SetSettled { .. }
+                            | RuntimeCommand::SetArchived { .. }
                             | RuntimeCommand::RenameSession { .. }
                             | RuntimeCommand::MoveSession { .. }
                     ) {
@@ -1419,9 +1419,9 @@ impl RuntimeOwner {
                     self.fail(error);
                 }
             }
-            RuntimeCommand::SetSettled { path, settled } => {
+            RuntimeCommand::SetArchived { path, archived } => {
                 if let Some(state) = &self.state
-                    && let Err(error) = state.set_settled(&path, settled)
+                    && let Err(error) = state.set_archived(&path, archived)
                 {
                     let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
                         generation: self.session_generation,
@@ -2351,7 +2351,7 @@ mod tests {
 
         assert!(!documents::session_document_is_live(&session, false, false));
         assert!(documents::session_document_is_live(&session, true, false));
-        session.settled = true;
+        session.archived = true;
         assert!(!documents::session_document_is_live(&session, true, false));
         assert!(documents::session_document_is_live(&session, true, true));
         session.is_running = true;
@@ -2621,7 +2621,7 @@ mod tests {
         let resident = resident.ok_or_else(|| "document did not hydrate".to_owned())?;
         documents.insert(key.clone(), resident);
         let mut archived = session;
-        archived.settled = true;
+        archived.archived = true;
         reconcile_live_session_documents(
             &[archived],
             &HashSet::from([key.clone()]),

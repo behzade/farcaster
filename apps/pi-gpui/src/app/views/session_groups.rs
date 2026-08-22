@@ -14,7 +14,7 @@ use crate::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum SessionRailKind {
     Project,
-    Settled,
+    Archived,
 }
 
 #[derive(Clone, Debug)]
@@ -98,13 +98,13 @@ pub(super) fn session_rail_lists(
     {
         let item = SessionRailItem {
             session: session.clone(),
-            kind: if session.settled {
-                SessionRailKind::Settled
+            kind: if session.archived {
+                SessionRailKind::Archived
             } else {
                 SessionRailKind::Project
             },
         };
-        if session.settled {
+        if session.archived {
             archived.push(item);
         } else {
             active.push(ActiveSessionItem::Session(item));
@@ -341,7 +341,7 @@ mod tests {
         );
     }
 
-    fn session(id: &str, app_session_id: i64, project: &Path, settled: bool) -> SessionSummary {
+    fn session(id: &str, app_session_id: i64, project: &Path, archived: bool) -> SessionSummary {
         SessionSummary::from_cached(
             id.into(),
             PathBuf::from(format!("/{id}.jsonl")),
@@ -353,7 +353,7 @@ mod tests {
             SystemTime::UNIX_EPOCH,
             0,
             UsageSummary::default(),
-            settled,
+            archived,
             false,
             String::new(),
         )

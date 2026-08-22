@@ -11,7 +11,7 @@ pub(super) fn session_document_is_live(
     interacted: bool,
     rpc_attached: bool,
 ) -> bool {
-    rpc_attached || session.is_running || (interacted && !session.settled)
+    rpc_attached || session.is_running || (interacted && !session.archived)
 }
 
 #[allow(clippy::too_many_arguments)]

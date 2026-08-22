@@ -57,8 +57,8 @@ fn active_sessions_always_have_a_meaningful_state() {
 
 #[test]
 fn archived_sessions_suppress_done_but_keep_active_states() {
-    let archived = item("archived", 2, "/project", SessionRailKind::Settled, false);
-    let running = item("running", 1, "/project", SessionRailKind::Settled, true);
+    let archived = item("archived", 2, "/project", SessionRailKind::Archived, false);
+    let running = item("running", 1, "/project", SessionRailKind::Archived, true);
 
     assert_eq!(
         session_badge(&archived, Some("Done"), None, "", false),
@@ -149,7 +149,7 @@ fn item(
             },
             0,
             UsageSummary::default(),
-            kind == SessionRailKind::Settled,
+            kind == SessionRailKind::Archived,
             is_running,
             String::new(),
         )

@@ -1358,18 +1358,18 @@ impl PiApp {
         );
     }
 
-    fn set_session_settled(&mut self, path: PathBuf, settled: bool, cx: &mut Context<Self>) {
+    fn set_session_archived(&mut self, path: PathBuf, archived: bool, cx: &mut Context<Self>) {
         if let Some(session) = self
             .sessions
             .iter_mut()
             .find(|session| session.path == path)
         {
-            session.settled = settled;
+            session.archived = archived;
         }
-        if !self.sessions.iter().any(|session| session.settled) {
+        if !self.sessions.iter().any(|session| session.archived) {
             self.archived_sessions_expanded = false;
         }
-        self.send(RuntimeCommand::SetSettled { path, settled });
+        self.send(RuntimeCommand::SetArchived { path, archived });
         self.notify_session_rail(cx);
         self.notify_run_panel(cx);
     }
@@ -1487,7 +1487,7 @@ fn archived_session_catalog_changed(
     fn render_key(
         session: &SessionSummary,
     ) -> Option<(&str, i64, &Path, &Path, &str, SystemTime, bool)> {
-        (session.parent_session.is_none() && session.settled).then_some((
+        (session.parent_session.is_none() && session.archived).then_some((
             session.id.as_str(),
             session.app_session_id,
             session.path.as_path(),
@@ -1508,7 +1508,7 @@ fn archived_session_catalog_changed(
 
     let archived_ids = current
         .iter()
-        .filter(|session| session.parent_session.is_none() && session.settled)
+        .filter(|session| session.parent_session.is_none() && session.archived)
         .map(|session| session.id.as_str())
         .collect::<HashSet<_>>();
     let archived_waiting_roots = |sessions| {
@@ -1622,7 +1622,7 @@ fn archived_session_rail_snapshot_changed(
 ) -> bool {
     let archived_root_id = |path| {
         root_session_for_path(sessions, path)
-            .filter(|session| session.settled)
+            .filter(|session| session.archived)
             .map(|session| session.id.as_str())
     };
     let previous_live = archived_root_id(previous.live_session.as_deref());

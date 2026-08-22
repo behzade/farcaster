@@ -76,7 +76,7 @@ impl PiApp {
         }) {
             Ok(()) => {
                 if let Some(path) = archived_session {
-                    self.set_session_settled(path, false, cx);
+                    self.set_session_archived(path, false, cx);
                 }
                 self.begin_draft_submission(&target, &value);
                 self.notify_session_rail(cx);
@@ -355,7 +355,7 @@ fn archived_session_for_target(
         .then(|| {
             sessions
                 .iter()
-                .find(|session| session.path == selected && session.settled)
+                .find(|session| session.path == selected && session.archived)
                 .map(|session| session.path.clone())
         })
         .flatten()
@@ -404,7 +404,7 @@ mod tests {
     use super::*;
     use crate::sessions::UsageSummary;
 
-    fn session(path: &str, settled: bool) -> SessionSummary {
+    fn session(path: &str, archived: bool) -> SessionSummary {
         SessionSummary::from_cached(
             "test".into(),
             path.into(),
@@ -416,7 +416,7 @@ mod tests {
             SystemTime::UNIX_EPOCH,
             0,
             UsageSummary::default(),
-            settled,
+            archived,
             false,
             String::new(),
         )

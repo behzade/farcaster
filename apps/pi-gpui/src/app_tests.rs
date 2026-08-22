@@ -36,7 +36,7 @@ fn item(text: &str) -> TranscriptItem {
     }
 }
 
-fn session_summary(id: &str, parent: Option<&str>, settled: bool) -> SessionSummary {
+fn session_summary(id: &str, parent: Option<&str>, archived: bool) -> SessionSummary {
     SessionSummary::from_cached(
         id.into(),
         PathBuf::from(format!("/{id}.jsonl")),
@@ -48,7 +48,7 @@ fn session_summary(id: &str, parent: Option<&str>, settled: bool) -> SessionSumm
         SystemTime::UNIX_EPOCH,
         0,
         UsageSummary::default(),
-        settled,
+        archived,
         false,
         String::new(),
     )
