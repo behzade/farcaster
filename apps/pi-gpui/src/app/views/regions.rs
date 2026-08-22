@@ -1,6 +1,6 @@
 use gpui::{Context, Entity, IntoElement as _, Render, Subscription, WeakEntity};
 
-use super::PiApp;
+use super::{PiApp, session_groups::SessionRailKind};
 use crate::app::workgraph::adapter::WorkGraphBoardView;
 use crate::transcript;
 
@@ -8,8 +8,9 @@ pub(crate) struct SessionRailView {
     app: WeakEntity<PiApp>,
 }
 
-pub(crate) struct ArchivedSessionRailView {
+pub(crate) struct InactiveSessionRailView {
     app: WeakEntity<PiApp>,
+    kind: SessionRailKind,
 }
 
 pub(crate) struct TranscriptView {
@@ -36,9 +37,9 @@ impl SessionRailView {
     }
 }
 
-impl ArchivedSessionRailView {
-    pub(crate) fn new(app: WeakEntity<PiApp>) -> Self {
-        Self { app }
+impl InactiveSessionRailView {
+    pub(crate) fn new(app: WeakEntity<PiApp>, kind: SessionRailKind) -> Self {
+        Self { app, kind }
     }
 }
 
@@ -85,15 +86,14 @@ impl Render for SessionRailView {
     }
 }
 
-impl Render for ArchivedSessionRailView {
+impl Render for InactiveSessionRailView {
     fn render(&mut self, _: &mut gpui::Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
-        let _timing = crate::performance::Timing::new("render.archived_session_sidebar");
+        let _timing = crate::performance::Timing::new("render.inactive_session_sidebar");
         let Some(app) = self.app.upgrade() else {
             return gpui::div().into_any_element();
         };
         app.read(cx)
-            .render_archived_sessions(self.app.clone())
-            .into_any_element()
+            .render_inactive_sessions(self.app.clone(), self.kind)
     }
 }
 

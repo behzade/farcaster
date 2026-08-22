@@ -55,7 +55,7 @@ impl PiApp {
             .flatten()
             .map(|image| image.prompt.clone())
             .collect::<Vec<PromptImage>>();
-        let archived_session = archived_session_for_target(
+        let inactive_session = inactive_session_for_target(
             &target,
             self.snapshot.selected_session.as_deref(),
             &self.sessions,
@@ -68,8 +68,8 @@ impl PiApp {
             allow_while_running,
         }) {
             Ok(()) => {
-                if let Some(path) = archived_session {
-                    self.set_session_archived(path, false, cx);
+                if let Some(path) = inactive_session {
+                    self.set_session_active(path, cx);
                 }
                 self.begin_draft_submission(&target, &value);
                 self.notify_session_rail(cx);
@@ -355,7 +355,7 @@ fn can_submit_to(
     !pending.contains_key(target)
 }
 
-fn archived_session_for_target(
+fn inactive_session_for_target(
     target: &str,
     selected_session: Option<&Path>,
     sessions: &[SessionSummary],
@@ -365,7 +365,7 @@ fn archived_session_for_target(
         .then(|| {
             sessions
                 .iter()
-                .find(|session| session.path == selected && session.archived)
+                .find(|session| session.path == selected && (session.in_review || session.archived))
                 .map(|session| session.path.clone())
         })
         .flatten()
@@ -426,20 +426,25 @@ mod tests {
     }
 
     #[test]
-    fn archived_selected_session_is_restored_when_its_message_is_sent() {
-        let path = Path::new("/sessions/archived.jsonl");
-        let sessions = [session("/sessions/archived.jsonl", true)];
+    fn review_and_archived_sessions_activate_when_their_message_is_sent() {
+        let path = Path::new("/sessions/inactive.jsonl");
+        let archived = [session("/sessions/inactive.jsonl", true)];
         assert_eq!(
-            archived_session_for_target(&session_target(path), Some(path), &sessions),
+            inactive_session_for_target(&session_target(path), Some(path), &archived),
+            Some(path.to_path_buf())
+        );
+        let review = [session("/sessions/inactive.jsonl", false).with_review(true)];
+        assert_eq!(
+            inactive_session_for_target(&session_target(path), Some(path), &review),
             Some(path.to_path_buf())
         );
         assert_eq!(
-            archived_session_for_target("session:/sessions/other.jsonl", Some(path), &sessions),
+            inactive_session_for_target("session:/sessions/other.jsonl", Some(path), &review),
             None
         );
-        let active_sessions = [session("/sessions/archived.jsonl", false)];
+        let active = [session("/sessions/inactive.jsonl", false)];
         assert_eq!(
-            archived_session_for_target(&session_target(path), Some(path), &active_sessions),
+            inactive_session_for_target(&session_target(path), Some(path), &active),
             None
         );
     }

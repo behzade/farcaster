@@ -147,8 +147,7 @@ fn context_metric(usage: &ComposerUsage) -> AnyElement {
     let filled = if percent <= 0.0 {
         0
     } else {
-        ((percent / 100.0 * CONTEXT_SEGMENTS as f64).round() as usize)
-            .clamp(1, CONTEXT_SEGMENTS)
+        ((percent / 100.0 * CONTEXT_SEGMENTS as f64).round() as usize).clamp(1, CONTEXT_SEGMENTS)
     };
     let color = context_color(usage.context_percent);
     div()

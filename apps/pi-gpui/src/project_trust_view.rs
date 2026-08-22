@@ -4,8 +4,8 @@ use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
 use gpui::{
     AppContext as _, Context, Entity, FocusHandle, InteractiveElement as _, IntoElement as _,
-    ParentElement as _, Render, Role, StatefulInteractiveElement as _,
-    Styled as _, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
+    ParentElement as _, Render, Role, StatefulInteractiveElement as _, Styled as _, WeakEntity,
+    Window, div, prelude::FluentBuilder as _, px,
 };
 
 use crate::{

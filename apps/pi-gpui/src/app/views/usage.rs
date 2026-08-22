@@ -13,10 +13,7 @@ pub(super) struct ComposerUsage {
 }
 
 pub(super) fn composer_usage(app: &PiApp) -> ComposerUsage {
-    let root = root_session_for_path(
-        &app.all_sessions,
-        app.snapshot.selected_session.as_deref(),
-    );
+    let root = root_session_for_path(&app.all_sessions, app.snapshot.selected_session.as_deref());
     let descendants = root
         .map(|root| descendant_sessions(&app.all_sessions, &root.id))
         .unwrap_or_default();

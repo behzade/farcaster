@@ -20,8 +20,8 @@ pub(crate) use picker::{PICKER_KEY_CONTEXT, PickerScope, ProjectPickerIntent};
 use submissions::PendingSubmission;
 pub(crate) use views::OVERLAY_KEY_CONTEXT;
 use views::{
-    ArchivedSessionRailView, ComposerView, RunPanelView, SessionRailView, TranscriptView,
-    WorkGraphDetailView, roots_waiting_for_descendants,
+    ComposerView, InactiveSessionRailView, RunPanelView, SessionRailKind, SessionRailView,
+    TranscriptView, WorkGraphDetailView, roots_waiting_for_descendants,
 };
 pub(crate) use workgraph::adapter::{WORKGRAPH_KEY_CONTEXT, WORKGRAPH_NAV_KEY_CONTEXT};
 use workgraph::{adapter::WorkGraphBoardView, sidebar::WorkGraphSidebarView};
@@ -32,7 +32,7 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
-    time::{Instant, SystemTime},
+    time::Instant,
 };
 
 use gpui::{
@@ -183,6 +183,8 @@ pub(crate) struct PiApp {
     picker_return_focus: Option<FocusHandle>,
     session_list: ListState,
     session_list_rows: RefCell<Vec<String>>,
+    review_session_list: ListState,
+    review_session_list_rows: RefCell<Vec<String>>,
     archived_session_list: ListState,
     archived_session_list_rows: RefCell<Vec<String>>,
     session_generation: u64,
@@ -193,7 +195,8 @@ pub(crate) struct PiApp {
     composer_project_files_loading: Option<PathBuf>,
     composer_mention_selection: usize,
     session_rail_view: Entity<SessionRailView>,
-    archived_session_rail_view: Entity<ArchivedSessionRailView>,
+    review_session_rail_view: Entity<InactiveSessionRailView>,
+    archived_session_rail_view: Entity<InactiveSessionRailView>,
     transcript_view: Entity<TranscriptView>,
     composer_view: Entity<ComposerView>,
     run_panel_view: Entity<RunPanelView>,
@@ -238,6 +241,7 @@ pub(crate) struct PiApp {
     pending_submissions: HashMap<String, PendingSubmission>,
     pending_session_reset: bool,
     sessions_sheet: bool,
+    review_sessions_expanded: bool,
     archived_sessions_expanded: bool,
     run_sheet: bool,
     keybindings_help: bool,
@@ -412,8 +416,10 @@ impl PiApp {
         });
         let app = cx.entity().downgrade();
         let session_rail_view = cx.new(|_| SessionRailView::new(app.clone()));
+        let review_session_rail_view =
+            cx.new(|_| InactiveSessionRailView::new(app.clone(), SessionRailKind::Review));
         let archived_session_rail_view =
-            cx.new(|_| ArchivedSessionRailView::new(app.clone()));
+            cx.new(|_| InactiveSessionRailView::new(app.clone(), SessionRailKind::Archived));
         let transcript_view = cx.new(|_| TranscriptView::new(app.clone()));
         let composer_view = cx.new(|_| ComposerView::new(app.clone()));
         let run_panel_view = cx.new(|_| RunPanelView::new(app.clone()));
@@ -485,6 +491,12 @@ impl PiApp {
                 crate::theme::THEME.layout.transcript_overdraw,
             ),
             session_list_rows: RefCell::new(Vec::new()),
+            review_session_list: ListState::new(
+                0,
+                ListAlignment::Top,
+                crate::theme::THEME.layout.transcript_overdraw,
+            ),
+            review_session_list_rows: RefCell::new(Vec::new()),
             archived_session_list: ListState::new(
                 0,
                 ListAlignment::Top,
@@ -499,6 +511,7 @@ impl PiApp {
             composer_project_files_loading: None,
             composer_mention_selection: 0,
             session_rail_view,
+            review_session_rail_view,
             archived_session_rail_view,
             transcript_view,
             composer_view,
@@ -544,6 +557,7 @@ impl PiApp {
             pending_submissions: HashMap::new(),
             pending_session_reset: false,
             sessions_sheet: false,
+            review_sessions_expanded: false,
             archived_sessions_expanded: false,
             run_sheet: false,
             keybindings_help: false,
@@ -570,6 +584,7 @@ impl PiApp {
             .as_mut()
             .is_some_and(crate::performance::PerformanceMonitor::sample_if_due);
         let mut rail_dirty = false;
+        let mut review_rail_dirty = false;
         let mut archived_rail_dirty = false;
         let mut transcript_dirty = false;
         let mut composer_dirty = false;
@@ -581,7 +596,14 @@ impl PiApp {
                 RuntimeEvent::Snapshot { snapshot, .. } => {
                     rail_dirty |=
                         session_rail_snapshot_changed(&self.sessions, &self.snapshot, snapshot);
-                    archived_rail_dirty |= archived_session_rail_snapshot_changed(
+                    review_rail_dirty |= inactive_session_rail_snapshot_changed(
+                        SessionRailKind::Review,
+                        &self.sessions,
+                        &self.snapshot,
+                        snapshot,
+                    );
+                    archived_rail_dirty |= inactive_session_rail_snapshot_changed(
+                        SessionRailKind::Archived,
                         &self.sessions,
                         &self.snapshot,
                         snapshot,
@@ -592,10 +614,13 @@ impl PiApp {
                     workgraph_session_dirty |=
                         self.snapshot.selected_session != snapshot.selected_session;
                 }
-                RuntimeEvent::Sessions { .. } | RuntimeEvent::SessionsFailed { .. } => {}
+                RuntimeEvent::Sessions { .. }
+                | RuntimeEvent::SessionsFailed { .. }
+                | RuntimeEvent::SessionFilesModified { .. } => {}
                 RuntimeEvent::SessionMoved { .. } => {
                     root_dirty = true;
                     rail_dirty = true;
+                    review_rail_dirty = true;
                     archived_rail_dirty = true;
                     transcript_dirty = true;
                     composer_dirty = true;
@@ -603,6 +628,7 @@ impl PiApp {
                 }
                 RuntimeEvent::SessionStatus { .. } => {
                     rail_dirty = true;
+                    review_rail_dirty = true;
                     archived_rail_dirty = true;
                 }
                 RuntimeEvent::HistoryReset { .. } => transcript_dirty = true,
@@ -616,6 +642,7 @@ impl PiApp {
                 RuntimeEvent::PromptResult { .. } => {
                     root_dirty = true;
                     rail_dirty = true;
+                    review_rail_dirty = true;
                     archived_rail_dirty = true;
                     composer_dirty = true;
                     run_dirty = true;
@@ -705,7 +732,15 @@ impl PiApp {
                         &sessions,
                         &all_sessions,
                     );
-                    let archived_catalog_changed = archived_session_catalog_changed(
+                    let review_catalog_changed = inactive_session_catalog_changed(
+                        SessionRailKind::Review,
+                        &self.sessions,
+                        &self.all_sessions,
+                        &sessions,
+                        &all_sessions,
+                    );
+                    let archived_catalog_changed = inactive_session_catalog_changed(
+                        SessionRailKind::Archived,
                         &self.sessions,
                         &self.all_sessions,
                         &sessions,
@@ -749,6 +784,7 @@ impl PiApp {
                             .or_insert_with(|| cx.focus_handle());
                     }
                     rail_dirty |= catalog_changed;
+                    review_rail_dirty |= review_catalog_changed;
                     archived_rail_dirty |= archived_catalog_changed;
                     composer_dirty |= composer_usage_changed;
                     run_dirty |= run_catalog_changed || visible_activities_changed;
@@ -881,7 +917,8 @@ impl PiApp {
                 | RuntimeEvent::ExtensionUi { .. }
                 | RuntimeEvent::PromptResult { .. }
                 | RuntimeEvent::Sessions { .. }
-                | RuntimeEvent::SessionsFailed { .. } => {}
+                | RuntimeEvent::SessionsFailed { .. }
+                | RuntimeEvent::SessionFilesModified { .. } => {}
             }
         }
         if workgraph_data_dirty {
@@ -893,6 +930,9 @@ impl PiApp {
         self.sync_recent_completion_expiries(cx);
         if rail_dirty {
             self.notify_session_rail_shell(cx);
+        }
+        if review_rail_dirty {
+            self.notify_review_session_rail(cx);
         }
         if archived_rail_dirty {
             self.notify_archived_session_rail(cx);
@@ -1392,18 +1432,44 @@ impl PiApp {
         );
     }
 
-    fn set_session_archived(&mut self, path: PathBuf, archived: bool, cx: &mut Context<Self>) {
+    fn set_session_active(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.set_session_category(path, false, false, cx);
+    }
+
+    fn set_session_review(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.set_session_category(path, true, false, cx);
+    }
+
+    fn set_session_archived(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.set_session_category(path, false, true, cx);
+    }
+
+    fn set_session_category(
+        &mut self,
+        path: PathBuf,
+        in_review: bool,
+        archived: bool,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(session) = self
             .sessions
             .iter_mut()
             .find(|session| session.path == path)
         {
+            session.in_review = in_review;
             session.archived = archived;
+        }
+        if !self.sessions.iter().any(|session| session.in_review) {
+            self.review_sessions_expanded = false;
         }
         if !self.sessions.iter().any(|session| session.archived) {
             self.archived_sessions_expanded = false;
         }
-        self.send(RuntimeCommand::SetArchived { path, archived });
+        self.send(RuntimeCommand::SetSessionCategory {
+            path,
+            in_review,
+            archived,
+        });
         self.notify_session_rail(cx);
         self.notify_run_panel(cx);
     }
@@ -1516,46 +1582,58 @@ fn session_catalog_changed(
     current != next || current_all != next_all || current_error.is_some()
 }
 
-fn archived_session_catalog_changed(
+fn session_has_rail_kind(session: &SessionSummary, kind: SessionRailKind) -> bool {
+    session.parent_session.is_none()
+        && match kind {
+            SessionRailKind::Project => !session.in_review && !session.archived,
+            SessionRailKind::Review => session.in_review && !session.archived,
+            SessionRailKind::Archived => session.archived,
+        }
+}
+
+fn inactive_session_catalog_changed(
+    kind: SessionRailKind,
     current: &[SessionSummary],
     current_all: &[SessionSummary],
     next: &[SessionSummary],
     next_all: &[SessionSummary],
 ) -> bool {
-    fn render_key(
-        session: &SessionSummary,
-    ) -> Option<(&str, i64, &Path, &Path, &str, SystemTime, bool)> {
-        (session.parent_session.is_none() && session.archived).then_some((
-            session.id.as_str(),
-            session.app_session_id,
-            session.path.as_path(),
-            session.project.as_path(),
-            session.title.as_str(),
-            session.modified,
-            session.is_running,
-        ))
-    }
-
-    let archived_rows_changed = !current
-        .iter()
-        .filter_map(render_key)
-        .eq(next.iter().filter_map(render_key));
-    if archived_rows_changed {
+    let rows = |sessions: &[SessionSummary]| {
+        sessions
+            .iter()
+            .filter(|session| session_has_rail_kind(session, kind))
+            .map(|session| {
+                (
+                    session.id.clone(),
+                    session.app_session_id,
+                    session.path.clone(),
+                    session.project.clone(),
+                    session.title.clone(),
+                    session.modified,
+                    session.is_running,
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let current_rows = rows(current);
+    if current_rows != rows(next) {
         return true;
     }
+    if kind != SessionRailKind::Archived {
+        return false;
+    }
 
-    let archived_ids = current
+    let ids = current_rows
         .iter()
-        .filter(|session| session.parent_session.is_none() && session.archived)
-        .map(|session| session.id.as_str())
+        .map(|(id, ..)| id.as_str())
         .collect::<HashSet<_>>();
-    let archived_waiting_roots = |sessions| {
+    let waiting = |sessions| {
         roots_waiting_for_descendants(sessions)
             .into_iter()
-            .filter(|id| archived_ids.contains(id.as_str()))
+            .filter(|id| ids.contains(id.as_str()))
             .collect::<HashSet<_>>()
     };
-    archived_waiting_roots(current_all) != archived_waiting_roots(next_all)
+    waiting(current_all) != waiting(next_all)
 }
 
 fn run_panel_sessions_changed(
@@ -1653,23 +1731,27 @@ fn session_rail_snapshot_changed(
         || previous.live_status != next.live_status
 }
 
-fn archived_session_rail_snapshot_changed(
+fn inactive_session_rail_snapshot_changed(
+    kind: SessionRailKind,
     sessions: &[SessionSummary],
     previous: &RuntimeSnapshot,
     next: &RuntimeSnapshot,
 ) -> bool {
-    let archived_root_id = |path| {
+    let root_id = |path| {
         root_session_for_path(sessions, path)
-            .filter(|session| session.archived)
+            .filter(|session| session_has_rail_kind(session, kind))
             .map(|session| session.id.as_str())
     };
-    let previous_live = archived_root_id(previous.live_session.as_deref());
-    let next_live = archived_root_id(next.live_session.as_deref());
+    if root_id(previous.selected_session.as_deref()) != root_id(next.selected_session.as_deref()) {
+        return true;
+    }
+    if kind != SessionRailKind::Archived {
+        return false;
+    }
 
-    archived_root_id(previous.selected_session.as_deref())
-        != archived_root_id(next.selected_session.as_deref())
-        || previous_live != next_live
-        || (previous.live_status != next.live_status && next_live.is_some())
+    let previous_live = root_id(previous.live_session.as_deref());
+    let next_live = root_id(next.live_session.as_deref());
+    previous_live != next_live || (previous.live_status != next.live_status && next_live.is_some())
 }
 
 fn composer_snapshot_changed(previous: &RuntimeSnapshot, next: &RuntimeSnapshot) -> bool {
@@ -1678,8 +1760,7 @@ fn composer_snapshot_changed(previous: &RuntimeSnapshot, next: &RuntimeSnapshot)
         || previous.commands != next.commands
         || previous.conversation.running != next.conversation.running
         || previous.conversation.queue != next.conversation.queue
-        || previous.conversation.average_cache_hit_rate
-            != next.conversation.average_cache_hit_rate
+        || previous.conversation.average_cache_hit_rate != next.conversation.average_cache_hit_rate
         || previous.stats != next.stats
         || previous.pending_question != next.pending_question
         || previous.session_identity() != next.session_identity()

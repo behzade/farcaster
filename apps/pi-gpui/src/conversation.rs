@@ -853,9 +853,7 @@ fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
                     .collect()
             })
             .unwrap_or_default();
-        if is_error
-            && let Some(error) = assistant_error_text(message, !items.is_empty())
-        {
+        if is_error && let Some(error) = assistant_error_text(message, !items.is_empty()) {
             items.push(model_error_item(error));
         }
         return items;

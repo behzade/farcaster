@@ -16,10 +16,10 @@ mod shell;
 mod usage;
 
 pub(super) use regions::{
-    ArchivedSessionRailView, ComposerView, RunPanelView, SessionRailView, TranscriptView,
+    ComposerView, InactiveSessionRailView, RunPanelView, SessionRailView, TranscriptView,
     WorkGraphDetailView,
 };
-pub(super) use session_groups::roots_waiting_for_descendants;
+pub(super) use session_groups::{SessionRailKind, roots_waiting_for_descendants};
 
 use gpui::{
     Context, Focusable as _, InteractiveElement as _, IntoElement, ParentElement as _, Render,
@@ -270,6 +270,9 @@ impl Render for PiApp {
             }))
             .on_action(cx.listener(|this, _: &ToggleArchivedSessions, _, cx| {
                 this.archived_sessions_expanded = !this.archived_sessions_expanded;
+                if this.archived_sessions_expanded {
+                    this.review_sessions_expanded = false;
+                }
                 this.notify_session_rail(cx);
             }))
             .on_action(cx.listener(|this, _: &SubmitPrompt, window, cx| {
@@ -295,7 +298,11 @@ impl Render for PiApp {
                             .iter()
                             .find(|session| session.path == path)
                             .is_some_and(|session| session.archived);
-                        this.set_session_archived(path, !archived, cx);
+                        if archived {
+                            this.set_session_review(path, cx);
+                        } else {
+                            this.set_session_archived(path, cx);
+                        }
                     }
                     CurrentCloseTarget::None => {}
                 },

@@ -57,14 +57,11 @@ impl RuntimeOwner {
         };
         self.pending_prompt_target = Some(target);
         self.snapshot.pending_question = None;
-        let invocation = crate::user_invocations::contains_invocation(
-            &message,
-            &self.snapshot.commands,
-        );
+        let invocation =
+            crate::user_invocations::contains_invocation(&message, &self.snapshot.commands);
         let conversation = Arc::make_mut(&mut self.snapshot.conversation);
-        self.pending_prompt_item = (!was_running).then(|| {
-            conversation.push_local_user(message.clone(), images.len(), invocation)
-        });
+        self.pending_prompt_item = (!was_running)
+            .then(|| conversation.push_local_user(message.clone(), images.len(), invocation));
         conversation.running = true;
         self.snapshot.status = "Working".into();
         self.publish();
@@ -76,10 +73,8 @@ impl RuntimeOwner {
         self.snapshot.project = self.project.clone();
         self.snapshot.selected_session = prompt.session.clone();
         self.pending_prompt_target = Some(prompt.target);
-        let invocation = crate::user_invocations::contains_invocation(
-            &prompt.message,
-            &self.snapshot.commands,
-        );
+        let invocation =
+            crate::user_invocations::contains_invocation(&prompt.message, &self.snapshot.commands);
         let conversation = Arc::make_mut(&mut self.snapshot.conversation);
         self.pending_prompt_item = Some(conversation.push_local_user(
             prompt.message.clone(),

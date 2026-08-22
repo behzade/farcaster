@@ -1,7 +1,6 @@
 use gpui::{
     CursorStyle, Div, ElementId, InteractiveElement as _, MouseButton, Pixels, Role, SharedString,
-    Stateful,
-    StatefulInteractiveElement as _, Styled as _, div,
+    Stateful, StatefulInteractiveElement as _, Styled as _, div,
 };
 use gpui_base::GlobalState;
 use gpui_component::{Icon, IconNamed, Sizable as _, tooltip::Tooltip};

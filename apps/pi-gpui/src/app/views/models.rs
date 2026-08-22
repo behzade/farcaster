@@ -6,7 +6,7 @@ use gpui::{
 };
 use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
 
-use super::{composer_footer::separator, super::PiApp};
+use super::{super::PiApp, composer_footer::separator};
 use crate::{
     primitives::{ButtonTone, dropdown_button},
     theme::{MONO_FONT_FAMILY, THEME},
@@ -54,38 +54,33 @@ pub(super) fn render(app: &PiApp, entity: WeakEntity<PiApp>) -> AnyElement {
     let add_provider_entity = entity.clone();
     let model_entity = entity.clone();
 
-    let provider = dropdown_button(
-        "select-provider",
-        provider_label,
-        ButtonTone::Quiet,
-        true,
-    )
-    .flex_none()
-    .font_family(MONO_FONT_FAMILY)
-    .text_color(THEME.colors.text)
-    .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
-        let mut menu = menu
-            .max_h(THEME.layout.dialog_max_height)
-            .label("Provider");
-        for provider in &providers {
-            let target = provider.clone();
-            let entity = provider_entity.clone();
-            menu = menu.item(
-                PopupMenuItem::new(provider.clone()).on_click(move |_, _, cx| {
-                    let _ = entity.update(cx, |this, cx| {
-                        this.select_provider(&target, cx);
-                    });
+    let provider = dropdown_button("select-provider", provider_label, ButtonTone::Quiet, true)
+        .flex_none()
+        .font_family(MONO_FONT_FAMILY)
+        .text_color(THEME.colors.text)
+        .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+            let mut menu = menu.max_h(THEME.layout.dialog_max_height).label("Provider");
+            for provider in &providers {
+                let target = provider.clone();
+                let entity = provider_entity.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(provider.clone()).on_click(move |_, _, cx| {
+                        let _ = entity.update(cx, |this, cx| {
+                            this.select_provider(&target, cx);
+                        });
+                    }),
+                );
+            }
+            if !providers.is_empty() {
+                menu = menu.separator();
+            }
+            let add_provider_entity = add_provider_entity.clone();
+            menu.item(
+                PopupMenuItem::new("+ Add provider…").on_click(move |_, _, cx| {
+                    let _ = add_provider_entity.update(cx, |this, _| this.add_provider());
                 }),
-            );
-        }
-        if !providers.is_empty() {
-            menu = menu.separator();
-        }
-        let add_provider_entity = add_provider_entity.clone();
-        menu.item(PopupMenuItem::new("+ Add provider…").on_click(move |_, _, cx| {
-            let _ = add_provider_entity.update(cx, |this, _| this.add_provider());
-        }))
-    });
+            )
+        });
     let model = dropdown_button(
         "select-model",
         model_label,
@@ -100,13 +95,13 @@ pub(super) fn render(app: &PiApp, entity: WeakEntity<PiApp>) -> AnyElement {
         for model in &provider_models {
             let target = model.clone();
             let entity = model_entity.clone();
-            menu = menu.item(PopupMenuItem::new(model.name.clone()).on_click(
-                move |_, _, cx| {
+            menu = menu.item(
+                PopupMenuItem::new(model.name.clone()).on_click(move |_, _, cx| {
                     let _ = entity.update(cx, |this, cx| {
                         this.select_model(&target, cx);
                     });
-                },
-            ));
+                }),
+            );
         }
         menu
     });

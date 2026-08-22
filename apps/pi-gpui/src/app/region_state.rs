@@ -17,11 +17,16 @@ impl PiApp {
 
     pub(super) fn notify_session_rail(&self, cx: &mut Context<Self>) {
         self.notify_session_rail_shell(cx);
+        self.notify_review_session_rail(cx);
         self.notify_archived_session_rail(cx);
     }
 
     pub(super) fn notify_session_rail_shell(&self, cx: &mut Context<Self>) {
         Self::notify_region(&self.session_rail_view, cx);
+    }
+
+    pub(super) fn notify_review_session_rail(&self, cx: &mut Context<Self>) {
+        Self::notify_region(&self.review_session_rail_view, cx);
     }
 
     pub(super) fn notify_archived_session_rail(&self, cx: &mut Context<Self>) {

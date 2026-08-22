@@ -1,6 +1,9 @@
 //! Session rail rendering and interaction.
 
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+};
 
 use gpui::{
     Anchor, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
@@ -12,21 +15,17 @@ use gpui_component::{
     menu::{DropdownMenu as _, PopupMenuItem},
 };
 
+#[cfg(test)]
+use super::session_rows::{session_accessible_label, status_visual};
 use super::{
     super::PiApp,
     session_groups::{
-        ActiveSessionItem, SessionRailItem, merge_visible_session_order, recent_archived_sessions,
-        recent_review_sessions, reordered_session_ids, roots_waiting_for_descendants,
-        session_rail_lists,
+        ActiveSessionItem, SessionRailItem, SessionRailKind, merge_visible_session_order,
+        reordered_session_ids, roots_waiting_for_descendants, session_rail_lists,
     },
     session_rows::{
         draft_session_row, project_label, session_badge, session_row, session_row_with_height,
     },
-};
-#[cfg(test)]
-use super::{
-    session_groups::SessionRailKind,
-    session_rows::{session_accessible_label, status_visual},
 };
 use crate::{
     app::{PickerScope, ProjectPickerIntent},
@@ -40,8 +39,7 @@ use crate::{
     theme::THEME,
 };
 
-const REVIEW_PREVIEW_LIMIT: usize = 3;
-const ARCHIVED_PREVIEW_LIMIT: usize = 3;
+const INACTIVE_PREVIEW_LIMIT: usize = 3;
 
 /// Direct subagent (child session) count per parent session id.
 fn subagent_counts(sessions: &[SessionSummary]) -> HashMap<String, usize> {
@@ -52,6 +50,39 @@ fn subagent_counts(sessions: &[SessionSummary]) -> HashMap<String, usize> {
         }
     }
     counts
+}
+
+fn inactive_session_badge(
+    kind: SessionRailKind,
+    item: &SessionRailItem,
+    run_statuses: &HashMap<String, String>,
+    live_root: Option<&str>,
+    live_status: &str,
+    waiting_roots: &HashSet<String>,
+) -> Option<String> {
+    if kind != SessionRailKind::Archived {
+        return None;
+    }
+    let target = format!("session:{}", item.session.path.display());
+    session_badge(
+        item,
+        run_statuses.get(&target).map(String::as_str),
+        live_root,
+        live_status,
+        waiting_roots.contains(&item.session.id),
+    )
+}
+
+fn inactive_rail_style(expanded: bool, count: usize) -> gpui::StyleRefinement {
+    if expanded {
+        gpui::StyleRefinement::default().size_full().flex_1()
+    } else {
+        gpui::StyleRefinement::default()
+            .w_full()
+            .h(THEME.controls.utility_row
+                + THEME.controls.archived_preview_row * count.min(INACTIVE_PREVIEW_LIMIT))
+            .flex_none()
+    }
 }
 
 impl PiApp {
@@ -163,30 +194,13 @@ impl PiApp {
 
         let review_expanded = self.review_sessions_expanded && review_entry_count > 0;
         let archived_expanded = self.archived_sessions_expanded && archived_entry_count > 0;
-        let review_session_rail_style = if review_expanded {
-            gpui::StyleRefinement::default().size_full().flex_1()
-        } else {
-            gpui::StyleRefinement::default()
-                .w_full()
-                .h(THEME.controls.utility_row
-                    + THEME.controls.archived_preview_row
-                        * review_entry_count.min(REVIEW_PREVIEW_LIMIT))
-                .flex_none()
-        };
+        let review_session_rail_style = inactive_rail_style(review_expanded, review_entry_count);
         let review_session_rail = self
             .review_session_rail_view
             .clone()
             .cached(review_session_rail_style);
-        let archived_session_rail_style = if archived_expanded {
-            gpui::StyleRefinement::default().size_full().flex_1()
-        } else {
-            gpui::StyleRefinement::default()
-                .w_full()
-                .h(THEME.controls.utility_row
-                    + THEME.controls.archived_preview_row
-                        * archived_entry_count.min(ARCHIVED_PREVIEW_LIMIT))
-                .flex_none()
-        };
+        let archived_session_rail_style =
+            inactive_rail_style(archived_expanded, archived_entry_count);
         let archived_session_rail = self
             .archived_session_rail_view
             .clone()
@@ -360,138 +374,12 @@ impl PiApp {
             .into_any_element()
     }
 
-    pub(super) fn render_review_sessions(&self, entity: WeakEntity<Self>) -> impl IntoElement {
-        let selected_root =
-            root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
-                .map(|session| session.id.clone());
-        let review_rows = session_rail_lists(
-            &self.sessions,
-            &self.drafts,
-            self.session_project_filter.as_deref(),
-            &self.session_order,
-        )
-        .review;
-        let review_entry_count = review_rows.len();
-        let review_counts = subagent_counts(&self.all_sessions);
-        let review_preview = recent_review_sessions(&review_rows, REVIEW_PREVIEW_LIMIT);
-        reconcile_list_rows(
-            &self.review_session_list,
-            &self.review_session_list_rows,
-            review_rows.iter().map(session_item_identity).collect(),
-        );
-
-        let review_preview_elements = review_preview
-            .iter()
-            .map(|item| {
-                let selected = selected_root.as_deref() == Some(item.session.id.as_str());
-                let editing = self
-                    .editing_session_title
-                    .as_ref()
-                    .is_some_and(|edit| edit.path == item.session.path);
-                session_row_with_height(
-                    item,
-                    selected,
-                    None,
-                    None,
-                    None,
-                    false,
-                    editing.then(|| self.session_title_input.clone()),
-                    review_counts
-                        .get(item.session.id.as_str())
-                        .copied()
-                        .unwrap_or(0),
-                    THEME.controls.archived_preview_row,
-                    entity.clone(),
-                )
-            })
-            .collect::<Vec<_>>();
-        let review_row_entity = entity.clone();
-        let review_editing_path = self
-            .editing_session_title
-            .as_ref()
-            .map(|edit| edit.path.clone());
-        let review_title_input = self.session_title_input.clone();
-        let review_list =
-            list(
-                self.review_session_list.clone(),
-                move |index, _, _| match review_rows.get(index) {
-                    Some(item) => {
-                        let selected = selected_root.as_deref() == Some(item.session.id.as_str());
-                        let editing =
-                            review_editing_path.as_deref() == Some(item.session.path.as_path());
-                        session_row(
-                            item,
-                            selected,
-                            None,
-                            None,
-                            None,
-                            false,
-                            editing.then(|| review_title_input.clone()),
-                            review_counts
-                                .get(item.session.id.as_str())
-                                .copied()
-                                .unwrap_or(0),
-                            review_row_entity.clone(),
-                        )
-                    }
-                    None => div().into_any_element(),
-                },
-            )
-            .size_full();
-
-        let review_expanded = self.review_sessions_expanded && review_entry_count > 0;
-        let review_toggle_entity = entity;
-        div()
-            .id("review-sessions")
-            .size_full()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .child(
-                div()
-                    .h(THEME.controls.utility_row)
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .px(THEME.space.md)
-                    .border_t(THEME.border)
-                    .border_color(THEME.colors.border)
-                    .text_size(THEME.type_scale.caption)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(THEME.colors.text)
-                    .child(format!("Review · {review_entry_count}"))
-                    .child(disclosure_button(
-                        "toggle-review-sessions",
-                        review_expanded,
-                        "Review sessions",
-                        move |_, cx| {
-                            let _ = review_toggle_entity.update(cx, |this, cx| {
-                                this.review_sessions_expanded = !this.review_sessions_expanded;
-                                if this.review_sessions_expanded {
-                                    this.archived_sessions_expanded = false;
-                                }
-                                this.notify_session_rail(cx);
-                            });
-                        },
-                    )),
-            )
-            .when(!review_expanded, |review| {
-                review.children(review_preview_elements)
-            })
-            .when(review_expanded, |review| {
-                review.child(
-                    div()
-                        .flex_1()
-                        .min_h_0()
-                        .overflow_y_hidden()
-                        .child(review_list),
-                )
-            })
-            .into_any_element()
-    }
-
-    pub(super) fn render_archived_sessions(&self, entity: WeakEntity<Self>) -> impl IntoElement {
+    pub(super) fn render_inactive_sessions(
+        &self,
+        entity: WeakEntity<Self>,
+        kind: SessionRailKind,
+    ) -> gpui::AnyElement {
+        debug_assert!(kind != SessionRailKind::Project);
         let selected_root =
             root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
                 .map(|session| session.id.clone());
@@ -499,33 +387,57 @@ impl PiApp {
             root_session_for_path(&self.sessions, self.snapshot.live_session.as_deref())
                 .map(|session| session.id.clone());
         let waiting_roots = roots_waiting_for_descendants(&self.all_sessions);
-        let archived_rows = session_rail_lists(
+        let lists = session_rail_lists(
             &self.sessions,
             &self.drafts,
             self.session_project_filter.as_deref(),
             &self.session_order,
-        )
-        .archived;
-        let archived_entry_count = archived_rows.len();
-        let archived_counts = subagent_counts(&self.all_sessions);
-        let archived_preview = recent_archived_sessions(&archived_rows, ARCHIVED_PREVIEW_LIMIT);
+        );
+        let (rows, list_state, list_rows, expanded, section_id, toggle_id, title, title_color) =
+            match kind {
+                SessionRailKind::Review => (
+                    lists.review,
+                    self.review_session_list.clone(),
+                    &self.review_session_list_rows,
+                    self.review_sessions_expanded,
+                    "review-sessions",
+                    "toggle-review-sessions",
+                    "Review",
+                    THEME.colors.text,
+                ),
+                SessionRailKind::Archived => (
+                    lists.archived,
+                    self.archived_session_list.clone(),
+                    &self.archived_session_list_rows,
+                    self.archived_sessions_expanded,
+                    "archived-sessions",
+                    "toggle-archived-sessions",
+                    "Archived",
+                    THEME.colors.muted,
+                ),
+                SessionRailKind::Project => unreachable!("active sessions use the main rail"),
+            };
+        let count = rows.len();
+        let expanded = expanded && count > 0;
+        let counts = subagent_counts(&self.all_sessions);
         reconcile_list_rows(
-            &self.archived_session_list,
-            &self.archived_session_list_rows,
-            archived_rows.iter().map(session_item_identity).collect(),
+            &list_state,
+            list_rows,
+            rows.iter().map(session_item_identity).collect(),
         );
 
-        let archived_preview_elements = archived_preview
+        let preview_elements = rows
             .iter()
+            .take(INACTIVE_PREVIEW_LIMIT)
             .map(|item| {
                 let selected = selected_root.as_deref() == Some(item.session.id.as_str());
-                let target = format!("session:{}", item.session.path.display());
-                let badge = session_badge(
+                let badge = inactive_session_badge(
+                    kind,
                     item,
-                    self.run_statuses.get(&target).map(String::as_str),
+                    &self.run_statuses,
                     live_root.as_deref(),
                     &self.snapshot.live_status,
-                    waiting_roots.contains(&item.session.id),
+                    &waiting_roots,
                 );
                 let editing = self
                     .editing_session_title
@@ -539,64 +451,51 @@ impl PiApp {
                     None,
                     false,
                     editing.then(|| self.session_title_input.clone()),
-                    archived_counts
-                        .get(item.session.id.as_str())
-                        .copied()
-                        .unwrap_or(0),
+                    counts.get(item.session.id.as_str()).copied().unwrap_or(0),
                     THEME.controls.archived_preview_row,
                     entity.clone(),
                 )
             })
             .collect::<Vec<_>>();
-        let archived_live_status = self.snapshot.live_status.clone();
-        let archived_run_statuses = self.run_statuses.clone();
-        let archived_waiting_roots = waiting_roots;
-        let archived_row_entity = entity.clone();
-        let archived_editing_path = self
+        let row_entity = entity.clone();
+        let editing_path = self
             .editing_session_title
             .as_ref()
             .map(|edit| edit.path.clone());
-        let archived_title_input = self.session_title_input.clone();
-        let archived_list =
-            list(
-                self.archived_session_list.clone(),
-                move |index, _, _| match archived_rows.get(index) {
-                    Some(item) => {
-                        let selected = selected_root.as_deref() == Some(item.session.id.as_str());
-                        let target = format!("session:{}", item.session.path.display());
-                        let badge = session_badge(
-                            item,
-                            archived_run_statuses.get(&target).map(String::as_str),
-                            live_root.as_deref(),
-                            &archived_live_status,
-                            archived_waiting_roots.contains(&item.session.id),
-                        );
-                        let editing =
-                            archived_editing_path.as_deref() == Some(item.session.path.as_path());
-                        session_row(
-                            item,
-                            selected,
-                            badge,
-                            None,
-                            None,
-                            false,
-                            editing.then(|| archived_title_input.clone()),
-                            archived_counts
-                                .get(item.session.id.as_str())
-                                .copied()
-                                .unwrap_or(0),
-                            archived_row_entity.clone(),
-                        )
-                    }
-                    None => div().into_any_element(),
-                },
-            )
-            .size_full();
+        let title_input = self.session_title_input.clone();
+        let live_status = self.snapshot.live_status.clone();
+        let run_statuses = self.run_statuses.clone();
+        let rows_list = list(list_state, move |index, _, _| match rows.get(index) {
+            Some(item) => {
+                let selected = selected_root.as_deref() == Some(item.session.id.as_str());
+                let badge = inactive_session_badge(
+                    kind,
+                    item,
+                    &run_statuses,
+                    live_root.as_deref(),
+                    &live_status,
+                    &waiting_roots,
+                );
+                let editing = editing_path.as_deref() == Some(item.session.path.as_path());
+                session_row(
+                    item,
+                    selected,
+                    badge,
+                    None,
+                    None,
+                    false,
+                    editing.then(|| title_input.clone()),
+                    counts.get(item.session.id.as_str()).copied().unwrap_or(0),
+                    row_entity.clone(),
+                )
+            }
+            None => div().into_any_element(),
+        })
+        .size_full();
 
-        let archived_expanded = self.archived_sessions_expanded && archived_entry_count > 0;
-        let archive_toggle_entity = entity;
+        let toggle_entity = entity;
         div()
-            .id("archived-sessions")
+            .id(section_id)
             .size_full()
             .min_h_0()
             .flex()
@@ -613,33 +512,44 @@ impl PiApp {
                     .border_color(THEME.colors.border)
                     .text_size(THEME.type_scale.caption)
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(THEME.colors.muted)
-                    .child(format!("Archived · {archived_entry_count}"))
+                    .text_color(title_color)
+                    .child(format!("{title} · {count}"))
                     .child(disclosure_button(
-                        "toggle-archived-sessions",
-                        archived_expanded,
-                        "Archived sessions",
+                        toggle_id,
+                        expanded,
+                        format!("{title} sessions"),
                         move |_, cx| {
-                            let _ = archive_toggle_entity.update(cx, |this, cx| {
-                                this.archived_sessions_expanded = !this.archived_sessions_expanded;
-                                if this.archived_sessions_expanded {
-                                    this.review_sessions_expanded = false;
+                            let _ = toggle_entity.update(cx, |this, cx| {
+                                match kind {
+                                    SessionRailKind::Review => {
+                                        this.review_sessions_expanded =
+                                            !this.review_sessions_expanded;
+                                        if this.review_sessions_expanded {
+                                            this.archived_sessions_expanded = false;
+                                        }
+                                    }
+                                    SessionRailKind::Archived => {
+                                        this.archived_sessions_expanded =
+                                            !this.archived_sessions_expanded;
+                                        if this.archived_sessions_expanded {
+                                            this.review_sessions_expanded = false;
+                                        }
+                                    }
+                                    SessionRailKind::Project => {}
                                 }
                                 this.notify_session_rail(cx);
                             });
                         },
                     )),
             )
-            .when(!archived_expanded, |archived| {
-                archived.children(archived_preview_elements)
-            })
-            .when(archived_expanded, |archived| {
-                archived.child(
+            .when(!expanded, |section| section.children(preview_elements))
+            .when(expanded, |section| {
+                section.child(
                     div()
                         .flex_1()
                         .min_h_0()
                         .overflow_y_hidden()
-                        .child(archived_list),
+                        .child(rows_list),
                 )
             })
             .into_any_element()

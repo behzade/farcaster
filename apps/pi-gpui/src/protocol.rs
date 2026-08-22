@@ -300,7 +300,7 @@ fn parse_extension_request(value: &Value) -> ExtensionUiRequest {
                     timeout,
                 }
             }
-        },
+        }
         "editor" => ExtensionUiRequest::Editor {
             id,
             title: string(value, "title"),

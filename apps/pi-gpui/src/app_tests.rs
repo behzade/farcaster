@@ -170,16 +170,49 @@ fn switching_between_active_sessions_does_not_invalidate_archived_sessions() {
         ..RuntimeSnapshot::default()
     };
 
-    assert!(!archived_session_rail_snapshot_changed(
-        &sessions, &previous, &next,
+    assert!(!inactive_session_rail_snapshot_changed(
+        SessionRailKind::Archived,
+        &sessions,
+        &previous,
+        &next,
     ));
 
     let archived_sessions = vec![
         session_summary("first", None, false),
         session_summary("second", None, true),
     ];
-    assert!(archived_session_rail_snapshot_changed(
+    assert!(inactive_session_rail_snapshot_changed(
+        SessionRailKind::Archived,
         &archived_sessions,
+        &previous,
+        &next,
+    ));
+}
+
+#[test]
+fn switching_review_selection_invalidates_only_review_sessions() {
+    let sessions = vec![
+        session_summary("first", None, false).with_review(true),
+        session_summary("second", None, false).with_review(true),
+    ];
+    let previous = RuntimeSnapshot {
+        selected_session: Some(PathBuf::from("/first.jsonl")),
+        ..RuntimeSnapshot::default()
+    };
+    let next = RuntimeSnapshot {
+        selected_session: Some(PathBuf::from("/second.jsonl")),
+        ..RuntimeSnapshot::default()
+    };
+
+    assert!(inactive_session_rail_snapshot_changed(
+        SessionRailKind::Review,
+        &sessions,
+        &previous,
+        &next,
+    ));
+    assert!(!inactive_session_rail_snapshot_changed(
+        SessionRailKind::Archived,
+        &sessions,
         &previous,
         &next,
     ));
@@ -191,7 +224,8 @@ fn active_session_discovery_does_not_invalidate_archived_sessions() {
     let current = vec![archived.clone()];
     let with_active = vec![session_summary("active", None, false), archived.clone()];
 
-    assert!(!archived_session_catalog_changed(
+    assert!(!inactive_session_catalog_changed(
+        SessionRailKind::Archived,
         &current,
         &current,
         &with_active,
@@ -199,7 +233,8 @@ fn active_session_discovery_does_not_invalidate_archived_sessions() {
     ));
     let mut renamed = archived;
     renamed.title = "Renamed".into();
-    assert!(archived_session_catalog_changed(
+    assert!(inactive_session_catalog_changed(
+        SessionRailKind::Archived,
         &current,
         &current,
         &[renamed],

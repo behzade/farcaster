@@ -17,7 +17,7 @@ use crate::{
     sessions::{SessionSummary, UsageSummary},
 };
 
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(crate) struct StateStore {
@@ -186,7 +186,7 @@ impl StateStore {
                      UPDATE meta SET value='5' WHERE key='schema_version';",
                 )
                 .map_err(|error| format!("migrate GUI state schema to 5: {error}"))?,
-            5 | SCHEMA_VERSION => {}
+            5 | 6 | SCHEMA_VERSION => {}
             _ => {
                 return Err(format!(
                     "GUI state schema {schema_version} is not supported by this build"
@@ -232,6 +232,15 @@ impl StateStore {
                      UPDATE meta SET value='6' WHERE key='schema_version';",
                 )
                 .map_err(|error| format!("migrate GUI state schema to 6: {error}"))?;
+            schema_version = 6;
+        }
+        if schema_version == 6 {
+            migration
+                .execute_batch(
+                    "ALTER TABLE sessions ADD COLUMN in_review INTEGER NOT NULL DEFAULT 0;
+                     UPDATE meta SET value='7' WHERE key='schema_version';",
+                )
+                .map_err(|error| format!("migrate GUI state schema to 7: {error}"))?;
         }
         migration
             .commit()
@@ -445,7 +454,7 @@ impl StateStore {
                         parent_session, modified_ms, message_count, input_tokens,
                         output_tokens, cache_read_tokens, cache_write_tokens,
                         total_tokens, cost_micros, search_text, settled_ms IS NOT NULL,
-                        is_running, app_session_id
+                        in_review, is_running, app_session_id
                    FROM sessions
                   ORDER BY modified_ms DESC, timestamp DESC",
             )
@@ -636,17 +645,23 @@ impl StateStore {
             .map_err(|error| format!("commit session path relocation: {error}"))
     }
 
-    pub(crate) fn set_archived(&self, path: &Path, archived: bool) -> Result<(), String> {
+    pub(crate) fn set_session_category(
+        &self,
+        path: &Path,
+        in_review: bool,
+        archived: bool,
+    ) -> Result<(), String> {
         self.connection
             .execute(
-                "UPDATE sessions SET settled_ms=?2 WHERE path=?1",
+                "UPDATE sessions SET in_review=?2, settled_ms=?3 WHERE path=?1",
                 params![
                     path.to_string_lossy(),
+                    in_review,
                     archived.then_some(now_ms()).map(u64_to_i64)
                 ],
             )
             .map(|_| ())
-            .map_err(|error| format!("update archived state for {}: {error}", path.display()))
+            .map_err(|error| format!("update session category for {}: {error}", path.display()))
     }
 
     pub(crate) fn enqueue_prompt(
@@ -1013,10 +1028,11 @@ fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary> {
             cost_micros: row.get(14)?,
         },
         row.get(16)?,
-        row.get(17)?,
+        row.get(18)?,
         row.get(15)?,
     )
-    .with_app_session_id(row.get(18)?))
+    .with_app_session_id(row.get(19)?)
+    .with_review(row.get(17)?))
 }
 
 fn existing_directory(path: &str) -> Option<PathBuf> {
