@@ -13,11 +13,14 @@ use super::WorkGraphBoardView;
 use crate::{
     app::workgraph::{
         components::{
-            dependency_issue_section, detail_section, related_issue_section, render_edit_fields,
-            status_color,
+            dependency_issue_section, description_section, detail_card, notes_section,
+            related_issue_section, render_edit_fields, sessions_section, status_pill,
         },
         contract::{BoardData, BoardLoadState},
-        core::status_label,
+        core::{
+            description_copy, inspector_notes, inspector_sessions, issue_meta_label, now_millis,
+            status_label,
+        },
         layout::{BoardLayoutMode, DETAIL_MIN_WIDTH, DETAIL_WIDTH, issue_detail_shell},
     },
     primitives::{ButtonTone, FeedbackTone, button, dropdown_button, feedback},
@@ -210,7 +213,7 @@ impl WorkGraphBoardView {
                     let status_selector = dropdown_button(
                         format!("workgraph-status-{number}"),
                         status_label(current_status),
-                        ButtonTone::Quiet,
+                        ButtonTone::Neutral,
                         true,
                     )
                     .dropdown_menu_with_anchor(
@@ -268,10 +271,13 @@ impl WorkGraphBoardView {
                         )
                     });
                     let back = entity.clone();
+                    let now = now_millis();
+                    let current_session_id =
+                        self.active_session.as_ref().map(|(id, _)| id.as_str());
                     div()
                         .flex()
                         .flex_col()
-                        .gap(THEME.space.md)
+                        .gap(THEME.space.sm)
                         .when(narrow, |detail| {
                             detail.child(button(
                                 "workgraph-detail-back",
@@ -284,103 +290,70 @@ impl WorkGraphBoardView {
                             ))
                         })
                         .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap(THEME.space.xs)
-                                .pb(THEME.space.md)
-                                .border_b(THEME.border)
-                                .border_color(THEME.colors.border)
+                            detail_card()
                                 .child(
                                     div()
-                                        .text_size(THEME.type_scale.caption)
-                                        .text_color(THEME.colors.subtle)
-                                        .child(format!("Issue #{}", issue.number)),
+                                        .flex()
+                                        .items_center()
+                                        .justify_between()
+                                        .child(
+                                            div()
+                                                .text_size(THEME.type_scale.caption)
+                                                .font_weight(FontWeight::SEMIBOLD)
+                                                .text_color(THEME.colors.muted)
+                                                .child(format!("Issue #{}", issue.number)),
+                                        )
+                                        .child(status_pill(issue.status)),
                                 )
                                 .child(
                                     div()
-                                        .text_size(THEME.type_scale.body)
+                                        .text_size(THEME.type_scale.display)
                                         .font_weight(FontWeight::SEMIBOLD)
+                                        .line_height(THEME.type_scale.line_composer)
                                         .text_color(THEME.colors.text)
                                         .child(issue.title.clone()),
                                 )
                                 .child(
                                     div()
                                         .text_size(THEME.type_scale.caption)
-                                        .text_color(status_color(issue.status))
-                                        .child(if issue.priority == 0 {
-                                            status_label(issue.status).to_owned()
-                                                + "  ·  Normal priority"
-                                        } else {
-                                            format!(
-                                                "{}  ·  Priority {}",
-                                                status_label(issue.status),
-                                                issue.priority
-                                            )
-                                        }),
+                                        .text_color(THEME.colors.subtle)
+                                        .child(issue_meta_label(
+                                            issue.priority,
+                                            issue.updated_at,
+                                            now,
+                                        )),
                                 )
-                                .child(edit_action),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap(THEME.space.xs)
                                 .child(
                                     div()
-                                        .text_size(THEME.type_scale.caption)
-                                        .text_color(THEME.colors.subtle)
-                                        .child("Change status"),
-                                )
-                                .child(status_selector),
+                                        .flex()
+                                        .items_center()
+                                        .gap(THEME.space.xs)
+                                        .child(status_selector)
+                                        .child(edit_action),
+                                ),
                         )
-                        .child(detail_section(
-                            "Description",
-                            if issue.body.trim().is_empty() {
-                                "No description recorded.".into()
-                            } else {
-                                issue.body.clone()
-                            },
-                        ))
+                        .child(description_section(description_copy(&issue.body)))
                         .child(dependency_issue_section(
                             issue.number,
                             issue.version,
                             dependencies,
                             entity.clone(),
+                            dependency_action.map(|action| action.into_any_element()),
                         ))
-                        .children(dependency_action)
                         .child(related_issue_section(
                             "Unblocks",
                             "No dependent issues.",
                             dependents,
                             entity.clone(),
                         ))
-                        .child(detail_section(
-                            "Notes",
-                            if notes.is_empty() {
-                                "No progress notes yet.".into()
-                            } else {
-                                notes
-                                    .iter()
-                                    .map(|note| note.body.as_str())
-                                    .collect::<Vec<_>>()
-                                    .join("\n\n")
-                            },
+                        .child(notes_section(
+                            inspector_notes(&notes, now),
+                            note_action.map(|action| action.into_any_element()),
                         ))
-                        .children(note_action)
-                        .child(detail_section(
-                            "Linked sessions",
-                            if sessions.is_empty() {
-                                "No sessions linked.".into()
-                            } else {
-                                sessions
-                                    .iter()
-                                    .map(|link| link.session_id.as_str())
-                                    .collect::<Vec<_>>()
-                                    .join("\n")
-                            },
+                        .child(sessions_section(
+                            inspector_sessions(&sessions, current_session_id, now),
+                            session_action.map(|action| action.into_any_element()),
                         ))
-                        .children(session_action)
                         .into_any_element()
                 }
                 None => div()

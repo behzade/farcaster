@@ -1,6 +1,6 @@
 //! Pure workgraph board projection independent of GPUI and SQLite.
 
-use workgraph::contract::{Issue, IssueStatus};
+use workgraph::contract::{Issue, IssueStatus, Note, SessionLink};
 
 use super::contract::{BoardData, BoardFilter, BoardGroup, IssueGroup, IssueRow};
 
@@ -59,13 +59,97 @@ fn issue_row(data: &BoardData, issue: Issue) -> IssueRow {
         } else {
             status_label(issue.status)
         },
-        priority_label: if issue.priority == 0 {
-            "Normal".into()
-        } else {
-            format!("P{}", issue.priority)
-        },
+        priority_label: priority_label(issue.priority),
         issue,
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct DescriptionCopy {
+    pub empty: bool,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct InspectorNote {
+    pub body: String,
+    pub created_label: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct InspectorSession {
+    pub title: String,
+    pub meta: String,
+}
+
+pub(super) fn priority_label(priority: u64) -> String {
+    if priority == 0 {
+        "Normal".into()
+    } else {
+        format!("P{priority}")
+    }
+}
+
+pub(super) fn issue_meta_label(priority: u64, updated_at: i64, now: i64) -> String {
+    format!(
+        "{} · Updated {}",
+        priority_label(priority),
+        format_relative_issue_time(updated_at, now)
+    )
+}
+
+pub(super) fn description_copy(body: &str) -> DescriptionCopy {
+    if body.trim().is_empty() {
+        DescriptionCopy {
+            empty: true,
+            text: "No description recorded.".into(),
+        }
+    } else {
+        DescriptionCopy {
+            empty: false,
+            text: body.to_owned(),
+        }
+    }
+}
+
+pub(super) fn inspector_notes(notes: &[&Note], now: i64) -> Vec<InspectorNote> {
+    notes
+        .iter()
+        .map(|note| InspectorNote {
+            body: note.body.clone(),
+            created_label: format_relative_issue_time(note.created_at, now),
+        })
+        .collect()
+}
+
+pub(super) fn inspector_sessions(
+    sessions: &[&SessionLink],
+    current_session_id: Option<&str>,
+    now: i64,
+) -> Vec<InspectorSession> {
+    sessions
+        .iter()
+        .map(|link| InspectorSession {
+            title: if current_session_id == Some(link.session_id.as_str()) {
+                "This session".into()
+            } else {
+                short_session_id(&link.session_id)
+            },
+            meta: format!("Linked {}", format_relative_issue_time(link.linked_at, now)),
+        })
+        .collect()
+}
+
+pub(super) fn now_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_millis()).ok())
+        .unwrap_or_default()
+}
+
+fn short_session_id(session_id: &str) -> String {
+    session_id.chars().take(8).collect()
 }
 
 fn group_for(data: &BoardData, issue: &Issue) -> BoardGroup {
@@ -276,5 +360,87 @@ mod tests {
         assert_eq!(format_relative_issue_time(now - 7_200_000, now), "2h ago");
         assert_eq!(format_relative_issue_time(now - 259_200_000, now), "3d ago");
         assert_eq!(format_relative_issue_time(now + 30_000, now), "just now");
+    }
+
+    #[test]
+    fn inspector_copy_keeps_notes_and_sessions_as_separate_entries() {
+        let now = 1_800_000_000_000_i64;
+        let notes = [
+            Note {
+                id: 1,
+                issue_number: 40,
+                body: "First update".into(),
+                created_at: now - 120_000,
+            },
+            Note {
+                id: 2,
+                issue_number: 40,
+                body: "Second update".into(),
+                created_at: now - 7_200_000,
+            },
+        ];
+        let sessions = [
+            SessionLink {
+                session_id: "current-session".into(),
+                session_path: "/sessions/current.jsonl".into(),
+                issue_number: 40,
+                linked_at: now - 30_000,
+            },
+            SessionLink {
+                session_id: "abcd1234efgh".into(),
+                session_path: "/sessions/other.jsonl".into(),
+                issue_number: 40,
+                linked_at: now - 86_400_000,
+            },
+        ];
+
+        assert_eq!(
+            description_copy("   "),
+            DescriptionCopy {
+                empty: true,
+                text: "No description recorded.".into(),
+            }
+        );
+        assert_eq!(
+            description_copy("Keep the ticket body readable."),
+            DescriptionCopy {
+                empty: false,
+                text: "Keep the ticket body readable.".into(),
+            }
+        );
+        assert_eq!(
+            inspector_notes(&[&notes[0], &notes[1]], now),
+            vec![
+                InspectorNote {
+                    body: "First update".into(),
+                    created_label: "2m ago".into(),
+                },
+                InspectorNote {
+                    body: "Second update".into(),
+                    created_label: "2h ago".into(),
+                },
+            ]
+        );
+        assert_eq!(
+            inspector_sessions(&[&sessions[0], &sessions[1]], Some("current-session"), now),
+            vec![
+                InspectorSession {
+                    title: "This session".into(),
+                    meta: "Linked just now".into(),
+                },
+                InspectorSession {
+                    title: "abcd1234".into(),
+                    meta: "Linked 1d ago".into(),
+                },
+            ]
+        );
+        assert_eq!(
+            issue_meta_label(0, now - 7_200_000, now),
+            "Normal · Updated 2h ago"
+        );
+        assert_eq!(
+            issue_meta_label(2, now - 7_200_000, now),
+            "P2 · Updated 2h ago"
+        );
     }
 }

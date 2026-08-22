@@ -3,12 +3,12 @@ use std::path::PathBuf;
 use gpui::{
     AppContext as _, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Render,
     StatefulInteractiveElement as _, Styled as _, Task, WeakEntity, div,
-    prelude::FluentBuilder as _, px,
+    prelude::FluentBuilder as _,
 };
 
 use super::{
+    components::{detail_card, detail_label, status_pill},
     contract::{BoardData, BoardLoadState},
-    core::status_label,
     persistence::load_issues,
 };
 use crate::{
@@ -213,13 +213,16 @@ fn render_summary(summary: SidebarSummary, app: WeakEntity<PiApp>) -> impl IntoE
             card.child(
                 div()
                     .id(("workgraph-sidebar-issue", number))
-                    .px(THEME.space.xs)
-                    .py(THEME.space.xs)
+                    .p(THEME.space.sm)
                     .flex()
                     .flex_col()
-                    .gap(px(3.0))
+                    .gap(THEME.space.sm)
+                    .rounded(THEME.radius)
+                    .border(THEME.border)
+                    .border_color(THEME.colors.border)
+                    .bg(THEME.colors.canvas)
                     .cursor_pointer()
-                    .hover(|card| card.bg(THEME.colors.hover))
+                    .hover(|card| card.bg(THEME.colors.surface))
                     .on_click(move |_, window, cx| {
                         let _ = app.update(cx, |app, cx| {
                             app.inspect_workgraph_issue(number, window, cx);
@@ -227,41 +230,56 @@ fn render_summary(summary: SidebarSummary, app: WeakEntity<PiApp>) -> impl IntoE
                     })
                     .child(
                         div()
-                            .text_size(THEME.type_scale.caption)
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(THEME.colors.accent)
-                            .child(format!(
-                                "#{} · {}",
-                                issue.number,
-                                status_label(issue.status)
-                            )),
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_size(THEME.type_scale.caption)
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(THEME.colors.muted)
+                                    .child(format!("Issue #{}", issue.number)),
+                            )
+                            .child(status_pill(issue.status)),
                     )
                     .child(
                         div()
                             .line_clamp(2)
+                            .text_size(THEME.type_scale.body_small)
+                            .font_weight(FontWeight::SEMIBOLD)
                             .text_color(THEME.colors.text)
                             .child(issue.title),
+                    )
+                    .child(
+                        div()
+                            .text_size(THEME.type_scale.caption)
+                            .text_color(THEME.colors.link)
+                            .child("Open issue details"),
                     ),
             )
         })
         .when(!has_linked, |card| {
             card.child(
-                div()
-                    .text_size(THEME.type_scale.caption)
-                    .text_color(THEME.colors.muted)
-                    .child("No issue linked to this session"),
+                detail_card()
+                    .child(detail_label("No linked issue"))
+                    .child(
+                        div()
+                            .text_size(THEME.type_scale.body_small)
+                            .text_color(THEME.colors.muted)
+                            .child("Attach this session to project work."),
+                    )
+                    .child(button(
+                        "choose-current-work",
+                        "Choose issue",
+                        ButtonTone::Quiet,
+                        true,
+                        move |window, cx| {
+                            let _ = choose_issue.update(cx, |app, cx| {
+                                app.open_workgraph_surface(window, cx);
+                            });
+                        },
+                    )),
             )
-            .child(button(
-                "choose-current-work",
-                "Choose issue",
-                ButtonTone::Quiet,
-                true,
-                move |window, cx| {
-                    let _ = choose_issue.update(cx, |app, cx| {
-                        app.open_workgraph_surface(window, cx);
-                    });
-                },
-            ))
         })
 }
 
@@ -320,7 +338,15 @@ mod tests {
 
         let summary = sidebar_summary(&data, Some("session-1"));
 
-        assert_eq!(summary.linked.map(|issue| issue.number), Some(2));
+        assert_eq!(summary.linked.as_ref().map(|issue| issue.number), Some(2));
+        assert_eq!(
+            summary.linked.as_ref().map(|issue| issue.status),
+            Some(IssueStatus::InProgress)
+        );
+        assert_eq!(
+            summary.linked.as_ref().map(|issue| issue.title.as_str()),
+            Some("Issue 2")
+        );
         assert_eq!(sidebar_summary(&data, Some("unlinked")).linked, None);
     }
 }
