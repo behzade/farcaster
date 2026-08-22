@@ -36,7 +36,7 @@ impl PiApp {
         let composer_cursor = composer.cursor().min(composer_text.len());
         let composer_value = composer_text.trim().to_owned();
         let command_suggestions =
-            slash_commands::suggestions(&composer_value, &self.snapshot.commands)
+            slash_commands::suggestions(composer_text.trim_start(), &self.snapshot.commands)
                 .into_iter()
                 .chain(user_invocations::suggestions(
                     &composer_text[..composer_cursor],
@@ -65,16 +65,14 @@ impl PiApp {
         let next_history_entity = entity.clone();
         let paste_entity = entity.clone();
         let composer_for_paste = self.composer.clone();
+        let key_entity = entity.clone();
         let cursor_entity = entity.clone();
         let attachments_entity = entity.clone();
         let command_entity = entity.clone();
         let mention_entity = entity.clone();
-        let mention_key_entity = entity.clone();
-        let mention_for_key = mention_query.clone();
         let mention_selection = self
             .composer_mention_selection
             .min(file_suggestions.len().saturating_sub(1));
-        let selected_file_suggestion = file_suggestions.get(mention_selection).cloned();
         let mention_suggestion_count = file_suggestions.len();
         let controls_entity = entity.clone();
         let actions_entity = entity;
@@ -196,24 +194,8 @@ impl PiApp {
                                 }
                                 cx.stop_propagation();
                             })
-                            .capture_key_down(move |event: &KeyDownEvent, window, cx| {
-                                if event.keystroke.key == "enter"
-                                    && !event.keystroke.modifiers.shift
-                                    && let (Some(query), Some(path)) =
-                                        (mention_for_key.clone(), selected_file_suggestion.clone())
-                                {
-                                    fill_file_mention(
-                                        mention_key_entity.clone(),
-                                        query,
-                                        path,
-                                        window,
-                                        cx,
-                                    );
-                                    window.prevent_default();
-                                    cx.stop_propagation();
-                                    return;
-                                }
-                                capture_after_input(mention_key_entity.clone(), cx);
+                            .capture_key_down(move |_: &KeyDownEvent, _, cx| {
+                                capture_after_input(key_entity.clone(), cx);
                             })
                             .on_mouse_up(MouseButton::Left, move |_, _, cx| {
                                 capture_after_input(cursor_entity.clone(), cx);

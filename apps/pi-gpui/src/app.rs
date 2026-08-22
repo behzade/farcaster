@@ -2,6 +2,7 @@
 
 mod archive;
 mod changes;
+mod composer_completion;
 mod composer_images;
 mod drafts;
 mod expiries;
@@ -353,20 +354,14 @@ impl PiApp {
                 InputEvent::PressEnter { shift: false, .. } => {
                     let input = state.read(cx);
                     let value = input.value();
-                    let mention =
-                        file_mentions::query_at_cursor(&value, input.cursor()).and_then(|query| {
-                            file_mentions::matches(&this.composer_project_files, &query.text)
-                                .get(this.composer_mention_selection)
-                                .cloned()
-                                .map(|path| (query, path))
-                        });
-                    if let Some((query, path)) = mention {
-                        let (text, cursor) = file_mentions::insert(&value, &query, &path);
-                        this.apply_composer_snapshot(
-                            ComposerSnapshot::new(text, cursor, cursor..cursor),
-                            _window,
-                            cx,
-                        );
+                    if let Some(completion) = composer_completion::resolve(
+                        &value,
+                        input.cursor(),
+                        &this.composer_project_files,
+                        this.composer_mention_selection,
+                        &this.snapshot.commands,
+                    ) {
+                        this.apply_composer_snapshot(completion, _window, cx);
                         this.composer_focus.focus(_window, cx);
                     } else {
                         let value = value.trim().to_owned();
