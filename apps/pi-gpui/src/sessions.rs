@@ -376,24 +376,53 @@ pub(crate) fn load_history(path: &Path) -> Result<LoadedHistory, String> {
         }
     }
     let branch = active_branch_entries(&entries);
-    let model = branch.iter().rev().find_map(|entry| {
-        (entry.get("type").and_then(Value::as_str) == Some("model_change")).then(|| {
-            Some((
-                entry.get("provider")?.as_str()?.to_owned(),
-                entry.get("modelId")?.as_str()?.to_owned(),
-            ))
-        })?
-    });
-    let thinking_level = branch.iter().rev().find_map(|entry| {
-        (entry.get("type").and_then(Value::as_str) == Some("thinking_level_change"))
-            .then(|| entry.get("thinkingLevel")?.as_str().map(str::to_owned))?
-    });
+    let (model, thinking_level) = session_settings(&branch);
     Ok(LoadedHistory {
         messages: project_display_history_from_branch(&branch),
         model,
-        thinking_level,
+        thinking_level: Some(thinking_level),
         pending_question: pending_question_from_branch(&branch),
     })
+}
+
+/// Match Pi's restoration order: assistant messages and explicit changes each
+/// replace the current model as the active branch is walked.
+fn session_settings(branch: &[&Value]) -> (Option<(String, String)>, String) {
+    let mut model = None;
+    let mut thinking_level = "off".to_owned();
+    for entry in branch {
+        match entry.get("type").and_then(Value::as_str) {
+            Some("model_change") => {
+                if let (Some(provider), Some(model_id)) = (
+                    entry.get("provider").and_then(Value::as_str),
+                    entry.get("modelId").and_then(Value::as_str),
+                ) {
+                    model = Some((provider.to_owned(), model_id.to_owned()));
+                }
+            }
+            Some("thinking_level_change") => {
+                if let Some(level) = entry.get("thinkingLevel").and_then(Value::as_str) {
+                    thinking_level = level.to_owned();
+                }
+            }
+            Some("message") => {
+                let Some(message) = entry.get("message") else {
+                    continue;
+                };
+                if message.get("role").and_then(Value::as_str) != Some("assistant") {
+                    continue;
+                }
+                if let (Some(provider), Some(model_id)) = (
+                    message.get("provider").and_then(Value::as_str),
+                    message.get("model").and_then(Value::as_str),
+                ) {
+                    model = Some((provider.to_owned(), model_id.to_owned()));
+                }
+            }
+            _ => {}
+        }
+    }
+    (model, thinking_level)
 }
 
 fn pending_question_from_branch(branch: &[&Value]) -> Option<ExtensionUiRequest> {
@@ -890,18 +919,7 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
     append_bounded(&mut search, &project.to_string_lossy());
     let session_path = normalize_session_path(path);
     let branch_entries = active_branch_entries(&activity_entries);
-    let model = branch_entries.iter().rev().find_map(|entry| {
-        (entry.get("type").and_then(Value::as_str) == Some("model_change")).then(|| {
-            Some((
-                entry.get("provider")?.as_str()?.to_owned(),
-                entry.get("modelId")?.as_str()?.to_owned(),
-            ))
-        })?
-    });
-    let thinking_level = branch_entries.iter().rev().find_map(|entry| {
-        (entry.get("type").and_then(Value::as_str) == Some("thinking_level_change"))
-            .then(|| entry.get("thinkingLevel")?.as_str().map(str::to_owned))?
-    });
+    let (model, thinking_level) = session_settings(&branch_entries);
     for entry in &branch_entries {
         activity.observe_entry(entry);
     }
@@ -940,7 +958,7 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
             archived: false,
             is_running,
             model,
-            thinking_level,
+            thinking_level: (!detail_limited).then_some(thinking_level),
             search: search.to_lowercase(),
         },
         activity,

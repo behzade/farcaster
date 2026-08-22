@@ -3,6 +3,7 @@
 mod catalog;
 mod documents;
 mod prompts;
+mod session_controls;
 mod session_identity;
 
 use std::{
@@ -33,6 +34,7 @@ use crate::{
     state::StateStore,
 };
 use catalog::ExternalActivityTracker;
+use session_controls::PendingSessionControls;
 use session_identity::SessionControlDefaults;
 
 const COALESCED_SESSION_REFRESH_DELAY: Duration = Duration::from_millis(100);
@@ -912,7 +914,7 @@ fn run_supervisor(
                             supervisor_thread.clone(),
                         )
                     });
-                    if target_command_needs_actor_message(view_only, resident_snapshot.is_some()) {
+                    if target_command_needs_actor_message(view_only, resident_snapshot.as_deref()) {
                         actor.send(command);
                     }
                     if let Some(mut snapshot) = resident_snapshot {
@@ -1024,8 +1026,10 @@ fn is_view_only_selection(command: &RuntimeCommand) -> bool {
     matches!(command, RuntimeCommand::SelectSession { .. })
 }
 
-fn target_command_needs_actor_message(view_only: bool, document_is_resident: bool) -> bool {
-    !view_only || !document_is_resident
+fn target_command_needs_actor_message(view_only: bool, resident: Option<&RuntimeSnapshot>) -> bool {
+    !view_only
+        || resident.is_none()
+        || resident.is_some_and(|snapshot| !snapshot.connected && !snapshot.history_preview)
 }
 
 fn actor_key_for_command(
@@ -1220,6 +1224,7 @@ struct RuntimeOwner {
     active_session: Option<PathBuf>,
     parked_snapshot: Option<RuntimeSnapshot>,
     deferred_prompt: Option<DeferredPrompt>,
+    pending_session_controls: PendingSessionControls,
     startup_state_loaded: bool,
     startup_history_loaded: bool,
     state: Option<StateStore>,
@@ -1291,6 +1296,7 @@ fn run(
         active_session: None,
         parked_snapshot: None,
         deferred_prompt: None,
+        pending_session_controls: PendingSessionControls::default(),
         startup_state_loaded: false,
         startup_history_loaded: false,
         state,
@@ -1380,8 +1386,9 @@ fn run(
 impl RuntimeOwner {
     fn start_process(&mut self, session: Option<PathBuf>) {
         self.process_generation = self.process_generation.saturating_add(1);
-        let preserve_submission = self.deferred_prompt.is_some();
-        let keep_preview = preserve_submission && self.snapshot.history_preview;
+        let preserve_transcript = self.deferred_prompt.is_some()
+            || (!self.pending_session_controls.is_empty() && self.snapshot.history_preview);
+        let keep_preview = preserve_transcript && self.snapshot.history_preview;
         if let Some(mut old) = self.process.take() {
             let _ = old.terminate();
         }
@@ -1414,7 +1421,7 @@ impl RuntimeOwner {
         }
         let _ = self.event_tx.send(RuntimeEvent::SessionReset {
             generation: self.process_generation,
-            preserve_submission,
+            preserve_submission: preserve_transcript,
         });
         self.publish();
         match RpcProcess::spawn_with_waker(
@@ -1498,17 +1505,13 @@ impl RuntimeOwner {
             RuntimeCommand::RefreshSessionDocument { path, project } => {
                 self.refresh_history(path, project)
             }
-            RuntimeCommand::SetModel { provider, model_id } => {
-                self.send(json!({"type":"set_model","provider":provider,"modelId":model_id}))
-            }
+            RuntimeCommand::SetModel { provider, model_id } => self.set_model(provider, model_id),
             RuntimeCommand::Login(provider) => {
                 if self.ensure_login_process() {
                     self.send(optional_string_command("login", "provider", provider));
                 }
             }
-            RuntimeCommand::SetThinking(level) => {
-                self.send(json!({"type":"set_thinking_level","level":level}))
-            }
+            RuntimeCommand::SetThinking(level) => self.set_thinking(level),
             RuntimeCommand::ExtensionResponse(response) => {
                 if let Some(process) = self.process.as_mut()
                     && let Err(error) = process.send_extension_response(response)
@@ -1740,10 +1743,14 @@ impl RuntimeOwner {
     fn select_history(&mut self, path: PathBuf, project: PathBuf) {
         let _timing = crate::performance::Timing::new("switch.select_document");
         self.history_generation = self.history_generation.saturating_add(1);
-        if self.snapshot.selected_session.as_deref() == Some(path.as_path()) {
+        if self.snapshot.selected_session.as_deref() == Some(path.as_path())
+            && (self.snapshot.history_preview || self.process.is_some())
+        {
             return;
         }
-        if self.active_session.as_deref() == Some(path.as_path()) {
+        if self.active_session.as_deref() == Some(path.as_path())
+            && (self.process.is_some() || self.parked_snapshot.is_some())
+        {
             if let Some(snapshot) = self.parked_snapshot.take() {
                 self.snapshot = snapshot;
                 self.project = project;
@@ -1889,8 +1896,19 @@ impl RuntimeOwner {
             }
         }
         if !response.success {
-            let blocks_resume = self.deferred_prompt.is_some()
-                && matches!(response.command.as_str(), "get_state" | "get_entries");
+            let startup_query = matches!(response.command.as_str(), "get_state" | "get_entries");
+            let blocks_resume = self.deferred_prompt.is_some() && startup_query;
+            let blocks_session_command_resume =
+                !self.pending_session_controls.is_empty() && startup_query;
+            if blocks_session_command_resume {
+                let details = format!(
+                    "{}: {}",
+                    response.command,
+                    response.error.unwrap_or_else(|| "command failed".into())
+                );
+                self.fail_session_control_resume("Command not sent", "Command not sent", details);
+                return;
+            }
             let login_failed_while_previewing =
                 response.command == "login" && self.parked_snapshot.is_some();
             let snapshot = if login_failed_while_previewing {
@@ -2071,6 +2089,7 @@ impl RuntimeOwner {
         }
         if matches!(response_command.as_str(), "get_state" | "get_entries") {
             self.maybe_send_deferred_prompt();
+            self.maybe_send_pending_session_controls();
         }
         if response_command == "login" {
             self.finish_login_process();
@@ -2112,6 +2131,9 @@ impl RuntimeOwner {
             return;
         }
         let starting = !self.startup_state_loaded || !self.startup_history_loaded;
+        let preserve_history = !self.pending_session_controls.is_empty()
+            && self.snapshot.history_preview
+            && self.parked_snapshot.is_some();
         let details = failure_details(&error);
         zlog::error!("Pi runtime failed: {details}");
         self.mark_outbox_failed(&details);
@@ -2121,10 +2143,15 @@ impl RuntimeOwner {
         if let Some(target) = self.pending_prompt_target.take() {
             self.emit_prompt_result(&target, false);
         }
+        self.login_process_only = false;
+        if preserve_history {
+            self.fail_session_control_resume("Failed", "Couldn’t start Pi", details);
+            return;
+        }
+        self.pending_session_controls = PendingSessionControls::default();
         if let Some(mut process) = self.process.take() {
             let _ = process.terminate();
         }
-        self.login_process_only = false;
         let previewing = self.parked_snapshot.is_some();
         let snapshot = self.active_snapshot_mut();
         snapshot.connected = false;
@@ -2456,6 +2483,7 @@ mod tests {
                 active_session: None,
                 parked_snapshot: None,
                 deferred_prompt: None,
+                pending_session_controls: PendingSessionControls::default(),
                 startup_state_loaded: false,
                 startup_history_loaded: false,
                 state: None,
@@ -2464,6 +2492,17 @@ mod tests {
             event_rx,
             discovery_rx,
         )
+    }
+
+    fn preview_history(owner: &mut RuntimeOwner, session: PathBuf, message: &str) {
+        owner.snapshot.history_preview = true;
+        owner.snapshot.selected_session = Some(session);
+        conversation_mut(&mut owner.snapshot).replace_history(&[json!({
+            "role": "user",
+            "content": message,
+            "timestamp": 1
+        })]);
+        owner.parked_snapshot = Some(RuntimeSnapshot::default());
     }
 
     #[test]
@@ -2862,9 +2901,20 @@ mod tests {
 
     #[test]
     fn selecting_a_resident_document_does_not_reload_or_message_its_actor() {
-        assert!(!target_command_needs_actor_message(true, true));
-        assert!(target_command_needs_actor_message(true, false));
-        assert!(target_command_needs_actor_message(false, true));
+        let history = RuntimeSnapshot {
+            connected: false,
+            history_preview: true,
+            ..RuntimeSnapshot::default()
+        };
+        let disconnected = RuntimeSnapshot::default();
+
+        assert!(!target_command_needs_actor_message(true, Some(&history)));
+        assert!(target_command_needs_actor_message(
+            true,
+            Some(&disconnected)
+        ));
+        assert!(target_command_needs_actor_message(true, None));
+        assert!(target_command_needs_actor_message(false, Some(&history)));
     }
 
     #[test]
@@ -3740,6 +3790,95 @@ mod tests {
     }
 
     #[test]
+    fn model_change_from_history_reconnects_without_hiding_history() -> Result<(), String> {
+        let temp = tempdir().map_err(|error| error.to_string())?;
+        let script = temp.path().join("fake-pi.sh");
+        fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))
+            .map_err(|error| error.to_string())?;
+        let session = temp.path().join("history.jsonl");
+        let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
+        owner.process_command =
+            ProcessCommand::test_script(&script, vec!["history-control".into()]);
+        preview_history(&mut owner, session.clone(), "preserved history");
+
+        owner.apply_command(RuntimeCommand::SetModel {
+            provider: "new-provider".into(),
+            model_id: "new-model".into(),
+        });
+
+        assert!(owner.process.is_some());
+        assert!(owner.snapshot.history_preview);
+        assert_eq!(
+            owner.snapshot.conversation.items[0].text,
+            "preserved history"
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            while let Some(item) = owner.process.as_mut().and_then(RpcProcess::try_next) {
+                owner.apply_process_item(item);
+            }
+            if owner.pending_session_controls.is_empty()
+                && owner
+                    .snapshot
+                    .session
+                    .as_ref()
+                    .and_then(|state| state.model.as_ref())
+                    .is_some_and(|model| model.id == "new-model")
+            {
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        assert!(!owner.snapshot.history_preview);
+        assert_eq!(owner.snapshot.selected_session, Some(session));
+        assert!(
+            owner.snapshot.conversation.items.iter().any(|item| {
+                item.kind == TranscriptKind::User && item.text == "preserved history"
+            })
+        );
+        assert_eq!(
+            owner
+                .snapshot
+                .session
+                .as_ref()
+                .and_then(|state| state.model.as_ref())
+                .map(|model| (model.provider.as_str(), model.id.as_str())),
+            Some(("new-provider", "new-model"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn failed_model_reconnect_keeps_the_loaded_history() {
+        let project = std::env::temp_dir();
+        let session = project.join("history.jsonl");
+        let (mut owner, _events, _discovery) = owner_without_process(project);
+        owner.process_command = ProcessCommand {
+            program: PathBuf::from("/definitely/missing/pi-gpui-test-command"),
+            prefix_args: Vec::new(),
+        };
+        preview_history(&mut owner, session.clone(), "keep this history");
+
+        owner.apply_command(RuntimeCommand::SetModel {
+            provider: "provider".into(),
+            model_id: "model".into(),
+        });
+
+        assert!(owner.process.is_none());
+        assert!(owner.snapshot.history_preview);
+        assert_eq!(owner.snapshot.selected_session, Some(session));
+        assert_eq!(
+            owner.snapshot.conversation.items[0].text,
+            "keep this history"
+        );
+        assert!(owner.snapshot.conversation.items.iter().any(|item| {
+            item.kind == TranscriptKind::Error && item.label == "Couldn’t start Pi"
+        }));
+    }
+
+    #[test]
     fn failed_resume_publishes_no_state_from_the_previous_process() {
         let (event_tx, event_rx) = test_event_channel();
         let (discovery_tx, _discovery_rx) = mpsc::channel();
@@ -3792,6 +3931,7 @@ mod tests {
             active_session: Some(PathBuf::from("/old")),
             parked_snapshot: None,
             deferred_prompt: None,
+            pending_session_controls: PendingSessionControls::default(),
             startup_state_loaded: false,
             startup_history_loaded: false,
             state: None,
@@ -3946,6 +4086,7 @@ mod tests {
             active_session: Some(old_path.clone()),
             parked_snapshot: None,
             deferred_prompt: None,
+            pending_session_controls: PendingSessionControls::default(),
             startup_state_loaded: false,
             startup_history_loaded: false,
             state: Some(StateStore::open_at(&temp.path().join("gui-state.sqlite3"))?),
@@ -4118,6 +4259,7 @@ mod tests {
             active_session: Some(active_path.clone()),
             parked_snapshot: None,
             deferred_prompt: None,
+            pending_session_controls: PendingSessionControls::default(),
             startup_state_loaded: true,
             startup_history_loaded: true,
             state: None,

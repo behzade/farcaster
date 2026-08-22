@@ -39,6 +39,8 @@ if [ "$case_name" = "normal" ]; then
   printf '{"type":"agent_start"}\n'
 fi
 printf '{"type":"response","id":"%s","command":"get_state","success":true,"data":{"model":null,"thinkingLevel":"off","isStreaming":false,"isCompacting":false,"sessionId":"fake","autoCompactionEnabled":true,"messageCount":0,"pendingMessageCount":0}}\n' "$id"
+model_changed=0
+entries_loaded=0
 
 while IFS= read -r line; do
   id=$(read_id "$line")
@@ -62,7 +64,12 @@ while IFS= read -r line; do
       data='{"messages":[]}'
       ;;
     get_entries)
-      data='{"entries":[],"leafId":null}'
+      if [ "$case_name" = "history-control" ]; then
+        entries_loaded=1
+        data='{"entries":[{"type":"message","id":"one","parentId":null,"message":{"role":"user","content":"preserved history"}}],"leafId":"one"}'
+      else
+        data='{"entries":[],"leafId":null}'
+      fi
       ;;
     get_available_models)
       data='{"models":[]}'
@@ -74,7 +81,22 @@ while IFS= read -r line; do
       data='{"contextUsage":{"tokens":4096,"contextWindow":8192,"percent":50}}'
       ;;
     get_state)
-      data='{"model":null,"thinkingLevel":"off","isStreaming":false,"isCompacting":false,"sessionId":"fake","autoCompactionEnabled":true,"messageCount":0,"pendingMessageCount":0}'
+      if [ "$case_name" = "history-control" ] && [ "$model_changed" -eq 1 ]; then
+        data='{"model":{"id":"new-model","name":"New Model","provider":"new-provider","reasoning":true},"thinkingLevel":"off","isStreaming":false,"isCompacting":false,"sessionId":"fake","autoCompactionEnabled":true,"messageCount":1,"pendingMessageCount":0}'
+      else
+        data='{"model":null,"thinkingLevel":"off","isStreaming":false,"isCompacting":false,"sessionId":"fake","autoCompactionEnabled":true,"messageCount":0,"pendingMessageCount":0}'
+      fi
+      ;;
+    set_model)
+      if [ "$case_name" = "history-control" ]; then
+        [ "$entries_loaded" -eq 1 ] || exit 9
+        case "$line" in
+          *'"provider":"new-provider"'*'"modelId":"new-model"'*) ;;
+          *) exit 10 ;;
+        esac
+      fi
+      model_changed=1
+      data='{"id":"new-model","name":"New Model","provider":"new-provider","reasoning":true}'
       ;;
     *)
       data='{}'

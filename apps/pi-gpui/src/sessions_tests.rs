@@ -181,8 +181,7 @@ fn discovery_reports_latest_model_and_thinking_level_from_the_active_branch() ->
         serde_json::json!({"type":"session","version":3,"id":"modelled","timestamp":"2026-01-02T00:00:00Z","cwd":project.path()}),
         serde_json::json!({"type":"model_change","provider":"openai","modelId":"gpt-4o"}),
         serde_json::json!({"type":"thinking_level_change","thinkingLevel":"low"}),
-        serde_json::json!({"type":"message","message":{"role":"user","content":"branch start"}}),
-        serde_json::json!({"type":"model_change","provider":"anthropic","modelId":"claude-opus-4-5"}),
+        serde_json::json!({"type":"message","message":{"role":"assistant","provider":"anthropic","model":"claude-sonnet-4-5","content":[],"stopReason":"stop"}}),
         serde_json::json!({"type":"thinking_level_change","thinkingLevel":"high"}),
     ];
     fs::write(
@@ -197,7 +196,7 @@ fn discovery_reports_latest_model_and_thinking_level_from_the_active_branch() ->
     assert_eq!(sessions.len(), 1);
     assert_eq!(
         sessions[0].model,
-        Some(("anthropic".to_owned(), "claude-opus-4-5".to_owned()))
+        Some(("anthropic".to_owned(), "claude-sonnet-4-5".to_owned()))
     );
     assert_eq!(sessions[0].thinking_level.as_deref(), Some("high"));
     Ok(())
@@ -880,6 +879,34 @@ fn loaded_history_includes_active_branch_model_and_effort() -> TestResult {
     );
     assert_eq!(history.thinking_level.as_deref(), Some("high"));
     assert_eq!(history.messages.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn loaded_history_uses_last_assistant_model_and_pi_default_effort() -> TestResult {
+    let directory = tempdir()?;
+    let path = directory.path().join("session.jsonl");
+    fs::write(
+        &path,
+        [
+            serde_json::json!({"type":"session","version":3,"id":"session","cwd":"/project"}),
+            serde_json::json!({"type":"model_change","id":"one","parentId":null,"provider":"google","modelId":"gemini-old"}),
+            serde_json::json!({"type":"message","id":"two","parentId":"one","message":{"role":"assistant","provider":"anthropic","model":"claude-old","content":[]}}),
+            serde_json::json!({"type":"message","id":"three","parentId":"two","message":{"role":"assistant","provider":"openai-codex","model":"gpt-current","content":[]}}),
+        ]
+        .into_iter()
+        .map(|entry| entry.to_string())
+        .collect::<Vec<_>>()
+        .join("\n"),
+    )?;
+
+    let history = load_history(&path)?;
+
+    assert_eq!(
+        history.model,
+        Some(("openai-codex".into(), "gpt-current".into()))
+    );
+    assert_eq!(history.thinking_level.as_deref(), Some("off"));
     Ok(())
 }
 
