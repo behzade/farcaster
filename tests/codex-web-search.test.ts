@@ -1,11 +1,24 @@
 import assert from "node:assert/strict";
+import { access } from "node:fs/promises";
+import { resolve } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   buildCodexSearchRequest,
   extractCodexAccountId,
   parseCodexSearchResponse,
   redactCredential,
-} from "../extensions/codex-web-search-core.ts";
+} from "../extensions/lib/codex-web-search-core.ts";
+
+const extensionRoot = fileURLToPath(new URL("../extensions/", import.meta.url));
+
+test("keeps support code out of Pi's auto-loaded extension root", async () => {
+  await access(resolve(extensionRoot, "lib/codex-web-search-core.ts"));
+  await assert.rejects(
+    access(resolve(extensionRoot, "codex-web-search-core.ts")),
+    { code: "ENOENT" },
+  );
+});
 
 test("builds the direct Codex search request with bounded filters", () => {
   const request = buildCodexSearchRequest("current docs", "session-123", "gpt-test", {

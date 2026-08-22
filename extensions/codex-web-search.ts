@@ -14,7 +14,7 @@ import {
   parseCodexSearchResponse,
   redactCredential,
   type CodexSearchOptions,
-} from "./codex-web-search-core.ts";
+} from "./lib/codex-web-search-core.ts";
 
 const CODEX_SEARCH_URL = "https://chatgpt.com/backend-api/codex/alpha/search";
 const SEARCH_TIMEOUT_MS = 60_000;

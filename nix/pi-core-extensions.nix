@@ -11,7 +11,6 @@ let
     ../extensions/package-lock.json
     ../extensions/notifications.ts
     ../extensions/codex-web-search.ts
-    ../extensions/codex-web-search-core.ts
     ../extensions/prompt-inspector.ts
     ../extensions/session-hooks.ts
     ../extensions/title-state.ts

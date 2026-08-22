@@ -33,7 +33,6 @@ stdenvNoCC.mkDerivation {
     ln -s ${coreExtensions}/node_modules "$out/extensions/node_modules"
     ln -s ${coreExtensions}/notifications.ts "$out/extensions/notifications.ts"
     ln -s ${coreExtensions}/codex-web-search.ts "$out/extensions/codex-web-search.ts"
-    ln -s ${coreExtensions}/codex-web-search-core.ts "$out/extensions/codex-web-search-core.ts"
     ln -s ${coreExtensions}/prompt-inspector.ts "$out/extensions/prompt-inspector.ts"
     ln -s ${coreExtensions}/session-hooks.ts "$out/extensions/session-hooks.ts"
     ln -s ${coreExtensions}/title-state.ts "$out/extensions/title-state.ts"

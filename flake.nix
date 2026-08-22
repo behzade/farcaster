@@ -180,6 +180,8 @@
             test "$(readlink ${agent}/extensions/sandbox)" = ${sandbox}
             test -f ${agent}/extensions/sandbox/index.ts
             test -f ${agent}/extensions/codex-web-search.ts
+            test -f ${agent}/extensions/lib/codex-web-search-core.ts
+            test ! -e ${agent}/extensions/codex-web-search-core.ts
             test -f ${agent}/extensions/sandbox/node_modules/effect/package.json
             mkdir home
             HOME="$PWD/home" PI_OFFLINE=1 pi --no-extensions -e ${sandbox}/index.ts --list-models >/dev/null
