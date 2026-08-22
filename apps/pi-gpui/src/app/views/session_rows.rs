@@ -26,6 +26,7 @@ use crate::{
         AppIconSize, ReorderPosition, ReorderTargetExt as _, app_icon, icon_control, reorder_handle,
     },
     projects::DraftSession,
+    sessions::SessionSummary,
     theme::THEME,
 };
 
@@ -236,7 +237,7 @@ pub(super) fn session_badge(
         .or_else(|| item.session.is_running.then(|| "Working".into()))
         .or_else(|| (item.kind == SessionRailKind::Project).then(|| "Done".into()));
     match (item.kind, status.as_deref()) {
-        (SessionRailKind::Archived, Some("Done")) | (_, None) => None,
+        (SessionRailKind::Review | SessionRailKind::Archived, Some("Done")) | (_, None) => None,
         _ => status,
     }
 }
@@ -256,6 +257,7 @@ pub(super) fn session_row(
     drop_position: Option<ReorderPosition>,
     draggable: bool,
     title_editor: Option<Entity<InputState>>,
+    subagents: usize,
     entity: WeakEntity<PiApp>,
 ) -> AnyElement {
     session_row_with_height(
@@ -266,6 +268,7 @@ pub(super) fn session_row(
         drop_position,
         draggable,
         title_editor,
+        subagents,
         THEME.layout.session_row_height,
         entity,
     )
@@ -279,10 +282,12 @@ pub(super) fn session_row_with_height(
     drop_position: Option<ReorderPosition>,
     draggable: bool,
     title_editor: Option<Entity<InputState>>,
+    subagents: usize,
     row_height: Pixels,
     entity: WeakEntity<PiApp>,
 ) -> AnyElement {
     let session = &item.session;
+    let tooltip_lines = session_tooltip_lines(session, subagents);
     let path = session.path.clone();
     let project = session.project.clone();
     let open_entity = entity.clone();
@@ -294,6 +299,8 @@ pub(super) fn session_row_with_height(
     let move_path = session.path.clone();
     let move_project = session.project.clone();
     let move_entity = entity.clone();
+    let review_path = session.path.clone();
+    let review_entity = entity.clone();
     let archive_path = session.path.clone();
     let archive_entity = entity.clone();
     let target_app_session_id = session.app_session_id;
@@ -306,15 +313,22 @@ pub(super) fn session_row_with_height(
     let drop_entity = entity.clone();
     let drag_handle_entity = entity.clone();
     let age = relative_age(session.modified);
+    let is_review = item.kind == SessionRailKind::Review;
     let is_archived = item.kind == SessionRailKind::Archived;
     let status_text = status.unwrap_or_default();
-    let accessible_state = if status_text.is_empty() {
+    let accessible_state = if is_archived {
         "Archived"
+    } else if is_review {
+        "Review"
     } else {
         status_text.as_str()
     };
     let accessible_label = session_accessible_label(&session.title, accessible_state, &age);
-    let archive_label = if is_archived { "Restore" } else { "Archive" };
+    let archive_label = if is_archived {
+        "Restore to review"
+    } else {
+        "Archive"
+    };
     let archive_icon = if is_archived {
         AppIcon::ArrowCounterClockwise
     } else {
@@ -377,6 +391,13 @@ pub(super) fn session_row_with_height(
                     this.select_session(path.clone(), project.clone(), window, cx)
                 });
             }
+        })
+        .when(!tooltip_lines.is_empty(), |row| {
+            row.tooltip(move |window, cx| {
+                let lines = tooltip_lines.clone();
+                Tooltip::element(move |_, _| session_tooltip_element(lines.as_slice()))
+                    .build(window, cx)
+            })
         })
         .child(
             div()
@@ -509,6 +530,50 @@ pub(super) fn session_row_with_height(
                                             .expect("fixed session shortcut must parse"),
                                     ))
                                 })
+                                .when(item.kind == SessionRailKind::Project, |metadata| {
+                                    metadata.child(
+                                        div()
+                                            .id(format!("review-{}", session.id))
+                                            .role(Role::Button)
+                                            .aria_label("Move session to review")
+                                            .tab_index(0)
+                                            .size(THEME.controls.icon_button)
+                                            .flex_none()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .rounded(THEME.radius)
+                                            .opacity(0.0)
+                                            .group_hover(
+                                                format!("session-actions-{}", session.id),
+                                                |button| button.opacity(1.0),
+                                            )
+                                            .focus(|button| {
+                                                button
+                                                    .opacity(1.0)
+                                                    .border(THEME.border)
+                                                    .border_color(THEME.colors.accent)
+                                            })
+                                            .text_color(THEME.colors.muted)
+                                            .hover(|button| button.bg(THEME.colors.hover))
+                                            .tooltip(move |window, cx| {
+                                                Tooltip::new("Move to review").build(window, cx)
+                                            })
+                                            .child(app_icon(
+                                                AppIcon::CheckCircle,
+                                                AppIconSize::Control,
+                                            ))
+                                            .on_click(move |_, _, cx| {
+                                                cx.stop_propagation();
+                                                let _ = review_entity.update(cx, |this, cx| {
+                                                    this.set_session_review(
+                                                        review_path.clone(),
+                                                        cx,
+                                                    );
+                                                });
+                                            }),
+                                    )
+                                })
                                 .child(
                                     div()
                                         .id(format!("archive-{}", session.id))
@@ -546,11 +611,17 @@ pub(super) fn session_row_with_height(
                                         .on_click(move |_, _, cx| {
                                             cx.stop_propagation();
                                             let _ = archive_entity.update(cx, |this, cx| {
-                                                this.set_session_archived(
-                                                    archive_path.clone(),
-                                                    !is_archived,
-                                                    cx,
-                                                );
+                                                if is_archived {
+                                                    this.set_session_review(
+                                                        archive_path.clone(),
+                                                        cx,
+                                                    );
+                                                } else {
+                                                    this.set_session_archived(
+                                                        archive_path.clone(),
+                                                        cx,
+                                                    );
+                                                }
                                             });
                                         }),
                                 ),
@@ -567,6 +638,36 @@ pub(super) fn session_row_with_height(
 
 pub(super) fn session_accessible_label(title: &str, state: &str, age: &str) -> String {
     format!("Resume session: {title}. State: {state}. Updated {age}")
+}
+
+fn session_tooltip_element(lines: &[String]) -> AnyElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(2.0))
+        .children(lines.iter().map(|line| {
+            div()
+                .whitespace_nowrap()
+                .text_size(THEME.type_scale.caption)
+                .text_color(THEME.colors.text)
+                .child(line.clone())
+        }))
+        .into_any_element()
+}
+
+pub(super) fn session_tooltip_lines(session: &SessionSummary, subagents: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some((provider, model)) = &session.model {
+        lines.push(format!("{provider}/{model}"));
+    }
+    if let Some(level) = &session.thinking_level {
+        lines.push(format!("effort: {level}"));
+    }
+    if subagents > 0 {
+        let plural = if subagents == 1 { "" } else { "s" };
+        lines.push(format!("{subagents} subagent{plural}"));
+    }
+    lines
 }
 
 fn status_icon(app_session_id: i64, status: &str) -> Option<AnyElement> {

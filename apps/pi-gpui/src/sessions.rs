@@ -23,7 +23,8 @@ const MAX_DEPTH: usize = 6;
 const MAX_LINES_PER_FILE: usize = 10_000;
 const MAX_SEARCH_BYTES: usize = 64 * 1024;
 const MAX_HEADER_BYTES: usize = 64 * 1024;
-const RUNNING_ACTIVITY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+pub(crate) const RUNNING_ACTIVITY_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(30 * 60);
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct UsageSummary {
@@ -59,8 +60,13 @@ pub(crate) struct SessionSummary {
     pub modified: SystemTime,
     pub message_count: usize,
     pub usage: UsageSummary,
+    pub in_review: bool,
     pub archived: bool,
     pub is_running: bool,
+    /// Latest `(provider, modelId)` on the active branch, if the session has one.
+    pub model: Option<(String, String)>,
+    /// Latest thinking (effort) level on the active branch, if set.
+    pub thinking_level: Option<String>,
     search: String,
 }
 
@@ -97,14 +103,22 @@ impl SessionSummary {
             modified,
             message_count,
             usage,
+            in_review: false,
             archived,
             is_running,
+            model: None,
+            thinking_level: None,
             search,
         }
     }
 
     pub(crate) fn with_app_session_id(mut self, app_session_id: i64) -> Self {
         self.app_session_id = app_session_id;
+        self
+    }
+
+    pub(crate) fn with_review(mut self, in_review: bool) -> Self {
+        self.in_review = in_review;
         self
     }
 
@@ -202,6 +216,13 @@ pub(crate) fn root_session_for_path<'a>(
         current = *parent;
     }
     Some(current)
+}
+
+/// Whether `path` belongs to a descendant (subagent) session rather than a root.
+pub(crate) fn is_subagent_path(sessions: &[SessionSummary], path: &Path) -> bool {
+    sessions
+        .iter()
+        .any(|session| session.path == path && session.parent_session.is_some())
 }
 
 pub(crate) fn descendant_sessions<'a>(
@@ -366,8 +387,7 @@ fn pending_question_from_branch(branch: &[&Value]) -> Option<ExtensionUiRequest>
     let mut application_exited = false;
     for entry in branch.iter().rev() {
         if entry.get("type").and_then(Value::as_str) == Some("custom_message")
-            && entry.get("customType").and_then(Value::as_str)
-                == Some("pi-gpui-application-exit")
+            && entry.get("customType").and_then(Value::as_str) == Some("pi-gpui-application-exit")
         {
             application_exited = true;
             continue;
@@ -855,7 +875,20 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
     append_bounded(&mut search, &title);
     append_bounded(&mut search, &project.to_string_lossy());
     let session_path = normalize_session_path(path);
-    for entry in active_branch_entries(&activity_entries) {
+    let branch_entries = active_branch_entries(&activity_entries);
+    let model = branch_entries.iter().rev().find_map(|entry| {
+        (entry.get("type").and_then(Value::as_str) == Some("model_change")).then(|| {
+            Some((
+                entry.get("provider")?.as_str()?.to_owned(),
+                entry.get("modelId")?.as_str()?.to_owned(),
+            ))
+        })?
+    });
+    let thinking_level = branch_entries.iter().rev().find_map(|entry| {
+        (entry.get("type").and_then(Value::as_str) == Some("thinking_level_change"))
+            .then(|| entry.get("thinkingLevel")?.as_str().map(str::to_owned))?
+    });
+    for entry in &branch_entries {
         activity.observe_entry(entry);
     }
     let mut activity = activity.finish(
@@ -889,8 +922,11 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
             modified,
             message_count,
             usage,
+            in_review: false,
             archived: false,
             is_running,
+            model,
+            thinking_level,
             search: search.to_lowercase(),
         },
         activity,

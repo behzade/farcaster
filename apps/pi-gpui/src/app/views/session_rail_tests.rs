@@ -3,9 +3,10 @@ use std::{path::PathBuf, time::SystemTime};
 use super::{
     ActiveSessionItem, SessionRailItem, SessionRailKind, minimal_row_splice,
     roots_waiting_for_descendants, session_accessible_label, session_badge, status_visual,
-    visible_session_shortcuts,
+    subagent_counts, visible_session_shortcuts,
 };
 use crate::{
+    app::views::session_rows::session_tooltip_lines,
     assets::AppIcon,
     projects::DraftSession,
     sessions::{SessionSummary, UsageSummary},
@@ -56,10 +57,12 @@ fn active_sessions_always_have_a_meaningful_state() {
 }
 
 #[test]
-fn archived_sessions_suppress_done_but_keep_active_states() {
+fn review_and_archived_sessions_suppress_done_but_keep_active_states() {
+    let review = item("review", 3, "/project", SessionRailKind::Review, false);
     let archived = item("archived", 2, "/project", SessionRailKind::Archived, false);
     let running = item("running", 1, "/project", SessionRailKind::Archived, true);
 
+    assert_eq!(session_badge(&review, Some("Done"), None, "", false), None);
     assert_eq!(
         session_badge(&archived, Some("Done"), None, "", false),
         None
@@ -153,7 +156,39 @@ fn item(
             is_running,
             String::new(),
         )
-        .with_app_session_id(app_session_id),
+        .with_app_session_id(app_session_id)
+        .with_review(kind == SessionRailKind::Review),
         kind,
     }
+}
+
+#[test]
+fn tooltips_report_model_effort_and_direct_subagent_counts() {
+    let mut modelled = item("modelled", 1, "/project", SessionRailKind::Project, false);
+    modelled.session.model = Some(("anthropic".into(), "claude-opus-4-5".into()));
+    modelled.session.thinking_level = Some("high".into());
+    assert_eq!(
+        session_tooltip_lines(&modelled.session, 1),
+        ["anthropic/claude-opus-4-5", "effort: high", "1 subagent",]
+            .map(String::from)
+            .to_vec()
+    );
+
+    let mut parent = item("parent", 2, "/project", SessionRailKind::Project, false);
+    parent.session.parent_session = Some("root".into());
+    let mut other = item("other", 3, "/project", SessionRailKind::Project, false);
+    other.session.parent_session = Some("root".into());
+    let sessions = vec![
+        item("root", 0, "/project", SessionRailKind::Project, false).session,
+        parent.session,
+        other.session,
+    ];
+
+    let counts = subagent_counts(&sessions);
+
+    assert_eq!(counts.get("root"), Some(&2));
+    assert_eq!(
+        session_tooltip_lines(sessions.first().unwrap(), counts["root"]).len(),
+        1
+    );
 }

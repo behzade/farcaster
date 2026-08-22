@@ -172,6 +172,38 @@ fn discovers_all_projects_and_name_or_message_fallback() -> TestResult {
 }
 
 #[test]
+fn discovery_reports_latest_model_and_thinking_level_from_the_active_branch() -> TestResult {
+    let root = tempdir()?;
+    let project = tempdir()?;
+    let directory = root.path().join("custom/nested");
+    fs::create_dir_all(&directory)?;
+    let lines = [
+        serde_json::json!({"type":"session","version":3,"id":"modelled","timestamp":"2026-01-02T00:00:00Z","cwd":project.path()}),
+        serde_json::json!({"type":"model_change","provider":"openai","modelId":"gpt-4o"}),
+        serde_json::json!({"type":"thinking_level_change","thinkingLevel":"low"}),
+        serde_json::json!({"type":"message","message":{"role":"user","content":"branch start"}}),
+        serde_json::json!({"type":"model_change","provider":"anthropic","modelId":"claude-opus-4-5"}),
+        serde_json::json!({"type":"thinking_level_change","thinkingLevel":"high"}),
+    ];
+    fs::write(
+        directory.join("modelled.jsonl"),
+        lines
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )?;
+    let sessions = discover_in(root.path(), "")?;
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(
+        sessions[0].model,
+        Some(("anthropic".to_owned(), "claude-opus-4-5".to_owned()))
+    );
+    assert_eq!(sessions[0].thinking_level.as_deref(), Some("high"));
+    Ok(())
+}
+
+#[test]
 fn search_is_case_insensitive_and_malformed_entries_do_not_poison() -> TestResult {
     let root = tempdir()?;
     let project = tempdir()?;
@@ -849,4 +881,47 @@ fn loaded_history_includes_active_branch_model_and_effort() -> TestResult {
     assert_eq!(history.thinking_level.as_deref(), Some("high"));
     assert_eq!(history.messages.len(), 1);
     Ok(())
+}
+
+#[test]
+fn subagent_path_detection_distinguishes_roots_from_descendants() {
+    let root = SessionSummary::from_cached(
+        "root".into(),
+        PathBuf::from("/sessions/root.jsonl"),
+        PathBuf::from("/project"),
+        "Root".into(),
+        "Question".into(),
+        String::new(),
+        None,
+        SystemTime::now(),
+        1,
+        UsageSummary::default(),
+        false,
+        false,
+        String::new(),
+    );
+    let child = SessionSummary::from_cached(
+        "child".into(),
+        PathBuf::from("/sessions/child.jsonl"),
+        PathBuf::from("/project"),
+        "Child".into(),
+        "Question".into(),
+        String::new(),
+        Some("root-1".into()),
+        SystemTime::now(),
+        1,
+        UsageSummary::default(),
+        false,
+        false,
+        String::new(),
+    );
+
+    assert!(!is_subagent_path(
+        &[root.clone(), child.clone()],
+        &PathBuf::from("/sessions/root.jsonl")
+    ));
+    assert!(is_subagent_path(
+        &[root, child],
+        &PathBuf::from("/sessions/child.jsonl")
+    ));
 }
