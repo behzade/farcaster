@@ -1,6 +1,6 @@
 use super::composer::{
     QueuedMessageKind, choice_copy, composer_primary_action, default_dialog_selection, dialog_copy,
-    queued_message_groups,
+    plain_text_html, queued_message_groups,
 };
 use crate::{conversation::QueueState, protocol::ExtensionUiRequest};
 
@@ -51,6 +51,16 @@ fn dialog_copy_preserves_extension_owned_copy() {
     assert_eq!(
         prompt.as_ref().map(AsRef::as_ref),
         Some("Allow bash to write to /work/file?")
+    );
+}
+
+#[test]
+fn dialog_text_does_not_interpret_tilde_paths_as_markdown() {
+    let text = "write file  \"~/Projects/one\"\nwrite file  \"~/Projects/two\"";
+
+    assert_eq!(
+        plain_text_html(text).as_ref(),
+        "write file  &quot;~/Projects/one&quot;<br>write file  &quot;~/Projects/two&quot;"
     );
 }
 

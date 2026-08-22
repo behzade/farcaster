@@ -768,12 +768,28 @@ fn capture_after_input(entity: WeakEntity<PiApp>, cx: &mut App) {
     });
 }
 
-fn selectable_dialog_text(id: impl Into<ElementId>, text: impl Into<SharedString>) -> TextView {
-    TextView::markdown(id, text)
+fn selectable_dialog_text(id: impl Into<ElementId>, text: impl AsRef<str>) -> TextView {
+    TextView::html(id, plain_text_html(text.as_ref()))
         .selectable(true)
         .w_full()
         .min_w_0()
         .line_height(THEME.type_scale.line_body)
+}
+
+pub(super) fn plain_text_html(text: &str) -> SharedString {
+    let mut escaped = String::with_capacity(text.len());
+    for character in text.chars() {
+        match character {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&#39;"),
+            '\n' => escaped.push_str("<br>"),
+            _ => escaped.push(character),
+        }
+    }
+    escaped.into()
 }
 
 fn dialog_choice(
