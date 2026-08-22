@@ -505,7 +505,28 @@ impl ListState {
     /// Inform the list state that the items in `old_range` have been replaced
     /// by `count` new items that must be recalculated.
     pub fn splice(&self, old_range: Range<usize>, count: usize) {
-        self.splice_focusable(old_range, (0..count).map(|_| None))
+        self.splice_items(old_range, (0..count).map(|_| (None, None)))
+    }
+
+    /// Inform the list state that the items in `old_range` have been replaced by new,
+    /// unmeasured items with caller-provided height estimates.
+    pub fn splice_with_size_hints(
+        &self,
+        old_range: Range<usize>,
+        size_hints: impl IntoIterator<Item = Pixels>,
+    ) {
+        self.splice_items(
+            old_range,
+            size_hints.into_iter().map(|height| {
+                (
+                    None,
+                    Some(Size {
+                        width: px(0.),
+                        height,
+                    }),
+                )
+            }),
+        )
     }
 
     /// Register with the list state that the items in `old_range` have been replaced
@@ -517,22 +538,35 @@ impl ListState {
         old_range: Range<usize>,
         focus_handles: impl IntoIterator<Item = Option<FocusHandle>>,
     ) {
+        self.splice_items(
+            old_range,
+            focus_handles
+                .into_iter()
+                .map(|focus_handle| (focus_handle, None)),
+        )
+    }
+
+    fn splice_items(
+        &self,
+        old_range: Range<usize>,
+        items: impl IntoIterator<Item = (Option<FocusHandle>, Option<Size<Pixels>>)>,
+    ) {
         let state = &mut *self.0.borrow_mut();
 
         let mut old_items = state.items.cursor::<Count>(());
         let mut new_items = old_items.slice(&Count(old_range.start), Bias::Right);
         old_items.seek_forward(&Count(old_range.end), Bias::Right);
 
-        let size_hint = state.uniform_item_height.map(|height| Size {
+        let uniform_size_hint = state.uniform_item_height.map(|height| Size {
             width: px(0.),
             height,
         });
         let mut spliced_count = 0;
         new_items.extend(
-            focus_handles.into_iter().map(|focus_handle| {
+            items.into_iter().map(|(focus_handle, size_hint)| {
                 spliced_count += 1;
                 ListItem::Unmeasured {
-                    size_hint,
+                    size_hint: size_hint.or(uniform_size_hint),
                     focus_handle,
                 }
             }),
@@ -1553,13 +1587,13 @@ impl Element for List {
             .last_layout_bounds
             .is_none_or(|last_bounds| last_bounds.size.width != bounds.size.width)
         {
-            let size_hint = state.uniform_item_height.map(|height| Size {
+            let uniform_size_hint = state.uniform_item_height.map(|height| Size {
                 width: px(0.),
                 height,
             });
             let new_items = SumTree::from_iter(
                 state.items.iter().map(|item| ListItem::Unmeasured {
-                    size_hint,
+                    size_hint: item.size_hint().or(uniform_size_hint),
                     focus_handle: item.focus_handle(),
                 }),
                 (),
@@ -1740,6 +1774,21 @@ mod test {
         IntoElement, ListState, Render, Styled, TestAppContext, Window, canvas, div, list, point,
         px, size,
     };
+
+    #[test]
+    fn test_splice_uses_per_item_height_hints() {
+        let state = ListState::new(0, crate::ListAlignment::Top, px(10.));
+        state.splice_with_size_hints(0..0, [px(20.), px(80.), px(40.)]);
+
+        let summary = state.0.borrow().items.summary();
+        assert_eq!(summary.height, px(140.));
+        assert!(!summary.has_unknown_height);
+
+        state.scroll_by(px(30.));
+        let offset = state.logical_scroll_top();
+        assert_eq!(offset.item_ix, 1);
+        assert_eq!(offset.offset_in_item, px(10.));
+    }
 
     #[gpui::test]
     fn test_uniform_height_hint_survives_future_splices_and_first_layout(cx: &mut TestAppContext) {

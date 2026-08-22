@@ -672,9 +672,9 @@ impl PiApp {
                         self.pending_dialog_setup = self.extension.dialog.is_some();
                         self.dialog_return_focus = None;
                     }
+                    self.snapshot = snapshot;
                     self.sync_transcript_rows(next_rows);
                     self.last_transcript_count = count;
-                    self.snapshot = snapshot;
                     self.sync_restored_dialog();
                     self.sync_composer_history();
                     self.reconcile_submitted_drafts(cx);

@@ -35,6 +35,40 @@ pub(crate) fn tail_reserve(viewport_height: Pixels) -> Pixels {
     px((f32::from(viewport_height) * 0.32).clamp(72.0, 280.0))
 }
 
+pub(crate) fn estimated_row_height(row: TranscriptRow, items: &[Arc<TranscriptItem>]) -> Pixels {
+    let (text, message) = match row {
+        TranscriptRow::MessageChunk {
+            index, start, end, ..
+        } => (&items[index].text[start..end], true),
+        TranscriptRow::StreamChunk { index, chunk, .. } => (
+            items[index]
+                .stream_chunks
+                .get(chunk)
+                .map_or(items[index].text.as_str(), |chunk| chunk.as_ref()),
+            true,
+        ),
+        TranscriptRow::Item { index, .. }
+            if matches!(
+                items[index].kind,
+                TranscriptKind::User | TranscriptKind::Assistant | TranscriptKind::Custom
+            ) && items[index].invocation.is_none() =>
+        {
+            (items[index].text.as_str(), true)
+        }
+        TranscriptRow::Item { .. } | TranscriptRow::ReadGroup { .. } => ("", false),
+    };
+    if !message {
+        return TRANSCRIPT_ROW_HEIGHT_HINT;
+    }
+
+    let visual_lines = text
+        .lines()
+        .map(|line| line.chars().count().max(1).div_ceil(88))
+        .sum::<usize>()
+        .max(1);
+    px((visual_lines.min(320) as f32).mul_add(20.0, 36.0))
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct TranscriptViewport {
     pub(crate) following: bool,
@@ -44,12 +78,12 @@ pub(crate) struct TranscriptViewport {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct FenceContinuation {
+pub(crate) struct FenceContinuation {
     opening_start: usize,
     opening_end: usize,
     marker: char,
     marker_len: usize,
+    indent_len: usize,
     prepend: bool,
     append: bool,
 }
@@ -61,6 +95,7 @@ struct MarkdownChunk {
     fence: Option<FenceContinuation>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TranscriptRow {
     Item {
         index: usize,
@@ -284,21 +319,22 @@ fn project_rows_from(items: &[Arc<TranscriptItem>], mut index: usize) -> Vec<Tra
             items[index].kind,
             TranscriptKind::User | TranscriptKind::Assistant
         ) && items[index].invocation.is_none()
-            && (items[index].text.len() > MARKDOWN_CHUNK_HARD_BYTES
+            && (markdown_needs_chunks(&items[index].text)
                 || (items[index].streaming
                     && items[index].text.len() > MARKDOWN_CHUNK_TARGET_BYTES))
         {
-            let chunks = markdown_chunk_ranges(&items[index].text);
+            let chunks = markdown_chunks(&items[index].text);
             let last_block = chunks.len().saturating_sub(1);
-            rows.extend(chunks.into_iter().enumerate().map(|(block, (start, end))| {
+            rows.extend(chunks.into_iter().enumerate().map(|(block, chunk)| {
                 TranscriptRow::MessageChunk {
                     index,
-                    start,
-                    end,
+                    start: chunk.start,
+                    end: chunk.end,
                     block,
-                    revision: text_revision(&items[index].text[start..end]),
+                    revision: text_revision(&markdown_chunk_text(&items[index].text, chunk)),
                     first: block == 0,
                     last: block == last_block,
+                    fence: chunk.fence,
                 }
             }));
         } else {
@@ -328,52 +364,188 @@ fn is_read(item: &TranscriptItem) -> bool {
     item.kind == TranscriptKind::Tool && item.label == "Read"
 }
 
-fn markdown_chunk_ranges(text: &str) -> Vec<(usize, usize)> {
-    if text.len() <= MARKDOWN_CHUNK_TARGET_BYTES {
-        return vec![(0, text.len())];
-    }
+fn markdown_needs_chunks(text: &str) -> bool {
+    text.len() > MARKDOWN_CHUNK_HARD_BYTES || text.lines().take(65).count() > 64
+}
+
+fn markdown_chunks(text: &str) -> Vec<MarkdownChunk> {
     let mut chunks = Vec::new();
-    let mut start = 0;
-    let mut end = 0;
-    let mut fence = None;
-    let mut protected_chunk = false;
+    let mut outside_start = 0;
+    let mut offset = 0;
+    let mut fence: Option<(usize, usize, char, usize, usize)> = None;
     for line in text.split_inclusive('\n') {
-        end += line.len();
-        let mut closed_fence = false;
-        if let Some(marker) = markdown_fence_marker(line) {
-            if fence == Some(marker) {
+        let line_start = offset;
+        offset += line.len();
+        if let Some((opening_start, opening_end, marker, marker_len, indent_len)) = fence {
+            if is_markdown_fence_close(line, marker, marker_len) {
+                split_fenced_markdown(
+                    text,
+                    opening_start,
+                    opening_end,
+                    line_start,
+                    offset,
+                    marker,
+                    marker_len,
+                    indent_len,
+                    true,
+                    &mut chunks,
+                );
                 fence = None;
-                closed_fence = true;
-            } else if fence.is_none() {
-                fence = Some(marker);
-                protected_chunk = true;
+                outside_start = offset;
             }
-        }
-        if closed_fence {
-            chunks.push((start, end));
-            start = end;
-            protected_chunk = false;
-            continue;
-        }
-        while fence.is_none() && !protected_chunk && end - start >= MARKDOWN_CHUNK_HARD_BYTES {
-            let split = hard_markdown_break(text, start, start + MARKDOWN_CHUNK_HARD_BYTES);
-            chunks.push((start, split));
-            start = split;
-        }
-        let preferred_break = end - start >= MARKDOWN_CHUNK_TARGET_BYTES && line.trim().is_empty();
-        if fence.is_none() && (preferred_break || end - start >= MARKDOWN_CHUNK_HARD_BYTES) {
-            chunks.push((start, end));
-            start = end;
-            protected_chunk = false;
+        } else if let Some((marker, marker_len, indent_len)) = markdown_fence_marker(line) {
+            append_plain_markdown_chunks(text, outside_start, line_start, &mut chunks);
+            fence = Some((line_start, offset, marker, marker_len, indent_len));
         }
     }
-    if start < text.len() {
-        chunks.push((start, text.len()));
+
+    if let Some((opening_start, opening_end, marker, marker_len, indent_len)) = fence {
+        split_fenced_markdown(
+            text,
+            opening_start,
+            opening_end,
+            text.len(),
+            text.len(),
+            marker,
+            marker_len,
+            indent_len,
+            false,
+            &mut chunks,
+        );
+    } else {
+        append_plain_markdown_chunks(text, outside_start, text.len(), &mut chunks);
     }
     if chunks.is_empty() {
-        chunks.push((0, text.len()));
+        chunks.push(plain_markdown_chunk(0, text.len()));
     }
     chunks
+}
+
+fn plain_markdown_chunk(start: usize, end: usize) -> MarkdownChunk {
+    MarkdownChunk {
+        start,
+        end,
+        fence: None,
+    }
+}
+
+fn append_plain_markdown_chunks(
+    text: &str,
+    mut start: usize,
+    end: usize,
+    chunks: &mut Vec<MarkdownChunk>,
+) {
+    if start >= end {
+        return;
+    }
+    let mut line_end = start;
+    for line in text[start..end].split_inclusive('\n') {
+        line_end += line.len();
+        while line_end - start >= MARKDOWN_CHUNK_HARD_BYTES {
+            let split = hard_markdown_break(text, start, start + MARKDOWN_CHUNK_HARD_BYTES);
+            chunks.push(plain_markdown_chunk(start, split));
+            start = split;
+        }
+        if line_end - start >= MARKDOWN_CHUNK_TARGET_BYTES && line.trim().is_empty() {
+            chunks.push(plain_markdown_chunk(start, line_end));
+            start = line_end;
+        }
+    }
+    if start < end {
+        chunks.push(plain_markdown_chunk(start, end));
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn split_fenced_markdown(
+    text: &str,
+    opening_start: usize,
+    opening_end: usize,
+    closing_start: usize,
+    fence_end: usize,
+    marker: char,
+    marker_len: usize,
+    indent_len: usize,
+    closed: bool,
+    chunks: &mut Vec<MarkdownChunk>,
+) {
+    const FENCED_CHUNK_LINES: usize = 64;
+    if fence_end - opening_start <= MARKDOWN_CHUNK_HARD_BYTES
+        && text[opening_end..closing_start].lines().count() <= FENCED_CHUNK_LINES
+    {
+        chunks.push(plain_markdown_chunk(opening_start, fence_end));
+        return;
+    }
+
+    let mut body = Vec::new();
+    let mut start = opening_end;
+    let mut end = opening_end;
+    let mut lines = 0;
+    for line in text[opening_end..closing_start].split_inclusive('\n') {
+        end += line.len();
+        lines += 1;
+        if lines >= FENCED_CHUNK_LINES || end - start >= MARKDOWN_CHUNK_TARGET_BYTES {
+            body.push(plain_markdown_chunk(start, end));
+            start = end;
+            lines = 0;
+        }
+    }
+    if start < closing_start {
+        body.push(plain_markdown_chunk(start, closing_start));
+    }
+    if body.is_empty() {
+        chunks.push(plain_markdown_chunk(opening_start, fence_end));
+        return;
+    }
+
+    let last = body.len() - 1;
+    for (index, body_chunk) in body.into_iter().enumerate() {
+        let first = index == 0;
+        let final_chunk = index == last;
+        chunks.push(MarkdownChunk {
+            start: if first {
+                opening_start
+            } else {
+                body_chunk.start
+            },
+            end: if final_chunk && closed {
+                fence_end
+            } else {
+                body_chunk.end
+            },
+            fence: Some(FenceContinuation {
+                opening_start,
+                opening_end,
+                marker,
+                marker_len,
+                indent_len,
+                prepend: !first,
+                append: !final_chunk || !closed,
+            }),
+        });
+    }
+}
+
+fn markdown_chunk_text(text: &str, chunk: MarkdownChunk) -> Cow<'_, str> {
+    let Some(fence) = chunk.fence else {
+        return Cow::Borrowed(&text[chunk.start..chunk.end]);
+    };
+    let mut rendered = String::with_capacity(
+        chunk.end - chunk.start + fence.opening_end - fence.opening_start + fence.marker_len + 2,
+    );
+    if fence.prepend {
+        rendered.push_str(&text[fence.opening_start..fence.opening_end]);
+    }
+    rendered.push_str(&text[chunk.start..chunk.end]);
+    if fence.append {
+        if !rendered.ends_with('\n') {
+            rendered.push('\n');
+        }
+        rendered.push_str(&text[fence.opening_start..fence.opening_start + fence.indent_len]);
+        rendered.extend(std::iter::repeat_n(fence.marker, fence.marker_len));
+        rendered.push('\n');
+    }
+    Cow::Owned(rendered)
 }
 
 fn hard_markdown_break(text: &str, start: usize, mut limit: usize) -> usize {
@@ -388,12 +560,29 @@ fn hard_markdown_break(text: &str, start: usize, mut limit: usize) -> usize {
         .map_or(limit, |(offset, char)| start + offset + char.len_utf8())
 }
 
-fn markdown_fence_marker(line: &str) -> Option<char> {
-    let trimmed = line.trim_start();
+fn markdown_fence_marker(line: &str) -> Option<(char, usize, usize)> {
+    let indent_len = line.bytes().take_while(|byte| *byte == b' ').count();
+    if indent_len > 3 {
+        return None;
+    }
+    let trimmed = &line[indent_len..];
     let marker = trimmed.chars().next()?;
-    ((marker == '`' || marker == '~')
-        && trimmed.chars().take_while(|char| *char == marker).count() >= 3)
-        .then_some(marker)
+    let marker_len = trimmed.chars().take_while(|char| *char == marker).count();
+    ((marker == '`' || marker == '~') && marker_len >= 3)
+        .then_some((marker, marker_len, indent_len))
+}
+
+fn is_markdown_fence_close(line: &str, marker: char, marker_len: usize) -> bool {
+    let indent_len = line.bytes().take_while(|byte| *byte == b' ').count();
+    if indent_len > 3 {
+        return false;
+    }
+    let trimmed = line[indent_len..].trim_end();
+    let run = trimmed
+        .chars()
+        .take_while(|character| *character == marker)
+        .count();
+    run >= marker_len && trimmed.chars().skip(run).all(char::is_whitespace)
 }
 
 fn expanded_by_default(_row: TranscriptRow, _items: &[Arc<TranscriptItem>]) -> bool {
@@ -550,19 +739,24 @@ fn render_row(
             revision,
             first,
             last,
-        } => render_message_chunk(
-            key,
-            block,
-            &items[index],
-            first,
-            last,
-            follows_tool,
-            markdown_cache.state(
-                MarkdownStateKey::message_chunk(index, block, revision),
-                &items[index].text[start..end],
-                cx,
-            ),
-        ),
+            fence,
+        } => {
+            let markdown =
+                markdown_chunk_text(&items[index].text, MarkdownChunk { start, end, fence });
+            render_message_chunk(
+                key,
+                block,
+                &items[index],
+                first,
+                last,
+                follows_tool,
+                markdown_cache.state(
+                    MarkdownStateKey::message_chunk(index, block, revision),
+                    &markdown,
+                    cx,
+                ),
+            )
+        }
         TranscriptRow::StreamChunk {
             index,
             chunk,
@@ -591,17 +785,19 @@ fn render_row(
         TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Error => {
             render_error(key, &items[index], expanded, entity)
         }
-        TranscriptRow::Item { index, .. }
+        TranscriptRow::Item { index, revision }
             if items[index].invocation.as_ref().is_some_and(|resolved| {
                 is_mixed_invocation_message(&items[index].text, resolved)
             }) =>
         {
+            let resolved = invocation_resolution(&items[index]);
+            let markdown = highlighted_invocation_markdown(&items[index].text, resolved);
             render_message(
                 key,
                 &items[index],
                 follows_tool,
-                None,
-                Some(invocation_resolution(&items[index])),
+                Some(markdown_cache.state(MarkdownStateKey::item(index, revision), &markdown, cx)),
+                Some(resolved),
             )
         }
         TranscriptRow::Item { index, .. } if items[index].invocation.is_some() => {
@@ -626,7 +822,11 @@ fn render_row(
             render_thinking(key, &items[index], expanded, entity)
         }
         TranscriptRow::Item { index, revision } => {
-            let markdown_state = (items[index].kind == TranscriptKind::Assistant).then(|| {
+            let markdown_state = matches!(
+                items[index].kind,
+                TranscriptKind::User | TranscriptKind::Assistant
+            )
+            .then(|| {
                 markdown_cache.state(
                     MarkdownStateKey::item(index, revision),
                     &items[index].text,
@@ -857,11 +1057,18 @@ fn render_message(
         .child(
             invocation_resolution
                 .map(|resolved| {
-                    styled_selectable_text(TextView::markdown(
-                        ("transcript-text", key),
-                        highlighted_invocation_markdown(&item.text, resolved),
-                    ))
-                    .style(invocation_transcript_markdown_style(resolved))
+                    markdown_state
+                        .as_ref()
+                        .map_or_else(
+                            || {
+                                styled_selectable_text(TextView::markdown(
+                                    ("transcript-text", key),
+                                    highlighted_invocation_markdown(&item.text, resolved),
+                                ))
+                            },
+                            selectable_text_state,
+                        )
+                        .style(invocation_transcript_markdown_style(resolved))
                 })
                 .unwrap_or_else(|| {
                     markdown_state.map_or_else(

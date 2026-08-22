@@ -109,7 +109,13 @@ impl PiApp {
                     .copied()
                     .map(|row| (row, offset.offset_in_item))
             });
-            self.transcript_list.splice(old_range, new_count);
+            let new_start = old_range.start;
+            self.transcript_list.splice_with_size_hints(
+                old_range,
+                next[new_start..new_start + new_count].iter().map(|row| {
+                    crate::transcript::estimated_row_height(*row, &self.snapshot.conversation.items)
+                }),
+            );
             if let Some(Some((anchored_row, offset_in_item))) = anchor
                 && let Some(item_ix) = next.iter().position(|row| row.same_position(&anchored_row))
             {

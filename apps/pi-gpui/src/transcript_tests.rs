@@ -170,31 +170,79 @@ fn link_heavy_user_messages_become_independently_virtualized_rows() {
 #[test]
 fn a_giant_plain_paragraph_is_split_at_word_boundaries() {
     let text = "word ".repeat(5_000);
-    let chunks = markdown_chunk_ranges(&text);
+    let chunks = markdown_chunks(&text);
 
     assert!(chunks.len() > 1);
     assert_eq!(
         chunks
             .iter()
-            .map(|(start, end)| &text[*start..*end])
+            .map(|chunk| &text[chunk.start..chunk.end])
             .collect::<String>(),
         text
     );
 }
 
 #[test]
-fn fenced_code_is_never_split_inside_the_fence() {
+fn oversized_fenced_code_is_split_into_bounded_valid_markdown() {
     let code = "let value = 1;\n".repeat(1_000);
     let text = format!("before\n\n```rust\n{code}```\n\nafter");
-    let closing_end = text.find("```\n\n").expect("closing fence") + 4;
-    let chunks = markdown_chunk_ranges(&text);
+    let chunks = markdown_chunks(&text);
+    let fenced = chunks
+        .iter()
+        .copied()
+        .filter(|chunk| chunk.fence.is_some())
+        .collect::<Vec<_>>();
 
-    assert!(chunks.iter().any(|(_, end)| *end == closing_end));
-    assert!(
-        !chunks
+    assert!(fenced.len() > 1);
+    assert_eq!(
+        chunks
             .iter()
-            .any(|(_, end)| text[..*end].ends_with("let value = 1;\n"))
+            .map(|chunk| &text[chunk.start..chunk.end])
+            .collect::<String>(),
+        text
     );
+    for chunk in fenced {
+        let rendered = markdown_chunk_text(&text, chunk);
+        assert!(rendered.starts_with("```rust\n"));
+        assert!(rendered.trim_end().ends_with("```"));
+        assert!(rendered.len() <= MARKDOWN_CHUNK_HARD_BYTES + 64);
+    }
+}
+
+#[test]
+fn unclosed_and_indented_tilde_fences_keep_code_context() {
+    let text = format!("  ~~~~rust\r\n{}", "line\r\n".repeat(200));
+    let chunks = markdown_chunks(&text);
+
+    assert!(chunks.len() > 1);
+    assert!(chunks.iter().all(|chunk| {
+        let rendered = markdown_chunk_text(&text, *chunk);
+        rendered.starts_with("  ~~~~rust\r\n") && rendered.trim_end().ends_with("~~~~")
+    }));
+
+    let indented_code = format!("    ```rust\n{}", "line\n".repeat(2_000));
+    assert!(
+        markdown_chunks(&indented_code)
+            .iter()
+            .all(|chunk| chunk.fence.is_none())
+    );
+}
+
+#[test]
+fn fence_like_code_lines_do_not_close_the_fence() {
+    let code = format!(
+        "{} ```not-a-close\n{}",
+        "line\n".repeat(1_000),
+        "tail\n".repeat(1_000)
+    );
+    let text = format!("````text\n{code}````\n");
+    let chunks = markdown_chunks(&text);
+
+    assert!(chunks.len() > 1);
+    assert!(chunks.iter().all(|chunk| {
+        let rendered = markdown_chunk_text(&text, *chunk);
+        rendered.starts_with("````text\n") && rendered.trim_end().ends_with("````")
+    }));
 }
 
 #[test]
@@ -313,6 +361,23 @@ fn appended_reads_merge_with_the_existing_read_group() {
         rows.as_slice(),
         [TranscriptRow::ReadGroup { len: 2, .. }]
     ));
+}
+
+#[test]
+fn markdown_row_height_estimates_reflect_wrapping_and_physical_lines() {
+    let assistant = item(
+        TranscriptKind::Assistant,
+        "",
+        &format!("```text\n{}```", "line\n".repeat(1_000)),
+    );
+    let items = vec![assistant];
+    let rows = project_rows(&items);
+
+    assert!(rows.len() > 10);
+    assert!(
+        rows.iter()
+            .all(|row| estimated_row_height(*row, &items) > TRANSCRIPT_ROW_HEIGHT_HINT)
+    );
 }
 
 #[test]
@@ -435,6 +500,7 @@ fn streaming_chunk_growth_keeps_stable_row_position() {
         revision: 1,
         first: true,
         last: true,
+        fence: None,
     };
     let streamed = TranscriptRow::MessageChunk {
         index: 3,
@@ -444,6 +510,7 @@ fn streaming_chunk_growth_keeps_stable_row_position() {
         revision: 2,
         first: true,
         last: false,
+        fence: None,
     };
 
     assert!(original.same_position(&streamed));
