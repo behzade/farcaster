@@ -201,6 +201,31 @@ fn fenced_code_is_never_split_inside_the_fence() {
 }
 
 #[test]
+fn item_prefix_accounting_counts_only_performed_comparisons() {
+    let first = item(TranscriptKind::Assistant, "", "first");
+    let second = item(TranscriptKind::Assistant, "", "second");
+
+    assert_eq!(
+        matching_item_prefix(&[first.clone(), second.clone()], &[first.clone(), second]),
+        (2, 2)
+    );
+    assert_eq!(
+        matching_item_prefix(
+            &[first.clone(), item(TranscriptKind::Assistant, "", "old")],
+            &[first.clone(), item(TranscriptKind::Assistant, "", "new")]
+        ),
+        (1, 2)
+    );
+    assert_eq!(
+        matching_item_prefix(
+            &[first.clone()],
+            &[first, item(TranscriptKind::User, "", "appended")]
+        ),
+        (1, 1)
+    );
+}
+
+#[test]
 fn row_updates_reproject_only_the_changed_shared_item_suffix() {
     let first = item(TranscriptKind::Assistant, "", "unchanged");
     let second = item(TranscriptKind::Assistant, "", "short");
@@ -291,6 +316,20 @@ fn appended_reads_merge_with_the_existing_read_group() {
         rows.as_slice(),
         [TranscriptRow::ReadGroup { len: 2, .. }]
     ));
+}
+
+#[test]
+fn agent_results_are_collapsed_by_default() {
+    let result = item(
+        TranscriptKind::AgentResult,
+        "Subagent result",
+        "Subagent child-1 (idle) returned:\n# Findings\nlong body",
+    );
+    let items = vec![result];
+    let row = project_rows(&items)[0];
+
+    assert!(!expanded_by_default(row, &items));
+    assert_eq!(message_role_label(TranscriptKind::AgentResult), None);
 }
 
 #[test]

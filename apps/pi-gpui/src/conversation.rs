@@ -20,6 +20,7 @@ pub(crate) enum TranscriptKind {
     Error,
     Notice,
     Custom,
+    AgentResult,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -891,8 +892,16 @@ fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
         ),
         "bashExecution" => (TranscriptKind::Tool, "Shell".into(), true),
         "custom" => (
-            TranscriptKind::Custom,
-            "Extension".into(),
+            if message.get("customType").and_then(Value::as_str) == Some("subagent-result") {
+                TranscriptKind::AgentResult
+            } else {
+                TranscriptKind::Custom
+            },
+            if message.get("customType").and_then(Value::as_str) == Some("subagent-result") {
+                "Subagent result".into()
+            } else {
+                "Extension".into()
+            },
             message
                 .get("display")
                 .and_then(Value::as_bool)

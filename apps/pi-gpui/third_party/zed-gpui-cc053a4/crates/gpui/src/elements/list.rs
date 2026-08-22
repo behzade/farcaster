@@ -73,6 +73,7 @@ struct StateInner {
     measuring_behavior: ListMeasuringBehavior,
     pending_scroll: Option<PendingScroll>,
     follow_state: FollowState,
+    uniform_item_height: Option<Pixels>,
 }
 
 /// Deferred scroll adjustment applied after the scroll-top item has been remeasured.
@@ -325,6 +326,7 @@ impl ListState {
             measuring_behavior: ListMeasuringBehavior::default(),
             pending_scroll: None,
             follow_state: FollowState::default(),
+            uniform_item_height: None,
         })));
         this.splice(0..0, item_count);
         this
@@ -338,8 +340,9 @@ impl ListState {
         self
     }
 
-    /// Pre-populate every unmeasured item with a uniform height hint so the scrollbar thumb
-    /// is correctly sized from the first frame, without measuring all items up front.
+    /// Use a uniform height hint for unmeasured items so the scrollbar thumb is correctly
+    /// sized from the first frame, without measuring all items up front. The hint also applies
+    /// to items inserted later and after width changes invalidate measured heights.
     ///
     /// As items are actually rendered their real heights replace the hint, so the scrollbar
     /// converges to the exact size over time. This is a cheaper alternative to [`Self::measure_all`]
@@ -380,6 +383,7 @@ impl ListState {
             height,
         };
         let mut state = self.0.borrow_mut();
+        state.uniform_item_height = Some(height);
         let new_items = state
             .items
             .iter()
@@ -519,12 +523,16 @@ impl ListState {
         let mut new_items = old_items.slice(&Count(old_range.start), Bias::Right);
         old_items.seek_forward(&Count(old_range.end), Bias::Right);
 
+        let size_hint = state.uniform_item_height.map(|height| Size {
+            width: px(0.),
+            height,
+        });
         let mut spliced_count = 0;
         new_items.extend(
             focus_handles.into_iter().map(|focus_handle| {
                 spliced_count += 1;
                 ListItem::Unmeasured {
-                    size_hint: None,
+                    size_hint,
                     focus_handle,
                 }
             }),
@@ -1545,9 +1553,13 @@ impl Element for List {
             .last_layout_bounds
             .is_none_or(|last_bounds| last_bounds.size.width != bounds.size.width)
         {
+            let size_hint = state.uniform_item_height.map(|height| Size {
+                width: px(0.),
+                height,
+            });
             let new_items = SumTree::from_iter(
                 state.items.iter().map(|item| ListItem::Unmeasured {
-                    size_hint: None,
+                    size_hint,
                     focus_handle: item.focus_handle(),
                 }),
                 (),
@@ -1728,6 +1740,37 @@ mod test {
         IntoElement, ListState, Render, Styled, TestAppContext, Window, canvas, div, list, point,
         px, size,
     };
+
+    #[gpui::test]
+    fn test_uniform_height_hint_survives_future_splices_and_first_layout(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let state =
+            ListState::new(0, crate::ListAlignment::Top, px(10.)).with_uniform_item_height(px(32.));
+        state.splice(0..0, 4_000);
+
+        let summary = state.0.borrow().items.summary();
+        assert_eq!(summary.height, px(128_000.));
+        assert!(!summary.has_unknown_height);
+
+        struct TestView(ListState);
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.0.clone(), |_, _, _| {
+                    div().h(px(24.)).w_full().into_any()
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, cx| {
+            cx.new(|_| TestView(state.clone())).into_any_element()
+        });
+
+        let summary = state.0.borrow().items.summary();
+        assert!(summary.height > px(120_000.));
+        assert!(!summary.has_unknown_height);
+    }
 
     #[gpui::test]
     fn test_autoscroll_above_item_top_renders_items_above(cx: &mut TestAppContext) {

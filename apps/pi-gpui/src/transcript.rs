@@ -28,6 +28,7 @@ use crate::{
 
 const MARKDOWN_CHUNK_TARGET_BYTES: usize = 2 * 1024;
 const MARKDOWN_CHUNK_HARD_BYTES: usize = 8 * 1024;
+pub(crate) const TRANSCRIPT_ROW_HEIGHT_HINT: Pixels = px(24.0);
 
 pub(crate) fn tail_reserve(viewport_height: Pixels) -> Pixels {
     px((f32::from(viewport_height) * 0.32).clamp(72.0, 280.0))
@@ -176,18 +177,10 @@ pub(crate) fn update_rows_from(
         .last()
         .map_or(0, TranscriptRow::item_end)
         .min(previous_items.len());
-    let unchanged_items = (unchanged_hint
-        + previous_items[unchanged_hint..]
-            .iter()
-            .zip(&items[unchanged_hint..])
-            .take_while(|(previous, next)| {
-                Arc::ptr_eq(previous, next) || previous.as_ref() == next.as_ref()
-            })
-            .count())
-    .min(projected_items);
-    crate::performance::count_transcript_items(
-        unchanged_items.saturating_add(usize::from(unchanged_items < items.len())),
-    );
+    let (matching_items, compared_items) =
+        matching_item_prefix(&previous_items[unchanged_hint..], &items[unchanged_hint..]);
+    crate::performance::count_transcript_comparisons(compared_items);
+    let unchanged_items = (unchanged_hint + matching_items).min(projected_items);
     if unchanged_items == previous_items.len()
         && unchanged_items == items.len()
         && (items.is_empty() || !previous_rows.is_empty())
@@ -219,8 +212,25 @@ pub(crate) fn update_rows_from(
     rows
 }
 
+fn matching_item_prefix(
+    previous_items: &[Arc<TranscriptItem>],
+    items: &[Arc<TranscriptItem>],
+) -> (usize, usize) {
+    let mut matching = 0;
+    let pair_count = previous_items.len().min(items.len());
+    while matching < pair_count {
+        let previous = &previous_items[matching];
+        let next = &items[matching];
+        if !Arc::ptr_eq(previous, next) && previous.as_ref() != next.as_ref() {
+            return (matching, matching + 1);
+        }
+        matching += 1;
+    }
+    (matching, matching)
+}
+
 fn project_rows_from(items: &[Arc<TranscriptItem>], mut index: usize) -> Vec<TranscriptRow> {
-    crate::performance::count_transcript_items(items.len().saturating_sub(index));
+    crate::performance::count_transcript_projections(items.len().saturating_sub(index));
     let mut rows = Vec::new();
     while index < items.len() {
         if is_read(&items[index]) {
@@ -488,7 +498,10 @@ fn latest_allows_tail_reserve(
             !expanded
                 || !matches!(
                     items[index].kind,
-                    TranscriptKind::Tool | TranscriptKind::Thinking | TranscriptKind::Error
+                    TranscriptKind::Tool
+                        | TranscriptKind::Thinking
+                        | TranscriptKind::Error
+                        | TranscriptKind::AgentResult
                 )
         }
         TranscriptRow::ReadGroup { .. } => !expanded,
@@ -577,6 +590,18 @@ fn render_row(
         }
         TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Tool => {
             render_tool(key, &items[index], expanded, diff_mode, entity)
+        }
+        TranscriptRow::Item { index, revision }
+            if items[index].kind == TranscriptKind::AgentResult =>
+        {
+            let markdown_state = expanded.then(|| {
+                markdown_cache.state(
+                    MarkdownStateKey::item(index, revision),
+                    &items[index].text,
+                    cx,
+                )
+            });
+            render_agent_result(key, &items[index], expanded, markdown_state, entity)
         }
         TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Thinking => {
             render_thinking(key, &items[index], expanded, entity)
@@ -866,6 +891,72 @@ fn render_message_chunk(
         .into_any_element()
 }
 
+fn render_agent_result(
+    key: usize,
+    item: &TranscriptItem,
+    expanded: bool,
+    markdown_state: Option<Entity<TextViewState>>,
+    entity: WeakEntity<PiApp>,
+) -> AnyElement {
+    let summary = item
+        .text
+        .lines()
+        .next()
+        .filter(|line| !line.trim().is_empty())
+        .unwrap_or("Subagent finished")
+        .chars()
+        .take(160)
+        .collect::<String>();
+    div()
+        .id(("agent-result-row", key))
+        .w_full()
+        .px(THEME.space.md)
+        .py(px(2.0))
+        .flex()
+        .flex_col()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(THEME.space.xs)
+                .child(transcript_disclosure_button(
+                    ("agent-result-toggle", key),
+                    expanded,
+                    format!("subagent result details for {summary}"),
+                    key,
+                    entity,
+                ))
+                .child(
+                    div()
+                        .text_size(THEME.type_scale.body_small)
+                        .text_color(THEME.colors.muted)
+                        .child(item.label.clone()),
+                )
+                .child(
+                    technical_text(("agent-result-summary", key), summary)
+                        .flex_1()
+                        .min_w_0()
+                        .text_color(THEME.colors.text),
+                ),
+        )
+        .when_some(markdown_state, |row, state| {
+            row.child(
+                div()
+                    .id(("agent-result-detail-scroll", key))
+                    .ml(px(22.0))
+                    .mt(THEME.space.xs)
+                    .max_h(THEME.layout.tool_max_height)
+                    .overflow_y_scroll()
+                    .border_l(THEME.border)
+                    .border_color(THEME.colors.accent)
+                    .pl(THEME.space.sm)
+                    .py(THEME.space.xs)
+                    .child(selectable_text_state(&state).text_color(THEME.colors.muted)),
+            )
+        })
+        .into_any_element()
+}
+
 fn render_error(
     key: usize,
     item: &TranscriptItem,
@@ -929,7 +1020,12 @@ fn message_role_label(kind: TranscriptKind) -> Option<&'static str> {
     match kind {
         TranscriptKind::User => Some("You"),
         TranscriptKind::Assistant => Some("Pi"),
-        _ => None,
+        TranscriptKind::Thinking
+        | TranscriptKind::Tool
+        | TranscriptKind::Error
+        | TranscriptKind::Notice
+        | TranscriptKind::Custom
+        | TranscriptKind::AgentResult => None,
     }
 }
 
@@ -1326,7 +1422,9 @@ fn tool_state(running: bool, failed: usize, completed: bool) -> Option<ToolState
 fn item_color(item: &TranscriptItem) -> gpui::Rgba {
     match item.kind {
         TranscriptKind::Error => THEME.colors.error,
-        TranscriptKind::Notice | TranscriptKind::Custom => THEME.colors.muted,
+        TranscriptKind::Notice | TranscriptKind::Custom | TranscriptKind::AgentResult => {
+            THEME.colors.muted
+        }
         TranscriptKind::User | TranscriptKind::Assistant => THEME.colors.text,
         TranscriptKind::Thinking | TranscriptKind::Tool => THEME.colors.subtle,
     }

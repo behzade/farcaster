@@ -1241,9 +1241,11 @@ fn run(
             match owner.apply_process_item(item) {
                 SnapshotChange::None => {}
                 SnapshotChange::Streaming => {
-                    crate::performance::count_coalesced_stream_event();
-                    stream_publish_due
-                        .get_or_insert_with(|| Instant::now() + STREAM_PUBLISH_INTERVAL);
+                    let coalesced = stream_publish_due.is_some();
+                    crate::performance::count_stream_event(coalesced);
+                    if !coalesced {
+                        stream_publish_due = Some(Instant::now() + STREAM_PUBLISH_INTERVAL);
+                    }
                 }
                 SnapshotChange::Immediate => immediate_snapshot_change = true,
             }

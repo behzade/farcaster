@@ -8,6 +8,20 @@ use crate::{
 };
 
 #[test]
+fn transcript_height_hint_gives_unmeasured_history_a_scroll_range() {
+    let list = transcript_list_state();
+    list.splice(0..0, 4_000);
+    list.scroll_to(gpui::ListOffset {
+        item_ix: 0,
+        offset_in_item: px(0.0),
+    });
+
+    list.scroll_by(px(2_400.0));
+
+    assert_eq!(list.logical_scroll_top().item_ix, 100);
+}
+
+#[test]
 fn close_targets_a_draft_before_its_backing_session() {
     let session = std::path::Path::new("/tmp/session.jsonl");
 

@@ -12,34 +12,76 @@ const SLOW_OPERATION: Duration = Duration::from_millis(2);
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
 static SNAPSHOTS_PUBLISHED: AtomicU64 = AtomicU64::new(0);
+static STREAM_EVENTS_OBSERVED: AtomicU64 = AtomicU64::new(0);
 static STREAM_EVENTS_COALESCED: AtomicU64 = AtomicU64::new(0);
-static TRANSCRIPT_ITEMS_EXAMINED: AtomicU64 = AtomicU64::new(0);
+static TRANSCRIPT_ITEMS_COMPARED: AtomicU64 = AtomicU64::new(0);
+static TRANSCRIPT_ITEMS_PROJECTED: AtomicU64 = AtomicU64::new(0);
 static TRANSCRIPT_ROWS_REMEASURED: AtomicU64 = AtomicU64::new(0);
+static CATALOG_SCANS: AtomicU64 = AtomicU64::new(0);
 static CATALOG_FILES_PARSED: AtomicU64 = AtomicU64::new(0);
+static CATALOG_CACHE_HITS: AtomicU64 = AtomicU64::new(0);
 static HIGHLIGHT_BYTES: AtomicU64 = AtomicU64::new(0);
 
+fn add_counter(counter: &AtomicU64, count: u64) {
+    if ENABLED.load(Ordering::Relaxed) {
+        counter.fetch_add(count, Ordering::Relaxed);
+    }
+}
+
+fn reset_counters() {
+    for counter in [
+        &SNAPSHOTS_PUBLISHED,
+        &STREAM_EVENTS_OBSERVED,
+        &STREAM_EVENTS_COALESCED,
+        &TRANSCRIPT_ITEMS_COMPARED,
+        &TRANSCRIPT_ITEMS_PROJECTED,
+        &TRANSCRIPT_ROWS_REMEASURED,
+        &CATALOG_SCANS,
+        &CATALOG_FILES_PARSED,
+        &CATALOG_CACHE_HITS,
+        &HIGHLIGHT_BYTES,
+    ] {
+        counter.store(0, Ordering::Relaxed);
+    }
+}
+
 pub(crate) fn count_snapshot() {
-    SNAPSHOTS_PUBLISHED.fetch_add(1, Ordering::Relaxed);
+    add_counter(&SNAPSHOTS_PUBLISHED, 1);
 }
 
-pub(crate) fn count_coalesced_stream_event() {
-    STREAM_EVENTS_COALESCED.fetch_add(1, Ordering::Relaxed);
+pub(crate) fn count_stream_event(coalesced: bool) {
+    add_counter(&STREAM_EVENTS_OBSERVED, 1);
+    if coalesced {
+        add_counter(&STREAM_EVENTS_COALESCED, 1);
+    }
 }
 
-pub(crate) fn count_transcript_items(count: usize) {
-    TRANSCRIPT_ITEMS_EXAMINED.fetch_add(count as u64, Ordering::Relaxed);
+pub(crate) fn count_transcript_comparisons(count: usize) {
+    add_counter(&TRANSCRIPT_ITEMS_COMPARED, count as u64);
+}
+
+pub(crate) fn count_transcript_projections(count: usize) {
+    add_counter(&TRANSCRIPT_ITEMS_PROJECTED, count as u64);
 }
 
 pub(crate) fn count_remeasured_rows(count: usize) {
-    TRANSCRIPT_ROWS_REMEASURED.fetch_add(count as u64, Ordering::Relaxed);
+    add_counter(&TRANSCRIPT_ROWS_REMEASURED, count as u64);
+}
+
+pub(crate) fn count_catalog_scan() {
+    add_counter(&CATALOG_SCANS, 1);
 }
 
 pub(crate) fn count_catalog_parse() {
-    CATALOG_FILES_PARSED.fetch_add(1, Ordering::Relaxed);
+    add_counter(&CATALOG_FILES_PARSED, 1);
+}
+
+pub(crate) fn count_catalog_cache_hit() {
+    add_counter(&CATALOG_CACHE_HITS, 1);
 }
 
 pub(crate) fn count_highlight_bytes(count: usize) {
-    HIGHLIGHT_BYTES.fetch_add(count as u64, Ordering::Relaxed);
+    add_counter(&HIGHLIGHT_BYTES, count as u64);
 }
 
 #[must_use]
@@ -102,20 +144,25 @@ pub(crate) struct PerformanceSummary {
     pub(crate) draw_p95: Duration,
     pub(crate) draw_max: Duration,
     pub(crate) dirty_to_draw_p95: Duration,
-    pub(crate) invalidations_average: f64,
-    pub(crate) invalidations_max: u64,
+    pub(crate) dirty_requests_average: f64,
+    pub(crate) dirty_requests_max: u64,
     pub(crate) slowest_task: Option<String>,
     pub(crate) slowest_action: Option<String>,
     pub(crate) snapshots_published: u64,
+    pub(crate) stream_events_observed: u64,
     pub(crate) stream_events_coalesced: u64,
-    pub(crate) transcript_items_examined: u64,
+    pub(crate) transcript_items_compared: u64,
+    pub(crate) transcript_items_projected: u64,
     pub(crate) transcript_rows_remeasured: u64,
+    pub(crate) catalog_scans: u64,
     pub(crate) catalog_files_parsed: u64,
+    pub(crate) catalog_cache_hits: u64,
     pub(crate) highlight_bytes: u64,
 }
 
 impl PerformanceMonitor {
     pub(crate) fn new(window_id: WindowId) -> Self {
+        reset_counters();
         ENABLED.store(true, Ordering::Relaxed);
         profiler::set_trace_enabled(true);
         profiler::set_frame_trace_enabled(true);
@@ -197,19 +244,23 @@ fn collect_summary(
         draw_p95: percentile(&draw, 95),
         draw_max: draw.last().copied().unwrap_or_default(),
         dirty_to_draw_p95: percentile(&dirty_to_draw, 95),
-        invalidations_average: if invalidations.is_empty() {
+        dirty_requests_average: if invalidations.is_empty() {
             0.0
         } else {
             invalidations.iter().sum::<u64>() as f64 / invalidations.len() as f64
         },
-        invalidations_max: invalidations.into_iter().max().unwrap_or_default(),
+        dirty_requests_max: invalidations.into_iter().max().unwrap_or_default(),
         slowest_task,
         slowest_action,
         snapshots_published: SNAPSHOTS_PUBLISHED.swap(0, Ordering::Relaxed),
+        stream_events_observed: STREAM_EVENTS_OBSERVED.swap(0, Ordering::Relaxed),
         stream_events_coalesced: STREAM_EVENTS_COALESCED.swap(0, Ordering::Relaxed),
-        transcript_items_examined: TRANSCRIPT_ITEMS_EXAMINED.swap(0, Ordering::Relaxed),
+        transcript_items_compared: TRANSCRIPT_ITEMS_COMPARED.swap(0, Ordering::Relaxed),
+        transcript_items_projected: TRANSCRIPT_ITEMS_PROJECTED.swap(0, Ordering::Relaxed),
         transcript_rows_remeasured: TRANSCRIPT_ROWS_REMEASURED.swap(0, Ordering::Relaxed),
+        catalog_scans: CATALOG_SCANS.swap(0, Ordering::Relaxed),
         catalog_files_parsed: CATALOG_FILES_PARSED.swap(0, Ordering::Relaxed),
+        catalog_cache_hits: CATALOG_CACHE_HITS.swap(0, Ordering::Relaxed),
         highlight_bytes: HIGHLIGHT_BYTES.swap(0, Ordering::Relaxed),
     }
 }
@@ -220,19 +271,23 @@ fn should_log_duration(duration: Duration) -> bool {
 
 fn log_summary(summary: &PerformanceSummary) {
     zlog::info!(
-        "PERF interval_ms={:.2} frames={} draw_p95_ms={:.2} draw_max_ms={:.2} dirty_to_draw_p95_ms={:.2} invalidations_avg={:.1} invalidations_max={} snapshots={} coalesced={} transcript_examined={} transcript_remeasured={} catalog_parses={} highlight_bytes={} slowest_task={:?} slowest_action={:?}",
+        "PERF interval_ms={:.2} frames={} draw_p95_ms={:.2} draw_max_ms={:.2} dirty_to_draw_p95_ms={:.2} dirty_requests_avg={:.1} dirty_requests_max={} snapshots={} stream_events={} stream_coalesced={} transcript_compared={} transcript_projected={} transcript_remeasured={} catalog_scans={} catalog_parses={} catalog_cache_hits={} highlight_bytes={} slowest_task={:?} slowest_action={:?}",
         summary.sample_interval.as_secs_f64() * 1_000.0,
         summary.frame_count,
         summary.draw_p95.as_secs_f64() * 1_000.0,
         summary.draw_max.as_secs_f64() * 1_000.0,
         summary.dirty_to_draw_p95.as_secs_f64() * 1_000.0,
-        summary.invalidations_average,
-        summary.invalidations_max,
+        summary.dirty_requests_average,
+        summary.dirty_requests_max,
         summary.snapshots_published,
+        summary.stream_events_observed,
         summary.stream_events_coalesced,
-        summary.transcript_items_examined,
+        summary.transcript_items_compared,
+        summary.transcript_items_projected,
         summary.transcript_rows_remeasured,
+        summary.catalog_scans,
         summary.catalog_files_parsed,
+        summary.catalog_cache_hits,
         summary.highlight_bytes,
         summary.slowest_task,
         summary.slowest_action,

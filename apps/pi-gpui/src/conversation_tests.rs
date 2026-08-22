@@ -405,6 +405,30 @@ fn tool_result_messages_update_the_existing_call_without_a_duplicate() {
 }
 
 #[test]
+fn subagent_results_keep_custom_context_but_use_dedicated_transcript_rows() {
+    let mut state = ConversationState::default();
+    state.replace_history(&[
+        json!({
+            "role":"custom",
+            "customType":"subagent-result",
+            "content":"Subagent child-1 (idle) returned:\n# Findings\nlong body",
+            "display":true
+        }),
+        json!({
+            "role":"custom",
+            "customType":"other-extension",
+            "content":"ordinary extension message",
+            "display":true
+        }),
+    ]);
+
+    assert_eq!(state.items[0].kind, TranscriptKind::AgentResult);
+    assert_eq!(state.items[0].label, "Subagent result");
+    assert!(state.items[0].text.contains("# Findings"));
+    assert_eq!(state.items[1].kind, TranscriptKind::Custom);
+}
+
+#[test]
 fn transcript_uses_quiet_speaker_labels_and_readable_tool_names() {
     let mut state = ConversationState::default();
     state.replace_history(&[

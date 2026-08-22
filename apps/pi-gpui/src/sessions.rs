@@ -562,6 +562,7 @@ fn discover_in_cached(
     query: &str,
     cache: &mut DiscoveryCache,
 ) -> Result<SessionDiscovery, String> {
+    crate::performance::count_catalog_scan();
     match fs::metadata(root) {
         Ok(_) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -659,6 +660,7 @@ fn discover_in_cached(
             && cached.len == len
             && cached.modified == modified
         {
+            crate::performance::count_catalog_cache_hit();
             let mut value = cached.parsed.clone();
             value.0.is_running =
                 recently_running(value.0.is_running, value.0.modified, SystemTime::now());

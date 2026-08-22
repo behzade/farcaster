@@ -369,32 +369,40 @@ fn render_performance(summary: &crate::performance::PerformanceSummary) -> impl 
             crate::performance::duration_label(summary.dirty_to_draw_p95),
         ))
         .child(metric_row(
-            "Invalidations avg / max",
+            "Dirty requests avg / max",
             format!(
                 "{:.1} / {}",
-                summary.invalidations_average, summary.invalidations_max
+                summary.dirty_requests_average, summary.dirty_requests_max
             ),
         ))
         .child(metric_row(
-            "Snapshots / coalesced",
+            "Snapshots / stream events / coalesced",
             format!(
-                "{} / {}",
-                summary.snapshots_published, summary.stream_events_coalesced
+                "{} / {} / {}",
+                summary.snapshots_published,
+                summary.stream_events_observed,
+                summary.stream_events_coalesced
             ),
         ))
         .child(metric_row(
-            "Transcript examined / remeasured",
+            "Transcript compared / projected / remeasured",
             format!(
-                "{} / {}",
-                summary.transcript_items_examined, summary.transcript_rows_remeasured
+                "{} / {} / {}",
+                summary.transcript_items_compared,
+                summary.transcript_items_projected,
+                summary.transcript_rows_remeasured
             ),
         ))
         .child(metric_row(
-            "Catalog parses / highlight bytes",
+            "Catalog scans / parses / cache hits",
             format!(
-                "{} / {}",
-                summary.catalog_files_parsed, summary.highlight_bytes
+                "{} / {} / {}",
+                summary.catalog_scans, summary.catalog_files_parsed, summary.catalog_cache_hits
             ),
+        ))
+        .child(metric_row(
+            "Highlight bytes",
+            summary.highlight_bytes.to_string(),
         ))
         .child(metric_row(
             "Slowest task poll",
