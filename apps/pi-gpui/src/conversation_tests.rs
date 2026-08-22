@@ -223,6 +223,67 @@ fn assistant_error_without_content_is_visible_live_and_in_history() {
 }
 
 #[test]
+fn assistant_error_with_content_keeps_response_and_appends_error() {
+    let failed = json!({
+        "role":"assistant",
+        "content":[
+            {"type":"thinking","thinking":"plan"},
+            {"type":"text","text":"partial answer"}
+        ],
+        "stopReason":"error",
+        "errorMessage":"429: overloaded"
+    });
+    let succeeded = json!({
+        "role":"assistant",
+        "content":[{"type":"text","text":"retried answer"}],
+        "stopReason":"stop"
+    });
+
+    let mut live = ConversationState::default();
+    live.reduce(&json!({"type":"message_start","message":{"role":"assistant","content":[]}}));
+    live.reduce(&json!({
+        "type":"message_update",
+        "assistantMessageEvent":{"type":"text_start","contentIndex":0}
+    }));
+    live.reduce(&json!({
+        "type":"message_update",
+        "assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"partial answer"}
+    }));
+    live.reduce(&json!({"type":"message_end","message":failed.clone()}));
+    live.reduce(&json!({
+        "type":"auto_retry_start",
+        "attempt":1,
+        "errorMessage":"429: overloaded"
+    }));
+    live.reduce(&json!({"type":"message_start","message":{"role":"assistant","content":[]}}));
+    live.reduce(&json!({"type":"message_end","message":succeeded.clone()}));
+
+    let mut history = ConversationState::default();
+    history.replace_history(&[failed, succeeded]);
+
+    for state in [&live, &history] {
+        let items = state
+            .items
+            .iter()
+            .filter(|item| item.kind != TranscriptKind::Notice)
+            .collect::<Vec<_>>();
+        assert_eq!(items.len(), 4);
+        assert_eq!(items[0].kind, TranscriptKind::Thinking);
+        assert_eq!(items[0].text, "plan");
+        assert!(!items[0].is_error);
+        assert_eq!(items[1].kind, TranscriptKind::Assistant);
+        assert_eq!(items[1].text, "partial answer");
+        assert!(!items[1].is_error);
+        assert_eq!(items[2].kind, TranscriptKind::Error);
+        assert_eq!(items[2].text, "429: overloaded");
+        assert!(items[2].is_error);
+        assert_eq!(items[3].kind, TranscriptKind::Assistant);
+        assert_eq!(items[3].text, "retried answer");
+        assert!(!items[3].is_error);
+    }
+}
+
+#[test]
 fn assistant_usage_without_prompt_tokens_does_not_change_average_cache_hit_rate() {
     let mut state = ConversationState::default();
     state.replace_history(&[json!({

@@ -831,16 +831,12 @@ fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
                             _ => return None,
                         };
                         Some(TranscriptItem {
-                            kind: if is_error && kind != TranscriptKind::Tool {
-                                TranscriptKind::Error
-                            } else {
-                                kind
-                            },
+                            kind,
                             label,
                             text,
                             stream_chunks: Arc::default(),
                             streaming: false,
-                            is_error,
+                            is_error: false,
                             tool_call_id: block
                                 .get("id")
                                 .and_then(Value::as_str)
@@ -857,25 +853,10 @@ fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
                     .collect()
             })
             .unwrap_or_default();
-        if items.is_empty()
-            && is_error
-            && let Some(error) = message
-                .get("errorMessage")
-                .and_then(Value::as_str)
-                .filter(|error| !error.is_empty())
+        if is_error
+            && let Some(error) = assistant_error_text(message, !items.is_empty())
         {
-            items.push(TranscriptItem {
-                kind: TranscriptKind::Error,
-                label: "Model error".into(),
-                text: error.to_owned(),
-                stream_chunks: Arc::default(),
-                streaming: false,
-                is_error: true,
-                tool_call_id: None,
-                tool_output: String::new(),
-                tool_presentation: None,
-                invocation: None,
-            });
+            items.push(model_error_item(error));
         }
         return items;
     }
@@ -1257,6 +1238,30 @@ fn strings(value: Option<&Value>) -> Vec<String> {
         })
         .unwrap_or_default()
 }
+fn assistant_error_text(message: &Value, has_content: bool) -> Option<String> {
+    message
+        .get("errorMessage")
+        .and_then(Value::as_str)
+        .filter(|error| !error.is_empty())
+        .map(str::to_owned)
+        .or_else(|| has_content.then(|| "Unknown error".into()))
+}
+
+fn model_error_item(text: String) -> TranscriptItem {
+    TranscriptItem {
+        kind: TranscriptKind::Error,
+        label: "Model error".into(),
+        text,
+        stream_chunks: Arc::default(),
+        streaming: false,
+        is_error: true,
+        tool_call_id: None,
+        tool_output: String::new(),
+        tool_presentation: None,
+        invocation: None,
+    }
+}
+
 fn retry_notice(event: &Value) -> String {
     let kind = text_field(event, "type");
     let attempt = event.get("attempt").and_then(Value::as_u64);
