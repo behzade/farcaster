@@ -10,7 +10,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, mpsc},
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use serde_json::{Value, json};
@@ -26,12 +26,13 @@ use crate::{
     session_transfer::{self, TransferMember},
     session_watcher::{SessionWatchEvent, SessionWatcher},
     sessions::{
-        LoadedHistory, SessionDiscovery, SessionSummary, configured_session_root,
-        descendant_sessions, discover, load_history, project_display_history,
-        root_session_for_path,
+        LoadedHistory, RUNNING_ACTIVITY_TIMEOUT, SessionDiscovery, SessionSummary,
+        configured_session_root, descendant_sessions, discover, load_history,
+        project_display_history, root_session_for_path,
     },
     state::StateStore,
 };
+use catalog::ExternalActivityTracker;
 use session_identity::SessionControlDefaults;
 
 const COALESCED_SESSION_REFRESH_DELAY: Duration = Duration::from_millis(100);
@@ -94,8 +95,9 @@ pub(crate) enum RuntimeCommand {
     SetThinking(String),
     ExtensionResponse(ExtensionUiResponse),
     DeliverQueued(crate::state::QueuedPrompt),
-    SetArchived {
+    SetSessionCategory {
         path: PathBuf,
+        in_review: bool,
         archived: bool,
     },
     LoadSessions(String),
@@ -150,6 +152,9 @@ pub(crate) enum RuntimeEvent {
         target: String,
         session: Option<PathBuf>,
         status: String,
+    },
+    SessionFilesModified {
+        paths: Vec<PathBuf>,
     },
     Stopped,
 }
@@ -354,6 +359,18 @@ fn publish_session_status_if_changed(
     });
 }
 
+fn rpc_owned_session_paths(latest: &HashMap<String, Arc<RuntimeSnapshot>>) -> HashSet<PathBuf> {
+    latest
+        .values()
+        .filter(|snapshot| snapshot.connected)
+        .filter_map(|snapshot| {
+            let live = snapshot.live_session.as_ref()?;
+            (!snapshot.history_preview || snapshot.selected_session.as_ref() != Some(live))
+                .then(|| live.clone())
+        })
+        .collect()
+}
+
 fn run_supervisor(
     project: PathBuf,
     draft_id: String,
@@ -398,6 +415,7 @@ fn run_supervisor(
     let mut latest = HashMap::<String, Arc<RuntimeSnapshot>>::new();
     let mut catalog_sessions = Vec::<SessionSummary>::new();
     let mut catalog_generation = 0_u64;
+    let mut activity_tracker = ExternalActivityTracker::default();
     if let Some(path) = initial_session.clone() {
         latest.insert(
             initial_key.clone(),
@@ -439,6 +457,13 @@ fn run_supervisor(
     }
     let mut running = true;
     while running {
+        let owned_sessions = rpc_owned_session_paths(&latest);
+        activity_tracker.remove_owned(&owned_sessions);
+        if activity_tracker.take_expired(Instant::now())
+            && let Some(catalog) = actors.get(&catalog_key)
+        {
+            catalog.send(RuntimeCommand::RefreshSessions);
+        }
         let keys = actors.keys().cloned().collect::<Vec<_>>();
         for key in keys {
             let mut events = Vec::new();
@@ -453,7 +478,15 @@ fn run_supervisor(
                 match event {
                     RuntimeEvent::Snapshot { snapshot, .. } => {
                         let mut snapshot = snapshot;
-                        session_controls.apply(Arc::make_mut(&mut snapshot));
+                        let session_path = snapshot
+                            .live_session
+                            .clone()
+                            .or_else(|| snapshot.selected_session.clone());
+                        let adopts_identity = key == selected
+                            && !session_path.is_some_and(|path| {
+                                crate::sessions::is_subagent_path(&catalog_sessions, &path)
+                            });
+                        session_controls.apply(Arc::make_mut(&mut snapshot), adopts_identity);
                         if snapshot.conversation.settled {
                             needs_input.remove(&key);
                             active_dialogs.remove(&key);
@@ -563,6 +596,17 @@ fn run_supervisor(
                             catalog.send(RuntimeCommand::RefreshSessions);
                         }
                     }
+                    RuntimeEvent::SessionFilesModified { paths } if key == catalog_key => {
+                        let refresh = activity_tracker.observe_files(
+                            &catalog_sessions,
+                            &rpc_owned_session_paths(&latest),
+                            &paths,
+                            Instant::now(),
+                        );
+                        if refresh && let Some(catalog) = actors.get(&catalog_key) {
+                            catalog.send(RuntimeCommand::RefreshSessions);
+                        }
+                    }
                     RuntimeEvent::WorkGraphChanged { project, .. } => {
                         let _ = event_tx.send(RuntimeEvent::WorkGraphChanged { project });
                     }
@@ -572,10 +616,20 @@ fn run_supervisor(
                             && let RuntimeEvent::Sessions {
                                 generation: next_generation,
                                 all_sessions,
+                                activities,
                                 ..
                             } = &event
                         {
                             catalog_generation = *next_generation;
+                            if let Some((_, exhaustive)) = activities {
+                                activity_tracker.sync_catalog(
+                                    all_sessions,
+                                    *exhaustive,
+                                    &rpc_owned_session_paths(&latest),
+                                    Instant::now(),
+                                    SystemTime::now(),
+                                );
+                            }
                             catalog_sessions.clone_from(all_sessions);
                             reconcile_live_session_documents(
                                 all_sessions,
@@ -604,6 +658,7 @@ fn run_supervisor(
                     RuntimeEvent::Stopped
                     | RuntimeEvent::SessionMoved { .. }
                     | RuntimeEvent::SessionStatus { .. }
+                    | RuntimeEvent::SessionFilesModified { .. }
                     | RuntimeEvent::SessionReset { .. }
                     | RuntimeEvent::HistoryReset { .. } => {}
                 }
@@ -857,7 +912,7 @@ fn run_supervisor(
                         &command,
                         RuntimeCommand::LoadSessions(_)
                             | RuntimeCommand::RefreshSessions
-                            | RuntimeCommand::SetArchived { .. }
+                            | RuntimeCommand::SetSessionCategory { .. }
                             | RuntimeCommand::RenameSession { .. }
                             | RuntimeCommand::MoveSession { .. }
                     ) {
@@ -870,7 +925,12 @@ fn run_supervisor(
                     }
                 }
             }
-            Err(mpsc::TryRecvError::Empty) => thread::park(),
+            Err(mpsc::TryRecvError::Empty) => match activity_tracker.next_deadline() {
+                Some(deadline) => {
+                    thread::park_timeout(deadline.saturating_duration_since(Instant::now()))
+                }
+                None => thread::park(),
+            },
             Err(mpsc::TryRecvError::Disconnected) => running = false,
         }
     }
@@ -1226,7 +1286,12 @@ fn run(
         }
         while let Ok(event) = watch_rx.try_recv() {
             match event {
-                SessionWatchEvent::Changed => owner.schedule_session_refresh(),
+                SessionWatchEvent::CatalogChanged => owner.schedule_session_refresh(),
+                SessionWatchEvent::Activity(paths) => {
+                    let _ = owner
+                        .event_tx
+                        .send(RuntimeEvent::SessionFilesModified { paths });
+                }
                 SessionWatchEvent::Failed(message) => {
                     let _ = owner.event_tx.send(RuntimeEvent::SessionsFailed {
                         generation: owner.session_generation,
@@ -1423,9 +1488,13 @@ impl RuntimeOwner {
                     self.fail(error);
                 }
             }
-            RuntimeCommand::SetArchived { path, archived } => {
+            RuntimeCommand::SetSessionCategory {
+                path,
+                in_review,
+                archived,
+            } => {
                 if let Some(state) = &self.state
-                    && let Err(error) = state.set_archived(&path, archived)
+                    && let Err(error) = state.set_session_category(&path, in_review, archived)
                 {
                     let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
                         generation: self.session_generation,
@@ -2235,6 +2304,32 @@ mod tests {
         assert!(!details.contains('\u{1b}'));
         assert!(details.ends_with('…'));
         assert_eq!(details.chars().count(), MAX_FAILURE_DETAILS_CHARS + 1);
+    }
+
+    #[test]
+    fn rpc_owned_paths_exclude_history_only_documents() {
+        let active = PathBuf::from("/sessions/active.jsonl");
+        let background = PathBuf::from("/sessions/background.jsonl");
+        let history = PathBuf::from("/sessions/history.jsonl");
+        let snapshot = |live: &PathBuf, selected: &PathBuf, history_preview| {
+            Arc::new(RuntimeSnapshot {
+                connected: true,
+                live_session: Some(live.clone()),
+                selected_session: Some(selected.clone()),
+                history_preview,
+                ..RuntimeSnapshot::default()
+            })
+        };
+        let latest = HashMap::from([
+            ("active".into(), snapshot(&active, &active, false)),
+            ("preview".into(), snapshot(&background, &history, true)),
+            ("history".into(), snapshot(&history, &history, true)),
+        ]);
+
+        assert_eq!(
+            rpc_owned_session_paths(&latest),
+            HashSet::from([active, background])
+        );
     }
 
     #[test]
@@ -3368,10 +3463,10 @@ mod tests {
             thinking_levels: vec!["off".into(), "high".into()],
             ..RuntimeSnapshot::default()
         };
-        controls.apply(&mut ready);
+        controls.apply(&mut ready, true);
 
         let mut starting = RuntimeSnapshot::default();
-        controls.apply(&mut starting);
+        controls.apply(&mut starting, true);
 
         assert_eq!(starting.prefill_model, Some(model.clone()));
         assert_eq!(starting.prefill_thinking_level.as_deref(), Some("high"));
@@ -3414,7 +3509,7 @@ mod tests {
             thinking_levels: vec!["medium".into(), "high".into()],
             ..RuntimeSnapshot::default()
         };
-        defaults.apply(&mut live_sol);
+        defaults.apply(&mut live_sol, true);
 
         let mut luna_history = RuntimeSnapshot {
             prefill_model: Some(luna.clone()),
@@ -3422,7 +3517,7 @@ mod tests {
             history_preview: true,
             ..RuntimeSnapshot::default()
         };
-        defaults.apply(&mut luna_history);
+        defaults.apply(&mut luna_history, false);
 
         let history_identity = luna_history.session_identity();
         assert_eq!(history_identity.provider, Some("openai-codex"));
@@ -3430,10 +3525,67 @@ mod tests {
         assert_eq!(history_identity.effort, Some("medium"));
 
         let mut empty_draft = RuntimeSnapshot::default();
-        defaults.apply(&mut empty_draft);
+        defaults.apply(&mut empty_draft, true);
         let draft_identity = empty_draft.session_identity();
         assert_eq!(draft_identity.model, Some(&sol));
         assert_eq!(draft_identity.effort, Some("high"));
+    }
+
+    #[test]
+    fn viewing_a_subagent_does_not_change_new_session_defaults() {
+        let sol = Model {
+            id: "gpt-5.6-sol".into(),
+            name: "Sol".into(),
+            provider: "openai-codex".into(),
+            context_window: 200_000,
+            reasoning: true,
+        };
+        let luna = Model {
+            id: "gpt-5.6-luna".into(),
+            name: "Luna".into(),
+            provider: "openai-codex".into(),
+            context_window: 200_000,
+            reasoning: true,
+        };
+        let session_state = |path: &str, model: Model| {
+            serde_json::from_value(json!({
+                "model": model,
+                "thinkingLevel": "high",
+                "isStreaming": false,
+                "isCompacting": false,
+                "sessionFile": path,
+                "sessionId": path,
+                "autoCompactionEnabled": true,
+                "messageCount": 0,
+                "pendingMessageCount": 0
+            }))
+            .ok()
+        };
+        let mut defaults = SessionControlDefaults::default();
+        let mut root = RuntimeSnapshot {
+            session: session_state("/sessions/root.jsonl", sol.clone()),
+            models: vec![sol.clone(), luna.clone()],
+            thinking_levels: vec!["medium".into(), "high".into()],
+            ..RuntimeSnapshot::default()
+        };
+        defaults.apply(&mut root, true);
+
+        // The user views a subagent running a different model; the supervisor passes
+        // adopt_identity=false for descendant sessions.
+        let mut subagent = RuntimeSnapshot {
+            live_session: Some(PathBuf::from("/sessions/child.jsonl")),
+            session: session_state("/sessions/child.jsonl", luna.clone()),
+            models: vec![sol.clone(), luna.clone()],
+            thinking_levels: vec!["medium".into(), "high".into()],
+            ..RuntimeSnapshot::default()
+        };
+        defaults.apply(&mut subagent, false);
+
+        let mut new_draft = RuntimeSnapshot::default();
+        defaults.apply(&mut new_draft, true);
+        let identity = new_draft.session_identity();
+        assert_eq!(identity.model, Some(&sol));
+        assert_eq!(identity.effort, Some("high"));
     }
 
     #[test]

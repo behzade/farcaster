@@ -45,7 +45,10 @@ struct OwnedSessionIdentity {
 }
 
 impl SessionControlDefaults {
-    pub fn apply(&mut self, snapshot: &mut RuntimeSnapshot) {
+    /// Apply shared control defaults to `snapshot`. `adopt_identity` controls whether a
+    /// live session's model and effort become the default for future new sessions; it
+    /// must be false for background sessions and subagents the user is merely viewing.
+    pub fn apply(&mut self, snapshot: &mut RuntimeSnapshot, adopt_identity: bool) {
         if snapshot.models.is_empty() {
             snapshot.models.clone_from(&self.models);
         } else {
@@ -58,17 +61,19 @@ impl SessionControlDefaults {
         }
 
         if let Some(session) = &snapshot.session {
-            if let Some(model) = &session.model {
-                self.identity.model = self
-                    .models
-                    .iter()
-                    .find(|candidate| {
-                        candidate.id == model.id && candidate.provider == model.provider
-                    })
-                    .cloned()
-                    .or_else(|| Some(model.clone()));
+            if adopt_identity {
+                if let Some(model) = &session.model {
+                    self.identity.model = self
+                        .models
+                        .iter()
+                        .find(|candidate| {
+                            candidate.id == model.id && candidate.provider == model.provider
+                        })
+                        .cloned()
+                        .or_else(|| Some(model.clone()));
+                }
+                self.identity.effort = Some(session.thinking_level.clone());
             }
-            self.identity.effort = Some(session.thinking_level.clone());
             return;
         }
 
