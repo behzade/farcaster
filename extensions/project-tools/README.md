@@ -5,6 +5,8 @@ This global Pi extension loads trusted project tools from `.pi/project-tools` af
 Pi scans tools on startup and `/reload`. It does not watch tool files.
 It loads at most 32 valid tools from one project.
 
+Every successful result is formatted as text and truncated to 2,000 lines or 50KB, whichever is reached first. Truncation is a successful tool result, not an error; the retained head includes a notice with the original size so the model can refine its next request. The unbounded value is never placed in Pi tool-result content or details.
+
 ## Layout
 
 ```text

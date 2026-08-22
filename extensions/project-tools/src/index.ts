@@ -4,6 +4,7 @@ import { basename } from "node:path";
 import { discoverProjectTools } from "./discovery.ts";
 import { ProjectToolRunError } from "./errors.ts";
 import { executeProjectTool, formatProjectToolResult, type LoadedProjectTool } from "./module.ts";
+import { PROJECT_TOOL_MAX_BYTES, PROJECT_TOOL_MAX_LINES } from "./truncation.ts";
 
 function projectSlug(projectRoot: string): string {
   const slug = basename(projectRoot).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
@@ -19,7 +20,7 @@ function registerTool(pi: ExtensionAPI, projectRoot: string, tool: LoadedProject
   pi.registerTool({
     name,
     label: tool.manifest.label,
-    description: tool.manifest.description,
+    description: `${tool.manifest.description} Output is truncated to ${PROJECT_TOOL_MAX_LINES} lines or ${PROJECT_TOOL_MAX_BYTES / 1024}KB, whichever is reached first.`,
     parameters: tool.manifest.parameters,
     async execute(toolCallId, arguments_, signal) {
       try {
@@ -28,9 +29,13 @@ function registerTool(pi: ExtensionAPI, projectRoot: string, tool: LoadedProject
           projectRoot,
           signal,
         }));
+        const formatted = formatProjectToolResult(value);
         return {
-          content: [{ type: "text", text: formatProjectToolResult(value) }],
-          details: { projectTool: tool.manifest.name },
+          content: [{ type: "text", text: formatted.text }],
+          details: {
+            projectTool: tool.manifest.name,
+            ...(formatted.truncation === undefined ? {} : { truncation: formatted.truncation }),
+          },
         };
       } catch (cause) {
         if (cause instanceof ProjectToolRunError) throw new Error(cause.message, { cause });

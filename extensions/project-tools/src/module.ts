@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { LoadedManifest } from "./manifest.ts";
 import { ProjectToolLoadError, ProjectToolRunError } from "./errors.ts";
 import { validationMessage } from "./schema.ts";
+import { truncateProjectToolOutput, type BoundedProjectToolOutput } from "./truncation.ts";
 
 export interface ProjectToolContext {
   readonly toolCallId: string;
@@ -135,7 +136,7 @@ export const executeProjectTool = Effect.fn("ProjectTools.executeProjectTool")(
   },
 );
 
-export function formatProjectToolResult(value: unknown): string {
-  if (typeof value === "string") return value;
-  return JSON.stringify(value, null, 2);
+export function formatProjectToolResult(value: unknown): BoundedProjectToolOutput {
+  const output = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  return truncateProjectToolOutput(output);
 }

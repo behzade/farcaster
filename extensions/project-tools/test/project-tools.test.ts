@@ -7,6 +7,7 @@ import { Cause, Effect, Exit } from "effect";
 import projectTools from "../src/index.ts";
 import { discoverProjectTools } from "../src/discovery.ts";
 import { executeProjectTool, formatProjectToolResult } from "../src/module.ts";
+import { PROJECT_TOOL_MAX_BYTES, PROJECT_TOOL_MAX_LINES } from "../src/truncation.ts";
 
 interface ToolOptions {
   readonly result?: unknown;
@@ -83,7 +84,30 @@ test("loads and executes an Effect v4 project tool in the host", async (t) => {
     signal: undefined,
   }));
   assert.deepEqual(value, { value: "ok:host-access" });
-  assert.equal(formatProjectToolResult(value), '{\n  "value": "ok:host-access"\n}');
+  assert.deepEqual(formatProjectToolResult(value), { text: '{\n  "value": "ok:host-access"\n}' });
+});
+
+function outputLineCount(value: string): number {
+  if (value.length === 0) return 0;
+  return value.endsWith("\n") ? value.split("\n").length - 1 : value.split("\n").length;
+}
+
+test("truncates oversized project tool results instead of failing", () => {
+  const byteLimited = formatProjectToolResult(`start:${"🙂".repeat(PROJECT_TOOL_MAX_BYTES)}:end`);
+  assert.ok(byteLimited.truncation);
+  assert.match(byteLimited.text, /^start:/);
+  assert.doesNotMatch(byteLimited.text, /:end/);
+  assert.match(byteLimited.text, /\[Project tool output truncated:/);
+  assert.ok(Buffer.byteLength(byteLimited.text, "utf8") <= PROJECT_TOOL_MAX_BYTES);
+
+  const lineLimited = formatProjectToolResult(
+    Array.from({ length: PROJECT_TOOL_MAX_LINES + 100 }, (_, index) => `line-${index}`).join("\n"),
+  );
+  assert.ok(lineLimited.truncation);
+  assert.match(lineLimited.text, /^line-0\n/);
+  assert.doesNotMatch(lineLimited.text, /line-2099/);
+  assert.match(lineLimited.text, /\[Project tool output truncated:/);
+  assert.ok(outputLineCount(lineLimited.text) <= PROJECT_TOOL_MAX_LINES);
 });
 
 test("provides an exported Effect layer to declared dependencies", async (t) => {
@@ -204,7 +228,7 @@ test("accepts a plain string only when the result schema accepts a string", asyn
     signal: undefined,
   }));
   assert.equal(value, "plain");
-  assert.equal(formatProjectToolResult(value), "plain");
+  assert.deepEqual(formatProjectToolResult(value), { text: "plain" });
 
   const rejected = await makeProject({
     main: 'import { Effect } from "effect"; export const execute = () => Effect.succeed("plain");',
@@ -291,6 +315,13 @@ test("registers tools only for a trusted project and makes them active", async (
   assert.equal(tools.length, 1);
   assert.equal(active.length, 1);
   assert.match(active[0]!, /^project_pi_project_tools_[a-z0-9]+_example$/);
+  assert.match(tools[0].description, /truncated to 2000 lines or 50KB/);
+
+  const result = await tools[0].execute("bounded-call", { input: "x".repeat(PROJECT_TOOL_MAX_BYTES * 2) });
+  assert.ok(Buffer.byteLength(result.content[0].text, "utf8") <= PROJECT_TOOL_MAX_BYTES);
+  assert.match(result.content[0].text, /\[Project tool output truncated:/);
+  assert.equal(result.details.projectTool, "example");
+  assert.equal(result.details.truncation.maxBytes, PROJECT_TOOL_MAX_BYTES);
 
   await sessionStart!({ type: "session_start", reason: "new" }, {
     ...context,
