@@ -2,10 +2,7 @@
   description = "Behzad's reviewed Pi coding-agent extensions";
 
   inputs.crane.url = "github:ipetkov/crane";
-  inputs.guardian = {
-    url = "github:behzade/pi-guardian";
-    inputs.nixpkgs.follows = "nixpkgs";
-  };
+  inputs.guardian.url = "github:behzade/pi-guardian";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
   outputs =
@@ -30,18 +27,13 @@
           pkgs = pkgsFor system;
           coreExtensions = pkgs.callPackage ./nix/pi-core-extensions.nix { };
           mcpCli = pkgs.callPackage ./nix/pi-mcp-cli.nix { };
-          sandbox = pkgs.callPackage "${guardian}/nix/pi-sandbox-extension.nix" {
-            inherit mcpCli;
-            nono = pkgs.nono;
-            bubblewrap = if pkgs.stdenv.hostPlatform.isLinux then pkgs.bubblewrap else null;
-            piCodingAgent = "${piTerminal}/lib/pi-terminal/node_modules/@earendil-works/pi-coding-agent";
-          };
+          sandbox = guardian.packages.${system}.default;
           denseTools = pkgs.callPackage ./nix/pi-dense-tools.nix { };
           sessionAgents = pkgs.callPackage ./nix/pi-session-agents.nix { };
           webAccess = pkgs.callPackage ./nix/pi-web-access.nix { };
           openaiServerCompaction = pkgs.callPackage ./nix/pi-openai-server-compaction.nix { };
           projectTools = pkgs.callPackage ./nix/pi-project-tools.nix { };
-          piTerminal = pkgs.callPackage ./nix/pi-terminal.nix { };
+          piTerminal = pkgs.callPackage ./nix/pi-terminal.nix { inherit mcpCli; };
           piGpui = pkgs.callPackage ./nix/pi-gpui.nix {
             craneLib = crane.mkLib pkgs;
             inherit piTerminal;
@@ -161,15 +153,10 @@
           coreExtensions = pkgs.callPackage ./nix/pi-core-extensions.nix { };
           denseTools = pkgs.callPackage ./nix/pi-dense-tools.nix { };
           mcpCli = pkgs.callPackage ./nix/pi-mcp-cli.nix { };
-          sandbox = pkgs.callPackage "${guardian}/nix/pi-sandbox-extension.nix" {
-            inherit mcpCli;
-            nono = pkgs.nono;
-            bubblewrap = if pkgs.stdenv.hostPlatform.isLinux then pkgs.bubblewrap else null;
-            piCodingAgent = "${piTerminal}/lib/pi-terminal/node_modules/@earendil-works/pi-coding-agent";
-          };
+          sandbox = guardian.packages.${system}.default;
           openaiServerCompaction = pkgs.callPackage ./nix/pi-openai-server-compaction.nix { };
           projectTools = pkgs.callPackage ./nix/pi-project-tools.nix { };
-          piTerminal = pkgs.callPackage ./nix/pi-terminal.nix { };
+          piTerminal = pkgs.callPackage ./nix/pi-terminal.nix { inherit mcpCli; };
           piGpui = pkgs.callPackage ./nix/pi-gpui.nix {
             craneLib = crane.mkLib pkgs;
             inherit piTerminal;
@@ -190,9 +177,16 @@
           };
         in
         {
-          agent-extension-layout = pkgs.runCommand "pi-agent-extension-layout-test" { } ''
+          agent-extension-layout = pkgs.runCommand "pi-agent-extension-layout-test" {
+            nativeBuildInputs = [ piTerminal ];
+          } ''
             test -f ${agent}/extensions/node_modules/effect/package.json
             test "$(readlink ${agent}/extensions/node_modules)" = ${coreExtensions}/node_modules
+            test "$(readlink ${agent}/extensions/sandbox)" = ${sandbox}
+            test -f ${agent}/extensions/sandbox/index.ts
+            test -f ${agent}/extensions/sandbox/node_modules/effect/package.json
+            mkdir home
+            HOME="$PWD/home" PI_OFFLINE=1 pi --no-extensions -e ${sandbox}/index.ts --list-models >/dev/null
             test -L ${agent}/prompts
             test -f ${agent}/prompts/commit.md
             touch "$out"
@@ -215,30 +209,6 @@
                 import("./user-invocations.ts"),
               ])
             '
-            touch "$out"
-          '';
-
-          sandbox-tests = pkgs.runCommand "pi-sandbox-tests" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
-            cp ${guardian}/extensions/sandbox/*.ts .
-            cp -R ${sandbox}/node_modules .
-            chmod -R u+w node_modules
-            mkdir -p node_modules/@earendil-works
-            ln -s ${piTerminal}/lib/pi-terminal/node_modules/@earendil-works/pi-ai node_modules/@earendil-works/pi-ai
-            node --import ./test-setup.ts --test \
-              background-jobs.test.ts \
-              sandbox-policy.test.ts \
-              linux-deny-layer.test.ts \
-              nono-client.test.ts \
-              network-policy.test.ts \
-              sandbox-config.test.ts \
-              development-caches.test.ts \
-              extension-schema.test.ts \
-              io-permissions.test.ts \
-              io-policy.test.ts \
-              native-sandbox-ops.test.ts \
-              project-policy.test.ts \
-              session-policy-store.test.ts \
-              approval-transport.test.ts
             touch "$out"
           '';
 

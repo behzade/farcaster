@@ -3,6 +3,7 @@
   cacert,
   lib,
   makeWrapper,
+  mcpCli,
   nodejs_24,
   stdenvNoCC,
   dependencySystem ? stdenvNoCC.hostPlatform.system,
@@ -104,7 +105,8 @@ stdenvNoCC.mkDerivation {
     cp package.json "$out/lib/pi-terminal/"
     cp -R node_modules "$out/lib/pi-terminal/node_modules"
     makeWrapper ${nodejs_24}/bin/node "$out/bin/pi" \
-      --add-flags "$out/lib/pi-terminal/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"
+      --add-flags "$out/lib/pi-terminal/node_modules/@earendil-works/pi-coding-agent/dist/cli.js" \
+      --prefix PATH : ${mcpCli}/bin
     runHook postInstall
   '';
 

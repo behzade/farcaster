@@ -14,9 +14,8 @@ separate `nix-config` repo.
 
 ## What is included
 
-- A native sandbox broker using Seatbelt on macOS and Bubblewrap on Linux.
-- Portable, checked-in project access policy with explicit host approval and no
-  automatic command retries.
+- Pi Guardian's native nono sandbox with explicit project/session approval and
+  no automatic command retries.
 - Persistent child Pi sessions with forked or blank context, steering, waiting,
   model selection, and cancellation.
 - Web search, page extraction, and video tools, with OpenAI used first when the
@@ -35,9 +34,9 @@ separate `nix-config` repo.
 
 ## Repository map
 
-- [Pi Guardian](https://github.com/behzade/pi-guardian) supplies the pinned
-  sandbox, approval transport, native broker, exact-host proxy, and background
-  jobs as one external extension.
+- [Pi Guardian](https://github.com/behzade/pi-guardian) supplies the complete
+  pinned sandbox, approval policy, and background-job security boundary. This
+  repository only installs and configures its packaged extension.
 - [`extensions/dense-tools`](extensions/dense-tools) renders compact tool output
   and provides `pi-diff`, the same syntax-highlighted diff view as a terminal
   command. It keeps a bounded output cache in the system temporary directory so
@@ -121,98 +120,19 @@ node --test \
   tests/user-invocations.test.ts
 ```
 
-Sandbox checks live in the pinned
-[Pi Guardian](https://github.com/behzade/pi-guardian) repository.
+Sandbox implementation checks and security documentation live in the pinned
+[Pi Guardian](https://github.com/behzade/pi-guardian) repository. This repository
+keeps only package-layout and Pi compatibility checks.
 
 My Home Manager configuration consumes the default flake package and deploys
 it at `~/.pi/agent`.
 
 ## Sandbox
 
-The default backend is named `native-preview` in the config. It starts one
-broker per Pi session and a fresh OS sandbox for each foreground command:
+[Pi Guardian](https://github.com/behzade/pi-guardian) owns sandbox enforcement,
+policy, approvals, fixed native executables, and background jobs. This repository
+pins and installs the finished Guardian package without rebuilding its internals.
 
-- macOS uses `/usr/bin/sandbox-exec` with a generated Seatbelt profile.
-- Linux uses a Nix-pinned Bubblewrap binary, a read-only host root, private
-  namespaces and `/proc`, `NoNewPrivs`, and a network namespace with a
-  restricted loopback bridge when a host is approved.
-
-The default policy can read most of the host and write the workspace, temporary
-directories, and a sandbox-only development cache. It keeps `.git`, project
-`.pi`, Pi and Codex configuration, common credential directories, auth files,
-and workspace secrets protected. The command environment is filtered, and
-common package-manager caches are redirected under
-`~/.cache/pi-sandbox`.
-
-Shell commands and background-job starts carry no permission declarations.
-Each call runs exactly once with the active policy. A denied command returns a
-bounded grouped diagnostic with at most three example paths and is never
-retried. Built-in file tools also deny without prompting and point the agent to
-`request_access`.
-
-`request_access` batches portable filesystem, exact-host, local-network, and
-managed development-cache adapter entries. It shows one bounded exact diff of
-only the net-new semantic entries, with **Add to project policy** and **Deny**
-choices. Approval conditionally writes and activates that policy for later
-commands; a concurrent/manual edit aborts rather than being overwritten, and
-the agent must explicitly rerun a command. Existing background jobs
-keep the immutable policy captured at start. Trusted project `.pi/project-tools`
-remain host tools and do not go through the command broker.
-
-Native execution is deliberately narrow:
-
-- Each broker supports one command at a time. The session owns one foreground
-  broker and each background job owns a separate broker.
-- Network access starts blocked. Project policy may grant one exact hostname or
-  IP, enforced by a host-owned proxy, or `network_local` for local servers. A
-  host grant applies to all ports on that exact host. Linux keeps local ports in
-  the command's private network namespace. macOS uses the host loopback
-  interface and permits Unix socket bind only at paths the command may write.
-- When macOS denial hints are available, summaries are grouped and best effort;
-  Linux has no structured denial source. Hints are diagnostics only and never
-  prompt or grant access.
-- Background jobs support bounded output, status, input, stop, and session
-  cleanup. They do not provide a PTY.
-
-The macOS release gate and the extension's real-broker end-to-end test pass.
-The Linux broker is in use on x86-64, but its ignored host release test,
-including the new network bridge checks, still needs a Linux run before this
-change can claim Linux network parity.
-
-Global machine hard policy lives at
-`~/.pi/agent/extensions/sandbox.json`. A trusted project's portable access
-policy is checked in at `.pi/extensions/sandbox/sandbox.json`. Keeping it under
-Pi's project-extension root makes stock Pi require project trust before loading it:
-
-```json
-{
-  "version": 1,
-  "rights": [
-    { "kind": "filesystem", "access": "write", "path": ".git", "scope": "tree" },
-    { "kind": "network_host", "host": "registry.npmjs.org" },
-    { "kind": "network_local" }
-  ],
-  "developmentCache": {
-    "environment": { "CUSTOM_TOOL_CACHE": "custom-tool" }
-  }
-}
-```
-
-Relative filesystem paths resolve from the project root and `~/` paths resolve
-from the current user's home. Checked-in absolute paths are rejected;
-`request_access` converts absolute denial paths beneath the workspace or home to
-portable form and rejects all others. Machine denies, broker hard rules,
-secrets, project `.pi` writes, and any filesystem right crossing an existing
-symlink always lose. Grant paths are revalidated immediately before every
-broker request, so a missing approved path cannot later retarget through a
-symlink. Direct policy-file edits are loaded only on a later session; explicitly
-approved `request_access` updates activate immediately.
-
-Development caches share one managed namespace under the machine-configured
-root (by default `~/.cache/pi-sandbox`). Projects may add safe environment
-mappings with relative targets beneath that root, but cannot relocate it. The
-cache is shared across workspaces, so projects that do not trust each other
-should use separate users or disposable homes.
-
-The broker protocol, threat model, and upstream notes are maintained in
-[Pi Guardian](https://github.com/behzade/pi-guardian/tree/main/sandbox-broker).
+Machine-specific Guardian policy remains in the separate `nix-config` repository.
+See Guardian's README for configuration, supported rights, threat model, and
+platform status.
