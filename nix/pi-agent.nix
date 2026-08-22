@@ -7,7 +7,6 @@
   sandbox,
   sessionAgents,
   stdenvNoCC,
-  webAccess,
 }:
 
 stdenvNoCC.mkDerivation {
@@ -30,11 +29,12 @@ stdenvNoCC.mkDerivation {
     ln -s ${projectTools} "$out/extensions/project-tools"
     ln -s ${sandbox} "$out/extensions/sandbox"
     ln -s ${sessionAgents} "$out/extensions/session-agents"
-    ln -s ${webAccess} "$out/extensions/web-access"
     ln -s ${coreExtensions}/lib "$out/extensions/lib"
     ln -s ${coreExtensions}/node_modules "$out/extensions/node_modules"
     ln -s ${coreExtensions}/agent-feedback.ts "$out/extensions/agent-feedback.ts"
     ln -s ${coreExtensions}/notifications.ts "$out/extensions/notifications.ts"
+    ln -s ${coreExtensions}/codex-web-search.ts "$out/extensions/codex-web-search.ts"
+    ln -s ${coreExtensions}/codex-web-search-core.ts "$out/extensions/codex-web-search-core.ts"
     ln -s ${coreExtensions}/prompt-inspector.ts "$out/extensions/prompt-inspector.ts"
     ln -s ${coreExtensions}/session-hooks.ts "$out/extensions/session-hooks.ts"
     ln -s ${coreExtensions}/title-state.ts "$out/extensions/title-state.ts"

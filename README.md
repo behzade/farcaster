@@ -18,8 +18,8 @@ separate `nix-config` repo.
   no automatic command retries.
 - Persistent child Pi sessions with forked or blank context, steering, waiting,
   model selection, and cancellation.
-- Web search, page extraction, and video tools, with OpenAI used first when the
-  request is supported.
+- A first-party Codex Web Search tool using the active Codex login and Codex's
+  direct search endpoint, with bounded cited output and no provider router.
 - Stateless MCP access through a pinned `mcp-cli`.
 - Server-side OpenAI compaction for long sessions.
 - Compact read, edit, and shell output with syntax-highlighted diffs.
@@ -47,6 +47,9 @@ separate `nix-config` repo.
 - [`extensions/project-tools`](extensions/project-tools) loads strict tool
   manifests and Effect v4 handlers from trusted project `.pi/project-tools`
   directories. These handlers run in Pi's host process, not the shell sandbox.
+- [`extensions/codex-web-search.ts`](extensions/codex-web-search.ts) exposes
+  one compact Codex Web Search tool; direct request shaping and response
+  validation live in `codex-web-search-core.ts`.
 - [`extensions/subagents`](extensions/subagents) owns persistent child Pi
   sessions. Child completion automatically reprompts the parent; three
   Effect-backed tools start, message, and control children.
@@ -66,8 +69,6 @@ separate `nix-config` repo.
   shell in the project directory and gives the captured project environment to
   the RPC process. It is a distinct GPL-3.0-or-later module; the enclosing
   repository's MIT license does not replace that module's license.
-- [`patches`](patches) contains the local changes applied to third-party Pi
-  extensions.
 - [`SYSTEM.md`](SYSTEM.md) is the base Pi system prompt. Nix fills its pinned
   Pi package path during the build.
 - [`APPEND_SYSTEM.md`](APPEND_SYSTEM.md) is the terse working contract appended
@@ -112,6 +113,7 @@ npm run check --prefix extensions/subagents
 make check-gpui
 node --test \
   tests/governance.test.ts \
+  tests/codex-web-search.test.ts \
   tests/session-agents-package.test.ts \
   tests/prompt-contract.test.ts \
   tests/prompt-inspector.test.ts \

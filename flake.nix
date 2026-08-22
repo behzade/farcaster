@@ -30,7 +30,6 @@
           sandbox = guardian.packages.${system}.default;
           denseTools = pkgs.callPackage ./nix/pi-dense-tools.nix { };
           sessionAgents = pkgs.callPackage ./nix/pi-session-agents.nix { };
-          webAccess = pkgs.callPackage ./nix/pi-web-access.nix { };
           openaiServerCompaction = pkgs.callPackage ./nix/pi-openai-server-compaction.nix { };
           projectTools = pkgs.callPackage ./nix/pi-project-tools.nix { };
           piTerminal = pkgs.callPackage ./nix/pi-terminal.nix { inherit mcpCli; };
@@ -59,7 +58,6 @@
               projectTools
               sandbox
               sessionAgents
-              webAccess
               ;
           };
         in
@@ -73,7 +71,6 @@
           dense-tools = denseTools;
           openai-server-compaction = openaiServerCompaction;
           project-tools = projectTools;
-          web-access = webAccess;
           default = agent;
         }
       );
@@ -162,7 +159,6 @@
             inherit piTerminal;
           };
           sessionAgents = pkgs.callPackage ./nix/pi-session-agents.nix { };
-          webAccess = pkgs.callPackage ./nix/pi-web-access.nix { };
           agent = pkgs.callPackage ./nix/pi-agent.nix {
             inherit
               coreExtensions
@@ -172,7 +168,6 @@
               projectTools
               sandbox
               sessionAgents
-              webAccess
               ;
           };
         in
@@ -184,6 +179,7 @@
             test "$(readlink ${agent}/extensions/node_modules)" = ${coreExtensions}/node_modules
             test "$(readlink ${agent}/extensions/sandbox)" = ${sandbox}
             test -f ${agent}/extensions/sandbox/index.ts
+            test -f ${agent}/extensions/codex-web-search.ts
             test -f ${agent}/extensions/sandbox/node_modules/effect/package.json
             mkdir home
             HOME="$PWD/home" PI_OFFLINE=1 pi --no-extensions -e ${sandbox}/index.ts --list-models >/dev/null
@@ -202,6 +198,7 @@
               await Promise.all([
                 import("./agent-feedback.ts"),
                 import("./notifications.ts"),
+                import("./codex-web-search.ts"),
                 import("./prompt-inspector.ts"),
                 import("./session-hooks.ts"),
                 import("./title-state.ts"),
@@ -288,12 +285,11 @@
             node --test ${self}/tests/session-agents-package.test.ts
             touch "$out"
           '';
-          web-access = webAccess;
-
           governance = pkgs.runCommand "pi-governance-tests" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
             node --test \
               ${self}/tests/agent-feedback.test.ts \
               ${self}/tests/governance.test.ts \
+              ${self}/tests/codex-web-search.test.ts \
               ${self}/tests/session-agents-package.test.ts \
               ${self}/tests/prompt-contract.test.ts \
               ${self}/tests/prompt-inspector.test.ts \
