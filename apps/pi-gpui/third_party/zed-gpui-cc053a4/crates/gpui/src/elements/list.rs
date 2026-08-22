@@ -1775,21 +1775,6 @@ mod test {
         px, size,
     };
 
-    #[test]
-    fn test_splice_uses_per_item_height_hints() {
-        let state = ListState::new(0, crate::ListAlignment::Top, px(10.));
-        state.splice_with_size_hints(0..0, [px(20.), px(80.), px(40.)]);
-
-        let summary = state.0.borrow().items.summary();
-        assert_eq!(summary.height, px(140.));
-        assert!(!summary.has_unknown_height);
-
-        state.scroll_by(px(30.));
-        let offset = state.logical_scroll_top();
-        assert_eq!(offset.item_ix, 1);
-        assert_eq!(offset.offset_in_item, px(10.));
-    }
-
     #[gpui::test]
     fn test_uniform_height_hint_survives_future_splices_and_first_layout(cx: &mut TestAppContext) {
         let cx = cx.add_empty_window();

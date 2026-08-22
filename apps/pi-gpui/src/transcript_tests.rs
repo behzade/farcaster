@@ -210,7 +210,7 @@ fn oversized_fenced_code_is_split_into_bounded_valid_markdown() {
 }
 
 #[test]
-fn unclosed_and_indented_tilde_fences_keep_code_context() {
+fn unclosed_fences_keep_code_context_and_commonmark_boundaries() {
     let text = format!("  ~~~~rust\r\n{}", "line\r\n".repeat(200));
     let chunks = markdown_chunks(&text);
 
@@ -220,29 +220,13 @@ fn unclosed_and_indented_tilde_fences_keep_code_context() {
         rendered.starts_with("  ~~~~rust\r\n") && rendered.trim_end().ends_with("~~~~")
     }));
 
-    let indented_code = format!("    ```rust\n{}", "line\n".repeat(2_000));
-    assert!(
-        markdown_chunks(&indented_code)
-            .iter()
-            .all(|chunk| chunk.fence.is_none())
-    );
-}
-
-#[test]
-fn fence_like_code_lines_do_not_close_the_fence() {
-    let code = format!(
-        "{} ```not-a-close\n{}",
-        "line\n".repeat(1_000),
-        "tail\n".repeat(1_000)
-    );
-    let text = format!("````text\n{code}````\n");
-    let chunks = markdown_chunks(&text);
-
-    assert!(chunks.len() > 1);
-    assert!(chunks.iter().all(|chunk| {
-        let rendered = markdown_chunk_text(&text, *chunk);
-        rendered.starts_with("````text\n") && rendered.trim_end().ends_with("````")
-    }));
+    let indented = "    ```rust\n";
+    assert!(markdown_fence(indented, 0, indented.len()).is_none());
+    let opening = "````text\n";
+    let fence = markdown_fence(opening, 0, opening.len()).expect("opening fence");
+    assert!(!markdown_fence_closes("```\n", fence));
+    assert!(!markdown_fence_closes("````not-a-close\n", fence));
+    assert!(markdown_fence_closes("  `````\n", fence));
 }
 
 #[test]
