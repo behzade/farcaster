@@ -41,41 +41,64 @@ fn invocation_badges_distinguish_skills_prompts_and_stacks() {
 }
 
 #[test]
-fn skill_invocations_choose_standalone_or_user_message_treatment() {
-    let resolved = "<skill name=\"review\">body</skill>";
+fn invocations_choose_standalone_or_user_message_treatment() {
+    let skill = "<skill name=\"review\">body</skill>";
 
-    assert!(!is_mixed_skill_message("$review", resolved));
-    assert!(!is_mixed_skill_message("$review $commit", resolved));
-    assert!(is_mixed_skill_message("please $review this", resolved));
-    assert!(!is_mixed_skill_message(
-        "please $review this",
-        "Review this"
+    assert!(!is_mixed_invocation_message("$review", skill));
+    assert!(!is_mixed_invocation_message("$review $commit", skill));
+    assert!(is_mixed_invocation_message("please $review this", skill));
+    assert!(!is_mixed_invocation_message("$commit", "expanded prompt"));
+    assert!(is_mixed_invocation_message(
+        "$commit\nwhy did this happen",
+        "expanded prompt"
+    ));
+    assert!(is_mixed_invocation_message(
+        "$commit costs $100",
+        "expanded prompt"
     ));
 }
 
 #[test]
-fn mixed_user_messages_highlight_only_resolved_skill_tokens() {
-    let resolved = "<skill name=\"review\">body</skill>\nPrompt body";
+fn mixed_user_messages_highlight_only_recognized_invocation_tokens() {
+    let skill = "<skill name=\"review\">body</skill>\nPrompt body";
 
     assert_eq!(
-        highlighted_skill_markdown("Please $review then $commit", resolved),
+        highlighted_invocation_markdown("Please $review then $commit", skill),
         "Please `$review` then $commit"
     );
     assert_eq!(
-        highlighted_skill_markdown("Use $skill:review\nnow", resolved),
+        highlighted_invocation_markdown("Use $skill:review\nnow", skill),
         "Use `$skill:review`\nnow"
+    );
+    assert_eq!(
+        highlighted_invocation_markdown(
+            "$commit\n\nwhy did this happen\n\nAttached image",
+            "expanded prompt"
+        ),
+        "`$commit`\n\nwhy did this happen\n\nAttached image"
+    );
+    assert_eq!(
+        highlighted_invocation_markdown("$commit costs $100", "expanded prompt"),
+        "`$commit` costs $100"
     );
 }
 
 #[test]
-fn skill_treatment_has_a_dedicated_non_green_palette() {
+fn invocation_treatment_uses_distinct_skill_and_prompt_palettes() {
     assert_ne!(THEME.colors.skill, THEME.colors.accent);
     assert_ne!(THEME.colors.skill, THEME.colors.success);
-    let style = skill_transcript_markdown_style();
-    assert_eq!(style.inline_code.color, Some(THEME.colors.skill.into()));
+    let skill = invocation_transcript_markdown_style("<skill name=\"review\">body</skill>");
+    assert_eq!(skill.inline_code.color, Some(THEME.colors.skill.into()));
     assert_eq!(
-        style.inline_code.background_color,
+        skill.inline_code.background_color,
         Some(THEME.colors.skill_surface.into())
+    );
+
+    let prompt = invocation_transcript_markdown_style("expanded prompt");
+    assert_eq!(prompt.inline_code.color, Some(THEME.colors.accent.into()));
+    assert_eq!(
+        prompt.inline_code.background_color,
+        Some(THEME.colors.panel.into())
     );
 }
 

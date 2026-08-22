@@ -557,7 +557,9 @@ fn render_row(
             )
         }
         TranscriptRow::Item { index, .. }
-            if is_mixed_skill_message(&items[index].text, invocation_resolution(&items[index])) =>
+            if items[index].invocation.as_ref().is_some_and(|resolved| {
+                is_mixed_invocation_message(&items[index].text, resolved)
+            }) =>
         {
             render_message(
                 key,
@@ -720,22 +722,33 @@ fn resolved_contains_skill(resolved: &str) -> bool {
     resolved.contains("<skill name=")
 }
 
-fn is_mixed_skill_message(display: &str, resolved: &str) -> bool {
-    resolved_contains_skill(resolved)
-        && display
-            .split_whitespace()
-            .any(|token| !is_invocation_token(token))
+fn is_mixed_invocation_message(display: &str, resolved: &str) -> bool {
+    display.split_whitespace().any(|token| {
+        if resolved_contains_skill(resolved) {
+            !is_invocation_token(token)
+        } else {
+            !is_prompt_invocation_token(token)
+        }
+    })
 }
 
 fn is_invocation_token(token: &str) -> bool {
+    token.strip_prefix('$').is_some_and(is_invocation_name)
+}
+
+fn is_prompt_invocation_token(token: &str) -> bool {
     token.strip_prefix('$').is_some_and(|name| {
-        !name.is_empty()
-            && name.chars().all(|character| {
-                character.is_ascii_lowercase()
-                    || character.is_ascii_digit()
-                    || matches!(character, ':' | '_' | '-')
-            })
+        is_invocation_name(name) && name.chars().any(|character| character.is_ascii_lowercase())
     })
+}
+
+fn is_invocation_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.chars().all(|character| {
+            character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || matches!(character, ':' | '_' | '-')
+        })
 }
 
 fn skill_names(resolved: &str) -> Vec<&str> {
@@ -748,7 +761,7 @@ fn skill_names(resolved: &str) -> Vec<&str> {
         .collect()
 }
 
-fn highlighted_skill_markdown(display: &str, resolved: &str) -> String {
+fn highlighted_invocation_markdown(display: &str, resolved: &str) -> String {
     let skill_names = skill_names(resolved);
     display
         .split_inclusive(char::is_whitespace)
@@ -757,7 +770,12 @@ fn highlighted_skill_markdown(display: &str, resolved: &str) -> String {
             let whitespace = &chunk[token.len()..];
             let name = token.strip_prefix('$').unwrap_or_default();
             let bare_name = name.strip_prefix("skill:").unwrap_or(name);
-            if skill_names.contains(&bare_name) {
+            let recognized = if resolved_contains_skill(resolved) {
+                skill_names.contains(&bare_name)
+            } else {
+                is_prompt_invocation_token(token)
+            };
+            if recognized {
                 format!("`{token}`{whitespace}")
             } else {
                 chunk.to_owned()
@@ -771,7 +789,7 @@ fn render_message(
     item: &TranscriptItem,
     follows_tool: bool,
     markdown_state: Option<Entity<TextViewState>>,
-    skill_resolution: Option<&str>,
+    invocation_resolution: Option<&str>,
 ) -> AnyElement {
     let user = item.kind == TranscriptKind::User;
     let role = message_role_label(item.kind);
@@ -790,13 +808,13 @@ fn render_message(
         })
         .children(role.map(|role| message_role(role, user)))
         .child(
-            skill_resolution
+            invocation_resolution
                 .map(|resolved| {
                     styled_selectable_text(TextView::markdown(
                         ("transcript-text", key),
-                        highlighted_skill_markdown(&item.text, resolved),
+                        highlighted_invocation_markdown(&item.text, resolved),
                     ))
-                    .style(skill_transcript_markdown_style())
+                    .style(invocation_transcript_markdown_style(resolved))
                 })
                 .unwrap_or_else(|| {
                     markdown_state.map_or_else(
@@ -1152,10 +1170,25 @@ fn transcript_markdown_style() -> TextViewStyle {
     })
 }
 
-fn skill_transcript_markdown_style() -> TextViewStyle {
+fn invocation_transcript_markdown_style(resolved: &str) -> TextViewStyle {
+    let skill = resolved_contains_skill(resolved);
     transcript_markdown_style_with_inline_code(HighlightStyle {
-        color: Some(THEME.colors.skill.into()),
-        background_color: Some(THEME.colors.skill_surface.into()),
+        color: Some(
+            if skill {
+                THEME.colors.skill
+            } else {
+                THEME.colors.accent
+            }
+            .into(),
+        ),
+        background_color: Some(
+            if skill {
+                THEME.colors.skill_surface
+            } else {
+                THEME.colors.panel
+            }
+            .into(),
+        ),
         font_weight: Some(FontWeight::SEMIBOLD),
         ..HighlightStyle::default()
     })
