@@ -358,38 +358,42 @@ impl PiApp {
                 ),
             ],
             PickerScope::Projects(intent) => {
-                let mut rows = ordered_projects(&self.projects, &self.all_sessions)
-                    .into_iter()
-                    .filter(|project| project_is_available_for_intent(&intent, project))
-                    .enumerate()
-                    .map(|(index, project)| {
-                        let command = match &intent {
-                            ProjectPickerIntent::NewSession => {
-                                PickerCommand::NewSession(project.clone())
-                            }
-                            ProjectPickerIntent::ChangeDraft => {
-                                PickerCommand::ChangeDraftProject(project.clone())
-                            }
-                            ProjectPickerIntent::MoveSession { path, .. } => {
-                                PickerCommand::MoveSession {
-                                    path: path.clone(),
-                                    project: project.clone(),
+                let open_session_project = (matches!(intent, ProjectPickerIntent::NewSession)
+                    && self.snapshot.selected_session.is_some())
+                .then_some(self.project.as_path());
+                let mut rows =
+                    ordered_projects(&self.projects, &self.all_sessions, open_session_project)
+                        .into_iter()
+                        .filter(|project| project_is_available_for_intent(&intent, project))
+                        .enumerate()
+                        .map(|(index, project)| {
+                            let command = match &intent {
+                                ProjectPickerIntent::NewSession => {
+                                    PickerCommand::NewSession(project.clone())
                                 }
-                            }
-                        };
-                        picker_row(
-                            &mut commands,
-                            &format!("project:{index}"),
-                            command,
-                            AppIcon::Folder,
-                            &project_label(&project),
-                            Some(project.display().to_string()),
-                            None,
-                            "project folder checkout",
-                        )
-                        .removable_project(project)
-                    })
-                    .collect::<Vec<_>>();
+                                ProjectPickerIntent::ChangeDraft => {
+                                    PickerCommand::ChangeDraftProject(project.clone())
+                                }
+                                ProjectPickerIntent::MoveSession { path, .. } => {
+                                    PickerCommand::MoveSession {
+                                        path: path.clone(),
+                                        project: project.clone(),
+                                    }
+                                }
+                            };
+                            picker_row(
+                                &mut commands,
+                                &format!("project:{index}"),
+                                command,
+                                AppIcon::Folder,
+                                &project_label(&project),
+                                Some(project.display().to_string()),
+                                None,
+                                "project folder checkout",
+                            )
+                            .removable_project(project)
+                        })
+                        .collect::<Vec<_>>();
                 rows.push(picker_row(
                     &mut commands,
                     "project:new",
@@ -531,7 +535,11 @@ fn picker_row(
     PickerRow::new(id, icon, label, detail, shortcut, keywords)
 }
 
-fn ordered_projects(projects: &[PathBuf], sessions: &[SessionSummary]) -> Vec<PathBuf> {
+fn ordered_projects(
+    projects: &[PathBuf],
+    sessions: &[SessionSummary],
+    open_session_project: Option<&std::path::Path>,
+) -> Vec<PathBuf> {
     let mut recency = HashMap::<PathBuf, Duration>::new();
     for session in sessions {
         let modified = session
@@ -543,7 +551,13 @@ fn ordered_projects(projects: &[PathBuf], sessions: &[SessionSummary]) -> Vec<Pa
             .and_modify(|current| *current = (*current).max(modified))
             .or_insert(modified);
     }
-    sort_projects_by_recency(projects, &recency)
+    let mut ordered = sort_projects_by_recency(projects, &recency);
+    if let Some(project) = open_session_project
+        && let Some(index) = ordered.iter().position(|candidate| candidate == project)
+    {
+        ordered[..=index].rotate_right(1);
+    }
+    ordered
 }
 
 fn sort_projects_by_recency(
@@ -636,6 +650,22 @@ mod tests {
         assert_eq!(
             sort_projects_by_recency(&[alpha.clone(), gamma.clone(), beta.clone()], &recency,),
             vec![beta, alpha, gamma]
+        );
+    }
+
+    #[test]
+    fn open_session_project_leads_without_changing_the_remaining_order() {
+        let alpha = PathBuf::from("/work/alpha");
+        let beta = PathBuf::from("/work/beta");
+        let gamma = PathBuf::from("/work/gamma");
+
+        assert_eq!(
+            ordered_projects(
+                &[alpha.clone(), beta.clone(), gamma.clone()],
+                &[],
+                Some(&gamma),
+            ),
+            vec![gamma, alpha, beta]
         );
     }
 }
