@@ -2,7 +2,10 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use gpui::{App, Context, Keystroke, ParentElement as _, Styled as _, Window, div};
+use gpui::{
+    App, Context, InteractiveElement as _, Keystroke, ParentElement as _,
+    StatefulInteractiveElement as _, Styled as _, Window, div,
+};
 use gpui_component::{
     IndexPath,
     kbd::Kbd,
@@ -10,8 +13,9 @@ use gpui_component::{
 };
 
 use crate::{
+    app::RemoveProject,
     assets::AppIcon,
-    primitives::{AppIconSize, app_icon},
+    primitives::{AppIconSize, app_icon, icon_control},
     theme::THEME,
 };
 
@@ -22,6 +26,7 @@ pub(crate) struct PickerRow {
     pub(crate) label: String,
     pub(crate) detail: Option<String>,
     pub(crate) shortcut: Option<&'static str>,
+    removable_project: Option<std::path::PathBuf>,
     search: String,
 }
 
@@ -46,8 +51,14 @@ impl PickerRow {
             label,
             detail,
             shortcut,
+            removable_project: None,
             search,
         }
+    }
+
+    pub(crate) fn removable_project(mut self, project: std::path::PathBuf) -> Self {
+        self.removable_project = Some(project);
+        self
     }
 
     fn matches(&self, query: &str) -> bool {
@@ -147,7 +158,7 @@ impl ListDelegate for PickerDelegate {
                                         .overflow_hidden()
                                         .whitespace_nowrap()
                                         .text_ellipsis()
-                                        .child(row.label),
+                                        .child(row.label.clone()),
                                 )
                                 .children(row.detail.map(|detail| {
                                     div()
@@ -165,6 +176,23 @@ impl ListDelegate for PickerDelegate {
                                     .expect("static picker shortcut must parse"),
                             )
                             .outline()
+                        }))
+                        .children(row.removable_project.map(|project| {
+                            icon_control(
+                                ("remove-picker-project", index.row),
+                                format!("Remove {}", row.label),
+                            )
+                            .hover(|button| button.bg(THEME.colors.hover))
+                            .child(app_icon(AppIcon::X, AppIconSize::Control))
+                            .on_click(move |_, window, cx| {
+                                cx.stop_propagation();
+                                window.dispatch_action(
+                                    Box::new(RemoveProject {
+                                        path: project.clone(),
+                                    }),
+                                    cx,
+                                );
+                            })
                         })),
                 ),
         )

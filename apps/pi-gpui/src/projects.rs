@@ -152,6 +152,12 @@ pub(crate) fn select(projects: &mut Vec<PathBuf>, project: PathBuf) -> bool {
     true
 }
 
+pub(crate) fn remove(projects: &mut Vec<PathBuf>, project: &Path) -> bool {
+    let previous_len = projects.len();
+    projects.retain(|known| known != project);
+    projects.len() != previous_len
+}
+
 pub(crate) fn most_recent() -> Option<PathBuf> {
     load()
         .ok()?
@@ -341,6 +347,17 @@ mod tests {
         assert!(select(&mut projects, second.clone()));
         assert_eq!(projects, vec![second.clone(), first]);
         assert!(!select(&mut projects, second));
+    }
+
+    #[test]
+    fn removing_a_project_only_changes_registered_matches() {
+        let first = PathBuf::from("/first");
+        let second = PathBuf::from("/second");
+        let mut projects = vec![first.clone(), second.clone()];
+
+        assert!(remove(&mut projects, &first));
+        assert_eq!(projects, vec![second]);
+        assert!(!remove(&mut projects, &first));
     }
 
     #[test]

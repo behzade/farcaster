@@ -89,7 +89,7 @@ enum PickerCommand {
 }
 
 pub(super) struct PickerState {
-    scope: PickerScope,
+    pub(super) scope: PickerScope,
     list: Entity<ComponentListState<PickerDelegate>>,
     commands: HashMap<String, PickerCommand>,
     query: Rc<RefCell<String>>,
@@ -387,6 +387,7 @@ impl PiApp {
                             None,
                             "project folder checkout",
                         )
+                        .removable_project(project)
                     })
                     .collect::<Vec<_>>();
                 rows.push(picker_row(

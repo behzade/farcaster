@@ -118,6 +118,12 @@ actions!(
     ]
 );
 
+#[derive(Clone, Debug, Eq, PartialEq, gpui::Action)]
+#[action(namespace = pi_gpui, no_json)]
+pub(crate) struct RemoveProject {
+    pub(crate) path: PathBuf,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) enum AppSurface {
     #[default]
@@ -1231,6 +1237,24 @@ impl PiApp {
         self.notify_session_rail(cx);
         cx.notify();
         Some(project)
+    }
+
+    fn remove_project_from_picker(
+        &mut self,
+        project: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !projects::remove(&mut self.projects, project) {
+            return;
+        }
+        self.save_project_registry();
+        let scope = self
+            .picker
+            .as_ref()
+            .map(|picker| picker.scope.clone())
+            .unwrap_or(PickerScope::Projects(ProjectPickerIntent::NewSession));
+        self.open_picker(scope, window, cx);
     }
 
     fn select_project(&mut self, project: PathBuf) {

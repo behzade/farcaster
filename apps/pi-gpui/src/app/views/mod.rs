@@ -31,9 +31,9 @@ use gpui_component::kbd::Kbd;
 use super::{
     AbortRun, AddProject, AppSurface, CloseCurrent, CurrentCloseTarget, DismissSurface,
     FocusComposer, FocusSessionSearch, NewSession, NextSession, PiApp, PickerBack, PickerScope,
-    PreviousSession, ProjectPickerIntent, ShowActionPicker, ShowKeybindings, ShowWorkGraph,
-    SubmitFollowUp, SubmitPrompt, SwitchSession1, SwitchSession2, SwitchSession3, SwitchSession4,
-    SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8, SwitchSession9,
+    PreviousSession, ProjectPickerIntent, RemoveProject, ShowActionPicker, ShowKeybindings,
+    ShowWorkGraph, SubmitFollowUp, SubmitPrompt, SwitchSession1, SwitchSession2, SwitchSession3,
+    SwitchSession4, SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8, SwitchSession9,
     ToggleArchivedSessions, WorkCreateIssue, WorkDismiss, WorkFocusSearch, WorkNextIssue,
     WorkPreviousIssue, current_close_target,
 };
@@ -252,6 +252,9 @@ impl Render for PiApp {
             }))
             .on_action(cx.listener(|this, _: &PickerBack, window, cx| {
                 this.picker_back(window, cx);
+            }))
+            .on_action(cx.listener(|this, action: &RemoveProject, window, cx| {
+                this.remove_project_from_picker(&action.path, window, cx);
             }))
             .on_action(cx.listener(|this, _: &FocusSessionSearch, window, cx| {
                 this.search_focus.focus(window, cx);

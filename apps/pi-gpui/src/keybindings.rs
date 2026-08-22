@@ -1,6 +1,7 @@
 //! Single registry for application keybindings and keyboard-help metadata.
 
 use gpui::KeyBinding;
+use gpui_base::actions::{SelectDown, SelectUp};
 
 use crate::app::{
     AbortRun, AddProject, CloseCurrent, ComposerHistoryNext, ComposerHistoryPrevious,
@@ -166,6 +167,20 @@ pub(crate) fn registry() -> Vec<Shortcut> {
         ),
         Shortcut {
             section: "Application",
+            label: "Previous picker item",
+            keystroke: "ctrl-p",
+            show_in_help: false,
+            binding: KeyBinding::new("ctrl-p", SelectUp, Some("PiPicker > Input")),
+        },
+        Shortcut {
+            section: "Application",
+            label: "Next picker item",
+            keystroke: "ctrl-n",
+            show_in_help: false,
+            binding: KeyBinding::new("ctrl-n", SelectDown, Some("PiPicker > Input")),
+        },
+        Shortcut {
+            section: "Application",
             label: "Back in action picker",
             keystroke: "backspace",
             show_in_help: false,
@@ -215,5 +230,11 @@ mod tests {
                 shortcut.label == "Next prompt" && shortcut.keystroke == "down"
             })
         );
+        assert!(shortcuts.iter().any(|shortcut| {
+            shortcut.label == "Previous picker item" && shortcut.keystroke == "ctrl-p"
+        }));
+        assert!(shortcuts.iter().any(|shortcut| {
+            shortcut.label == "Next picker item" && shortcut.keystroke == "ctrl-n"
+        }));
     }
 }
