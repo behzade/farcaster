@@ -51,6 +51,30 @@ test("Pi GPUI vendors an offline Ghostty terminal against its host GPUI", async 
       assert.rejects(stat(resolve(vendorRoot, name))),
     ),
   );
+
+  let bytes = 0;
+  const pending = [vendorRoot];
+  while (pending.length > 0) {
+    const directory = pending.pop();
+    assert.ok(directory);
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const path = resolve(directory, entry.name);
+      if (entry.isDirectory()) {
+        pending.push(path);
+      } else if (entry.isFile()) {
+        const file = await stat(path);
+        assert.ok(
+          file.size <= 1024 * 1024,
+          `oversized vendored file: ${path}`,
+        );
+        bytes += file.size;
+      }
+    }
+  }
+  assert.ok(
+    bytes < 10 * 1024 * 1024,
+    `vendored terminal source is ${bytes} bytes`,
+  );
 });
 
 test("Pi GPUI uses a narrow local Zed source snapshot", async () => {
