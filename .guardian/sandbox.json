@@ -69,11 +69,19 @@
     },
     {
       "kind": "network_host",
+      "host": "api.github.com"
+    },
+    {
+      "kind": "network_host",
       "host": "github.com"
     },
     {
       "kind": "network_host",
       "host": "index.crates.io"
+    },
+    {
+      "kind": "network_host",
+      "host": "raw.githubusercontent.com"
     },
     {
       "kind": "network_host",
