@@ -33,11 +33,20 @@ pub(crate) fn render(
     on_expand: Option<ExpandHandler>,
 ) -> AnyElement {
     let (path, prepared) = match presentation {
-        ToolPresentation::Edit { path, prepared, .. }
-        | ToolPresentation::Write { path, prepared, .. } => (path, prepared.get()),
-    };
-    let Some(prepared) = prepared else {
-        return render_frame(path, (0, 0), key, on_expand, None);
+        ToolPresentation::Edit {
+            path,
+            diff,
+            format,
+            prepared,
+        } => (
+            path,
+            prepared.get_or_init(|| prepare_edit(path, diff.as_deref(), *format)),
+        ),
+        ToolPresentation::Write {
+            path,
+            content,
+            prepared,
+        } => (path, prepared.get_or_init(|| prepare_write(path, content))),
     };
     let counts = prepared.counts();
     let omitted = prepared.omitted();

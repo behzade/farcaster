@@ -417,6 +417,14 @@ fn edit_results_keep_the_structured_diff_for_native_rendering() {
             prepared: Default::default(),
         })
     );
+    let Some(ToolPresentation::Edit { prepared, .. }) = state.items[0].tool_presentation.as_ref()
+    else {
+        panic!("expected edit presentation");
+    };
+    assert!(
+        prepared.get().is_none(),
+        "historical edit results should be prepared only when rendered"
+    );
 }
 
 #[test]
@@ -438,6 +446,14 @@ fn edit_argument_previews_are_explicitly_unnumbered() {
             prepared: Default::default(),
         })
     );
+    let Some(ToolPresentation::Edit { prepared, .. }) = state.items[0].tool_presentation.as_ref()
+    else {
+        panic!("expected edit presentation");
+    };
+    assert!(
+        prepared.get().is_none(),
+        "historical edit arguments should be prepared only when rendered"
+    );
 }
 
 #[test]
@@ -457,6 +473,14 @@ fn write_calls_keep_content_for_native_rendering() {
             content: "fn main() {}".into(),
             prepared: Default::default(),
         })
+    );
+    let Some(ToolPresentation::Write { prepared, .. }) = state.items[0].tool_presentation.as_ref()
+    else {
+        panic!("expected write presentation");
+    };
+    assert!(
+        prepared.get().is_none(),
+        "historical writes should be prepared only when rendered"
     );
 }
 

@@ -48,41 +48,33 @@ pub(crate) enum ToolPresentation {
 
 impl ToolPresentation {
     fn edit(path: String, diff: Option<String>, format: EditDiffFormat) -> Self {
-        let prepared = Arc::new(std::sync::OnceLock::from(
-            crate::tool_changes::prepare_edit(&path, diff.as_deref(), format),
-        ));
         Self::Edit {
             path,
             diff,
             format,
-            prepared,
+            prepared: Arc::default(),
         }
     }
 
     fn write(path: String, content: String) -> Self {
-        let prepared = Arc::new(std::sync::OnceLock::from(
-            crate::tool_changes::prepare_write(&path, &content),
-        ));
         Self::Write {
             path,
             content,
-            prepared,
+            prepared: Arc::default(),
         }
     }
 
     fn apply_edit_result(&mut self, diff: &str) {
         let Self::Edit {
-            path,
             diff: item_diff,
             format,
             prepared,
+            ..
         } = self
         else {
             return;
         };
-        *prepared = Arc::new(std::sync::OnceLock::from(
-            crate::tool_changes::prepare_edit(path, Some(diff), EditDiffFormat::Numbered),
-        ));
+        *prepared = Arc::default();
         *item_diff = Some(diff.to_owned());
         *format = EditDiffFormat::Numbered;
     }
