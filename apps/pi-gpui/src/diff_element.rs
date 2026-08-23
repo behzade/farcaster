@@ -18,7 +18,6 @@ pub(crate) enum DiffTone {
     Context,
     Addition,
     Deletion,
-    Muted,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -348,7 +347,6 @@ fn tone_colors(tone: DiffTone) -> (Rgba, Rgba) {
         DiffTone::Context => (THEME.colors.canvas, THEME.colors.text),
         DiffTone::Addition => (THEME.colors.diff_added, THEME.colors.success),
         DiffTone::Deletion => (THEME.colors.diff_deleted, THEME.colors.error),
-        DiffTone::Muted => (THEME.colors.surface, THEME.colors.subtle),
     }
 }
 
