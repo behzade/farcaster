@@ -8,6 +8,13 @@ use crate::{
 };
 
 #[test]
+fn deactivating_window_hides_session_shortcuts() {
+    assert!(!session_shortcuts_visible_for_window(true, false));
+    assert!(session_shortcuts_visible_for_window(true, true));
+    assert!(!session_shortcuts_visible_for_window(false, true));
+}
+
+#[test]
 fn transcript_list_uses_per_row_height_hints_before_measurement() {
     let list = transcript_list_state();
     list.splice_with_size_hints(0..0, [px(20.0), px(80.0), px(40.0)]);

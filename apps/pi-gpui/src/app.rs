@@ -196,7 +196,7 @@ pub(crate) struct PiApp {
     composer_project_files: Vec<String>,
     composer_project_files_project: Option<PathBuf>,
     composer_project_files_loading: Option<PathBuf>,
-    composer_mention_selection: usize,
+    composer_suggestion_selection: usize,
     session_rail_view: Entity<SessionRailView>,
     review_session_rail_view: Entity<InactiveSessionRailView>,
     archived_session_rail_view: Entity<InactiveSessionRailView>,
@@ -227,7 +227,7 @@ pub(crate) struct PiApp {
     sheet_return_focus: Option<FocusHandle>,
     pending_sheet_setup: bool,
     transcript_list: ListState,
-    transcript_rows: Arc<Vec<crate::transcript::TranscriptRow>>,
+    transcript_rows: Arc<crate::persistent_vec::PersistentVec<crate::transcript::TranscriptRow>>,
     transcript_following: bool,
     transcript_unseen: usize,
     pub(crate) transcript_disclosure_states: HashMap<usize, bool>,
@@ -261,8 +261,13 @@ pub(crate) struct PiApp {
     _composer_subscription: Subscription,
     _search_subscription: Subscription,
     _session_title_subscription: Subscription,
+    _window_activation_subscription: Subscription,
     _window_placement_subscription: Subscription,
     _event_task: Task<()>,
+}
+
+fn session_shortcuts_visible_for_window(current: bool, window_active: bool) -> bool {
+    current && window_active
 }
 
 impl PiApp {
@@ -339,7 +344,7 @@ impl PiApp {
             window,
             |this, state, event: &InputEvent, _window, cx| match event {
                 InputEvent::Change => {
-                    this.composer_mention_selection = 0;
+                    this.composer_suggestion_selection = 0;
                     this.composer_sessions.exit_history();
                     let snapshot = input_snapshot(state.read(cx));
                     let has_mention =
@@ -361,7 +366,7 @@ impl PiApp {
                         &value,
                         input.cursor(),
                         &this.composer_project_files,
-                        this.composer_mention_selection,
+                        this.composer_suggestion_selection,
                         &this.snapshot.commands,
                     ) {
                         let submitted_value = completion
@@ -400,6 +405,17 @@ impl PiApp {
                 InputEvent::Change | InputEvent::Focus => {}
             },
         );
+        let window_activation_subscription =
+            cx.observe_window_activation(window, |this, window, cx| {
+                let visible = session_shortcuts_visible_for_window(
+                    this.session_shortcuts_visible,
+                    window.is_window_active(),
+                );
+                if this.session_shortcuts_visible != visible {
+                    this.session_shortcuts_visible = visible;
+                    this.notify_session_rail(cx);
+                }
+            });
         let window_placement_subscription = crate::launch::observe_window_placement(window, cx);
         let runtime_wake = runtime.wake_receiver();
         let event_task = cx.spawn(async move |weak, cx| {
@@ -517,7 +533,7 @@ impl PiApp {
             composer_project_files: Vec::new(),
             composer_project_files_project: None,
             composer_project_files_loading: None,
-            composer_mention_selection: 0,
+            composer_suggestion_selection: 0,
             session_rail_view,
             review_session_rail_view,
             archived_session_rail_view,
@@ -548,7 +564,7 @@ impl PiApp {
             sheet_return_focus: None,
             pending_sheet_setup: false,
             transcript_list,
-            transcript_rows: Arc::new(Vec::new()),
+            transcript_rows: Arc::new(crate::persistent_vec::PersistentVec::default()),
             transcript_following: true,
             transcript_unseen: 0,
             transcript_disclosure_states: HashMap::new(),
@@ -582,6 +598,7 @@ impl PiApp {
             _composer_subscription: composer_subscription,
             _search_subscription: search_subscription,
             _session_title_subscription: session_title_subscription,
+            _window_activation_subscription: window_activation_subscription,
             _window_placement_subscription: window_placement_subscription,
             _event_task: event_task,
         }
@@ -1091,7 +1108,7 @@ impl PiApp {
 
     fn reset_transcript_ui(&mut self) {
         self.transcript_list.reset(0);
-        self.transcript_rows = Arc::new(Vec::new());
+        self.transcript_rows = Arc::new(crate::persistent_vec::PersistentVec::default());
         self.transcript_list.set_follow_mode(FollowMode::Tail);
         self.transcript_disclosure_states.clear();
         self.transcript_following = true;
