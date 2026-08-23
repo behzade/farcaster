@@ -135,4 +135,6 @@ pins and installs the finished pi-nono package without rebuilding its internals.
 
 Machine-specific pi-nono policy remains in the separate `nix-config` repository.
 See pi-nono's README for configuration, supported rights, threat model, and
-platform status.
+platform status. The separately approved host-script mode in
+[`extensions/user-input.ts`](extensions/user-input.ts) uses Pi's local shell
+backend directly; pi-nono does not mediate that execution.
