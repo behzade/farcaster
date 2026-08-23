@@ -1,17 +1,22 @@
-//! Compact native summaries for file mutation tools.
+//! Native presentations for file mutation tools.
+
+mod preview;
 
 use std::rc::Rc;
 
 use crate::{
     assets::AppIcon,
     conversation::ToolPresentation,
+    diff_element::{DiffCell, DiffElement, DiffPaintRow, DiffTone},
     primitives::{ButtonTone, icon_button},
     theme::{MONO_FONT_FAMILY, THEME},
 };
 use gpui::{
     AnyElement, App, InteractiveElement as _, IntoElement, ParentElement as _, Styled as _, Window,
-    div, px,
+    div, prelude::FluentBuilder as _, px,
 };
+use preview::{ChangeKind, PairedLine, SideLine};
+pub(crate) use preview::{PreparedToolChange, prepare_edit, prepare_write};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum EmbeddedDiffMode {
@@ -21,80 +26,55 @@ pub(crate) enum EmbeddedDiffMode {
 
 pub(crate) type ExpandHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct PreparedToolChange {
-    additions: usize,
-    deletions: usize,
-}
-
 pub(crate) fn render(
     presentation: &ToolPresentation,
     key: usize,
-    _requested_mode: EmbeddedDiffMode,
+    requested_mode: EmbeddedDiffMode,
     on_expand: Option<ExpandHandler>,
 ) -> AnyElement {
     let (path, prepared) = match presentation {
-        ToolPresentation::Edit {
-            path,
-            diff,
-            prepared,
-            ..
-        } => (
-            path,
-            prepared.get_or_init(|| {
-                let _timing = crate::performance::OperationTiming::new(
-                    crate::performance::OperationKind::ToolPreview,
-                    diff.as_deref().map_or(0, str::len),
-                );
-                edit_metadata(diff.as_deref())
-            }),
-        ),
-        ToolPresentation::Write {
-            path,
-            content,
-            prepared,
-        } => (
-            path,
-            prepared.get_or_init(|| {
-                let _timing = crate::performance::OperationTiming::new(
-                    crate::performance::OperationKind::ToolPreview,
-                    content.len(),
-                );
-                write_metadata(content)
-            }),
-        ),
+        ToolPresentation::Edit { path, prepared, .. }
+        | ToolPresentation::Write { path, prepared, .. } => (path, prepared.get()),
     };
-    render_summary(path, *prepared, key, on_expand)
-}
-
-fn write_metadata(content: &str) -> PreparedToolChange {
-    PreparedToolChange {
-        additions: content.lines().count(),
-        deletions: 0,
-    }
-}
-
-fn edit_metadata(diff: Option<&str>) -> PreparedToolChange {
-    let Some(diff) = diff else {
-        return PreparedToolChange::default();
+    let Some(prepared) = prepared else {
+        return render_frame(path, (0, 0), key, on_expand, None);
     };
-    diff.lines()
-        .fold(PreparedToolChange::default(), |mut metadata, line| {
-            match line.as_bytes().first() {
-                Some(b'+') => metadata.additions += 1,
-                Some(b'-') => metadata.deletions += 1,
-                _ => {}
-            }
-            metadata
-        })
+    let counts = prepared.counts();
+    let omitted = prepared.omitted();
+    let body = match (requested_mode, prepared.split_rows()) {
+        (EmbeddedDiffMode::Split, Some(rows)) => render_split(rows, omitted),
+        _ => render_unified(prepared.unified_rows(), omitted),
+    };
+    render_frame(path, counts, key, on_expand, Some(body))
 }
 
-fn render_summary(
+fn render_frame(
     path: &str,
-    metadata: PreparedToolChange,
+    (additions, deletions): (usize, usize),
     key: usize,
     on_expand: Option<ExpandHandler>,
+    body: Option<AnyElement>,
 ) -> AnyElement {
+    div()
+        .id(("tool-change", key))
+        .w_full()
+        .min_w_0()
+        .overflow_hidden()
+        .border_y(THEME.border)
+        .border_color(THEME.colors.border)
+        .bg(THEME.colors.canvas)
+        .child(render_header(path, additions, deletions, key, on_expand))
+        .children(body)
+        .into_any_element()
+}
+
+fn render_header(
+    path: &str,
+    additions: usize,
+    deletions: usize,
+    key: usize,
+    on_expand: Option<ExpandHandler>,
+) -> impl IntoElement {
     let expand = on_expand.map(|handler| {
         icon_button(
             ("expand-tool-change", key),
@@ -105,7 +85,6 @@ fn render_summary(
         )
     });
     div()
-        .id(("tool-change", key))
         .w_full()
         .min_w_0()
         .h(px(34.0))
@@ -113,17 +92,9 @@ fn render_summary(
         .flex()
         .items_center()
         .gap(THEME.space.sm)
-        .border_y(THEME.border)
+        .border_b(THEME.border)
         .border_color(THEME.colors.border)
         .bg(THEME.colors.panel)
-        .child(change_count(
-            format!("+{}", metadata.additions),
-            THEME.colors.success,
-        ))
-        .child(change_count(
-            format!("-{}", metadata.deletions),
-            THEME.colors.error,
-        ))
         .child(
             div()
                 .flex_1()
@@ -136,49 +107,81 @@ fn render_summary(
                 .text_color(THEME.colors.text)
                 .child(path.to_owned()),
         )
+        .child(change_count(format!("+{additions}"), THEME.colors.success))
+        .child(change_count(format!("-{deletions}"), THEME.colors.error))
         .children(expand)
-        .into_any_element()
 }
 
 fn change_count(label: String, color: gpui::Rgba) -> impl IntoElement {
     div()
-        .flex_none()
         .font_family(MONO_FONT_FAMILY)
         .text_size(THEME.type_scale.caption)
         .text_color(color)
         .child(label)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+fn render_split(rows: &std::sync::Arc<Vec<PairedLine>>, omitted: usize) -> AnyElement {
+    let row_count = rows.len();
+    let rows = rows.clone();
+    div()
+        .w_full()
+        .min_w_0()
+        .child(DiffElement::split(
+            row_count,
+            px(28.0),
+            px(48.0),
+            move |index| {
+                rows.get(index)
+                    .map_or_else(DiffPaintRow::default, |row| DiffPaintRow {
+                        old: row.old.as_ref().map(diff_cell),
+                        new: row.new.as_ref().map(diff_cell),
+                    })
+            },
+        ))
+        .when(omitted > 0, |body| body.child(limit_hint(omitted)))
+        .into_any_element()
+}
 
-    #[test]
-    fn edit_summary_counts_added_and_deleted_lines() {
-        assert_eq!(
-            edit_metadata(Some(
-                " 10 context\n- 11 old one\n- 12 old two\n+ 11 new one"
-            )),
-            PreparedToolChange {
-                additions: 1,
-                deletions: 2,
-            }
-        );
-    }
+fn render_unified(rows: &std::sync::Arc<Vec<SideLine>>, omitted: usize) -> AnyElement {
+    let row_count = rows.len();
+    let rows = rows.clone();
+    div()
+        .w_full()
+        .min_w_0()
+        .child(DiffElement::unified(
+            row_count,
+            px(28.0),
+            px(48.0),
+            move |index| rows.get(index).map(diff_cell),
+        ))
+        .when(omitted > 0, |body| body.child(limit_hint(omitted)))
+        .into_any_element()
+}
 
-    #[test]
-    fn missing_edit_diff_has_zero_counts() {
-        assert_eq!(edit_metadata(None), PreparedToolChange::default());
-    }
+fn limit_hint(remaining: usize) -> impl IntoElement {
+    div()
+        .px(THEME.space.md)
+        .py(THEME.space.sm)
+        .border_t(THEME.border)
+        .border_color(THEME.colors.border)
+        .text_size(THEME.type_scale.caption)
+        .text_color(THEME.colors.warning)
+        .child(format!("{remaining} additional lines omitted"))
+}
 
-    #[test]
-    fn write_summary_counts_added_lines() {
-        assert_eq!(
-            write_metadata("first\nsecond\n"),
-            PreparedToolChange {
-                additions: 2,
-                deletions: 0,
-            }
-        );
+fn diff_cell(line: &SideLine) -> DiffCell {
+    let (marker, tone) = match line.kind {
+        ChangeKind::Context => (" ", DiffTone::Context),
+        ChangeKind::Addition => ("+", DiffTone::Addition),
+        ChangeKind::Deletion => ("-", DiffTone::Deletion),
+        ChangeKind::Ellipsis => ("", DiffTone::Context),
+    };
+    DiffCell {
+        gutter: Some(match line.number {
+            Some(number) => format!("{marker}{number}"),
+            None => marker.to_owned(),
+        }),
+        text: line.syntax.clone(),
+        tone,
     }
 }

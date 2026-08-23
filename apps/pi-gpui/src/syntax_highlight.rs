@@ -134,7 +134,6 @@ pub(crate) enum DiffLineKind {
     Deletion,
 }
 
-#[cfg(test)]
 pub(crate) fn highlight_lines(lines: &[&str], language: &str) -> Vec<HighlightedText> {
     let mut source = lines.join("\n");
     source.push('\n');

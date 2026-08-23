@@ -46,6 +46,48 @@ pub(crate) enum ToolPresentation {
     },
 }
 
+impl ToolPresentation {
+    fn edit(path: String, diff: Option<String>, format: EditDiffFormat) -> Self {
+        let prepared = Arc::new(std::sync::OnceLock::from(
+            crate::tool_changes::prepare_edit(&path, diff.as_deref(), format),
+        ));
+        Self::Edit {
+            path,
+            diff,
+            format,
+            prepared,
+        }
+    }
+
+    fn write(path: String, content: String) -> Self {
+        let prepared = Arc::new(std::sync::OnceLock::from(
+            crate::tool_changes::prepare_write(&path, &content),
+        ));
+        Self::Write {
+            path,
+            content,
+            prepared,
+        }
+    }
+
+    fn apply_edit_result(&mut self, diff: &str) {
+        let Self::Edit {
+            path,
+            diff: item_diff,
+            format,
+            prepared,
+        } = self
+        else {
+            return;
+        };
+        *prepared = Arc::new(std::sync::OnceLock::from(
+            crate::tool_changes::prepare_edit(path, Some(diff), EditDiffFormat::Numbered),
+        ));
+        *item_diff = Some(diff.to_owned());
+        *format = EditDiffFormat::Numbered;
+    }
+}
+
 impl PartialEq for ToolPresentation {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -1027,20 +1069,15 @@ fn tool_presentation(name: &str, arguments: &Value) -> Option<ToolPresentation> 
         .unwrap_or_default()
         .to_owned();
     match name.trim().to_ascii_lowercase().as_str() {
-        "edit" => Some(ToolPresentation::Edit {
+        "edit" => Some(ToolPresentation::edit(
             path,
-            diff: preview_edit_diff(arguments),
-            format: EditDiffFormat::Unnumbered,
-            prepared: Arc::default(),
-        }),
+            preview_edit_diff(arguments),
+            EditDiffFormat::Unnumbered,
+        )),
         "write" => arguments
             .get("content")
             .and_then(Value::as_str)
-            .map(|content| ToolPresentation::Write {
-                path,
-                content: content.to_owned(),
-                prepared: Arc::default(),
-            }),
+            .map(|content| ToolPresentation::write(path, content.to_owned())),
         _ => None,
     }
 }
@@ -1098,16 +1135,9 @@ fn apply_tool_result(item: &mut TranscriptItem, result: &Value, message: bool) {
         .and_then(|details| details.get("diff"))
         .and_then(Value::as_str)
         .filter(|diff| !diff.is_empty())
-        && let Some(ToolPresentation::Edit {
-            diff: item_diff,
-            format,
-            prepared,
-            ..
-        }) = item.tool_presentation.as_mut()
+        && let Some(presentation) = item.tool_presentation.as_mut()
     {
-        *item_diff = Some(diff.to_owned());
-        *format = EditDiffFormat::Numbered;
-        *prepared = Arc::default();
+        presentation.apply_edit_result(diff);
     }
 }
 
