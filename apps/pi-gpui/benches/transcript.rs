@@ -52,6 +52,8 @@ mod conversation;
 mod diff_element;
 #[path = "../src/performance.rs"]
 mod performance;
+#[path = "../src/persistent_vec.rs"]
+mod persistent_vec;
 #[path = "../src/primitives/mod.rs"]
 mod primitives;
 #[path = "../src/syntax_highlight.rs"]
@@ -79,7 +81,7 @@ struct FrameSample {
 
 struct TranscriptBenchView {
     list: ListState,
-    rows: Arc<Vec<transcript::TranscriptRow>>,
+    rows: Arc<persistent_vec::PersistentVec<transcript::TranscriptRow>>,
     conversation: Arc<conversation::ConversationState>,
     markdown_cache: transcript_markdown::TranscriptMarkdownCache,
 }

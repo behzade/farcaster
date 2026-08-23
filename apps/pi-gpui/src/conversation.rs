@@ -7,6 +7,8 @@ use std::{
 
 use serde_json::Value;
 
+use crate::persistent_vec::PersistentVec;
+
 const MAX_DIAGNOSTICS: usize = 32;
 const STREAM_CHUNK_BYTES: usize = 2 * 1024;
 const STREAM_TAIL_MAX_BYTES: usize = STREAM_CHUNK_BYTES;
@@ -126,7 +128,7 @@ impl QueueState {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct ConversationState {
-    pub items: Vec<Arc<TranscriptItem>>,
+    pub items: PersistentVec<Arc<TranscriptItem>>,
     pub queue: QueueState,
     pub running: bool,
     pub settled: bool,
@@ -191,11 +193,7 @@ impl ConversationState {
     }
 
     pub(crate) fn rollback_local_user(&mut self, optimistic: &Arc<TranscriptItem>) -> bool {
-        let Some(index) = self
-            .items
-            .iter()
-            .rposition(|item| Arc::ptr_eq(item, optimistic))
-        else {
+        let Some(index) = self.items.rposition(|item| Arc::ptr_eq(item, optimistic)) else {
             return false;
         };
         self.items.remove(index);
@@ -235,11 +233,13 @@ impl ConversationState {
                 .and_then(Value::as_str)
                 .unwrap_or_default();
             if !id.is_empty()
-                && let Some(item) = self.items.iter_mut().rev().find(|item| {
+                && let Some(index) = self.items.rposition(|item| {
                     item.kind == TranscriptKind::Tool && item.tool_call_id.as_deref() == Some(id)
                 })
             {
-                apply_tool_result(Arc::make_mut(item), message, true);
+                let mut item = self.items[index].clone();
+                apply_tool_result(Arc::make_mut(&mut item), message, true);
+                self.items.set(index, item);
                 return;
             }
         }
@@ -585,7 +585,7 @@ impl ConversationState {
             invocation: None,
         });
         if content_existed {
-            self.items[live.start + position] = projected;
+            self.items.set(live.start + position, projected);
         } else {
             self.items.insert(live.start + position, projected);
             live.len += 1;
@@ -606,10 +606,12 @@ impl ConversationState {
                 .get("toolCallId")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            if let Some(item) = self.items.iter_mut().rev().find(|item| {
+            if let Some(index) = self.items.rposition(|item| {
                 item.kind == TranscriptKind::Tool && item.tool_call_id.as_deref() == Some(id)
             }) {
-                apply_tool_result(Arc::make_mut(item), message, true);
+                let mut item = self.items[index].clone();
+                apply_tool_result(Arc::make_mut(&mut item), message, true);
+                self.items.set(index, item);
                 self.content.clear();
                 self.dirty_content.clear();
                 self.projected_content.clear();
@@ -631,10 +633,7 @@ impl ConversationState {
         }
         if finalizes_user
             && let Some(optimistic) = self.optimistic_user.take()
-            && let Some(index) = self
-                .items
-                .iter()
-                .position(|item| Arc::ptr_eq(item, &optimistic))
+            && let Some(index) = self.items.position(|item| Arc::ptr_eq(item, &optimistic))
         {
             self.items.remove(index);
         }
@@ -659,15 +658,16 @@ impl ConversationState {
         let args_value = event.get("args");
         let presentation = args_value.and_then(|args| tool_presentation(&name, args));
         let args = args_value.map(readable_json).unwrap_or_default();
-        if let Some(index) = self.items.iter().rposition(|item| {
+        if let Some(index) = self.items.rposition(|item| {
             item.kind == TranscriptKind::Tool && item.tool_call_id.as_deref() == Some(id.as_str())
         }) {
-            if let Some(item) = self.items.get_mut(index).map(Arc::make_mut) {
-                item.label = display_tool_name(&name);
-                item.text = args;
-                item.tool_presentation = presentation;
-                item.streaming = true;
-            }
+            let mut item = self.items[index].clone();
+            let value = Arc::make_mut(&mut item);
+            value.label = display_tool_name(&name);
+            value.text = args;
+            value.tool_presentation = presentation;
+            value.streaming = true;
+            self.items.set(index, item);
             self.tools.insert(id, index);
             return;
         }
@@ -695,13 +695,15 @@ impl ConversationState {
             .get("partialResult")
             .map(result_text)
             .unwrap_or_default();
-        let Some(item) = self.items.get_mut(index) else {
+        let Some(item) = self.items.get(index) else {
             return false;
         };
         if item.tool_output == output {
             return false;
         }
-        Arc::make_mut(item).tool_output = output;
+        let mut item = item.clone();
+        Arc::make_mut(&mut item).tool_output = output;
+        self.items.set(index, item);
         true
     }
 
@@ -712,13 +714,16 @@ impl ConversationState {
             .and_then(Value::as_bool)
             .unwrap_or(false);
         if let Some(index) = self.tools.remove(&id)
-            && let Some(item) = self.items.get_mut(index).map(Arc::make_mut)
+            && let Some(item) = self.items.get(index)
         {
+            let mut item = item.clone();
+            let value = Arc::make_mut(&mut item);
             if let Some(result) = event.get("result") {
-                apply_tool_result(item, result, false);
+                apply_tool_result(value, result, false);
             }
-            item.streaming = false;
-            item.is_error = is_error;
+            value.streaming = false;
+            value.is_error = is_error;
+            self.items.set(index, item);
         }
     }
 

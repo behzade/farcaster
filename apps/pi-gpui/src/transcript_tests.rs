@@ -344,7 +344,7 @@ fn equal_snapshot_recovers_items_missing_from_the_row_cache() {
     let rows = update_rows_from(&previous_rows, &previous_items, &reconstructed, Some(1));
 
     assert!(matches!(
-        rows.as_slice(),
+        rows.iter().copied().collect::<Vec<_>>().as_slice(),
         [
             TranscriptRow::Item { index: 0, .. },
             TranscriptRow::Item { index: 1, .. }
@@ -364,7 +364,7 @@ fn appended_reads_merge_with_the_existing_read_group() {
     let rows = update_rows(&previous_rows, &previous_items, &items);
 
     assert!(matches!(
-        rows.as_slice(),
+        rows.iter().copied().collect::<Vec<_>>().as_slice(),
         [TranscriptRow::ReadGroup { len: 2, .. }]
     ));
 }

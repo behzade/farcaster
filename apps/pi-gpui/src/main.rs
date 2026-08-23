@@ -12,6 +12,7 @@ mod keybindings;
 mod launch;
 mod layout;
 mod performance;
+mod persistent_vec;
 mod primitives;
 mod project_trust;
 mod project_trust_view;

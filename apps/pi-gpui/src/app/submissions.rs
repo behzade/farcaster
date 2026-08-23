@@ -177,8 +177,7 @@ impl PiApp {
                     .snapshot
                     .conversation
                     .items
-                    .iter()
-                    .rev()
+                    .iter_rev()
                     .take_while(|item| item.kind != TranscriptKind::User)
                     .filter(|item| item.kind == TranscriptKind::Assistant && !item.text.is_empty())
                     .map(|item| item.text.clone())
