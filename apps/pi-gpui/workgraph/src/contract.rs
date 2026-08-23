@@ -61,11 +61,20 @@ pub struct Node {
     pub plan_number: u64,
     pub number: u64,
     pub title: String,
+    #[serde(default)]
+    pub acceptance: String,
     pub files: Vec<String>,
     pub completion: CompletionRequirement,
     pub version: u64,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeDraft {
+    pub title: String,
+    pub acceptance: String,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -212,6 +221,13 @@ pub enum EditAction {
         completion: Option<CompletionRequirement>,
         expected_version: Option<u64>,
     },
+    Patch {
+        nodes: Vec<NodeDraft>,
+        after: Option<u64>,
+        before: Option<u64>,
+        session_id: String,
+        session_path: String,
+    },
     AddEdge {
         plan: u64,
         from: u64,
@@ -236,6 +252,11 @@ pub enum EditAction {
         walk: u64,
         number: u64,
         expected_version: Option<u64>,
+    },
+    Complete {
+        session_id: String,
+        next: Option<u64>,
+        outcome: Outcome,
     },
     LinkSession {
         walk: u64,

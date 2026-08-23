@@ -1,13 +1,16 @@
 //! Private companion-extension RPC edge for the durable work graph.
 
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::{BTreeMap, HashSet},
+    path::Path,
+};
 
 use serde::{Deserialize, Serialize};
 use workgraph::{
     adapter::SqliteAdapter,
     contract::{
-        CompletionRequirement, EditAction, EditRequest, Evidence, EvidenceKind, Outcome,
-        SearchRequest,
+        EditAction, EditRequest, EditResult, Evidence, EvidenceKind, NodeDraft, Outcome,
+        PlanSnapshot, SearchRequest, SearchResult,
     },
     core::{WorkGraph, WorkGraphError},
 };
@@ -22,7 +25,7 @@ pub(crate) enum WorkGraphRpcError {
     Invalid(&'static str),
     #[error(transparent)]
     Graph(#[from] WorkGraphError),
-    #[error("workgraph output could not be encoded")]
+    #[error("workgraph data could not be encoded")]
     Encode(#[from] serde_json::Error),
 }
 
@@ -47,15 +50,46 @@ struct BridgeRequest {
     fields: BTreeMap<String, String>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GraphOutput {
+    root: u64,
+    active: Option<u64>,
+    nodes: Vec<NodeOutput>,
+    edges: Vec<EdgeOutput>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    matches: Option<Vec<u64>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NodeOutput {
+    number: u64,
+    title: String,
+    acceptance: String,
+    state: &'static str,
+}
+
+#[derive(Serialize)]
+struct EdgeOutput {
+    from: u64,
+    to: u64,
+}
+
 pub(crate) fn response(
     request: &crate::protocol::ExtensionUiRequest,
     database: &Path,
 ) -> Option<WorkGraphRpcResponse> {
     let (id, payload) = request.workgraph_rpc()?;
-    let is_edit = serde_json::from_str::<BridgeRequest>(payload)
-        .is_ok_and(|request| request.operation == "edit");
+    let changed = serde_json::from_str::<BridgeRequest>(payload).is_ok_and(|request| {
+        request.operation == "workgraph"
+            && request
+                .fields
+                .get("action")
+                .is_some_and(|action| action != "search")
+    });
     let result = handle(payload, database);
-    let changed = is_edit && result.is_ok();
+    let changed = changed && result.is_ok();
     let value = result.unwrap_or_else(|error| {
         serde_json::json!({
             "success": false,
@@ -74,21 +108,161 @@ pub(crate) fn response(
 
 fn handle(payload: &str, database: &Path) -> Result<String, WorkGraphRpcError> {
     let request = serde_json::from_str::<BridgeRequest>(payload)?;
+    if request.operation != "workgraph" {
+        return Err(WorkGraphRpcError::Invalid("operation"));
+    }
+    let action = required(&request.fields, "action")?;
+    reject_action_fields(action, &request.fields)?;
     let project = canonical_project(&request.project)?;
     let adapter = SqliteAdapter::open(database).map_err(WorkGraphError::Persistence)?;
     let mut graph = WorkGraph::new(adapter);
-    let value = match request.operation.as_str() {
+    let value = match action {
         "search" => {
-            serde_json::to_value(graph.search(&search_request(project, &request.fields)?)?)?
+            let snapshot = attached_snapshot(
+                &mut graph,
+                &project,
+                required(&request.fields, "sessionId")?,
+            )?;
+            serde_json::to_value(snapshot.map(|snapshot| {
+                graph_output(&snapshot, request.fields.get("query").map(String::as_str))
+            }))?
         }
-        "edit" => serde_json::to_value(graph.edit(&edit_request(project, &request.fields)?)?)?,
-        _ => return Err(WorkGraphRpcError::Invalid("operation")),
+        "patch" => {
+            let nodes = node_list(&request.fields)?;
+            let result = graph.edit(&EditRequest {
+                project,
+                idempotency_key: required(&request.fields, "idempotencyKey")?.to_owned(),
+                action: EditAction::Patch {
+                    nodes,
+                    after: optional_number(&request.fields, "after")?,
+                    before: optional_number(&request.fields, "before")?,
+                    session_id: required(&request.fields, "sessionId")?.to_owned(),
+                    session_path: required(&request.fields, "sessionPath")?.to_owned(),
+                },
+            })?;
+            let EditResult::Plan(snapshot) = result else {
+                return Err(WorkGraphRpcError::Invalid("patch result"));
+            };
+            serde_json::to_value(graph_output(&snapshot, None))?
+        }
+        "complete" => {
+            let evidence = required(&request.fields, "evidence")?.to_owned();
+            let result = graph.edit(&EditRequest {
+                project,
+                idempotency_key: required(&request.fields, "idempotencyKey")?.to_owned(),
+                action: EditAction::Complete {
+                    session_id: required(&request.fields, "sessionId")?.to_owned(),
+                    next: optional_number(&request.fields, "next")?,
+                    outcome: Outcome {
+                        note: evidence.clone(),
+                        evidence: Evidence {
+                            kind: EvidenceKind::Observation,
+                            reference: evidence,
+                        },
+                    },
+                },
+            })?;
+            let EditResult::Plan(snapshot) = result else {
+                return Err(WorkGraphRpcError::Invalid("complete result"));
+            };
+            serde_json::to_value(graph_output(&snapshot, None))?
+        }
+        _ => return Err(WorkGraphRpcError::Invalid("action")),
     };
     serde_json::to_string(&Output {
         success: true,
         data: value,
     })
     .map_err(Into::into)
+}
+
+fn attached_snapshot(
+    graph: &mut WorkGraph<SqliteAdapter>,
+    project: &str,
+    session_id: &str,
+) -> Result<Option<PlanSnapshot>, WorkGraphRpcError> {
+    let link = match graph.search(&SearchRequest::Session {
+        project: project.to_owned(),
+        session_id: session_id.to_owned(),
+    })? {
+        SearchResult::Session(link) => link,
+        _ => None,
+    };
+    let Some(link) = link else {
+        return Ok(None);
+    };
+    match graph.search(&SearchRequest::Plan {
+        project: project.to_owned(),
+        plan: link.plan_number,
+        walk: Some(link.walk_number),
+    })? {
+        SearchResult::Plan(snapshot) => Ok(Some(snapshot)),
+        _ => Err(WorkGraphRpcError::Invalid("search result")),
+    }
+}
+
+fn graph_output(snapshot: &PlanSnapshot, query: Option<&str>) -> GraphOutput {
+    let completed = active_node_numbers(snapshot);
+    let active = snapshot.walk.as_ref().and_then(|walk| walk.current_node);
+    let query = query.map(str::trim).filter(|query| !query.is_empty());
+    let matches = query.map(|query| {
+        let query = query.to_lowercase();
+        snapshot
+            .nodes
+            .iter()
+            .filter(|node| {
+                node.title.to_lowercase().contains(&query)
+                    || node.acceptance.to_lowercase().contains(&query)
+            })
+            .map(|node| node.number)
+            .collect()
+    });
+    GraphOutput {
+        root: snapshot.plan.root_node,
+        active,
+        nodes: snapshot
+            .nodes
+            .iter()
+            .map(|node| NodeOutput {
+                number: node.number,
+                title: node.title.clone(),
+                acceptance: if node.acceptance.is_empty() {
+                    "Acceptance was not recorded for this legacy node.".into()
+                } else {
+                    node.acceptance.clone()
+                },
+                state: if completed.contains(&node.number) {
+                    "completed"
+                } else if active == Some(node.number) {
+                    "active"
+                } else {
+                    "pending"
+                },
+            })
+            .collect(),
+        edges: snapshot
+            .edges
+            .iter()
+            .map(|edge| EdgeOutput {
+                from: edge.from,
+                to: edge.to,
+            })
+            .collect(),
+        matches,
+    }
+}
+
+fn active_node_numbers(snapshot: &PlanSnapshot) -> HashSet<u64> {
+    let mut result = HashSet::new();
+    let mut current = snapshot.walk.as_ref().and_then(|walk| walk.head_step);
+    while let Some(id) = current {
+        let Some(step) = snapshot.steps.iter().find(|step| step.id == id) else {
+            break;
+        };
+        result.insert(step.node_number);
+        current = step.parent_step;
+    }
+    result
 }
 
 fn canonical_project(configured: &str) -> Result<String, WorkGraphRpcError> {
@@ -102,130 +276,25 @@ fn canonical_project(configured: &str) -> Result<String, WorkGraphRpcError> {
         })
 }
 
-fn search_request(
-    project: String,
+fn reject_action_fields(
+    action: &str,
     fields: &BTreeMap<String, String>,
-) -> Result<SearchRequest, WorkGraphRpcError> {
-    reject_unknown(fields, &["view", "plan", "walk", "number", "sessionId"])?;
-    match fields.get("view").map(String::as_str).unwrap_or("project") {
-        "project" => Ok(SearchRequest::Project { project }),
-        "plan" => Ok(SearchRequest::Plan {
-            project,
-            plan: number(fields, "plan")?,
-            walk: optional_number(fields, "walk")?,
-        }),
-        "node" => Ok(SearchRequest::Node {
-            project,
-            plan: number(fields, "plan")?,
-            number: number(fields, "number")?,
-        }),
-        "session" => Ok(SearchRequest::Session {
-            project,
-            session_id: required(fields, "sessionId")?.to_owned(),
-        }),
-        _ => Err(WorkGraphRpcError::Invalid("view")),
-    }
-}
-
-fn edit_request(
-    project: String,
-    fields: &BTreeMap<String, String>,
-) -> Result<EditRequest, WorkGraphRpcError> {
-    reject_unknown(
-        fields,
-        &[
+) -> Result<(), WorkGraphRpcError> {
+    let allowed: &[&str] = match action {
+        "search" => &["action", "query", "sessionId"],
+        "patch" => &[
             "action",
-            "title",
-            "rootTitle",
-            "files",
-            "completion",
-            "plan",
-            "walk",
-            "number",
+            "nodes",
             "after",
-            "from",
-            "to",
-            "next",
-            "note",
-            "evidenceKind",
-            "evidence",
-            "expectedVersion",
+            "before",
             "idempotencyKey",
             "sessionId",
             "sessionPath",
         ],
-    )?;
-    let action = match required(fields, "action")? {
-        "create_plan" => EditAction::CreatePlan {
-            title: required(fields, "title")?.to_owned(),
-            root_title: required(fields, "rootTitle")?.to_owned(),
-            files: string_list(fields, "files")?,
-            completion: optional_completion(fields)?.unwrap_or_default(),
-        },
-        "add_node" => EditAction::AddNode {
-            plan: number(fields, "plan")?,
-            title: required(fields, "title")?.to_owned(),
-            files: string_list(fields, "files")?,
-            completion: optional_completion(fields)?.unwrap_or_default(),
-            after: optional_number(fields, "after")?,
-        },
-        "set_node" => EditAction::SetNode {
-            plan: number(fields, "plan")?,
-            number: number(fields, "number")?,
-            title: fields.get("title").cloned(),
-            files: fields
-                .contains_key("files")
-                .then(|| string_list(fields, "files"))
-                .transpose()?,
-            completion: optional_completion(fields)?,
-            expected_version: optional_number(fields, "expectedVersion")?,
-        },
-        "add_edge" => EditAction::AddEdge {
-            plan: number(fields, "plan")?,
-            from: number(fields, "from")?,
-            to: number(fields, "to")?,
-        },
-        "remove_edge" => EditAction::RemoveEdge {
-            plan: number(fields, "plan")?,
-            from: number(fields, "from")?,
-            to: number(fields, "to")?,
-        },
-        "create_walk" => EditAction::CreateWalk {
-            plan: number(fields, "plan")?,
-        },
-        "advance" => EditAction::Advance {
-            walk: number(fields, "walk")?,
-            number: number(fields, "number")?,
-            next: optional_number(fields, "next")?,
-            outcome: Outcome {
-                note: required(fields, "note")?.to_owned(),
-                evidence: Evidence {
-                    kind: parse_evidence(required(fields, "evidenceKind")?)?,
-                    reference: required(fields, "evidence")?.to_owned(),
-                },
-            },
-            expected_version: optional_number(fields, "expectedVersion")?,
-        },
-        "rewind" => EditAction::Rewind {
-            walk: number(fields, "walk")?,
-            number: number(fields, "number")?,
-            expected_version: optional_number(fields, "expectedVersion")?,
-        },
-        "link_session" => EditAction::LinkSession {
-            walk: number(fields, "walk")?,
-            session_id: required(fields, "sessionId")?.to_owned(),
-            session_path: required(fields, "sessionPath")?.to_owned(),
-        },
-        "unlink_session" => EditAction::UnlinkSession {
-            session_id: required(fields, "sessionId")?.to_owned(),
-        },
+        "complete" => &["action", "evidence", "next", "idempotencyKey", "sessionId"],
         _ => return Err(WorkGraphRpcError::Invalid("action")),
     };
-    Ok(EditRequest {
-        project,
-        idempotency_key: required(fields, "idempotencyKey")?.to_owned(),
-        action,
-    })
+    reject_unknown(fields, allowed)
 }
 
 fn reject_unknown(
@@ -249,10 +318,6 @@ fn required<'a>(
         .ok_or(WorkGraphRpcError::Missing(key))
 }
 
-fn number(fields: &BTreeMap<String, String>, key: &'static str) -> Result<u64, WorkGraphRpcError> {
-    optional_number(fields, key)?.ok_or(WorkGraphRpcError::Missing(key))
-}
-
 fn optional_number(
     fields: &BTreeMap<String, String>,
     key: &'static str,
@@ -263,47 +328,17 @@ fn optional_number(
         .transpose()
 }
 
-fn string_list(
-    fields: &BTreeMap<String, String>,
-    key: &'static str,
-) -> Result<Vec<String>, WorkGraphRpcError> {
-    fields
-        .get(key)
-        .map(|value| serde_json::from_str(value).map_err(|_| WorkGraphRpcError::Invalid(key)))
-        .transpose()
-        .map(Option::unwrap_or_default)
-}
-
-fn optional_completion(
-    fields: &BTreeMap<String, String>,
-) -> Result<Option<CompletionRequirement>, WorkGraphRpcError> {
-    fields
-        .get("completion")
-        .map(|value| match value.as_str() {
-            "revision_or_observation" => Ok(CompletionRequirement::RevisionOrObservation),
-            "file" => Ok(CompletionRequirement::File),
-            "observation" => Ok(CompletionRequirement::Observation),
-            _ => Err(WorkGraphRpcError::Invalid("completion")),
-        })
-        .transpose()
-}
-
-fn parse_evidence(value: &str) -> Result<EvidenceKind, WorkGraphRpcError> {
-    match value {
-        "revision" => Ok(EvidenceKind::Revision),
-        "file" => Ok(EvidenceKind::File),
-        "observation" => Ok(EvidenceKind::Observation),
-        _ => Err(WorkGraphRpcError::Invalid("evidenceKind")),
-    }
+fn node_list(fields: &BTreeMap<String, String>) -> Result<Vec<NodeDraft>, WorkGraphRpcError> {
+    serde_json::from_str(required(fields, "nodes")?).map_err(Into::into)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn request(operation: &str, project: &Path, fields: serde_json::Value) -> String {
+    fn request(project: &Path, fields: serde_json::Value) -> String {
         serde_json::json!({
-            "operation": operation,
+            "operation": "workgraph",
             "project": project,
             "fields": fields,
         })
@@ -311,69 +346,63 @@ mod tests {
     }
 
     #[test]
-    fn companion_rpc_creates_and_reads_a_plan() {
+    fn companion_rpc_patches_searches_and_completes_the_attached_graph() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let project = tempfile::tempdir().expect("project");
         let database = directory.path().join("gui-state.sqlite3");
+        let nodes = serde_json::json!([
+            {"title": "Issue", "acceptance": "Problem is understood"},
+            {"title": "Outcome", "acceptance": "Behavior is fixed"}
+        ]);
         let output = handle(
             &request(
-                "edit",
                 project.path(),
                 serde_json::json!({
-                    "action": "create_plan",
-                    "title": "Git and jj integration",
-                    "rootTitle": "Current product",
-                    "idempotencyKey": "create-1",
+                    "action": "patch",
+                    "nodes": nodes.to_string(),
+                    "sessionId": "session-1",
+                    "sessionPath": "/sessions/one.jsonl",
+                    "idempotencyKey": "patch-1",
                 }),
             ),
             &database,
         )
-        .expect("create");
-        assert!(output.contains("Git and jj integration"));
-        handle(
-            &request(
-                "edit",
-                project.path(),
-                serde_json::json!({
-                    "action": "add_node",
-                    "plan": "1",
-                    "title": "Both backends work",
-                    "after": "1",
-                    "idempotencyKey": "node-1",
-                }),
-            ),
-            &database,
-        )
-        .expect("add node");
-        handle(
-            &request(
-                "edit",
-                project.path(),
-                serde_json::json!({
-                    "action": "advance",
-                    "walk": "1",
-                    "number": "1",
-                    "note": "Current product state verified",
-                    "evidenceKind": "observation",
-                    "evidence": "apps/pi-gpui at git:abc123",
-                    "expectedVersion": "1",
-                    "idempotencyKey": "advance-1",
-                }),
-            ),
-            &database,
-        )
-        .expect("advance");
+        .expect("patch");
+        let output: serde_json::Value = serde_json::from_str(&output).expect("patch output");
+        assert_eq!(output["data"]["active"], 1);
+        assert_eq!(output["data"]["nodes"][0]["acceptance"], "Problem is understood");
+
         let output = handle(
             &request(
-                "search",
                 project.path(),
-                serde_json::json!({ "view": "plan", "plan": "1", "walk": "1" }),
+                serde_json::json!({
+                    "action": "search",
+                    "query": "fixed",
+                    "sessionId": "session-1",
+                }),
             ),
             &database,
         )
         .expect("search");
-        assert!(output.contains("Current product state verified"));
-        assert!(output.contains("\"currentNode\":2"));
+        let output: serde_json::Value = serde_json::from_str(&output).expect("search output");
+        assert_eq!(output["data"]["matches"], serde_json::json!([2]));
+
+        let output = handle(
+            &request(
+                project.path(),
+                serde_json::json!({
+                    "action": "complete",
+                    "evidence": "Focused regression test passed",
+                    "sessionId": "session-1",
+                    "idempotencyKey": "complete-1",
+                }),
+            ),
+            &database,
+        )
+        .expect("complete");
+        let output: serde_json::Value = serde_json::from_str(&output).expect("complete output");
+        assert_eq!(output["data"]["active"], 2);
+        assert_eq!(output["data"]["nodes"][0]["state"], "completed");
     }
 
     #[test]
@@ -381,9 +410,8 @@ mod tests {
         let directory = tempfile::tempdir().expect("temporary directory");
         let project = tempfile::tempdir().expect("project");
         let payload = request(
-            "search",
             project.path(),
-            serde_json::json!({ "view": "project" }),
+            serde_json::json!({"action": "search", "sessionId": "session-1"}),
         );
         let request = crate::protocol::ExtensionUiRequest::Input {
             id: "bridge-search".into(),
@@ -397,13 +425,21 @@ mod tests {
     }
 
     #[test]
-    fn unknown_rpc_fields_are_rejected() {
+    fn fields_for_another_action_are_rejected() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let project = tempfile::tempdir().expect("project");
         let result = handle(
-            &request("search", project.path(), serde_json::json!({ "wat": "no" })),
+            &request(
+                project.path(),
+                serde_json::json!({
+                    "action": "search",
+                    "sessionId": "one",
+                    "nodes": "[]"
+                }),
+            ),
             &directory.path().join("state.sqlite"),
         );
-        assert!(matches!(result, Err(WorkGraphRpcError::Field(field)) if field == "wat"));
+        assert!(matches!(result, Err(WorkGraphRpcError::Field(field)) if field == "nodes"));
     }
+
 }

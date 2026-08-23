@@ -143,6 +143,25 @@ impl WorkGraphBoardView {
                         )
                         .child(
                             detail_card()
+                                .child(detail_label("Acceptance"))
+                                .child(
+                                    div()
+                                        .text_size(THEME.type_scale.body_small)
+                                        .line_height(THEME.type_scale.line_body)
+                                        .text_color(if node.acceptance.is_empty() {
+                                            THEME.colors.subtle
+                                        } else {
+                                            THEME.colors.text
+                                        })
+                                        .child(if node.acceptance.is_empty() {
+                                            "No acceptance condition recorded.".to_owned()
+                                        } else {
+                                            node.acceptance.clone()
+                                        }),
+                                ),
+                        )
+                        .child(
+                            detail_card()
                                 .child(detail_label("Scoped paths"))
                                 .when(node.files.is_empty(), |card| {
                                     card.child(

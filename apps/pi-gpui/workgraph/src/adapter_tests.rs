@@ -5,6 +5,23 @@ use crate::{
 };
 
 #[test]
+fn legacy_nodes_without_acceptance_remain_readable() {
+    let node: crate::contract::Node = serde_json::from_value(serde_json::json!({
+        "planNumber": 1,
+        "number": 2,
+        "title": "Legacy node",
+        "files": [],
+        "completion": "revision_or_observation",
+        "version": 1,
+        "createdAt": 0,
+        "updatedAt": 0
+    }))
+    .expect("legacy node");
+
+    assert!(node.acceptance.is_empty());
+}
+
+#[test]
 fn sqlite_schema_coexists_with_gui_state_tables() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let path = directory.path().join("gui-state.sqlite3");

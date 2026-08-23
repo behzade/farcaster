@@ -76,7 +76,13 @@ fn node_matches(node: &workgraph::contract::Node, search: &str) -> bool {
     if search.is_empty() {
         return true;
     }
-    let value = format!("#{} {} {}", node.number, node.title, node.files.join(" "));
+    let value = format!(
+        "#{} {} {} {}",
+        node.number,
+        node.title,
+        node.acceptance,
+        node.files.join(" ")
+    );
     value.to_lowercase().contains(&search)
 }
 
@@ -181,6 +187,7 @@ mod tests {
             plan_number: 1,
             number,
             title: title.into(),
+            acceptance: String::new(),
             files: Vec::new(),
             completion: CompletionRequirement::RevisionOrObservation,
             version: 1,

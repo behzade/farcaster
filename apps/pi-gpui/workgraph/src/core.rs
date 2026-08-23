@@ -1,8 +1,11 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod patch;
+
 use crate::contract::{
-    Edge, EditAction, EditRequest, EditResult, IdempotencyReceipt, Node, Plan, PlanSnapshot,
-    ProjectGraph, SearchRequest, SearchResult, SessionLink, StoredProject, Walk, WalkStep,
+    CompletionRequirement, Edge, EditAction, EditRequest, EditResult, EvidenceKind,
+    IdempotencyReceipt, Node, Plan, PlanSnapshot, ProjectGraph, SearchRequest, SearchResult,
+    SessionLink, StoredProject, Walk, WalkStep,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -17,6 +20,10 @@ pub enum WorkGraphError {
     NodeNotFound,
     #[error("walk was not found")]
     WalkNotFound,
+    #[error("the current session is not attached to a work graph")]
+    SessionNotAttached,
+    #[error("the work graph has no active node")]
+    NoActiveNode,
     #[error("walk is not positioned at that node")]
     PositionConflict,
     #[error("node or walk changed since it was read")]
@@ -183,6 +190,7 @@ fn apply_edit(
                 plan_number,
                 number: node_number,
                 title: root_title.trim().to_owned(),
+                acceptance: String::new(),
                 files: normalized_files(files),
                 completion: *completion,
                 version: 1,
@@ -223,6 +231,7 @@ fn apply_edit(
                 plan_number: *plan,
                 number,
                 title: title.trim().to_owned(),
+                acceptance: String::new(),
                 files: normalized_files(files),
                 completion: *completion,
                 version: 1,
@@ -272,6 +281,7 @@ fn apply_edit(
             bump_plan(&mut stored.graph, *plan, now)?;
             Ok(EditResult::Node(node))
         }
+        EditAction::Patch { .. } => Ok(EditResult::Plan(patch::apply(stored, request, now)?)),
         EditAction::AddEdge { plan, from, to } => {
             require_node(&stored.graph, *plan, *from)?;
             require_node(&stored.graph, *plan, *to)?;
@@ -331,41 +341,15 @@ fn apply_edit(
                 .iter()
                 .position(|candidate| candidate.number == *walk)
                 .ok_or(WorkGraphError::WalkNotFound)?;
-            let plan_number = stored.graph.walks[walk_index].plan_number;
-            let node = require_node(&stored.graph, plan_number, *number)?;
-            if !node.completion.accepts(outcome.evidence.kind) {
-                return Err(WorkGraphError::EvidenceMismatch);
-            }
-            let current = &stored.graph.walks[walk_index];
-            if current.current_node != Some(*number) {
-                return Err(WorkGraphError::PositionConflict);
-            }
-            if expected_version.is_some_and(|version| version != current.version) {
-                return Err(WorkGraphError::VersionConflict);
-            }
-            let successors = stored
-                .graph
-                .edges
-                .iter()
-                .filter(|edge| edge.plan_number == plan_number && edge.from == *number)
-                .map(|edge| edge.to)
-                .collect::<Vec<_>>();
-            let next = choose_successor(&successors, *next)?;
-            let step = WalkStep {
-                id: take(&mut stored.next_step_id),
-                walk_number: *walk,
-                node_number: *number,
-                parent_step: current.head_step,
-                outcome: outcome.clone(),
-                completed_at: now,
-            };
-            stored.graph.steps.push(step.clone());
-            let current = &mut stored.graph.walks[walk_index];
-            current.current_node = next;
-            current.head_step = Some(step.id);
-            current.version = current.version.saturating_add(1);
-            current.updated_at = now;
-            Ok(EditResult::Step(step))
+            Ok(EditResult::Step(advance_walk(
+                stored,
+                walk_index,
+                *number,
+                *next,
+                outcome,
+                *expected_version,
+                now,
+            )?))
         }
         EditAction::Rewind {
             walk,
@@ -397,31 +381,52 @@ fn apply_edit(
             current.updated_at = now;
             Ok(EditResult::Walk(current.clone()))
         }
+        EditAction::Complete {
+            session_id,
+            next,
+            outcome,
+        } => {
+            let link = stored
+                .graph
+                .sessions
+                .iter()
+                .find(|link| link.session_id == *session_id)
+                .cloned()
+                .ok_or(WorkGraphError::SessionNotAttached)?;
+            let walk_index = stored
+                .graph
+                .walks
+                .iter()
+                .position(|walk| walk.number == link.walk_number)
+                .ok_or(WorkGraphError::WalkNotFound)?;
+            let number = stored.graph.walks[walk_index]
+                .current_node
+                .ok_or(WorkGraphError::NoActiveNode)?;
+            let mut outcome = outcome.clone();
+            outcome.evidence.kind =
+                match require_node(&stored.graph, link.plan_number, number)?.completion {
+                    CompletionRequirement::File => EvidenceKind::File,
+                    CompletionRequirement::Observation
+                    | CompletionRequirement::RevisionOrObservation => EvidenceKind::Observation,
+                };
+            advance_walk(stored, walk_index, number, *next, &outcome, None, now)?;
+            Ok(EditResult::Plan(snapshot(
+                &stored.graph,
+                link.plan_number,
+                Some(link.walk_number),
+            )?))
+        }
         EditAction::LinkSession {
             walk,
             session_id,
             session_path,
-        } => {
-            let walk = stored
-                .graph
-                .walks
-                .iter()
-                .find(|candidate| candidate.number == *walk)
-                .ok_or(WorkGraphError::WalkNotFound)?;
-            let link = SessionLink {
-                session_id: session_id.clone(),
-                session_path: session_path.clone(),
-                plan_number: walk.plan_number,
-                walk_number: walk.number,
-                linked_at: now,
-            };
-            stored
-                .graph
-                .sessions
-                .retain(|candidate| candidate.session_id != *session_id);
-            stored.graph.sessions.push(link.clone());
-            Ok(EditResult::Session(link))
-        }
+        } => Ok(EditResult::Session(attach_session(
+            &mut stored.graph,
+            *walk,
+            session_id,
+            session_path,
+            now,
+        )?)),
         EditAction::UnlinkSession { session_id } => {
             let index = stored
                 .graph
@@ -434,6 +439,79 @@ fn apply_edit(
             ))
         }
     }
+}
+
+pub(super) fn attach_session(
+    graph: &mut ProjectGraph,
+    walk_number: u64,
+    session_id: &str,
+    session_path: &str,
+    now: i64,
+) -> Result<SessionLink, WorkGraphError> {
+    let plan_number = graph
+        .walks
+        .iter()
+        .find(|walk| walk.number == walk_number)
+        .map(|walk| walk.plan_number)
+        .ok_or(WorkGraphError::WalkNotFound)?;
+    let link = SessionLink {
+        session_id: session_id.to_owned(),
+        session_path: session_path.to_owned(),
+        plan_number,
+        walk_number,
+        linked_at: now,
+    };
+    graph.sessions.retain(|link| link.session_id != session_id);
+    graph.sessions.push(link.clone());
+    Ok(link)
+}
+
+fn advance_walk(
+    stored: &mut StoredProject,
+    walk_index: usize,
+    number: u64,
+    next: Option<u64>,
+    outcome: &crate::contract::Outcome,
+    expected_version: Option<u64>,
+    now: i64,
+) -> Result<WalkStep, WorkGraphError> {
+    let walk = &stored.graph.walks[walk_index];
+    let plan_number = walk.plan_number;
+    let walk_number = walk.number;
+    let parent_step = walk.head_step;
+    if walk.current_node != Some(number) {
+        return Err(WorkGraphError::PositionConflict);
+    }
+    if expected_version.is_some_and(|version| version != walk.version) {
+        return Err(WorkGraphError::VersionConflict);
+    }
+    let node = require_node(&stored.graph, plan_number, number)?;
+    if !node.completion.accepts(outcome.evidence.kind) {
+        return Err(WorkGraphError::EvidenceMismatch);
+    }
+    let successors = stored
+        .graph
+        .edges
+        .iter()
+        .filter(|edge| edge.plan_number == plan_number && edge.from == number)
+        .map(|edge| edge.to)
+        .collect::<Vec<_>>();
+    let next = choose_successor(&successors, next)?;
+    let step = WalkStep {
+        id: take(&mut stored.next_step_id),
+        walk_number,
+        node_number: number,
+        parent_step,
+        outcome: outcome.clone(),
+        completed_at: now,
+    };
+    stored.graph.steps.push(step.clone());
+    let walk = &mut stored.graph.walks[walk_index];
+    walk.current_node = next;
+    walk.head_step = Some(step.id);
+    walk.version = walk.version.saturating_add(1);
+    walk.updated_at = now;
+    Ok(step)
 }
 
 fn snapshot(
@@ -626,13 +704,37 @@ fn validate_request(request: &EditRequest) -> Result<(), WorkGraphError> {
         {
             Err(WorkGraphError::InvalidInput("node fields are invalid"))
         }
-        EditAction::Advance { outcome, .. }
+        EditAction::Patch {
+            nodes,
+            session_id,
+            session_path,
+            ..
+        } if nodes.is_empty()
+            || nodes.len() > 64
+            || nodes.iter().any(|node| {
+                !valid_title(&node.title)
+                    || node.acceptance.trim().is_empty()
+                    || node.acceptance.len() > 4096
+            })
+            || session_id.trim().is_empty()
+            || session_id.len() > 256
+            || session_path.trim().is_empty()
+            || session_path.len() > 4096 =>
+        {
+            Err(WorkGraphError::InvalidInput("node patch is invalid"))
+        }
+        EditAction::Advance { outcome, .. } | EditAction::Complete { outcome, .. }
             if outcome.note.trim().is_empty()
-                || outcome.note.len() > 1_000
+                || outcome.note.len() > 4096
                 || outcome.evidence.reference.trim().is_empty()
                 || outcome.evidence.reference.len() > 4096 =>
         {
             Err(WorkGraphError::InvalidInput("completion outcome is invalid"))
+        }
+        EditAction::Complete { session_id, .. }
+            if session_id.trim().is_empty() || session_id.len() > 256 =>
+        {
+            Err(WorkGraphError::InvalidInput("session link is invalid"))
         }
         EditAction::LinkSession {
             session_id,

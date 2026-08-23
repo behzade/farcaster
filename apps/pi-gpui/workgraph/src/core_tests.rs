@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::{
     contract::{
         CompletionRequirement, EditAction, EditRequest, EditResult, Evidence, EvidenceKind,
-        IdempotencyReceipt, Outcome, SearchRequest, SearchResult, StoredProject,
+        IdempotencyReceipt, NodeDraft, Outcome, SearchRequest, SearchResult, StoredProject,
     },
     core::{
         Persistence, PersistenceError, TransactionMode, WorkGraph, WorkGraphError,
@@ -126,6 +126,35 @@ fn add_node(
     node.number
 }
 
+fn patch(
+    graph: &mut WorkGraph<MemoryPersistence>,
+    key: &str,
+    nodes: &[(&str, &str)],
+    after: Option<u64>,
+    before: Option<u64>,
+) -> crate::contract::PlanSnapshot {
+    let EditResult::Plan(snapshot) = edit(
+        graph,
+        key,
+        EditAction::Patch {
+            nodes: nodes
+                .iter()
+                .map(|(title, acceptance)| NodeDraft {
+                    title: (*title).into(),
+                    acceptance: (*acceptance).into(),
+                })
+                .collect(),
+            after,
+            before,
+            session_id: "session-1".into(),
+            session_path: "/sessions/one.jsonl".into(),
+        },
+    ) else {
+        panic!("patch result");
+    };
+    snapshot
+}
+
 fn outcome(kind: EvidenceKind, reference: &str) -> Outcome {
     Outcome {
         note: "Verified state".into(),
@@ -158,6 +187,199 @@ fn advance(
         panic!("step result");
     };
     step.id
+}
+
+#[test]
+fn patch_without_attachments_creates_and_attaches_an_ordered_graph() {
+    let mut graph = WorkGraph::new(MemoryPersistence::default());
+    let snapshot = patch(
+        &mut graph,
+        "patch-create",
+        &[
+            ("Issue", "Problem is understood"),
+            ("Outcome", "Behavior is fixed"),
+        ],
+        None,
+        None,
+    );
+
+    assert_eq!(snapshot.plan.root_node, snapshot.nodes[0].number);
+    assert_eq!(snapshot.nodes[0].acceptance, "Problem is understood");
+    assert_eq!(
+        snapshot.walk.expect("walk").current_node,
+        Some(snapshot.nodes[0].number)
+    );
+    assert_eq!(snapshot.edges.len(), 1);
+    assert_eq!(snapshot.edges[0].from, snapshot.nodes[0].number);
+    assert_eq!(snapshot.edges[0].to, snapshot.nodes[1].number);
+    assert_eq!(snapshot.sessions[0].session_id, "session-1");
+}
+
+#[test]
+fn patch_prepends_and_repositions_unstarted_walks() {
+    let mut graph = WorkGraph::new(MemoryPersistence::default());
+    let created = patch(
+        &mut graph,
+        "patch-create",
+        &[("Issue", "Known"), ("Outcome", "Fixed")],
+        None,
+        None,
+    );
+    let old_root = created.plan.root_node;
+    let snapshot = patch(
+        &mut graph,
+        "patch-prepend",
+        &[("Earlier issue", "Reproduced")],
+        None,
+        Some(old_root),
+    );
+    let new_root = snapshot.plan.root_node;
+
+    assert_ne!(new_root, old_root);
+    assert_eq!(snapshot.walk.expect("walk").current_node, Some(new_root));
+    assert!(
+        snapshot
+            .edges
+            .iter()
+            .any(|edge| edge.from == new_root && edge.to == old_root)
+    );
+}
+
+#[test]
+fn patch_after_a_completed_leaf_reactivates_the_walk() {
+    let mut graph = WorkGraph::new(MemoryPersistence::default());
+    let created = patch(
+        &mut graph,
+        "patch-create",
+        &[("Issue", "Known"), ("Outcome", "Fixed")],
+        None,
+        None,
+    );
+    let issue = created.nodes[0].number;
+    let outcome_node = created.nodes[1].number;
+    let walk = created.walk.expect("walk");
+    advance(&mut graph, "complete-issue", walk.number, issue, None, walk.version);
+    advance(
+        &mut graph,
+        "complete-outcome",
+        walk.number,
+        outcome_node,
+        None,
+        walk.version + 1,
+    );
+
+    let snapshot = patch(
+        &mut graph,
+        "patch-after-leaf",
+        &[("Follow-up", "Verified")],
+        Some(outcome_node),
+        None,
+    );
+    let follow_up = snapshot
+        .nodes
+        .iter()
+        .find(|node| node.title == "Follow-up")
+        .expect("follow-up")
+        .number;
+
+    assert_eq!(snapshot.walk.expect("walk").current_node, Some(follow_up));
+}
+
+#[test]
+fn patch_cannot_move_the_session_to_another_graph() {
+    let mut graph = WorkGraph::new(MemoryPersistence::default());
+    let attached = patch(
+        &mut graph,
+        "patch-create",
+        &[("Issue", "Known"), ("Outcome", "Fixed")],
+        None,
+        None,
+    );
+    let (other_plan, other_root, _) = create_plan(&mut graph);
+    let result = graph.edit(&EditRequest {
+        project: "/project".into(),
+        idempotency_key: "cross-graph-patch".into(),
+        action: EditAction::Patch {
+            nodes: vec![NodeDraft {
+                title: "Wrong graph".into(),
+                acceptance: "Never attached".into(),
+            }],
+            after: Some(other_root),
+            before: None,
+            session_id: "session-1".into(),
+            session_path: "/sessions/one.jsonl".into(),
+        },
+    });
+
+    assert!(matches!(result, Err(WorkGraphError::InvalidInput(_))));
+    let SearchResult::Session(link) = graph
+        .search(&SearchRequest::Session {
+            project: "/project".into(),
+            session_id: "session-1".into(),
+        })
+        .expect("session search")
+    else {
+        panic!("session result");
+    };
+    assert_eq!(link.expect("attached session").plan_number, attached.plan.number);
+    assert_ne!(attached.plan.number, other_plan);
+}
+
+#[test]
+fn patch_between_completed_predecessor_and_active_node_moves_cursor() {
+    let mut graph = WorkGraph::new(MemoryPersistence::default());
+    let created = patch(
+        &mut graph,
+        "patch-create",
+        &[("Issue", "Known"), ("Outcome", "Fixed")],
+        None,
+        None,
+    );
+    let issue = created.nodes[0].number;
+    let outcome_node = created.nodes[1].number;
+    let walk = created.walk.expect("walk");
+    advance(
+        &mut graph,
+        "complete-issue",
+        walk.number,
+        issue,
+        None,
+        walk.version,
+    );
+
+    let snapshot = patch(
+        &mut graph,
+        "patch-middle",
+        &[("Implementation", "Regression test passes")],
+        Some(issue),
+        Some(outcome_node),
+    );
+    let inserted = snapshot
+        .nodes
+        .iter()
+        .find(|node| node.title == "Implementation")
+        .expect("inserted")
+        .number;
+
+    assert_eq!(snapshot.walk.expect("walk").current_node, Some(inserted));
+    assert!(
+        !snapshot
+            .edges
+            .iter()
+            .any(|edge| edge.from == issue && edge.to == outcome_node)
+    );
+    assert!(
+        snapshot
+            .edges
+            .iter()
+            .any(|edge| edge.from == issue && edge.to == inserted)
+    );
+    assert!(
+        snapshot
+            .edges
+            .iter()
+            .any(|edge| edge.from == inserted && edge.to == outcome_node)
+    );
 }
 
 #[test]
@@ -285,6 +507,47 @@ fn reusable_plan_walks_advance_independently() {
             .and_then(|walk| walk.current_node),
         Some(root)
     );
+}
+
+#[test]
+fn session_completion_adapts_generic_evidence_to_legacy_requirements() {
+    let mut graph = WorkGraph::new(MemoryPersistence::default());
+    let EditResult::Plan(snapshot) = edit(
+        &mut graph,
+        "file-plan",
+        EditAction::CreatePlan {
+            title: "Legacy file plan".into(),
+            root_title: "Write artifact".into(),
+            files: Vec::new(),
+            completion: CompletionRequirement::File,
+        },
+    ) else {
+        panic!("plan result");
+    };
+    let walk = snapshot.walk.expect("walk").number;
+    edit(
+        &mut graph,
+        "link-file-plan",
+        EditAction::LinkSession {
+            walk,
+            session_id: "session-1".into(),
+            session_path: "/sessions/one.jsonl".into(),
+        },
+    );
+
+    let EditResult::Plan(snapshot) = edit(
+        &mut graph,
+        "complete-file-node",
+        EditAction::Complete {
+            session_id: "session-1".into(),
+            next: None,
+            outcome: outcome(EvidenceKind::Observation, "artifact.txt"),
+        },
+    ) else {
+        panic!("complete result");
+    };
+
+    assert_eq!(snapshot.steps[0].outcome.evidence.kind, EvidenceKind::File);
 }
 
 #[test]
