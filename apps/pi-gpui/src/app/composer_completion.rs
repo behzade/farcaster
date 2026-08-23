@@ -13,12 +13,12 @@ pub(super) fn resolve(
     text: &str,
     cursor: usize,
     project_files: &[String],
-    mention_selection: usize,
+    suggestion_selection: usize,
     commands: &[SlashCommand],
 ) -> Option<ComposerCompletion> {
     if let Some(query) = file_mentions::query_at_cursor(text, cursor) {
         let matches = file_mentions::matches(project_files, &query.text);
-        if let Some(path) = matches.get(mention_selection.min(matches.len().saturating_sub(1))) {
+        if let Some(path) = matches.get(suggestion_selection.min(matches.len().saturating_sub(1))) {
             let (text, cursor) = file_mentions::insert(text, &query, path);
             return Some(ComposerCompletion {
                 snapshot: ComposerSnapshot::new(text, cursor, cursor..cursor),
@@ -28,13 +28,15 @@ pub(super) fn resolve(
     }
 
     let prefix = text.get(..cursor)?;
-    let mut suggestions = slash_commands::suggestions(text.trim_start(), commands)
+    let suggestions = slash_commands::suggestions(text.trim_start(), commands)
         .into_iter()
-        .chain(user_invocations::suggestions(prefix, commands));
-    let suggestion = suggestions.next()?;
+        .chain(user_invocations::suggestions(prefix, commands))
+        .collect::<Vec<_>>();
+    let suggestion =
+        suggestions.get(suggestion_selection.min(suggestions.len().saturating_sub(1)))?;
     let standalone = cursor == text.len() && text.split_whitespace().count() == 1;
     let submit = standalone
-        && suggestions.next().is_none()
+        && suggestions.len() == 1
         && (suggestion.sigil == '$' || slash_commands::submits_after_completion(&suggestion.name));
     let (text, cursor) =
         user_invocations::complete(text, cursor, suggestion.sigil, &suggestion.name);
@@ -84,6 +86,14 @@ mod tests {
         let slash_completion = resolve("/rel", 4, &[], 0, &[]).expect("slash completion");
         assert_eq!(slash_completion.snapshot.text, "/reload ");
         assert!(slash_completion.submit);
+    }
+
+    #[test]
+    fn selection_completes_the_highlighted_command() {
+        let completion = resolve("/r", 2, &[], 1, &[]).expect("selected completion");
+
+        assert_eq!(completion.snapshot.text, "/reload ");
+        assert!(!completion.submit);
     }
 
     #[test]

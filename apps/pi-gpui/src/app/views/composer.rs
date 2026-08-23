@@ -44,6 +44,7 @@ impl PiApp {
                 ))
                 .take(8)
                 .collect::<Vec<_>>();
+        let command_suggestion_count = command_suggestions.len();
         let exact_command = slash_commands::is_exact(&composer_value, &self.snapshot.commands);
         let primary_action = composer_primary_action(
             !composer_value.is_empty() || self.has_composer_images(),
@@ -70,9 +71,10 @@ impl PiApp {
         let attachments_entity = entity.clone();
         let command_entity = entity.clone();
         let mention_entity = entity.clone();
-        let mention_selection = self
-            .composer_mention_selection
-            .min(file_suggestions.len().saturating_sub(1));
+        let suggestion_selection = self.composer_suggestion_selection;
+        let mention_selection = suggestion_selection.min(file_suggestions.len().saturating_sub(1));
+        let command_selection =
+            suggestion_selection.min(command_suggestion_count.saturating_sub(1));
         let mention_suggestion_count = file_suggestions.len();
         let controls_entity = entity.clone();
         let actions_entity = entity;
@@ -112,7 +114,11 @@ impl PiApp {
                         |composer, attachments| composer.child(attachments),
                     )
                     .when(!command_suggestions.is_empty(), |composer| {
-                        composer.child(command_menu(command_suggestions, command_entity))
+                        composer.child(command_menu(
+                            command_suggestions,
+                            command_selection,
+                            command_entity,
+                        ))
                     })
                     .when_some(
                         mention_query
@@ -158,11 +164,16 @@ impl PiApp {
                             .on_action(move |_: &ComposerHistoryPrevious, window, cx| {
                                 let handled = previous_history_entity
                                     .update(cx, |this, cx| {
-                                        if mention_suggestion_count > 0 {
-                                            this.composer_mention_selection = this
-                                                .composer_mention_selection
+                                        let suggestion_count = if mention_suggestion_count > 0 {
+                                            mention_suggestion_count
+                                        } else {
+                                            command_suggestion_count
+                                        };
+                                        if suggestion_count > 0 {
+                                            this.composer_suggestion_selection = this
+                                                .composer_suggestion_selection
                                                 .checked_sub(1)
-                                                .unwrap_or(mention_suggestion_count - 1);
+                                                .unwrap_or(suggestion_count - 1);
                                             this.notify_composer(cx);
                                             true
                                         } else {
@@ -178,10 +189,15 @@ impl PiApp {
                             .on_action(move |_: &ComposerHistoryNext, window, cx| {
                                 let handled = next_history_entity
                                     .update(cx, |this, cx| {
-                                        if mention_suggestion_count > 0 {
-                                            this.composer_mention_selection =
-                                                (this.composer_mention_selection + 1)
-                                                    % mention_suggestion_count;
+                                        let suggestion_count = if mention_suggestion_count > 0 {
+                                            mention_suggestion_count
+                                        } else {
+                                            command_suggestion_count
+                                        };
+                                        if suggestion_count > 0 {
+                                            this.composer_suggestion_selection =
+                                                (this.composer_suggestion_selection + 1)
+                                                    % suggestion_count;
                                             this.notify_composer(cx);
                                             true
                                         } else {
@@ -564,7 +580,11 @@ fn fill_file_mention(
     });
 }
 
-fn command_menu(commands: Vec<ComposerSuggestion>, entity: WeakEntity<PiApp>) -> AnyElement {
+fn command_menu(
+    commands: Vec<ComposerSuggestion>,
+    selected: usize,
+    entity: WeakEntity<PiApp>,
+) -> AnyElement {
     let mut menu = div()
         .id("command-menu")
         .role(Role::Group)
@@ -594,6 +614,9 @@ fn command_menu(commands: Vec<ComposerSuggestion>, entity: WeakEntity<PiApp>) ->
                 .px(THEME.space.sm)
                 .py(THEME.space.xs)
                 .rounded(THEME.radius)
+                .when(index == selected, |row| {
+                    row.bg(THEME.colors.hover).text_color(THEME.colors.accent)
+                })
                 .hover(|row| row.bg(THEME.colors.hover))
                 .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
                 .cursor_pointer()

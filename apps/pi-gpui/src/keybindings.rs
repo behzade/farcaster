@@ -92,6 +92,24 @@ pub(crate) fn registry() -> Vec<Shortcut> {
             show_in_help: false,
             binding: KeyBinding::new("down", ComposerHistoryNext, Some("PiComposer > Input")),
         },
+        Shortcut {
+            section: "Composer",
+            label: "Previous completion",
+            keystroke: "ctrl-p",
+            show_in_help: false,
+            binding: KeyBinding::new(
+                "ctrl-p",
+                ComposerHistoryPrevious,
+                Some("PiComposer > Input"),
+            ),
+        },
+        Shortcut {
+            section: "Composer",
+            label: "Next completion",
+            keystroke: "ctrl-n",
+            show_in_help: false,
+            binding: KeyBinding::new("ctrl-n", ComposerHistoryNext, Some("PiComposer > Input")),
+        },
         shortcut!("Composer", "Focus composer", "cmd-l", FocusComposer, None),
         shortcut!("Composer", "Send prompt", "cmd-enter", SubmitPrompt, None),
         shortcut!(
@@ -235,6 +253,12 @@ mod tests {
         }));
         assert!(shortcuts.iter().any(|shortcut| {
             shortcut.label == "Next picker item" && shortcut.keystroke == "ctrl-n"
+        }));
+        assert!(shortcuts.iter().any(|shortcut| {
+            shortcut.label == "Previous completion" && shortcut.keystroke == "ctrl-p"
+        }));
+        assert!(shortcuts.iter().any(|shortcut| {
+            shortcut.label == "Next completion" && shortcut.keystroke == "ctrl-n"
         }));
     }
 }
