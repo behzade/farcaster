@@ -100,6 +100,7 @@ pub trait EntityInputHandler: 'static + Sized {
 pub struct ElementInputHandler<V> {
     view: Entity<V>,
     element_bounds: Bounds<Pixels>,
+    apple_press_and_hold_enabled: bool,
 }
 
 impl<V: 'static> ElementInputHandler<V> {
@@ -110,7 +111,15 @@ impl<V: 'static> ElementInputHandler<V> {
         ElementInputHandler {
             view,
             element_bounds,
+            apple_press_and_hold_enabled: true,
         }
+    }
+
+    /// Routes held printable keys through the input handler instead of macOS's
+    /// press-and-hold accent UI.
+    pub fn with_raw_key_repeats(mut self) -> Self {
+        self.apple_press_and_hold_enabled = false;
+        self
     }
 }
 
@@ -224,6 +233,10 @@ impl<V: EntityInputHandler> InputHandler for ElementInputHandler<V> {
     fn accepts_text_input(&mut self, window: &mut Window, cx: &mut App) -> bool {
         self.view
             .update(cx, |view, cx| view.accepts_text_input(window, cx))
+    }
+
+    fn apple_press_and_hold_enabled(&mut self) -> bool {
+        self.apple_press_and_hold_enabled
     }
 
     fn prefers_ime_for_printable_keys(&mut self, window: &mut Window, cx: &mut App) -> bool {
