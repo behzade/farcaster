@@ -53,7 +53,6 @@ fn render_plan_row(
         .tab_index(0)
         .cursor_pointer()
         .on_click(move |_, _, cx| entity.update(cx, |this, cx| this.select_node(number, cx)))
-        .ml(px((row.depth.min(8) * 18) as f32))
         .border_l(px(if row.current { 3.0 } else { 1.0 }))
         .border_color(if row.current {
             THEME.colors.accent

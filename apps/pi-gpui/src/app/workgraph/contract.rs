@@ -19,7 +19,6 @@ pub(super) enum PlanLoadState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct PlanRow {
     pub node: workgraph::contract::Node,
-    pub depth: usize,
     pub reached: bool,
     pub current: bool,
     pub detached: bool,

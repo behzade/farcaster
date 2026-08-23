@@ -219,7 +219,6 @@ fn render_sidebar_row(row: PlanRow, app: WeakEntity<PiApp>) -> impl IntoElement 
         .aria_label(format!("Open plan node {}", row.node.title))
         .tab_index(0)
         .cursor_pointer()
-        .ml(px((row.depth.min(8) * 12) as f32))
         .px(THEME.space.xs)
         .py(THEME.space.xs)
         .flex()

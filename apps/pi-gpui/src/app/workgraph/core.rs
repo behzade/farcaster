@@ -13,14 +13,12 @@ pub(super) fn plan_rows(snapshot: &PlanSnapshot, search: &str) -> Vec<PlanRow> {
         .collect::<HashSet<_>>();
     let current = snapshot.walk.as_ref().and_then(|walk| walk.current_node);
     let reachable = reachable_nodes(snapshot);
-    let depths = node_depths(snapshot);
     topological_numbers(snapshot)
         .into_iter()
         .filter_map(|number| {
             let node = snapshot.nodes.iter().find(|node| node.number == number)?;
             node_matches(node, search).then(|| PlanRow {
                 node: node.clone(),
-                depth: depths.get(&number).copied().unwrap_or_default(),
                 reached: reached.contains(&number),
                 current: current == Some(number),
                 detached: !reachable.contains(&number),
@@ -153,26 +151,6 @@ fn reachable_nodes(snapshot: &PlanSnapshot) -> HashSet<u64> {
     reached
 }
 
-fn node_depths(snapshot: &PlanSnapshot) -> HashMap<u64, usize> {
-    let order = topological_numbers(snapshot);
-    let mut depths = HashMap::from([(snapshot.plan.root_node, 0_usize)]);
-    for number in order {
-        let depth = depths.get(&number).copied().unwrap_or_default();
-        for successor in snapshot
-            .edges
-            .iter()
-            .filter(|edge| edge.from == number)
-            .map(|edge| edge.to)
-        {
-            depths
-                .entry(successor)
-                .and_modify(|value| *value = (*value).max(depth.saturating_add(1)))
-                .or_insert(depth.saturating_add(1));
-        }
-    }
-    depths
-}
-
 #[cfg(test)]
 mod tests {
     use workgraph::contract::{
@@ -260,7 +238,7 @@ mod tests {
     }
 
     #[test]
-    fn projection_is_stable_and_marks_reached_current_and_depth() {
+    fn projection_is_stable_and_marks_reached_and_current_nodes() {
         let rows = plan_rows(&snapshot(), "");
         assert_eq!(
             rows.iter().map(|row| row.node.number).collect::<Vec<_>>(),
@@ -268,7 +246,6 @@ mod tests {
         );
         assert!(rows[0].reached);
         assert!(rows[1].current);
-        assert_eq!(rows[3].depth, 2);
         assert!(rows.iter().all(|row| !row.detached));
     }
 
