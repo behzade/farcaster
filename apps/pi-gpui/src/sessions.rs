@@ -194,28 +194,45 @@ pub(crate) fn root_sessions(sessions: &[SessionSummary]) -> Vec<&SessionSummary>
         .collect()
 }
 
+pub(crate) struct SessionRootIndex<'a> {
+    by_id: HashMap<&'a str, &'a SessionSummary>,
+    by_path: HashMap<&'a Path, &'a SessionSummary>,
+}
+
+impl<'a> SessionRootIndex<'a> {
+    pub(crate) fn new(sessions: &'a [SessionSummary]) -> Self {
+        Self {
+            by_id: sessions
+                .iter()
+                .map(|session| (session.id.as_str(), session))
+                .collect(),
+            by_path: sessions
+                .iter()
+                .map(|session| (session.path.as_path(), session))
+                .collect(),
+        }
+    }
+
+    pub(crate) fn root_for_path(&self, selected: Option<&Path>) -> Option<&'a SessionSummary> {
+        let mut current = *self.by_path.get(selected?)?;
+        for _ in 0..self.by_id.len() {
+            let Some(parent) = current.parent_session.as_deref() else {
+                break;
+            };
+            let Some(parent) = self.by_id.get(parent) else {
+                break;
+            };
+            current = *parent;
+        }
+        Some(current)
+    }
+}
+
 pub(crate) fn root_session_for_path<'a>(
     sessions: &'a [SessionSummary],
     selected: Option<&Path>,
 ) -> Option<&'a SessionSummary> {
-    let by_id = sessions
-        .iter()
-        .map(|session| (session.id.as_str(), session))
-        .collect::<HashMap<_, _>>();
-    let mut current = sessions
-        .iter()
-        .find(|session| selected == Some(session.path.as_path()))?;
-    let mut seen = HashSet::new();
-    while seen.insert(current.id.as_str()) {
-        let Some(parent) = current.parent_session.as_deref() else {
-            break;
-        };
-        let Some(parent) = by_id.get(parent) else {
-            break;
-        };
-        current = *parent;
-    }
-    Some(current)
+    SessionRootIndex::new(sessions).root_for_path(selected)
 }
 
 /// Whether `path` belongs to a descendant (subagent) session rather than a root.

@@ -56,7 +56,7 @@ use crate::{
     projects,
     protocol::{ExtensionUiRequest, Model},
     runtime::{RuntimeCommand, RuntimeEvent, RuntimeHandle, RuntimeSnapshot},
-    sessions::{SessionSummary, descendant_sessions, root_session_for_path},
+    sessions::{SessionRootIndex, SessionSummary, descendant_sessions, root_session_for_path},
 };
 
 const SYSTEM_NOTIFICATION_TAG: &str = "pi-agent";
@@ -605,17 +605,17 @@ impl PiApp {
         while let Ok(event) = self.runtime.try_recv() {
             match &event {
                 RuntimeEvent::Snapshot { snapshot, .. } => {
-                    rail_dirty |=
-                        session_rail_snapshot_changed(&self.sessions, &self.snapshot, snapshot);
+                    let roots = SessionRootIndex::new(&self.sessions);
+                    rail_dirty |= session_rail_snapshot_changed(&roots, &self.snapshot, snapshot);
                     review_rail_dirty |= inactive_session_rail_snapshot_changed(
                         SessionRailKind::Review,
-                        &self.sessions,
+                        &roots,
                         &self.snapshot,
                         snapshot,
                     );
                     archived_rail_dirty |= inactive_session_rail_snapshot_changed(
                         SessionRailKind::Archived,
-                        &self.sessions,
+                        &roots,
                         &self.snapshot,
                         snapshot,
                     );
@@ -1784,11 +1784,11 @@ fn run_panel_activities_changed(
 }
 
 fn session_rail_snapshot_changed(
-    sessions: &[SessionSummary],
+    roots: &SessionRootIndex<'_>,
     previous: &RuntimeSnapshot,
     next: &RuntimeSnapshot,
 ) -> bool {
-    let root_id = |path| root_session_for_path(sessions, path).map(|session| session.id.as_str());
+    let root_id = |path| roots.root_for_path(path).map(|session| session.id.as_str());
     root_id(previous.selected_session.as_deref()) != root_id(next.selected_session.as_deref())
         || root_id(previous.live_session.as_deref()) != root_id(next.live_session.as_deref())
         || previous.live_status != next.live_status
@@ -1796,12 +1796,13 @@ fn session_rail_snapshot_changed(
 
 fn inactive_session_rail_snapshot_changed(
     kind: SessionRailKind,
-    sessions: &[SessionSummary],
+    roots: &SessionRootIndex<'_>,
     previous: &RuntimeSnapshot,
     next: &RuntimeSnapshot,
 ) -> bool {
     let root_id = |path| {
-        root_session_for_path(sessions, path)
+        roots
+            .root_for_path(path)
             .filter(|session| session_has_rail_kind(session, kind))
             .map(|session| session.id.as_str())
     };

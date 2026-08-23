@@ -172,7 +172,7 @@ fn switching_between_active_sessions_does_not_invalidate_archived_sessions() {
 
     assert!(!inactive_session_rail_snapshot_changed(
         SessionRailKind::Archived,
-        &sessions,
+        &SessionRootIndex::new(&sessions),
         &previous,
         &next,
     ));
@@ -183,7 +183,7 @@ fn switching_between_active_sessions_does_not_invalidate_archived_sessions() {
     ];
     assert!(inactive_session_rail_snapshot_changed(
         SessionRailKind::Archived,
-        &archived_sessions,
+        &SessionRootIndex::new(&archived_sessions),
         &previous,
         &next,
     ));
@@ -204,15 +204,16 @@ fn switching_review_selection_invalidates_only_review_sessions() {
         ..RuntimeSnapshot::default()
     };
 
+    let roots = SessionRootIndex::new(&sessions);
     assert!(inactive_session_rail_snapshot_changed(
         SessionRailKind::Review,
-        &sessions,
+        &roots,
         &previous,
         &next,
     ));
     assert!(!inactive_session_rail_snapshot_changed(
         SessionRailKind::Archived,
-        &sessions,
+        &roots,
         &previous,
         &next,
     ));
@@ -291,7 +292,11 @@ fn selecting_a_subagent_does_not_invalidate_the_session_rail() {
         ..RuntimeSnapshot::default()
     };
 
-    assert!(!session_rail_snapshot_changed(&sessions, &previous, &next));
+    assert!(!session_rail_snapshot_changed(
+        &SessionRootIndex::new(&sessions),
+        &previous,
+        &next
+    ));
 }
 
 fn activity(id: &str, text: &str) -> AgentActivity {
