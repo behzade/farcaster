@@ -492,8 +492,7 @@ impl ConversationState {
             .and_then(Value::as_str)
             .unwrap_or_default();
         let partial = self.content.entry(content_index).or_default();
-        let previous = partial.clone();
-        match delta_type {
+        let changed = match delta_type {
             "text_start" => reset_partial(partial, PartialKind::Text),
             "text_delta" => append_delta(partial, delta),
             "text_end" => finish_content(partial, delta),
@@ -501,26 +500,31 @@ impl ConversationState {
             "thinking_delta" => append_delta(partial, delta),
             "thinking_end" => finish_content(partial, delta),
             "toolcall_start" => {
-                reset_partial(partial, PartialKind::ToolCall);
-                partial.label = delta
+                let label = delta
                     .get("toolCall")
                     .and_then(tool_name)
                     .or_else(|| delta.get("toolName").and_then(Value::as_str))
                     .map(display_tool_name)
                     .unwrap_or_default();
+                let changed =
+                    reset_partial(partial, PartialKind::ToolCall) || partial.label != label;
+                partial.label = label;
+                changed
             }
             "toolcall_delta" => append_delta(partial, delta),
-            "toolcall_end" => {
-                if let Some(tool_call) = delta.get("toolCall") {
-                    partial.label = tool_name(tool_call)
-                        .map(display_tool_name)
-                        .unwrap_or_else(|| "Tool".into());
-                    partial.value = tool_arguments(tool_call);
-                }
-            }
+            "toolcall_end" => delta.get("toolCall").is_some_and(|tool_call| {
+                let label = tool_name(tool_call)
+                    .map(display_tool_name)
+                    .unwrap_or_else(|| "Tool".into());
+                let value = tool_arguments(tool_call);
+                let changed = partial.label != label || partial.value != value;
+                partial.label = label;
+                partial.value = value;
+                changed
+            }),
             _ => return false,
-        }
-        if *partial == previous {
+        };
+        if !changed {
             return false;
         }
         self.dirty_content.insert(content_index);
@@ -741,23 +745,31 @@ impl ConversationState {
     }
 }
 
-fn reset_partial(partial: &mut PartialContent, kind: PartialKind) {
+fn reset_partial(partial: &mut PartialContent, kind: PartialKind) -> bool {
+    let changed = partial.kind != kind
+        || !partial.label.is_empty()
+        || !partial.value.is_empty()
+        || !partial.chunks.is_empty();
     partial.kind = kind;
     partial.label.clear();
     partial.value.clear();
     partial.chunks = Arc::default();
+    changed
 }
 
-fn append_delta(partial: &mut PartialContent, delta: &Value) {
-    partial.value.push_str(
-        delta
-            .get("delta")
-            .and_then(Value::as_str)
-            .unwrap_or_default(),
-    );
+fn append_delta(partial: &mut PartialContent, delta: &Value) -> bool {
+    let text = delta
+        .get("delta")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let freezes_tail = matches!(partial.kind, PartialKind::Text | PartialKind::Thinking)
+        && partial.value.len() > STREAM_TAIL_MAX_BYTES;
+    let changed = !text.is_empty() || freezes_tail;
+    partial.value.push_str(text);
     if matches!(partial.kind, PartialKind::Text | PartialKind::Thinking) {
         freeze_stream_chunks(partial);
     }
+    changed
 }
 
 fn freeze_stream_chunks(partial: &mut PartialContent) {
@@ -777,11 +789,16 @@ fn freeze_stream_chunks(partial: &mut PartialContent) {
     }
 }
 
-fn finish_content(partial: &mut PartialContent, delta: &Value) {
-    if let Some(content) = delta.get("content").and_then(Value::as_str) {
+fn finish_content(partial: &mut PartialContent, delta: &Value) -> bool {
+    let Some(content) = delta.get("content").and_then(Value::as_str) else {
+        return false;
+    };
+    let changed = partial.value != content || !partial.chunks.is_empty();
+    if changed {
         partial.value = content.to_owned();
         partial.chunks = Arc::default();
     }
+    changed
 }
 
 fn cache_hit_rate(message: &Value) -> Option<f64> {

@@ -97,6 +97,19 @@ fn updating_one_partial_keeps_other_live_blocks_shared() {
 }
 
 #[test]
+fn empty_stream_delta_does_not_reproject_the_live_item() {
+    let mut state = ConversationState::default();
+    state.reduce(&json!({"type":"message_start","message":{"role":"assistant","content":[]}}));
+    state.reduce(&json!({"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"answer"}}));
+    let item = state.items[0].clone();
+
+    let changed = state.reduce(&json!({"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":""}}));
+
+    assert_eq!(changed, None);
+    assert!(Arc::ptr_eq(&item, &state.items[0]));
+}
+
+#[test]
 fn live_partial_blocks_remain_sorted_when_indexes_arrive_out_of_order() {
     let mut state = ConversationState::default();
     state.reduce(&json!({"type":"message_start","message":{"role":"assistant","content":[]}}));
