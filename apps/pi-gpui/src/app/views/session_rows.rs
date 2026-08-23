@@ -6,9 +6,10 @@ use std::{
 };
 
 use gpui::{
-    AnyElement, AppContext as _, Context, CursorStyle, Entity, FontWeight, InteractiveElement as _, IntoElement,
-    MouseButton, ParentElement as _, Pixels, Render, Rgba, Role, StatefulInteractiveElement as _,
-    Styled as _, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
+    AnyElement, AppContext as _, Context, CursorStyle, Entity, FontWeight, InteractiveElement as _,
+    IntoElement, MouseButton, ParentElement as _, Pixels, Render, Rgba, Role,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div,
+    prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
     input::{Escape, Input, InputState},
@@ -23,9 +24,7 @@ use super::{
 };
 use crate::{
     assets::AppIcon,
-    primitives::{
-        AppIconSize, ReorderPosition, ReorderTargetExt as _, app_icon, icon_control,
-    },
+    primitives::{AppIconSize, ReorderPosition, ReorderTargetExt as _, app_icon, icon_control},
     projects::DraftSession,
     theme::THEME,
 };

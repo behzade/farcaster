@@ -372,6 +372,8 @@ pub(crate) struct LoadedHistory {
 
 /// Read the visible, active branch of a session without starting Pi.
 pub(crate) fn load_history(path: &Path) -> Result<LoadedHistory, String> {
+    let mut timing =
+        crate::performance::OperationTiming::new(crate::performance::OperationKind::HistoryLoad, 0);
     let file = File::open(path).map_err(|error| format!("open {}: {error}", path.display()))?;
     let mut reader = BufReader::new(file);
     let mut line = Vec::new();
@@ -392,6 +394,7 @@ pub(crate) fn load_history(path: &Path) -> Result<LoadedHistory, String> {
             entries.push(entry);
         }
     }
+    timing.set_work(entries.len());
     let branch = active_branch_entries(&entries);
     let (model, thinking_level) = session_settings(&branch);
     Ok(LoadedHistory {

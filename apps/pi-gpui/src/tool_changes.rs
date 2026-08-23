@@ -83,6 +83,10 @@ pub(crate) fn render(
         } => (
             path,
             prepared.get_or_init(|| {
+                let _timing = crate::performance::OperationTiming::new(
+                    crate::performance::OperationKind::ToolPreview,
+                    diff.as_deref().map_or(0, str::len),
+                );
                 let rows = diff
                     .as_deref()
                     .map_or_else(preparing_rows, |diff| parse_display_diff(diff, *format));
@@ -108,6 +112,10 @@ pub(crate) fn render(
         } => (
             path,
             prepared.get_or_init(|| {
+                let _timing = crate::performance::OperationTiming::new(
+                    crate::performance::OperationKind::ToolPreview,
+                    content.len(),
+                );
                 let rows = write_rows(content, &language_for_path(path));
                 let additions = rows.len();
                 PreparedToolChange::Write {

@@ -210,14 +210,17 @@ impl PiApp {
         }
     }
 
-    pub(super) fn reconcile_submitted_drafts(&mut self, cx: &mut Context<Self>) {
+    #[must_use = "draft promotion must invalidate the session rail"]
+    pub(super) fn reconcile_submitted_drafts(&mut self, cx: &mut Context<Self>) -> bool {
         let promotions = reconciliation_candidates(
             &self.submitted_drafts,
             self.sessions.iter().map(|session| session.path.as_path()),
         );
+        let promoted = !promotions.is_empty();
         for (id, path) in promotions {
             self.promote_draft(&id, &path, cx);
         }
+        promoted
     }
 
     fn promote_draft(&mut self, id: &str, path: &std::path::Path, cx: &mut Context<Self>) {

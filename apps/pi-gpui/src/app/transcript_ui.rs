@@ -46,6 +46,10 @@ impl PiApp {
     }
 
     pub(super) fn sync_composer_history(&mut self) {
+        let _timing = crate::performance::OperationTiming::new(
+            crate::performance::OperationKind::ComposerHistory,
+            self.snapshot.conversation.items.len(),
+        );
         let target = self.composer_sessions.current_target().to_owned();
         let mut user_count = 0;
         let mut last_user = "";

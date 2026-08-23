@@ -66,11 +66,11 @@ impl<K: Copy + Eq + Hash, V: Clone> RecentCache<K, V> {
         }
     }
 
-    fn get_or_insert_with(&mut self, key: K, create: impl FnOnce() -> V) -> V {
+    fn get_or_insert_with(&mut self, key: K, create: impl FnOnce() -> V) -> (V, bool) {
         self.clock = self.clock.wrapping_add(1);
         if let Some((value, last_used)) = self.entries.get_mut(&key) {
             *last_used = self.clock;
-            return value.clone();
+            return (value.clone(), true);
         }
 
         let value = create();
@@ -84,7 +84,7 @@ impl<K: Copy + Eq + Hash, V: Clone> RecentCache<K, V> {
             self.entries.remove(&oldest);
         }
         self.entries.insert(key, (value.clone(), self.clock));
-        value
+        (value, false)
     }
 }
 
@@ -108,9 +108,17 @@ impl TranscriptMarkdownCache {
         text: &str,
         cx: &mut gpui::App,
     ) -> Entity<TextViewState> {
-        self.states
-            .borrow_mut()
-            .get_or_insert_with(key, || cx.new(|cx| TextViewState::markdown(text, cx)))
+        let (state, hit) = self.states.borrow_mut().get_or_insert_with(key, || {
+            let _timing = crate::performance::OperationTiming::new(
+                crate::performance::OperationKind::MarkdownParse,
+                text.len(),
+            );
+            cx.new(|cx| TextViewState::markdown(text, cx))
+        });
+        if hit {
+            crate::performance::count_markdown_cache_hit();
+        }
+        state
     }
 }
 
@@ -122,17 +130,19 @@ mod tests {
     fn recently_used_markdown_state_survives_virtualization() {
         let mut cache = RecentCache::new(2);
         let mut parses = 0;
-        let first = cache.get_or_insert_with("final-row", || {
+        let (first, first_hit) = cache.get_or_insert_with("final-row", || {
             parses += 1;
             "parsed state"
         });
         let _other = cache.get_or_insert_with("other-row", || "other state");
-        let restored = cache.get_or_insert_with("final-row", || {
+        let (restored, restored_hit) = cache.get_or_insert_with("final-row", || {
             parses += 1;
             "replacement state"
         });
 
         assert_eq!(first, restored);
+        assert!(!first_hit);
+        assert!(restored_hit);
         assert_eq!(parses, 1);
     }
 }

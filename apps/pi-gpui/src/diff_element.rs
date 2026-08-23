@@ -136,16 +136,15 @@ impl Element for DiffElement {
         window: &mut Window,
         _cx: &mut App,
     ) -> Self::PrepaintState {
-        let _timing = crate::performance::Timing::new(if self.split {
-            "diff.prepaint_split"
-        } else {
-            "diff.prepaint_unified"
-        });
         let visible = visible_row_range(
             self.row_count,
             self.line_height,
             bounds,
             window.content_mask().bounds,
+        );
+        let _timing = crate::performance::OperationTiming::new(
+            crate::performance::OperationKind::DiffPrepaint,
+            visible.len(),
         );
         let mut state = DiffPrepaintState::default();
         let base_style = diff_text_style(window);

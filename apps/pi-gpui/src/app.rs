@@ -234,6 +234,7 @@ pub(crate) struct PiApp {
     last_transcript_count: usize,
     fps_monitor: Option<Entity<FpsMonitor>>,
     performance_monitor: Option<crate::performance::PerformanceMonitor>,
+    _performance_task: Option<Task<()>>,
     pending_session_switch: Option<(PathBuf, crate::performance::Timing)>,
     extension: ExtensionUiState,
     parked_extension: Option<ExtensionUiState>,
@@ -438,6 +439,28 @@ impl PiApp {
         let performance_monitor = debug.then(|| {
             crate::performance::PerformanceMonitor::new(window.window_handle().window_id())
         });
+        let performance_task =
+            debug.then(|| {
+                cx.spawn(async move |weak, cx| {
+                    loop {
+                        cx.background_executor()
+                            .timer(crate::performance::sample_interval())
+                            .await;
+                        if weak
+                            .update(cx, |this, cx| {
+                                if this.performance_monitor.as_mut().is_some_and(
+                                    crate::performance::PerformanceMonitor::sample_if_due,
+                                ) {
+                                    this.notify_run_panel(cx);
+                                }
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                })
+            });
         let app = cx.entity().downgrade();
         let session_rail_view = cx.new(|_| SessionRailView::new(app.clone()));
         let review_session_rail_view =
@@ -571,6 +594,7 @@ impl PiApp {
             last_transcript_count: 0,
             fps_monitor,
             performance_monitor,
+            _performance_task: performance_task,
             pending_session_switch: None,
             extension: ExtensionUiState::default(),
             parked_extension: None,
@@ -605,6 +629,10 @@ impl PiApp {
     }
 
     fn drain_runtime(&mut self, cx: &mut Context<Self>) {
+        let mut operation = crate::performance::OperationTiming::new(
+            crate::performance::OperationKind::RuntimeDrain,
+            0,
+        );
         let _timing = crate::performance::Timing::new("runtime.drain_events");
         let mut root_dirty = false;
         let performance_changed = self
@@ -620,6 +648,7 @@ impl PiApp {
         let mut workgraph_session_dirty = false;
         let mut workgraph_data_dirty = false;
         while let Ok(event) = self.runtime.try_recv() {
+            operation.increment_work();
             match &event {
                 RuntimeEvent::Snapshot { snapshot, .. } => {
                     let roots = SessionRootIndex::new(&self.sessions);
@@ -726,6 +755,10 @@ impl PiApp {
                     let row_update = if transcript_preselected {
                         self.project_transcript_rows(&snapshot)
                     } else if session_changed {
+                        let _timing = crate::performance::OperationTiming::new(
+                            crate::performance::OperationKind::FullProjection,
+                            snapshot.conversation.items.len(),
+                        );
                         crate::transcript::TranscriptRowUpdate::replace(
                             crate::transcript::project_rows(&snapshot.conversation.items),
                         )
@@ -755,7 +788,7 @@ impl PiApp {
                     self.last_transcript_count = count;
                     self.sync_restored_dialog();
                     self.sync_composer_history();
-                    self.reconcile_submitted_drafts(cx);
+                    rail_dirty |= self.reconcile_submitted_drafts(cx);
                 }
                 RuntimeEvent::SessionReset {
                     generation,
@@ -841,7 +874,7 @@ impl PiApp {
                     run_dirty |= run_catalog_changed || visible_activities_changed;
                     workgraph_session_dirty |=
                         previous_workgraph_session != self.active_workgraph_session();
-                    self.reconcile_submitted_drafts(cx);
+                    rail_dirty |= self.reconcile_submitted_drafts(cx);
                 }
                 RuntimeEvent::SessionMoved {
                     target_root,
@@ -945,7 +978,7 @@ impl PiApp {
                     if let Some(pending) = self.pending_submissions.get_mut(&target) {
                         pending.result = Some((accepted, session));
                     }
-                    self.reconcile_submitted_drafts(cx);
+                    rail_dirty |= self.reconcile_submitted_drafts(cx);
                 }
                 RuntimeEvent::SessionStatus {
                     target,
@@ -953,7 +986,7 @@ impl PiApp {
                     status,
                 } => {
                     self.record_session_status(target, session, status);
-                    self.reconcile_submitted_drafts(cx);
+                    rail_dirty |= self.reconcile_submitted_drafts(cx);
                 }
                 RuntimeEvent::Stopped => {
                     Arc::make_mut(&mut self.snapshot).status = "Stopped".into()

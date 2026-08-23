@@ -294,6 +294,10 @@ impl PiApp {
         ));
         self.changes.diff_scroll = ScrollHandle::new();
         let surface = {
+            let _operation = crate::performance::OperationTiming::new(
+                crate::performance::OperationKind::FullDiffPrepare,
+                0,
+            );
             let _timing = crate::performance::Timing::new_always("diff.reconstruct_tool_surface");
             load_tool_diff_surface(path, presentation)
         };
@@ -321,6 +325,10 @@ impl PiApp {
             return;
         };
         let (path, patch, key) = {
+            let _operation = crate::performance::OperationTiming::new(
+                crate::performance::OperationKind::FullDiffPrepare,
+                patch.len(),
+            );
             let _timing = crate::performance::Timing::new_always("diff.prepare_highlight_input");
             let path = path.to_string_lossy().into_owned();
             let patch = patch.to_owned();

@@ -370,7 +370,10 @@ mod tests {
         .expect("patch");
         let output: serde_json::Value = serde_json::from_str(&output).expect("patch output");
         assert_eq!(output["data"]["active"], 1);
-        assert_eq!(output["data"]["nodes"][0]["acceptance"], "Problem is understood");
+        assert_eq!(
+            output["data"]["nodes"][0]["acceptance"],
+            "Problem is understood"
+        );
 
         let output = handle(
             &request(
@@ -441,5 +444,4 @@ mod tests {
         );
         assert!(matches!(result, Err(WorkGraphRpcError::Field(field)) if field == "nodes"));
     }
-
 }

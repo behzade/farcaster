@@ -775,6 +775,10 @@ pub(crate) fn render(
     let jump = entity.clone();
     let row_entity = entity;
     let view = list(list_state.clone(), move |index, _, cx| {
+        let _timing = crate::performance::OperationTiming::new(
+            crate::performance::OperationKind::TranscriptRow,
+            1,
+        );
         let Some(row) = rows.get(index).copied() else {
             return div().into_any_element();
         };
@@ -1405,6 +1409,10 @@ fn render_thinking(
     entity: WeakEntity<PiApp>,
 ) -> AnyElement {
     let body = if expanded {
+        let _timing = crate::performance::OperationTiming::new(
+            crate::performance::OperationKind::ThinkingAssembly,
+            item.stream_chunks.len(),
+        );
         item.complete_text()
     } else {
         item.stream_chunks

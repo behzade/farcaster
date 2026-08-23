@@ -66,6 +66,10 @@ impl StateStore {
     }
 
     pub(crate) fn open_at(path: &Path) -> Result<Self, String> {
+        let _timing = crate::performance::OperationTiming::new(
+            crate::performance::OperationKind::StateDatabase,
+            1,
+        );
         let parent = path
             .parent()
             .ok_or_else(|| format!("state database has no parent: {}", path.display()))?;

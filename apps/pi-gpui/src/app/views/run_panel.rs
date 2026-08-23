@@ -405,6 +405,19 @@ fn render_performance(summary: &crate::performance::PerformanceSummary) -> impl 
             summary.highlight_bytes.to_string(),
         ))
         .child(metric_row(
+            "Markdown cache hits / misses",
+            format!(
+                "{} / {}",
+                summary.markdown_cache_hits,
+                summary
+                    .operations
+                    .iter()
+                    .find(|operation| operation.label == "Markdown cache miss")
+                    .map_or(0, |operation| operation.calls)
+            ),
+        ))
+        .children(summary.operations.iter().map(operation_metric_row))
+        .child(metric_row(
             "Slowest task poll",
             summary.slowest_task.clone().unwrap_or_else(|| "—".into()),
         ))
@@ -412,6 +425,22 @@ fn render_performance(summary: &crate::performance::PerformanceSummary) -> impl 
             "Slowest action",
             summary.slowest_action.clone().unwrap_or_else(|| "—".into()),
         ))
+}
+
+fn operation_metric_row(
+    operation: &crate::performance::OperationSummary,
+) -> impl IntoElement + use<> {
+    metric_row(
+        operation.label,
+        format!(
+            "{} calls · {} total · {} max · {} {}",
+            operation.calls,
+            crate::performance::duration_label(operation.total),
+            crate::performance::duration_label(operation.max),
+            operation.work,
+            operation.work_label,
+        ),
+    )
 }
 
 fn metric_row(label: &'static str, value: String) -> impl IntoElement {
