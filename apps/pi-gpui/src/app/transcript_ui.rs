@@ -1,6 +1,6 @@
 //! Transcript projection and long-session UI synchronization.
 
-use gpui::{Context, FollowMode};
+use gpui::Context;
 
 use super::PiApp;
 use crate::conversation::TranscriptKind;
@@ -22,7 +22,6 @@ impl PiApp {
     pub(crate) fn jump_to_latest(&mut self, cx: &mut Context<Self>) {
         self.transcript_following = true;
         self.transcript_unseen = 0;
-        self.transcript_list.set_follow_mode(FollowMode::Tail);
         self.transcript_list.scroll_to_end();
         self.notify_transcript(cx);
     }

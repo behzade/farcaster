@@ -37,9 +37,9 @@ use std::{
 };
 
 use gpui::{
-    AppContext as _, Context, Entity, FocusHandle, Focusable as _, FollowMode, ListAlignment,
-    ListState, PathPromptOptions, ScrollHandle, Subscription, SystemNotification, Task, Window,
-    actions, point, px,
+    AppContext as _, Context, Entity, FocusHandle, Focusable as _, ListAlignment, ListState,
+    PathPromptOptions, ScrollHandle, Subscription, SystemNotification, Task, Window, actions,
+    point, px,
 };
 use gpui_component::input::{InputEvent, InputState, TextareaState};
 use gpui_fps::FpsMonitor;
@@ -57,14 +57,11 @@ use crate::{
     protocol::{BackgroundJob, ExtensionUiRequest, Model},
     runtime::{RuntimeCommand, RuntimeEvent, RuntimeHandle, RuntimeSnapshot},
     sessions::{SessionRootIndex, SessionSummary, descendant_sessions, root_session_for_path},
+    transcript_list::TranscriptListState,
 };
 
 const SYSTEM_NOTIFICATION_TAG: &str = "pi-agent";
 pub(crate) const COMPOSER_KEY_CONTEXT: &str = "PiComposer";
-
-fn transcript_list_state() -> crate::transcript_list::TranscriptListState {
-    crate::transcript_list::TranscriptListState::new()
-}
 
 #[derive(Debug, Eq, PartialEq)]
 enum CurrentCloseTarget {
@@ -222,7 +219,7 @@ pub(crate) struct PiApp {
     sheet_focus: FocusHandle,
     sheet_return_focus: Option<FocusHandle>,
     pending_sheet_setup: bool,
-    transcript_list: crate::transcript_list::TranscriptListState,
+    transcript_list: TranscriptListState,
     transcript_rows: Arc<crate::persistent_vec::PersistentVec<crate::transcript::TranscriptRow>>,
     transcript_following: bool,
     transcript_unseen: usize,
@@ -422,8 +419,8 @@ impl PiApp {
                 }
             }
         });
-        let transcript_list = transcript_list_state();
-        transcript_list.set_follow_mode(FollowMode::Tail);
+        let transcript_list = TranscriptListState::new();
+        transcript_list.scroll_to_end();
         let debug = std::env::var("DEBUG").ok().as_deref() == Some("true");
         let fps_monitor = debug.then(|| {
             cx.new(|cx| {
@@ -473,8 +470,7 @@ impl PiApp {
         let workgraph_sidebar_view = cx.new(|cx| {
             WorkGraphSidebarView::new(app.clone(), crate::state::state_path(), project.clone(), cx)
         });
-        transcript_list.set_scroll_handler(move |event, _, cx| {
-            let following = event.is_following_tail;
+        transcript_list.set_scroll_handler(move |following, _, cx| {
             let needs_update = app.upgrade().is_some_and(|app| {
                 let app = app.read(cx);
                 transcript_follow_state_needs_update(
@@ -1145,9 +1141,9 @@ impl PiApp {
     }
 
     fn reset_transcript_ui(&mut self) {
-        self.transcript_list.reset(0);
+        self.transcript_list.reset();
+        self.transcript_list.scroll_to_end();
         self.transcript_rows = Arc::new(crate::persistent_vec::PersistentVec::default());
-        self.transcript_list.set_follow_mode(FollowMode::Tail);
         self.transcript_disclosure_states.clear();
         self.transcript_following = true;
         self.transcript_unseen = 0;

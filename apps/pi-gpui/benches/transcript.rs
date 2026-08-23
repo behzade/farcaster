@@ -10,7 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use gpui::{FollowMode, IntoElement as _, Render, TestApp, WeakEntity};
+use gpui::{IntoElement as _, Render, TestApp, WeakEntity};
 use serde_json::{Value, json};
 
 mod app {
@@ -109,7 +109,6 @@ impl TranscriptBenchView {
             rows.iter()
                 .map(|row| transcript::estimated_row_height(*row, &conversation.items)),
         );
-        list.set_follow_mode(FollowMode::Tail);
         list.scroll_to_end();
 
         Self {

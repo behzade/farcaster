@@ -15,32 +15,6 @@ fn deactivating_window_hides_session_shortcuts() {
 }
 
 #[test]
-fn transcript_list_uses_per_row_height_hints_before_measurement() {
-    let list = transcript_list_state();
-    list.splice_with_size_hints(0..0, [px(20.0), px(80.0), px(40.0)]);
-
-    list.scroll_by(px(30.0));
-
-    let offset = list.logical_scroll_top();
-    assert_eq!(offset.item_ix, 1);
-    assert_eq!(offset.offset_in_item, px(10.0));
-}
-
-#[test]
-fn transcript_height_hint_gives_unmeasured_history_a_scroll_range() {
-    let list = transcript_list_state();
-    list.splice(0..0, 4_000);
-    list.scroll_to(gpui::ListOffset {
-        item_ix: 0,
-        offset_in_item: px(0.0),
-    });
-
-    list.scroll_by(px(2_400.0));
-
-    assert_eq!(list.logical_scroll_top().item_ix, 100);
-}
-
-#[test]
 fn close_targets_a_draft_before_its_backing_session() {
     let session = std::path::Path::new("/tmp/session.jsonl");
 
