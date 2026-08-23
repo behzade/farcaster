@@ -5,6 +5,7 @@ mod changes;
 mod composer_completion;
 mod composer_images;
 mod drafts;
+mod editor;
 mod expiries;
 mod file_mentions;
 mod picker;
@@ -52,6 +53,7 @@ use crate::{
         ComposerSessions, ComposerSnapshot, HistoryNavigation, draft_target, project_target,
         session_target,
     },
+    editor_terminal::EditorTerminal,
     extension_ui::{ExtensionEffect, ExtensionUiState},
     projects,
     protocol::{BackgroundJob, ExtensionUiRequest, Model},
@@ -132,13 +134,14 @@ pub(crate) struct RemoveProject {
 pub(super) enum AppSurface {
     #[default]
     Chat,
+    Editor,
     Work,
 }
 
 impl AppSurface {
     const fn toggled(self) -> Self {
         match self {
-            Self::Chat => Self::Work,
+            Self::Chat | Self::Editor => Self::Work,
             Self::Work => Self::Chat,
         }
     }
@@ -168,6 +171,7 @@ pub(crate) struct PiApp {
     recent_completion_expiries: HashMap<String, (Instant, Task<()>)>,
     system_notification_target: Option<(PathBuf, PathBuf)>,
     projects: Vec<PathBuf>,
+    excluded_projects: Vec<PathBuf>,
     drafts: Vec<projects::DraftSession>,
     draft_session_ids: HashMap<String, i64>,
     selected_draft: Option<String>,
@@ -199,6 +203,9 @@ pub(crate) struct PiApp {
     workgraph_view: Entity<WorkGraphBoardView>,
     workgraph_detail_view: Entity<WorkGraphDetailView>,
     workgraph_sidebar_view: Entity<WorkGraphSidebarView>,
+    editor: Option<Entity<EditorTerminal>>,
+    editor_error: Option<String>,
+    editor_return_focus: Option<FocusHandle>,
     surface: AppSurface,
     workgraph_inspector_issue: Option<u64>,
     run_panel_scroll: ScrollHandle,
@@ -270,7 +277,11 @@ impl PiApp {
             Ok(registry) => (registry, None),
             Err(error) => (projects::Registry::default(), Some(error)),
         };
-        projects::select(&mut registry.projects, project.clone());
+        projects::select(
+            &mut registry.projects,
+            &registry.excluded_projects,
+            project.clone(),
+        );
         let session_order = match projects::load_app_session_order() {
             Ok(order) => order,
             Err(error) => {
@@ -518,6 +529,7 @@ impl PiApp {
             recent_completion_expiries: HashMap::new(),
             system_notification_target: None,
             projects: registry.projects,
+            excluded_projects: registry.excluded_projects,
             drafts: registry.drafts,
             draft_session_ids,
             selected_draft: Some(selected_draft),
@@ -561,6 +573,9 @@ impl PiApp {
             workgraph_view,
             workgraph_detail_view,
             workgraph_sidebar_view,
+            editor: None,
+            editor_error: None,
+            editor_return_focus: None,
             surface: AppSurface::Chat,
             workgraph_inspector_issue: None,
             run_panel_scroll: ScrollHandle::new(),
@@ -843,7 +858,11 @@ impl PiApp {
                         self.snapshot.selected_session.as_deref(),
                     );
                     for session in &all_sessions {
-                        projects::add_unique(&mut self.projects, session.project.clone());
+                        projects::add_visible(
+                            &mut self.projects,
+                            &self.excluded_projects,
+                            session.project.clone(),
+                        );
                     }
                     self.sessions_error = None;
                     self.sessions = sessions;
@@ -1355,7 +1374,8 @@ impl PiApp {
                 return None;
             }
         };
-        if projects::add_unique(&mut self.projects, project.clone()) {
+        let restored = projects::restore(&mut self.excluded_projects, &project);
+        if projects::add_unique(&mut self.projects, project.clone()) || restored {
             self.save_project_registry();
         }
         self.notify_session_rail(cx);
@@ -1369,7 +1389,7 @@ impl PiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !projects::remove(&mut self.projects, project) {
+        if !projects::remove(&mut self.projects, &mut self.excluded_projects, project) {
             return;
         }
         self.save_project_registry();
@@ -1388,7 +1408,7 @@ impl PiApp {
             self.composer_project_files_loading = None;
         }
         self.project = project.clone();
-        if projects::select(&mut self.projects, project) {
+        if projects::select(&mut self.projects, &self.excluded_projects, project) {
             self.save_project_registry();
         }
     }
@@ -1424,6 +1444,7 @@ impl PiApp {
     fn save_project_registry(&mut self) {
         if let Err(error) = projects::save(&projects::Registry {
             projects: self.projects.clone(),
+            excluded_projects: self.excluded_projects.clone(),
             drafts: self.drafts.clone(),
         }) {
             self.sessions_error = Some(error);

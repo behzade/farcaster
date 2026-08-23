@@ -661,6 +661,7 @@ mod tests {
             let mut store = StateStore::open_at(&database)?;
             store.save_registry(&Registry {
                 projects: vec![project.clone()],
+                excluded_projects: Vec::new(),
                 drafts,
             })?;
             store.replace_sessions(&[SessionSummary::from_cached(

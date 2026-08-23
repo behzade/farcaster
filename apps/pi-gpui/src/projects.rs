@@ -86,6 +86,8 @@ fn current_time_ms() -> u64 {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Registry {
     pub projects: Vec<PathBuf>,
+    #[serde(default, skip_serializing)]
+    pub excluded_projects: Vec<PathBuf>,
     pub drafts: Vec<DraftSession>,
 }
 
@@ -135,6 +137,10 @@ pub(crate) fn is_linked_worktree(project: &Path) -> bool {
     git_dir.join("commondir").is_file()
 }
 
+fn is_excluded(excluded_projects: &[PathBuf], project: &Path) -> bool {
+    excluded_projects.iter().any(|excluded| excluded == project)
+}
+
 pub(crate) fn add_unique(projects: &mut Vec<PathBuf>, project: PathBuf) -> bool {
     if is_linked_worktree(&project) || projects.iter().any(|known| known == &project) {
         return false;
@@ -143,8 +149,26 @@ pub(crate) fn add_unique(projects: &mut Vec<PathBuf>, project: PathBuf) -> bool 
     true
 }
 
-pub(crate) fn select(projects: &mut Vec<PathBuf>, project: PathBuf) -> bool {
-    if projects.first() == Some(&project) {
+pub(crate) fn add_visible(
+    projects: &mut Vec<PathBuf>,
+    excluded_projects: &[PathBuf],
+    project: PathBuf,
+) -> bool {
+    !is_excluded(excluded_projects, &project) && add_unique(projects, project)
+}
+
+pub(crate) fn restore(excluded_projects: &mut Vec<PathBuf>, project: &Path) -> bool {
+    let previous_len = excluded_projects.len();
+    excluded_projects.retain(|excluded| excluded != project);
+    excluded_projects.len() != previous_len
+}
+
+pub(crate) fn select(
+    projects: &mut Vec<PathBuf>,
+    excluded_projects: &[PathBuf],
+    project: PathBuf,
+) -> bool {
+    if is_excluded(excluded_projects, &project) || projects.first() == Some(&project) {
         return false;
     }
     projects.retain(|known| known != &project);
@@ -152,10 +176,20 @@ pub(crate) fn select(projects: &mut Vec<PathBuf>, project: PathBuf) -> bool {
     true
 }
 
-pub(crate) fn remove(projects: &mut Vec<PathBuf>, project: &Path) -> bool {
+pub(crate) fn remove(
+    projects: &mut Vec<PathBuf>,
+    excluded_projects: &mut Vec<PathBuf>,
+    project: &Path,
+) -> bool {
     let previous_len = projects.len();
     projects.retain(|known| known != project);
-    projects.len() != previous_len
+    if projects.len() == previous_len {
+        return false;
+    }
+    if !is_excluded(excluded_projects, project) {
+        excluded_projects.push(project.to_path_buf());
+    }
+    true
 }
 
 pub(crate) fn most_recent() -> Option<PathBuf> {
@@ -217,7 +251,11 @@ fn load_from(path: &Path) -> Result<Registry, String> {
             (draft.project.is_dir() && seen_drafts.insert(draft.id.clone())).then_some(draft)
         })
         .collect();
-    Ok(Registry { projects, drafts })
+    Ok(Registry {
+        projects,
+        excluded_projects: Vec::new(),
+        drafts,
+    })
 }
 
 #[cfg(test)]
@@ -259,6 +297,7 @@ mod tests {
             &path,
             &Registry {
                 projects: vec![first.clone(), second.clone(), first.clone()],
+                excluded_projects: Vec::new(),
                 drafts: vec![DraftSession {
                     id: "draft-one".into(),
                     app_session_id: 7,
@@ -275,6 +314,7 @@ mod tests {
             load_from(&path)?,
             Registry {
                 projects: vec![first.canonicalize()?, second.canonicalize()?],
+                excluded_projects: Vec::new(),
                 drafts: vec![DraftSession {
                     id: "draft-one".into(),
                     app_session_id: 7,
@@ -297,6 +337,7 @@ mod tests {
             &path,
             &Registry {
                 projects: vec![temp.path().join("gone")],
+                excluded_projects: Vec::new(),
                 drafts: vec![DraftSession {
                     id: "gone".into(),
                     app_session_id: 8,
@@ -339,14 +380,20 @@ mod tests {
     }
 
     #[test]
-    fn selecting_a_project_moves_it_to_the_front() {
+    fn selecting_a_project_moves_it_to_the_front_unless_it_was_removed() {
         let first = PathBuf::from("/first");
         let second = PathBuf::from("/second");
+        let removed = PathBuf::from("/removed");
         let mut projects = vec![first.clone(), second.clone()];
 
-        assert!(select(&mut projects, second.clone()));
+        assert!(select(&mut projects, &[], second.clone()));
         assert_eq!(projects, vec![second.clone(), first]);
-        assert!(!select(&mut projects, second));
+        assert!(!select(&mut projects, &[], second));
+        assert!(!select(
+            &mut projects,
+            std::slice::from_ref(&removed),
+            removed.clone()
+        ));
     }
 
     #[test]
@@ -354,10 +401,14 @@ mod tests {
         let first = PathBuf::from("/first");
         let second = PathBuf::from("/second");
         let mut projects = vec![first.clone(), second.clone()];
+        let mut excluded_projects = Vec::new();
 
-        assert!(remove(&mut projects, &first));
+        assert!(remove(&mut projects, &mut excluded_projects, &first));
         assert_eq!(projects, vec![second]);
-        assert!(!remove(&mut projects, &first));
+        assert_eq!(excluded_projects, vec![first.clone()]);
+        assert!(!remove(&mut projects, &mut excluded_projects, &first));
+        assert!(restore(&mut excluded_projects, &first));
+        assert!(excluded_projects.is_empty());
     }
 
     #[test]

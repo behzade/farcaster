@@ -39,7 +39,9 @@ fn window_placement_survives_reopen() -> Result<(), Box<dyn std::error::Error>> 
 fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
+    let removed_project = temp.path().join("removed-project");
     fs::create_dir(&project)?;
+    fs::create_dir(&removed_project)?;
     let database = temp.path().join("state/gui.sqlite3");
     let session_path = temp.path().join("submitted-session.jsonl");
     let catalog_session_path = temp.path().join("session.jsonl");
@@ -57,6 +59,7 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
         let mut store = StateStore::open_at(&database)?;
         store.save_registry(&Registry {
             projects: vec![project.clone()],
+            excluded_projects: vec![removed_project.canonicalize()?],
             drafts: vec![draft.clone()],
         })?;
         store.save_app_session_order(&[7, 3, 1])?;
@@ -95,8 +98,13 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
         store.set_session_category(&catalog_session_path.canonicalize()?, true, false)?;
     }
     let mut store = StateStore::open_at(&database)?;
+    let registry = store.load_registry()?;
     assert_eq!(
-        store.load_registry()?.drafts,
+        registry.excluded_projects,
+        vec![removed_project.canonicalize()?]
+    );
+    assert_eq!(
+        registry.drafts,
         vec![DraftSession {
             project: project.canonicalize()?,
             session_path: Some(session_path.canonicalize()?),
@@ -168,6 +176,7 @@ fn prompt_completion_persists_draft_session_association_atomically()
     let mut store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;
     store.save_registry(&Registry {
         projects: vec![project.clone()],
+        excluded_projects: Vec::new(),
         drafts: vec![DraftSession {
             id: "pending".into(),
             app_session_id: 1,
@@ -477,6 +486,7 @@ fn submitted_draft_without_session_path_survives_reopen() -> Result<(), Box<dyn 
 
     store.save_registry(&Registry {
         projects: vec![project.clone()],
+        excluded_projects: Vec::new(),
         drafts: vec![DraftSession {
             id: "pending".into(),
             app_session_id: 1,

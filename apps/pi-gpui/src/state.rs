@@ -357,6 +357,22 @@ impl StateStore {
                 projects.push(path);
             }
         }
+        let excluded_projects = self
+            .connection
+            .query_row(
+                "SELECT value FROM meta WHERE key='excluded_projects'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| format!("load excluded projects: {error}"))?
+            .map_or_else(
+                || Ok(Vec::new()),
+                |value| {
+                    serde_json::from_str(&value)
+                        .map_err(|error| format!("decode excluded projects: {error}"))
+                },
+            )?;
         let mut drafts = Vec::new();
         let mut statement = self
             .connection
@@ -396,10 +412,16 @@ impl StateStore {
                 });
             }
         }
-        Ok(Registry { projects, drafts })
+        Ok(Registry {
+            projects,
+            excluded_projects,
+            drafts,
+        })
     }
 
     pub(crate) fn save_registry(&mut self, registry: &Registry) -> Result<(), String> {
+        let excluded_projects = serde_json::to_string(&registry.excluded_projects)
+            .map_err(|error| format!("encode excluded projects: {error}"))?;
         let transaction = self
             .connection
             .transaction()
@@ -410,6 +432,13 @@ impl StateStore {
         transaction
             .execute("DELETE FROM drafts", [])
             .map_err(|error| format!("clear drafts: {error}"))?;
+        transaction
+            .execute(
+                "INSERT INTO meta(key, value) VALUES('excluded_projects', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                [excluded_projects],
+            )
+            .map_err(|error| format!("save excluded projects: {error}"))?;
         let now = now_ms();
         for (index, project) in registry.projects.iter().enumerate() {
             transaction
