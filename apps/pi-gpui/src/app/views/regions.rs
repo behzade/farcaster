@@ -144,7 +144,7 @@ impl Render for TranscriptView {
                 diff_mode,
             },
             app.transcript_rows.clone(),
-            app.snapshot.clone(),
+            app.snapshot.conversation.clone(),
             app.transcript_disclosure_states.clone(),
             self.markdown_cache.clone(),
             self.app.clone(),

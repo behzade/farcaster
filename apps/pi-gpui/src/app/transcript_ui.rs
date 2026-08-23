@@ -1,10 +1,8 @@
 //! Transcript projection and long-session UI synchronization.
 
-use std::sync::Arc;
-
 use gpui::{Context, FollowMode};
 
-use super::{PiApp, transcript_splice};
+use super::PiApp;
 use crate::{conversation::TranscriptKind, transcript::TranscriptRow};
 
 impl PiApp {
@@ -77,55 +75,12 @@ impl PiApp {
     }
 
     pub(super) fn sync_transcript_rows(&mut self, next: Vec<TranscriptRow>) {
-        let _timing = crate::performance::Timing::new("transcript.sync_rows");
-        let positions_unchanged = self.transcript_rows.len() == next.len()
-            && self
-                .transcript_rows
-                .iter()
-                .zip(&next)
-                .all(|(current, next)| current.same_position(next));
-        if positions_unchanged {
-            if let Some(first) = self
-                .transcript_rows
-                .iter()
-                .zip(&next)
-                .position(|(current, next)| current != next)
-            {
-                let last = self
-                    .transcript_rows
-                    .iter()
-                    .zip(&next)
-                    .rposition(|(current, next)| current != next)
-                    .unwrap_or(first);
-                crate::performance::count_remeasured_rows(last + 1 - first);
-                self.transcript_list.remeasure_items(first..last + 1);
-            }
-        } else if let Some((old_range, new_count)) = transcript_splice(&self.transcript_rows, &next)
-        {
-            let anchor = (!self.transcript_list.is_following_tail()).then(|| {
-                let offset = self.transcript_list.logical_scroll_top();
-                self.transcript_rows
-                    .get(offset.item_ix)
-                    .copied()
-                    .map(|row| (row, offset.offset_in_item))
-            });
-            let new_start = old_range.start;
-            self.transcript_list.splice_with_size_hints(
-                old_range,
-                next[new_start..new_start + new_count].iter().map(|row| {
-                    crate::transcript::estimated_row_height(*row, &self.snapshot.conversation.items)
-                }),
-            );
-            if let Some(Some((anchored_row, offset_in_item))) = anchor
-                && let Some(item_ix) = next.iter().position(|row| row.same_position(&anchored_row))
-            {
-                self.transcript_list.scroll_to(gpui::ListOffset {
-                    item_ix,
-                    offset_in_item,
-                });
-            }
-        }
-        self.transcript_rows = Arc::new(next);
+        crate::transcript::sync_transcript_list(
+            &self.transcript_list,
+            &mut self.transcript_rows,
+            &self.snapshot.conversation.items,
+            next,
+        );
     }
 
     pub(super) fn mark_transcript_changed(&mut self, index: usize, _was_empty: bool) {

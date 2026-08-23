@@ -44,4 +44,16 @@ repository target:
 cargo test --manifest-path apps/pi-gpui/Cargo.toml
 ```
 
+## Transcript benchmark
+
+Run the mock streaming benchmark in release mode:
+
+```sh
+cargo bench --manifest-path apps/pi-gpui/Cargo.toml --bench transcript
+```
+
+It reports median, p95, and maximum time for event reduction, row projection and
+list synchronization, GPUI drawing, and the complete frame at 200, 2,000, and
+10,000 historical transcript items.
+
 See `NOTICE.md` for adapted-code attribution.

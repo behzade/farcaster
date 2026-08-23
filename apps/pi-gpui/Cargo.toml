@@ -25,10 +25,15 @@ workgraph = { path = "workgraph" }
 zlog = { path = "third_party/zed-gpui-cc053a4/crates/zlog" }
 
 [dev-dependencies]
+gpui = { path = "third_party/zed-gpui-cc053a4/crates/gpui", features = ["test-support"] }
 tempfile = "3.27.0"
 
 [[bench]]
 name = "diff_plan"
+harness = false
+
+[[bench]]
+name = "transcript"
 harness = false
 
 [patch."https://github.com/zed-industries/zed"]

@@ -270,6 +270,79 @@ pub(crate) fn update_rows_from(
     rows
 }
 
+pub(crate) fn sync_transcript_list(
+    list: &ListState,
+    current: &mut Arc<Vec<TranscriptRow>>,
+    items: &[Arc<TranscriptItem>],
+    next: Vec<TranscriptRow>,
+) {
+    let _timing = crate::performance::Timing::new("transcript.sync_rows");
+    let positions_unchanged = current.len() == next.len()
+        && current
+            .iter()
+            .zip(&next)
+            .all(|(current, next)| current.same_position(next));
+    if positions_unchanged {
+        if let Some(first) = current
+            .iter()
+            .zip(&next)
+            .position(|(current, next)| current != next)
+        {
+            let last = current
+                .iter()
+                .zip(&next)
+                .rposition(|(current, next)| current != next)
+                .unwrap_or(first);
+            crate::performance::count_remeasured_rows(last + 1 - first);
+            list.remeasure_items(first..last + 1);
+        }
+    } else if let Some((old_range, new_count)) = transcript_splice(current, &next) {
+        let anchor = (!list.is_following_tail()).then(|| {
+            let offset = list.logical_scroll_top();
+            current
+                .get(offset.item_ix)
+                .copied()
+                .map(|row| (row, offset.offset_in_item))
+        });
+        let new_start = old_range.start;
+        list.splice_with_size_hints(
+            old_range,
+            next[new_start..new_start + new_count]
+                .iter()
+                .map(|row| estimated_row_height(*row, items)),
+        );
+        if let Some(Some((anchored_row, offset_in_item))) = anchor
+            && let Some(item_ix) = next.iter().position(|row| row.same_position(&anchored_row))
+        {
+            list.scroll_to(gpui::ListOffset {
+                item_ix,
+                offset_in_item,
+            });
+        }
+    }
+    *current = Arc::new(next);
+}
+
+pub(crate) fn transcript_splice<T: PartialEq>(
+    current: &[T],
+    next: &[T],
+) -> Option<(std::ops::Range<usize>, usize)> {
+    let prefix = current
+        .iter()
+        .zip(next)
+        .take_while(|(left, right)| left == right)
+        .count();
+    let suffix = current[prefix..]
+        .iter()
+        .rev()
+        .zip(next[prefix..].iter().rev())
+        .take_while(|(left, right)| left == right)
+        .count();
+    let old_end = current.len().saturating_sub(suffix);
+    let new_count = next.len().saturating_sub(prefix + suffix);
+    (prefix != old_end || new_count != 0).then_some((prefix..old_end, new_count))
+}
+
 fn matching_item_prefix(
     previous_items: &[Arc<TranscriptItem>],
     items: &[Arc<TranscriptItem>],
@@ -599,7 +672,7 @@ pub(crate) fn render(
     list_state: &ListState,
     viewport: TranscriptViewport,
     rows: std::sync::Arc<Vec<TranscriptRow>>,
-    snapshot: std::sync::Arc<crate::runtime::RuntimeSnapshot>,
+    conversation: Arc<crate::conversation::ConversationState>,
     disclosure_states: std::collections::HashMap<usize, bool>,
     markdown_cache: TranscriptMarkdownCache,
     entity: WeakEntity<PiApp>,
@@ -614,15 +687,15 @@ pub(crate) fn render(
         let Some(row) = rows.get(index).copied() else {
             return div().into_any_element();
         };
-        let expanded = resolved_expanded(row, &snapshot.conversation.items, &disclosure_states);
+        let expanded = resolved_expanded(row, &conversation.items, &disclosure_states);
         let reserves_tail = index + 1 == rows.len()
-            && latest_allows_tail_reserve(row, &snapshot.conversation.items, expanded);
+            && latest_allows_tail_reserve(row, &conversation.items, expanded);
         div()
             .w_full()
             .when(reserves_tail, |row| row.pb(viewport.tail_reserve))
             .child(render_row(
                 row,
-                &snapshot.conversation.items,
+                &conversation.items,
                 expanded,
                 viewport.diff_mode,
                 &markdown_cache,
