@@ -55,6 +55,17 @@ GPL-3.0-or-later licensing. Exact upstream license texts and detailed source
 provenance are included in that directory as `LICENSE-APACHE`, `LICENSE-GPL`,
 and `README.md`.
 
+The embedded terminal component is vendored from `Xuanwo/gpui-ghostty` commit
+`e3025981c6211dd7db2a825dc364ffb5d342f45e` under
+`third_party/gpui-ghostty-e3025981`. It is distributed under Apache-2.0; its
+license and source provenance are included in that directory. The component
+uses Ghostty's VT core from commit
+`6d2dd585a5d87fa745d48188dd096ca6e63014d0`, distributed under MIT, and
+ziglyph 0.11.2, also distributed under MIT with Unicode data under the Unicode
+license. Their license files are retained in the vendored source trees. Pi
+changes the component's GPUI dependency to the local Zed snapshot and vendors
+its pinned Zig dependency so builds do not fetch source at build time.
+
 The embedded SVG icon set identifies itself as Lucide and includes work derived
 from Feather. Its ISC and Feather MIT terms and notices are included at
 `THIRD_PARTY_LICENSES/LUCIDE-ISC.txt`. No SVG was copied into this module's

@@ -177,7 +177,7 @@ impl PiApp {
 
     pub(super) fn toggle_workgraph_surface(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match self.surface.toggled() {
-            AppSurface::Chat => self.show_chat_surface(window, cx),
+            AppSurface::Chat | AppSurface::Editor => self.show_chat_surface(window, cx),
             AppSurface::Work => self.open_workgraph_surface(window, cx),
         }
     }

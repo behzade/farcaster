@@ -13,6 +13,11 @@ and `defaultProjectTrust`, or asks for a project, parent, or deny decision.
 `/trust` opens the same persistent trust manager. Changes made for an
 already-running project take effect after restarting Pi GPUI.
 
+Changed files in Session details can be opened in an embedded Neovim editor.
+The editor uses Ghostty's VT core rendered directly by GPUI and keeps one
+Neovim process per open editor surface. Set `PI_GUI_NVIM` to override the
+`nvim` executable.
+
 ## Run
 
 ```sh

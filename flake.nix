@@ -124,12 +124,14 @@
               git
               nix
               nixfmt-tree
+              neovim
               nodejs
               pkg-config
               rust-analyzer
               rustc
               rustfmt
               rustPlatform.bindgenHook
+              zig_0_14
             ];
             shellHook = ''
               export CARGO_TARGET_DIR="$PWD/target"

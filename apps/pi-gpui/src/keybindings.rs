@@ -2,6 +2,9 @@
 
 use gpui::KeyBinding;
 use gpui_base::actions::{SelectDown, SelectUp};
+use gpui_ghostty_terminal::view::{
+    Copy as TerminalCopy, Paste as TerminalPaste, SelectAll as TerminalSelectAll,
+};
 
 use crate::app::{
     AbortRun, AddProject, CloseCurrent, ComposerHistoryNext, ComposerHistoryPrevious,
@@ -73,7 +76,7 @@ pub(crate) fn registry() -> Vec<Shortcut> {
         ),
         shortcut!(
             "Sessions",
-            "Close draft or session",
+            "Close editor, draft, or session",
             "cmd-w",
             CloseCurrent,
             None
@@ -111,6 +114,27 @@ pub(crate) fn registry() -> Vec<Shortcut> {
             binding: KeyBinding::new("ctrl-n", ComposerHistoryNext, Some("PiComposer > Input")),
         },
         shortcut!("Composer", "Focus composer", "cmd-l", FocusComposer, None),
+        shortcut!(
+            "Editor",
+            "Copy terminal selection",
+            "cmd-c",
+            TerminalCopy,
+            Some("Terminal")
+        ),
+        shortcut!(
+            "Editor",
+            "Paste into Neovim",
+            "cmd-v",
+            TerminalPaste,
+            Some("Terminal")
+        ),
+        shortcut!(
+            "Editor",
+            "Select terminal contents",
+            "cmd-a",
+            TerminalSelectAll,
+            Some("Terminal")
+        ),
         shortcut!("Composer", "Send prompt", "cmd-enter", SubmitPrompt, None),
         shortcut!(
             "Composer",
@@ -236,7 +260,7 @@ mod tests {
             shortcut.label == "Open / close project work" && shortcut.keystroke == "cmd-shift-i"
         }));
         assert!(shortcuts.iter().any(|shortcut| {
-            shortcut.label == "Close draft or session" && shortcut.keystroke == "cmd-w"
+            shortcut.label == "Close editor, draft, or session" && shortcut.keystroke == "cmd-w"
         }));
         assert!(
             shortcuts.iter().any(|shortcut| {
@@ -259,6 +283,9 @@ mod tests {
         }));
         assert!(shortcuts.iter().any(|shortcut| {
             shortcut.label == "Next completion" && shortcut.keystroke == "ctrl-n"
+        }));
+        assert!(shortcuts.iter().any(|shortcut| {
+            shortcut.label == "Paste into Neovim" && shortcut.keystroke == "cmd-v"
         }));
     }
 }

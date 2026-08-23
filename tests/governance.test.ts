@@ -21,6 +21,38 @@ test("notification previews are short and safe for OSC 9", () => {
   assert.equal(osc9Sequence("done", true), "\u001bPtmux;\u001b\u001b]9;done\u0007\u001b\\");
 });
 
+test("Pi GPUI vendors an offline Ghostty terminal against its host GPUI", async () => {
+  const vendorRoot = resolve(
+    repositoryRoot,
+    "apps/pi-gpui/third_party/gpui-ghostty-e3025981",
+  );
+  const [provenance, workspace, zigManifest, buildScript] = await Promise.all([
+    readFile(resolve(vendorRoot, "README.md"), "utf8"),
+    readFile(resolve(vendorRoot, "Cargo.toml"), "utf8"),
+    readFile(
+      resolve(vendorRoot, "crates/ghostty_vt_sys/zig/build.zig.zon"),
+      "utf8",
+    ),
+    readFile(resolve(vendorRoot, "crates/ghostty_vt_sys/build.rs"), "utf8"),
+  ]);
+  assert.match(provenance, /e3025981c6211dd7db2a825dc364ffb5d342f45e/);
+  assert.match(provenance, /6d2dd585a5d87fa745d48188dd096ca6e63014d0/);
+  assert.match(workspace, /path = "\.\.\/zed-gpui-cc053a4\/crates\/gpui"/);
+  assert.match(zigManifest, /path = "\.\.\/\.\.\/\.\.\/vendor\/ziglyph"/);
+  assert.doesNotMatch(zigManifest, /https?:\/\//);
+  assert.match(buildScript, /--global-cache-dir/);
+  await Promise.all([
+    stat(resolve(vendorRoot, "LICENSE")),
+    stat(resolve(vendorRoot, "vendor/ghostty/LICENSE")),
+    stat(resolve(vendorRoot, "vendor/ziglyph/LICENSE")),
+  ]);
+  await Promise.all(
+    [".git", ".zig-cache", "target", "node_modules"].map((name) =>
+      assert.rejects(stat(resolve(vendorRoot, name))),
+    ),
+  );
+});
+
 test("Pi GPUI uses a narrow local Zed source snapshot", async () => {
   const appRoot = resolve(repositoryRoot, "apps/pi-gpui");
   const vendorRoot = resolve(appRoot, "third_party/zed-gpui-cc053a4");

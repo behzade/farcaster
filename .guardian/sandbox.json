@@ -73,6 +73,10 @@
     },
     {
       "kind": "network_host",
+      "host": "deps.files.ghostty.org"
+    },
+    {
+      "kind": "network_host",
       "host": "github.com"
     },
     {

@@ -3,6 +3,7 @@
   craneLib,
   lib,
   makeWrapper,
+  neovim,
   piTerminal,
   pkg-config,
   rustPlatform,
@@ -38,6 +39,7 @@
   util-linux,
   vulkan-loader,
   wayland,
+  zig_0_14,
 }:
 
 let
@@ -62,7 +64,8 @@ let
         relative = lib.removePrefix "${toString sourceRoot}/" (toString path);
       in
       relative == "third_party"
-      || lib.hasPrefix "third_party/zed-gpui-cc053a4" relative;
+      || lib.hasPrefix "third_party/zed-gpui-cc053a4" relative
+      || lib.hasPrefix "third_party/gpui-ghostty-e3025981" relative;
   };
   dummySrc = craneLib.mkDummySrc {
     inherit src;
@@ -96,6 +99,7 @@ let
       makeWrapper
       pkg-config
       rustPlatform.bindgenHook
+      zig_0_14
     ] ++ lib.optionals stdenv.hostPlatform.isLinux [
       util-linux
     ];
@@ -166,6 +170,7 @@ craneLib.buildPackage (
       wrapProgram "$out/bin/pi-gpui" \
         --set PI_GUI_PI_PATH ${piTerminal}/bin/pi \
         --set PI_GUI_COMPANION_EXTENSION "$out/lib/pi-gpui/companion/index.ts" \
+        --prefix PATH : ${lib.makeBinPath [ neovim ]} \
         ${lib.optionalString stdenv.hostPlatform.isLinux "--set PI_GUI_IMPORT_SHELL_ENV 1 --prefix PATH : ${lib.makeBinPath [ coreutils util-linux ]} --prefix LD_LIBRARY_PATH : ${linuxRuntimeLibraryPath}"}
     ''
     + lib.optionalString stdenv.hostPlatform.isDarwin ''

@@ -5,6 +5,7 @@ mod composer_footer;
 #[cfg(test)]
 mod composer_tests;
 mod diff_modal;
+mod editor;
 mod models;
 mod project_trust;
 mod regions;
@@ -160,7 +161,7 @@ impl Render for PiApp {
         let editable_draft_project = (!has_conversation)
             .then(|| self.editable_draft_project())
             .flatten();
-        let main = div()
+        let chat_main = div()
             .relative()
             .flex_1()
             .min_w_0()
@@ -208,6 +209,11 @@ impl Render for PiApp {
                 main.child(self.composer_view.clone())
             })
             .into_any_element();
+        let main = if self.surface == AppSurface::Editor {
+            self.render_editor_surface(entity.clone(), cx)
+        } else {
+            chat_main
+        };
         let workgraph_focus = self.workgraph_view.read(cx).focus_handle();
         let picker = self.render_picker(entity.clone(), cx);
         div()
@@ -272,8 +278,12 @@ impl Render for PiApp {
                     this.send(crate::runtime::RuntimeCommand::Abort);
                 }
             }))
-            .on_action(cx.listener(
-                |this, _: &CloseCurrent, window, cx| match current_close_target(
+            .on_action(cx.listener(|this, _: &CloseCurrent, window, cx| {
+                if this.surface == AppSurface::Editor {
+                    this.close_editor(window, cx);
+                    return;
+                }
+                match current_close_target(
                     this.selected_draft.as_deref(),
                     this.snapshot.selected_session.as_deref(),
                 ) {
@@ -287,8 +297,8 @@ impl Render for PiApp {
                         this.request_session_archive(path, !archived, window, cx);
                     }
                     CurrentCloseTarget::None => {}
-                },
-            ))
+                }
+            }))
             .on_action(cx.listener(|this, _: &ShowKeybindings, window, cx| {
                 this.open_keybindings_help(window, cx);
             }))

@@ -9,6 +9,7 @@ use gpui::{
 
 use super::super::PiApp;
 use crate::{
+    primitives::{ButtonTone, button},
     session_changes::{FileChange, FileChangeKind},
     sessions::root_session_for_path,
     theme::{MONO_FONT_FAMILY, THEME},
@@ -124,6 +125,8 @@ impl PiApp {
         let focus = self.changes.row_focus.get(&file.path)?.clone();
         let click_focus = focus.clone();
         let click_file = file.clone();
+        let editor_file = file.path.clone();
+        let editor_entity = entity.clone();
         let path = file.path.to_string_lossy().into_owned();
         let display_path = middle_truncate(&display_change_path(&file.path, project), 44);
         let state = match file.kind {
@@ -189,6 +192,18 @@ impl PiApp {
                             .child("partial"),
                     )
                 })
+                .child(button(
+                    format!("edit-change-{path}"),
+                    "Edit",
+                    ButtonTone::Quiet,
+                    true,
+                    move |window, cx| {
+                        cx.stop_propagation();
+                        let _ = editor_entity.update(cx, |this, cx| {
+                            this.open_file_editor(editor_file.clone(), window, cx);
+                        });
+                    },
+                ))
                 .child(
                     div()
                         .min_w(px(36.0))
