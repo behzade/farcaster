@@ -363,8 +363,15 @@ impl PiApp {
                         this.composer_mention_selection,
                         &this.snapshot.commands,
                     ) {
-                        this.apply_composer_snapshot(completion, _window, cx);
-                        this.composer_focus.focus(_window, cx);
+                        let submitted_value = completion
+                            .submit
+                            .then(|| completion.snapshot.text.trim().to_owned());
+                        this.apply_composer_snapshot(completion.snapshot, _window, cx);
+                        if let Some(value) = submitted_value {
+                            this.submit(value, this.enter_mode(), _window, cx);
+                        } else {
+                            this.composer_focus.focus(_window, cx);
+                        }
                     } else {
                         let value = value.trim().to_owned();
                         if !value.is_empty() || this.has_composer_images() {

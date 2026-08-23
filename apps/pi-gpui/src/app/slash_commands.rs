@@ -243,6 +243,13 @@ pub(super) fn suggestions(input: &str, commands: &[SlashCommand]) -> Vec<Compose
     matches
 }
 
+pub(super) fn submits_after_completion(name: &str) -> bool {
+    BUILTINS
+        .iter()
+        .find(|command| command.name == name)
+        .is_some_and(|command| !command.accepts_arguments)
+}
+
 pub(super) fn is_immediate_extension(input: &str, commands: &[SlashCommand]) -> bool {
     builtin_invocation(input).is_none()
         && exact(input, commands)
