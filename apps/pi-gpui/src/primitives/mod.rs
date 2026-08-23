@@ -14,4 +14,4 @@ pub(crate) use disclosure::{disclosure_button, disclosure_indicator};
 pub(crate) use feedback::{FeedbackTone, feedback};
 pub(crate) use icon::{AppIconSize, app_icon, icon_control};
 pub(crate) use picker::{PickerDelegate, PickerRow};
-pub(crate) use reorder::{ReorderPosition, ReorderTargetExt, reorder_handle};
+pub(crate) use reorder::{ReorderPosition, ReorderTargetExt};

@@ -1,54 +1,14 @@
-//! Reusable GPUI drag handles and before/after reorder targets.
+//! Reusable GPUI before/after reorder targets.
 
 use gpui::{
-    AnyElement, App, AppContext as _, Bounds, Div, DragMoveEvent, ElementId,
-    InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Point, Render, Rgba, Role,
-    SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, Window, div,
-    prelude::FluentBuilder as _, px,
-};
-use gpui_component::tooltip::Tooltip;
-
-use crate::{
-    assets::AppIcon,
-    primitives::{AppIconSize, app_icon},
-    theme::THEME,
+    App, Bounds, Div, DragMoveEvent, InteractiveElement as _, Pixels, Point, Rgba, Stateful,
+    Styled as _, Window, prelude::FluentBuilder as _, px,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ReorderPosition {
     Before,
     After,
-}
-
-pub(crate) fn reorder_handle<T>(
-    id: impl Into<ElementId>,
-    label: impl Into<SharedString>,
-    drag: T,
-    on_start: impl Fn(&mut App) + 'static,
-) -> AnyElement
-where
-    T: Clone + Render + 'static,
-{
-    let label = label.into();
-    let tooltip_label = label.clone();
-    div()
-        .id(id)
-        .role(Role::Button)
-        .aria_label(label)
-        .tab_index(0)
-        .flex_none()
-        .flex()
-        .items_center()
-        .mr(THEME.space.xs)
-        .cursor(gpui::CursorStyle::OpenHand)
-        .text_color(THEME.colors.subtle)
-        .tooltip(move |window, cx| Tooltip::new(tooltip_label.clone()).build(window, cx))
-        .on_drag(drag, move |drag, _, _, cx| {
-            on_start(cx);
-            cx.new(|_| drag.clone())
-        })
-        .child(app_icon(AppIcon::DotsSixVertical, AppIconSize::Control))
-        .into_any_element()
 }
 
 pub(crate) trait ReorderTargetExt {

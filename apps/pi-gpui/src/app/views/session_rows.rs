@@ -6,7 +6,7 @@ use std::{
 };
 
 use gpui::{
-    AnyElement, Context, CursorStyle, Entity, FontWeight, InteractiveElement as _, IntoElement,
+    AnyElement, AppContext as _, Context, CursorStyle, Entity, FontWeight, InteractiveElement as _, IntoElement,
     MouseButton, ParentElement as _, Pixels, Render, Rgba, Role, StatefulInteractiveElement as _,
     Styled as _, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
 };
@@ -24,7 +24,7 @@ use super::{
 use crate::{
     assets::AppIcon,
     primitives::{
-        AppIconSize, ReorderPosition, ReorderTargetExt as _, app_icon, icon_control, reorder_handle,
+        AppIconSize, ReorderPosition, ReorderTargetExt as _, app_icon, icon_control,
     },
     projects::DraftSession,
     theme::THEME,
@@ -35,7 +35,6 @@ pub(super) struct DraggedSession {
     pub(super) app_session_id: i64,
     pub(super) path: Option<PathBuf>,
     kind: SessionRailKind,
-    element_id: String,
     title: String,
     project: String,
 }
@@ -84,24 +83,6 @@ impl Render for DraggedSession {
     }
 }
 
-fn session_drag_handle(drag: DraggedSession, entity: WeakEntity<PiApp>) -> AnyElement {
-    let element_id = drag.element_id.clone();
-    let category_movable = drag.path.is_some();
-    let label = if category_movable {
-        "Drag to move session"
-    } else {
-        "Drag to reorder session"
-    };
-    reorder_handle(
-        format!("drag-session-{element_id}"),
-        label,
-        drag,
-        move |cx| {
-            let _ = entity.update(cx, |this, cx| this.begin_session_drag(cx));
-        },
-    )
-}
-
 pub(super) fn draft_session_row(
     draft: &DraftSession,
     selected: bool,
@@ -120,13 +101,12 @@ pub(super) fn draft_session_row(
         app_session_id: target_app_session_id,
         path: draft.session_path.clone(),
         kind: SessionRailKind::Project,
-        element_id: draft.id.clone(),
         title: title.clone(),
         project: project_label(&draft.project),
     };
     let drag_move_entity = entity.clone();
     let drop_entity = entity.clone();
-    let drag_handle_entity = entity.clone();
+    let drag_entity = entity.clone();
     let action_group = format!("draft-actions-{id}");
     let hover_id = format!("draft-hover-{id}");
     let hover_details = draft_hover_details(draft, status);
@@ -160,6 +140,10 @@ pub(super) fn draft_session_row(
                     .hover(|row| row.bg(THEME.colors.hover))
                     .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
                     .cursor(CursorStyle::PointingHand)
+                    .on_drag(drag, move |drag, _, _, cx| {
+                        let _ = drag_entity.update(cx, |this, cx| this.begin_session_drag(cx));
+                        cx.new(|_| drag.clone())
+                    })
                     .can_drop(move |value, _, _| {
                         value.downcast_ref::<DraggedSession>().is_some_and(|drag| {
                             drag.can_drop_on(SessionRailKind::Project, target_app_session_id)
@@ -195,7 +179,6 @@ pub(super) fn draft_session_row(
                             this.resume_draft(id.clone(), project.clone(), window, cx);
                         });
                     })
-                    .child(session_drag_handle(drag, drag_handle_entity))
                     .child(
                         div()
                             .min_w_0()
@@ -359,13 +342,12 @@ pub(super) fn session_row_with_height(
         app_session_id: target_app_session_id,
         path: Some(session.path.clone()),
         kind: item.kind,
-        element_id: session.id.clone(),
         title: session.title.clone(),
         project: project_label(&session.project),
     };
     let drag_move_entity = entity.clone();
     let drop_entity = entity.clone();
-    let drag_handle_entity = entity.clone();
+    let drag_entity = entity.clone();
     let age = relative_age(session.modified);
     let target_kind = item.kind;
     let is_review = target_kind == SessionRailKind::Review;
@@ -414,7 +396,11 @@ pub(super) fn session_row_with_height(
         .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
         .cursor(CursorStyle::PointingHand)
         .when(draggable, move |row| {
-            row.can_drop(move |value, _, _| {
+            row.on_drag(drag, move |drag, _, _, cx| {
+                let _ = drag_entity.update(cx, |this, cx| this.begin_session_drag(cx));
+                cx.new(|_| drag.clone())
+            })
+            .can_drop(move |value, _, _| {
                 value
                     .downcast_ref::<DraggedSession>()
                     .is_some_and(|drag| drag.can_drop_on(target_kind, target_app_session_id))
@@ -461,9 +447,6 @@ pub(super) fn session_row_with_height(
                 .flex()
                 .items_stretch()
                 .gap(THEME.space.sm)
-                .when(draggable, |content| {
-                    content.child(session_drag_handle(drag, drag_handle_entity))
-                })
                 .child(
                     div()
                         .min_w_0()

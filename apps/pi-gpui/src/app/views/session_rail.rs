@@ -6,8 +6,8 @@ use std::{
 };
 
 use gpui::{
-    Anchor, AnyElement, CursorStyle, FontWeight, InteractiveElement as _, IntoElement,
-    ParentElement as _, Role, StatefulInteractiveElement as _, Styled as _, WeakEntity, div, list,
+    Anchor, Div, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Stateful,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, list,
     prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
@@ -42,40 +42,16 @@ use crate::{
 
 const INACTIVE_PREVIEW_LIMIT: usize = 3;
 
-fn session_category_drop_target(
+fn session_section_drop_target(
+    section: Stateful<Div>,
     kind: SessionRailKind,
-    label: &'static str,
     entity: WeakEntity<PiApp>,
-) -> AnyElement {
-    div()
-        .id(format!("drop-session-category-{label}"))
-        .role(Role::Button)
-        .aria_label(format!("Move session to {label}"))
-        .h(THEME.controls.utility_row)
-        .flex_1()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(THEME.radius)
-        .border(THEME.border)
-        .border_color(THEME.colors.border)
-        .text_size(THEME.type_scale.caption)
-        .text_color(THEME.colors.muted)
-        .cursor(CursorStyle::PointingHand)
+) -> Stateful<Div> {
+    section
         .can_drop(move |value, _, _| {
             value
                 .downcast_ref::<DraggedSession>()
                 .is_some_and(|drag| drag.can_move_to(kind))
-        })
-        .drag_over::<DraggedSession>(move |target, drag, _, _| {
-            if drag.can_move_to(kind) {
-                target
-                    .bg(THEME.colors.hover)
-                    .border_color(THEME.colors.accent)
-                    .text_color(THEME.colors.text)
-            } else {
-                target
-            }
         })
         .on_drop(move |drag: &DraggedSession, window, cx| {
             cx.stop_propagation();
@@ -83,29 +59,6 @@ fn session_category_drop_target(
                 this.complete_session_category_drop(drag, kind, window, cx);
             });
         })
-        .child(label)
-        .into_any_element()
-}
-
-fn session_category_drop_targets(entity: WeakEntity<PiApp>) -> AnyElement {
-    div()
-        .absolute()
-        .top(px(0.0))
-        .left(px(0.0))
-        .right(px(0.0))
-        .flex()
-        .gap(THEME.space.xs)
-        .px(THEME.space.sm)
-        .py(THEME.space.xs)
-        .border_b(THEME.border)
-        .border_color(THEME.colors.border)
-        .bg(THEME.colors.panel)
-        .children([
-            session_category_drop_target(SessionRailKind::Project, "Active", entity.clone()),
-            session_category_drop_target(SessionRailKind::Review, "Review", entity.clone()),
-            session_category_drop_target(SessionRailKind::Archived, "Archive", entity),
-        ])
-        .into_any_element()
 }
 
 /// Direct subagent (child session) count per parent session id.
@@ -171,7 +124,7 @@ impl PiApp {
         let actions_entity = entity.clone();
         let cancel_drop_entity = entity.clone();
         let cancel_drop_out_entity = entity.clone();
-        let category_drop_entity = entity.clone();
+        let active_drop_entity = entity.clone();
         let search_focus = self.search_focus.clone();
         let selected_root =
             root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
@@ -274,8 +227,10 @@ impl PiApp {
         )
         .size_full();
 
-        let review_expanded = self.review_sessions_expanded && review_entry_count > 0;
-        let archived_expanded = self.archived_sessions_expanded && archived_entry_count > 0;
+        let review_expanded =
+            !session_drag_active && self.review_sessions_expanded && review_entry_count > 0;
+        let archived_expanded =
+            !session_drag_active && self.archived_sessions_expanded && archived_entry_count > 0;
         let review_session_rail_style =
             inactive_rail_style(review_expanded, review_entry_count, false);
         let review_session_rail = self
@@ -428,22 +383,22 @@ impl PiApp {
                             .update(cx, |this, cx| this.clear_session_drop_target(cx));
                     })
                     .when(!review_expanded && !archived_expanded, |lists| {
-                        lists.child(
+                        lists.child(session_section_drop_target(
                             div()
+                                .id("active-session-drop-area")
                                 .flex_1()
                                 .min_h_0()
                                 .overflow_y_hidden()
                                 .child(active_list),
-                        )
+                            SessionRailKind::Project,
+                            active_drop_entity,
+                        ))
                     })
                     .when(review_entry_count > 0 && !archived_expanded, |lists| {
                         lists.child(review_session_rail)
                     })
                     .when(archived_entry_count > 0 && !review_expanded, |lists| {
                         lists.child(archived_session_rail)
-                    })
-                    .when(session_drag_active, |lists| {
-                        lists.child(session_category_drop_targets(category_drop_entity))
                     }),
             )
             .when(
@@ -584,8 +539,9 @@ impl PiApp {
         })
         .size_full();
 
+        let drop_entity = entity.clone();
         let toggle_entity = entity;
-        div()
+        let section = div()
             .id(section_id)
             .size_full()
             .min_h_0()
@@ -645,8 +601,8 @@ impl PiApp {
                         .overflow_y_hidden()
                         .child(rows_list),
                 )
-            })
-            .into_any_element()
+            });
+        session_section_drop_target(section, kind, drop_entity).into_any_element()
     }
 }
 
