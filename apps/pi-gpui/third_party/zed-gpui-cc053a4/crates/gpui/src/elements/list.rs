@@ -182,6 +182,9 @@ pub struct ListScrollEvent {
 
     /// Whether the list is currently in follow-tail mode (auto-scrolling to end).
     pub is_following_tail: bool,
+
+    /// The touch phase of the platform scroll event.
+    pub touch_phase: crate::TouchPhase,
 }
 
 /// The sizing behavior to apply during layout.
@@ -942,6 +945,7 @@ impl StateInner {
         scroll_top: &ListOffset,
         height: Pixels,
         delta: Point<Pixels>,
+        touch_phase: crate::TouchPhase,
         current_view: EntityId,
         window: &mut Window,
         cx: &mut App,
@@ -992,6 +996,7 @@ impl StateInner {
                         self.follow_state,
                         FollowState::Tail { is_following: true }
                     ),
+                    touch_phase,
                 },
                 window,
                 cx,
@@ -1652,6 +1657,7 @@ impl Element for List {
                     &scroll_top,
                     height,
                     pixel_delta,
+                    event.touch_phase,
                     current_view,
                     window,
                     cx,

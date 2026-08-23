@@ -478,6 +478,7 @@ impl PiApp {
             WorkGraphSidebarView::new(app.clone(), crate::state::state_path(), project.clone(), cx)
         });
         transcript_list.set_scroll_handler(move |event, _, cx| {
+            crate::performance::record_scroll_event(event.touch_phase);
             let following = event.is_following_tail;
             let needs_update = app.upgrade().is_some_and(|app| {
                 let app = app.read(cx);
@@ -491,7 +492,9 @@ impl PiApp {
                 return;
             }
             let app = app.clone();
+            let deferred_at = Instant::now();
             cx.defer(move |cx| {
+                crate::performance::record_scroll_defer(deferred_at.elapsed());
                 let _ = app.update(cx, |this, cx| {
                     if update_transcript_follow_state(
                         &mut this.transcript_following,

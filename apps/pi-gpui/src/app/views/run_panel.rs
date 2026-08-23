@@ -416,6 +416,36 @@ fn render_performance(summary: &crate::performance::PerformanceSummary) -> impl 
                     .map_or(0, |operation| operation.calls)
             ),
         ))
+        .child(metric_row(
+            "Scroll events · start / move / end",
+            format!(
+                "{} · {} / {} / {}",
+                summary.scroll_events,
+                summary.scroll_started,
+                summary.scroll_moved,
+                summary.scroll_ended,
+            ),
+        ))
+        .child(metric_row(
+            "Scroll after end · events / max",
+            format!(
+                "{} / {}",
+                summary.scroll_events_after_end,
+                crate::performance::duration_label(summary.scroll_after_end_max),
+            ),
+        ))
+        .child(metric_row(
+            "Scroll handler max gap",
+            crate::performance::duration_label(summary.scroll_event_gap_max),
+        ))
+        .child(metric_row(
+            "Scroll defers · count / max wait",
+            format!(
+                "{} / {}",
+                summary.scroll_deferred_updates,
+                crate::performance::duration_label(summary.scroll_defer_max),
+            ),
+        ))
         .children(summary.operations.iter().map(operation_metric_row))
         .child(metric_row(
             "Slowest task poll",

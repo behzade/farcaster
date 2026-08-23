@@ -1,11 +1,12 @@
 //! DEBUG-only summaries from GPUI's frame, task, and action profilers.
 
 use std::{
+    cell::RefCell,
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
     time::{Duration, Instant},
 };
 
-use gpui::{FrameTimingCollector, TasksIncluded, WindowId, profiler};
+use gpui::{FrameTimingCollector, TasksIncluded, TouchPhase, WindowId, profiler};
 
 const SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
 const SLOW_OPERATION: Duration = Duration::from_millis(2);
@@ -22,6 +23,25 @@ static CATALOG_FILES_PARSED: AtomicU64 = AtomicU64::new(0);
 static CATALOG_CACHE_HITS: AtomicU64 = AtomicU64::new(0);
 static HIGHLIGHT_BYTES: AtomicU64 = AtomicU64::new(0);
 static MARKDOWN_CACHE_HITS: AtomicU64 = AtomicU64::new(0);
+static SCROLL_EVENTS: AtomicU64 = AtomicU64::new(0);
+static SCROLL_STARTED: AtomicU64 = AtomicU64::new(0);
+static SCROLL_MOVED: AtomicU64 = AtomicU64::new(0);
+static SCROLL_ENDED: AtomicU64 = AtomicU64::new(0);
+static SCROLL_EVENTS_AFTER_END: AtomicU64 = AtomicU64::new(0);
+static SCROLL_AFTER_END_MAX_NS: AtomicU64 = AtomicU64::new(0);
+static SCROLL_EVENT_GAP_MAX_NS: AtomicU64 = AtomicU64::new(0);
+static SCROLL_DEFERRED_UPDATES: AtomicU64 = AtomicU64::new(0);
+static SCROLL_DEFER_MAX_NS: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Default)]
+struct ScrollTimingState {
+    last_event: Option<Instant>,
+    last_end: Option<Instant>,
+}
+
+thread_local! {
+    static SCROLL_TIMING: RefCell<ScrollTimingState> = RefCell::default();
+}
 
 const OPERATION_COUNT: usize = 12;
 static OPERATION_CALLS: [AtomicU64; OPERATION_COUNT] =
@@ -119,9 +139,19 @@ fn reset_counters() {
         &CATALOG_CACHE_HITS,
         &HIGHLIGHT_BYTES,
         &MARKDOWN_CACHE_HITS,
+        &SCROLL_EVENTS,
+        &SCROLL_STARTED,
+        &SCROLL_MOVED,
+        &SCROLL_ENDED,
+        &SCROLL_EVENTS_AFTER_END,
+        &SCROLL_AFTER_END_MAX_NS,
+        &SCROLL_EVENT_GAP_MAX_NS,
+        &SCROLL_DEFERRED_UPDATES,
+        &SCROLL_DEFER_MAX_NS,
     ] {
         counter.store(0, Ordering::Relaxed);
     }
+    SCROLL_TIMING.with(|state| *state.borrow_mut() = ScrollTimingState::default());
     for index in 0..OPERATION_COUNT {
         OPERATION_CALLS[index].store(0, Ordering::Relaxed);
         OPERATION_TOTAL_NS[index].store(0, Ordering::Relaxed);
@@ -173,6 +203,60 @@ pub(crate) fn count_markdown_cache_hit() {
     add_counter(&MARKDOWN_CACHE_HITS, 1);
 }
 
+pub(crate) fn record_scroll_event(phase: TouchPhase) {
+    if !ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
+    let now = Instant::now();
+    SCROLL_EVENTS.fetch_add(1, Ordering::Relaxed);
+    match phase {
+        TouchPhase::Started => {
+            SCROLL_STARTED.fetch_add(1, Ordering::Relaxed);
+            SCROLL_TIMING.with(|state| {
+                let mut state = state.borrow_mut();
+                state.last_event = None;
+                state.last_end = None;
+            });
+        }
+        TouchPhase::Moved => {
+            SCROLL_MOVED.fetch_add(1, Ordering::Relaxed);
+        }
+        TouchPhase::Ended | TouchPhase::Cancelled => {
+            SCROLL_ENDED.fetch_add(1, Ordering::Relaxed);
+            SCROLL_TIMING.with(|state| state.borrow_mut().last_end = Some(now));
+        }
+    }
+    SCROLL_TIMING.with(|state| {
+        let mut state = state.borrow_mut();
+        if let Some(last_event) = state.last_event.replace(now) {
+            SCROLL_EVENT_GAP_MAX_NS.fetch_max(
+                duration_nanos(now.duration_since(last_event)),
+                Ordering::Relaxed,
+            );
+        }
+        if !matches!(phase, TouchPhase::Ended | TouchPhase::Cancelled)
+            && let Some(last_end) = state.last_end
+        {
+            SCROLL_EVENTS_AFTER_END.fetch_add(1, Ordering::Relaxed);
+            SCROLL_AFTER_END_MAX_NS.fetch_max(
+                duration_nanos(now.duration_since(last_end)),
+                Ordering::Relaxed,
+            );
+        }
+    });
+}
+
+pub(crate) fn record_scroll_defer(elapsed: Duration) {
+    if ENABLED.load(Ordering::Relaxed) {
+        SCROLL_DEFERRED_UPDATES.fetch_add(1, Ordering::Relaxed);
+        SCROLL_DEFER_MAX_NS.fetch_max(duration_nanos(elapsed), Ordering::Relaxed);
+    }
+}
+
+fn duration_nanos(duration: Duration) -> u64 {
+    duration.as_nanos().min(u128::from(u64::MAX)) as u64
+}
+
 #[must_use]
 pub(crate) struct OperationTiming {
     kind: OperationKind,
@@ -204,7 +288,7 @@ impl Drop for OperationTiming {
             return;
         };
         let elapsed = started_at.elapsed();
-        let elapsed_ns = elapsed.as_nanos().min(u128::from(u64::MAX)) as u64;
+        let elapsed_ns = duration_nanos(elapsed);
         let index = self.kind as usize;
         OPERATION_CALLS[index].fetch_add(1, Ordering::Relaxed);
         OPERATION_TOTAL_NS[index].fetch_add(elapsed_ns, Ordering::Relaxed);
@@ -289,6 +373,15 @@ pub(crate) struct PerformanceSummary {
     pub(crate) highlight_bytes: u64,
     pub(crate) markdown_cache_hits: u64,
     pub(crate) operations: Vec<OperationSummary>,
+    pub(crate) scroll_events: u64,
+    pub(crate) scroll_started: u64,
+    pub(crate) scroll_moved: u64,
+    pub(crate) scroll_ended: u64,
+    pub(crate) scroll_events_after_end: u64,
+    pub(crate) scroll_after_end_max: Duration,
+    pub(crate) scroll_event_gap_max: Duration,
+    pub(crate) scroll_deferred_updates: u64,
+    pub(crate) scroll_defer_max: Duration,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -404,6 +497,19 @@ fn collect_summary(
         catalog_cache_hits: CATALOG_CACHE_HITS.swap(0, Ordering::Relaxed),
         highlight_bytes: HIGHLIGHT_BYTES.swap(0, Ordering::Relaxed),
         markdown_cache_hits: MARKDOWN_CACHE_HITS.swap(0, Ordering::Relaxed),
+        scroll_events: SCROLL_EVENTS.swap(0, Ordering::Relaxed),
+        scroll_started: SCROLL_STARTED.swap(0, Ordering::Relaxed),
+        scroll_moved: SCROLL_MOVED.swap(0, Ordering::Relaxed),
+        scroll_ended: SCROLL_ENDED.swap(0, Ordering::Relaxed),
+        scroll_events_after_end: SCROLL_EVENTS_AFTER_END.swap(0, Ordering::Relaxed),
+        scroll_after_end_max: Duration::from_nanos(
+            SCROLL_AFTER_END_MAX_NS.swap(0, Ordering::Relaxed),
+        ),
+        scroll_event_gap_max: Duration::from_nanos(
+            SCROLL_EVENT_GAP_MAX_NS.swap(0, Ordering::Relaxed),
+        ),
+        scroll_deferred_updates: SCROLL_DEFERRED_UPDATES.swap(0, Ordering::Relaxed),
+        scroll_defer_max: Duration::from_nanos(SCROLL_DEFER_MAX_NS.swap(0, Ordering::Relaxed)),
         operations: OperationKind::ALL
             .into_iter()
             .map(|kind| {
@@ -428,8 +534,13 @@ fn should_log_duration(duration: Duration) -> bool {
 }
 
 fn log_summary(summary: &PerformanceSummary) {
+    let active_operations = summary
+        .operations
+        .iter()
+        .filter(|operation| operation.calls > 0)
+        .collect::<Vec<_>>();
     zlog::info!(
-        "PERF interval_ms={:.2} frames={} draw_p95_ms={:.2} draw_max_ms={:.2} dirty_to_draw_p95_ms={:.2} dirty_requests_avg={:.1} dirty_requests_max={} snapshots={} stream_events={} stream_coalesced={} transcript_compared={} transcript_projected={} transcript_remeasured={} catalog_scans={} catalog_parses={} catalog_cache_hits={} highlight_bytes={} markdown_cache_hits={} operations={:?} slowest_task={:?} slowest_action={:?}",
+        "PERF interval_ms={:.2} frames={} draw_p95_ms={:.2} draw_max_ms={:.2} dirty_to_draw_p95_ms={:.2} dirty_requests_avg={:.1} dirty_requests_max={} snapshots={} stream_events={} stream_coalesced={} transcript_compared={} transcript_projected={} transcript_remeasured={} catalog_scans={} catalog_parses={} catalog_cache_hits={} highlight_bytes={} markdown_cache_hits={} scroll_events={} scroll_phases={}/{}/{} scroll_after_end={} scroll_after_end_max_ms={:.2} scroll_gap_max_ms={:.2} scroll_defers={} scroll_defer_max_ms={:.2} operations={:?} slowest_task={:?} slowest_action={:?}",
         summary.sample_interval.as_secs_f64() * 1_000.0,
         summary.frame_count,
         summary.draw_p95.as_secs_f64() * 1_000.0,
@@ -448,7 +559,16 @@ fn log_summary(summary: &PerformanceSummary) {
         summary.catalog_cache_hits,
         summary.highlight_bytes,
         summary.markdown_cache_hits,
-        summary.operations,
+        summary.scroll_events,
+        summary.scroll_started,
+        summary.scroll_moved,
+        summary.scroll_ended,
+        summary.scroll_events_after_end,
+        summary.scroll_after_end_max.as_secs_f64() * 1_000.0,
+        summary.scroll_event_gap_max.as_secs_f64() * 1_000.0,
+        summary.scroll_deferred_updates,
+        summary.scroll_defer_max.as_secs_f64() * 1_000.0,
+        active_operations,
         summary.slowest_task,
         summary.slowest_action,
     );
