@@ -12,7 +12,7 @@ use super::super::{
 use crate::{
     assets::AppIcon,
     diff_element::{DiffCell, DiffElement, DiffPaintRow, DiffTone},
-    primitives::{ButtonTone, button, icon_button, section_heading},
+    primitives::{ButtonTone, icon_button, section_heading},
     session_changes::FileChangeKind,
     syntax_highlight::{DiffLineKind, HighlightedDiff, HighlightedDiffLine},
     theme::{MONO_FONT_FAMILY, THEME},
@@ -45,6 +45,7 @@ impl PiApp {
             .deletions
             .map_or_else(|| "-—".into(), |count| format!("-{count}"));
         let close = entity.clone();
+        let open = entity.clone();
         let open_path = file.path.clone();
         div()
             .w_full()
@@ -132,12 +133,17 @@ impl PiApp {
                                     }),
                             )
                             .when(file.exists, |controls| {
-                                controls.child(button(
+                                controls.child(icon_button(
                                     "open-diff-file",
-                                    "Open file",
+                                    AppIcon::ArrowSquareOut,
+                                    "Open in Neovim",
                                     ButtonTone::Quiet,
-                                    true,
-                                    move |_, cx| cx.open_with_system(&open_path),
+                                    move |window, cx| {
+                                        let _ = open.update(cx, |this, cx| {
+                                            this.close_file_diff(window, cx);
+                                            this.open_file_editor(open_path.clone(), window, cx);
+                                        });
+                                    },
                                 ))
                             }),
                     ),

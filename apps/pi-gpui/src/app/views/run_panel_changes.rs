@@ -9,7 +9,8 @@ use gpui::{
 
 use super::super::PiApp;
 use crate::{
-    primitives::{ButtonTone, button},
+    assets::AppIcon,
+    primitives::{ButtonTone, icon_button},
     session_changes::{FileChange, FileChangeKind},
     sessions::root_session_for_path,
     theme::{MONO_FONT_FAMILY, THEME},
@@ -192,11 +193,11 @@ impl PiApp {
                             .child("partial"),
                     )
                 })
-                .child(button(
+                .child(icon_button(
                     format!("edit-change-{path}"),
-                    "Edit",
+                    AppIcon::PencilSimple,
+                    "Edit in Neovim",
                     ButtonTone::Quiet,
-                    true,
                     move |window, cx| {
                         cx.stop_propagation();
                         let _ = editor_entity.update(cx, |this, cx| {
