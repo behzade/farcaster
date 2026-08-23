@@ -1,7 +1,7 @@
 PROJECT ?= $(CURDIR)
 CARGO_TARGET_DIR ?= $(CURDIR)/target
 
-.PHONY: run debug release release-debug check-gpui check-flake update-guardian
+.PHONY: run debug release release-debug check-gpui check-flake update-pi-nono
 run:
 	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo run --manifest-path apps/pi-gpui/Cargo.toml -- "$(PROJECT)"
 
@@ -23,6 +23,6 @@ check-gpui:
 check-flake:
 	nix flake check
 
-update-guardian:
-	nix flake update guardian
+update-pi-nono:
+	nix flake update piNono
 	$(MAKE) check-flake

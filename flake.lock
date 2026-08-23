@@ -15,24 +15,6 @@
         "type": "github"
       }
     },
-    "guardian": {
-      "inputs": {
-        "nixpkgs": "nixpkgs"
-      },
-      "locked": {
-        "lastModified": 1787403957,
-        "narHash": "sha256-LPfU0nCVjdgkqnQSSZbzMp7BAx2VfkrNCNbJWRaIMSg=",
-        "owner": "behzade",
-        "repo": "pi-guardian",
-        "rev": "e0420054a180badc6448534b9bf9226bd48abcbd",
-        "type": "github"
-      },
-      "original": {
-        "owner": "behzade",
-        "repo": "pi-guardian",
-        "type": "github"
-      }
-    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1787204541,
@@ -65,11 +47,29 @@
         "type": "github"
       }
     },
+    "piNono": {
+      "inputs": {
+        "nixpkgs": "nixpkgs"
+      },
+      "locked": {
+        "lastModified": 1787476168,
+        "narHash": "sha256-TH/6m4IEscIa9Y5o6oQO3aCbGVvOv4K0IvnVZSPhQVk=",
+        "owner": "behzade",
+        "repo": "pi-nono",
+        "rev": "f524106e4368b956f6cdf4e9132632f1f80b8b76",
+        "type": "github"
+      },
+      "original": {
+        "owner": "behzade",
+        "repo": "pi-nono",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
         "crane": "crane",
-        "guardian": "guardian",
-        "nixpkgs": "nixpkgs_2"
+        "nixpkgs": "nixpkgs_2",
+        "piNono": "piNono"
       }
     }
   },

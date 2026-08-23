@@ -68,7 +68,7 @@ test("Gruvbox dark hard uses the canonical palette and every Pi color", async ()
   assert.equal(theme.export.pageBg, canonicalPalette.bg0Hard);
 });
 
-test("dense tools do not replace the guardian bash tool", async () => {
+test("dense tools do not replace the pi-nono bash tool", async () => {
   const denseTools = await readFile(denseToolsPath, "utf8");
   assert.doesNotMatch(denseTools, /createBashTool|name:\s*["']bash["']/);
 });

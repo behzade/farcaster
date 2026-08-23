@@ -102,7 +102,7 @@ export class PiSessionFactory implements ChildSessionFactory {
 		try {
 			// SDK-created sessions are unbound until their host mode initializes the
 			// extension runner. Children are headless, but still need lifecycle events
-			// so Guardian and every other extension can initialize isolated state.
+			// so pi-nono and every other extension can initialize isolated state.
 			await session.bindExtensions({ mode: "print" });
 		} catch (error) {
 			await runtime.dispose();

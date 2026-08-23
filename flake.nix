@@ -2,14 +2,14 @@
   description = "Behzad's reviewed Pi coding-agent extensions";
 
   inputs.crane.url = "github:ipetkov/crane";
-  inputs.guardian.url = "github:behzade/pi-guardian";
+  inputs.piNono.url = "github:behzade/pi-nono";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
   outputs =
     {
       crane,
-      guardian,
       nixpkgs,
+      piNono,
       self,
     }:
     let
@@ -27,7 +27,7 @@
           pkgs = pkgsFor system;
           coreExtensions = pkgs.callPackage ./nix/pi-core-extensions.nix { };
           mcpCli = pkgs.callPackage ./nix/pi-mcp-cli.nix { };
-          sandbox = guardian.packages.${system}.default;
+          sandbox = piNono.packages.${system}.default;
           denseTools = pkgs.callPackage ./nix/pi-dense-tools.nix { };
           sessionAgents = pkgs.callPackage ./nix/pi-session-agents.nix { };
           openaiServerCompaction = pkgs.callPackage ./nix/pi-openai-server-compaction.nix { };
@@ -150,7 +150,7 @@
           coreExtensions = pkgs.callPackage ./nix/pi-core-extensions.nix { };
           denseTools = pkgs.callPackage ./nix/pi-dense-tools.nix { };
           mcpCli = pkgs.callPackage ./nix/pi-mcp-cli.nix { };
-          sandbox = guardian.packages.${system}.default;
+          sandbox = piNono.packages.${system}.default;
           openaiServerCompaction = pkgs.callPackage ./nix/pi-openai-server-compaction.nix { };
           projectTools = pkgs.callPackage ./nix/pi-project-tools.nix { };
           piTerminal = pkgs.callPackage ./nix/pi-terminal.nix { inherit mcpCli; };

@@ -14,7 +14,7 @@ separate `nix-config` repo.
 
 ## What is included
 
-- Pi Guardian's native nono sandbox with explicit project/session approval and
+- pi-nono's native sandbox with explicit project/session approval and
   no automatic command retries.
 - Persistent child Pi sessions with forked or blank context, steering, waiting,
   model selection, and cancellation.
@@ -34,7 +34,7 @@ separate `nix-config` repo.
 
 ## Repository map
 
-- [Pi Guardian](https://github.com/behzade/pi-guardian) supplies the complete
+- [pi-nono](https://github.com/behzade/pi-nono) supplies the complete
   pinned sandbox, approval policy, and background-job security boundary. This
   repository only installs and configures its packaged extension.
 - [`extensions/dense-tools`](extensions/dense-tools) renders compact tool output
@@ -102,7 +102,7 @@ target directory, cache, or dependency folder.
 Choose only the checks that cover the changed area. Start with an exact test or
 package check; do not run this whole list for every change. Nix packaging and
 lock-input changes are the exception: use `make check-flake` to build every
-flake check before publishing them. Update Guardian with `make update-guardian`;
+flake check before publishing them. Update pi-nono with `make update-pi-nono`;
 it updates the input and immediately runs that gate.
 
 ```sh
@@ -121,7 +121,7 @@ node --test \
 ```
 
 Sandbox implementation checks and security documentation live in the pinned
-[Pi Guardian](https://github.com/behzade/pi-guardian) repository. This repository
+[pi-nono](https://github.com/behzade/pi-nono) repository. This repository
 keeps only package-layout and Pi compatibility checks.
 
 My Home Manager configuration consumes the default flake package and deploys
@@ -129,10 +129,10 @@ it at `~/.pi/agent`.
 
 ## Sandbox
 
-[Pi Guardian](https://github.com/behzade/pi-guardian) owns sandbox enforcement,
+[pi-nono](https://github.com/behzade/pi-nono) owns sandbox enforcement,
 policy, approvals, fixed native executables, and background jobs. This repository
-pins and installs the finished Guardian package without rebuilding its internals.
+pins and installs the finished pi-nono package without rebuilding its internals.
 
-Machine-specific Guardian policy remains in the separate `nix-config` repository.
-See Guardian's README for configuration, supported rights, threat model, and
+Machine-specific pi-nono policy remains in the separate `nix-config` repository.
+See pi-nono's README for configuration, supported rights, threat model, and
 platform status.
