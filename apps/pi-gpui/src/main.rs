@@ -33,6 +33,7 @@ mod syntax_highlight;
 mod theme;
 mod tool_changes;
 mod transcript;
+mod transcript_list;
 mod transcript_markdown;
 mod user_invocations;
 mod workgraph_rpc;

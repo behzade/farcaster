@@ -10,7 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use gpui::{FollowMode, IntoElement as _, ListAlignment, ListState, Render, TestApp, WeakEntity};
+use gpui::{FollowMode, IntoElement as _, Render, TestApp, WeakEntity};
 use serde_json::{Value, json};
 
 mod app {
@@ -64,6 +64,8 @@ mod theme;
 mod tool_changes;
 #[path = "../src/transcript.rs"]
 mod transcript;
+#[path = "../src/transcript_list.rs"]
+mod transcript_list;
 #[path = "../src/transcript_markdown.rs"]
 mod transcript_markdown;
 
@@ -80,7 +82,7 @@ struct FrameSample {
 }
 
 struct TranscriptBenchView {
-    list: ListState,
+    list: transcript_list::TranscriptListState,
     rows: Arc<persistent_vec::PersistentVec<transcript::TranscriptRow>>,
     conversation: Arc<conversation::ConversationState>,
     markdown_cache: transcript_markdown::TranscriptMarkdownCache,
@@ -101,11 +103,7 @@ impl TranscriptBenchView {
 
         let conversation = Arc::new(conversation);
         let rows = Arc::new(transcript::project_rows(&conversation.items));
-        let list = ListState::new(
-            0,
-            ListAlignment::Top,
-            theme::THEME.layout.transcript_overdraw,
-        );
+        let list = transcript_list::TranscriptListState::new();
         list.splice_with_size_hints(
             0..0,
             rows.iter()

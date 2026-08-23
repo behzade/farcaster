@@ -4,6 +4,27 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 pub(crate) const WORKGRAPH_RPC_TITLE: &str = "\u{1f}pi-gpui-workgraph\u{1f}";
+const BACKGROUND_JOBS_STATUS_KEY: &str = "\u{1f}pi-gpui-background-jobs\u{1f}";
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum BackgroundJobState {
+    Starting,
+    Running,
+    Completed,
+    Exited,
+    Failed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BackgroundJob {
+    pub name: String,
+    pub command: String,
+    pub state: BackgroundJobState,
+    #[serde(default)]
+    pub exit_code: Option<i32>,
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub(crate) struct RpcResponse {
@@ -173,6 +194,17 @@ impl ExtensionUiRequest {
             return None;
         };
         (title == WORKGRAPH_RPC_TITLE).then_some((id, payload))
+    }
+
+    pub(crate) fn background_jobs(&self) -> Option<Vec<BackgroundJob>> {
+        let Self::SetStatus { key, text, .. } = self else {
+            return None;
+        };
+        (key == BACKGROUND_JOBS_STATUS_KEY).then(|| {
+            text.as_deref()
+                .and_then(|value| serde_json::from_str(value).ok())
+                .unwrap_or_default()
+        })
     }
 
     pub(crate) fn dialog_id(&self) -> Option<&str> {
@@ -403,6 +435,32 @@ mod tests {
             timeout: None,
         };
         assert_eq!(ordinary.workgraph_rpc(), None);
+    }
+
+    #[test]
+    fn companion_background_job_status_decodes_structured_snapshots() {
+        let request = ExtensionUiRequest::SetStatus {
+            id: "jobs".into(),
+            key: BACKGROUND_JOBS_STATUS_KEY.into(),
+            text: Some(
+                r#"[{"name":"pi-server","command":"npm run dev","state":"running"}]"#.into(),
+            ),
+        };
+        assert_eq!(
+            request.background_jobs(),
+            Some(vec![BackgroundJob {
+                name: "pi-server".into(),
+                command: "npm run dev".into(),
+                state: BackgroundJobState::Running,
+                exit_code: None,
+            }])
+        );
+        let malformed = ExtensionUiRequest::SetStatus {
+            id: "jobs".into(),
+            key: BACKGROUND_JOBS_STATUS_KEY.into(),
+            text: Some("not json".into()),
+        };
+        assert_eq!(malformed.background_jobs(), Some(Vec::new()));
     }
 
     #[test]

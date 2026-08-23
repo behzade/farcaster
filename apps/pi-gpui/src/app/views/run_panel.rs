@@ -10,8 +10,9 @@ use crate::{
     agent_activity::{AgentActivity, AgentLifecycle, AgentOutcome},
     assets::AppIcon,
     primitives::{AppIconSize, app_icon, disclosure_button, panel, section_heading},
+    protocol::{BackgroundJob, BackgroundJobState},
     sessions::{descendant_sessions, root_session_for_path},
-    theme::THEME,
+    theme::{MONO_FONT_FAMILY, THEME},
 };
 
 const MAX_VISIBLE_COMPLETED_AGENTS: usize = 5;
@@ -108,6 +109,13 @@ impl PiApp {
                     .children(active.iter().filter_map(|(activity, depth, _)| {
                         self.agent_card(activity, *depth, true, false, None, entity.clone())
                     }))
+            })
+            .when(!self.background_jobs.is_empty(), |run| {
+                run.child(section_heading(format!(
+                    "Background jobs ({})",
+                    self.background_jobs.len()
+                )))
+                .children(self.background_jobs.iter().map(background_job_row))
             })
             .child(section_heading("Changes"))
             .child(self.render_changes(entity.clone()))
@@ -490,6 +498,89 @@ fn metric_row(label: &'static str, value: String) -> impl IntoElement {
                 .text_color(THEME.colors.muted)
                 .child(value),
         )
+}
+
+fn background_job_row(job: &BackgroundJob) -> AnyElement {
+    div()
+        .id(format!("background-job-{}", job.name))
+        .px(THEME.space.sm)
+        .py(THEME.space.xs)
+        .flex()
+        .items_center()
+        .gap(THEME.space.sm)
+        .child(
+            div()
+                .size(THEME.controls.agent_marker)
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(background_job_color(job.state))
+                .child(app_icon(
+                    background_job_icon(job.state),
+                    AppIconSize::Inline,
+                )),
+        )
+        .child(
+            div()
+                .w_0()
+                .min_w_0()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(THEME.colors.text)
+                        .child(job.name.clone()),
+                )
+                .child(
+                    div()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .font_family(MONO_FONT_FAMILY)
+                        .text_size(THEME.type_scale.caption)
+                        .text_color(THEME.colors.subtle)
+                        .child(job.command.clone()),
+                ),
+        )
+        .child(
+            div()
+                .flex_none()
+                .text_size(THEME.type_scale.caption)
+                .text_color(background_job_color(job.state))
+                .child(background_job_label(job)),
+        )
+        .into_any_element()
+}
+
+fn background_job_label(job: &BackgroundJob) -> String {
+    match job.state {
+        BackgroundJobState::Starting => "Starting".into(),
+        BackgroundJobState::Running => "Running".into(),
+        BackgroundJobState::Completed => "Complete".into(),
+        BackgroundJobState::Exited => job
+            .exit_code
+            .map_or_else(|| "Exited".into(), |code| format!("Exit {code}")),
+        BackgroundJobState::Failed => "Failed".into(),
+    }
+}
+
+fn background_job_icon(state: BackgroundJobState) -> AppIcon {
+    match state {
+        BackgroundJobState::Starting | BackgroundJobState::Running => AppIcon::SpinnerGap,
+        BackgroundJobState::Completed => AppIcon::CheckCircle,
+        BackgroundJobState::Exited | BackgroundJobState::Failed => AppIcon::XCircle,
+    }
+}
+
+fn background_job_color(state: BackgroundJobState) -> gpui::Rgba {
+    match state {
+        BackgroundJobState::Starting | BackgroundJobState::Running => THEME.colors.accent,
+        BackgroundJobState::Completed => THEME.colors.success,
+        BackgroundJobState::Exited | BackgroundJobState::Failed => THEME.colors.error,
+    }
 }
 
 fn role_icon(role: &str) -> AppIcon {

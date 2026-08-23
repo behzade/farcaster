@@ -54,7 +54,7 @@ use crate::{
     },
     extension_ui::{ExtensionEffect, ExtensionUiState},
     projects,
-    protocol::{ExtensionUiRequest, Model},
+    protocol::{BackgroundJob, ExtensionUiRequest, Model},
     runtime::{RuntimeCommand, RuntimeEvent, RuntimeHandle, RuntimeSnapshot},
     sessions::{SessionRootIndex, SessionSummary, descendant_sessions, root_session_for_path},
 };
@@ -62,13 +62,8 @@ use crate::{
 const SYSTEM_NOTIFICATION_TAG: &str = "pi-agent";
 pub(crate) const COMPOSER_KEY_CONTEXT: &str = "PiComposer";
 
-fn transcript_list_state() -> ListState {
-    ListState::new(
-        0,
-        ListAlignment::Top,
-        crate::theme::THEME.layout.transcript_overdraw,
-    )
-    .with_uniform_item_height(crate::transcript::TRANSCRIPT_ROW_HEIGHT_HINT)
+fn transcript_list_state() -> crate::transcript_list::TranscriptListState {
+    crate::transcript_list::TranscriptListState::new()
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -167,6 +162,7 @@ pub(crate) struct PiApp {
     all_sessions: Vec<SessionSummary>,
     agent_activities: HashMap<String, AgentActivity>,
     agent_row_focus: HashMap<String, FocusHandle>,
+    background_jobs: Vec<BackgroundJob>,
     changes: changes::ChangesState,
     session_order: Vec<i64>,
     session_drop_target: Option<(i64, crate::primitives::ReorderPosition)>,
@@ -226,7 +222,7 @@ pub(crate) struct PiApp {
     sheet_focus: FocusHandle,
     sheet_return_focus: Option<FocusHandle>,
     pending_sheet_setup: bool,
-    transcript_list: ListState,
+    transcript_list: crate::transcript_list::TranscriptListState,
     transcript_rows: Arc<crate::persistent_vec::PersistentVec<crate::transcript::TranscriptRow>>,
     transcript_following: bool,
     transcript_unseen: usize,
@@ -478,7 +474,6 @@ impl PiApp {
             WorkGraphSidebarView::new(app.clone(), crate::state::state_path(), project.clone(), cx)
         });
         transcript_list.set_scroll_handler(move |event, _, cx| {
-            crate::performance::record_scroll_event(event.touch_phase);
             let following = event.is_following_tail;
             let needs_update = app.upgrade().is_some_and(|app| {
                 let app = app.read(cx);
@@ -518,6 +513,7 @@ impl PiApp {
             all_sessions: Vec::new(),
             agent_activities: HashMap::new(),
             agent_row_focus: HashMap::new(),
+            background_jobs: Vec::new(),
             changes: changes::ChangesState::new(cx),
             session_order,
             session_drop_target: None,
@@ -952,7 +948,12 @@ impl PiApp {
                     request,
                     system_notification_target,
                 } if generation == self.runtime_generation => {
-                    if let Some((title, body)) = request.gpui_system_notification() {
+                    if let Some(jobs) = request.background_jobs() {
+                        if self.background_jobs != jobs {
+                            self.background_jobs = jobs;
+                            run_dirty = true;
+                        }
+                    } else if let Some((title, body)) = request.gpui_system_notification() {
                         self.system_notification_target = system_notification_target;
                         cx.show_system_notification(SystemNotification {
                             tag: SYSTEM_NOTIFICATION_TAG.into(),
@@ -1067,6 +1068,7 @@ impl PiApp {
         self.runtime_generation = generation;
         self.extension.reset();
         self.parked_extension = None;
+        self.background_jobs.clear();
         self.pending_extension_picker = None;
         self.restored_dialog_id = None;
         self.dismissed_restored_dialog_id = None;

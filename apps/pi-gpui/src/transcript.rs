@@ -9,9 +9,8 @@ use std::{
 
 use gpui::{
     AnyElement, Entity, FontWeight, HighlightStyle, InteractiveElement as _, IntoElement as _,
-    ListSizingBehavior, ListState, Overflow, ParentElement as _, Pixels,
-    StatefulInteractiveElement as _, StyleRefinement, Styled as _, WeakEntity, div, list,
-    prelude::FluentBuilder as _, px, rems,
+    Overflow, ParentElement as _, Pixels, StatefulInteractiveElement as _, StyleRefinement,
+    Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px, rems,
 };
 use gpui_component::{
     highlighter::HighlightTheme,
@@ -25,6 +24,7 @@ use crate::{
     primitives::{ButtonTone, button, disclosure_button, disclosure_indicator},
     theme::{MONO_FONT_FAMILY, THEME},
     tool_changes::EmbeddedDiffMode,
+    transcript_list::{TranscriptListState, transcript_list},
     transcript_markdown::{MarkdownStateKey, TranscriptMarkdownCache},
 };
 
@@ -258,7 +258,7 @@ impl TranscriptRowUpdate {
 
     pub(crate) fn apply(
         self,
-        list: &ListState,
+        list: &TranscriptListState,
         current: &mut Arc<PersistentVec<TranscriptRow>>,
         items: &PersistentVec<Arc<TranscriptItem>>,
     ) -> bool {
@@ -324,7 +324,7 @@ pub(crate) fn update_rows_incremental(
 }
 
 fn sync_transcript_list(
-    list: &ListState,
+    list: &TranscriptListState,
     current: &mut Arc<PersistentVec<TranscriptRow>>,
     items: &PersistentVec<Arc<TranscriptItem>>,
     next: PersistentVec<TranscriptRow>,
@@ -760,7 +760,7 @@ fn message_follows_tool(
 }
 
 pub(crate) fn render(
-    list_state: &ListState,
+    list_state: &TranscriptListState,
     viewport: TranscriptViewport,
     rows: std::sync::Arc<PersistentVec<TranscriptRow>>,
     conversation: Arc<crate::conversation::ConversationState>,
@@ -774,7 +774,7 @@ pub(crate) fn render(
 
     let jump = entity.clone();
     let row_entity = entity;
-    let view = list(list_state.clone(), move |index, _, cx| {
+    let view = transcript_list(list_state.clone(), move |index, _, cx| {
         let _timing = crate::performance::OperationTiming::new(
             crate::performance::OperationKind::TranscriptRow,
             1,
@@ -798,10 +798,7 @@ pub(crate) fn render(
                 cx,
             ))
             .into_any_element()
-    })
-    .with_sizing_behavior(ListSizingBehavior::Auto)
-    .w_full()
-    .flex_grow_1();
+    });
 
     div()
         .size_full()
