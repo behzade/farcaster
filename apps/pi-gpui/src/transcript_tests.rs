@@ -296,7 +296,7 @@ fn changed_item_revision_invalidates_an_equal_length_row() {
 }
 
 #[test]
-fn reconstructed_equal_history_reuses_existing_rows() {
+fn reconstructed_equal_history_skips_the_row_update() {
     let previous_items = vec![
         item(TranscriptKind::User, "", "question"),
         item(TranscriptKind::Assistant, "", "answer"),
@@ -307,9 +307,27 @@ fn reconstructed_equal_history_reuses_existing_rows() {
         .map(|item| Arc::new(item.as_ref().clone()))
         .collect::<Vec<_>>();
 
-    let rows = update_rows_from(&previous_rows, &previous_items, &reconstructed, Some(0));
+    let update = update_rows_incremental(&previous_rows, &previous_items, &reconstructed, Some(0));
 
-    assert_eq!(rows, previous_rows);
+    assert!(update.rows.is_none());
+}
+
+#[test]
+fn row_update_identifies_the_unchanged_prefix() {
+    let previous_items = vec![
+        item(TranscriptKind::User, "", "question"),
+        item(TranscriptKind::Assistant, "", "first answer"),
+        item(TranscriptKind::Assistant, "", "old tail"),
+    ];
+    let previous_rows = project_rows(&previous_items);
+    let changed = vec![
+        previous_items[0].clone(),
+        previous_items[1].clone(),
+        item(TranscriptKind::Assistant, "", "new tail"),
+    ];
+    let update = update_rows_incremental(&previous_rows, &previous_items, &changed, Some(2));
+
+    assert_eq!(update.unchanged_prefix_rows, 2);
 }
 
 #[test]

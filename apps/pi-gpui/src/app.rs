@@ -31,7 +31,6 @@ use workgraph::{adapter::WorkGraphBoardView, sidebar::WorkGraphSidebarView};
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
-    ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
     time::Instant,
@@ -45,6 +44,8 @@ use gpui::{
 use gpui_component::input::{InputEvent, InputState, TextareaState};
 use gpui_fps::FpsMonitor;
 
+#[cfg(test)]
+use crate::transcript::transcript_splice;
 use crate::{
     agent_activity::AgentActivity,
     composer_sessions::{
@@ -705,15 +706,16 @@ impl PiApp {
                         self.reset_session_ui(generation, transcript_preselected);
                         root_dirty = true;
                     }
-                    let next_rows = if transcript_preselected {
+                    let row_update = if transcript_preselected {
                         self.project_transcript_rows(&snapshot)
                     } else if session_changed {
-                        crate::transcript::project_rows(&snapshot.conversation.items)
+                        crate::transcript::TranscriptRowUpdate::replace(
+                            crate::transcript::project_rows(&snapshot.conversation.items),
+                        )
                     } else {
                         self.project_transcript_rows(&snapshot)
                     };
-                    transcript_dirty |= next_rows.as_slice() != self.transcript_rows.as_slice();
-                    let count = next_rows.len();
+                    let count = row_update.row_count(self.transcript_rows.len());
                     if count > self.last_transcript_count && !self.transcript_following {
                         self.transcript_unseen = self
                             .transcript_unseen
@@ -732,7 +734,7 @@ impl PiApp {
                         self.dialog_return_focus = None;
                     }
                     self.snapshot = snapshot;
-                    self.sync_transcript_rows(next_rows);
+                    transcript_dirty |= self.apply_transcript_rows(row_update);
                     self.last_transcript_count = count;
                     self.sync_restored_dialog();
                     self.sync_composer_history();
@@ -1839,23 +1841,6 @@ fn input_snapshot(input: &TextareaState) -> ComposerSnapshot {
         input.cursor(),
         input.selected_range(),
     )
-}
-
-fn transcript_splice<T: PartialEq>(current: &[T], next: &[T]) -> Option<(Range<usize>, usize)> {
-    let prefix = current
-        .iter()
-        .zip(next)
-        .take_while(|(left, right)| left == right)
-        .count();
-    let suffix = current[prefix..]
-        .iter()
-        .rev()
-        .zip(next[prefix..].iter().rev())
-        .take_while(|(left, right)| left == right)
-        .count();
-    let old_end = current.len().saturating_sub(suffix);
-    let new_count = next.len().saturating_sub(prefix + suffix);
-    (prefix != old_end || new_count != 0).then_some((prefix..old_end, new_count))
 }
 
 fn park_extension_surface(visible: &mut ExtensionUiState, parked: &mut Option<ExtensionUiState>) {

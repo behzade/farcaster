@@ -3,15 +3,15 @@
 use gpui::{Context, FollowMode};
 
 use super::PiApp;
-use crate::{conversation::TranscriptKind, transcript::TranscriptRow};
+use crate::conversation::TranscriptKind;
 
 impl PiApp {
     pub(super) fn project_transcript_rows(
         &self,
         snapshot: &crate::runtime::RuntimeSnapshot,
-    ) -> Vec<TranscriptRow> {
+    ) -> crate::transcript::TranscriptRowUpdate {
         let _timing = crate::performance::Timing::new("transcript.project_rows");
-        crate::transcript::update_rows_from(
+        crate::transcript::update_rows_incremental(
             &self.transcript_rows,
             &self.snapshot.conversation.items,
             &snapshot.conversation.items,
@@ -74,13 +74,15 @@ impl PiApp {
         self.composer_history_marker = Some((target, user_count, last_user.to_owned()));
     }
 
-    pub(super) fn sync_transcript_rows(&mut self, next: Vec<TranscriptRow>) {
-        crate::transcript::sync_transcript_list(
+    pub(super) fn apply_transcript_rows(
+        &mut self,
+        update: crate::transcript::TranscriptRowUpdate,
+    ) -> bool {
+        update.apply(
             &self.transcript_list,
             &mut self.transcript_rows,
             &self.snapshot.conversation.items,
-            next,
-        );
+        )
     }
 
     pub(super) fn mark_transcript_changed(&mut self, index: usize, _was_empty: bool) {
@@ -90,6 +92,7 @@ impl PiApp {
             &self.snapshot.conversation.items,
             Some(index),
         );
-        self.sync_transcript_rows(rows);
+        let _changed =
+            self.apply_transcript_rows(crate::transcript::TranscriptRowUpdate::replace(rows));
     }
 }

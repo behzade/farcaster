@@ -227,6 +227,48 @@ pub(crate) fn update_rows_from(
     items: &[Arc<TranscriptItem>],
     changed_from: Option<usize>,
 ) -> Vec<TranscriptRow> {
+    update_rows_incremental(previous_rows, previous_items, items, changed_from)
+        .rows
+        .unwrap_or_else(|| previous_rows.to_vec())
+}
+
+pub(crate) struct TranscriptRowUpdate {
+    rows: Option<Vec<TranscriptRow>>,
+    unchanged_prefix_rows: usize,
+}
+
+impl TranscriptRowUpdate {
+    pub(crate) fn replace(rows: Vec<TranscriptRow>) -> Self {
+        Self {
+            rows: Some(rows),
+            unchanged_prefix_rows: 0,
+        }
+    }
+
+    pub(crate) fn row_count(&self, current: usize) -> usize {
+        self.rows.as_ref().map_or(current, Vec::len)
+    }
+
+    pub(crate) fn apply(
+        self,
+        list: &ListState,
+        current: &mut Arc<Vec<TranscriptRow>>,
+        items: &[Arc<TranscriptItem>],
+    ) -> bool {
+        let Some(rows) = self.rows else {
+            return false;
+        };
+        sync_transcript_list(list, current, items, rows, self.unchanged_prefix_rows);
+        true
+    }
+}
+
+pub(crate) fn update_rows_incremental(
+    previous_rows: &[TranscriptRow],
+    previous_items: &[Arc<TranscriptItem>],
+    items: &[Arc<TranscriptItem>],
+    changed_from: Option<usize>,
+) -> TranscriptRowUpdate {
     let unchanged_hint = changed_from
         .unwrap_or_default()
         .min(previous_items.len())
@@ -243,13 +285,13 @@ pub(crate) fn update_rows_from(
         && unchanged_items == items.len()
         && (items.is_empty() || !previous_rows.is_empty())
     {
-        return previous_rows.to_vec();
+        return TranscriptRowUpdate {
+            rows: None,
+            unchanged_prefix_rows: previous_rows.len(),
+        };
     }
 
-    let mut keep_rows = previous_rows
-        .iter()
-        .take_while(|row| row.item_end() <= unchanged_items)
-        .count();
+    let mut keep_rows = previous_rows.partition_point(|row| row.item_end() <= unchanged_items);
     let mut project_from = previous_rows
         .get(keep_rows)
         .map_or(unchanged_items, TranscriptRow::item_start);
@@ -267,36 +309,44 @@ pub(crate) fn update_rows_from(
 
     let mut rows = previous_rows[..keep_rows].to_vec();
     rows.extend(project_rows_from(items, project_from));
-    rows
+    TranscriptRowUpdate {
+        rows: Some(rows),
+        unchanged_prefix_rows: keep_rows,
+    }
 }
 
-pub(crate) fn sync_transcript_list(
+fn sync_transcript_list(
     list: &ListState,
     current: &mut Arc<Vec<TranscriptRow>>,
     items: &[Arc<TranscriptItem>],
     next: Vec<TranscriptRow>,
+    unchanged_prefix_rows: usize,
 ) {
     let _timing = crate::performance::Timing::new("transcript.sync_rows");
+    let unchanged_prefix_rows = unchanged_prefix_rows.min(current.len()).min(next.len());
     let positions_unchanged = current.len() == next.len()
-        && current
+        && current[unchanged_prefix_rows..]
             .iter()
-            .zip(&next)
+            .zip(&next[unchanged_prefix_rows..])
             .all(|(current, next)| current.same_position(next));
     if positions_unchanged {
-        if let Some(first) = current
+        if let Some(first) = current[unchanged_prefix_rows..]
             .iter()
-            .zip(&next)
+            .zip(&next[unchanged_prefix_rows..])
             .position(|(current, next)| current != next)
+            .map(|index| unchanged_prefix_rows + index)
         {
-            let last = current
+            let last = current[first..]
                 .iter()
-                .zip(&next)
+                .zip(&next[first..])
                 .rposition(|(current, next)| current != next)
-                .unwrap_or(first);
+                .map_or(first, |index| first + index);
             crate::performance::count_remeasured_rows(last + 1 - first);
             list.remeasure_items(first..last + 1);
         }
-    } else if let Some((old_range, new_count)) = transcript_splice(current, &next) {
+    } else if let Some((old_range, new_count)) =
+        transcript_splice_from(current, &next, unchanged_prefix_rows)
+    {
         let anchor = (!list.is_following_tail()).then(|| {
             let offset = list.logical_scroll_top();
             current
@@ -323,15 +373,26 @@ pub(crate) fn sync_transcript_list(
     *current = Arc::new(next);
 }
 
+#[cfg(test)]
 pub(crate) fn transcript_splice<T: PartialEq>(
     current: &[T],
     next: &[T],
 ) -> Option<(std::ops::Range<usize>, usize)> {
-    let prefix = current
-        .iter()
-        .zip(next)
-        .take_while(|(left, right)| left == right)
-        .count();
+    transcript_splice_from(current, next, 0)
+}
+
+fn transcript_splice_from<T: PartialEq>(
+    current: &[T],
+    next: &[T],
+    unchanged_prefix: usize,
+) -> Option<(std::ops::Range<usize>, usize)> {
+    let unchanged_prefix = unchanged_prefix.min(current.len()).min(next.len());
+    let prefix = unchanged_prefix
+        + current[unchanged_prefix..]
+            .iter()
+            .zip(&next[unchanged_prefix..])
+            .take_while(|(left, right)| left == right)
+            .count();
     let suffix = current[prefix..]
         .iter()
         .rev()

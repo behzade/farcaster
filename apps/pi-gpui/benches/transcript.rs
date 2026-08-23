@@ -132,18 +132,13 @@ impl TranscriptBenchView {
         let reduce = reduce_started.elapsed();
 
         let projection_started = Instant::now();
-        let next = transcript::update_rows_from(
+        let update = transcript::update_rows_incremental(
             &self.rows,
             &previous.items,
             &self.conversation.items,
             changed_from,
         );
-        transcript::sync_transcript_list(
-            &self.list,
-            &mut self.rows,
-            &self.conversation.items,
-            next,
-        );
+        let _changed = update.apply(&self.list, &mut self.rows, &self.conversation.items);
         (reduce, projection_started.elapsed())
     }
 }
