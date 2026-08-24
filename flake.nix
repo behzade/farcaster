@@ -67,6 +67,7 @@
           core-extensions = coreExtensions;
           inherit pi;
           pi-terminal = piTerminal;
+          pi-gpui-deps = piGpui.cargoArtifacts;
           mcp-cli = mcpCli;
           dense-tools = denseTools;
           openai-server-compaction = openaiServerCompaction;

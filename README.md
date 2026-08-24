@@ -99,6 +99,17 @@ The root `.envrc` enters the default Rust/GPUI development shell and sets the
 shared Cargo target directory. Do not create another development shell, Cargo
 target directory, cache, or dependency folder.
 
+Crane's GPUI dependency artifact is build-only, so garbage collection can remove
+it even while the installed application remains rooted. Keep only its current
+version across garbage collection with:
+
+```sh
+make root-gpui-deps
+```
+
+This maintains the ignored `result-pi-gpui-deps` GC root. Re-run it after GPUI
+dependency changes; replacing the link leaves older artifacts collectible.
+
 Choose only the checks that cover the changed area. Start with an exact test or
 package check; do not run this whole list for every change. Nix packaging and
 lock-input changes are the exception: use `make check-flake` to build every

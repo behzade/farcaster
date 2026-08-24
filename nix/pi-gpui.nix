@@ -150,6 +150,7 @@ craneLib.buildPackage (
   commonArgs
   // {
     inherit cargoArtifacts;
+    passthru = { inherit cargoArtifacts; };
 
     postInstall = ''
       ln -s "$out/bin/pi-gpui" "$out/bin/pi-gui"
