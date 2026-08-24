@@ -2510,6 +2510,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "gpui-libghostty"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ec62e31308a03a6a04b61494084732f387cf51df745a676183e33f7b8608d2e"
+dependencies = [
+ "gpui",
+ "raw-window-handle",
+]
+
+[[package]]
+name = "gpui-neovim"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81e574776190c70ff8c31f1b10e18d7919fcea056c3e044a480ce652448118ed"
+dependencies = [
+ "gpui",
+ "gpui-libghostty",
+ "wait-timeout",
+]
+
+[[package]]
 name = "gpui_linux"
 version = "0.1.0"
 dependencies = [
@@ -4782,10 +4803,9 @@ dependencies = [
  "gpui-component",
  "gpui-component-assets",
  "gpui-fps",
+ "gpui-neovim",
  "gpui_platform",
  "notify",
- "pi-libghostty",
- "raw-window-handle",
  "ropey",
  "rusqlite",
  "serde",
@@ -4793,14 +4813,9 @@ dependencies = [
  "sum_tree",
  "tempfile",
  "thiserror 2.0.19",
- "wait-timeout",
  "workgraph",
  "zlog",
 ]
-
-[[package]]
-name = "pi-libghostty"
-version = "0.1.0"
 
 [[package]]
 name = "pico-args"

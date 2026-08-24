@@ -3,9 +3,10 @@
 use std::path::{Path, PathBuf};
 
 use gpui::{AppContext as _, Context, Window};
+use gpui_neovim::{NvimEditor, NvimOptions};
 
 use super::{AppSurface, PiApp};
-use crate::{editor_terminal::EditorTerminal, sessions::root_session_for_path};
+use crate::sessions::root_session_for_path;
 
 impl PiApp {
     pub(crate) fn open_file_editor(
@@ -27,11 +28,11 @@ impl PiApp {
 
         let can_reuse = self.editor.as_ref().is_some_and(|editor| {
             let editor = editor.read(cx);
-            editor.project() == project && editor.is_alive()
+            editor.project() == project && editor.is_alive(cx)
         });
         if can_reuse {
             let editor = self.editor.as_ref().expect("editor checked above").clone();
-            let opened = editor.update(cx, |editor, _| editor.open_file(path));
+            let opened = editor.update(cx, |editor, cx| editor.open_file(path, cx));
             match opened {
                 Ok(()) => {
                     self.editor_error = None;
@@ -47,7 +48,11 @@ impl PiApp {
         if self.editor_return_focus.is_none() {
             self.editor_return_focus = window.focused(cx);
         }
-        match EditorTerminal::spawn(project, path, window, cx) {
+        let mut options = NvimOptions::new(project, path);
+        if let Some(executable) = std::env::var_os("PI_GUI_NVIM") {
+            options.executable = executable.into();
+        }
+        match NvimEditor::spawn(options, window, cx) {
             Ok(editor) => {
                 self.editor = Some(cx.new(|_| editor));
                 self.editor_error = None;

@@ -185,7 +185,7 @@ impl PiApp {
     pub(super) fn show_chat_surface(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let changed = self.surface != AppSurface::Chat;
         if let Some(editor) = self.editor.as_ref() {
-            editor.update(cx, |editor, _| editor.set_visible(false));
+            editor.update(cx, |editor, cx| editor.set_visible(false, cx));
         }
         self.surface = AppSurface::Chat;
         if changed {
@@ -198,7 +198,7 @@ impl PiApp {
 
     pub(super) fn open_workgraph_surface(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(editor) = self.editor.as_ref() {
-            editor.update(cx, |editor, _| editor.set_visible(false));
+            editor.update(cx, |editor, cx| editor.set_visible(false, cx));
         }
         if self.run_sheet {
             self.close_sheet(window, cx);
@@ -286,7 +286,7 @@ impl PiApp {
 
     fn open_sheet(&mut self, sheet: AppSheet, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(editor) = self.editor.as_ref() {
-            editor.update(cx, |editor, _| editor.set_visible(false));
+            editor.update(cx, |editor, cx| editor.set_visible(false, cx));
         }
         if self.picker.take().is_some() {
             self.picker_return_focus = None;
@@ -326,7 +326,7 @@ impl PiApp {
         if self.surface == AppSurface::Editor
             && let Some(editor) = self.editor.as_ref()
         {
-            editor.update(cx, |editor, _| editor.set_visible(true));
+            editor.update(cx, |editor, cx| editor.set_visible(true, cx));
         }
         cx.notify();
     }

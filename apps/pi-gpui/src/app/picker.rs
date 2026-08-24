@@ -104,7 +104,7 @@ impl PiApp {
         cx: &mut Context<Self>,
     ) {
         if let Some(editor) = self.editor.as_ref() {
-            editor.update(cx, |editor, _| editor.set_visible(false));
+            editor.update(cx, |editor, cx| editor.set_visible(false, cx));
         }
         if self.picker.is_none() {
             let sheet_open = self.sessions_sheet || self.run_sheet || self.keybindings_help;
@@ -190,7 +190,7 @@ impl PiApp {
         if self.surface == super::AppSurface::Editor
             && let Some(editor) = self.editor.as_ref()
         {
-            editor.update(cx, |editor, _| editor.set_visible(true));
+            editor.update(cx, |editor, cx| editor.set_visible(true, cx));
         }
         cx.notify();
     }

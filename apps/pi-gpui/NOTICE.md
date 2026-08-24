@@ -55,14 +55,10 @@ GPL-3.0-or-later licensing. Exact upstream license texts and detailed source
 provenance are included in that directory as `LICENSE-APACHE`, `LICENSE-GPL`,
 and `README.md`.
 
-The embedded terminal renderer is built from Ghostty commit
-`9f0e1719dc918368367d368bfe300f59bb68b5a4`, vendored under
-`third_party/libghostty-9f0e1719`. Ghostty is distributed under MIT; its exact
-license and source provenance are retained in that directory. Pi uses a narrow
-Objective-C/Rust adapter around Ghostty's internal macOS surface API and retains
-Ghostty's native Metal renderer rather than adapting its VT state to GPUI.
-Vendored Noto emoji fonts retain their upstream license texts under
-`src/font/res`.
+The `gpui-neovim` and `gpui-libghostty` dependencies use crates.io release
+`0.1.0` from <https://github.com/behzade/gpui-libghostty>. They and their pinned
+Ghostty source are distributed under MIT; exact third-party licenses and source
+provenance are retained in that repository.
 
 The embedded SVG icon set identifies itself as Lucide and includes work derived
 from Feather. Its ISC and Feather MIT terms and notices are included at

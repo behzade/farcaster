@@ -64,8 +64,7 @@ let
         relative = lib.removePrefix "${toString sourceRoot}/" (toString path);
       in
       relative == "third_party"
-      || lib.hasPrefix "third_party/zed-gpui-cc053a4" relative
-      || lib.hasPrefix "third_party/libghostty-9f0e1719" relative;
+      || lib.hasPrefix "third_party/zed-gpui-cc053a4" relative;
   };
   dummySrc = craneLib.mkDummySrc {
     inherit src;
@@ -80,6 +79,8 @@ let
     inherit pname src version;
     cargoLock = ../apps/pi-gpui/Cargo.lock;
     outputHashes = {
+      "git+https://github.com/proptest-rs/proptest?rev=3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b#3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b" =
+        "sha256-p5NTcHhruI8QQvANACg8AMRVNmuvGxs2NLit+/8PaWo=";
       "git+https://github.com/longbridge/gpui-component?rev=bd833291311289f3468479d31b629d3de279d3d4#bd833291311289f3468479d31b629d3de279d3d4" =
         "sha256-5ZUdqetzhirAFdIr4oZLzovndZNDcbNc4arYAHZ0kRM=";
       "git+https://github.com/zed-industries/font-kit?rev=94b0f28166665e8fd2f53ff6d268a14955c82269#94b0f28166665e8fd2f53ff6d268a14955c82269" =

@@ -14,17 +14,15 @@ gpui-base = { git = "https://github.com/longbridge/gpui-component", rev = "bd833
 gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "bd833291311289f3468479d31b629d3de279d3d4", features = ["tree-sitter-languages"] }
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "bd833291311289f3468479d31b629d3de279d3d4" }
 gpui-fps = { git = "https://github.com/longbridge/gpui-component", rev = "bd833291311289f3468479d31b629d3de279d3d4" }
-pi-libghostty = { path = "libghostty" }
+gpui-neovim = "0.1.0"
 gpui_platform = { path = "third_party/zed-gpui-cc053a4/crates/gpui_platform", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
 notify = "7.0.0"
-raw-window-handle = "0.6"
 rusqlite = { version = "0.37.0", features = ["bundled"] }
 ropey = "=2.0.0-beta.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sum_tree = { path = "third_party/zed-gpui-cc053a4/crates/sum_tree" }
 thiserror = "2.0.19"
-wait-timeout = "0.2.1"
 workgraph = { path = "workgraph" }
 zlog = { path = "third_party/zed-gpui-cc053a4/crates/zlog" }
 
@@ -43,6 +41,9 @@ harness = false
 [[bench]]
 name = "tool_preview_highlight"
 harness = false
+
+[patch.crates-io]
+gpui = { path = "third_party/zed-gpui-cc053a4/crates/gpui" }
 
 [patch."https://github.com/zed-industries/zed"]
 collections = { path = "third_party/zed-gpui-cc053a4/crates/collections" }
