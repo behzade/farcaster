@@ -33,10 +33,9 @@ mod app {
         ) {
         }
 
-        pub(crate) fn open_tool_diff(
+        pub(crate) fn open_file_editor(
             &mut self,
-            _: crate::conversation::ToolPresentation,
-            _: Option<gpui::FocusHandle>,
+            _: std::path::PathBuf,
             _: &mut gpui::Window,
             _: &mut gpui::Context<Self>,
         ) {
@@ -48,16 +47,12 @@ mod app {
 mod assets;
 #[path = "../src/conversation.rs"]
 mod conversation;
-#[path = "../src/diff_element.rs"]
-mod diff_element;
 #[path = "../src/performance.rs"]
 mod performance;
 #[path = "../src/persistent_vec.rs"]
 mod persistent_vec;
 #[path = "../src/primitives/mod.rs"]
 mod primitives;
-#[path = "../src/syntax_highlight.rs"]
-mod syntax_highlight;
 #[path = "../src/theme.rs"]
 mod theme;
 #[path = "../src/tool_changes.rs"]
@@ -154,7 +149,6 @@ impl Render for TranscriptBenchView {
                 following: true,
                 unseen: 0,
                 tail_reserve: transcript::tail_reserve(window.viewport_size().height),
-                diff_mode: tool_changes::EmbeddedDiffMode::Unified,
             },
             self.rows.clone(),
             self.conversation.clone(),

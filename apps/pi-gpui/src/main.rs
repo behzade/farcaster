@@ -5,7 +5,6 @@ mod composer_sessions;
 #[cfg(test)]
 mod composer_sessions_test;
 mod conversation;
-mod diff_element;
 mod extension_ui;
 mod framing;
 mod keybindings;
@@ -31,7 +30,6 @@ mod shell_environment;
 mod state;
 #[cfg(test)]
 mod state_test;
-mod syntax_highlight;
 mod theme;
 mod tool_changes;
 mod transcript;

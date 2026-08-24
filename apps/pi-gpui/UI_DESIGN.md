@@ -33,7 +33,7 @@ Change:
 - compress Usage into a glanceable context summary;
 - make active subagents operationally useful;
 - separate completed subagents similarly to Archived sessions;
-- add working-copy changed files and full-file diff viewing;
+- add working-copy changed files that open in embedded Neovim;
 - use a clear sans-serif for interface and prose, reserving monospace for technical content;
 - rebuild the composer as a three-band terminal console with session context, a generous input surface, and labeled controls;
 - correct the composer's cursor-reveal behavior for long input.
@@ -232,7 +232,7 @@ The first event begins after normal timeline padding at the top of the window.
 
 ### 5.2 Timeline structure
 
-Keep one chronological stream. Do not split conversation, tools, or diffs into separate views.
+Keep one chronological stream. Do not split conversation or tools into separate views.
 
 Use spacing, typography, surfaces, and expansion state to communicate importance. A faint timeline guide or aligned event markers may reinforce chronology, but should not become decoration.
 
@@ -246,10 +246,7 @@ YOU · 10:42
 PI · 10:43
 No. The package now resolves the real local path sources directly…
 
-DIFF · nix/pi-gpui.nix                                      +8 −4
-┌──────────────────────────────────────────────────────────────┐
-│ …code diff…                                                 │
-└──────────────────────────────────────────────────────────────┘
+Edit · nix/pi-gpui.nix                                      +8 −4
 
 ▸ Bash · focused regression test                         ✓ 14s
 ▸ Read · nix/pi-gpui.nix                                  ✓
@@ -284,28 +281,9 @@ Pi's actual response is the second-highest event.
 
 Streaming should not cause surrounding events to jump horizontally or shift their alignment.
 
-### 5.5 Diffs
+### 5.5 File changes
 
-Diffs are the third-highest event and may use the full available center width.
-
-```text
-┌ nix/pi-gpui.nix ───────────────────── +8  −4 ── Split ▾  Expand ┐
-│ 194 │ …                              │ 194 │ …                  │
-│ 198 │ session_badge(                 │ 198 │ item.kind,         │
-│                  6 unchanged lines                              │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-Diff rules:
-
-- Code, line numbers, and diff content remain monospace.
-- Use a sticky file header with path, additions, deletions, view mode, and Expand.
-- Continue supporting split diff where space allows.
-- Default to unified mode if the center becomes too narrow for readable split columns.
-- Reduce unchanged context and provide an obvious expansion row.
-- Preserve code alignment; do not wrap diff lines to fit.
-- Diff background hues use the current theme but should not overpower the code.
-- Embedded diffs may have a practical height limit; Expand opens the complete diff view.
+Edit and write tools show a compact path and change-count row. They do not render diffs inline. The file action opens the target in embedded Neovim.
 
 ### 5.6 Tool calls
 
@@ -475,29 +453,9 @@ Rules:
 - Show five file rows initially. Each expansion appends at most twenty more below the existing rows.
 - Use monospace for paths and counts.
 - Truncate from the middle when a path is too long so the filename remains visible.
-- A deleted file, rename, binary file, or unavailable diff receives a clear textual state.
-- Clicking a file opens its complete diff in a modal.
+- A deleted file, rename, or binary file receives a clear textual state.
+- Clicking anywhere on a file row opens it in embedded Neovim; there is no separate pencil action.
 - Show session-only additions and deletions in the composer immediately before cost.
-
-### 6.6 Full-file diff modal
-
-```text
-┌──────────────────────────────────────────────────────────────────────────┐
-│ apps/pi-gpui/src/shell.rs                     +21 −8   Split ▾   Open  × │
-├──────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│                     complete scrollable file diff                        │
-│                                                                          │
-└──────────────────────────────────────────────────────────────────────────┘
-```
-
-- Modal uses most of the window while leaving enough surrounding context to read as an overlay.
-- Show full path, additions/deletions, diff mode, Open file, and Close.
-- Display the entire file diff without transcript truncation.
-- Support split and unified modes.
-- Preserve vertical and horizontal scroll position when switching modes where possible.
-- `Esc` closes the modal and returns focus to the exact file row that opened it.
-- Modal must have keyboard focus containment and a visible close action.
 
 ## 7. Composer
 
@@ -673,7 +631,7 @@ Keep prominent:
 - Introduce sans-serif UI/prose typography.
 - Strengthen user-message treatment.
 - Improve Pi response spacing and labels.
-- Standardize diff headers.
+- Keep file-change actions compact and open them in embedded Neovim.
 - Compact and collapse tool rows.
 
 ### Phase 3 — right sidebar
@@ -682,14 +640,14 @@ Keep prominent:
 - Build compact circular Context summary.
 - Expand active subagent information.
 - Add completed-subagents section.
-- Add the flat working-copy list and full-file diff modal.
+- Add the flat working-copy list with rows that open in embedded Neovim.
 
 ### Phase 4 — composer behavior and polish
 
 - Build the three-band composer and widen the empty-state frame.
 - Correct caret reveal and scrolling for long input.
-- Verify keyboard focus restoration from the diff modal.
-- Test long paths, many agents, many projects, and large diffs.
+- Verify focus restoration from embedded Neovim.
+- Test long paths, many agents, many projects, and many changed files.
 - Tune contrast and spacing without changing the theme.
 
 ## 13. Acceptance criteria
@@ -701,16 +659,16 @@ The redesign is aligned when:
 3. The left header clearly presents Search/New session and Project/Add project as two action rows.
 4. Consecutive sessions do not repeat the same project name and folder icon.
 5. Existing Done, Working, and Needs input states remain visible.
-6. The center hierarchy reads as user message, Pi response, diff, then tool activity.
+6. The center hierarchy reads as user message, Pi response, then tool activity.
 7. Tool calls remain chronological but do not compete visually with user-facing messages.
 8. The right sidebar contains no redundant Status section.
 9. Context usage is understandable at a glance and detailed usage remains available on demand.
 10. Every active subagent shows role, activity, current/recent tool, tool count, token usage, and elapsed time.
 11. Completed subagents are separated and collapsed similarly to Archived sessions.
 12. The working-copy section has a flat JJ/Git toggle, aggregate totals, dirty identity, and paged file rows; session totals appear before composer cost.
-13. Clicking a changed file opens its complete diff in a keyboard-accessible modal.
+13. Clicking a changed file row opens it in embedded Neovim without a separate pencil button.
 14. The composer has a status strip, dominant input body, and labeled control footer without losing existing behavior.
 15. Long composer input keeps the caret visible without per-keystroke scroll creep.
-16. Nontechnical interface and prose use sans-serif; code, diffs, commands, and raw tool output use monospace.
+16. Nontechnical interface and prose use sans-serif; code, commands, and raw tool output use monospace.
 17. The existing theme remains recognizable and materially unchanged.
 18. Sidebars remain proportional on very wide windows because they stop growing at defined maximums.

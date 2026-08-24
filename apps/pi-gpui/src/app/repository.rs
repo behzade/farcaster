@@ -5,7 +5,7 @@ mod watching;
 
 use std::{collections::BTreeMap, path::PathBuf};
 
-use gpui::{AppContext as _, Context, FocusHandle, Window};
+use gpui::{AppContext as _, Context, FocusHandle};
 
 use super::PiApp;
 use crate::{
@@ -163,33 +163,6 @@ impl RepositoryState {
 }
 
 impl PiApp {
-    pub(super) fn open_current_repository_diff(
-        &mut self,
-        key: DiffTargetKey,
-        opener: FocusHandle,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(backend) = self.repository.backend.clone() else {
-            return;
-        };
-        let Some(target) = self
-            .repository
-            .snapshot
-            .as_ref()
-            .and_then(|snapshot| {
-                snapshot
-                    .changes
-                    .iter()
-                    .find(|change| change.target.key == key)
-            })
-            .map(|change| change.target.clone())
-        else {
-            return;
-        };
-        self.open_repository_diff(backend, target, opener, window, cx);
-    }
-
     pub(super) fn expand_repository_changes(&mut self, cx: &mut Context<Self>) {
         self.repository.visible_changes = self.repository.visible_changes.saturating_add(20);
         self.notify_run_panel(cx);
@@ -208,7 +181,6 @@ impl PiApp {
         cx: &mut Context<Self>,
     ) {
         if self.repository.select_project(project, execution_allowed) {
-            self.invalidate_repository_diff(cx);
             self.request_repository_refresh(cx);
         }
     }
@@ -221,7 +193,6 @@ impl PiApp {
         if !self.repository.select_preference(preference) {
             return;
         }
-        self.invalidate_repository_diff(cx);
         self.composer_project_files.clear();
         self.composer_project_files_project = None;
         self.composer_project_files_loading = None;

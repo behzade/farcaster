@@ -4,7 +4,7 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 33] = [
+const ICON_PATHS: [&str; 32] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrows-clockwise.svg",
     "icons/phosphor/arrows-out.svg",
@@ -27,7 +27,6 @@ const ICON_PATHS: [&str; 33] = [
     "icons/phosphor/list.svg",
     "icons/phosphor/magnifying-glass.svg",
     "icons/phosphor/microscope.svg",
-    "icons/phosphor/pencil-simple.svg",
     "icons/phosphor/plus.svg",
     "icons/phosphor/question.svg",
     "icons/phosphor/sign-in.svg",
@@ -127,9 +126,6 @@ impl AssetSource for AppAssets {
             "icons/phosphor/microscope.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/microscope.svg"))
             }
-            "icons/phosphor/pencil-simple.svg" => {
-                Some(include_bytes!("../assets/phosphor-icons/pencil-simple.svg"))
-            }
             "icons/phosphor/sign-in.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/sign-in.svg"))
             }
@@ -197,7 +193,6 @@ pub(crate) enum AppIcon {
     List,
     MagnifyingGlass,
     Microscope,
-    PencilSimple,
     Plus,
     Question,
     SignIn,
@@ -235,7 +230,6 @@ impl IconNamed for AppIcon {
             Self::List => "list",
             Self::MagnifyingGlass => "magnifying-glass",
             Self::Microscope => "microscope",
-            Self::PencilSimple => "pencil-simple",
             Self::Plus => "plus",
             Self::Question => "question",
             Self::SignIn => "sign-in",
@@ -299,7 +293,6 @@ mod tests {
             AppIcon::List,
             AppIcon::MagnifyingGlass,
             AppIcon::Microscope,
-            AppIcon::PencilSimple,
             AppIcon::Plus,
             AppIcon::Question,
             AppIcon::SignIn,

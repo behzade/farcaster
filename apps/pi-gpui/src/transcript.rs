@@ -3,7 +3,6 @@
 use std::{
     borrow::Cow,
     hash::{Hash, Hasher},
-    rc::Rc,
     sync::Arc,
 };
 
@@ -23,7 +22,6 @@ use crate::{
     persistent_vec::{Indexed, PersistentVec},
     primitives::{ButtonTone, button, disclosure_button, disclosure_indicator},
     theme::{MONO_FONT_FAMILY, THEME},
-    tool_changes::EmbeddedDiffMode,
     transcript_list::{TranscriptListState, transcript_list_grouped},
     transcript_markdown::{MarkdownStateKey, TranscriptMarkdownCache},
 };
@@ -78,7 +76,6 @@ pub(crate) struct TranscriptViewport {
     pub(crate) following: bool,
     pub(crate) unseen: usize,
     pub(crate) tail_reserve: Pixels,
-    pub(crate) diff_mode: EmbeddedDiffMode,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -827,7 +824,6 @@ pub(crate) fn render(
                             row,
                             &conversation.items,
                             expanded,
-                            viewport.diff_mode,
                             &markdown_cache,
                             row_entity.clone(),
                             cx,
@@ -904,7 +900,6 @@ fn render_row(
     row: TranscriptRow,
     items: &PersistentVec<Arc<TranscriptItem>>,
     expanded: bool,
-    diff_mode: EmbeddedDiffMode,
     markdown_cache: &TranscriptMarkdownCache,
     entity: WeakEntity<PiApp>,
     cx: &mut gpui::App,
@@ -988,7 +983,7 @@ fn render_row(
             render_invocation(key, &items[index], expanded, entity)
         }
         TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Tool => {
-            render_tool(key, &items[index], expanded, diff_mode, entity)
+            render_tool(key, &items[index], expanded, entity)
         }
         TranscriptRow::Item { index, revision }
             if items[index].kind == TranscriptKind::AgentResult =>
@@ -1570,7 +1565,6 @@ fn render_tool(
     key: usize,
     item: &TranscriptItem,
     expanded: bool,
-    diff_mode: EmbeddedDiffMode,
     entity: WeakEntity<PiApp>,
 ) -> AnyElement {
     let target = tool_target(&item.text);
@@ -1644,18 +1638,15 @@ fn render_tool(
         })
         .when_some(presentation, |tool, presentation| {
             let source = presentation.clone();
-            let expand_entity = entity.clone();
-            let on_expand = Rc::new(move |window: &mut gpui::Window, cx: &mut gpui::App| {
-                let opener = window.focused(cx);
-                let _ = expand_entity.update(cx, |this, cx| {
-                    this.open_tool_diff(source.clone(), opener, window, cx)
-                });
-            });
+            let open_entity = entity.clone();
             tool.child(div().mt(THEME.space.xs).child(crate::tool_changes::render(
                 presentation,
                 item.tool_call_id.as_ref().map_or(0, |id| stable_key(id)),
-                diff_mode,
-                Some(on_expand),
+                move |window, cx| {
+                    let _ = open_entity.update(cx, |this, cx| {
+                        this.open_file_editor(source.path().into(), window, cx);
+                    });
+                },
             )))
         })
         .into_any_element()

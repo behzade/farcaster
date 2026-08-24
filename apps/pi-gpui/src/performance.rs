@@ -21,7 +21,6 @@ static TRANSCRIPT_ROWS_REMEASURED: AtomicU64 = AtomicU64::new(0);
 static CATALOG_SCANS: AtomicU64 = AtomicU64::new(0);
 static CATALOG_FILES_PARSED: AtomicU64 = AtomicU64::new(0);
 static CATALOG_CACHE_HITS: AtomicU64 = AtomicU64::new(0);
-static HIGHLIGHT_BYTES: AtomicU64 = AtomicU64::new(0);
 static MARKDOWN_CACHE_HITS: AtomicU64 = AtomicU64::new(0);
 static SCROLL_EVENTS: AtomicU64 = AtomicU64::new(0);
 static SCROLL_STARTED: AtomicU64 = AtomicU64::new(0);
@@ -43,7 +42,7 @@ thread_local! {
     static SCROLL_TIMING: RefCell<ScrollTimingState> = RefCell::default();
 }
 
-const OPERATION_COUNT: usize = 12;
+const OPERATION_COUNT: usize = 9;
 static OPERATION_CALLS: [AtomicU64; OPERATION_COUNT] =
     [const { AtomicU64::new(0) }; OPERATION_COUNT];
 static OPERATION_TOTAL_NS: [AtomicU64; OPERATION_COUNT] =
@@ -57,15 +56,12 @@ static OPERATION_WORK: [AtomicU64; OPERATION_COUNT] =
 pub(crate) enum OperationKind {
     TranscriptRow,
     MarkdownParse,
-    ToolPreview,
     ThinkingAssembly,
-    DiffPrepaint,
     FullProjection,
     ComposerHistory,
     FileMentionMatch,
     StateDatabase,
     HistoryLoad,
-    FullDiffPrepare,
     RuntimeDrain,
 }
 
@@ -73,15 +69,12 @@ impl OperationKind {
     const ALL: [Self; OPERATION_COUNT] = [
         Self::TranscriptRow,
         Self::MarkdownParse,
-        Self::ToolPreview,
         Self::ThinkingAssembly,
-        Self::DiffPrepaint,
         Self::FullProjection,
         Self::ComposerHistory,
         Self::FileMentionMatch,
         Self::StateDatabase,
         Self::HistoryLoad,
-        Self::FullDiffPrepare,
         Self::RuntimeDrain,
     ];
 
@@ -89,23 +82,20 @@ impl OperationKind {
         match self {
             Self::TranscriptRow => "Transcript row layout",
             Self::MarkdownParse => "Markdown cache miss",
-            Self::ToolPreview => "Tool preview prepare",
             Self::ThinkingAssembly => "Thinking text assembly",
-            Self::DiffPrepaint => "Diff prepaint",
             Self::FullProjection => "Full transcript projection",
             Self::ComposerHistory => "Composer history scan",
             Self::FileMentionMatch => "File mention match",
             Self::StateDatabase => "State database open/schema",
             Self::HistoryLoad => "Session history load",
-            Self::FullDiffPrepare => "Full diff preparation",
             Self::RuntimeDrain => "Runtime event drain",
         }
     }
 
     const fn work_label(self) -> &'static str {
         match self {
-            Self::TranscriptRow | Self::DiffPrepaint => "rows",
-            Self::MarkdownParse | Self::ToolPreview | Self::FullDiffPrepare => "bytes",
+            Self::TranscriptRow => "rows",
+            Self::MarkdownParse => "bytes",
             Self::ThinkingAssembly => "chunks",
             Self::FullProjection | Self::ComposerHistory => "items",
             Self::FileMentionMatch => "files",
@@ -137,7 +127,6 @@ fn reset_counters() {
         &CATALOG_SCANS,
         &CATALOG_FILES_PARSED,
         &CATALOG_CACHE_HITS,
-        &HIGHLIGHT_BYTES,
         &MARKDOWN_CACHE_HITS,
         &SCROLL_EVENTS,
         &SCROLL_STARTED,
@@ -193,10 +182,6 @@ pub(crate) fn count_catalog_parse() {
 
 pub(crate) fn count_catalog_cache_hit() {
     add_counter(&CATALOG_CACHE_HITS, 1);
-}
-
-pub(crate) fn count_highlight_bytes(count: usize) {
-    add_counter(&HIGHLIGHT_BYTES, count as u64);
 }
 
 pub(crate) fn count_markdown_cache_hit() {
@@ -301,24 +286,13 @@ impl Drop for OperationTiming {
 pub(crate) struct Timing {
     name: &'static str,
     started_at: Option<Instant>,
-    include_fast: bool,
 }
 
 impl Timing {
     pub(crate) fn new(name: &'static str) -> Self {
-        Self::start(name, false)
-    }
-
-    /// Record even sub-threshold operations while the DEBUG monitor is enabled.
-    pub(crate) fn new_always(name: &'static str) -> Self {
-        Self::start(name, true)
-    }
-
-    fn start(name: &'static str, include_fast: bool) -> Self {
         Self {
             name,
             started_at: ENABLED.load(Ordering::Relaxed).then(Instant::now),
-            include_fast,
         }
     }
 
@@ -333,7 +307,7 @@ impl Drop for Timing {
             return;
         };
         let elapsed = started_at.elapsed();
-        if self.include_fast || should_log_duration(elapsed) {
+        if should_log_duration(elapsed) {
             zlog::info!(
                 "PERF operation={} elapsed_ms={:.2}",
                 self.name,
@@ -370,7 +344,6 @@ pub(crate) struct PerformanceSummary {
     pub(crate) catalog_scans: u64,
     pub(crate) catalog_files_parsed: u64,
     pub(crate) catalog_cache_hits: u64,
-    pub(crate) highlight_bytes: u64,
     pub(crate) markdown_cache_hits: u64,
     pub(crate) operations: Vec<OperationSummary>,
     pub(crate) scroll_events: u64,
@@ -495,7 +468,6 @@ fn collect_summary(
         catalog_scans: CATALOG_SCANS.swap(0, Ordering::Relaxed),
         catalog_files_parsed: CATALOG_FILES_PARSED.swap(0, Ordering::Relaxed),
         catalog_cache_hits: CATALOG_CACHE_HITS.swap(0, Ordering::Relaxed),
-        highlight_bytes: HIGHLIGHT_BYTES.swap(0, Ordering::Relaxed),
         markdown_cache_hits: MARKDOWN_CACHE_HITS.swap(0, Ordering::Relaxed),
         scroll_events: SCROLL_EVENTS.swap(0, Ordering::Relaxed),
         scroll_started: SCROLL_STARTED.swap(0, Ordering::Relaxed),
@@ -540,7 +512,7 @@ fn log_summary(summary: &PerformanceSummary) {
         .filter(|operation| operation.calls > 0)
         .collect::<Vec<_>>();
     zlog::info!(
-        "PERF interval_ms={:.2} frames={} draw_p95_ms={:.2} draw_max_ms={:.2} dirty_to_draw_p95_ms={:.2} dirty_requests_avg={:.1} dirty_requests_max={} snapshots={} stream_events={} stream_coalesced={} transcript_compared={} transcript_projected={} transcript_remeasured={} catalog_scans={} catalog_parses={} catalog_cache_hits={} highlight_bytes={} markdown_cache_hits={} scroll_events={} scroll_phases={}/{}/{} scroll_after_end={} scroll_after_end_max_ms={:.2} scroll_gap_max_ms={:.2} scroll_defers={} scroll_defer_max_ms={:.2} operations={:?} slowest_task={:?} slowest_action={:?}",
+        "PERF interval_ms={:.2} frames={} draw_p95_ms={:.2} draw_max_ms={:.2} dirty_to_draw_p95_ms={:.2} dirty_requests_avg={:.1} dirty_requests_max={} snapshots={} stream_events={} stream_coalesced={} transcript_compared={} transcript_projected={} transcript_remeasured={} catalog_scans={} catalog_parses={} catalog_cache_hits={} markdown_cache_hits={} scroll_events={} scroll_phases={}/{}/{} scroll_after_end={} scroll_after_end_max_ms={:.2} scroll_gap_max_ms={:.2} scroll_defers={} scroll_defer_max_ms={:.2} operations={:?} slowest_task={:?} slowest_action={:?}",
         summary.sample_interval.as_secs_f64() * 1_000.0,
         summary.frame_count,
         summary.draw_p95.as_secs_f64() * 1_000.0,
@@ -557,7 +529,6 @@ fn log_summary(summary: &PerformanceSummary) {
         summary.catalog_scans,
         summary.catalog_files_parsed,
         summary.catalog_cache_hits,
-        summary.highlight_bytes,
         summary.markdown_cache_hits,
         summary.scroll_events,
         summary.scroll_started,

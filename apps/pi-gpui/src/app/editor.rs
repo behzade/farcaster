@@ -15,6 +15,9 @@ impl PiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.run_sheet {
+            self.close_sheet(window, cx);
+        }
         let project = self.editor_project();
         let path = match resolve_editor_path(&project, &path) {
             Ok(path) => path,
@@ -105,22 +108,44 @@ fn resolve_editor_path(project: &Path, path: &Path) -> Result<PathBuf, String> {
     } else {
         project.join(path)
     };
-    let candidate = candidate
+    match std::fs::symlink_metadata(&candidate) {
+        Ok(_) => {
+            let candidate = candidate
+                .canonicalize()
+                .map_err(|error| format!("open {}: {error}", candidate.display()))?;
+            if !candidate.starts_with(&project) {
+                return Err(format!(
+                    "refusing to open a file outside the project: {}",
+                    candidate.display()
+                ));
+            }
+            if !candidate.is_file() {
+                return Err(format!(
+                    "editor target is not a file: {}",
+                    candidate.display()
+                ));
+            }
+            return Ok(candidate);
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("open {}: {error}", candidate.display())),
+    }
+
+    let file_name = candidate
+        .file_name()
+        .ok_or_else(|| format!("editor target is not a file: {}", candidate.display()))?;
+    let parent = candidate
+        .parent()
+        .ok_or_else(|| format!("editor target has no parent: {}", candidate.display()))?
         .canonicalize()
         .map_err(|error| format!("open {}: {error}", candidate.display()))?;
-    if !candidate.starts_with(&project) {
+    if !parent.starts_with(&project) {
         return Err(format!(
             "refusing to open a file outside the project: {}",
             candidate.display()
         ));
     }
-    if !candidate.is_file() {
-        return Err(format!(
-            "editor target is not a file: {}",
-            candidate.display()
-        ));
-    }
-    Ok(candidate)
+    Ok(parent.join(file_name))
 }
 
 #[cfg(test)]
@@ -138,11 +163,22 @@ mod tests {
             resolve_editor_path(project.path(), Path::new("src.rs"))?,
             file.canonicalize()?
         );
+        assert_eq!(
+            resolve_editor_path(project.path(), Path::new("deleted.rs"))?,
+            project.path().canonicalize()?.join("deleted.rs")
+        );
 
         let outside = tempdir()?;
         let outside_file = outside.path().join("outside.rs");
         std::fs::write(&outside_file, "")?;
         assert!(resolve_editor_path(project.path(), &outside_file).is_err());
+
+        #[cfg(unix)]
+        {
+            let dangling = project.path().join("dangling.rs");
+            std::os::unix::fs::symlink(outside.path().join("missing.rs"), &dangling)?;
+            assert!(resolve_editor_path(project.path(), &dangling).is_err());
+        }
         Ok(())
     }
 }

@@ -4,7 +4,6 @@ mod composer;
 mod composer_footer;
 #[cfg(test)]
 mod composer_tests;
-mod diff_modal;
 mod editor;
 mod models;
 mod project_trust;
@@ -86,11 +85,6 @@ impl Render for PiApp {
             let focus = self.sheet_focus.clone();
             cx.defer_in(window, move |_, window, cx| focus.focus(window, cx));
         }
-        if self.changes.pending_diff_setup {
-            self.changes.pending_diff_setup = false;
-            let focus = self.changes.diff_focus.clone();
-            cx.defer_in(window, move |_, window, cx| focus.focus(window, cx));
-        }
         if self.pending_dialog_setup {
             self.pending_dialog_setup = false;
             if self.dialog_return_focus.is_none() {
@@ -148,14 +142,6 @@ impl Render for PiApp {
         }
         let viewport = window.viewport_size();
         let mode = layout_mode(viewport.width);
-        let full_diff_mode = if crate::layout::shows_split_diff(viewport.width - gpui::px(64.0)) {
-            crate::app::changes::FullDiffMode::Split
-        } else {
-            crate::app::changes::FullDiffMode::Unified
-        };
-        if self.changes.diff.is_some() {
-            self.ensure_diff_highlight(full_diff_mode, cx);
-        }
         let entity = cx.entity().downgrade();
         let work_active = self.surface == AppSurface::Work;
         let has_conversation = !self.selected_draft_is_empty_and_unsubmitted();
@@ -539,27 +525,6 @@ impl Render for PiApp {
                                     .into_any_element()
                             },
                         )
-                    },
-                ))
-            })
-            .when(self.changes.diff.is_some(), |root| {
-                let close = entity.clone();
-                root.child(modal(
-                    "full-diff",
-                    "File diff",
-                    &self.changes.diff_focus,
-                    OVERLAY_KEY_CONTEXT,
-                    move |window, cx| {
-                        let _ = close.update(cx, |this, cx| this.close_file_diff(window, cx));
-                    },
-                    |surface| {
-                        surface
-                            .w_full()
-                            .max_w_full()
-                            .h_full()
-                            .max_h(gpui::relative(1.0))
-                            .overflow_hidden()
-                            .child(self.render_diff_modal(entity.clone(), full_diff_mode))
                     },
                 ))
             })

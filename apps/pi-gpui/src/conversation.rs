@@ -25,89 +25,52 @@ pub(crate) enum TranscriptKind {
     AgentResult,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum EditDiffFormat {
-    Unnumbered,
-    Numbered,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) enum ToolPresentation {
-    Edit {
-        path: String,
-        diff: Option<String>,
-        format: EditDiffFormat,
-        prepared: Arc<std::sync::OnceLock<crate::tool_changes::PreparedToolChange>>,
-    },
-    Write {
-        path: String,
-        content: String,
-        prepared: Arc<std::sync::OnceLock<crate::tool_changes::PreparedToolChange>>,
-    },
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ToolPresentation {
+    path: String,
+    additions: usize,
+    deletions: usize,
 }
 
 impl ToolPresentation {
-    fn edit(path: String, diff: Option<String>, format: EditDiffFormat) -> Self {
-        Self::Edit {
+    fn edit(path: String, (additions, deletions): (usize, usize)) -> Self {
+        Self {
             path,
-            diff,
-            format,
-            prepared: Arc::default(),
+            additions,
+            deletions,
         }
     }
 
-    fn write(path: String, content: String) -> Self {
-        Self::Write {
+    fn write(path: String, content: &str) -> Self {
+        Self {
             path,
-            content,
-            prepared: Arc::default(),
+            additions: content.lines().count(),
+            deletions: 0,
         }
     }
 
     fn apply_edit_result(&mut self, diff: &str) {
-        let Self::Edit {
-            diff: item_diff,
-            format,
-            prepared,
-            ..
-        } = self
-        else {
-            return;
-        };
-        *prepared = Arc::default();
-        *item_diff = Some(diff.to_owned());
-        *format = EditDiffFormat::Numbered;
+        (self.additions, self.deletions) = change_counts(diff);
+    }
+
+    pub(crate) fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub(crate) const fn counts(&self) -> (usize, usize) {
+        (self.additions, self.deletions)
     }
 }
 
-impl PartialEq for ToolPresentation {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (
-                Self::Edit {
-                    path, diff, format, ..
-                },
-                Self::Edit {
-                    path: other_path,
-                    diff: other_diff,
-                    format: other_format,
-                    ..
-                },
-            ) => path == other_path && diff == other_diff && format == other_format,
-            (
-                Self::Write { path, content, .. },
-                Self::Write {
-                    path: other_path,
-                    content: other_content,
-                    ..
-                },
-            ) => path == other_path && content == other_content,
-            _ => false,
+fn change_counts(diff: &str) -> (usize, usize) {
+    diff.lines().fold((0, 0), |(additions, deletions), line| {
+        match line.as_bytes().first() {
+            Some(b'+') => (additions + 1, deletions),
+            Some(b'-') => (additions, deletions + 1),
+            _ => (additions, deletions),
         }
-    }
+    })
 }
-
-impl Eq for ToolPresentation {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TranscriptItem {
@@ -1061,54 +1024,40 @@ fn tool_presentation(name: &str, arguments: &Value) -> Option<ToolPresentation> 
         .unwrap_or_default()
         .to_owned();
     match name.trim().to_ascii_lowercase().as_str() {
-        "edit" => Some(ToolPresentation::edit(
-            path,
-            preview_edit_diff(arguments),
-            EditDiffFormat::Unnumbered,
-        )),
+        "edit" => Some(ToolPresentation::edit(path, preview_edit_counts(arguments))),
         "write" => arguments
             .get("content")
             .and_then(Value::as_str)
-            .map(|content| ToolPresentation::write(path, content.to_owned())),
+            .map(|content| ToolPresentation::write(path, content)),
         _ => None,
     }
 }
 
-fn preview_edit_diff(arguments: &Value) -> Option<String> {
+fn preview_edit_counts(arguments: &Value) -> (usize, usize) {
     let edits = arguments.get("edits").and_then(Value::as_array);
     let legacy = arguments
         .get("oldText")
         .and_then(Value::as_str)
         .zip(arguments.get("newText").and_then(Value::as_str));
-    let pairs = edits
-        .map(|edits| {
-            edits
-                .iter()
-                .filter_map(|edit| {
-                    edit.get("oldText")
-                        .and_then(Value::as_str)
-                        .zip(edit.get("newText").and_then(Value::as_str))
-                })
-                .collect::<Vec<_>>()
-        })
-        .or_else(|| legacy.map(|pair| vec![pair]))?;
-    let mut diff = String::new();
-    for (index, (old, new)) in pairs.into_iter().enumerate() {
-        if index > 0 {
-            diff.push_str("     ...\n");
-        }
-        for line in old.lines() {
-            diff.push_str("- ");
-            diff.push_str(line);
-            diff.push('\n');
-        }
-        for line in new.lines() {
-            diff.push_str("+ ");
-            diff.push_str(line);
-            diff.push('\n');
-        }
+    if let Some(edits) = edits {
+        return edit_pair_counts(edits.iter().filter_map(|edit| {
+            edit.get("oldText")
+                .and_then(Value::as_str)
+                .zip(edit.get("newText").and_then(Value::as_str))
+        }));
     }
-    (!diff.is_empty()).then(|| diff.trim_end().to_owned())
+    edit_pair_counts(legacy)
+}
+
+fn edit_pair_counts<'a>(pairs: impl IntoIterator<Item = (&'a str, &'a str)>) -> (usize, usize) {
+    pairs
+        .into_iter()
+        .fold((0, 0), |(additions, deletions), (old, new)| {
+            (
+                additions.saturating_add(new.lines().count()),
+                deletions.saturating_add(old.lines().count()),
+            )
+        })
 }
 
 fn apply_tool_result(item: &mut TranscriptItem, result: &Value, message: bool) {

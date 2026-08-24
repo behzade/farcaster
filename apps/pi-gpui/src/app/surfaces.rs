@@ -334,8 +334,6 @@ impl PiApp {
     pub(super) fn dismiss_surface(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.picker.is_some() {
             self.close_picker(window, cx);
-        } else if self.changes.diff.is_some() {
-            self.close_file_diff(window, cx);
         } else if self.extension.dialog.is_some() {
             self.cancel_dialog(window, cx);
         } else if self.project_trust_sheet {

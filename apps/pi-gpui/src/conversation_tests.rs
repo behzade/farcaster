@@ -390,7 +390,7 @@ fn duplicate_tool_updates_preserve_item_identity() {
 }
 
 #[test]
-fn edit_results_keep_the_structured_diff_for_native_rendering() {
+fn edit_results_update_the_file_change_action() {
     let mut state = ConversationState::default();
     state.replace_history(&[
         json!({"role":"assistant","content":[{
@@ -408,80 +408,30 @@ fn edit_results_keep_the_structured_diff_for_native_rendering() {
         }),
     ]);
 
-    assert_eq!(
-        state.items[0].tool_presentation,
-        Some(ToolPresentation::Edit {
-            path: "src/main.rs".into(),
-            diff: Some("- 1 old\n+ 1 new".into()),
-            format: EditDiffFormat::Numbered,
-            prepared: Default::default(),
-        })
-    );
-    let Some(ToolPresentation::Edit { prepared, .. }) = state.items[0].tool_presentation.as_ref()
-    else {
-        panic!("expected edit presentation");
-    };
-    assert!(
-        prepared.get().is_none(),
-        "historical edit results should be prepared only when rendered"
-    );
+    let action = state.items[0]
+        .tool_presentation
+        .as_ref()
+        .expect("edit action");
+    assert_eq!(action.path(), "src/main.rs");
+    assert_eq!(action.counts(), (1, 1));
 }
 
 #[test]
-fn edit_argument_previews_are_explicitly_unnumbered() {
-    let mut state = ConversationState::default();
-    state.replace_history(&[json!({"role":"assistant","content":[{
-        "type":"toolCall",
-        "id":"edit-1",
-        "name":"edit",
-        "arguments":{"path":"src/lib.rs","oldText":"123 source","newText":"456 source"}
-    }]})]);
-
-    assert_eq!(
-        state.items[0].tool_presentation,
-        Some(ToolPresentation::Edit {
-            path: "src/lib.rs".into(),
-            diff: Some("- 123 source\n+ 456 source".into()),
-            format: EditDiffFormat::Unnumbered,
-            prepared: Default::default(),
-        })
-    );
-    let Some(ToolPresentation::Edit { prepared, .. }) = state.items[0].tool_presentation.as_ref()
-    else {
-        panic!("expected edit presentation");
-    };
-    assert!(
-        prepared.get().is_none(),
-        "historical edit arguments should be prepared only when rendered"
-    );
-}
-
-#[test]
-fn write_calls_keep_content_for_native_rendering() {
+fn write_calls_expose_a_file_change_action() {
     let mut state = ConversationState::default();
     state.replace_history(&[json!({"role":"assistant","content":[{
         "type":"toolCall",
         "id":"write-1",
         "name":"write",
-        "arguments":{"path":"src/lib.rs","content":"fn main() {}"}
+        "arguments":{"path":"src/lib.rs","content":"one\ntwo"}
     }]})]);
 
-    assert_eq!(
-        state.items[0].tool_presentation,
-        Some(ToolPresentation::Write {
-            path: "src/lib.rs".into(),
-            content: "fn main() {}".into(),
-            prepared: Default::default(),
-        })
-    );
-    let Some(ToolPresentation::Write { prepared, .. }) = state.items[0].tool_presentation.as_ref()
-    else {
-        panic!("expected write presentation");
-    };
-    assert!(
-        prepared.get().is_none(),
-        "historical writes should be prepared only when rendered"
-    );
+    let action = state.items[0]
+        .tool_presentation
+        .as_ref()
+        .expect("write action");
+    assert_eq!(action.path(), "src/lib.rs");
+    assert_eq!(action.counts(), (2, 0));
 }
 
 #[test]

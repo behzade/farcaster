@@ -413,10 +413,6 @@ fn render_performance(summary: &crate::performance::PerformanceSummary) -> impl 
             ),
         ))
         .child(metric_row(
-            "Highlight bytes",
-            summary.highlight_bytes.to_string(),
-        ))
-        .child(metric_row(
             "Markdown cache hits / misses",
             format!(
                 "{} / {}",

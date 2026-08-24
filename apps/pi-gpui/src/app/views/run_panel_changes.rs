@@ -9,8 +9,7 @@ use gpui::{
 
 use super::super::PiApp;
 use crate::{
-    assets::AppIcon,
-    primitives::{ButtonTone, activates_button, icon_button},
+    primitives::activates_button,
     session_changes::{ChangeSet, FileChange, FileChangeKind},
     sessions::root_session_for_path,
     theme::{MONO_FONT_FAMILY, THEME},
@@ -96,14 +95,10 @@ impl PiApp {
         entity: WeakEntity<Self>,
     ) -> Option<AnyElement> {
         let focus = self.changes.row_focus.get(&file.path)?.clone();
-        let click_focus = focus.clone();
-        let click_file = file.clone();
+        let click_file = file.path.clone();
         let click_entity = entity.clone();
-        let key_focus = focus.clone();
-        let key_file = file.clone();
-        let key_entity = entity.clone();
-        let editor_file = file.path.clone();
-        let editor_entity = entity;
+        let key_file = file.path.clone();
+        let key_entity = entity;
         let path = file.path.to_string_lossy().into_owned();
         let display_path = middle_truncate(&display_change_path(&file.path, project), 44);
         let state = match file.kind {
@@ -121,7 +116,7 @@ impl PiApp {
             .id(format!("change-row-{path}"))
             .track_focus(&focus)
             .role(Role::Button)
-            .aria_label(format!("Open recorded changes for {path}"))
+            .aria_label(format!("Open {path} in Neovim"))
             .tab_index(0)
             .min_w_0()
             .flex_1()
@@ -136,14 +131,14 @@ impl PiApp {
             .cursor_pointer()
             .on_click(move |_, window, cx| {
                 let _ = click_entity.update(cx, |this, cx| {
-                    this.open_file_diff(click_file.clone(), click_focus.clone(), window, cx)
+                    this.open_file_editor(click_file.clone(), window, cx);
                 });
             })
             .on_key_down(move |event, window, cx| {
                 if activates_button(event) {
                     cx.stop_propagation();
                     let _ = key_entity.update(cx, |this, cx| {
-                        this.open_file_diff(key_file.clone(), key_focus.clone(), window, cx)
+                        this.open_file_editor(key_file.clone(), window, cx);
                     });
                 }
             })
@@ -169,7 +164,7 @@ impl PiApp {
                     .text_size(THEME.type_scale.caption)
                     .child(display_path),
             )
-            .when(file.diff.partial, |row| {
+            .when(file.partial, |row| {
                 row.child(
                     div()
                         .flex_none()
@@ -198,25 +193,7 @@ impl PiApp {
                     .text_color(THEME.colors.error)
                     .child(deletions),
             );
-        Some(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(2.0))
-                .child(target)
-                .child(icon_button(
-                    format!("edit-change-{path}"),
-                    AppIcon::PencilSimple,
-                    "Edit in Neovim",
-                    ButtonTone::Quiet,
-                    move |window, cx| {
-                        let _ = editor_entity.update(cx, |this, cx| {
-                            this.open_file_editor(editor_file.clone(), window, cx);
-                        });
-                    },
-                ))
-                .into_any_element(),
-        )
+        Some(target.into_any_element())
     }
 }
 
