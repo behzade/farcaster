@@ -1567,7 +1567,6 @@ fn render_tool(
     expanded: bool,
     entity: WeakEntity<PiApp>,
 ) -> AnyElement {
-    let target = tool_target(&item.text);
     let state = tool_state(
         item.streaming,
         usize::from(item.is_error),
@@ -1594,6 +1593,7 @@ fn render_tool(
             },
         );
     }
+    let target = tool_target(&item.text);
     let has_target = !target.is_empty();
     let detail_label = if has_target {
         format!("{} tool call details for {target}", item.label)
@@ -1616,15 +1616,13 @@ fn render_tool(
                 .flex()
                 .items_center()
                 .gap(THEME.space.xs)
-                .when(presentation.is_none(), |row| {
-                    row.child(transcript_disclosure_button(
-                        ("tool-toggle", key),
-                        expanded,
-                        disclosure_label,
-                        key,
-                        entity.clone(),
-                    ))
-                })
+                .child(transcript_disclosure_button(
+                    ("tool-toggle", key),
+                    expanded,
+                    disclosure_label,
+                    key,
+                    entity.clone(),
+                ))
                 .child(
                     div()
                         .text_size(THEME.type_scale.body_small)
@@ -1648,7 +1646,7 @@ fn render_tool(
                         .child(state.glyph)
                 })),
         )
-        .when(expanded && presentation.is_none(), |tool| {
+        .when(expanded, |tool| {
             tool.child(
                 div()
                     .ml(px(22.0))

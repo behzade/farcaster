@@ -40,7 +40,6 @@ impl NvimOptions {
 /// A Neovim process hosted inside a [`Terminal`].
 pub struct NvimEditor {
     project: PathBuf,
-    path: PathBuf,
     socket: PathBuf,
     executable: PathBuf,
     remote_timeout: Duration,
@@ -67,7 +66,6 @@ impl NvimEditor {
         )?;
         Ok(Self {
             project: options.project,
-            path: options.initial_file,
             socket,
             executable: options.executable,
             remote_timeout: options.remote_timeout,
@@ -77,10 +75,6 @@ impl NvimEditor {
 
     pub fn project(&self) -> &Path {
         &self.project
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
     }
 
     pub fn is_alive(&self, cx: &App) -> bool {
@@ -95,11 +89,6 @@ impl NvimEditor {
     pub fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
         self.terminal
             .update(cx, |terminal, _| terminal.set_visible(visible));
-    }
-
-    /// Opens `path` in the existing Neovim server rather than spawning another editor.
-    pub fn open_file(&mut self, path: PathBuf, cx: &mut Context<Self>) -> Result<(), String> {
-        self.open_file_at_line(path, None, cx)
     }
 
     /// Opens `path` and places the cursor at `line` when supplied.
@@ -142,7 +131,6 @@ impl NvimEditor {
         if !status.success() {
             return Err(format!("Neovim remote command exited with {status}"));
         }
-        self.path = path;
         Ok(())
     }
 }
@@ -188,10 +176,5 @@ mod tests {
             ),
             "'/tmp/my nvim' --listen '/tmp/editor.sock' +42 -- '/tmp/it'\\''s.rs'"
         );
-    }
-
-    #[test]
-    fn sockets_are_unique_within_the_process() {
-        assert_ne!(socket_path(), socket_path());
     }
 }
