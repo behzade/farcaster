@@ -113,8 +113,8 @@ fn render_usage(usage: &ComposerUsage, session_totals: &SessionChangeTotals) -> 
         .text_size(THEME.type_scale.body_small)
         .child(context_metric(usage));
     if let Some(rate) = usage.cache_hit_rate {
-        row = row.child(separator()).child(simple_metric(
-            Some(AppIcon::Database),
+        row = row.child(separator()).child(labeled_metric(
+            "CH",
             "Cache hit rate",
             format!("{rate:.0}%"),
             THEME.colors.success,
@@ -222,6 +222,31 @@ fn context_meter(filled: usize, color: gpui::Rgba) -> AnyElement {
                     THEME.colors.border
                 })
         }))
+        .into_any_element()
+}
+
+fn labeled_metric(
+    label: &'static str,
+    accessible_label: &'static str,
+    value: String,
+    value_color: gpui::Rgba,
+) -> AnyElement {
+    let aria_label = format!("{accessible_label}: {value}");
+    div()
+        .id(accessible_label)
+        .aria_label(aria_label)
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap(THEME.space.xs)
+        .whitespace_nowrap()
+        .child(
+            div()
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(THEME.colors.subtle)
+                .child(label),
+        )
+        .child(div().text_color(value_color).child(value))
         .into_any_element()
 }
 

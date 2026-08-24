@@ -4,7 +4,7 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 36] = [
+const ICON_PATHS: [&str; 35] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrows-clockwise.svg",
     "icons/phosphor/arrows-out.svg",
@@ -19,7 +19,6 @@ const ICON_PATHS: [&str; 36] = [
     "icons/phosphor/chat-circle-dots.svg",
     "icons/phosphor/check-circle.svg",
     "icons/phosphor/code.svg",
-    "icons/phosphor/database.svg",
     "icons/phosphor/dots-six-vertical.svg",
     "icons/phosphor/eye.svg",
     "icons/phosphor/folder.svg",
@@ -103,9 +102,6 @@ impl AssetSource for AppAssets {
                 Some(include_bytes!("../assets/phosphor-icons/check-circle.svg"))
             }
             "icons/phosphor/code.svg" => Some(include_bytes!("../assets/phosphor-icons/code.svg")),
-            "icons/phosphor/database.svg" => {
-                Some(include_bytes!("../assets/phosphor-icons/database.svg"))
-            }
             "icons/phosphor/dots-six-vertical.svg" => Some(include_bytes!(
                 "../assets/phosphor-icons/dots-six-vertical.svg"
             )),
@@ -199,7 +195,6 @@ pub(crate) enum AppIcon {
     ChatCircleDots,
     CheckCircle,
     Code,
-    Database,
     DotsSixVertical,
     Eye,
     Folder,
@@ -240,7 +235,6 @@ impl IconNamed for AppIcon {
             Self::ChatCircleDots => "chat-circle-dots",
             Self::CheckCircle => "check-circle",
             Self::Code => "code",
-            Self::Database => "database",
             Self::DotsSixVertical => "dots-six-vertical",
             Self::Eye => "eye",
             Self::Folder => "folder",
@@ -307,7 +301,6 @@ mod tests {
             AppIcon::ChatCircleDots,
             AppIcon::CheckCircle,
             AppIcon::Code,
-            AppIcon::Database,
             AppIcon::DotsSixVertical,
             AppIcon::Eye,
             AppIcon::Folder,
