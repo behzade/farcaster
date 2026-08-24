@@ -404,7 +404,7 @@ fn edit_results_update_the_file_change_action() {
             "toolCallId":"edit-1",
             "toolName":"edit",
             "content":[{"type":"text","text":"done"}],
-            "details":{"diff":"- 1 old\n+ 1 new"}
+            "details":{"diff":"- 1 old\n+ 1 new","firstChangedLine":37}
         }),
     ]);
 
@@ -414,6 +414,7 @@ fn edit_results_update_the_file_change_action() {
         .expect("edit action");
     assert_eq!(action.path(), "src/main.rs");
     assert_eq!(action.counts(), (1, 1));
+    assert_eq!(action.first_changed_line(), Some(37));
 }
 
 #[test]

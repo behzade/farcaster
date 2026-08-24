@@ -1574,6 +1574,26 @@ fn render_tool(
         !item.streaming && (item.is_error || !item.tool_output.is_empty()),
     );
     let presentation = item.tool_presentation.as_ref();
+    if let Some(presentation) = presentation {
+        let source = presentation.clone();
+        let open_entity = entity;
+        return crate::tool_changes::render(
+            &item.label,
+            presentation,
+            item.tool_call_id.as_ref().map_or(0, |id| stable_key(id)),
+            state.map(|state| state.glyph),
+            move |window, cx| {
+                let _ = open_entity.update(cx, |this, cx| {
+                    this.open_file_editor_at_line(
+                        source.path().into(),
+                        source.first_changed_line(),
+                        window,
+                        cx,
+                    );
+                });
+            },
+        );
+    }
     let has_target = !target.is_empty();
     let detail_label = if has_target {
         format!("{} tool call details for {target}", item.label)
@@ -1635,19 +1655,6 @@ fn render_tool(
                     .mt(THEME.space.xs)
                     .child(expanded_tool_body(("tool-detail", key), item)),
             )
-        })
-        .when_some(presentation, |tool, presentation| {
-            let source = presentation.clone();
-            let open_entity = entity.clone();
-            tool.child(div().mt(THEME.space.xs).child(crate::tool_changes::render(
-                presentation,
-                item.tool_call_id.as_ref().map_or(0, |id| stable_key(id)),
-                move |window, cx| {
-                    let _ = open_entity.update(cx, |this, cx| {
-                        this.open_file_editor(source.path().into(), window, cx);
-                    });
-                },
-            )))
         })
         .into_any_element()
 }

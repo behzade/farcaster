@@ -12,8 +12,10 @@ use gpui::{
 };
 
 pub(crate) fn render(
+    label: &str,
     presentation: &ToolPresentation,
     key: usize,
+    status_glyph: Option<&'static str>,
     on_open: impl Fn(&mut Window, &mut App) + 'static,
 ) -> AnyElement {
     let (additions, deletions) = presentation.counts();
@@ -31,6 +33,13 @@ pub(crate) fn render(
         .bg(THEME.colors.panel)
         .child(
             div()
+                .flex_none()
+                .text_size(THEME.type_scale.body_small)
+                .text_color(THEME.colors.muted)
+                .child(label.to_owned()),
+        )
+        .child(
+            div()
                 .flex_1()
                 .min_w_0()
                 .overflow_hidden()
@@ -45,11 +54,18 @@ pub(crate) fn render(
         .child(change_count(format!("-{deletions}"), THEME.colors.error))
         .child(icon_button(
             ("open-tool-change", key),
-            AppIcon::ArrowSquareOut,
+            AppIcon::Code,
             "Open in Neovim",
             ButtonTone::Quiet,
             on_open,
         ))
+        .children(status_glyph.map(|glyph| {
+            div()
+                .flex_none()
+                .text_size(THEME.type_scale.caption)
+                .text_color(THEME.colors.subtle)
+                .child(glyph)
+        }))
         .into_any_element()
 }
 

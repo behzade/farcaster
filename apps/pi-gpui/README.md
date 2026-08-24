@@ -29,6 +29,13 @@ The editor uses Ghostty's VT core rendered directly by GPUI and keeps one
 Neovim process per open editor surface. Set `PI_GUI_NVIM` to override the
 `nvim` executable.
 
+Chat, Neovim, and a project terminal share the center workspace. Hover the
+window's top-left corner to reveal the three surface controls. `Cmd+L` returns
+to Chat and focuses the composer, `Cmd+E` opens Neovim, and `Cmd+T` opens the
+terminal. Neovim and terminal processes remain alive while switching surfaces;
+changing sessions returns to Chat. The terminal starts the account login shell
+in the selected project. Set `PI_GUI_SHELL` to override its executable.
+
 ## Run
 
 ```sh

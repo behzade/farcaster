@@ -33,9 +33,10 @@ mod app {
         ) {
         }
 
-        pub(crate) fn open_file_editor(
+        pub(crate) fn open_file_editor_at_line(
             &mut self,
             _: std::path::PathBuf,
+            _: Option<u64>,
             _: &mut gpui::Window,
             _: &mut gpui::Context<Self>,
         ) {

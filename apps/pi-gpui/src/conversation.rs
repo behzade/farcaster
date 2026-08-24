@@ -30,6 +30,7 @@ pub(crate) struct ToolPresentation {
     path: String,
     additions: usize,
     deletions: usize,
+    first_changed_line: Option<u64>,
 }
 
 impl ToolPresentation {
@@ -38,6 +39,7 @@ impl ToolPresentation {
             path,
             additions,
             deletions,
+            first_changed_line: None,
         }
     }
 
@@ -46,11 +48,13 @@ impl ToolPresentation {
             path,
             additions: content.lines().count(),
             deletions: 0,
+            first_changed_line: None,
         }
     }
 
-    fn apply_edit_result(&mut self, diff: &str) {
+    fn apply_edit_result(&mut self, diff: &str, first_changed_line: Option<u64>) {
         (self.additions, self.deletions) = change_counts(diff);
+        self.first_changed_line = first_changed_line;
     }
 
     pub(crate) fn path(&self) -> &str {
@@ -59,6 +63,10 @@ impl ToolPresentation {
 
     pub(crate) const fn counts(&self) -> (usize, usize) {
         (self.additions, self.deletions)
+    }
+
+    pub(crate) const fn first_changed_line(&self) -> Option<u64> {
+        self.first_changed_line
     }
 }
 
@@ -1071,14 +1079,17 @@ fn apply_tool_result(item: &mut TranscriptItem, result: &Value, message: bool) {
         .and_then(Value::as_bool)
         .unwrap_or(false);
     item.streaming = false;
-    if let Some(diff) = result
-        .get("details")
+    let details = result.get("details");
+    if let Some(diff) = details
         .and_then(|details| details.get("diff"))
         .and_then(Value::as_str)
         .filter(|diff| !diff.is_empty())
         && let Some(presentation) = item.tool_presentation.as_mut()
     {
-        presentation.apply_edit_result(diff);
+        let first_changed_line = details
+            .and_then(|details| details.get("firstChangedLine"))
+            .and_then(Value::as_u64);
+        presentation.apply_edit_result(diff, first_changed_line);
     }
 }
 

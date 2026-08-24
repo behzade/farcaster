@@ -15,6 +15,7 @@ mod session_titles;
 mod slash_commands;
 mod submissions;
 mod surfaces;
+mod terminal;
 mod transcript_ui;
 mod trust;
 mod views;
@@ -45,6 +46,7 @@ use gpui::{
 };
 use gpui_component::input::{InputEvent, InputState, TextareaState};
 use gpui_fps::FpsMonitor;
+use gpui_libghostty::Terminal;
 use gpui_neovim::NvimEditor;
 
 #[cfg(test)]
@@ -107,6 +109,8 @@ actions!(
         PickerBack,
         FocusSessionSearch,
         FocusComposer,
+        ShowEditor,
+        ShowTerminal,
         PreviousSession,
         NextSession,
         ToggleArchivedSessions,
@@ -136,16 +140,8 @@ pub(super) enum AppSurface {
     #[default]
     Chat,
     Editor,
+    Terminal,
     Work,
-}
-
-impl AppSurface {
-    const fn toggled(self) -> Self {
-        match self {
-            Self::Chat | Self::Editor => Self::Work,
-            Self::Work => Self::Chat,
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -208,6 +204,9 @@ pub(crate) struct PiApp {
     editor: Option<Entity<NvimEditor>>,
     editor_error: Option<String>,
     editor_return_focus: Option<FocusHandle>,
+    terminal: Option<Entity<Terminal>>,
+    terminal_project: Option<PathBuf>,
+    terminal_error: Option<String>,
     surface: AppSurface,
     workgraph_inspector_issue: Option<u64>,
     run_panel_scroll: ScrollHandle,
@@ -587,6 +586,9 @@ impl PiApp {
             editor: None,
             editor_error: None,
             editor_return_focus: None,
+            terminal: None,
+            terminal_project: None,
+            terminal_error: None,
             surface: AppSurface::Chat,
             workgraph_inspector_issue: None,
             run_panel_scroll: ScrollHandle::new(),
@@ -1162,7 +1164,11 @@ impl PiApp {
             ExtensionEffect::SetEditorText(text) => {
                 self.pending_editor_text = Some((generation, text))
             }
-            ExtensionEffect::OpenUrl(url) => cx.open_url(&url),
+            ExtensionEffect::OpenUrl(url) => {
+                self.hide_native_workspace_surfaces(cx);
+                self.surface = AppSurface::Chat;
+                cx.open_url(&url);
+            }
             ExtensionEffect::PersistError(_) | ExtensionEffect::None => {}
             ExtensionEffect::Diagnostic(message) => {
                 Arc::make_mut(&mut Arc::make_mut(&mut self.snapshot).conversation)
@@ -1206,9 +1212,7 @@ impl PiApp {
         if self.pending_project_trust_command.is_some() {
             return;
         }
-        if self.surface == AppSurface::Editor {
-            self.show_chat_surface(window, cx);
-        }
+        self.return_to_chat_from_native_workspace(window, cx);
         let _timing = crate::performance::Timing::new("switch.session_request");
         if self.snapshot.selected_session.as_deref() == Some(path.as_path())
             && self.selected_draft.is_none()
@@ -1255,6 +1259,7 @@ impl PiApp {
         if self.pending_project_trust_command.is_some() {
             return;
         }
+        self.return_to_chat_from_native_workspace(window, cx);
         self.run_panel_scroll.set_offset(point(px(0.0), px(0.0)));
         let draft = match projects::new_draft(project.clone()) {
             Ok(draft) => draft,
@@ -1302,6 +1307,7 @@ impl PiApp {
         if self.pending_project_trust_command.is_some() {
             return;
         }
+        self.return_to_chat_from_native_workspace(window, cx);
         if self.selected_draft.as_deref() == Some(id.as_str()) && !self.snapshot.history_preview {
             self.close_sessions_sheet_after_selection(window, cx);
             return;

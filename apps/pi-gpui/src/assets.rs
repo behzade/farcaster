@@ -4,7 +4,7 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 32] = [
+const ICON_PATHS: [&str; 34] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrows-clockwise.svg",
     "icons/phosphor/arrows-out.svg",
@@ -17,6 +17,7 @@ const ICON_PATHS: [&str; 32] = [
     "icons/phosphor/chat-circle.svg",
     "icons/phosphor/chat-circle-dots.svg",
     "icons/phosphor/check-circle.svg",
+    "icons/phosphor/code.svg",
     "icons/phosphor/dots-six-vertical.svg",
     "icons/phosphor/eye.svg",
     "icons/phosphor/folder.svg",
@@ -32,6 +33,7 @@ const ICON_PATHS: [&str; 32] = [
     "icons/phosphor/sign-in.svg",
     "icons/phosphor/spinner-gap.svg",
     "icons/phosphor/stop.svg",
+    "icons/phosphor/terminal-window.svg",
     "icons/phosphor/trash.svg",
     "icons/phosphor/user-focus.svg",
     "icons/phosphor/warning-circle.svg",
@@ -95,6 +97,7 @@ impl AssetSource for AppAssets {
             "icons/phosphor/check-circle.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/check-circle.svg"))
             }
+            "icons/phosphor/code.svg" => Some(include_bytes!("../assets/phosphor-icons/code.svg")),
             "icons/phosphor/dots-six-vertical.svg" => Some(include_bytes!(
                 "../assets/phosphor-icons/dots-six-vertical.svg"
             )),
@@ -136,6 +139,9 @@ impl AssetSource for AppAssets {
                 Some(include_bytes!("../assets/phosphor-icons/stack.svg"))
             }
             "icons/phosphor/stop.svg" => Some(include_bytes!("../assets/phosphor-icons/stop.svg")),
+            "icons/phosphor/terminal-window.svg" => Some(include_bytes!(
+                "../assets/phosphor-icons/terminal-window.svg"
+            )),
             "icons/phosphor/trash.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/trash.svg"))
             }
@@ -183,6 +189,7 @@ pub(crate) enum AppIcon {
     ChatCircle,
     ChatCircleDots,
     CheckCircle,
+    Code,
     DotsSixVertical,
     Eye,
     Folder,
@@ -198,6 +205,7 @@ pub(crate) enum AppIcon {
     SignIn,
     SpinnerGap,
     Stop,
+    TerminalWindow,
     Trash,
     UserFocus,
     WarningCircle,
@@ -220,6 +228,7 @@ impl IconNamed for AppIcon {
             Self::ChatCircle => "chat-circle",
             Self::ChatCircleDots => "chat-circle-dots",
             Self::CheckCircle => "check-circle",
+            Self::Code => "code",
             Self::DotsSixVertical => "dots-six-vertical",
             Self::Eye => "eye",
             Self::Folder => "folder",
@@ -235,6 +244,7 @@ impl IconNamed for AppIcon {
             Self::SignIn => "sign-in",
             Self::SpinnerGap => "spinner-gap",
             Self::Stop => "stop",
+            Self::TerminalWindow => "terminal-window",
             Self::Trash => "trash",
             Self::UserFocus => "user-focus",
             Self::WarningCircle => "warning-circle",
@@ -283,6 +293,7 @@ mod tests {
             AppIcon::ChatCircle,
             AppIcon::ChatCircleDots,
             AppIcon::CheckCircle,
+            AppIcon::Code,
             AppIcon::DotsSixVertical,
             AppIcon::Eye,
             AppIcon::Folder,
@@ -298,6 +309,7 @@ mod tests {
             AppIcon::SignIn,
             AppIcon::SpinnerGap,
             AppIcon::Stop,
+            AppIcon::TerminalWindow,
             AppIcon::Trash,
             AppIcon::UserFocus,
             AppIcon::WarningCircle,

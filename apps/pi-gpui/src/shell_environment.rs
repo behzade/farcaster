@@ -40,6 +40,17 @@ pub(crate) fn project_shell_environment(project: &Path) -> Result<Option<Environ
     Ok(Some(environment))
 }
 
+pub(crate) fn terminal_login_shell_command() -> String {
+    let shell = std::env::var_os("PI_GUI_SHELL")
+        .map(PathBuf::from)
+        .unwrap_or_else(default_login_shell);
+    login_shell_command(&shell)
+}
+
+fn login_shell_command(shell: &Path) -> String {
+    format!("'{}' -l", shell.to_string_lossy().replace('\'', "'\\''"))
+}
+
 fn default_login_shell() -> PathBuf {
     #[cfg(target_os = "macos")]
     let shell = account_login_shell().or_else(|| std::env::var_os("SHELL").map(PathBuf::from));
@@ -207,6 +218,14 @@ mod tests {
     use tempfile::tempdir;
 
     type TestResult = Result<(), Box<dyn Error>>;
+
+    #[test]
+    fn login_shell_command_quotes_the_executable_path() {
+        assert_eq!(
+            login_shell_command(Path::new("/tmp/my shell's bin")),
+            "'/tmp/my shell'\\''s bin' -l"
+        );
+    }
 
     #[test]
     fn account_record_yields_its_absolute_login_shell() {

@@ -3,11 +3,11 @@
 use crate::app::{
     AbortRun, AddProject, CloseCurrent, ComposerHistoryNext, ComposerHistoryPrevious,
     DismissSurface, FocusComposer, NewSession, NextSession, OVERLAY_KEY_CONTEXT,
-    PICKER_KEY_CONTEXT, PickerBack, PreviousSession, QuitApplication, ShowActionPicker,
-    ShowKeybindings, ShowWorkGraph, SubmitFollowUp, SubmitPrompt, SwitchSession1, SwitchSession2,
-    SwitchSession3, SwitchSession4, SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8,
-    SwitchSession9, ToggleArchivedSessions, WorkCreateIssue, WorkDismiss, WorkFocusSearch,
-    WorkNextIssue, WorkPreviousIssue,
+    PICKER_KEY_CONTEXT, PickerBack, PreviousSession, QuitApplication, ShowActionPicker, ShowEditor,
+    ShowKeybindings, ShowTerminal, ShowWorkGraph, SubmitFollowUp, SubmitPrompt, SwitchSession1,
+    SwitchSession2, SwitchSession3, SwitchSession4, SwitchSession5, SwitchSession6, SwitchSession7,
+    SwitchSession8, SwitchSession9, ToggleArchivedSessions, WorkCreateIssue, WorkDismiss,
+    WorkFocusSearch, WorkNextIssue, WorkPreviousIssue,
 };
 use crate::app::{WORKGRAPH_KEY_CONTEXT, WORKGRAPH_NAV_KEY_CONTEXT};
 use crate::keyboard::CopySelection;
@@ -74,7 +74,7 @@ pub(crate) fn registry() -> Vec<Shortcut> {
         ),
         shortcut!(
             "Sessions",
-            "Close editor, draft, or session",
+            "Close workspace, draft, or session",
             "cmd-w",
             CloseCurrent,
             None
@@ -111,7 +111,15 @@ pub(crate) fn registry() -> Vec<Shortcut> {
             show_in_help: false,
             binding: KeyBinding::new("ctrl-n", ComposerHistoryNext, Some("PiComposer > Input")),
         },
-        shortcut!("Composer", "Focus composer", "cmd-l", FocusComposer, None),
+        shortcut!(
+            "Workspace",
+            "Chat and composer",
+            "cmd-l",
+            FocusComposer,
+            None
+        ),
+        shortcut!("Workspace", "Open Neovim", "cmd-e", ShowEditor, None),
+        shortcut!("Workspace", "Open terminal", "cmd-t", ShowTerminal, None),
         Shortcut {
             section: "Transcript",
             label: "Copy visual selection",
@@ -250,6 +258,22 @@ mod tests {
     }
 
     #[test]
+    fn workspace_shortcuts_are_registered() {
+        let shortcuts = registry();
+        for (label, keystroke) in [
+            ("Chat and composer", "cmd-l"),
+            ("Open Neovim", "cmd-e"),
+            ("Open terminal", "cmd-t"),
+        ] {
+            assert!(
+                shortcuts
+                    .iter()
+                    .any(|shortcut| { shortcut.label == label && shortcut.keystroke == keystroke })
+            );
+        }
+    }
+
+    #[test]
     fn keyboard_help_has_both_question_mark_shortcuts_and_workgraph_navigation() {
         let shortcuts = registry();
         assert!(
@@ -266,7 +290,7 @@ mod tests {
             shortcut.label == "Open / close project work" && shortcut.keystroke == "cmd-shift-i"
         }));
         assert!(shortcuts.iter().any(|shortcut| {
-            shortcut.label == "Close editor, draft, or session" && shortcut.keystroke == "cmd-w"
+            shortcut.label == "Close workspace, draft, or session" && shortcut.keystroke == "cmd-w"
         }));
         assert!(
             shortcuts.iter().any(|shortcut| {

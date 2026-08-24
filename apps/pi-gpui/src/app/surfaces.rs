@@ -1,11 +1,14 @@
 //! Focus restoration and dismissal policy for app-owned overlays.
 
+use std::path::PathBuf;
+
 use gpui::{Context, Window};
 
 use super::{AppSurface, PiApp};
 use crate::{
     protocol::{ExtensionUiRequest, PromptMode},
     runtime::RuntimeCommand,
+    sessions::root_session_for_path,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -44,6 +47,54 @@ const fn should_capture_return_focus(flags: SheetFlags) -> bool {
 }
 
 impl PiApp {
+    pub(super) fn hide_native_workspace_surfaces(&self, cx: &mut Context<Self>) {
+        self.hide_editor(cx);
+        self.hide_terminal(cx);
+    }
+
+    pub(super) fn restore_active_native_workspace_surface(&self, cx: &mut Context<Self>) {
+        self.restore_editor_visibility(cx);
+        self.restore_terminal_visibility(cx);
+    }
+
+    pub(super) fn workspace_project(&self) -> PathBuf {
+        root_session_for_path(
+            &self.all_sessions,
+            self.snapshot.selected_session.as_deref(),
+        )
+        .map(|root| root.project.clone())
+        .or_else(|| {
+            let selected = self.selected_draft.as_deref()?;
+            self.drafts
+                .iter()
+                .find(|draft| draft.id == selected)
+                .map(|draft| draft.project.clone())
+        })
+        .unwrap_or_else(|| self.project.clone())
+    }
+
+    pub(super) fn return_to_chat_from_native_workspace(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(self.surface, AppSurface::Editor | AppSurface::Terminal) {
+            self.show_chat_surface(window, cx);
+        }
+    }
+
+    pub(super) fn workspace_switch_blocked(&self) -> bool {
+        self.picker.is_some()
+            || self.sessions_sheet
+            || self.run_sheet
+            || self.keybindings_help
+            || self.project_trust_sheet
+            || self.pending_archive.is_some()
+            || self.extension.dialog.is_some()
+            || self.extension.provider_auth.is_some()
+            || self.surface == AppSurface::Work
+    }
+
     pub(super) fn respond_value(
         &mut self,
         id: String,
@@ -176,30 +227,27 @@ impl PiApp {
     }
 
     pub(super) fn toggle_workgraph_surface(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match self.surface.toggled() {
-            AppSurface::Chat | AppSurface::Editor => self.show_chat_surface(window, cx),
-            AppSurface::Work => self.open_workgraph_surface(window, cx),
+        if self.surface == AppSurface::Work {
+            self.show_chat_surface(window, cx);
+        } else {
+            self.open_workgraph_surface(window, cx);
         }
     }
 
     pub(super) fn show_chat_surface(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let changed = self.surface != AppSurface::Chat;
-        if let Some(editor) = self.editor.as_ref() {
-            editor.update(cx, |editor, cx| editor.set_visible(false, cx));
-        }
+        self.hide_native_workspace_surfaces(cx);
         self.surface = AppSurface::Chat;
+        self.composer_focus.focus(window, cx);
         if changed {
             self.workgraph_view
                 .update(cx, |view, cx| view.prepare_open(window, cx));
-            self.composer_focus.focus(window, cx);
             cx.notify();
         }
     }
 
     pub(super) fn open_workgraph_surface(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(editor) = self.editor.as_ref() {
-            editor.update(cx, |editor, cx| editor.set_visible(false, cx));
-        }
+        self.hide_native_workspace_surfaces(cx);
         if self.run_sheet {
             self.close_sheet(window, cx);
         }
@@ -285,9 +333,7 @@ impl PiApp {
     }
 
     fn open_sheet(&mut self, sheet: AppSheet, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(editor) = self.editor.as_ref() {
-            editor.update(cx, |editor, cx| editor.set_visible(false, cx));
-        }
+        self.hide_native_workspace_surfaces(cx);
         if self.picker.take().is_some() {
             self.picker_return_focus = None;
         }
@@ -323,11 +369,7 @@ impl PiApp {
             .take()
             .unwrap_or_else(|| self.composer_focus.clone());
         focus.focus(window, cx);
-        if self.surface == AppSurface::Editor
-            && let Some(editor) = self.editor.as_ref()
-        {
-            editor.update(cx, |editor, cx| editor.set_visible(true, cx));
-        }
+        self.restore_active_native_workspace_surface(cx);
         cx.notify();
     }
 

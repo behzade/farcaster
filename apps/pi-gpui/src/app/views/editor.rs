@@ -7,18 +7,21 @@ use crate::theme::THEME;
 
 impl PiApp {
     pub(super) fn render_editor_surface(&self) -> AnyElement {
-        let content = if let Some(editor) = self.editor.clone() {
+        let content = if let Some(error) = self.editor_error.clone() {
+            div()
+                .size_full()
+                .p(THEME.space.md)
+                .text_color(THEME.colors.error)
+                .child(error)
+                .into_any_element()
+        } else if let Some(editor) = self.editor.clone() {
             editor.into_any_element()
         } else {
             div()
                 .size_full()
                 .p(THEME.space.md)
                 .text_color(THEME.colors.error)
-                .child(
-                    self.editor_error
-                        .clone()
-                        .unwrap_or_else(|| "Neovim is not running".to_owned()),
-                )
+                .child("Neovim is not running")
                 .into_any_element()
         };
         div()

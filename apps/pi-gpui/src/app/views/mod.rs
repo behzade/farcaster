@@ -15,6 +15,8 @@ mod session_hover;
 mod session_rail;
 mod session_rows;
 mod shell;
+mod surface_switcher;
+mod terminal;
 mod usage;
 
 pub(super) use regions::{
@@ -33,11 +35,11 @@ use gpui_component::kbd::Kbd;
 use super::{
     AbortRun, AddProject, AppSurface, CloseCurrent, CurrentCloseTarget, DismissSurface,
     FocusComposer, FocusSessionSearch, NewSession, NextSession, PiApp, PickerBack, PickerScope,
-    PreviousSession, ProjectPickerIntent, RemoveProject, ShowActionPicker, ShowKeybindings,
-    ShowWorkGraph, SubmitFollowUp, SubmitPrompt, SwitchSession1, SwitchSession2, SwitchSession3,
-    SwitchSession4, SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8, SwitchSession9,
-    ToggleArchivedSessions, WorkCreateIssue, WorkDismiss, WorkFocusSearch, WorkNextIssue,
-    WorkPreviousIssue, current_close_target,
+    PreviousSession, ProjectPickerIntent, RemoveProject, ShowActionPicker, ShowEditor,
+    ShowKeybindings, ShowTerminal, ShowWorkGraph, SubmitFollowUp, SubmitPrompt, SwitchSession1,
+    SwitchSession2, SwitchSession3, SwitchSession4, SwitchSession5, SwitchSession6, SwitchSession7,
+    SwitchSession8, SwitchSession9, ToggleArchivedSessions, WorkCreateIssue, WorkDismiss,
+    WorkFocusSearch, WorkNextIssue, WorkPreviousIssue, current_close_target,
 };
 pub(crate) const OVERLAY_KEY_CONTEXT: &str = "PiGpuiOverlay";
 
@@ -86,6 +88,11 @@ impl Render for PiApp {
             cx.defer_in(window, move |_, window, cx| focus.focus(window, cx));
         }
         if self.pending_dialog_setup {
+            if matches!(self.surface, AppSurface::Editor | AppSurface::Terminal) {
+                self.hide_native_workspace_surfaces(cx);
+                self.surface = AppSurface::Chat;
+                self.dialog_return_focus = Some(self.composer_focus.clone());
+            }
             self.pending_dialog_setup = false;
             if self.dialog_return_focus.is_none() {
                 self.dialog_return_focus = window.focused(cx);
@@ -192,10 +199,10 @@ impl Render for PiApp {
                 main.child(self.composer_view.clone())
             })
             .into_any_element();
-        let main = if self.surface == AppSurface::Editor {
-            self.render_editor_surface()
-        } else {
-            chat_main
+        let main = match self.surface {
+            AppSurface::Editor => self.render_editor_surface(),
+            AppSurface::Terminal => self.render_terminal_workspace(),
+            AppSurface::Chat | AppSurface::Work => chat_main,
         };
         let workgraph_focus = self.workgraph_view.read(cx).focus_handle();
         let picker = self.render_picker(entity.clone(), cx);
@@ -242,7 +249,15 @@ impl Render for PiApp {
                 this.search_focus.focus(window, cx);
             }))
             .on_action(cx.listener(|this, _: &FocusComposer, window, cx| {
-                this.composer_focus.focus(window, cx);
+                if !this.workspace_switch_blocked() {
+                    this.show_chat_surface(window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &ShowEditor, window, cx| {
+                this.show_editor_surface(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ShowTerminal, window, cx| {
+                this.show_terminal_surface(window, cx);
             }))
             .on_action(cx.listener(|this, _: &PreviousSession, window, cx| {
                 this.switch_relative_session(-1, window, cx);
@@ -271,6 +286,10 @@ impl Render for PiApp {
             .on_action(cx.listener(|this, _: &CloseCurrent, window, cx| {
                 if this.surface == AppSurface::Editor {
                     this.close_editor(window, cx);
+                    return;
+                }
+                if this.surface == AppSurface::Terminal {
+                    this.close_terminal(window, cx);
                     return;
                 }
                 match current_close_target(
@@ -400,6 +419,7 @@ impl Render for PiApp {
                         )
                     }),
             )
+            .child(self.render_surface_switcher(entity.clone(), !shows_left_inline(mode)))
             .when_some(picker, |root, picker| root.child(picker))
             .when(work_active, |root| {
                 let close = entity.clone();

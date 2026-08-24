@@ -55,13 +55,17 @@ GPL-3.0-or-later licensing. Exact upstream license texts and detailed source
 provenance are included in that directory as `LICENSE-APACHE`, `LICENSE-GPL`,
 and `README.md`.
 
-The `gpui-neovim` and `gpui-libghostty` dependencies use crates.io release
-`0.1.0` from <https://github.com/behzade/gpui-libghostty>. They and their pinned
-Ghostty source are distributed under MIT; exact third-party licenses and source
-provenance are retained in that repository.
+The locally patched `gpui-neovim` dependency derives from release `0.1.0`, and
+`gpui-libghostty` uses release `0.1.2`, from
+<https://github.com/behzade/gpui-libghostty>. The patched Neovim source is under
+`third_party/gpui-neovim-0.1.0`; it and the pinned Ghostty source are distributed
+under MIT, with exact licenses and provenance retained in that repository.
 
-The embedded SVG icon set identifies itself as Lucide and includes work derived
-from Feather. Its ISC and Feather MIT terms and notices are included at
-`THIRD_PARTY_LICENSES/LUCIDE-ISC.txt`. No SVG was copied into this module's
-source tree, but `gpui-component-assets::Assets` embeds and serves that set at
-runtime.
+Application icons copied from Phosphor Icons are distributed under MIT. The
+exact upstream license is included at
+`THIRD_PARTY_LICENSES/PHOSPHOR-ICONS-MIT.txt`.
+
+The fallback embedded SVG icon set identifies itself as Lucide and includes work
+derived from Feather. Its ISC and Feather MIT terms and notices are included at
+`THIRD_PARTY_LICENSES/LUCIDE-ISC.txt`; `gpui-component-assets::Assets` embeds
+and serves that set at runtime.
