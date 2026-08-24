@@ -57,21 +57,20 @@ let
       lib.cleanSourceFilter path type
       && !(type == "directory" && builtins.baseNameOf path == "target");
   };
-  gpuiPathSources = lib.cleanSourceWith {
+  vendoredPathSources = lib.cleanSourceWith {
     src = sourceRoot;
     filter = path: _type:
       let
         relative = lib.removePrefix "${toString sourceRoot}/" (toString path);
       in
-      relative == "third_party"
-      || lib.hasPrefix "third_party/zed-gpui-cc053a4" relative;
+      relative == "third_party" || lib.hasPrefix "third_party/" relative;
   };
   dummySrc = craneLib.mkDummySrc {
     inherit src;
     cargoLock = ../apps/pi-gpui/Cargo.lock;
     extraDummyScript = ''
       rm -rf "$out/third_party"
-      cp -r ${gpuiPathSources}/third_party "$out/third_party"
+      cp -r ${vendoredPathSources}/third_party "$out/third_party"
     '';
   };
 
