@@ -246,7 +246,7 @@ pub(crate) struct PiApp {
     pending_title: Option<(u64, String)>,
     pending_editor_text: Option<(u64, String)>,
     pending_submissions: HashMap<String, PendingSubmission>,
-    pending_session_reset: bool,
+    pending_focus_after_render: Option<FocusHandle>,
     sessions_sheet: bool,
     review_sessions_expanded: bool,
     pending_archive: Option<archive::PendingArchive>,
@@ -628,7 +628,7 @@ impl PiApp {
             pending_title: None,
             pending_editor_text: None,
             pending_submissions: HashMap::new(),
-            pending_session_reset: false,
+            pending_focus_after_render: None,
             sessions_sheet: false,
             review_sessions_expanded: false,
             pending_archive: None,
@@ -1106,7 +1106,7 @@ impl PiApp {
         self.pending_dialog_setup = false;
         self.pending_title = Some((generation, "Pi".into()));
         self.pending_editor_text = None;
-        self.pending_session_reset = true;
+        self.pending_focus_after_render = Some(self.composer_focus.clone());
         self.dialog_return_focus = None;
         self.sessions_sheet = false;
         self.run_sheet = false;
@@ -1165,8 +1165,7 @@ impl PiApp {
                 self.pending_editor_text = Some((generation, text))
             }
             ExtensionEffect::OpenUrl(url) => {
-                self.hide_native_workspace_surfaces(cx);
-                self.surface = AppSurface::Chat;
+                self.enter_chat_surface(self.composer_focus.clone(), cx);
                 cx.open_url(&url);
             }
             ExtensionEffect::PersistError(_) | ExtensionEffect::None => {}

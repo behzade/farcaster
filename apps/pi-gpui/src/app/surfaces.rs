@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use gpui::{Context, Window};
+use gpui::{Context, FocusHandle, Window};
 
 use super::{AppSurface, PiApp};
 use crate::{
@@ -234,15 +234,23 @@ impl PiApp {
         }
     }
 
-    pub(super) fn show_chat_surface(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn enter_chat_surface(
+        &mut self,
+        focus: FocusHandle,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let changed = self.surface != AppSurface::Chat;
         self.hide_native_workspace_surfaces(cx);
         self.surface = AppSurface::Chat;
-        self.composer_focus.focus(window, cx);
-        if changed {
+        self.pending_focus_after_render = Some(focus);
+        cx.notify();
+        changed
+    }
+
+    pub(super) fn show_chat_surface(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.enter_chat_surface(self.composer_focus.clone(), cx) {
             self.workgraph_view
                 .update(cx, |view, cx| view.prepare_open(window, cx));
-            cx.notify();
         }
     }
 

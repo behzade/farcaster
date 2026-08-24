@@ -72,9 +72,7 @@ impl Render for PiApp {
                 this.open_picker(scope, window, cx);
             });
         }
-        if self.pending_session_reset {
-            self.pending_session_reset = false;
-            let focus = self.composer_focus.clone();
+        if let Some(focus) = self.pending_focus_after_render.take() {
             cx.defer_in(window, move |_, window, cx| focus.focus(window, cx));
         }
         if self.pending_session_title_focus {
@@ -285,7 +283,7 @@ impl Render for PiApp {
             }))
             .on_action(cx.listener(|this, _: &CloseCurrent, window, cx| {
                 if this.surface == AppSurface::Editor {
-                    this.close_editor(window, cx);
+                    this.close_editor(cx);
                     return;
                 }
                 if this.surface == AppSurface::Terminal {

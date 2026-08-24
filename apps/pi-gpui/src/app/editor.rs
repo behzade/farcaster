@@ -131,16 +131,15 @@ impl PiApp {
         }
     }
 
-    pub(super) fn close_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn close_editor(&mut self, cx: &mut Context<Self>) {
         self.editor = None;
         self.editor_error = None;
-        self.surface = AppSurface::Chat;
-        self.editor_return_focus
+        let focus = self
+            .editor_return_focus
             .take()
-            .unwrap_or_else(|| self.composer_focus.clone())
-            .focus(window, cx);
+            .unwrap_or_else(|| self.composer_focus.clone());
+        self.enter_chat_surface(focus, cx);
         self.request_repository_refresh(cx);
-        cx.notify();
     }
 }
 
