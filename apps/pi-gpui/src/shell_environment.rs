@@ -1,9 +1,11 @@
 //! Project login-shell environment import for desktop launches.
 
+#[cfg(target_os = "linux")]
+use std::io::Write as _;
+
 use std::{
     collections::HashMap,
     ffi::OsString,
-    io::Write as _,
     os::unix::ffi::OsStringExt as _,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -98,25 +100,31 @@ fn absolute_path(value: &[u8]) -> Option<PathBuf> {
 
 fn capture_login_shell_environment(shell: &Path, project: &Path) -> Result<Environment, String> {
     let mut command = script_command(shell)?;
-    let mut child = command
+    command
         .current_dir(project)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    let child = command
         .spawn()
         .map_err(|error| format!("start login shell {} in terminal: {error}", shell.display()))?;
-    let mut input = child
-        .stdin
-        .take()
-        .ok_or_else(|| "login shell terminal did not expose input".to_owned())?;
-    input
-        .write_all(CAPTURE_COMMAND.as_bytes())
-        .and_then(|()| input.flush())
-        .map_err(|error| format!("request login shell environment: {error}"))?;
+    #[cfg(target_os = "linux")]
+    let mut child = child;
+    #[cfg(target_os = "linux")]
+    let _input = {
+        let mut input = child
+            .stdin
+            .take()
+            .ok_or_else(|| "login shell terminal did not expose input".to_owned())?;
+        input
+            .write_all(CAPTURE_COMMAND.as_bytes())
+            .and_then(|()| input.flush())
+            .map_err(|error| format!("request login shell environment: {error}"))?;
+        input
+    };
     let output = child
         .wait_with_output()
         .map_err(|error| format!("wait for login shell {}: {error}", shell.display()))?;
-    drop(input);
     if !output.status.success() {
         return Err(format!(
             "login shell {} exited with {}",
@@ -133,7 +141,7 @@ fn script_command(shell: &Path) -> Result<Command, String> {
     command
         .args(["-q", "/dev/null"])
         .arg(shell)
-        .args(["-l", "-i"]);
+        .args(["-l", "-i", "-c", CAPTURE_COMMAND]);
     Ok(command)
 }
 
@@ -245,13 +253,22 @@ mod tests {
     fn capture_runs_a_real_interactive_login_shell() -> TestResult {
         let temp = tempdir()?;
         let shell = temp.path().join("shell");
-        fs::write(
-            &shell,
+        #[cfg(target_os = "macos")]
+        let run_capture = r#"
+test "$3" = "-c"
+test "$#" = "4"
+exec /bin/sh -c "$4"
+"#;
+        #[cfg(target_os = "linux")]
+        let run_capture = r#"
+test "$#" = "2"
+exec /bin/sh
+"#;
+        let shell_script = format!(
             r#"#!/bin/sh
 set -eu
 test "$1" = "-l"
 test "$2" = "-i"
-test "$#" = "2"
 test -t 0
 test -t 1
 export PATH=/login/bin:$PATH
@@ -260,9 +277,9 @@ export PROJECT_VALUE="$PWD"
 export MULTILINE_VALUE='left
 right'
 printf 'prompt hook output before environment\n'
-exec /bin/sh
-"#,
-        )?;
+{run_capture}"#
+        );
+        fs::write(&shell, shell_script)?;
         let mut permissions = fs::metadata(&shell)?.permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&shell, permissions)?;
