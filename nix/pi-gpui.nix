@@ -39,7 +39,7 @@
   util-linux,
   vulkan-loader,
   wayland,
-  zig_0_14,
+  zig_0_16,
 }:
 
 let
@@ -65,7 +65,7 @@ let
       in
       relative == "third_party"
       || lib.hasPrefix "third_party/zed-gpui-cc053a4" relative
-      || lib.hasPrefix "third_party/gpui-ghostty-e3025981" relative;
+      || lib.hasPrefix "third_party/libghostty-9f0e1719" relative;
   };
   dummySrc = craneLib.mkDummySrc {
     inherit src;
@@ -99,7 +99,7 @@ let
       makeWrapper
       pkg-config
       rustPlatform.bindgenHook
-      zig_0_14
+      zig_0_16
     ] ++ lib.optionals stdenv.hostPlatform.isLinux [
       util-linux
     ];

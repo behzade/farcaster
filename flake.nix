@@ -131,7 +131,7 @@
               rustc
               rustfmt
               rustPlatform.bindgenHook
-              zig_0_14
+              zig_0_16
             ];
             shellHook = ''
               export CARGO_TARGET_DIR="$PWD/target"

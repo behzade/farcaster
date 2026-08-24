@@ -103,6 +103,9 @@ impl PiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(editor) = self.editor.as_ref() {
+            editor.update(cx, |editor, _| editor.set_visible(false));
+        }
         if self.picker.is_none() {
             let sheet_open = self.sessions_sheet || self.run_sheet || self.keybindings_help;
             self.picker_return_focus = if sheet_open {
@@ -184,6 +187,11 @@ impl PiApp {
             .take()
             .unwrap_or_else(|| self.composer_focus.clone())
             .focus(window, cx);
+        if self.surface == super::AppSurface::Editor
+            && let Some(editor) = self.editor.as_ref()
+        {
+            editor.update(cx, |editor, _| editor.set_visible(true));
+        }
         cx.notify();
     }
 

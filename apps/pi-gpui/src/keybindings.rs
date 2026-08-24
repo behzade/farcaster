@@ -2,10 +2,6 @@
 
 use gpui::KeyBinding;
 use gpui_base::actions::{SelectDown, SelectUp};
-use gpui_ghostty_terminal::view::{
-    Copy as TerminalCopy, Paste as TerminalPaste, SelectAll as TerminalSelectAll,
-};
-
 use crate::app::{
     AbortRun, AddProject, CloseCurrent, ComposerHistoryNext, ComposerHistoryPrevious,
     DismissSurface, FocusComposer, NewSession, NextSession, OVERLAY_KEY_CONTEXT,
@@ -114,27 +110,6 @@ pub(crate) fn registry() -> Vec<Shortcut> {
             binding: KeyBinding::new("ctrl-n", ComposerHistoryNext, Some("PiComposer > Input")),
         },
         shortcut!("Composer", "Focus composer", "cmd-l", FocusComposer, None),
-        shortcut!(
-            "Editor",
-            "Copy terminal selection",
-            "cmd-c",
-            TerminalCopy,
-            Some("Terminal")
-        ),
-        shortcut!(
-            "Editor",
-            "Paste into Neovim",
-            "cmd-v",
-            TerminalPaste,
-            Some("Terminal")
-        ),
-        shortcut!(
-            "Editor",
-            "Select terminal contents",
-            "cmd-a",
-            TerminalSelectAll,
-            Some("Terminal")
-        ),
         shortcut!("Composer", "Send prompt", "cmd-enter", SubmitPrompt, None),
         shortcut!(
             "Composer",

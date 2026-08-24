@@ -14,11 +14,10 @@ gpui-base = { git = "https://github.com/longbridge/gpui-component", rev = "bd833
 gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "bd833291311289f3468479d31b629d3de279d3d4", features = ["tree-sitter-languages"] }
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "bd833291311289f3468479d31b629d3de279d3d4" }
 gpui-fps = { git = "https://github.com/longbridge/gpui-component", rev = "bd833291311289f3468479d31b629d3de279d3d4" }
-ghostty_vt = { path = "third_party/gpui-ghostty-e3025981/crates/ghostty_vt" }
-gpui_ghostty_terminal = { path = "third_party/gpui-ghostty-e3025981/crates/gpui_ghostty_terminal" }
+pi-libghostty = { path = "libghostty" }
 gpui_platform = { path = "third_party/zed-gpui-cc053a4/crates/gpui_platform", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
 notify = "7.0.0"
-portable-pty = "0.9.0"
+raw-window-handle = "0.6"
 rusqlite = { version = "0.37.0", features = ["bundled"] }
 ropey = "=2.0.0-beta.1"
 serde = { version = "1.0.229", features = ["derive"] }

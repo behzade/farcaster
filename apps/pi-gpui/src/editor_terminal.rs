@@ -1,31 +1,25 @@
-//! Embedded Neovim process, PTY lifecycle, and Ghostty-backed GPUI terminal view.
+//! Embedded Neovim lifecycle and upstream libghostty native surface integration.
 
 use std::{
-    io::{Read as _, Write as _},
+    ffi::{CString, c_void},
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, AtomicU64, Ordering},
-    },
+    ptr::NonNull,
+    sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };
 
 use gpui::{
-    AppContext as _, Bounds, Context, Entity, FocusHandle, IntoElement, ParentElement as _, Pixels,
-    Render, SharedString, Styled as _, Task, Window, div,
+    Bounds, Context, FocusHandle, InteractiveElement as _, IntoElement, KeyDownEvent, KeyUpEvent,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Render, ScrollDelta, ScrollWheelEvent,
+    Styled as _, Task, Window, div,
 };
 use gpui_component::ElementExt as _;
-use gpui_ghostty_terminal::{
-    TerminalConfig, TerminalSession, default_terminal_font, default_terminal_font_features,
-    view::{TerminalInput, TerminalView},
-};
-use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
+use pi_libghostty::{KeyAction, Modifiers, MouseButton, MouseState, Surface};
+use raw_window_handle::RawWindowHandle;
 use wait_timeout::ChildExt as _;
 
-const DEFAULT_COLS: u16 = 100;
-const DEFAULT_ROWS: u16 = 30;
-const OUTPUT_FRAME: Duration = Duration::from_millis(16);
+const TICK_INTERVAL: Duration = Duration::from_millis(8);
 static NEXT_SOCKET_ID: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) struct EditorTerminal {
@@ -33,13 +27,10 @@ pub(crate) struct EditorTerminal {
     path: PathBuf,
     socket: PathBuf,
     nvim: PathBuf,
-    view: Entity<TerminalView>,
+    surface: Surface,
     focus: FocusHandle,
-    master: Box<dyn MasterPty + Send>,
-    killer: Box<dyn ChildKiller + Send + Sync>,
-    alive: Arc<AtomicBool>,
-    size: PtySize,
-    _output_task: Task<()>,
+    bounds: Bounds<Pixels>,
+    tick_task: Option<Task<()>>,
 }
 
 impl EditorTerminal {
@@ -52,118 +43,23 @@ impl EditorTerminal {
         let nvim = std::env::var_os("PI_GUI_NVIM")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("nvim"));
-        Self::spawn_with_program(project, path, nvim, window, cx)
-    }
-
-    fn spawn_with_program<T: 'static>(
-        project: PathBuf,
-        path: PathBuf,
-        nvim: PathBuf,
-        window: &mut Window,
-        cx: &mut Context<T>,
-    ) -> Result<Self, String> {
         let socket = socket_path();
-        let config = terminal_config();
-        let session = TerminalSession::new(config)
-            .map_err(|error| format!("initialize Ghostty terminal: {error}"))?;
-        let size = PtySize {
-            rows: config.rows,
-            cols: config.cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        };
-        let pair = native_pty_system()
-            .openpty(size)
-            .map_err(|error| format!("open Neovim terminal: {error}"))?;
-        let master = pair.master;
-        let mut reader = master
-            .try_clone_reader()
-            .map_err(|error| format!("open Neovim terminal output: {error}"))?;
-        let writer = master
-            .take_writer()
-            .map_err(|error| format!("open Neovim terminal input: {error}"))?;
-
-        let mut command = CommandBuilder::new(&nvim);
-        command.cwd(&project);
-        command.arg("--listen");
-        command.arg(&socket);
-        command.arg("--");
-        command.arg(&path);
-        command.env("TERM", "xterm-256color");
-        command.env("COLORTERM", "truecolor");
-        command.env("TERM_PROGRAM", "pi-gpui");
-        let mut child = pair
-            .slave
-            .spawn_command(command)
-            .map_err(|error| format!("start {}: {error}", nvim.display()))?;
-        let killer = child.clone_killer();
-        let alive = Arc::new(AtomicBool::new(true));
-        let alive_after_exit = alive.clone();
-        std::thread::spawn(move || {
-            let _ = child.wait();
-            alive_after_exit.store(false, Ordering::Release);
-        });
-
-        let writer = Arc::new(Mutex::new(writer));
-        let input_writer = writer.clone();
+        let command = nvim_command(&nvim, &socket, &path)?;
+        let working_directory = path_c_string(&project, "editor project")?;
+        let parent_view = appkit_view(window)?;
+        let surface = Surface::new(parent_view, &working_directory, &command)
+            .map_err(|error| format!("initialize upstream libghostty: {error}"))?;
         let focus = cx.focus_handle();
-        let view = cx.new(|_| {
-            TerminalView::new_with_input(
-                session,
-                focus.clone(),
-                TerminalInput::new(move |bytes| {
-                    let Ok(mut writer) = input_writer.lock() else {
-                        return;
-                    };
-                    let _ = writer.write_all(bytes);
-                    let _ = writer.flush();
-                }),
-            )
-        });
-
-        let (output_tx, output_rx) = async_channel::unbounded::<Vec<u8>>();
-        std::thread::spawn(move || {
-            let mut buffer = [0_u8; 8192];
-            loop {
-                let count = match reader.read(&mut buffer) {
-                    Ok(0) | Err(_) => break,
-                    Ok(count) => count,
-                };
-                if output_tx.send_blocking(buffer[..count].to_vec()).is_err() {
-                    break;
-                }
-            }
-        });
-        let output_view = view.clone();
-        let output_task = cx.spawn(async move |_, cx| {
-            loop {
-                cx.background_executor().timer(OUTPUT_FRAME).await;
-                let mut batch = Vec::new();
-                while let Ok(chunk) = output_rx.try_recv() {
-                    batch.extend_from_slice(&chunk);
-                }
-                if !batch.is_empty() {
-                    output_view.update(cx, |view, cx| view.queue_output_bytes(&batch, cx));
-                }
-                if output_rx.is_closed() && output_rx.is_empty() {
-                    break;
-                }
-            }
-        });
-
         focus.focus(window, cx);
         Ok(Self {
             project,
             path,
             socket,
             nvim,
-            view,
+            surface,
             focus,
-            master,
-            killer,
-            alive,
-            size,
-            _output_task: output_task,
+            bounds: Bounds::default(),
+            tick_task: None,
         })
     }
 
@@ -176,11 +72,18 @@ impl EditorTerminal {
     }
 
     pub(crate) fn is_alive(&self) -> bool {
-        self.alive.load(Ordering::Acquire)
+        self.surface.is_alive()
     }
 
-    pub(crate) fn focus<T>(&self, window: &mut Window, cx: &mut Context<T>) {
+    pub(crate) fn focus<T>(&mut self, window: &mut Window, cx: &mut Context<T>) {
+        self.surface.set_visible(true);
+        self.surface.set_focus(true);
         self.focus.focus(window, cx);
+    }
+
+    pub(crate) fn set_visible(&mut self, visible: bool) {
+        self.surface.set_visible(visible);
+        self.surface.set_focus(visible);
     }
 
     pub(crate) fn open_file(&mut self, path: PathBuf) -> Result<(), String> {
@@ -213,99 +116,195 @@ impl EditorTerminal {
         Ok(())
     }
 
-    fn resize_to(&mut self, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((cell_width, cell_height)) = cell_metrics(window) else {
-            return;
-        };
-        let cols = grid_dimension(f32::from(bounds.size.width), cell_width);
-        let rows = grid_dimension(f32::from(bounds.size.height), cell_height);
-        if self.size.cols == cols && self.size.rows == rows {
+    fn start_ticking(&mut self, cx: &mut Context<Self>) {
+        if self.tick_task.is_some() {
             return;
         }
-        let size = PtySize {
-            cols,
-            rows,
-            pixel_width: 0,
-            pixel_height: 0,
-        };
-        if self.master.resize(size).is_err() {
+        self.surface.tick();
+        let editor = cx.entity().downgrade();
+        self.tick_task = Some(cx.spawn(async move |_, cx| {
+            loop {
+                cx.background_executor().timer(TICK_INTERVAL).await;
+                let updated = editor.update(cx, |editor, cx| {
+                    if editor.surface.needs_tick() {
+                        editor.surface.tick();
+                        cx.notify();
+                    }
+                });
+                if updated.is_err() {
+                    break;
+                }
+            }
+        }));
+    }
+
+    fn update_frame(&mut self, bounds: Bounds<Pixels>) {
+        self.bounds = bounds;
+        self.surface.set_frame(
+            f64::from(f32::from(bounds.origin.x)),
+            f64::from(f32::from(bounds.origin.y)),
+            f64::from(f32::from(bounds.size.width)),
+            f64::from(f32::from(bounds.size.height)),
+        );
+        self.surface.set_visible(true);
+    }
+
+    fn key_down(&mut self, event: &KeyDownEvent) {
+        self.send_key(
+            if event.is_held {
+                KeyAction::Repeat
+            } else {
+                KeyAction::Press
+            },
+            &event.keystroke,
+        );
+    }
+
+    fn key_up(&mut self, event: &KeyUpEvent) {
+        self.send_key(KeyAction::Release, &event.keystroke);
+    }
+
+    fn send_key(&mut self, action: KeyAction, keystroke: &gpui::Keystroke) {
+        let Some(keycode) = mac_keycode(&keystroke.key) else {
+            if matches!(action, KeyAction::Press | KeyAction::Repeat)
+                && !keystroke.modifiers.control
+                && !keystroke.modifiers.alt
+                && !keystroke.modifiers.platform
+                && let Some(text) = keystroke.key_char.as_deref()
+                && let Ok(text) = CString::new(text)
+            {
+                self.surface.text(&text);
+            }
             return;
-        }
-        self.size = size;
-        self.view
-            .update(cx, |view, cx| view.resize_terminal(cols, rows, cx));
+        };
+        let text = keystroke
+            .key_char
+            .as_deref()
+            .and_then(|text| CString::new(text).ok());
+        let unshifted = keystroke.key.chars().next().map_or(0, u32::from);
+        let _ = self.surface.key(
+            action,
+            modifiers(keystroke.modifiers),
+            keycode,
+            text.as_deref(),
+            unshifted,
+        );
+    }
+
+    fn mouse_position(&mut self, position: gpui::Point<Pixels>, modifiers: gpui::Modifiers) {
+        let x = f64::from(f32::from(position.x - self.bounds.origin.x));
+        let y = f64::from(f32::from(position.y - self.bounds.origin.y));
+        self.surface
+            .mouse_position(x, y, self::modifiers(modifiers));
+    }
+
+    fn mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.focus.focus(window, cx);
+        self.surface.set_focus(true);
+        self.mouse_position(event.position, event.modifiers);
+        self.surface.mouse_button(
+            MouseState::Press,
+            mouse_button(event.button),
+            modifiers(event.modifiers),
+        );
+    }
+
+    fn mouse_up(&mut self, event: &MouseUpEvent) {
+        self.mouse_position(event.position, event.modifiers);
+        self.surface.mouse_button(
+            MouseState::Release,
+            mouse_button(event.button),
+            modifiers(event.modifiers),
+        );
+    }
+
+    fn mouse_move(&mut self, event: &MouseMoveEvent) {
+        self.mouse_position(event.position, event.modifiers);
+    }
+
+    fn scroll(&mut self, event: &ScrollWheelEvent) {
+        self.mouse_position(event.position, event.modifiers);
+        let (x, y, precision) = match event.delta {
+            ScrollDelta::Pixels(delta) => (
+                f64::from(f32::from(delta.x)),
+                f64::from(f32::from(delta.y)),
+                true,
+            ),
+            ScrollDelta::Lines(delta) => (f64::from(delta.x), f64::from(delta.y), false),
+        };
+        self.surface.mouse_scroll(x, y, precision);
     }
 }
 
 impl Render for EditorTerminal {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.start_ticking(cx);
         let editor = cx.entity().downgrade();
         div()
+            .key_context("Terminal")
+            .track_focus(&self.focus)
             .size_full()
             .min_h_0()
-            .on_prepaint(move |bounds, window, cx| {
-                let _ = editor.update(cx, |editor, cx| editor.resize_to(bounds, window, cx));
+            .on_prepaint(move |bounds, _, cx| {
+                let _ = editor.update(cx, |editor, _| editor.update_frame(bounds));
             })
-            .child(self.view.clone())
+            .on_key_down(cx.listener(|editor, event, _, _| editor.key_down(event)))
+            .on_key_up(cx.listener(|editor, event, _, _| editor.key_up(event)))
+            .on_mouse_move(cx.listener(|editor, event, _, _| editor.mouse_move(event)))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|editor, event, window, cx| editor.mouse_down(event, window, cx)),
+            )
+            .on_mouse_down(
+                gpui::MouseButton::Middle,
+                cx.listener(|editor, event, window, cx| editor.mouse_down(event, window, cx)),
+            )
+            .on_mouse_down(
+                gpui::MouseButton::Right,
+                cx.listener(|editor, event, window, cx| editor.mouse_down(event, window, cx)),
+            )
+            .on_mouse_up(
+                gpui::MouseButton::Left,
+                cx.listener(|editor, event, _, _| editor.mouse_up(event)),
+            )
+            .on_mouse_up(
+                gpui::MouseButton::Middle,
+                cx.listener(|editor, event, _, _| editor.mouse_up(event)),
+            )
+            .on_mouse_up(
+                gpui::MouseButton::Right,
+                cx.listener(|editor, event, _, _| editor.mouse_up(event)),
+            )
+            .on_scroll_wheel(cx.listener(|editor, event, _, _| editor.scroll(event)))
     }
 }
 
-impl Drop for EditorTerminal {
-    fn drop(&mut self) {
-        let _ = self.killer.kill();
-        let _ = std::fs::remove_file(&self.socket);
+fn appkit_view(window: &Window) -> Result<NonNull<c_void>, String> {
+    let handle = raw_window_handle::HasWindowHandle::window_handle(window)
+        .map_err(|error| format!("read native window handle: {error}"))?;
+    match handle.as_raw() {
+        RawWindowHandle::AppKit(handle) => Ok(handle.ns_view),
+        _ => Err("upstream libghostty editor is only available on macOS".to_owned()),
     }
 }
 
-fn terminal_config() -> TerminalConfig {
-    let foreground = crate::theme::THEME.colors.text;
-    let background = crate::theme::THEME.colors.canvas;
-    TerminalConfig {
-        cols: DEFAULT_COLS,
-        rows: DEFAULT_ROWS,
-        default_fg: rgb(foreground),
-        default_bg: rgb(background),
-        update_window_title: false,
-    }
+fn path_c_string(path: &Path, label: &str) -> Result<CString, String> {
+    CString::new(path.to_string_lossy().as_bytes())
+        .map_err(|_| format!("{label} contains a NUL byte: {}", path.display()))
 }
 
-fn rgb(color: gpui::Rgba) -> ghostty_vt::Rgb {
-    ghostty_vt::Rgb {
-        r: (color.r * 255.0).round() as u8,
-        g: (color.g * 255.0).round() as u8,
-        b: (color.b * 255.0).round() as u8,
-    }
+fn nvim_command(nvim: &Path, socket: &Path, path: &Path) -> Result<CString, String> {
+    let command = format!(
+        "exec {} --listen {} -- {}",
+        shell_quote(nvim),
+        shell_quote(socket),
+        shell_quote(path)
+    );
+    CString::new(command).map_err(|_| "Neovim command contains a NUL byte".to_owned())
 }
 
-fn cell_metrics(window: &mut Window) -> Option<(f32, f32)> {
-    let mut style = window.text_style();
-    let font = default_terminal_font();
-    style.font_family = font.family.clone();
-    style.font_features = default_terminal_font_features();
-    style.font_fallbacks = font.fallbacks.clone();
-    let rem_size = window.rem_size();
-    let font_size = style.font_size.to_pixels(rem_size);
-    let line_height = style.line_height.to_pixels(style.font_size, rem_size);
-    let line = window
-        .text_system()
-        .shape_text(
-            SharedString::from("M"),
-            font_size,
-            &[style.to_run(1)],
-            None,
-            Some(1),
-        )
-        .ok()?
-        .into_iter()
-        .next()?;
-    Some((
-        f32::from(line.width()).max(1.0),
-        f32::from(line_height).max(1.0),
-    ))
-}
-
-fn grid_dimension(pixels: f32, cell: f32) -> u16 {
-    (pixels / cell).floor().clamp(1.0, f32::from(u16::MAX)) as u16
+fn shell_quote(path: &Path) -> String {
+    format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
 }
 
 fn socket_path() -> PathBuf {
@@ -313,15 +312,134 @@ fn socket_path() -> PathBuf {
     std::env::temp_dir().join(format!("pi-gpui-nvim-{}-{id}.sock", std::process::id()))
 }
 
+fn modifiers(value: gpui::Modifiers) -> Modifiers {
+    let mut result = Modifiers::empty();
+    if value.shift {
+        result.insert(Modifiers::SHIFT);
+    }
+    if value.control {
+        result.insert(Modifiers::CONTROL);
+    }
+    if value.alt {
+        result.insert(Modifiers::ALT);
+    }
+    if value.platform {
+        result.insert(Modifiers::SUPER);
+    }
+    result
+}
+
+fn mouse_button(button: gpui::MouseButton) -> MouseButton {
+    match button {
+        gpui::MouseButton::Left => MouseButton::Left,
+        gpui::MouseButton::Right => MouseButton::Right,
+        gpui::MouseButton::Middle => MouseButton::Middle,
+        gpui::MouseButton::Navigate(_) => MouseButton::Unknown,
+    }
+}
+
+fn mac_keycode(key: &str) -> Option<u32> {
+    Some(match key {
+        "a" => 0,
+        "s" => 1,
+        "d" => 2,
+        "f" => 3,
+        "h" => 4,
+        "g" => 5,
+        "z" => 6,
+        "x" => 7,
+        "c" => 8,
+        "v" => 9,
+        "b" => 11,
+        "q" => 12,
+        "w" => 13,
+        "e" => 14,
+        "r" => 15,
+        "y" => 16,
+        "t" => 17,
+        "1" => 18,
+        "2" => 19,
+        "3" => 20,
+        "4" => 21,
+        "6" => 22,
+        "5" => 23,
+        "=" => 24,
+        "9" => 25,
+        "7" => 26,
+        "-" => 27,
+        "8" => 28,
+        "0" => 29,
+        "]" => 30,
+        "o" => 31,
+        "u" => 32,
+        "[" => 33,
+        "i" => 34,
+        "p" => 35,
+        "enter" | "return" => 36,
+        "l" => 37,
+        "j" => 38,
+        "'" => 39,
+        "k" => 40,
+        ";" => 41,
+        "\\" => 42,
+        "," => 43,
+        "/" => 44,
+        "n" => 45,
+        "m" => 46,
+        "." => 47,
+        "tab" => 48,
+        "space" => 49,
+        "`" => 50,
+        "backspace" => 51,
+        "escape" => 53,
+        "f17" => 64,
+        "f18" => 79,
+        "f19" => 80,
+        "f20" => 90,
+        "f5" => 96,
+        "f6" => 97,
+        "f7" => 98,
+        "f3" => 99,
+        "f8" => 100,
+        "f9" => 101,
+        "f11" => 103,
+        "f13" => 105,
+        "f16" => 106,
+        "f14" => 107,
+        "f10" => 109,
+        "f12" => 111,
+        "f15" => 113,
+        "home" => 115,
+        "pageup" | "page_up" | "page-up" => 116,
+        "delete" => 117,
+        "f4" => 118,
+        "end" => 119,
+        "f2" => 120,
+        "pagedown" | "page_down" | "page-down" => 121,
+        "left" => 123,
+        "right" => 124,
+        "down" => 125,
+        "up" => 126,
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn terminal_grid_never_has_zero_or_overflowing_dimensions() {
-        assert_eq!(grid_dimension(0.0, 9.0), 1);
-        assert_eq!(grid_dimension(89.0, 9.0), 9);
-        assert_eq!(grid_dimension(f32::MAX, 1.0), u16::MAX);
+    fn nvim_command_quotes_paths_for_ghosttys_shell_boundary() {
+        let command = nvim_command(
+            Path::new("/tmp/my nvim"),
+            Path::new("/tmp/editor.sock"),
+            Path::new("/tmp/it's.rs"),
+        )
+        .expect("valid command");
+        assert_eq!(
+            command.to_str().expect("UTF-8 command"),
+            "exec '/tmp/my nvim' --listen '/tmp/editor.sock' -- '/tmp/it'\\''s.rs'"
+        );
     }
 
     #[test]
@@ -329,37 +447,10 @@ mod tests {
         assert_ne!(socket_path(), socket_path());
     }
 
-    #[cfg(unix)]
-    #[gpui::test]
-    fn embedded_editor_owns_a_live_pty_child(cx: &mut gpui::TestAppContext) {
-        use std::os::unix::fs::PermissionsExt as _;
-
-        let directory = tempfile::tempdir().expect("temporary project");
-        let file = directory.path().join("file.rs");
-        std::fs::write(&file, "fn main() {}\n").expect("test file");
-        let program = directory.path().join("fake-nvim");
-        std::fs::write(&program, "#!/bin/sh\nsleep 5\n").expect("fake Neovim");
-        let mut permissions = std::fs::metadata(&program)
-            .expect("fake Neovim metadata")
-            .permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&program, permissions).expect("executable fake Neovim");
-
-        let cx = cx.add_empty_window();
-        let editor = cx.update(|window, cx| {
-            cx.new(|editor_cx| {
-                EditorTerminal::spawn_with_program(
-                    directory.path().to_path_buf(),
-                    file,
-                    program,
-                    window,
-                    editor_cx,
-                )
-            })
-        });
-        let editor = editor.read_with(cx, |editor, _| {
-            editor.as_ref().expect("embedded editor starts").is_alive()
-        });
-        assert!(editor);
+    #[test]
+    fn keycode_mapping_covers_neovim_navigation_and_repeat_keys() {
+        for key in ["j", "k", "up", "down", "pageup", "pagedown", "escape"] {
+            assert!(mac_keycode(key).is_some(), "missing keycode for {key}");
+        }
     }
 }
