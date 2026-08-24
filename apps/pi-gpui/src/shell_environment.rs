@@ -13,6 +13,7 @@ use std::{
 };
 
 const IMPORT_REQUESTED: &str = "PI_GUI_IMPORT_SHELL_ENV";
+const APP_ENV_IMPORTED: &str = "PI_GUI_SHELL_ENV_IMPORTED";
 const START_MARKER: &[u8] = b"\x1ePI_GPUI_ENV_START\x1f\0";
 const END_MARKER: &[u8] = b"\x1ePI_GPUI_ENV_END\x1f\0";
 const CAPTURE_COMMAND: &str = "/bin/sh -c \"command stty -echo -opost; command printf '\\\\036PI_GPUI_ENV_START\\\\037\\\\0'; command env -0; command printf '\\\\036PI_GPUI_ENV_END\\\\037\\\\0'\" 2>/dev/null; exit\n";
@@ -59,22 +60,25 @@ fn environment_import_requested() -> bool {
 }
 
 pub(crate) fn import_app_shell_environment() -> Result<(), String> {
+    use std::os::unix::process::CommandExt as _;
+
+    if std::env::var(APP_ENV_IMPORTED).as_deref() == Ok("1") {
+        return Ok(());
+    }
     let Some(environment) = app_shell_environment()? else {
         return Ok(());
     };
-    let inherited_names = std::env::vars_os()
-        .map(|(name, _)| name)
-        .collect::<Vec<_>>();
-    // SAFETY: `main` calls this before GPUI or any application worker threads start.
-    unsafe {
-        for name in inherited_names {
-            std::env::remove_var(name);
-        }
-        for (name, value) in environment {
-            std::env::set_var(name, value);
-        }
-    }
-    Ok(())
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("resolve pi-gpui executable for shell environment: {error}"))?;
+    let error = Command::new(executable)
+        .args(std::env::args_os().skip(1))
+        .env_clear()
+        .envs(environment)
+        .env(APP_ENV_IMPORTED, "1")
+        .exec();
+    Err(format!(
+        "relaunch pi-gpui with the login-shell environment: {error}"
+    ))
 }
 
 pub(crate) fn terminal_login_shell_command() -> String {

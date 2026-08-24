@@ -1573,14 +1573,34 @@ fn render_tool(
         !item.streaming && (item.is_error || !item.tool_output.is_empty()),
     );
     let presentation = item.tool_presentation.as_ref();
+    let target =
+        presentation.map_or_else(|| tool_target(&item.text), |change| change.path().into());
+    let has_target = !target.is_empty();
+    let detail_label = if has_target {
+        format!("{} tool call details for {target}", item.label)
+    } else {
+        format!("{} tool call details", item.label)
+    };
+    let disclosure_label = format!(
+        "{detail_label}. {}",
+        state.map_or("No result", |state| state.label)
+    );
     if let Some(presentation) = presentation {
         let source = presentation.clone();
-        let open_entity = entity;
+        let open_entity = entity.clone();
         return crate::tool_changes::render(
             &item.label,
             presentation,
-            item.tool_call_id.as_ref().map_or(0, |id| stable_key(id)),
+            key,
             state.map(|state| state.glyph),
+            transcript_disclosure_button(
+                ("tool-toggle", key),
+                expanded,
+                disclosure_label,
+                key,
+                entity,
+            ),
+            expanded.then(|| expanded_tool_body(("tool-detail", key), item)),
             move |window, cx| {
                 let _ = open_entity.update(cx, |this, cx| {
                     this.open_file_editor_at_line(
@@ -1593,17 +1613,6 @@ fn render_tool(
             },
         );
     }
-    let target = tool_target(&item.text);
-    let has_target = !target.is_empty();
-    let detail_label = if has_target {
-        format!("{} tool call details for {target}", item.label)
-    } else {
-        format!("{} tool call details", item.label)
-    };
-    let disclosure_label = format!(
-        "{detail_label}. {}",
-        state.map_or("No result", |state| state.label)
-    );
     div()
         .id(("tool-row", key))
         .w_full()
@@ -1780,12 +1789,6 @@ fn tool_target(arguments: &str) -> String {
         .chars()
         .take(96)
         .collect()
-}
-
-fn stable_key(value: &str) -> usize {
-    value.bytes().fold(0_usize, |hash, byte| {
-        hash.wrapping_mul(16777619).wrapping_add(usize::from(byte))
-    })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -13,7 +13,7 @@ use super::{
 };
 use crate::{
     assets::AppIcon,
-    primitives::{ButtonTone, prominent_icon_button},
+    primitives::{AppIconSize, ButtonTone, app_icon, prominent_icon_button},
     runtime::RuntimeCommand,
     theme::{MONO_FONT_FAMILY, THEME},
 };
@@ -114,21 +114,24 @@ fn render_usage(usage: &ComposerUsage, session_totals: &SessionChangeTotals) -> 
         .child(context_metric(usage));
     if let Some(rate) = usage.cache_hit_rate {
         row = row.child(separator()).child(simple_metric(
-            "cache",
+            Some(AppIcon::Database),
+            "Cache hit rate",
             format!("{rate:.0}%"),
             THEME.colors.success,
         ));
     }
     if usage.aggregate.input > 0 {
         row = row.child(separator()).child(simple_metric(
-            "in",
+            Some(AppIcon::ArrowUp),
+            "Input tokens",
             format_tokens(usage.aggregate.input),
             THEME.colors.text,
         ));
     }
     if usage.aggregate.output > 0 {
         row = row.child(separator()).child(simple_metric(
-            "out",
+            Some(AppIcon::ArrowDown),
+            "Output tokens",
             format_tokens(usage.aggregate.output),
             THEME.colors.text,
         ));
@@ -140,7 +143,8 @@ fn render_usage(usage: &ComposerUsage, session_totals: &SessionChangeTotals) -> 
     }
     if usage.aggregate.cost_micros > 0 {
         row = row.child(separator()).child(simple_metric(
-            "",
+            None,
+            "Cost",
             format_cost(usage.aggregate.cost_micros),
             THEME.colors.text,
         ));
@@ -155,12 +159,6 @@ fn session_change_metric(totals: &SessionChangeTotals) -> AnyElement {
         .items_center()
         .gap(THEME.space.xs)
         .whitespace_nowrap()
-        .child(
-            div()
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(THEME.colors.subtle)
-                .child("session"),
-        )
         .child(
             div().text_color(THEME.colors.success).child(
                 totals
@@ -200,13 +198,6 @@ fn context_metric(usage: &ComposerUsage) -> AnyElement {
         .child(
             div()
                 .flex_none()
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(THEME.colors.subtle)
-                .child("ctx"),
-        )
-        .child(
-            div()
-                .flex_none()
                 .whitespace_nowrap()
                 .text_color(THEME.colors.text)
                 .child(value),
@@ -234,22 +225,26 @@ fn context_meter(filled: usize, color: gpui::Rgba) -> AnyElement {
         .into_any_element()
 }
 
-fn simple_metric(label: &'static str, value: String, value_color: gpui::Rgba) -> AnyElement {
-    let mut metric = div()
+fn simple_metric(
+    icon: Option<AppIcon>,
+    accessible_label: &'static str,
+    value: String,
+    value_color: gpui::Rgba,
+) -> AnyElement {
+    let aria_label = format!("{accessible_label}: {value}");
+    div()
+        .id(accessible_label)
+        .aria_label(aria_label)
         .flex_none()
         .flex()
         .items_center()
         .gap(THEME.space.xs)
-        .whitespace_nowrap();
-    if !label.is_empty() {
-        metric = metric.child(
-            div()
-                .font_weight(gpui::FontWeight::SEMIBOLD)
+        .whitespace_nowrap()
+        .children(icon.map(|icon| {
+            app_icon(icon, AppIconSize::Inline)
                 .text_color(THEME.colors.subtle)
-                .child(label),
-        );
-    }
-    metric
+                .into_any_element()
+        }))
         .child(div().text_color(value_color).child(value))
         .into_any_element()
 }

@@ -1,8 +1,7 @@
 //! Provider, model, and effort selectors for the composer footer.
 
 use gpui::{
-    Anchor, AnyElement, FontWeight, IntoElement as _, ParentElement as _, Styled as _, WeakEntity,
-    div,
+    Anchor, AnyElement, IntoElement as _, ParentElement as _, Styled as _, WeakEntity, div,
 };
 use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
 
@@ -110,14 +109,11 @@ pub(super) fn render(app: &PiApp, entity: WeakEntity<PiApp>) -> AnyElement {
         .flex_none()
         .flex()
         .items_center()
-        .child(inline_control("provider:", provider.into_any_element()))
+        .child(provider)
         .child(separator())
-        .child(inline_control("model:", model.into_any_element()))
+        .child(model)
         .child(separator())
-        .child(inline_control(
-            "effort:",
-            effort_selector(effort, &efforts, entity),
-        ))
+        .child(effort_selector(effort, &efforts, entity))
         .into_any_element()
 }
 
@@ -153,25 +149,6 @@ fn effort_selector(
         menu
     })
     .into_any_element()
-}
-
-fn inline_control(label: &'static str, control: AnyElement) -> AnyElement {
-    div()
-        .flex_none()
-        .flex()
-        .items_center()
-        .gap(THEME.space.xs)
-        .font_family(MONO_FONT_FAMILY)
-        .text_size(THEME.type_scale.body_small)
-        .child(
-            div()
-                .flex_none()
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(THEME.colors.subtle)
-                .child(label),
-        )
-        .child(control)
-        .into_any_element()
 }
 
 fn effort_color(level: &str) -> gpui::Rgba {

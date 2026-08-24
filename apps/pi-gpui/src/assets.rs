@@ -4,11 +4,12 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 34] = [
+const ICON_PATHS: [&str; 36] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrows-clockwise.svg",
     "icons/phosphor/arrows-out.svg",
     "icons/phosphor/arrow-counter-clockwise.svg",
+    "icons/phosphor/arrow-down.svg",
     "icons/phosphor/arrow-square-out.svg",
     "icons/phosphor/arrow-up.svg",
     "icons/phosphor/binoculars.svg",
@@ -18,6 +19,7 @@ const ICON_PATHS: [&str; 34] = [
     "icons/phosphor/chat-circle-dots.svg",
     "icons/phosphor/check-circle.svg",
     "icons/phosphor/code.svg",
+    "icons/phosphor/database.svg",
     "icons/phosphor/dots-six-vertical.svg",
     "icons/phosphor/eye.svg",
     "icons/phosphor/folder.svg",
@@ -73,6 +75,9 @@ impl AssetSource for AppAssets {
             "icons/phosphor/arrow-counter-clockwise.svg" => Some(include_bytes!(
                 "../assets/phosphor-icons/arrow-counter-clockwise.svg"
             )),
+            "icons/phosphor/arrow-down.svg" => {
+                Some(include_bytes!("../assets/phosphor-icons/arrow-down.svg"))
+            }
             "icons/phosphor/arrow-square-out.svg" => Some(include_bytes!(
                 "../assets/phosphor-icons/arrow-square-out.svg"
             )),
@@ -98,6 +103,9 @@ impl AssetSource for AppAssets {
                 Some(include_bytes!("../assets/phosphor-icons/check-circle.svg"))
             }
             "icons/phosphor/code.svg" => Some(include_bytes!("../assets/phosphor-icons/code.svg")),
+            "icons/phosphor/database.svg" => {
+                Some(include_bytes!("../assets/phosphor-icons/database.svg"))
+            }
             "icons/phosphor/dots-six-vertical.svg" => Some(include_bytes!(
                 "../assets/phosphor-icons/dots-six-vertical.svg"
             )),
@@ -181,6 +189,7 @@ pub(crate) enum AppIcon {
     ArrowsClockwise,
     ArrowsOut,
     ArrowCounterClockwise,
+    ArrowDown,
     ArrowSquareOut,
     ArrowUp,
     Binoculars,
@@ -190,6 +199,7 @@ pub(crate) enum AppIcon {
     ChatCircleDots,
     CheckCircle,
     Code,
+    Database,
     DotsSixVertical,
     Eye,
     Folder,
@@ -220,6 +230,7 @@ impl IconNamed for AppIcon {
             Self::ArrowsClockwise => "arrows-clockwise",
             Self::ArrowsOut => "arrows-out",
             Self::ArrowCounterClockwise => "arrow-counter-clockwise",
+            Self::ArrowDown => "arrow-down",
             Self::ArrowSquareOut => "arrow-square-out",
             Self::ArrowUp => "arrow-up",
             Self::Binoculars => "binoculars",
@@ -229,6 +240,7 @@ impl IconNamed for AppIcon {
             Self::ChatCircleDots => "chat-circle-dots",
             Self::CheckCircle => "check-circle",
             Self::Code => "code",
+            Self::Database => "database",
             Self::DotsSixVertical => "dots-six-vertical",
             Self::Eye => "eye",
             Self::Folder => "folder",
@@ -285,6 +297,7 @@ mod tests {
             AppIcon::ArrowsClockwise,
             AppIcon::ArrowsOut,
             AppIcon::ArrowCounterClockwise,
+            AppIcon::ArrowDown,
             AppIcon::ArrowSquareOut,
             AppIcon::ArrowUp,
             AppIcon::Binoculars,
@@ -294,6 +307,7 @@ mod tests {
             AppIcon::ChatCircleDots,
             AppIcon::CheckCircle,
             AppIcon::Code,
+            AppIcon::Database,
             AppIcon::DotsSixVertical,
             AppIcon::Eye,
             AppIcon::Folder,
