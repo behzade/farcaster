@@ -4,6 +4,8 @@ CARGO_TARGET_DIR ?= $(CURDIR)/target
 .PHONY: run debug release release-debug check-gpui check-flake update-pi-nono
 run:
 	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo run --manifest-path apps/pi-gpui/Cargo.toml -- "$(PROJECT)"
+test:
+	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo test --manifest-path apps/pi-gpui/Cargo.toml -- "$(PROJECT)"
 
 debug:
 	DEBUG=true CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo run --manifest-path apps/pi-gpui/Cargo.toml -- "$(PROJECT)"

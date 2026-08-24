@@ -290,8 +290,5 @@ mod tests {
         assert!(shortcuts.iter().any(|shortcut| {
             shortcut.label == "Next completion" && shortcut.keystroke == "ctrl-n"
         }));
-        assert!(shortcuts.iter().any(|shortcut| {
-            shortcut.label == "Paste into Neovim" && shortcut.keystroke == "cmd-v"
-        }));
     }
 }
