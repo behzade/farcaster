@@ -79,12 +79,6 @@ impl PiApp {
         cx.notify();
     }
 
-    pub(super) fn editor_path(&self, cx: &gpui::App) -> Option<PathBuf> {
-        self.editor
-            .as_ref()
-            .map(|editor| editor.read(cx).path().to_path_buf())
-    }
-
     fn editor_project(&self) -> PathBuf {
         root_session_for_path(
             &self.all_sessions,

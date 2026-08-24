@@ -1206,6 +1206,9 @@ impl PiApp {
         if self.pending_project_trust_command.is_some() {
             return;
         }
+        if self.surface == AppSurface::Editor {
+            self.show_chat_surface(window, cx);
+        }
         let _timing = crate::performance::Timing::new("switch.session_request");
         if self.snapshot.selected_session.as_deref() == Some(path.as_path())
             && self.selected_draft.is_none()

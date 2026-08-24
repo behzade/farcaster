@@ -207,7 +207,7 @@ impl Render for PiApp {
             })
             .into_any_element();
         let main = if self.surface == AppSurface::Editor {
-            self.render_editor_surface(entity.clone(), cx)
+            self.render_editor_surface()
         } else {
             chat_main
         };
