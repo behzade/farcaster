@@ -1,4 +1,4 @@
-//! Project login-shell environment import for desktop launches.
+//! Login-shell environment import for app and project processes.
 
 #[cfg(target_os = "linux")]
 use std::io::Write as _;
@@ -19,25 +19,62 @@ const CAPTURE_COMMAND: &str = "/bin/sh -c \"command stty -echo -opost; command p
 
 type Environment = Vec<(OsString, OsString)>;
 
-static PROJECT_ENVIRONMENTS: OnceLock<Mutex<HashMap<PathBuf, Environment>>> = OnceLock::new();
+static SHELL_ENVIRONMENTS: OnceLock<Mutex<HashMap<PathBuf, Environment>>> = OnceLock::new();
 
 pub(crate) fn project_shell_environment(project: &Path) -> Result<Option<Environment>, String> {
-    if std::env::var(IMPORT_REQUESTED).as_deref() != Ok("1") {
+    if !environment_import_requested() {
         return Ok(None);
     }
-    let project_key = project
+    shell_environment_at(project).map(Some)
+}
+
+fn app_shell_environment() -> Result<Option<Environment>, String> {
+    if !environment_import_requested() {
+        return Ok(None);
+    }
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| "HOME is not set".to_owned())?;
+    shell_environment_at(&home).map(Some)
+}
+
+fn shell_environment_at(working_directory: &Path) -> Result<Environment, String> {
+    let key = working_directory
         .canonicalize()
-        .unwrap_or_else(|_| project.to_path_buf());
-    let environments = PROJECT_ENVIRONMENTS.get_or_init(|| Mutex::new(HashMap::new()));
+        .unwrap_or_else(|_| working_directory.to_path_buf());
+    let environments = SHELL_ENVIRONMENTS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut environments = environments
         .lock()
-        .map_err(|_| "project shell environment cache is poisoned".to_owned())?;
-    if let Some(environment) = environments.get(&project_key) {
-        return Ok(Some(environment.clone()));
+        .map_err(|_| "shell environment cache is poisoned".to_owned())?;
+    if let Some(environment) = environments.get(&key) {
+        return Ok(environment.clone());
     }
-    let environment = capture_login_shell_environment(&default_login_shell(), project)?;
-    environments.insert(project_key, environment.clone());
-    Ok(Some(environment))
+    let environment = capture_login_shell_environment(&default_login_shell(), working_directory)?;
+    environments.insert(key, environment.clone());
+    Ok(environment)
+}
+
+fn environment_import_requested() -> bool {
+    std::env::var(IMPORT_REQUESTED).as_deref() == Ok("1")
+}
+
+pub(crate) fn import_app_shell_environment() -> Result<(), String> {
+    let Some(environment) = app_shell_environment()? else {
+        return Ok(());
+    };
+    let inherited_names = std::env::vars_os()
+        .map(|(name, _)| name)
+        .collect::<Vec<_>>();
+    // SAFETY: `main` calls this before GPUI or any application worker threads start.
+    unsafe {
+        for name in inherited_names {
+            std::env::remove_var(name);
+        }
+        for (name, value) in environment {
+            std::env::set_var(name, value);
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn terminal_login_shell_command() -> String {

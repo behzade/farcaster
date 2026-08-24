@@ -44,6 +44,10 @@ fn main() -> std::process::ExitCode {
         return fail(error);
     }
 
+    if let Err(error) = shell_environment::import_app_shell_environment() {
+        return fail(format!("import app shell environment: {error}"));
+    }
+
     zlog::init();
     zlog::init_output_stderr();
     if let Err(error) = init_log_file() {
