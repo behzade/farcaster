@@ -307,7 +307,7 @@ impl PiApp {
                         let label = numbered_dialog_choice(index, option);
                         dialog_choice(
                             ("dialog-option", index),
-                            &label,
+                            label.into(),
                             index == 0,
                             move |window, cx| {
                                 let _ = choice_entity.update(cx, |this, cx| {
@@ -814,15 +814,15 @@ pub(super) fn plain_text_html(text: &str) -> SharedString {
 
 fn dialog_choice(
     id: impl Into<ElementId>,
-    label: &str,
+    label: SharedString,
     primary: bool,
     on_press: impl Fn(&mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
-    let (title, detail) = choice_copy(label);
+    let (title, detail) = choice_copy(&label);
     div()
         .id(id)
         .role(Role::Button)
-        .aria_label(label.to_owned())
+        .aria_label(label)
         .tab_index(0)
         .w_full()
         .min_h(px(48.0))

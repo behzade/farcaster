@@ -1,7 +1,7 @@
 //! Hover-revealed controls for the center workspace surfaces.
 
 use gpui::{
-    Context, InteractiveElement as _, IntoElement as _, ParentElement as _,
+    Context, InteractiveElement as _, IntoElement, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div,
     prelude::FluentBuilder as _,
 };
@@ -23,6 +23,7 @@ impl PiApp {
     ) -> impl IntoElement {
         let hover = entity.clone();
         div()
+            .id(SURFACE_GROUP)
             .absolute()
             .top(THEME.space.sm)
             .left(THEME.space.sm)

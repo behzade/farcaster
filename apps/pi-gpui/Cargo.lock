@@ -2476,9 +2476,9 @@ dependencies = [
 
 [[package]]
 name = "gpui-libghostty"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "935887172f8cc8a6824c1a3ac391b105c23f8e155e4532c5f251c784094b27bd"
+checksum = "cb879c5f5b6219eaabe74fddbd095e400245887035bce60f01a3577f187128b1"
 dependencies = [
  "gpui",
  "raw-window-handle",

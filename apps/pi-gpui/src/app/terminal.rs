@@ -1,6 +1,6 @@
 //! Project terminal lifecycle and shell selection.
 
-use gpui::{AppContext as _, Context, Window};
+use gpui::{Context, Window};
 use gpui_libghostty::{Terminal, TerminalOptions};
 
 use super::{AppSurface, PiApp};
