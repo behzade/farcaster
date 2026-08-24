@@ -183,14 +183,10 @@ impl PiApp {
         entity: WeakEntity<Self>,
     ) -> Option<AnyElement> {
         let focus = self.repository.row_focus.get(&change.target.key)?.clone();
-        let click_focus = focus.clone();
-        let click_key = change.target.key.clone();
         let click_entity = entity.clone();
-        let key_focus = focus.clone();
-        let key = change.target.key.clone();
-        let key_entity = entity.clone();
-        let editor_entity = entity;
-        let editor_path = change.target.absolute_path();
+        let click_path = change.target.absolute_path();
+        let key_entity = entity;
+        let key_path = change.target.absolute_path();
         let row_id = repository_row_id(&change.target.key);
         let full_path = display_change_path(change);
         let display_path = middle_truncate(&full_path, 42);
@@ -198,7 +194,7 @@ impl PiApp {
         let layer = group_title(change.layer);
         let state = change_kind_label(&change.kind);
         let accessible_path = accessible_change_path(change);
-        let accessible = format!("Open {layer} diff for {state} file {accessible_path}");
+        let accessible = format!("Edit {layer} {state} file {accessible_path} in Neovim");
         let target = div()
             .id(("repository-change", row_id))
             .track_focus(&focus)
@@ -217,19 +213,15 @@ impl PiApp {
             .focus(|row| row.bg(THEME.colors.selection))
             .cursor_pointer()
             .on_click(move |_, window, cx| {
-                let key = click_key.clone();
-                let focus = click_focus.clone();
                 let _ = click_entity.update(cx, |this, cx| {
-                    this.open_current_repository_diff(key, focus, window, cx);
+                    this.open_file_editor(click_path.clone(), window, cx);
                 });
             })
             .on_key_down(move |event, window, cx| {
                 if activates_button(event) {
                     cx.stop_propagation();
-                    let key = key.clone();
-                    let focus = key_focus.clone();
                     let _ = key_entity.update(cx, |this, cx| {
-                        this.open_current_repository_diff(key, focus, window, cx);
+                        this.open_file_editor(key_path.clone(), window, cx);
                     });
                 }
             })
@@ -253,27 +245,7 @@ impl PiApp {
                     .text_size(THEME.type_scale.caption)
                     .child(display_path),
             );
-        Some(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(2.0))
-                .child(target)
-                .when(change.target.exists, |row| {
-                    row.child(icon_button(
-                        ("edit-repository-change", row_id),
-                        AppIcon::PencilSimple,
-                        "Edit in Neovim",
-                        ButtonTone::Quiet,
-                        move |window, cx| {
-                            let _ = editor_entity.update(cx, |this, cx| {
-                                this.open_file_editor(editor_path.clone(), window, cx);
-                            });
-                        },
-                    ))
-                })
-                .into_any_element(),
-        )
+        Some(target.into_any_element())
     }
 }
 
