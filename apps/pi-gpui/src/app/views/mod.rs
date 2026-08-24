@@ -52,6 +52,7 @@ fn session_shortcuts_visible(current: bool, requested: bool, has_text_selection:
 
 use crate::{
     assets::AppIcon,
+    keyboard::CopySelection,
     layout::{
         layout_mode, shows_left_inline, shows_right_inline, shows_run_sheet_button,
         shows_session_sheet_button,
@@ -219,6 +220,13 @@ impl Render for PiApp {
             .font(ui_font())
             .text_color(THEME.colors.text)
             .text_size(THEME.type_scale.body)
+            .on_action(cx.listener(|this, _: &CopySelection, _, cx| {
+                crate::keyboard::copy_selection(
+                    this.transcript_list.selected_text(),
+                    this.composer.read(cx).selected_value().to_string(),
+                    cx,
+                );
+            }))
             .on_action(cx.listener(|this, _: &DismissSurface, window, cx| {
                 this.dismiss_surface(window, cx);
             }))

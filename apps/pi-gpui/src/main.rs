@@ -10,6 +10,7 @@ mod editor_terminal;
 mod extension_ui;
 mod framing;
 mod keybindings;
+mod keyboard;
 mod launch;
 mod layout;
 mod performance;

@@ -1,7 +1,5 @@
 //! Single registry for application keybindings and keyboard-help metadata.
 
-use gpui::KeyBinding;
-use gpui_base::actions::{SelectDown, SelectUp};
 use crate::app::{
     AbortRun, AddProject, CloseCurrent, ComposerHistoryNext, ComposerHistoryPrevious,
     DismissSurface, FocusComposer, NewSession, NextSession, OVERLAY_KEY_CONTEXT,
@@ -12,6 +10,10 @@ use crate::app::{
     WorkNextIssue, WorkPreviousIssue,
 };
 use crate::app::{WORKGRAPH_KEY_CONTEXT, WORKGRAPH_NAV_KEY_CONTEXT};
+use crate::keyboard::CopySelection;
+use crate::transcript_list::TRANSCRIPT_SELECTION_KEY_CONTEXT;
+use gpui::KeyBinding;
+use gpui_base::actions::{SelectDown, SelectUp};
 
 pub(crate) struct Shortcut {
     pub section: &'static str,
@@ -110,6 +112,24 @@ pub(crate) fn registry() -> Vec<Shortcut> {
             binding: KeyBinding::new("ctrl-n", ComposerHistoryNext, Some("PiComposer > Input")),
         },
         shortcut!("Composer", "Focus composer", "cmd-l", FocusComposer, None),
+        Shortcut {
+            section: "Transcript",
+            label: "Copy visual selection",
+            keystroke: "cmd-c",
+            show_in_help: false,
+            binding: KeyBinding::new(
+                "cmd-c",
+                CopySelection,
+                Some(TRANSCRIPT_SELECTION_KEY_CONTEXT),
+            ),
+        },
+        Shortcut {
+            section: "Composer",
+            label: "Copy selection",
+            keystroke: "cmd-c",
+            show_in_help: false,
+            binding: KeyBinding::new("cmd-c", CopySelection, Some("PiComposer > Input")),
+        },
         shortcut!("Composer", "Send prompt", "cmd-enter", SubmitPrompt, None),
         shortcut!(
             "Composer",
@@ -217,6 +237,17 @@ pub(crate) fn registry() -> Vec<Shortcut> {
 #[cfg(test)]
 mod tests {
     use super::registry;
+
+    #[test]
+    fn copy_shortcuts_route_through_the_application_command() {
+        let shortcuts = registry();
+        assert!(shortcuts.iter().any(|shortcut| {
+            shortcut.label == "Copy visual selection" && shortcut.keystroke == "cmd-c"
+        }));
+        assert!(shortcuts.iter().any(|shortcut| {
+            shortcut.label == "Copy selection" && shortcut.keystroke == "cmd-c"
+        }));
+    }
 
     #[test]
     fn keyboard_help_has_both_question_mark_shortcuts_and_workgraph_navigation() {

@@ -1,37 +1,13 @@
 use super::*;
 use gpui::{
-    AppContext as _, Context, ParentElement as _, Render, ScrollDelta, Styled as _, TestAppContext,
-    VisualTestContext, div, size,
+    AppContext as _, Context, Render, ScrollDelta, Styled as _, TestAppContext, VisualTestContext,
+    div, size,
 };
-use gpui_base::TextSelectionLayer;
 
 struct FixedHeightView {
     state: TranscriptListState,
     row_height: Pixels,
     rendered: Rc<RefCell<Vec<usize>>>,
-}
-
-struct CopyableRowsView {
-    state: TranscriptListState,
-}
-
-impl Render for CopyableRowsView {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .size_full()
-            .child(TextSelectionLayer)
-            .child(transcript_list_grouped(
-                self.state.clone(),
-                |index| index,
-                |range| {
-                    range
-                        .map(|index| index.to_string())
-                        .collect::<Vec<_>>()
-                        .join(",")
-                },
-                |_, _, _| div().h(px(24.)).w_full().into_any_element(),
-            ))
-    }
 }
 
 impl Render for FixedHeightView {
@@ -166,36 +142,6 @@ fn cross_element_selection_marks_the_inclusive_logical_range() {
 
     inner.selection_cursor = Some(7);
     assert!(!inner.selection_contains(7));
-}
-
-#[gpui::test]
-fn coarse_selection_is_exposed_to_window_copy(cx: &mut TestAppContext) {
-    let state = state_with_rows(10);
-    let (_, cx) = cx.add_window_view({
-        let state = state.clone();
-        move |_, _| CopyableRowsView { state }
-    });
-    let cx: &mut VisualTestContext = cx;
-    cx.update(|window, cx| {
-        let _ = window.draw(cx);
-    });
-
-    let handle = {
-        let mut inner = state.0.borrow_mut();
-        inner.selection_anchor = Some(1);
-        inner.selection_cursor = Some(3);
-        inner
-            .selection_handle
-            .clone()
-            .expect("drawing creates the stable transcript selection handle")
-    };
-    cx.update(|window, cx| {
-        handle.set_local_selection(true, cx);
-        let _ = window.draw(cx);
-    });
-
-    let copied = cx.update(|window, cx| gpui_base::TextSelection::selected_text(window, cx));
-    assert_eq!(copied, "1,2,3");
 }
 
 #[test]

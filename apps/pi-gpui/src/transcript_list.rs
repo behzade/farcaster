@@ -16,11 +16,12 @@ use gpui::{
 #[path = "transcript_list/height_index.rs"]
 mod height_index;
 use self::height_index::HeightIndex;
-use gpui_base::{TextSelectionHandle, TextSelectionRegistration};
 
 type RenderRow = dyn FnMut(usize, &mut Window, &mut App) -> AnyElement + 'static;
 type ScrollHandler = dyn FnMut(bool, &mut Window, &mut App) + 'static;
 type SelectionText = dyn Fn(std::ops::RangeInclusive<usize>) -> String + 'static;
+
+pub(crate) const TRANSCRIPT_SELECTION_KEY_CONTEXT: &str = "PiTranscriptSelection";
 
 #[derive(Default)]
 struct StateInner {
@@ -38,7 +39,7 @@ struct StateInner {
     selection_cursor: Option<usize>,
     selection_drag_position: Option<gpui::Point<Pixels>>,
     selection_scroll_delta: Option<Pixels>,
-    selection_handle: Option<TextSelectionHandle>,
+    selection_text: Option<String>,
     scroll_handler: Option<Rc<RefCell<Box<ScrollHandler>>>>,
 }
 
@@ -186,6 +187,7 @@ impl StateInner {
         self.selection_cursor = None;
         self.selection_drag_position = None;
         self.selection_scroll_delta = None;
+        self.selection_text = None;
     }
 
     fn set_selection_scroll(&mut self, delta: Option<Pixels>) -> Option<u64> {
@@ -291,6 +293,10 @@ impl TranscriptListState {
         self.0.borrow().selection_contains(key)
     }
 
+    pub(crate) fn selected_text(&self) -> Option<String> {
+        self.0.borrow().selection_text.clone()
+    }
+
     fn queue_scroll(&self, delta: Pixels) -> Option<u64> {
         self.0.borrow_mut().queue_scroll(delta)
     }
@@ -371,31 +377,6 @@ impl Element for TranscriptList {
         cx: &mut App,
     ) -> Self::PrepaintState {
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
-        let selection_handle = { self.state.0.borrow().selection_handle.clone() };
-        let selection_handle = selection_handle.unwrap_or_else(|| {
-            let handle = TextSelectionHandle::new("", cx);
-            let state = self.state.clone();
-            let view = window.current_view();
-            handle.clear_with(
-                move |cx| {
-                    state.0.borrow_mut().clear_selection();
-                    cx.notify(view);
-                },
-                cx,
-            );
-            self.state.0.borrow_mut().selection_handle = Some(handle.clone());
-            handle
-        });
-        if selection_handle.has_local_selection(cx)
-            && let Some(range) = self.state.0.borrow().selection_range()
-        {
-            selection_handle.set_fallback_copy_text((self.selection_text)(range), cx);
-            selection_handle.register(
-                TextSelectionRegistration::new(hitbox.clone(), bounds),
-                window,
-                cx,
-            );
-        }
         let (anchor, handler, scrolled) = {
             let mut state = self.state.0.borrow_mut();
             let (anchor, scrolled) = state.begin_frame(bounds.size);
@@ -527,6 +508,7 @@ impl Element for TranscriptList {
                     .map(|row| selection_key(row));
                 state.selection_anchor = None;
                 state.selection_cursor = None;
+                state.selection_text = None;
                 state.selection_drag_position = inside.then_some(event.position);
                 if had_selection {
                     cx.notify(current_view);
@@ -577,29 +559,18 @@ impl Element for TranscriptList {
             if phase != DispatchPhase::Bubble {
                 return;
             }
-            let (range, handle, anchor, cursor) = {
+            let range = {
                 let mut state = selection_state.0.borrow_mut();
                 state.selection_drag_active = false;
                 state.selection_anchor_candidate = None;
                 state.selection_drag_position = None;
                 state.set_selection_scroll(None);
-                (
-                    state.selection_range(),
-                    state.selection_handle.clone(),
-                    state.selection_anchor,
-                    state.selection_cursor,
-                )
+                state.selection_range()
             };
-            if let (Some(range), Some(handle)) = (range, handle) {
+            if let Some(range) = range {
                 let text = selection_text(range);
                 gpui_base::TextSelection::clear(window, cx);
-                {
-                    let mut state = selection_state.0.borrow_mut();
-                    state.selection_anchor = anchor;
-                    state.selection_cursor = cursor;
-                }
-                handle.set_fallback_copy_text(text, cx);
-                handle.set_local_selection(true, cx);
+                selection_state.0.borrow_mut().selection_text = Some(text);
                 cx.notify(current_view);
             }
         });

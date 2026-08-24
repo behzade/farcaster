@@ -793,6 +793,7 @@ pub(crate) fn render(
         return div().size_full().bg(THEME.colors.canvas).into_any_element();
     }
 
+    let visual_selection_active = list_state.selected_text().is_some();
     let jump = entity.clone();
     let row_entity = entity;
     let selection_rows = rows.clone();
@@ -838,6 +839,9 @@ pub(crate) fn render(
 
     div()
         .size_full()
+        .when(visual_selection_active, |root| {
+            root.key_context(crate::transcript_list::TRANSCRIPT_SELECTION_KEY_CONTEXT)
+        })
         .flex()
         .flex_col()
         .child(
