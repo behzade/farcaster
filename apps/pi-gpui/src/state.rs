@@ -1,7 +1,7 @@
 //! Durable GUI state and a fast session index.
 
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     path::{Path, PathBuf},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -19,6 +19,8 @@ use crate::{
 
 const SCHEMA_VERSION: i64 = 7;
 const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(10);
+const REPOSITORY_BACKEND_PREFERENCES_KEY: &str = "repository_backend_preferences";
+const REPOSITORY_BACKENDS: [&str; 3] = ["auto", "git", "jj"];
 
 pub(crate) struct StateStore {
     connection: Connection,
@@ -313,6 +315,46 @@ impl StateStore {
             )
             .map(|_| ())
             .map_err(|error| format!("save application session order: {error}"))
+    }
+
+    pub(crate) fn load_repository_backend_preferences(
+        &self,
+    ) -> Result<BTreeMap<PathBuf, String>, String> {
+        let stored = self
+            .connection
+            .query_row(
+                "SELECT value FROM meta WHERE key=?1",
+                [REPOSITORY_BACKEND_PREFERENCES_KEY],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| format!("load repository backend preferences: {error}"))?;
+        let preferences = stored.map_or_else(
+            || Ok(BTreeMap::new()),
+            |value| {
+                serde_json::from_str::<BTreeMap<PathBuf, String>>(&value)
+                    .map_err(|error| format!("decode repository backend preferences: {error}"))
+            },
+        )?;
+        validate_repository_backend_preferences(&preferences)?;
+        Ok(preferences)
+    }
+
+    pub(crate) fn save_repository_backend_preferences(
+        &self,
+        preferences: &BTreeMap<PathBuf, String>,
+    ) -> Result<(), String> {
+        validate_repository_backend_preferences(preferences)?;
+        let value = serde_json::to_string(preferences)
+            .map_err(|error| format!("encode repository backend preferences: {error}"))?;
+        self.connection
+            .execute(
+                "INSERT INTO meta(key, value) VALUES(?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                params![REPOSITORY_BACKEND_PREFERENCES_KEY, value],
+            )
+            .map(|_| ())
+            .map_err(|error| format!("save repository backend preferences: {error}"))
     }
 
     pub(crate) fn allocate_app_session_id(
@@ -916,6 +958,26 @@ pub(crate) fn state_path() -> Result<PathBuf, String> {
             .join(root)
     };
     Ok(root.join("gui-state.sqlite3"))
+}
+
+fn validate_repository_backend_preferences(
+    preferences: &BTreeMap<PathBuf, String>,
+) -> Result<(), String> {
+    for (project, backend) in preferences {
+        if !project.is_absolute() {
+            return Err(format!(
+                "repository backend preference project path is not absolute: {}",
+                project.display()
+            ));
+        }
+        if !REPOSITORY_BACKENDS.contains(&backend.as_str()) {
+            return Err(format!(
+                "unknown repository backend preference for {}: {backend}",
+                project.display()
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn enable_wal(connection: &Connection) -> Result<(), String> {

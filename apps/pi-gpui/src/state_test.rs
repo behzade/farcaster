@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fs,
     sync::{Arc, Barrier},
     thread,
@@ -32,6 +33,81 @@ fn window_placement_survives_reopen() -> Result<(), Box<dyn std::error::Error>> 
         StateStore::open_at(&database)?.load_window_placement()?,
         Some(placement)
     );
+    Ok(())
+}
+
+#[test]
+fn repository_backend_preferences_default_to_empty() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;
+
+    assert!(store.load_repository_backend_preferences()?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn repository_backend_preferences_round_trip_deterministically()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let database = temp.path().join("gui.sqlite3");
+    let alpha = temp.path().join("alpha");
+    let zeta = temp.path().join("zeta");
+    fs::create_dir(&alpha)?;
+    fs::create_dir(&zeta)?;
+    let preferences = BTreeMap::from([
+        (zeta.canonicalize()?, "jj".to_owned()),
+        (alpha.canonicalize()?, "git".to_owned()),
+    ]);
+
+    StateStore::open_at(&database)?.save_repository_backend_preferences(&preferences)?;
+
+    assert_eq!(
+        StateStore::open_at(&database)?.load_repository_backend_preferences()?,
+        preferences
+    );
+    let stored = Connection::open(&database)?.query_row(
+        "SELECT value FROM meta WHERE key='repository_backend_preferences'",
+        [],
+        |row| row.get::<_, String>(0),
+    )?;
+    assert_eq!(stored, serde_json::to_string(&preferences)?);
+    assert!(stored.find("alpha") < stored.find("zeta"));
+
+    fs::remove_dir_all(&alpha)?;
+    StateStore::open_at(&database)?.save_repository_backend_preferences(&preferences)?;
+    assert_eq!(
+        StateStore::open_at(&database)?.load_repository_backend_preferences()?,
+        preferences
+    );
+    Ok(())
+}
+
+#[test]
+fn repository_backend_preferences_reject_unknown_and_malformed_values()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let database = temp.path().join("gui.sqlite3");
+    let project = temp.path().join("project");
+    fs::create_dir(&project)?;
+    let project = project.canonicalize()?;
+    let store = StateStore::open_at(&database)?;
+    let unknown = BTreeMap::from([(project.clone(), "svn".to_owned())]);
+    let Err(error) = store.save_repository_backend_preferences(&unknown) else {
+        return Err("unknown repository backend was accepted".into());
+    };
+    assert!(error.contains("unknown repository backend preference"));
+    drop(store);
+
+    let connection = Connection::open(&database)?;
+    connection.execute(
+        "INSERT INTO meta(key, value) VALUES('repository_backend_preferences', ?1)",
+        ["not json"],
+    )?;
+    drop(connection);
+    let Err(error) = StateStore::open_at(&database)?.load_repository_backend_preferences() else {
+        return Err("malformed repository backend preferences were accepted".into());
+    };
+    assert!(error.contains("decode repository backend preferences"));
     Ok(())
 }
 

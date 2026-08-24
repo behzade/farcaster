@@ -117,32 +117,12 @@ pub(crate) fn save_app_session_order(order: &[i64]) -> Result<(), String> {
     StateStore::open()?.save_app_session_order(order)
 }
 
-pub(crate) fn is_linked_worktree(project: &Path) -> bool {
-    let Ok(pointer) = fs::read_to_string(project.join(".git")) else {
-        return false;
-    };
-    let Some(git_dir) = pointer
-        .lines()
-        .next()
-        .and_then(|line| line.strip_prefix("gitdir: "))
-    else {
-        return false;
-    };
-    let git_dir = Path::new(git_dir);
-    let git_dir = if git_dir.is_absolute() {
-        git_dir.to_path_buf()
-    } else {
-        project.join(git_dir)
-    };
-    git_dir.join("commondir").is_file()
-}
-
 fn is_excluded(excluded_projects: &[PathBuf], project: &Path) -> bool {
     excluded_projects.iter().any(|excluded| excluded == project)
 }
 
 pub(crate) fn add_unique(projects: &mut Vec<PathBuf>, project: PathBuf) -> bool {
-    if is_linked_worktree(&project) || projects.iter().any(|known| known == &project) {
+    if projects.iter().any(|known| known == &project) {
         return false;
     }
     projects.push(project);
@@ -193,11 +173,7 @@ pub(crate) fn remove(
 }
 
 pub(crate) fn most_recent() -> Option<PathBuf> {
-    load()
-        .ok()?
-        .projects
-        .into_iter()
-        .find(|project| !is_linked_worktree(project))
+    load().ok()?.projects.into_iter().next()
 }
 
 fn registry_path() -> Result<PathBuf, String> {
@@ -355,7 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn detects_linked_worktrees_without_mistaking_regular_repositories()
+    fn linked_worktrees_are_distinct_projects_that_can_be_selected_and_restored()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempdir()?;
         let repository = temp.path().join("repository");
@@ -368,14 +344,26 @@ mod tests {
             worktree.join(".git"),
             format!("gitdir: {}\n", worktree_git_dir.display()),
         )?;
-
         fs::create_dir_all(repository.join(".git"))?;
-        assert!(!is_linked_worktree(&repository));
-        assert!(is_linked_worktree(&worktree));
 
-        let mut projects = vec![repository];
-        assert!(!add_unique(&mut projects, worktree));
-        assert_eq!(projects.len(), 1);
+        let repository = repository.canonicalize()?;
+        let worktree = worktree.canonicalize()?;
+        let mut projects = vec![repository.clone()];
+        let mut excluded_projects = Vec::new();
+        assert!(add_unique(&mut projects, worktree.clone()));
+        assert!(!add_unique(&mut projects, worktree.clone()));
+        assert_eq!(projects, vec![repository.clone(), worktree.clone()]);
+
+        assert!(select(&mut projects, &excluded_projects, worktree.clone()));
+        assert_eq!(projects, vec![worktree.clone(), repository.clone()]);
+        assert!(remove(&mut projects, &mut excluded_projects, &worktree));
+        assert!(restore(&mut excluded_projects, &worktree));
+        assert!(add_visible(
+            &mut projects,
+            &excluded_projects,
+            worktree.clone()
+        ));
+        assert_eq!(projects, vec![repository, worktree]);
         Ok(())
     }
 

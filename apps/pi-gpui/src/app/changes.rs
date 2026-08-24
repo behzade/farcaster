@@ -14,6 +14,7 @@ use super::PiApp;
 use crate::{
     agent_activity::{FileMutation, FileMutationKind},
     conversation::{EditDiffFormat, ToolPresentation},
+    repository::{DiffResult as RepositoryDiff, DiffTarget, RepositoryBackend},
     session_changes::{self, ChangeSet, FileChange, FullDiff},
     sessions::{descendant_sessions, root_session_for_path},
     syntax_highlight::{DiffHighlightMode, HighlightedDiff},
@@ -28,10 +29,21 @@ pub(crate) enum FullDiffMode {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) enum RepositoryDiffState {
+    Loading,
+    Ready(Box<RepositoryDiff>),
+    Error(String),
+}
+
+#[derive(Clone, Debug)]
 pub(crate) enum DiffSurface {
     Ready(FileChange, FullDiff),
     Preview(FileChange, FullDiff, String),
     Error(FileChange, String),
+    Repository {
+        target: Box<DiffTarget>,
+        state: RepositoryDiffState,
+    },
 }
 
 #[derive(Default)]
@@ -266,6 +278,62 @@ impl PiApp {
         cx.notify();
     }
 
+    pub(crate) fn open_repository_diff(
+        &mut self,
+        backend: RepositoryBackend,
+        target: DiffTarget,
+        opener: FocusHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        opener.focus(window, cx);
+        self.changes.return_focus = Some(opener);
+        self.changes.diff_generation = self.changes.diff_generation.saturating_add(1);
+        let generation = self.changes.diff_generation;
+        cancel_timing(&mut self.changes.diff_open_timing);
+        self.changes.diff_scroll = ScrollHandle::new();
+        self.changes.diff_syntax = None;
+        self.changes.diff = Some(DiffSurface::Repository {
+            target: Box::new(target.clone()),
+            state: RepositoryDiffState::Loading,
+        });
+        self.changes.pending_diff_setup = true;
+        cx.notify();
+
+        let task_target = target.clone();
+        let task = cx.background_spawn(async move { backend.load_diff(task_target) });
+        cx.spawn(async move |weak, cx| {
+            let result = task.await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.changes.diff_generation != generation {
+                    return;
+                }
+                let Some(DiffSurface::Repository {
+                    target: current,
+                    state,
+                }) = this.changes.diff.as_mut()
+                else {
+                    return;
+                };
+                if current.key != target.key {
+                    return;
+                }
+                match result {
+                    Ok(diff) => {
+                        this.changes.diff_open_timing = Some(
+                            crate::performance::Timing::new_always("diff.open_to_highlight_ready"),
+                        );
+                        *state = RepositoryDiffState::Ready(Box::new(diff));
+                    }
+                    Err(error) => *state = RepositoryDiffState::Error(error.to_string()),
+                }
+                this.changes.diff_syntax = None;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     pub(crate) fn open_tool_diff(
         &mut self,
         presentation: ToolPresentation,
@@ -378,6 +446,20 @@ impl PiApp {
         .detach();
     }
 
+    pub(super) fn invalidate_repository_diff(&mut self, cx: &mut Context<Self>) {
+        if !matches!(self.changes.diff, Some(DiffSurface::Repository { .. })) {
+            return;
+        }
+        self.changes.diff_generation = self.changes.diff_generation.saturating_add(1);
+        cancel_timing(&mut self.changes.diff_open_timing);
+        self.changes.diff = None;
+        self.changes.diff_syntax = None;
+        self.changes.diff_highlight_requested = None;
+        self.changes.pending_diff_setup = false;
+        self.changes.return_focus = None;
+        cx.notify();
+    }
+
     pub(crate) fn close_file_diff(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.changes.diff_generation = self.changes.diff_generation.saturating_add(1);
         cancel_timing(&mut self.changes.diff_open_timing);
@@ -427,12 +509,20 @@ fn cancel_timing(timing: &mut Option<crate::performance::Timing>) {
     }
 }
 
-fn surface_diff(surface: &DiffSurface) -> Option<(&std::path::Path, &str)> {
+fn surface_diff(surface: &DiffSurface) -> Option<(PathBuf, &str)> {
     match surface {
         DiffSurface::Ready(file, diff) | DiffSurface::Preview(file, diff, _) => {
-            Some((&file.path, &diff.patch))
+            Some((file.path.clone(), &diff.patch))
         }
-        DiffSurface::Error(_, _) => None,
+        DiffSurface::Repository {
+            state: RepositoryDiffState::Ready(diff),
+            ..
+        } => Some((diff.target.absolute_path(), &diff.patch)),
+        DiffSurface::Error(_, _)
+        | DiffSurface::Repository {
+            state: RepositoryDiffState::Loading | RepositoryDiffState::Error(_),
+            ..
+        } => None,
     }
 }
 

@@ -1,6 +1,9 @@
+use std::rc::Rc;
+
 use gpui::{
-    AnyElement, App, Div, ElementId, InteractiveElement as _, IntoElement as _, ParentElement as _,
-    SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, Window,
+    AnyElement, App, Div, ElementId, InteractiveElement as _, IntoElement as _, KeyDownEvent,
+    ParentElement as _, SharedString, Stateful, StatefulInteractiveElement as _, Styled as _,
+    Window,
 };
 use gpui_component::{
     Disableable as _, IconNamed, Sizable as _, Size,
@@ -11,6 +14,8 @@ use crate::{
     primitives::{AppIconSize, app_icon, icon_control},
     theme::THEME,
 };
+
+type ButtonPress = dyn Fn(&mut Window, &mut App);
 
 #[derive(Clone, Copy)]
 pub(crate) enum ButtonTone {
@@ -77,8 +82,22 @@ fn icon_button_with_size(
     tone: ButtonTone,
     on_press: impl Fn(&mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
+    let on_press: Rc<ButtonPress> = Rc::new(on_press);
+    let click = Rc::clone(&on_press);
     tone_icon_control(icon_control(id, label).child(app_icon(icon, size)), tone)
-        .on_click(move |_, window, cx| on_press(window, cx))
+        .on_click(move |_, window, cx| click(window, cx))
+        .on_key_down(move |event, window, cx| {
+            if activates_button(event) {
+                cx.stop_propagation();
+                on_press(window, cx);
+            }
+        })
+}
+
+pub(crate) fn activates_button(event: &KeyDownEvent) -> bool {
+    !event.is_held
+        && event.keystroke.modifiers == gpui::Modifiers::default()
+        && matches!(event.keystroke.key.as_str(), "enter" | "space")
 }
 
 fn tone_icon_control(control: Stateful<Div>, tone: ButtonTone) -> Stateful<Div> {
@@ -109,5 +128,27 @@ fn tone_button(button: Button, tone: ButtonTone) -> Button {
         ButtonTone::Neutral => button.secondary(),
         ButtonTone::Quiet => button.ghost(),
         ButtonTone::Danger => button.danger(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key_event(key: &str, is_held: bool) -> KeyDownEvent {
+        KeyDownEvent {
+            keystroke: gpui::Keystroke::parse(key).expect("test keystroke"),
+            is_held,
+            prefer_character_input: false,
+        }
+    }
+
+    #[test]
+    fn icon_buttons_activate_on_unmodified_enter_or_space_once() {
+        assert!(activates_button(&key_event("enter", false)));
+        assert!(activates_button(&key_event("space", false)));
+        assert!(!activates_button(&key_event("enter", true)));
+        assert!(!activates_button(&key_event("cmd-enter", false)));
+        assert!(!activates_button(&key_event("a", false)));
     }
 }

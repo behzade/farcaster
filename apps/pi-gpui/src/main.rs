@@ -19,6 +19,7 @@ mod project_trust;
 mod project_trust_view;
 mod projects;
 mod protocol;
+mod repository;
 mod rpc_process;
 mod runtime;
 mod session_changes;

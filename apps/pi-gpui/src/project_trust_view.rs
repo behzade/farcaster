@@ -40,7 +40,7 @@ impl ProjectTrustView {
             error: None,
         };
         if startup_trust == StartupTrust::Ready {
-            this.start_app(window, cx);
+            this.start_app(None, window, cx);
         } else {
             let focus = this.focus.clone();
             cx.defer_in(window, move |_, window, cx| focus.focus(window, cx));
@@ -50,7 +50,7 @@ impl ProjectTrustView {
 
     fn select_trust(&mut self, choice: TrustChoice, window: &mut Window, cx: &mut Context<Self>) {
         match project_trust::apply(&self.project, choice) {
-            Ok(_) => self.start_app(window, cx),
+            Ok(applied) => self.start_app(Some(applied.trusted), window, cx),
             Err(error) => {
                 self.error = Some(error);
                 cx.notify();
@@ -58,9 +58,17 @@ impl ProjectTrustView {
         }
     }
 
-    fn start_app(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn start_app(
+        &mut self,
+        repository_execution_allowed: Option<bool>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let project = self.project.clone();
-        let app = cx.new(|cx| PiApp::new(project, window, cx));
+        let repository_execution_allowed = repository_execution_allowed.unwrap_or_else(|| {
+            project_trust::repository_execution_allowed(&project).unwrap_or(false)
+        });
+        let app = cx.new(|cx| PiApp::new(project, repository_execution_allowed, window, cx));
         *self.notification_app.borrow_mut() = Some(app.downgrade());
         self.app = Some(app);
         cx.notify();

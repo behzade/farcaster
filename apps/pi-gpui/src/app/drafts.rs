@@ -65,7 +65,7 @@ impl PiApp {
         if !changed {
             return;
         }
-        self.select_project(project.clone());
+        self.select_project(project.clone(), cx);
         self.send_project_command(
             &project,
             RuntimeCommand::NewSession {
@@ -262,11 +262,7 @@ impl PiApp {
 }
 
 fn available_projects(registered: &[PathBuf], current: &std::path::Path) -> Vec<PathBuf> {
-    let mut available = registered
-        .iter()
-        .filter(|project| !projects::is_linked_worktree(project))
-        .cloned()
-        .collect::<Vec<_>>();
+    let mut available = registered.to_vec();
     projects::add_unique(&mut available, current.to_path_buf());
     if let Some(index) = available.iter().position(|project| project == current) {
         available.swap(0, index);
@@ -449,7 +445,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn project_choices_exclude_registered_and_current_worktrees() {
+    fn project_choices_include_registered_and_current_worktrees() {
         let temp = tempfile::tempdir().expect("temporary project root");
         let project = temp.path().join("project");
         let other = temp.path().join("other");
@@ -468,11 +464,11 @@ mod tests {
 
         assert_eq!(
             available_projects(&registered, &other),
-            vec![other.clone(), project.clone()]
+            vec![other.clone(), worktree.clone(), project.clone()]
         );
         assert_eq!(
             available_projects(&registered, &worktree),
-            vec![project, other]
+            vec![worktree, project, other]
         );
     }
 

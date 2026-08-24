@@ -1,6 +1,8 @@
 //! Repository file discovery and matching for composer `@` mentions.
 
-use std::{path::Path, process::Command};
+use std::path::Path;
+
+use crate::repository::{BackendPreference, RepositoryBackend};
 
 const MAX_RESULTS: usize = 8;
 
@@ -10,31 +12,12 @@ pub(super) struct MentionQuery {
     pub(super) text: String,
 }
 
-pub(super) fn project_files(project: &Path) -> Vec<String> {
-    let output = Command::new("git")
-        .args([
-            "ls-files",
-            "--cached",
-            "--others",
-            "--exclude-standard",
-            "-z",
-        ])
-        .current_dir(project)
-        .output();
-    let Ok(output) = output else {
-        return Vec::new();
-    };
-    if !output.status.success() {
-        return Vec::new();
-    }
-    let mut files = output
-        .stdout
-        .split(|byte| *byte == 0)
-        .filter(|path| !path.is_empty())
-        .filter_map(|path| String::from_utf8(path.to_vec()).ok())
-        .collect::<Vec<_>>();
-    files.sort_unstable();
-    files
+pub(super) fn project_files(project: &Path, preference: BackendPreference) -> Vec<String> {
+    RepositoryBackend::discover(project, preference)
+        .ok()
+        .flatten()
+        .and_then(|backend| backend.list_project_files().ok())
+        .unwrap_or_default()
 }
 
 pub(super) fn query_at_cursor(value: &str, cursor: usize) -> Option<MentionQuery> {

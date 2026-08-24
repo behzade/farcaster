@@ -43,10 +43,11 @@ impl PiApp {
     ) {
         let project = self
             .project_trust_project
-            .as_deref()
-            .unwrap_or(self.project.as_path());
-        match project_trust::apply(project, choice) {
+            .clone()
+            .unwrap_or_else(|| self.project.clone());
+        match project_trust::apply(&project, choice) {
             Ok(applied) => {
+                self.set_repository_project_execution(project, applied.trusted, cx);
                 let scope = applied.saved_path.map_or_else(
                     || self.project.display().to_string(),
                     |path| path.display().to_string(),

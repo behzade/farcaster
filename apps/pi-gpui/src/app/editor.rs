@@ -70,6 +70,7 @@ impl PiApp {
             .take()
             .unwrap_or_else(|| self.composer_focus.clone())
             .focus(window, cx);
+        self.request_repository_refresh(cx);
         cx.notify();
     }
 

@@ -1,5 +1,10 @@
 use std::time::{Duration, SystemTime};
 
+#[path = "run_panel_repository.rs"]
+mod run_panel_repository;
+#[path = "run_panel_repository_presentation.rs"]
+mod run_panel_repository_presentation;
+
 use gpui::{
     AnyElement, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Role,
     StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
@@ -117,7 +122,8 @@ impl PiApp {
                 )))
                 .children(self.background_jobs.iter().map(background_job_row))
             })
-            .child(section_heading("Changes"))
+            .child(self.render_repository(entity.clone()))
+            .child(section_heading("Session activity"))
             .child(self.render_changes(entity.clone()))
             .when(!completed.is_empty(), |run| {
                 run.child(

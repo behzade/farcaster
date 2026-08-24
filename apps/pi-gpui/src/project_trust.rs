@@ -125,6 +125,30 @@ pub(crate) fn saved_decision(project: &Path) -> Result<Option<(PathBuf, bool)>, 
     )
 }
 
+pub(crate) fn repository_execution_allowed(project: &Path) -> Result<bool, String> {
+    let environment = trust_environment(project)?;
+    repository_execution_allowed_with_agent_dir(
+        project,
+        &environment.agent_dir,
+        environment.home.as_deref(),
+    )
+}
+
+fn repository_execution_allowed_with_agent_dir(
+    project: &Path,
+    agent_dir: &Path,
+    home: Option<&Path>,
+) -> Result<bool, String> {
+    if let Some((_, trusted)) = nearest_decision(&agent_dir.join("trust.json"), project)? {
+        return Ok(trusted);
+    }
+    match default_project_trust(&agent_dir.join("settings.json")) {
+        DefaultProjectTrust::Always => Ok(true),
+        DefaultProjectTrust::Never => Ok(false),
+        DefaultProjectTrust::Ask => Ok(!has_trust_requiring_resources(project, home)?),
+    }
+}
+
 fn has_trust_requiring_resources(project: &Path, home: Option<&Path>) -> Result<bool, String> {
     let project = canonical(project)?;
     if PROJECT_CONFIG_RESOURCES
@@ -347,6 +371,40 @@ mod tests {
             startup_trust_with_agent_dir(&project, &agent)?,
             StartupTrust::Ready
         );
+        Ok(())
+    }
+
+    #[test]
+    fn repository_commands_follow_resource_saved_and_default_trust()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempdir()?;
+        let project = temp.path().join("project");
+        let agent = temp.path().join("agent");
+        fs::create_dir_all(&project)?;
+        fs::create_dir_all(&agent)?;
+
+        assert!(repository_execution_allowed_with_agent_dir(
+            &project, &agent, None
+        )?);
+        fs::create_dir_all(project.join(".pi/extensions"))?;
+        assert!(!repository_execution_allowed_with_agent_dir(
+            &project, &agent, None
+        )?);
+        fs::write(
+            agent.join("settings.json"),
+            r#"{"defaultProjectTrust":"never"}"#,
+        )?;
+        assert!(!repository_execution_allowed_with_agent_dir(
+            &project, &agent, None
+        )?);
+        update_trust_file(&agent.join("trust.json"), &[(project.clone(), Some(true))])?;
+        assert!(repository_execution_allowed_with_agent_dir(
+            &project, &agent, None
+        )?);
+        update_trust_file(&agent.join("trust.json"), &[(project.clone(), Some(false))])?;
+        assert!(!repository_execution_allowed_with_agent_dir(
+            &project, &agent, None
+        )?);
         Ok(())
     }
 

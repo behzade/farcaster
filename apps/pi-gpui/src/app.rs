@@ -10,6 +10,7 @@ mod expiries;
 mod file_mentions;
 mod picker;
 mod region_state;
+mod repository;
 mod session_titles;
 mod slash_commands;
 mod submissions;
@@ -164,6 +165,7 @@ pub(crate) struct PiApp {
     agent_row_focus: HashMap<String, FocusHandle>,
     background_jobs: Vec<BackgroundJob>,
     changes: changes::ChangesState,
+    repository: repository::RepositoryState,
     session_order: Vec<i64>,
     session_drop_target: Option<(i64, crate::primitives::ReorderPosition)>,
     run_statuses: HashMap<String, String>,
@@ -272,7 +274,12 @@ fn session_shortcuts_visible_for_window(current: bool, window_active: bool) -> b
 }
 
 impl PiApp {
-    pub(crate) fn new(project: PathBuf, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(
+        project: PathBuf,
+        repository_execution_allowed: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let (mut registry, mut project_registry_error) = match projects::load() {
             Ok(registry) => (registry, None),
             Err(error) => (projects::Registry::default(), Some(error)),
@@ -420,6 +427,9 @@ impl PiApp {
                     this.session_shortcuts_visible = visible;
                     this.notify_session_rail(cx);
                 }
+                if window.is_window_active() {
+                    this.request_repository_refresh(cx);
+                }
             });
         let window_placement_subscription = crate::launch::observe_window_placement(window, cx);
         let runtime_wake = runtime.wake_receiver();
@@ -508,7 +518,7 @@ impl PiApp {
                 });
             });
         });
-        Self {
+        let mut this = Self {
             project: project.clone(),
             runtime,
             snapshot: Arc::new(RuntimeSnapshot {
@@ -522,6 +532,10 @@ impl PiApp {
             agent_row_focus: HashMap::new(),
             background_jobs: Vec::new(),
             changes: changes::ChangesState::new(cx),
+            repository: repository::RepositoryState::load(
+                project.clone(),
+                repository_execution_allowed,
+            ),
             session_order,
             session_drop_target: None,
             run_statuses: HashMap::new(),
@@ -635,7 +649,9 @@ impl PiApp {
             _window_activation_subscription: window_activation_subscription,
             _window_placement_subscription: window_placement_subscription,
             _event_task: event_task,
-        }
+        };
+        this.request_repository_refresh(cx);
+        this
     }
 
     fn drain_runtime(&mut self, cx: &mut Context<Self>) {
@@ -655,6 +671,7 @@ impl PiApp {
         let mut transcript_dirty = false;
         let mut composer_dirty = false;
         let mut run_dirty = performance_changed;
+        let mut repository_dirty = false;
         let mut workgraph_session_dirty = false;
         let mut workgraph_data_dirty = false;
         while let Ok(event) = self.runtime.try_recv() {
@@ -678,6 +695,8 @@ impl PiApp {
                     composer_dirty |= composer_snapshot_changed(&self.snapshot, snapshot);
                     root_dirty |= self.snapshot.pending_question != snapshot.pending_question;
                     run_dirty |= run_panel_snapshot_changed(&self.snapshot, snapshot);
+                    repository_dirty |=
+                        self.snapshot.conversation.running && !snapshot.conversation.running;
                     workgraph_session_dirty |=
                         self.snapshot.selected_session != snapshot.selected_session;
                 }
@@ -694,13 +713,16 @@ impl PiApp {
                     run_dirty = true;
                 }
                 RuntimeEvent::SessionStatus {
-                    target, session, ..
+                    target,
+                    session,
+                    status,
                 } => {
+                    repository_dirty |= matches!(status.as_str(), "Done" | "Failed");
                     rail_dirty |= session_event_affects_active_rail(
                         &self.drafts,
                         &self.submitted_drafts,
                         &self.sessions,
-                        &target,
+                        target,
                         session.as_deref(),
                     );
                     archived_rail_dirty |= archive::session_event_affects_archived_rail(
@@ -739,7 +761,11 @@ impl PiApp {
                 RuntimeEvent::WorkGraphChanged { project, .. } => {
                     workgraph_data_dirty |= project == &self.project;
                 }
-                RuntimeEvent::RefreshCatalog | RuntimeEvent::Stopped => run_dirty = true,
+                RuntimeEvent::RefreshCatalog => run_dirty = true,
+                RuntimeEvent::Stopped => {
+                    run_dirty = true;
+                    repository_dirty = true;
+                }
             }
             match event {
                 RuntimeEvent::Snapshot {
@@ -940,7 +966,7 @@ impl PiApp {
                         .or(self.snapshot.live_session.as_ref())
                         .is_some_and(|path| paths.contains_key(path));
                     if selected_was_moved {
-                        self.select_project(target_project.clone());
+                        self.select_project(target_project.clone(), cx);
                         self.send(RuntimeCommand::SelectSession {
                             path: target_root,
                             project: target_project,
@@ -1049,6 +1075,9 @@ impl PiApp {
         if run_dirty {
             self.notify_run_panel(cx);
             self.request_changes_refresh(cx);
+        }
+        if repository_dirty {
+            self.request_repository_refresh(cx);
         }
         if root_dirty {
             cx.notify();
@@ -1207,7 +1236,7 @@ impl PiApp {
             root_session_for_path(&self.sessions, Some(&path)).map(|session| session.id.clone());
         self.switch_composer_target(session_target(&path), window, cx);
         self.selected_draft = None;
-        self.select_project(project.clone());
+        self.select_project(project.clone(), cx);
         if let Some((_, timing)) = self.pending_session_switch.take() {
             timing.cancel();
         }
@@ -1265,7 +1294,7 @@ impl PiApp {
             window,
             cx,
         );
-        self.select_project(project);
+        self.select_project(project, cx);
         self.search
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.close_sessions_sheet_after_selection(window, cx);
@@ -1293,7 +1322,7 @@ impl PiApp {
         self.run_panel_scroll.set_offset(point(px(0.0), px(0.0)));
         self.switch_composer_target(draft_target(&id), window, cx);
         self.selected_draft = Some(id.clone());
-        self.select_project(project.clone());
+        self.select_project(project.clone(), cx);
         let command = if let Some(Some(path)) = self.submitted_drafts.get(&id).cloned() {
             RuntimeCommand::SelectSession {
                 path,
@@ -1401,13 +1430,14 @@ impl PiApp {
         self.open_picker(scope, window, cx);
     }
 
-    fn select_project(&mut self, project: PathBuf) {
+    fn select_project(&mut self, project: PathBuf, cx: &mut Context<Self>) {
         if self.project != project {
             self.composer_project_files.clear();
             self.composer_project_files_project = None;
             self.composer_project_files_loading = None;
         }
         self.project = project.clone();
+        self.select_repository_project(project.clone(), cx);
         if projects::select(&mut self.projects, &self.excluded_projects, project) {
             self.save_project_registry();
         }
@@ -1415,23 +1445,31 @@ impl PiApp {
 
     fn request_composer_project_files(&mut self, cx: &mut Context<Self>) {
         let project = self.project.clone();
+        if !self.repository.execution_allowed {
+            self.composer_project_files.clear();
+            self.composer_project_files_project = Some(project);
+            self.composer_project_files_loading = None;
+            self.notify_composer(cx);
+            return;
+        }
         if self.composer_project_files_project.as_ref() == Some(&project)
             || self.composer_project_files_loading.as_ref() == Some(&project)
         {
             return;
         }
         self.composer_project_files_loading = Some(project.clone());
+        let preference = self.repository.preference;
         let task = cx.background_spawn(async move {
-            let files = file_mentions::project_files(&project);
-            (project, files)
+            let files = file_mentions::project_files(&project, preference);
+            (project, preference, files)
         });
         cx.spawn(async move |weak, cx| {
-            let (project, files) = task.await;
+            let (project, preference, files) = task.await;
             let _ = weak.update(cx, |this, cx| {
                 if this.composer_project_files_loading.as_ref() == Some(&project) {
                     this.composer_project_files_loading = None;
                 }
-                if this.project == project {
+                if this.project == project && this.repository.preference == preference {
                     this.composer_project_files = files;
                     this.composer_project_files_project = Some(project);
                     this.notify_composer(cx);
@@ -1467,7 +1505,7 @@ impl PiApp {
         if was_selected {
             self.selected_draft = None;
             if let Some(session) = self.sessions.first().cloned() {
-                self.select_project(session.project.clone());
+                self.select_project(session.project.clone(), cx);
                 let snapshot = self
                     .composer_sessions
                     .discard_and_switch(&target, session_target(&session.path));

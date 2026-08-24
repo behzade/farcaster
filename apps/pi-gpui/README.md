@@ -13,6 +13,15 @@ and `defaultProjectTrust`, or asks for a project, parent, or deny decision.
 `/trust` opens the same persistent trust manager. Changes made for an
 already-running project take effect after restarting Pi GPUI.
 
+Session details separates the repository's authoritative **Working copy** from
+Pi's recorded **Session activity**. Working copy is read-only: it shows Git's
+staged, working-tree, untracked, and conflict state, or Jujutsu's current
+change, and opens backend-specific file diffs. Choose Auto, Git, or Jujutsu per
+project; Auto uses Jujutsu for a colocated repository. A Jujutsu refresh may
+snapshot the working copy as part of normal `jj` behavior. Repository commands
+remain disabled for explicitly untrusted projects. Set `PI_GUI_GIT` or
+`PI_GUI_JJ` to override either executable.
+
 Changed files in Session details can be opened in an embedded Neovim editor.
 The editor uses Ghostty's VT core rendered directly by GPUI and keeps one
 Neovim process per open editor surface. Set `PI_GUI_NVIM` to override the
