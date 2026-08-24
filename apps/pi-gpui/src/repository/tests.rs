@@ -42,12 +42,12 @@ fn auto_uses_deepest_marker_and_jj_wins_only_a_tie() {
     fs::create_dir(nested.parent().expect("nested parent").join(".git"))
         .expect("create nested Git marker");
 
-    let root = RepositoryBackend::discover(temp.path(), BackendPreference::Auto)
+    let root = discover_available(temp.path(), BackendPreference::Auto)
         .expect("discover root")
         .expect("root repository");
     assert_eq!(root.location.kind, RepositoryKind::Jujutsu);
 
-    let nested_backend = RepositoryBackend::discover(&nested, BackendPreference::Auto)
+    let nested_backend = discover_available(&nested, BackendPreference::Auto)
         .expect("discover nested")
         .expect("nested repository");
     assert_eq!(nested_backend.location.kind, RepositoryKind::Git);
@@ -66,7 +66,7 @@ fn forced_backend_never_falls_back() {
     let temp = TestDirectory::new("forced");
     fs::create_dir(temp.path().join(".jj")).expect("create JJ marker");
 
-    let error = RepositoryBackend::discover(temp.path(), BackendPreference::Git)
+    let error = discover_available(temp.path(), BackendPreference::Git)
         .expect_err("forced Git must not use JJ");
     assert!(matches!(
         error,
@@ -77,14 +77,37 @@ fn forced_backend_never_falls_back() {
     ));
 
     fs::create_dir(temp.path().join(".git")).expect("create Git marker");
-    let git = RepositoryBackend::discover(temp.path(), BackendPreference::Git)
+    let git = discover_available(temp.path(), BackendPreference::Git)
         .expect("discover forced Git")
         .expect("Git repository");
-    let jj = RepositoryBackend::discover(temp.path(), BackendPreference::Jujutsu)
+    let jj = discover_available(temp.path(), BackendPreference::Jujutsu)
         .expect("discover forced JJ")
         .expect("JJ repository");
     assert_eq!(git.location.kind, RepositoryKind::Git);
     assert_eq!(jj.location.kind, RepositoryKind::Jujutsu);
+}
+
+#[test]
+fn unavailable_backend_is_ignored_for_auto_and_stale_preference() {
+    let temp = TestDirectory::new("unavailable");
+    fs::create_dir(temp.path().join(".git")).expect("create Git marker");
+    fs::create_dir(temp.path().join(".jj")).expect("create JJ marker");
+    let missing = temp.path().join("missing");
+    let options = RepositoryOptions {
+        git_executable: std::env::current_exe()
+            .expect("current executable")
+            .into_os_string(),
+        jj_executable: missing.into_os_string(),
+        ..RepositoryOptions::default()
+    };
+
+    for preference in [BackendPreference::Auto, BackendPreference::Jujutsu] {
+        let backend =
+            RepositoryBackend::discover_with_options(temp.path(), preference, options.clone())
+                .expect("ignore unavailable JJ")
+                .expect("Git repository");
+        assert_eq!(backend.location.kind, RepositoryKind::Git);
+    }
 }
 
 #[test]
@@ -362,6 +385,24 @@ fn run_jj(repository: &Path, home: &Path, config: &Path, arguments: &[&str]) {
         "JJ failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+fn discover_available(
+    project: &Path,
+    preference: BackendPreference,
+) -> Result<Option<RepositoryBackend>, RepositoryError> {
+    RepositoryBackend::discover_with_options(project, preference, available_options())
+}
+
+fn available_options() -> RepositoryOptions {
+    let executable = std::env::current_exe()
+        .expect("current executable")
+        .into_os_string();
+    RepositoryOptions {
+        git_executable: executable.clone(),
+        jj_executable: executable,
+        ..RepositoryOptions::default()
+    }
 }
 
 fn isolated_environment(home: &Path, config: &Path) -> Vec<(OsString, OsString)> {

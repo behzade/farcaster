@@ -227,10 +227,9 @@ pub(crate) struct RepositoryBackend {
 }
 
 impl RepositoryBackend {
-    /// `Auto` picks the deepest marker and prefers `.jj` only on a tie. Forced
-    /// modes inspect only their marker and never fall back to the other tool.
-    /// `Ok(None)` therefore means Auto found no repository; command failures
-    /// occur later as `Err`, and forced missing markers are `BackendUnavailable`.
+    /// `Auto` picks the deepest marker among available backends and prefers
+    /// `.jj` only on a tie. Forced modes never fall back while available; a
+    /// stale preference for an unavailable executable is treated as `Auto`.
     pub(crate) fn discover(
         project: &Path,
         preference: BackendPreference,
@@ -260,7 +259,10 @@ impl RepositoryBackend {
             canonical
         };
 
-        let selected = find_marker(&project_root, preference)?;
+        let git_available = executable_available(&options.git_executable);
+        let jj_available = executable_available(&options.jj_executable);
+        let preference = available_preference(preference, git_available, jj_available);
+        let selected = find_marker(&project_root, preference, git_available, jj_available)?;
         let Some((workspace_root, kind)) = selected else {
             return match preference {
                 BackendPreference::Auto => Ok(None),
@@ -282,6 +284,14 @@ impl RepositoryBackend {
             },
             options,
         }))
+    }
+
+    pub(crate) fn available_backends() -> (bool, bool) {
+        let options = RepositoryOptions::default();
+        (
+            executable_available(&options.git_executable),
+            executable_available(&options.jj_executable),
+        )
     }
 
     pub(crate) const fn location(&self) -> &RepositoryLocation {
@@ -472,33 +482,55 @@ fn repository_operation() -> Result<MutexGuard<'static, ()>, RepositoryError> {
         })
 }
 
+fn available_preference(
+    preference: BackendPreference,
+    git_available: bool,
+    jj_available: bool,
+) -> BackendPreference {
+    match preference {
+        BackendPreference::Git if !git_available => BackendPreference::Auto,
+        BackendPreference::Jujutsu if !jj_available => BackendPreference::Auto,
+        preference => preference,
+    }
+}
+
 fn find_marker(
     project_root: &Path,
     preference: BackendPreference,
+    git_available: bool,
+    jj_available: bool,
 ) -> Result<Option<(PathBuf, RepositoryKind)>, RepositoryError> {
     for ancestor in project_root.ancestors() {
         let kind = match preference {
             BackendPreference::Auto => {
-                if marker_exists(&ancestor.join(".jj"))? {
+                if jj_available && marker_exists(&ancestor.join(".jj"))? {
                     Some(RepositoryKind::Jujutsu)
-                } else if marker_exists(&ancestor.join(".git"))? {
+                } else if git_available && marker_exists(&ancestor.join(".git"))? {
                     Some(RepositoryKind::Git)
                 } else {
                     None
                 }
             }
-            BackendPreference::Git => {
-                marker_exists(&ancestor.join(".git"))?.then_some(RepositoryKind::Git)
-            }
-            BackendPreference::Jujutsu => {
-                marker_exists(&ancestor.join(".jj"))?.then_some(RepositoryKind::Jujutsu)
-            }
+            BackendPreference::Git => (git_available && marker_exists(&ancestor.join(".git"))?)
+                .then_some(RepositoryKind::Git),
+            BackendPreference::Jujutsu => (jj_available && marker_exists(&ancestor.join(".jj"))?)
+                .then_some(RepositoryKind::Jujutsu),
         };
         if let Some(kind) = kind {
             return Ok(Some((ancestor.to_path_buf(), kind)));
         }
     }
     Ok(None)
+}
+
+fn executable_available(executable: &std::ffi::OsStr) -> bool {
+    let executable = Path::new(executable);
+    if executable.components().count() > 1 {
+        return executable.is_file();
+    }
+    std::env::var_os("PATH").is_some_and(|path| {
+        std::env::split_paths(&path).any(|directory| directory.join(executable).is_file())
+    })
 }
 
 fn marker_exists(path: &Path) -> Result<bool, RepositoryError> {

@@ -17,7 +17,8 @@ use crate::{
     assets::AppIcon,
     primitives::{ButtonTone, activates_button, disclosure_button, icon_button},
     repository::{
-        BackendPreference, RepositoryKind, SnapshotIdentity, WorkingCopyChange, WorkingCopySnapshot,
+        BackendPreference, RepositoryBackend, RepositoryKind, SnapshotIdentity, WorkingCopyChange,
+        WorkingCopySnapshot,
     },
     theme::{MONO_FONT_FAMILY, THEME},
 };
@@ -255,11 +256,12 @@ fn repository_header(
     entity: WeakEntity<PiApp>,
     refresh: impl Fn(&mut gpui::App) + 'static,
 ) -> AnyElement {
-    let active = snapshot.map(|snapshot| snapshot.location.kind).unwrap_or(
-        match app.repository.preference {
-            BackendPreference::Git => RepositoryKind::Git,
-            BackendPreference::Auto | BackendPreference::Jujutsu => RepositoryKind::Jujutsu,
-        },
+    let (git_available, jj_available) = RepositoryBackend::available_backends();
+    let active = selected_backend(
+        snapshot.map(|snapshot| snapshot.location.kind),
+        app.repository.preference,
+        git_available,
+        jj_available,
     );
     let identity = snapshot.map(repository_identity_label);
     let dirty = snapshot.is_some_and(|snapshot| !snapshot.changes.is_empty());
@@ -276,6 +278,8 @@ fn repository_header(
         .child(backend_toggle(
             active,
             app.repository.execution_allowed,
+            git_available,
+            jj_available,
             entity,
         ))
         .child(working_copy_totals(
@@ -307,29 +311,54 @@ fn repository_header(
         .into_any_element()
 }
 
-fn backend_toggle(active: RepositoryKind, enabled: bool, entity: WeakEntity<PiApp>) -> AnyElement {
+fn selected_backend(
+    discovered: Option<RepositoryKind>,
+    preference: BackendPreference,
+    git_available: bool,
+    jj_available: bool,
+) -> Option<RepositoryKind> {
+    discovered.or_else(|| match preference {
+        BackendPreference::Git if git_available => Some(RepositoryKind::Git),
+        BackendPreference::Jujutsu if jj_available => Some(RepositoryKind::Jujutsu),
+        BackendPreference::Auto | BackendPreference::Git | BackendPreference::Jujutsu => None,
+    })
+}
+
+fn backend_toggle(
+    active: Option<RepositoryKind>,
+    enabled: bool,
+    git_available: bool,
+    jj_available: bool,
+    entity: WeakEntity<PiApp>,
+) -> AnyElement {
     div()
         .flex_none()
         .flex()
         .items_center()
         .gap(px(3.0))
-        .child(backend_option(
-            "repository-backend-jj",
-            "JJ",
-            BackendPreference::Jujutsu,
-            active == RepositoryKind::Jujutsu,
-            enabled,
-            entity.clone(),
-        ))
-        .child(div().text_color(THEME.colors.subtle).child("/"))
-        .child(backend_option(
-            "repository-backend-git",
-            "Git",
-            BackendPreference::Git,
-            active == RepositoryKind::Git,
-            enabled,
-            entity,
-        ))
+        .when(jj_available, |toggle| {
+            toggle.child(backend_option(
+                "repository-backend-jj",
+                "JJ",
+                BackendPreference::Jujutsu,
+                active == Some(RepositoryKind::Jujutsu),
+                enabled,
+                entity.clone(),
+            ))
+        })
+        .when(jj_available && git_available, |toggle| {
+            toggle.child(div().text_color(THEME.colors.subtle).child("/"))
+        })
+        .when(git_available, |toggle| {
+            toggle.child(backend_option(
+                "repository-backend-git",
+                "Git",
+                BackendPreference::Git,
+                active == Some(RepositoryKind::Git),
+                enabled,
+                entity,
+            ))
+        })
         .into_any_element()
 }
 
@@ -426,6 +455,27 @@ fn repository_notice(message: &str, color: gpui::Rgba) -> AnyElement {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn auto_does_not_select_jj_before_discovery() {
+        assert_eq!(
+            selected_backend(None, BackendPreference::Auto, true, true),
+            None
+        );
+        assert_eq!(
+            selected_backend(None, BackendPreference::Jujutsu, true, false),
+            None
+        );
+        assert_eq!(
+            selected_backend(
+                Some(RepositoryKind::Git),
+                BackendPreference::Auto,
+                true,
+                true,
+            ),
+            Some(RepositoryKind::Git)
+        );
+    }
 
     #[test]
     fn repository_files_start_at_five_and_expand_twenty_at_a_time() {
