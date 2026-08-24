@@ -58,6 +58,12 @@
     {
       "kind": "filesystem",
       "access": "write",
+      "path": "~/Projects/personal/gpui-ghostty",
+      "scope": "tree"
+    },
+    {
+      "kind": "filesystem",
+      "access": "write",
       "path": "~/Projects/personal/pi-guardian",
       "scope": "tree"
     },
