@@ -295,7 +295,7 @@ fn path_c_string(path: &Path, label: &str) -> Result<CString, String> {
 
 fn nvim_command(nvim: &Path, socket: &Path, path: &Path) -> Result<CString, String> {
     let command = format!(
-        "exec {} --listen {} -- {}",
+        "{} --listen {} -- {}",
         shell_quote(nvim),
         shell_quote(socket),
         shell_quote(path)
@@ -438,7 +438,7 @@ mod tests {
         .expect("valid command");
         assert_eq!(
             command.to_str().expect("UTF-8 command"),
-            "exec '/tmp/my nvim' --listen '/tmp/editor.sock' -- '/tmp/it'\\''s.rs'"
+            "'/tmp/my nvim' --listen '/tmp/editor.sock' -- '/tmp/it'\\''s.rs'"
         );
     }
 
