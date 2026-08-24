@@ -33,7 +33,7 @@ Change:
 - compress Usage into a glanceable context summary;
 - make active subagents operationally useful;
 - separate completed subagents similarly to Archived sessions;
-- add session-wide changed files and full-file diff viewing;
+- add working-copy changed files and full-file diff viewing;
 - use a clear sans-serif for interface and prose, reserving monospace for technical content;
 - rebuild the composer as a three-band terminal console with session context, a generous input surface, and labeled controls;
 - correct the composer's cursor-reveal behavior for long input.
@@ -453,28 +453,31 @@ Worker       Failed · 18s · 8.4k
 - Failed or incomplete outcomes remain visually distinguishable.
 - Completed agents remain inspectable.
 
-### 6.5 Session-wide changes
+### 6.5 Working-copy changes
 
-Add a Changes section showing the net file changes associated with the session.
+Show the complete working copy rather than a session-filtered repository view.
 
 ```text
-CHANGES · 3 FILES                         +83  −21
+JJ / Git    +83  −21    uyzmnoqm*
 
-M  apps/pi-gpui/src/shell.rs              +21   −8
-M  apps/pi-gpui/src/session.rs            +54   −9
-A  apps/pi-gpui/src/shell_tests.rs         +8   −4
+M  apps/pi-gpui/src/shell.rs
+M  apps/pi-gpui/src/session.rs
+A  apps/pi-gpui/src/shell_tests.rs
+                                      18 more files  ›
 ```
 
 Rules:
 
-- Header shows file count and session-wide additions/deletions.
-- Each row shows status, path, additions, and deletions.
+- Keep the header flat, without a card, border, scope selector, or `Working` label.
+- `JJ / Git` is a two-state text toggle; the active backend is strong and the inactive backend is muted but clickable.
+- Header totals describe the complete working copy.
+- Show the Jujutsu change ID or Git branch followed immediately by `*` only when the working copy is dirty.
+- Show five file rows initially. Each expansion appends at most twenty more below the existing rows.
 - Use monospace for paths and counts.
 - Truncate from the middle when a path is too long so the filename remains visible.
-- Sort changed files by most recently changed by default.
-- Use the net current diff for each file, not a sum that double-counts repeated edits.
 - A deleted file, rename, binary file, or unavailable diff receives a clear textual state.
 - Clicking a file opens its complete diff in a modal.
+- Show session-only additions and deletions in the composer immediately before cost.
 
 ### 6.6 Full-file diff modal
 
@@ -653,7 +656,7 @@ Keep prominent:
 - Pi's user-facing responses;
 - active subagent role and activity;
 - context percentage;
-- session-wide changed files;
+- working-copy changed files;
 - Needs input, blocked, and failed states.
 
 ## 12. Delivery order
@@ -679,7 +682,7 @@ Keep prominent:
 - Build compact circular Context summary.
 - Expand active subagent information.
 - Add completed-subagents section.
-- Add session-wide Changes list and full-file diff modal.
+- Add the flat working-copy list and full-file diff modal.
 
 ### Phase 4 — composer behavior and polish
 
@@ -704,7 +707,7 @@ The redesign is aligned when:
 9. Context usage is understandable at a glance and detailed usage remains available on demand.
 10. Every active subagent shows role, activity, current/recent tool, tool count, token usage, and elapsed time.
 11. Completed subagents are separated and collapsed similarly to Archived sessions.
-12. The Changes section shows session-wide net file counts and per-file `+ / −` values.
+12. The working-copy section has a flat JJ/Git toggle, aggregate totals, dirty identity, and paged file rows; session totals appear before composer cost.
 13. Clicking a changed file opens its complete diff in a keyboard-accessible modal.
 14. The composer has a status strip, dominant input body, and labeled control footer without losing existing behavior.
 15. Long composer input keeps the caret visible without per-keystroke scroll creep.

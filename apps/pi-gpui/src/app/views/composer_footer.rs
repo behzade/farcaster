@@ -8,6 +8,7 @@ use gpui::{
 use super::{
     super::PiApp,
     models,
+    run_panel_changes::{SessionChangeTotals, session_change_totals},
     usage::{ComposerUsage, composer_usage, format_cost, format_tokens, has_meaningful_usage},
 };
 use crate::{
@@ -37,8 +38,14 @@ impl PiApp {
 
         if show_usage {
             let usage = composer_usage(self);
-            if has_meaningful_usage(&usage) {
-                footer = footer.child(separator()).child(render_usage(&usage));
+            let session_totals = session_change_totals(&self.changes.set);
+            if has_meaningful_usage(&usage)
+                || session_totals.additions.is_some()
+                || session_totals.deletions.is_some()
+            {
+                footer = footer
+                    .child(separator())
+                    .child(render_usage(&usage, &session_totals));
             }
         }
         footer.child(div().min_w_0().flex_1()).into_any_element()
@@ -97,7 +104,7 @@ impl PiApp {
     }
 }
 
-fn render_usage(usage: &ComposerUsage) -> AnyElement {
+fn render_usage(usage: &ComposerUsage, session_totals: &SessionChangeTotals) -> AnyElement {
     let mut row = div()
         .flex_none()
         .flex()
@@ -126,6 +133,11 @@ fn render_usage(usage: &ComposerUsage) -> AnyElement {
             THEME.colors.text,
         ));
     }
+    if session_totals.additions.is_some() || session_totals.deletions.is_some() {
+        row = row
+            .child(separator())
+            .child(session_change_metric(session_totals));
+    }
     if usage.aggregate.cost_micros > 0 {
         row = row.child(separator()).child(simple_metric(
             "",
@@ -134,6 +146,36 @@ fn render_usage(usage: &ComposerUsage) -> AnyElement {
         ));
     }
     row.into_any_element()
+}
+
+fn session_change_metric(totals: &SessionChangeTotals) -> AnyElement {
+    div()
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap(THEME.space.xs)
+        .whitespace_nowrap()
+        .child(
+            div()
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(THEME.colors.subtle)
+                .child("session"),
+        )
+        .child(
+            div().text_color(THEME.colors.success).child(
+                totals
+                    .additions
+                    .map_or_else(|| "+—".to_owned(), |count| format!("+{count}")),
+            ),
+        )
+        .child(
+            div().text_color(THEME.colors.error).child(
+                totals
+                    .deletions
+                    .map_or_else(|| "-—".to_owned(), |count| format!("-{count}")),
+            ),
+        )
+        .into_any_element()
 }
 
 fn context_metric(usage: &ComposerUsage) -> AnyElement {

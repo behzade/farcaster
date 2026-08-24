@@ -6,10 +6,7 @@ use std::{
 };
 
 use crate::{
-    repository::{
-        BackendPreference, ChangeKind, ChangeLayer, DiffTargetKey, GitIdentity, JujutsuIdentity,
-        RepositoryKind, WorkingCopyChange,
-    },
+    repository::{ChangeKind, ChangeLayer, DiffTargetKey, GitIdentity, WorkingCopyChange},
     theme::THEME,
 };
 
@@ -25,40 +22,6 @@ pub(super) fn git_identity(identity: &GitIdentity) -> String {
         (Some(branch), None) => format!("{branch} · unborn"),
         (None, Some(oid)) => format!("detached {}", short_id(oid)),
         (None, None) => "unborn HEAD".to_owned(),
-    }
-}
-
-pub(super) fn git_upstream(identity: &GitIdentity) -> Option<String> {
-    let upstream = identity.upstream.as_ref()?;
-    let mut label = upstream.clone();
-    if identity.ahead > 0 || identity.behind > 0 {
-        label.push_str(&format!(" · +{} -{}", identity.ahead, identity.behind));
-    }
-    Some(label)
-}
-
-pub(super) fn jj_identity(identity: &JujutsuIdentity) -> String {
-    let mut label = short_id(&identity.change_id);
-    if let Some(bookmark) = identity.bookmarks.first() {
-        label.push_str(" · ");
-        label.push_str(bookmark);
-    }
-    if identity.conflicted {
-        label.push_str(" · conflict");
-    }
-    label
-}
-
-pub(super) fn preference_label(
-    preference: BackendPreference,
-    active: Option<RepositoryKind>,
-) -> String {
-    match (preference, active) {
-        (BackendPreference::Auto, Some(RepositoryKind::Git)) => "Auto · Git".to_owned(),
-        (BackendPreference::Auto, Some(RepositoryKind::Jujutsu)) => "Auto · Jujutsu".to_owned(),
-        (BackendPreference::Auto, None) => "Auto".to_owned(),
-        (BackendPreference::Git, _) => "Git".to_owned(),
-        (BackendPreference::Jujutsu, _) => "Jujutsu".to_owned(),
     }
 }
 
@@ -167,18 +130,6 @@ pub(super) fn change_color(kind: &ChangeKind) -> gpui::Rgba {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn backend_label_names_only_the_active_automatic_backend() {
-        assert_eq!(
-            preference_label(BackendPreference::Auto, Some(RepositoryKind::Jujutsu)),
-            "Auto · Jujutsu"
-        );
-        assert_eq!(
-            preference_label(BackendPreference::Git, Some(RepositoryKind::Jujutsu)),
-            "Git"
-        );
-    }
 
     #[test]
     fn unborn_and_detached_git_heads_are_explicit() {

@@ -296,6 +296,74 @@ impl RepositoryBackend {
         }
     }
 
+    pub(crate) fn working_copy_totals(
+        &self,
+        snapshot: &WorkingCopySnapshot,
+    ) -> Result<(Option<u64>, Option<u64>), RepositoryError> {
+        if snapshot.location != self.location {
+            return Err(RepositoryError::TargetMismatch(
+                "snapshot belongs to another repository".to_owned(),
+            ));
+        }
+        let _operation = repository_operation()?;
+        let output = match &snapshot.identity {
+            SnapshotIdentity::Git(_) => {
+                let mut patch = Vec::new();
+                for staged in [true, false] {
+                    let mut arguments = [
+                        "--no-pager",
+                        "--no-optional-locks",
+                        "--literal-pathspecs",
+                        "-c",
+                        "core.fsmonitor=false",
+                        "diff",
+                        "--no-color",
+                        "--no-ext-diff",
+                        "--no-textconv",
+                        "--find-renames",
+                    ]
+                    .map(OsString::from)
+                    .to_vec();
+                    if staged {
+                        arguments.push(OsString::from("--cached"));
+                    }
+                    arguments.push(OsString::from("--"));
+                    arguments.push(self.project_pathspec().into_os_string());
+                    let output = self.run_success(&arguments)?;
+                    require_complete_stdout(self.executable(), &output)?;
+                    patch.extend(output.stdout);
+                }
+                for change in snapshot
+                    .changes
+                    .iter()
+                    .filter(|change| change.layer == ChangeLayer::GitUntracked)
+                {
+                    let diff = git::load_diff(self, change.target.clone())?;
+                    patch.extend(diff.patch.into_bytes());
+                }
+                patch
+            }
+            SnapshotIdentity::Jujutsu(identity) => {
+                let arguments = vec![
+                    OsString::from("--no-pager"),
+                    OsString::from("--color=never"),
+                    OsString::from("--at-operation"),
+                    OsString::from(&identity.operation_id),
+                    OsString::from("diff"),
+                    OsString::from("-r"),
+                    OsString::from("@"),
+                    OsString::from("--git"),
+                    OsString::from("--"),
+                    self.project_pathspec().into_os_string(),
+                ];
+                let output = self.run_success(&arguments)?;
+                require_complete_stdout(self.executable(), &output)?;
+                output.stdout
+            }
+        };
+        Ok(patch_counts(&String::from_utf8_lossy(&output)))
+    }
+
     pub(crate) fn load_diff(&self, target: DiffTarget) -> Result<DiffResult, RepositoryError> {
         self.validate_target(&target)?;
         let _operation = repository_operation()?;

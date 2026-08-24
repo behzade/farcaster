@@ -4,7 +4,7 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 35] = [
+const ICON_PATHS: [&str; 33] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrows-clockwise.svg",
     "icons/phosphor/arrows-out.svg",
@@ -21,7 +21,6 @@ const ICON_PATHS: [&str; 35] = [
     "icons/phosphor/eye.svg",
     "icons/phosphor/folder.svg",
     "icons/phosphor/folder-plus.svg",
-    "icons/phosphor/git-branch.svg",
     "icons/phosphor/hammer.svg",
     "icons/phosphor/hourglass.svg",
     "icons/phosphor/key.svg",
@@ -33,7 +32,6 @@ const ICON_PATHS: [&str; 35] = [
     "icons/phosphor/question.svg",
     "icons/phosphor/sign-in.svg",
     "icons/phosphor/spinner-gap.svg",
-    "icons/phosphor/stack.svg",
     "icons/phosphor/stop.svg",
     "icons/phosphor/trash.svg",
     "icons/phosphor/user-focus.svg",
@@ -193,7 +191,6 @@ pub(crate) enum AppIcon {
     Eye,
     Folder,
     FolderPlus,
-    GitBranch,
     Hammer,
     Hourglass,
     Key,
@@ -205,7 +202,6 @@ pub(crate) enum AppIcon {
     Question,
     SignIn,
     SpinnerGap,
-    Stack,
     Stop,
     Trash,
     UserFocus,
@@ -233,7 +229,6 @@ impl IconNamed for AppIcon {
             Self::Eye => "eye",
             Self::Folder => "folder",
             Self::FolderPlus => "folder-plus",
-            Self::GitBranch => "git-branch",
             Self::Hammer => "hammer",
             Self::Hourglass => "hourglass",
             Self::Key => "key",
@@ -245,7 +240,6 @@ impl IconNamed for AppIcon {
             Self::Question => "question",
             Self::SignIn => "sign-in",
             Self::SpinnerGap => "spinner-gap",
-            Self::Stack => "stack",
             Self::Stop => "stop",
             Self::Trash => "trash",
             Self::UserFocus => "user-focus",
@@ -299,7 +293,6 @@ mod tests {
             AppIcon::Eye,
             AppIcon::Folder,
             AppIcon::FolderPlus,
-            AppIcon::GitBranch,
             AppIcon::Hammer,
             AppIcon::Hourglass,
             AppIcon::Key,
@@ -311,7 +304,6 @@ mod tests {
             AppIcon::Question,
             AppIcon::SignIn,
             AppIcon::SpinnerGap,
-            AppIcon::Stack,
             AppIcon::Stop,
             AppIcon::Trash,
             AppIcon::UserFocus,

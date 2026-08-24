@@ -1,78 +1,43 @@
-//! Combined Changes sidebar: repository status filtered by Pi's recorded session activity.
-
-use std::collections::HashSet;
+//! Flat working-copy header and paged repository file list.
 
 use gpui::{
-    Anchor, AnyElement, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Role,
+    AnyElement, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Role,
     StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
-};
-use gpui_component::{
-    Icon,
-    menu::{DropdownMenu as _, PopupMenuItem},
-    tooltip::Tooltip,
 };
 
 use super::{
-    super::super::{
-        PiApp,
-        repository::RepositoryChangeScope,
-        views::run_panel_changes::{session_change_matches, session_change_totals},
-    },
+    super::super::PiApp,
     run_panel_repository_presentation::{
         accessible_change_path, bounded_message, change_color, change_kind_label,
-        change_status_label, display_change_path, git_identity, git_upstream, group_title,
-        jj_identity, middle_truncate, preference_label, repository_row_id,
+        change_status_label, display_change_path, git_identity, group_title, middle_truncate,
+        repository_row_id,
     },
 };
 use crate::{
     assets::AppIcon,
-    primitives::{
-        AppIconSize, ButtonTone, activates_button, app_icon, dropdown_button, icon_button,
-    },
+    primitives::{ButtonTone, activates_button, disclosure_button, icon_button},
     repository::{
-        BackendPreference, ChangeKind, ChangeLayer, RepositoryKind, SnapshotIdentity,
-        WorkingCopyChange, WorkingCopySnapshot,
+        BackendPreference, RepositoryKind, SnapshotIdentity, WorkingCopyChange, WorkingCopySnapshot,
     },
-    session_changes::ChangeSet,
     theme::{MONO_FONT_FAMILY, THEME},
 };
 
-const MAX_VISIBLE_CHANGES: usize = 10;
-const GROUP_ORDER: [ChangeLayer; 5] = [
-    ChangeLayer::GitConflict,
-    ChangeLayer::GitIndex,
-    ChangeLayer::GitWorkingTree,
-    ChangeLayer::GitUntracked,
-    ChangeLayer::JujutsuWorkingCopy,
-];
+const INITIAL_VISIBLE_CHANGES: usize = 5;
+const EXPAND_CHANGE_PAGE: usize = 20;
 
 impl PiApp {
     pub(super) fn render_repository(&self, entity: WeakEntity<Self>) -> AnyElement {
         let refresh = entity.clone();
-        let totals = session_change_totals(&self.changes.set);
-        let controls = repository_control_bar(
-            self,
-            totals.additions,
-            totals.deletions,
-            entity.clone(),
-            move |cx| {
-                let _ = refresh.update(cx, |this, cx| {
-                    this.request_repository_refresh(cx);
-                });
-            },
-        );
+        let snapshot = self.repository.snapshot.as_ref();
+        let header = repository_header(self, snapshot, entity.clone(), move |cx| {
+            let _ = refresh.update(cx, |this, cx| this.request_repository_refresh(cx));
+        });
 
         div()
             .flex()
             .flex_col()
             .gap(THEME.space.xs)
-            .child(controls)
-            .when(self.changes.set.incomplete, |section| {
-                section.child(repository_notice(
-                    "Session record was too large to scan in full; totals and filtering may be incomplete",
-                    THEME.colors.warning,
-                ))
-            })
+            .child(header)
             .when(
                 self.repository.loading && !self.repository.initialized,
                 |section| {
@@ -95,15 +60,18 @@ impl PiApp {
                     ))
                 },
             )
-            .when_some(self.repository.watcher_error.as_deref(), |section, error| {
-                section.child(repository_notice(
-                    &format!(
-                        "Automatic refresh is unavailable; use Refresh: {}",
-                        bounded_message(error)
-                    ),
-                    THEME.colors.warning,
-                ))
-            })
+            .when_some(
+                self.repository.watcher_error.as_deref(),
+                |section, error| {
+                    section.child(repository_notice(
+                        &format!(
+                            "Automatic refresh is unavailable; use Refresh: {}",
+                            bounded_message(error)
+                        ),
+                        THEME.colors.warning,
+                    ))
+                },
+            )
             .when_some(self.repository.error.as_deref(), |section, error| {
                 let message = if self.repository.snapshot.is_some() {
                     format!(
@@ -115,16 +83,8 @@ impl PiApp {
                 };
                 section.child(repository_notice(&message, THEME.colors.error))
             })
-            .when_some(self.repository.snapshot.as_ref(), |section, snapshot| {
-                let changes = repository_scope_changes(
-                    snapshot,
-                    self.repository.scope,
-                    &self.changes.set,
-                    &self.repository.project,
-                );
-                section
-                    .child(repository_summary(&changes, self.repository.scope))
-                    .child(self.repository_changes(snapshot, &changes, entity.clone()))
+            .when_some(snapshot, |section, snapshot| {
+                section.child(self.repository_changes(snapshot, entity.clone()))
             })
             .when(!self.repository.execution_allowed, |section| {
                 section.child(
@@ -163,68 +123,58 @@ impl PiApp {
     fn repository_changes(
         &self,
         snapshot: &WorkingCopySnapshot,
-        changes: &[&WorkingCopyChange],
         entity: WeakEntity<Self>,
     ) -> AnyElement {
-        if changes.is_empty() {
-            let message = if self.repository.scope == RepositoryChangeScope::Session
-                && !snapshot.changes.is_empty()
-            {
-                "No files touched by this session remain changed in the working copy"
-            } else {
-                match snapshot.location.kind {
-                    RepositoryKind::Git => "Working tree and index are clean",
-                    RepositoryKind::Jujutsu => "Current change is empty",
-                }
-            };
+        if snapshot.changes.is_empty() {
             return div()
                 .id("repository-clean")
                 .role(Role::Status)
                 .text_size(THEME.type_scale.caption)
-                .text_color(THEME.colors.success)
-                .child(message)
+                .text_color(THEME.colors.subtle)
+                .child(match snapshot.location.kind {
+                    RepositoryKind::Git => "Working tree and index are clean",
+                    RepositoryKind::Jujutsu => "Current change is empty",
+                })
                 .into_any_element();
         }
 
-        let mut visible = 0_usize;
-        let mut body = div().flex().flex_col().gap(px(2.0));
-        for layer in GROUP_ORDER {
-            let group = changes
-                .iter()
-                .copied()
-                .filter(|change| change.layer == layer)
-                .collect::<Vec<_>>();
-            if group.is_empty() {
-                continue;
-            }
-            let group_count = group.len();
-            body = body.child(
-                div()
-                    .pt(THEME.space.xs)
-                    .text_size(THEME.type_scale.caption)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(THEME.colors.subtle)
-                    .child(format!("{} ({group_count})", group_title(layer))),
-            );
-            for change in group.into_iter().take(MAX_VISIBLE_CHANGES - visible) {
-                visible = visible.saturating_add(1);
-                if let Some(row) = self.repository_change_row(change, entity.clone()) {
-                    body = body.child(row);
-                }
-            }
-        }
-        let remaining = changes.len().saturating_sub(visible);
-        body.when(remaining > 0, |body| {
-            body.child(
-                div()
-                    .px(THEME.space.xs)
-                    .pt(THEME.space.xs)
-                    .text_size(THEME.type_scale.caption)
-                    .text_color(THEME.colors.subtle)
-                    .child(format!("{remaining} more changes")),
+        let (visible, remaining, expand_count) =
+            change_page(snapshot.changes.len(), self.repository.visible_changes);
+        let expand = entity.clone();
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(2.0))
+            .children(
+                snapshot
+                    .changes
+                    .iter()
+                    .take(visible)
+                    .filter_map(|change| self.repository_change_row(change, entity.clone())),
             )
-        })
-        .into_any_element()
+            .when(remaining > 0, |changes| {
+                changes.child(
+                    div()
+                        .pt(THEME.space.xs)
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .text_size(THEME.type_scale.caption)
+                        .text_color(THEME.colors.subtle)
+                        .child(format!("{remaining} more files"))
+                        .child(disclosure_button(
+                            "expand-repository-changes",
+                            false,
+                            format!("Show {expand_count} more files"),
+                            move |_, cx| {
+                                let _ = expand.update(cx, |this, cx| {
+                                    this.expand_repository_changes(cx);
+                                });
+                            },
+                        )),
+                )
+            })
+            .into_any_element()
     }
 
     fn repository_change_row(
@@ -327,94 +277,144 @@ impl PiApp {
     }
 }
 
-fn repository_control_bar(
+fn repository_header(
     app: &PiApp,
-    additions: Option<u64>,
-    deletions: Option<u64>,
+    snapshot: Option<&WorkingCopySnapshot>,
     entity: WeakEntity<PiApp>,
     refresh: impl Fn(&mut gpui::App) + 'static,
 ) -> AnyElement {
-    let snapshot = app.repository.snapshot.as_ref();
+    let active = snapshot.map(|snapshot| snapshot.location.kind).unwrap_or(
+        match app.repository.preference {
+            BackendPreference::Git => RepositoryKind::Git,
+            BackendPreference::Auto | BackendPreference::Jujutsu => RepositoryKind::Jujutsu,
+        },
+    );
+    let identity = snapshot.map(repository_identity_label);
+    let dirty = snapshot.is_some_and(|snapshot| !snapshot.changes.is_empty());
     div()
         .id("repository-control-bar")
         .role(Role::Group)
-        .aria_label("Changes: scope, backend, repository identity, and session totals")
-        .border(THEME.border)
-        .border_color(THEME.colors.border)
-        .bg(THEME.colors.panel)
-        .rounded(THEME.radius)
-        .p(THEME.space.xs)
-        .flex()
-        .flex_col()
-        .gap(THEME.space.xs)
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(THEME.space.xs)
-                .child(repository_scope_selector(app, entity.clone()))
-                .child(control_divider())
-                .child(repository_selector(app, entity))
-                .when(app.repository.execution_allowed, |row| {
-                    row.child(icon_button(
-                        "refresh-working-copy",
-                        AppIcon::ArrowsClockwise,
-                        "Refresh working copy",
-                        ButtonTone::Quiet,
-                        move |_, cx| refresh(cx),
-                    ))
-                }),
-        )
-        .child(div().h(THEME.border).w_full().bg(THEME.colors.border))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap(THEME.space.sm)
-                .when_some(snapshot, |row, snapshot| {
-                    row.child(repository_identity(snapshot))
-                        .child(control_divider())
-                })
-                .when(snapshot.is_none(), |row| row.child(div().flex_1()))
-                .child(session_totals(additions, deletions)),
-        )
-        .into_any_element()
-}
-
-fn control_divider() -> AnyElement {
-    div()
-        .w(THEME.border)
-        .h(px(20.0))
-        .flex_none()
-        .bg(THEME.colors.border)
-        .into_any_element()
-}
-
-fn repository_scope_changes<'a>(
-    snapshot: &'a WorkingCopySnapshot,
-    scope: RepositoryChangeScope,
-    session: &ChangeSet,
-    project: &std::path::Path,
-) -> Vec<&'a WorkingCopyChange> {
-    snapshot
-        .changes
-        .iter()
-        .filter(|change| {
-            scope == RepositoryChangeScope::All
-                || session_change_matches(change, session, project, &snapshot.location.project_root)
-        })
-        .collect()
-}
-
-fn session_totals(additions: Option<u64>, deletions: Option<u64>) -> AnyElement {
-    div()
+        .aria_label("Working copy backend, totals, and identity")
+        .min_w_0()
         .flex()
         .items_center()
         .gap(THEME.space.sm)
         .font_family(MONO_FONT_FAMILY)
-        .text_size(THEME.type_scale.caption)
-        .child(div().text_color(THEME.colors.muted).child("Session"))
+        .text_size(THEME.type_scale.body_small)
+        .child(backend_toggle(
+            active,
+            app.repository.execution_allowed,
+            entity,
+        ))
+        .child(working_copy_totals(
+            app.repository.additions,
+            app.repository.deletions,
+        ))
+        .when_some(identity, |row, identity| {
+            row.child(
+                div()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(THEME.colors.text)
+                    .child(format!("{identity}{}", if dirty { "*" } else { "" })),
+            )
+        })
+        .child(div().min_w_0().flex_1())
+        .when(app.repository.execution_allowed, |row| {
+            row.child(icon_button(
+                "refresh-working-copy",
+                AppIcon::ArrowsClockwise,
+                "Refresh working copy",
+                ButtonTone::Quiet,
+                move |_, cx| refresh(cx),
+            ))
+        })
+        .into_any_element()
+}
+
+fn backend_toggle(active: RepositoryKind, enabled: bool, entity: WeakEntity<PiApp>) -> AnyElement {
+    div()
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap(px(3.0))
+        .child(backend_option(
+            "repository-backend-jj",
+            "JJ",
+            BackendPreference::Jujutsu,
+            active == RepositoryKind::Jujutsu,
+            enabled,
+            entity.clone(),
+        ))
+        .child(div().text_color(THEME.colors.subtle).child("/"))
+        .child(backend_option(
+            "repository-backend-git",
+            "Git",
+            BackendPreference::Git,
+            active == RepositoryKind::Git,
+            enabled,
+            entity,
+        ))
+        .into_any_element()
+}
+
+fn backend_option(
+    id: &'static str,
+    label: &'static str,
+    preference: BackendPreference,
+    active: bool,
+    enabled: bool,
+    entity: WeakEntity<PiApp>,
+) -> AnyElement {
+    let key_entity = entity.clone();
+    div()
+        .id(id)
+        .role(Role::Button)
+        .aria_label(format!(
+            "{} {label} working copy backend",
+            if active { "Selected" } else { "Use" }
+        ))
+        .tab_index(if enabled { 0 } else { -1 })
+        .cursor_pointer()
+        .font_weight(if active {
+            FontWeight::SEMIBOLD
+        } else {
+            FontWeight::NORMAL
+        })
+        .text_color(if active {
+            THEME.colors.text
+        } else {
+            THEME.colors.subtle
+        })
+        .hover(|option| option.text_color(THEME.colors.accent))
+        .on_click(move |_, _, cx| {
+            if enabled {
+                let _ = entity.update(cx, |this, cx| {
+                    this.set_repository_backend_preference(preference, cx);
+                });
+            }
+        })
+        .on_key_down(move |event, _, cx| {
+            if enabled && activates_button(event) {
+                cx.stop_propagation();
+                let _ = key_entity.update(cx, |this, cx| {
+                    this.set_repository_backend_preference(preference, cx);
+                });
+            }
+        })
+        .child(label)
+        .into_any_element()
+}
+
+fn working_copy_totals(additions: Option<u64>, deletions: Option<u64>) -> AnyElement {
+    div()
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap(THEME.space.xs)
         .child(
             div()
                 .text_color(THEME.colors.success)
@@ -422,200 +422,23 @@ fn session_totals(additions: Option<u64>, deletions: Option<u64>) -> AnyElement 
         )
         .child(
             div()
-                .px(px(3.0))
-                .rounded(px(3.0))
-                .bg(THEME.colors.diff_deleted)
-                .text_color(THEME.colors.text)
+                .text_color(THEME.colors.error)
                 .child(deletions.map_or_else(|| "-—".to_owned(), |count| format!("-{count}"))),
         )
         .into_any_element()
 }
 
-fn repository_scope_selector(app: &PiApp, entity: WeakEntity<PiApp>) -> AnyElement {
-    let selected = app.repository.scope;
-    let label = if app.repository.snapshot.is_none() {
-        "Session"
-    } else {
-        match selected {
-            RepositoryChangeScope::All => "Working",
-            RepositoryChangeScope::Session => "Session",
-        }
-    };
-    dropdown_button(
-        "repository-change-scope",
-        label,
-        ButtonTone::Neutral,
-        app.repository.snapshot.is_some(),
-    )
-    .icon(Icon::new(AppIcon::Stack))
-    .compact()
-    .flex_1()
-    .min_w_0()
-    .font_family(MONO_FONT_FAMILY)
-    .text_color(THEME.colors.text)
-    .dropdown_menu_with_anchor(Anchor::BottomLeft, move |menu, _, _| {
-        let mut menu = menu.label("Show changes");
-        for (scope, label) in [
-            (RepositoryChangeScope::All, "All working copy"),
-            (RepositoryChangeScope::Session, "This session"),
-        ] {
-            let target = entity.clone();
-            menu = menu.item(
-                PopupMenuItem::new(label)
-                    .checked(selected == scope)
-                    .on_click(move |_, _, cx| {
-                        let _ = target.update(cx, |this, cx| {
-                            this.set_repository_change_scope(scope, cx);
-                        });
-                    }),
-            );
-        }
-        menu
-    })
-    .into_any_element()
+fn repository_identity_label(snapshot: &WorkingCopySnapshot) -> String {
+    match &snapshot.identity {
+        SnapshotIdentity::Git(identity) => git_identity(identity),
+        SnapshotIdentity::Jujutsu(identity) => identity.change_id.chars().take(8).collect(),
+    }
 }
 
-fn repository_selector(app: &PiApp, entity: WeakEntity<PiApp>) -> AnyElement {
-    let label = preference_label(
-        app.repository.preference,
-        app.repository
-            .snapshot
-            .as_ref()
-            .map(|snapshot| snapshot.location.kind),
-    );
-    let label = if label == "Auto · Jujutsu" {
-        "Auto · Jj"
-    } else {
-        label.as_str()
-    };
-    let selected = app.repository.preference;
-    dropdown_button(
-        "repository-backend",
-        label,
-        ButtonTone::Neutral,
-        app.repository.execution_allowed,
-    )
-    .icon(Icon::new(AppIcon::GitBranch))
-    .compact()
-    .flex_1()
-    .min_w_0()
-    .font_family(MONO_FONT_FAMILY)
-    .text_color(THEME.colors.text)
-    .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, _, _| {
-        let mut menu = menu.label("Working copy backend");
-        for (preference, label) in [
-            (BackendPreference::Auto, "Auto"),
-            (BackendPreference::Jujutsu, "Jujutsu"),
-            (BackendPreference::Git, "Git"),
-        ] {
-            let target = entity.clone();
-            menu = menu.item(
-                PopupMenuItem::new(label)
-                    .checked(selected == preference)
-                    .on_click(move |_, _, cx| {
-                        let _ = target.update(cx, |this, cx| {
-                            this.set_repository_backend_preference(preference, cx);
-                        });
-                    }),
-            );
-        }
-        menu
-    })
-    .into_any_element()
-}
-
-fn repository_identity(snapshot: &WorkingCopySnapshot) -> AnyElement {
-    let (backend, primary, secondary) = match &snapshot.identity {
-        SnapshotIdentity::Git(identity) => ("Git", git_identity(identity), git_upstream(identity)),
-        SnapshotIdentity::Jujutsu(identity) => (
-            "Jujutsu",
-            jj_identity(identity),
-            (!identity.description.is_empty()).then(|| identity.description.clone()),
-        ),
-    };
-    let primary_label = format!("{backend} · {primary}");
-    let full_label = secondary.as_ref().map_or_else(
-        || primary_label.clone(),
-        |secondary| format!("{primary_label} · {secondary}"),
-    );
-    div()
-        .id("repository-identity")
-        .aria_label(format!("Repository: {full_label}"))
-        .tooltip(move |window, cx| Tooltip::new(full_label.clone()).build(window, cx))
-        .min_w_0()
-        .flex_1()
-        .flex()
-        .items_center()
-        .gap(THEME.space.xs)
-        .child(app_icon(AppIcon::GitBranch, AppIconSize::Inline).text_color(THEME.colors.muted))
-        .child(
-            div()
-                .min_w_0()
-                .flex_1()
-                .flex()
-                .flex_col()
-                .gap(px(2.0))
-                .child(
-                    div()
-                        .min_w_0()
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .font_family(MONO_FONT_FAMILY)
-                        .text_size(THEME.type_scale.body_small)
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(THEME.colors.text)
-                        .child(primary_label),
-                )
-                .children(secondary.map(|secondary| {
-                    div()
-                        .min_w_0()
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.muted)
-                        .child(secondary)
-                })),
-        )
-        .into_any_element()
-}
-
-fn repository_summary(changes: &[&WorkingCopyChange], scope: RepositoryChangeScope) -> AnyElement {
-    let paths = changes
-        .iter()
-        .map(|change| change.relative_path.as_path())
-        .collect::<HashSet<_>>()
-        .len();
-    let conflicts = changes
-        .iter()
-        .filter(|change| change.kind == ChangeKind::Conflict)
-        .count();
-    let mut summary = format!("{} {}", paths, if paths == 1 { "file" } else { "files" });
-    if changes.len() != paths {
-        summary.push_str(&format!(" · {} entries", changes.len()));
-    }
-    if scope == RepositoryChangeScope::Session {
-        summary.push_str(" · touched this session");
-    }
-    if conflicts > 0 {
-        summary.push_str(&format!(
-            " · {conflicts} conflict{}",
-            if conflicts == 1 { "" } else { "s" }
-        ));
-    }
-    div()
-        .id("repository-summary")
-        .role(Role::Status)
-        .font_family(MONO_FONT_FAMILY)
-        .text_size(THEME.type_scale.caption)
-        .text_color(if conflicts > 0 {
-            THEME.colors.warning
-        } else {
-            THEME.colors.subtle
-        })
-        .child(summary)
-        .into_any_element()
+fn change_page(total: usize, requested: usize) -> (usize, usize, usize) {
+    let visible = requested.max(INITIAL_VISIBLE_CHANGES).min(total);
+    let remaining = total.saturating_sub(visible);
+    (visible, remaining, remaining.min(EXPAND_CHANGE_PAGE))
 }
 
 fn repository_notice(message: &str, color: gpui::Rgba) -> AnyElement {
@@ -626,4 +449,17 @@ fn repository_notice(message: &str, color: gpui::Rgba) -> AnyElement {
         .text_color(color)
         .child(message.to_owned())
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repository_files_start_at_five_and_expand_twenty_at_a_time() {
+        assert_eq!(change_page(50, 5), (5, 45, 20));
+        assert_eq!(change_page(50, 25), (25, 25, 20));
+        assert_eq!(change_page(30, 25), (25, 5, 5));
+        assert_eq!(change_page(3, 5), (3, 0, 0));
+    }
 }

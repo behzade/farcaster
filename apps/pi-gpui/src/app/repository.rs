@@ -16,13 +16,6 @@ use crate::{
     state::StateStore,
 };
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) enum RepositoryChangeScope {
-    #[default]
-    All,
-    Session,
-}
-
 #[derive(Default)]
 struct RefreshGate {
     desired: u64,
@@ -80,7 +73,9 @@ pub(super) struct RepositoryState {
     pub(super) error: Option<String>,
     pub(super) preference_error: Option<String>,
     pub(super) watcher_error: Option<String>,
-    pub(super) scope: RepositoryChangeScope,
+    pub(super) additions: Option<u64>,
+    pub(super) deletions: Option<u64>,
+    pub(super) visible_changes: usize,
     pub(super) row_focus: std::collections::HashMap<DiffTargetKey, FocusHandle>,
     preferences: BTreeMap<PathBuf, String>,
     refresh: RefreshGate,
@@ -111,7 +106,9 @@ impl RepositoryState {
             error: None,
             preference_error,
             watcher_error: None,
-            scope: RepositoryChangeScope::All,
+            additions: None,
+            deletions: None,
+            visible_changes: 5,
             row_focus: std::collections::HashMap::new(),
             preferences,
             refresh: RefreshGate::default(),
@@ -155,6 +152,9 @@ impl RepositoryState {
         self.initialized = false;
         self.error = None;
         self.watcher_error = None;
+        self.additions = None;
+        self.deletions = None;
+        self.visible_changes = 5;
         self.row_focus.clear();
         self.watcher = None;
         self.watcher_binding = None;
@@ -190,15 +190,9 @@ impl PiApp {
         self.open_repository_diff(backend, target, opener, window, cx);
     }
 
-    pub(super) fn set_repository_change_scope(
-        &mut self,
-        scope: RepositoryChangeScope,
-        cx: &mut Context<Self>,
-    ) {
-        if self.repository.scope != scope {
-            self.repository.scope = scope;
-            self.notify_run_panel(cx);
-        }
+    pub(super) fn expand_repository_changes(&mut self, cx: &mut Context<Self>) {
+        self.repository.visible_changes = self.repository.visible_changes.saturating_add(20);
+        self.notify_run_panel(cx);
     }
 
     pub(super) fn select_repository_project(&mut self, project: PathBuf, cx: &mut Context<Self>) {
@@ -263,7 +257,12 @@ impl PiApp {
         let task = cx.background_spawn(async move {
             RepositoryBackend::discover(&project, preference).map(|backend| {
                 backend.map(|backend| {
-                    let snapshot = backend.snapshot();
+                    let snapshot = backend.snapshot().map(|snapshot| {
+                        let (additions, deletions) = backend
+                            .working_copy_totals(&snapshot)
+                            .unwrap_or((None, None));
+                        (snapshot, additions, deletions)
+                    });
                     (backend, snapshot)
                 })
             })
@@ -278,11 +277,12 @@ impl PiApp {
                 if completion.publish {
                     this.repository.initialized = true;
                     match result {
-                        Ok(Some((backend, Ok(snapshot)))) => {
+                        Ok(Some((backend, Ok((snapshot, additions, deletions))))) => {
                             let observation_changed =
                                 this.repository.snapshot.as_ref().is_none_or(|current| {
                                     !displayed_snapshot_eq(current, &snapshot)
-                                });
+                                }) || this.repository.additions != additions
+                                    || this.repository.deletions != deletions;
                             if observation_changed {
                                 this.repository.row_focus.retain(|key, _| {
                                     snapshot
@@ -300,6 +300,8 @@ impl PiApp {
                             let location = snapshot.location.clone();
                             this.repository.backend = Some(backend);
                             this.repository.snapshot = Some(snapshot);
+                            this.repository.additions = additions;
+                            this.repository.deletions = deletions;
                             display_changed |= this.repository.error.take().is_some();
                             display_changed |= this.install_repository_watcher(location, cx);
                             if observation_changed {
@@ -317,6 +319,8 @@ impl PiApp {
                             {
                                 this.repository.backend = None;
                                 this.repository.snapshot = None;
+                                this.repository.additions = None;
+                                this.repository.deletions = None;
                                 this.repository.row_focus.clear();
                                 display_changed = true;
                             }
@@ -332,6 +336,8 @@ impl PiApp {
                                 || this.repository.snapshot.is_some();
                             this.repository.backend = None;
                             this.repository.snapshot = None;
+                            this.repository.additions = None;
+                            this.repository.deletions = None;
                             this.repository.error = None;
                             this.repository.row_focus.clear();
                             display_changed |= this.install_repository_discovery_watcher(cx);

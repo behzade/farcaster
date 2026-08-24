@@ -13,17 +13,16 @@ and `defaultProjectTrust`, or asks for a project, parent, or deny decision.
 `/trust` opens the same persistent trust manager. Changes made for an
 already-running project take effect after restarting Pi GPUI.
 
-Session details has one read-only **Changes** section. Its header reports Pi's
-recorded session additions and deletions; its file list shows Git's staged,
-working-tree, untracked, and conflict state, or Jujutsu's current change. Use
-the scope control to show the entire working copy or only repository files
-touched by the session. Choose Auto, Git, or Jujutsu per project; Auto uses
-Jujutsu for a colocated repository. A Jujutsu refresh may snapshot the working
-copy as part of normal `jj` behavior. Filesystem watching refreshes status when
-the selected project or repository metadata changes; unchanged refreshes do not
-invalidate the sidebar. Repository commands remain disabled for explicitly
-untrusted projects. Set `PI_GUI_GIT` or `PI_GUI_JJ` to override either
-executable.
+Session details has one read-only working-copy section. Its flat header switches
+between Git and Jujutsu and shows aggregate additions, deletions, and the active
+branch or change ID; a trailing `*` marks a dirty working copy. The file list
+shows five entries initially and reveals twenty more per expansion. Session-only
+additions and deletions appear in the composer before cost. A Jujutsu refresh
+may snapshot the working copy as part of normal `jj` behavior. Filesystem
+watching refreshes status when the selected project or repository metadata
+changes; unchanged refreshes do not invalidate the sidebar. Repository commands
+remain disabled for explicitly untrusted projects. Set `PI_GUI_GIT` or
+`PI_GUI_JJ` to override either executable.
 
 Changed files in Session details can be opened in an embedded Neovim editor.
 The editor uses Ghostty's VT core rendered directly by GPUI and keeps one

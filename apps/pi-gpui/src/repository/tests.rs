@@ -195,6 +195,12 @@ fn git_snapshot_and_lazy_diff_use_separate_layers() {
             .expect("Git repository");
     let snapshot = backend.snapshot().expect("capture Git snapshot");
     assert_eq!(
+        backend
+            .working_copy_totals(&snapshot)
+            .expect("count Git working copy diff"),
+        (Some(2), Some(1))
+    );
+    assert_eq!(
         backend.list_project_files().expect("list Git files"),
         ["file.txt"]
     );
@@ -307,6 +313,12 @@ fn jj_snapshot_and_lazy_diff_use_the_current_change_only() {
             .expect("discover JJ")
             .expect("JJ repository");
     let snapshot = backend.snapshot().expect("capture JJ snapshot");
+    assert_eq!(
+        backend
+            .working_copy_totals(&snapshot)
+            .expect("count JJ working copy diff"),
+        (Some(1), Some(0))
+    );
     assert_eq!(
         backend.list_project_files().expect("list JJ files"),
         ["a|b.txt"]

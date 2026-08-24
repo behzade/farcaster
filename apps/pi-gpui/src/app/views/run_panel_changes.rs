@@ -11,7 +11,6 @@ use super::super::PiApp;
 use crate::{
     assets::AppIcon,
     primitives::{ButtonTone, activates_button, icon_button},
-    repository::WorkingCopyChange,
     session_changes::{ChangeSet, FileChange, FileChangeKind},
     sessions::root_session_for_path,
     theme::{MONO_FONT_FAMILY, THEME},
@@ -228,54 +227,6 @@ pub(super) fn session_change_totals(changes: &ChangeSet) -> SessionChangeTotals 
     }
 }
 
-pub(super) fn session_change_matches(
-    change: &WorkingCopyChange,
-    changes: &ChangeSet,
-    project: &Path,
-    repository_project: &Path,
-) -> bool {
-    changes.files.iter().any(|file| {
-        path_matches(
-            &change.relative_path,
-            &file.path,
-            &change.target.workspace_root,
-            project,
-            repository_project,
-        ) || change
-            .original_relative_path
-            .as_ref()
-            .is_some_and(|source| {
-                path_matches(
-                    source,
-                    &file.path,
-                    &change.target.workspace_root,
-                    project,
-                    repository_project,
-                )
-            })
-    })
-}
-
-fn path_matches(
-    repository_path: &Path,
-    session_path: &Path,
-    workspace_root: &Path,
-    project: &Path,
-    repository_project: &Path,
-) -> bool {
-    let repository_absolute = workspace_root.join(repository_path);
-    repository_path == session_path
-        || repository_absolute == session_path
-        || (!session_path.is_absolute()
-            && repository_project.join(session_path) == repository_absolute)
-        || session_path
-            .strip_prefix(project)
-            .is_ok_and(|relative| repository_project.join(relative) == repository_absolute)
-        || session_path
-            .strip_prefix(workspace_root)
-            .is_ok_and(|relative| relative == repository_path)
-}
-
 fn sum_known_counts(counts: impl IntoIterator<Item = Option<u64>>) -> Option<u64> {
     counts.into_iter().try_fold(0_u64, |total, count| {
         count.map(|count| total.saturating_add(count))
@@ -313,42 +264,6 @@ mod tests {
     fn aggregate_counts_remain_unknown_when_any_file_is_unknown() {
         assert_eq!(sum_known_counts([Some(2), Some(3)]), Some(5));
         assert_eq!(sum_known_counts([Some(2), None]), None);
-    }
-
-    #[test]
-    fn session_paths_match_repository_paths_without_matching_outside_files() {
-        let workspace = Path::new("/workspace");
-        let project = Path::new("/project-link");
-        let repository_project = Path::new("/workspace/apps/pi-gpui");
-        let repository_path = Path::new("apps/pi-gpui/src/app.rs");
-        assert!(path_matches(
-            repository_path,
-            Path::new("/workspace/apps/pi-gpui/src/app.rs"),
-            workspace,
-            project,
-            repository_project,
-        ));
-        assert!(path_matches(
-            repository_path,
-            Path::new("src/app.rs"),
-            workspace,
-            project,
-            repository_project,
-        ));
-        assert!(path_matches(
-            repository_path,
-            Path::new("/project-link/src/app.rs"),
-            workspace,
-            project,
-            repository_project,
-        ));
-        assert!(!path_matches(
-            repository_path,
-            Path::new("/other/apps/pi-gpui/src/app.rs"),
-            workspace,
-            project,
-            repository_project,
-        ));
     }
 
     #[test]
