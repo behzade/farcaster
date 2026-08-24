@@ -1,6 +1,6 @@
 use super::composer::{
     QueuedMessageKind, choice_copy, composer_primary_action, default_dialog_selection, dialog_copy,
-    plain_text_html, queued_message_groups,
+    dialog_number_selection, numbered_dialog_choice, plain_text_html, queued_message_groups,
 };
 use crate::{conversation::QueueState, protocol::ExtensionUiRequest};
 
@@ -72,6 +72,12 @@ fn choice_copy_preserves_extension_owned_copy() {
 }
 
 #[test]
+fn select_options_are_numbered_from_one() {
+    assert_eq!(numbered_dialog_choice(0, "First"), "1. First");
+    assert_eq!(numbered_dialog_choice(4, "Fifth"), "5. Fifth");
+}
+
+#[test]
 fn enter_defaults_to_the_primary_select_option() {
     let request = ExtensionUiRequest::Select {
         id: "question-1".into(),
@@ -84,6 +90,46 @@ fn enter_defaults_to_the_primary_select_option() {
         default_dialog_selection(&request),
         Some(("question-1", "First"))
     );
+}
+
+#[test]
+fn number_keys_immediately_select_the_matching_first_five_options() {
+    let request = ExtensionUiRequest::Select {
+        id: "question-1".into(),
+        title: "Choose".into(),
+        options: (1..=6).map(|number| format!("Option {number}")).collect(),
+        timeout: None,
+    };
+
+    assert_eq!(
+        dialog_number_selection(&request, "1"),
+        Some(("question-1", "Option 1"))
+    );
+    assert_eq!(
+        dialog_number_selection(&request, "5"),
+        Some(("question-1", "Option 5"))
+    );
+    assert_eq!(dialog_number_selection(&request, "6"), None);
+    assert_eq!(dialog_number_selection(&request, "0"), None);
+}
+
+#[test]
+fn number_keys_ignore_missing_options_and_non_select_dialogs() {
+    let select = ExtensionUiRequest::Select {
+        id: "question-1".into(),
+        title: "Choose".into(),
+        options: vec!["Only".into()],
+        timeout: None,
+    };
+    let input = ExtensionUiRequest::Input {
+        id: "question-2".into(),
+        title: "Explain".into(),
+        placeholder: None,
+        timeout: None,
+    };
+
+    assert_eq!(dialog_number_selection(&select, "2"), None);
+    assert_eq!(dialog_number_selection(&input, "1"), None);
 }
 
 #[test]

@@ -290,10 +290,9 @@ impl PiApp {
             return div().into_any_element();
         };
         let cancel_button_entity = entity.clone();
-        let enter_entity = entity.clone();
-        let enter_focus = self.dialog_focus.clone();
-        let enter_selection =
-            default_dialog_selection(dialog).map(|(id, value)| (id.to_owned(), value.to_owned()));
+        let key_entity = entity.clone();
+        let key_focus = self.dialog_focus.clone();
+        let keyboard_dialog = dialog.clone();
         let technical_editor = matches!(dialog, ExtensionUiRequest::Editor { .. });
         let secret_input = matches!(dialog, ExtensionUiRequest::Secret { .. });
         let (title, body) = match dialog {
@@ -305,9 +304,10 @@ impl PiApp {
                         let value = option.clone();
                         let id = id.clone();
                         let choice_entity = entity.clone();
+                        let label = numbered_dialog_choice(index, option);
                         dialog_choice(
                             ("dialog-option", index),
-                            option,
+                            &label,
                             index == 0,
                             move |window, cx| {
                                 let _ = choice_entity.update(cx, |this, cx| {
@@ -457,12 +457,18 @@ impl PiApp {
             .track_focus(&self.dialog_focus)
             .key_context(super::OVERLAY_KEY_CONTEXT)
             .capture_key_down(move |event: &KeyDownEvent, window, cx| {
-                if event.keystroke.key == "enter"
-                    && !event.keystroke.modifiers.modified()
-                    && enter_focus.is_focused(window)
-                    && let Some((id, value)) = enter_selection.clone()
-                {
-                    let _ = enter_entity.update(cx, |this, cx| {
+                if event.keystroke.modifiers.modified() || !key_focus.is_focused(window) {
+                    return;
+                }
+                let selection = if event.keystroke.key == "enter" {
+                    default_dialog_selection(&keyboard_dialog)
+                } else {
+                    dialog_number_selection(&keyboard_dialog, &event.keystroke.key)
+                };
+                if let Some((id, value)) = selection {
+                    let id = id.to_owned();
+                    let value = value.to_owned();
+                    let _ = key_entity.update(cx, |this, cx| {
                         this.respond_dialog_value(id, value, window, cx);
                     });
                     window.prevent_default();
@@ -887,11 +893,35 @@ pub(super) fn choice_copy(value: &str) -> (SharedString, Option<SharedString>) {
     (value.to_owned().into(), None)
 }
 
+pub(super) fn numbered_dialog_choice(index: usize, value: &str) -> String {
+    format!("{}. {value}", index + 1)
+}
+
 pub(super) fn default_dialog_selection(request: &ExtensionUiRequest) -> Option<(&str, &str)> {
     match request {
         ExtensionUiRequest::Select { id, options, .. } => {
             options.first().map(|option| (id.as_str(), option.as_str()))
         }
+        _ => None,
+    }
+}
+
+pub(super) fn dialog_number_selection<'a>(
+    request: &'a ExtensionUiRequest,
+    key: &str,
+) -> Option<(&'a str, &'a str)> {
+    let index = match key {
+        "1" => 0,
+        "2" => 1,
+        "3" => 2,
+        "4" => 3,
+        "5" => 4,
+        _ => return None,
+    };
+    match request {
+        ExtensionUiRequest::Select { id, options, .. } => options
+            .get(index)
+            .map(|option| (id.as_str(), option.as_str())),
         _ => None,
     }
 }
