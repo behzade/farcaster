@@ -178,11 +178,7 @@ impl Render for PiApp {
                     .flex_1()
                     .min_h_0()
                     .when(has_conversation, |body| {
-                        body.child(
-                            self.transcript_view
-                                .clone()
-                                .cached(gpui::StyleRefinement::default().size_full()),
-                        )
+                        body.child(self.transcript_view.clone())
                     })
                     .when(!has_conversation, |body| {
                         let heading_entity = entity.clone();

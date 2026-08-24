@@ -9,15 +9,18 @@ use std::{cell::RefCell, collections::BTreeMap, ops::Range, rc::Rc};
 use gpui::{
     AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Element, ElementId,
     EntityId, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId,
-    ListOffset, Pixels, ScrollWheelEvent, Size, Style, Window, point, px, relative,
+    ListOffset, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    ScrollWheelEvent, Size, Style, Window, point, px, relative,
 };
 
 #[path = "transcript_list/height_index.rs"]
 mod height_index;
 use self::height_index::HeightIndex;
+use gpui_base::{TextSelectionHandle, TextSelectionRegistration};
 
 type RenderRow = dyn FnMut(usize, &mut Window, &mut App) -> AnyElement + 'static;
 type ScrollHandler = dyn FnMut(bool, &mut Window, &mut App) + 'static;
+type SelectionText = dyn Fn(std::ops::RangeInclusive<usize>) -> String + 'static;
 
 #[derive(Default)]
 struct StateInner {
@@ -29,6 +32,13 @@ struct StateInner {
     pending_scroll: Pixels,
     next_frame_token: u64,
     scheduled_frame: Option<u64>,
+    selection_drag_active: bool,
+    selection_anchor_candidate: Option<usize>,
+    selection_anchor: Option<usize>,
+    selection_cursor: Option<usize>,
+    selection_drag_position: Option<gpui::Point<Pixels>>,
+    selection_scroll_delta: Option<Pixels>,
+    selection_handle: Option<TextSelectionHandle>,
     scroll_handler: Option<Rc<RefCell<Box<ScrollHandler>>>>,
 }
 
@@ -138,6 +148,55 @@ impl StateInner {
         }
         true
     }
+
+    fn row_at_viewport_y(&self, y: Pixels) -> Option<usize> {
+        (!self.heights.is_empty()).then(|| {
+            self.heights
+                .row_at((self.scroll_y + y).max(px(0.0)))
+                .min(self.heights.len() - 1)
+        })
+    }
+
+    fn confirm_selection_drag(&mut self, has_selection: bool, cursor: Option<usize>) -> bool {
+        if self.selection_anchor.is_none() && self.selection_drag_active && has_selection {
+            self.selection_anchor = self.selection_anchor_candidate;
+        }
+        if self.selection_anchor.is_some() {
+            self.selection_cursor = cursor;
+        }
+        self.selection_anchor.is_some()
+    }
+
+    fn selection_range(&self) -> Option<std::ops::RangeInclusive<usize>> {
+        let (Some(anchor), Some(cursor)) = (self.selection_anchor, self.selection_cursor) else {
+            return None;
+        };
+        (anchor != cursor).then_some(anchor.min(cursor)..=anchor.max(cursor))
+    }
+
+    fn selection_contains(&self, key: usize) -> bool {
+        self.selection_range()
+            .is_some_and(|range| range.contains(&key))
+    }
+
+    fn clear_selection(&mut self) {
+        self.selection_drag_active = false;
+        self.selection_anchor_candidate = None;
+        self.selection_anchor = None;
+        self.selection_cursor = None;
+        self.selection_drag_position = None;
+        self.selection_scroll_delta = None;
+    }
+
+    fn set_selection_scroll(&mut self, delta: Option<Pixels>) -> Option<u64> {
+        self.selection_scroll_delta = delta;
+        delta.and_then(|delta| self.queue_scroll(-delta))
+    }
+
+    fn continue_selection_scroll(&mut self) -> Option<u64> {
+        self.selection_scroll_delta
+            .and_then(|delta| self.queue_scroll(-delta))
+    }
 }
 
 #[derive(Clone)]
@@ -154,6 +213,7 @@ impl TranscriptListState {
         state.scroll_y = px(0.0);
         state.pending_scroll = px(0.0);
         state.following_tail = false;
+        state.clear_selection();
     }
 
     pub(crate) fn splice_with_size_hints(
@@ -227,23 +287,33 @@ impl TranscriptListState {
         self.0.borrow_mut().scroll_handler = Some(Rc::new(RefCell::new(Box::new(handler))));
     }
 
+    pub(crate) fn selection_contains(&self, key: usize) -> bool {
+        self.0.borrow().selection_contains(key)
+    }
+
     fn queue_scroll(&self, delta: Pixels) -> Option<u64> {
         self.0.borrow_mut().queue_scroll(delta)
     }
 }
 
-pub(crate) fn transcript_list(
+pub(crate) fn transcript_list_grouped(
     state: TranscriptListState,
+    selection_key: impl Fn(usize) -> usize + 'static,
+    selection_text: impl Fn(std::ops::RangeInclusive<usize>) -> String + 'static,
     render_row: impl FnMut(usize, &mut Window, &mut App) -> AnyElement + 'static,
 ) -> TranscriptList {
     TranscriptList {
         state,
+        selection_key: Rc::new(selection_key),
+        selection_text: Rc::new(selection_text),
         render_row: Box::new(render_row),
     }
 }
 
 pub(crate) struct TranscriptList {
     state: TranscriptListState,
+    selection_key: Rc<dyn Fn(usize) -> usize>,
+    selection_text: Rc<SelectionText>,
     render_row: Box<RenderRow>,
 }
 
@@ -301,9 +371,41 @@ impl Element for TranscriptList {
         cx: &mut App,
     ) -> Self::PrepaintState {
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+        let selection_handle = { self.state.0.borrow().selection_handle.clone() };
+        let selection_handle = selection_handle.unwrap_or_else(|| {
+            let handle = TextSelectionHandle::new("", cx);
+            let state = self.state.clone();
+            let view = window.current_view();
+            handle.clear_with(
+                move |cx| {
+                    state.0.borrow_mut().clear_selection();
+                    cx.notify(view);
+                },
+                cx,
+            );
+            self.state.0.borrow_mut().selection_handle = Some(handle.clone());
+            handle
+        });
+        if selection_handle.has_local_selection(cx)
+            && let Some(range) = self.state.0.borrow().selection_range()
+        {
+            selection_handle.set_fallback_copy_text((self.selection_text)(range), cx);
+            selection_handle.register(
+                TextSelectionRegistration::new(hitbox.clone(), bounds),
+                window,
+                cx,
+            );
+        }
         let (anchor, handler, scrolled) = {
             let mut state = self.state.0.borrow_mut();
             let (anchor, scrolled) = state.begin_frame(bounds.size);
+            if state.selection_drag_active
+                && state.selection_anchor.is_some()
+                && let Some(position) = state.selection_drag_position
+                && let Some(row) = state.row_at_viewport_y(position.y - bounds.top())
+            {
+                state.selection_cursor = Some((self.selection_key)(row));
+            }
             (anchor, state.scroll_handler.clone(), scrolled)
         };
 
@@ -410,11 +512,107 @@ impl Element for TranscriptList {
             }
         });
 
+        let selection_state = self.state.clone();
+        let selection_key = self.selection_key.clone();
+        let selection_hitbox_id = prepaint.hitbox.id;
+        window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+            if phase == DispatchPhase::Bubble && event.button == MouseButton::Left {
+                let mut state = selection_state.0.borrow_mut();
+                let had_selection = state.selection_anchor.is_some();
+                let inside = selection_hitbox_id.is_hovered(window);
+                state.selection_drag_active = inside;
+                state.selection_anchor_candidate = inside
+                    .then(|| state.row_at_viewport_y(event.position.y - bounds.top()))
+                    .flatten()
+                    .map(|row| selection_key(row));
+                state.selection_anchor = None;
+                state.selection_cursor = None;
+                state.selection_drag_position = inside.then_some(event.position);
+                if had_selection {
+                    cx.notify(current_view);
+                }
+            }
+        });
+
+        let selection_state = self.state.clone();
+        let selection_key = self.selection_key.clone();
+        window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+            if phase != DispatchPhase::Bubble {
+                return;
+            }
+            if !selection_state.0.borrow().selection_drag_active
+                || event.pressed_button != Some(MouseButton::Left)
+            {
+                selection_state.0.borrow_mut().set_selection_scroll(None);
+                return;
+            }
+            let (selection_drag_confirmed, selection_changed) = {
+                let mut state = selection_state.0.borrow_mut();
+                state.selection_drag_position = Some(event.position);
+                let cursor = state
+                    .row_at_viewport_y(event.position.y - bounds.top())
+                    .map(|row| selection_key(row));
+                let previous = state.selection_cursor;
+                let confirmed = state.confirm_selection_drag(
+                    gpui_base::TextSelection::has_selection(window, cx),
+                    cursor,
+                );
+                (confirmed, previous != state.selection_cursor)
+            };
+            if selection_changed {
+                cx.notify(current_view);
+            }
+            let delta = (selection_drag_confirmed
+                && event.pressed_button == Some(MouseButton::Left))
+            .then(|| gpui_base::AutoScroll::compute_delta(event.position.y, bounds))
+            .flatten();
+            if let Some(token) = selection_state.0.borrow_mut().set_selection_scroll(delta) {
+                request_scroll_frame(window, current_view, selection_state.clone(), token);
+            }
+        });
+
+        let selection_state = self.state.clone();
+        let selection_text = self.selection_text.clone();
+        window.on_mouse_event(move |_: &MouseUpEvent, phase, window, cx| {
+            if phase != DispatchPhase::Bubble {
+                return;
+            }
+            let (range, handle, anchor, cursor) = {
+                let mut state = selection_state.0.borrow_mut();
+                state.selection_drag_active = false;
+                state.selection_anchor_candidate = None;
+                state.selection_drag_position = None;
+                state.set_selection_scroll(None);
+                (
+                    state.selection_range(),
+                    state.selection_handle.clone(),
+                    state.selection_anchor,
+                    state.selection_cursor,
+                )
+            };
+            if let (Some(range), Some(handle)) = (range, handle) {
+                let text = selection_text(range);
+                gpui_base::TextSelection::clear(window, cx);
+                {
+                    let mut state = selection_state.0.borrow_mut();
+                    state.selection_anchor = anchor;
+                    state.selection_cursor = cursor;
+                }
+                handle.set_fallback_copy_text(text, cx);
+                handle.set_local_selection(true, cx);
+                cx.notify(current_view);
+            }
+        });
+
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             for row in &mut prepaint.rows {
                 row.paint(window, cx);
             }
         });
+
+        if let Some(token) = self.state.0.borrow_mut().continue_selection_scroll() {
+            request_scroll_frame(window, current_view, self.state.clone(), token);
+        }
     }
 }
 

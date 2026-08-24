@@ -24,7 +24,7 @@ use crate::{
     primitives::{ButtonTone, button, disclosure_button, disclosure_indicator},
     theme::{MONO_FONT_FAMILY, THEME},
     tool_changes::EmbeddedDiffMode,
-    transcript_list::{TranscriptListState, transcript_list},
+    transcript_list::{TranscriptListState, transcript_list_grouped},
     transcript_markdown::{MarkdownStateKey, TranscriptMarkdownCache},
 };
 
@@ -759,6 +759,27 @@ fn message_follows_tool(
             .is_some_and(|item| item.kind == TranscriptKind::Tool)
 }
 
+fn copy_transcript_items(
+    items: &PersistentVec<Arc<TranscriptItem>>,
+    range: std::ops::RangeInclusive<usize>,
+) -> String {
+    range
+        .filter_map(|index| items.get(index))
+        .map(|item| {
+            let text = item.complete_text();
+            if !text.trim().is_empty() {
+                text
+            } else if !item.tool_output.trim().is_empty() {
+                item.tool_output.clone()
+            } else {
+                item.label.clone()
+            }
+        })
+        .filter(|text| !text.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
 pub(crate) fn render(
     list_state: &TranscriptListState,
     viewport: TranscriptViewport,
@@ -774,31 +795,46 @@ pub(crate) fn render(
 
     let jump = entity.clone();
     let row_entity = entity;
-    let view = transcript_list(list_state.clone(), move |index, _, cx| {
-        let _timing = crate::performance::OperationTiming::new(
-            crate::performance::OperationKind::TranscriptRow,
-            1,
-        );
-        let Some(row) = rows.get(index).copied() else {
-            return div().into_any_element();
-        };
-        let expanded = resolved_expanded(row, &conversation.items, &disclosure_states);
-        let reserves_tail = index + 1 == rows.len()
-            && latest_allows_tail_reserve(row, &conversation.items, expanded);
-        div()
-            .w_full()
-            .when(reserves_tail, |row| row.pb(viewport.tail_reserve))
-            .child(render_row(
-                row,
-                &conversation.items,
-                expanded,
-                viewport.diff_mode,
-                &markdown_cache,
-                row_entity.clone(),
-                cx,
-            ))
-            .into_any_element()
-    });
+    let selection_rows = rows.clone();
+    let selection_items = conversation.items.clone();
+    let selection_state = list_state.clone();
+    let view = transcript_list_grouped(
+        list_state.clone(),
+        move |index| selection_rows.get(index).map_or(index, TranscriptRow::key),
+        move |range| copy_transcript_items(&selection_items, range),
+        move |index, _, cx| {
+            let _timing = crate::performance::OperationTiming::new(
+                crate::performance::OperationKind::TranscriptRow,
+                1,
+            );
+            let Some(row) = rows.get(index).copied() else {
+                return div().into_any_element();
+            };
+            let expanded = resolved_expanded(row, &conversation.items, &disclosure_states);
+            let reserves_tail = index + 1 == rows.len()
+                && latest_allows_tail_reserve(row, &conversation.items, expanded);
+            div()
+                .w_full()
+                .when(reserves_tail, |row| row.pb(viewport.tail_reserve))
+                .child(
+                    div()
+                        .w_full()
+                        .when(selection_state.selection_contains(row.key()), |row| {
+                            row.bg(THEME.colors.selection)
+                        })
+                        .child(render_row(
+                            row,
+                            &conversation.items,
+                            expanded,
+                            viewport.diff_mode,
+                            &markdown_cache,
+                            row_entity.clone(),
+                            cx,
+                        )),
+                )
+                .into_any_element()
+        },
+    );
 
     div()
         .size_full()

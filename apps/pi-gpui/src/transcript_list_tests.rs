@@ -1,8 +1,9 @@
 use super::*;
 use gpui::{
-    AppContext as _, Context, Render, ScrollDelta, Styled as _, TestAppContext, VisualTestContext,
-    div, size,
+    AppContext as _, Context, ParentElement as _, Render, ScrollDelta, Styled as _, TestAppContext,
+    VisualTestContext, div, size,
 };
+use gpui_base::TextSelectionLayer;
 
 struct FixedHeightView {
     state: TranscriptListState,
@@ -10,14 +11,42 @@ struct FixedHeightView {
     rendered: Rc<RefCell<Vec<usize>>>,
 }
 
+struct CopyableRowsView {
+    state: TranscriptListState,
+}
+
+impl Render for CopyableRowsView {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .child(TextSelectionLayer)
+            .child(transcript_list_grouped(
+                self.state.clone(),
+                |index| index,
+                |range| {
+                    range
+                        .map(|index| index.to_string())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                },
+                |_, _, _| div().h(px(24.)).w_full().into_any_element(),
+            ))
+    }
+}
+
 impl Render for FixedHeightView {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let rendered = self.rendered.clone();
         let row_height = self.row_height;
-        transcript_list(self.state.clone(), move |index, _, _| {
-            rendered.borrow_mut().push(index);
-            div().h(row_height).w_full().into_any_element()
-        })
+        transcript_list_grouped(
+            self.state.clone(),
+            |index| index,
+            |_| String::new(),
+            move |index, _, _| {
+                rendered.borrow_mut().push(index);
+                div().h(row_height).w_full().into_any_element()
+            },
+        )
     }
 }
 
@@ -106,6 +135,109 @@ fn wheel_events_coalesce_until_the_next_layout(cx: &mut TestAppContext) {
     assert_eq!(offset.item_ix, 9);
     assert_eq!(offset.offset_in_item, px(4.0));
     assert_eq!(cx.update(|window, cx| window.simulate_next_frame(cx)), 0);
+}
+
+#[test]
+fn confirmed_selection_drag_survives_a_virtualization_gap() {
+    let state = TranscriptListState::new();
+    let mut inner = state.0.borrow_mut();
+    inner.selection_drag_active = true;
+    inner.selection_anchor_candidate = Some(2);
+
+    assert!(inner.confirm_selection_drag(true, Some(4)));
+    assert!(inner.confirm_selection_drag(false, Some(8)));
+    assert_eq!(inner.selection_anchor, Some(2));
+    assert_eq!(inner.selection_cursor, Some(8));
+    assert!(inner.selection_contains(6));
+}
+
+#[test]
+fn cross_element_selection_marks_the_inclusive_logical_range() {
+    let state = TranscriptListState::new();
+    let mut inner = state.0.borrow_mut();
+    inner.selection_anchor = Some(7);
+    inner.selection_cursor = Some(3);
+
+    assert!(!inner.selection_contains(2));
+    assert!(inner.selection_contains(3));
+    assert!(inner.selection_contains(5));
+    assert!(inner.selection_contains(7));
+    assert!(!inner.selection_contains(8));
+
+    inner.selection_cursor = Some(7);
+    assert!(!inner.selection_contains(7));
+}
+
+#[gpui::test]
+fn coarse_selection_is_exposed_to_window_copy(cx: &mut TestAppContext) {
+    let state = state_with_rows(10);
+    let (_, cx) = cx.add_window_view({
+        let state = state.clone();
+        move |_, _| CopyableRowsView { state }
+    });
+    let cx: &mut VisualTestContext = cx;
+    cx.update(|window, cx| {
+        let _ = window.draw(cx);
+    });
+
+    let handle = {
+        let mut inner = state.0.borrow_mut();
+        inner.selection_anchor = Some(1);
+        inner.selection_cursor = Some(3);
+        inner
+            .selection_handle
+            .clone()
+            .expect("drawing creates the stable transcript selection handle")
+    };
+    cx.update(|window, cx| {
+        handle.set_local_selection(true, cx);
+        let _ = window.draw(cx);
+    });
+
+    let copied = cx.update(|window, cx| gpui_base::TextSelection::selected_text(window, cx));
+    assert_eq!(copied, "1,2,3");
+}
+
+#[test]
+fn selection_edge_scroll_repeats_until_stopped() {
+    let state = state_with_rows(100);
+    let mut inner = state.0.borrow_mut();
+    inner.viewport_height = px(100.0);
+    inner.scroll_y = px(240.0);
+
+    let first = inner
+        .set_selection_scroll(Some(px(12.0)))
+        .expect("first edge drag schedules a frame");
+    assert!(inner.should_notify(first));
+    assert_eq!(inner.begin_frame(size(px(100.), px(100.))).1, true);
+    assert_eq!(inner.scroll_y, px(252.0));
+
+    let second = inner
+        .continue_selection_scroll()
+        .expect("active edge drag schedules another frame");
+    assert!(inner.should_notify(second));
+    assert_eq!(inner.begin_frame(size(px(100.), px(100.))).1, true);
+    assert_eq!(inner.scroll_y, px(264.0));
+
+    inner.set_selection_scroll(None);
+    assert!(inner.continue_selection_scroll().is_none());
+}
+
+#[test]
+fn selection_edge_scroll_stops_at_the_document_boundary() {
+    let state = state_with_rows(10);
+    let mut inner = state.0.borrow_mut();
+    inner.viewport_height = px(100.0);
+    inner.scroll_y = inner.maximum_scroll();
+
+    let final_frame = inner
+        .set_selection_scroll(Some(px(12.0)))
+        .expect("the final downward frame resumes tail following");
+    assert!(inner.should_notify(final_frame));
+    inner.begin_frame(size(px(100.), px(100.)));
+    inner.resume_tail_at_end();
+    assert!(inner.continue_selection_scroll().is_none());
+    assert_eq!(inner.pending_scroll, px(0.0));
 }
 
 #[gpui::test]
