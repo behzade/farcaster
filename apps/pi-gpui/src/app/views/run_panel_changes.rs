@@ -52,7 +52,7 @@ impl PiApp {
                     .text_size(THEME.type_scale.caption)
                     .text_color(THEME.colors.subtle)
                     .child(format!(
-                        "{} recorded session {}",
+                        "{} {} touched this session",
                         self.changes.set.files.len(),
                         if self.changes.set.files.len() == 1 {
                             "file"
