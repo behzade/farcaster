@@ -293,7 +293,8 @@ impl PiApp {
     pub(crate) fn submit_follow_up(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let value = self.composer.read(cx).value().trim().to_owned();
         if !value.is_empty() || self.has_composer_images() {
-            self.submit(value, PromptMode::FollowUp, window, cx);
+            let mode = prompt_mode_for_follow_up(self.snapshot.conversation.running);
+            self.submit(value, mode, window, cx);
         }
     }
 
@@ -391,6 +392,14 @@ fn prompt_mode_for_enter(running: bool) -> PromptMode {
     }
 }
 
+fn prompt_mode_for_follow_up(running: bool) -> PromptMode {
+    if running {
+        PromptMode::FollowUp
+    } else {
+        PromptMode::Normal
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::SystemTime;
@@ -478,5 +487,11 @@ mod tests {
     fn enter_prompts_when_idle_and_steers_while_running() {
         assert_eq!(prompt_mode_for_enter(false), PromptMode::Normal);
         assert_eq!(prompt_mode_for_enter(true), PromptMode::Steer);
+    }
+
+    #[test]
+    fn tab_prompts_when_idle_and_queues_a_follow_up_while_running() {
+        assert_eq!(prompt_mode_for_follow_up(false), PromptMode::Normal);
+        assert_eq!(prompt_mode_for_follow_up(true), PromptMode::FollowUp);
     }
 }
