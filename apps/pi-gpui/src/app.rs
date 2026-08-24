@@ -45,6 +45,7 @@ use gpui::{
 };
 use gpui_component::input::{InputEvent, InputState, TextareaState};
 use gpui_fps::FpsMonitor;
+use gpui_neovim::NvimEditor;
 
 #[cfg(test)]
 use crate::transcript::transcript_splice;
@@ -54,7 +55,6 @@ use crate::{
         ComposerSessions, ComposerSnapshot, HistoryNavigation, draft_target, project_target,
         session_target,
     },
-    editor_terminal::EditorTerminal,
     extension_ui::{ExtensionEffect, ExtensionUiState},
     projects,
     protocol::{BackgroundJob, ExtensionUiRequest, Model},
@@ -205,7 +205,7 @@ pub(crate) struct PiApp {
     workgraph_view: Entity<WorkGraphBoardView>,
     workgraph_detail_view: Entity<WorkGraphDetailView>,
     workgraph_sidebar_view: Entity<WorkGraphSidebarView>,
-    editor: Option<Entity<EditorTerminal>>,
+    editor: Option<Entity<NvimEditor>>,
     editor_error: Option<String>,
     editor_return_focus: Option<FocusHandle>,
     surface: AppSurface,
@@ -426,9 +426,6 @@ impl PiApp {
                 if this.session_shortcuts_visible != visible {
                     this.session_shortcuts_visible = visible;
                     this.notify_session_rail(cx);
-                }
-                if window.is_window_active() {
-                    this.request_repository_refresh(cx);
                 }
             });
         let window_placement_subscription = crate::launch::observe_window_placement(window, cx);
@@ -671,7 +668,6 @@ impl PiApp {
         let mut transcript_dirty = false;
         let mut composer_dirty = false;
         let mut run_dirty = performance_changed;
-        let mut repository_dirty = false;
         let mut workgraph_session_dirty = false;
         let mut workgraph_data_dirty = false;
         while let Ok(event) = self.runtime.try_recv() {
@@ -695,8 +691,6 @@ impl PiApp {
                     composer_dirty |= composer_snapshot_changed(&self.snapshot, snapshot);
                     root_dirty |= self.snapshot.pending_question != snapshot.pending_question;
                     run_dirty |= run_panel_snapshot_changed(&self.snapshot, snapshot);
-                    repository_dirty |=
-                        self.snapshot.conversation.running && !snapshot.conversation.running;
                     workgraph_session_dirty |=
                         self.snapshot.selected_session != snapshot.selected_session;
                 }
@@ -713,11 +707,8 @@ impl PiApp {
                     run_dirty = true;
                 }
                 RuntimeEvent::SessionStatus {
-                    target,
-                    session,
-                    status,
+                    target, session, ..
                 } => {
-                    repository_dirty |= matches!(status.as_str(), "Done" | "Failed");
                     rail_dirty |= session_event_affects_active_rail(
                         &self.drafts,
                         &self.submitted_drafts,
@@ -761,11 +752,7 @@ impl PiApp {
                 RuntimeEvent::WorkGraphChanged { project, .. } => {
                     workgraph_data_dirty |= project == &self.project;
                 }
-                RuntimeEvent::RefreshCatalog => run_dirty = true,
-                RuntimeEvent::Stopped => {
-                    run_dirty = true;
-                    repository_dirty = true;
-                }
+                RuntimeEvent::RefreshCatalog | RuntimeEvent::Stopped => run_dirty = true,
             }
             match event {
                 RuntimeEvent::Snapshot {
@@ -1075,9 +1062,6 @@ impl PiApp {
         if run_dirty {
             self.notify_run_panel(cx);
             self.request_changes_refresh(cx);
-        }
-        if repository_dirty {
-            self.request_repository_refresh(cx);
         }
         if root_dirty {
             cx.notify();

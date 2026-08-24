@@ -123,8 +123,6 @@ impl PiApp {
                 .children(self.background_jobs.iter().map(background_job_row))
             })
             .child(self.render_repository(entity.clone()))
-            .child(section_heading("Session activity"))
-            .child(self.render_changes(entity.clone()))
             .when(!completed.is_empty(), |run| {
                 run.child(
                     div()

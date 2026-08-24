@@ -1,14 +1,27 @@
 //! App-owned repository refresh, backend choice, and stale-result policy.
 
+#[path = "repository_watching.rs"]
+mod watching;
+
 use std::{collections::BTreeMap, path::PathBuf};
 
-use gpui::{AppContext as _, Context, FocusHandle};
+use gpui::{AppContext as _, Context, FocusHandle, Window};
 
 use super::PiApp;
 use crate::{
-    repository::{BackendPreference, DiffTargetKey, RepositoryBackend, WorkingCopySnapshot},
+    repository::{
+        BackendPreference, DiffTargetKey, RepositoryBackend, RepositoryLocation,
+        WorkingCopySnapshot, watcher::RepositoryWatcher,
+    },
     state::StateStore,
 };
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) enum RepositoryChangeScope {
+    #[default]
+    All,
+    Session,
+}
 
 #[derive(Default)]
 struct RefreshGate {
@@ -63,13 +76,19 @@ pub(super) struct RepositoryState {
     pub(super) backend: Option<RepositoryBackend>,
     pub(super) snapshot: Option<WorkingCopySnapshot>,
     pub(super) loading: bool,
+    pub(super) initialized: bool,
     pub(super) error: Option<String>,
     pub(super) preference_error: Option<String>,
+    pub(super) watcher_error: Option<String>,
+    pub(super) scope: RepositoryChangeScope,
     pub(super) row_focus: std::collections::HashMap<DiffTargetKey, FocusHandle>,
     preferences: BTreeMap<PathBuf, String>,
     refresh: RefreshGate,
     preference_save_in_flight: bool,
     preference_save_pending: bool,
+    watcher: Option<RepositoryWatcher>,
+    watcher_binding: Option<watching::WatchBinding>,
+    watcher_generation: u64,
 }
 
 impl RepositoryState {
@@ -88,13 +107,19 @@ impl RepositoryState {
             backend: None,
             snapshot: None,
             loading: false,
+            initialized: false,
             error: None,
             preference_error,
+            watcher_error: None,
+            scope: RepositoryChangeScope::All,
             row_focus: std::collections::HashMap::new(),
             preferences,
             refresh: RefreshGate::default(),
             preference_save_in_flight: false,
             preference_save_pending: false,
+            watcher: None,
+            watcher_binding: None,
+            watcher_generation: 0,
         }
     }
 
@@ -126,12 +151,56 @@ impl RepositoryState {
     fn clear_observation(&mut self) {
         self.backend = None;
         self.snapshot = None;
+        self.loading = false;
+        self.initialized = false;
         self.error = None;
+        self.watcher_error = None;
         self.row_focus.clear();
+        self.watcher = None;
+        self.watcher_binding = None;
+        self.watcher_generation = self.watcher_generation.saturating_add(1);
     }
 }
 
 impl PiApp {
+    pub(super) fn open_current_repository_diff(
+        &mut self,
+        key: DiffTargetKey,
+        opener: FocusHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(backend) = self.repository.backend.clone() else {
+            return;
+        };
+        let Some(target) = self
+            .repository
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| {
+                snapshot
+                    .changes
+                    .iter()
+                    .find(|change| change.target.key == key)
+            })
+            .map(|change| change.target.clone())
+        else {
+            return;
+        };
+        self.open_repository_diff(backend, target, opener, window, cx);
+    }
+
+    pub(super) fn set_repository_change_scope(
+        &mut self,
+        scope: RepositoryChangeScope,
+        cx: &mut Context<Self>,
+    ) {
+        if self.repository.scope != scope {
+            self.repository.scope = scope;
+            self.notify_run_panel(cx);
+        }
+    }
+
     pub(super) fn select_repository_project(&mut self, project: PathBuf, cx: &mut Context<Self>) {
         let execution_allowed =
             crate::project_trust::repository_execution_allowed(&project).unwrap_or(false);
@@ -174,10 +243,15 @@ impl PiApp {
             self.notify_run_panel(cx);
             return;
         }
+        let notify = !self.repository.initialized && !self.repository.loading;
         self.repository.loading = true;
-        self.repository.error = None;
+        if !self.repository.initialized {
+            self.repository.error = None;
+        }
         let generation = self.repository.refresh.request();
-        self.notify_run_panel(cx);
+        if notify {
+            self.notify_run_panel(cx);
+        }
         if let Some(generation) = generation {
             self.start_repository_refresh(generation, cx);
         }
@@ -196,14 +270,20 @@ impl PiApp {
         });
         cx.spawn(async move |weak, cx| {
             let result = task.await;
-            let _ =
-                weak.update(cx, |this, cx| {
-                    let Some(completion) = this.repository.refresh.finish(generation) else {
-                        return;
-                    };
-                    if completion.publish {
-                        match result {
-                            Ok(Some((backend, Ok(snapshot)))) => {
+            let _ = weak.update(cx, |this, cx| {
+                let Some(completion) = this.repository.refresh.finish(generation) else {
+                    return;
+                };
+                let mut display_changed = completion.publish && !this.repository.initialized;
+                if completion.publish {
+                    this.repository.initialized = true;
+                    match result {
+                        Ok(Some((backend, Ok(snapshot)))) => {
+                            let observation_changed =
+                                this.repository.snapshot.as_ref().is_none_or(|current| {
+                                    !displayed_snapshot_eq(current, &snapshot)
+                                });
+                            if observation_changed {
                                 this.repository.row_focus.retain(|key, _| {
                                     snapshot
                                         .changes
@@ -216,36 +296,70 @@ impl PiApp {
                                         .entry(change.target.key.clone())
                                         .or_insert_with(|| cx.focus_handle());
                                 }
-                                this.repository.backend = Some(backend);
-                                this.repository.snapshot = Some(snapshot);
-                                this.repository.error = None;
+                            }
+                            let location = snapshot.location.clone();
+                            this.repository.backend = Some(backend);
+                            this.repository.snapshot = Some(snapshot);
+                            display_changed |= this.repository.error.take().is_some();
+                            display_changed |= this.install_repository_watcher(location, cx);
+                            if observation_changed {
+                                display_changed = true;
                                 this.invalidate_repository_file_mentions(cx);
                             }
-                            Ok(Some((backend, Err(error)))) => {
-                                if this.repository.snapshot.as_ref().is_some_and(|snapshot| {
-                                    &snapshot.location != backend.location()
-                                }) {
-                                    this.repository.clear_observation();
-                                }
-                                this.repository.error = Some(error.to_string());
-                            }
-                            Ok(None) => {
+                        }
+                        Ok(Some((backend, Err(error)))) => {
+                            let location = backend.location().clone();
+                            if this
+                                .repository
+                                .snapshot
+                                .as_ref()
+                                .is_some_and(|snapshot| snapshot.location != location)
+                            {
                                 this.repository.backend = None;
                                 this.repository.snapshot = None;
-                                this.repository.error = None;
                                 this.repository.row_focus.clear();
+                                display_changed = true;
+                            }
+                            this.repository.backend = Some(backend);
+                            display_changed |= this.install_repository_watcher(location, cx);
+                            let error = error.to_string();
+                            display_changed |=
+                                this.repository.error.as_deref() != Some(error.as_str());
+                            this.repository.error = Some(error);
+                        }
+                        Ok(None) => {
+                            let had_observation = this.repository.backend.is_some()
+                                || this.repository.snapshot.is_some();
+                            this.repository.backend = None;
+                            this.repository.snapshot = None;
+                            this.repository.error = None;
+                            this.repository.row_focus.clear();
+                            display_changed |= this.install_repository_discovery_watcher(cx);
+                            if had_observation {
+                                display_changed = true;
                                 this.invalidate_repository_file_mentions(cx);
                             }
-                            Err(error) => this.repository.error = Some(error.to_string()),
+                        }
+                        Err(error) => {
+                            if this.repository.snapshot.is_none() {
+                                display_changed |= this.install_repository_discovery_watcher(cx);
+                            }
+                            let error = error.to_string();
+                            display_changed |=
+                                this.repository.error.as_deref() != Some(error.as_str());
+                            this.repository.error = Some(error);
                         }
                     }
-                    if let Some(next) = completion.next {
-                        this.start_repository_refresh(next, cx);
-                    } else {
-                        this.repository.loading = false;
-                    }
+                }
+                if let Some(next) = completion.next {
+                    this.start_repository_refresh(next, cx);
+                } else {
+                    this.repository.loading = false;
+                }
+                if display_changed {
                     this.notify_run_panel(cx);
-                });
+                }
+            });
         })
         .detach();
     }
@@ -290,6 +404,45 @@ impl PiApp {
     }
 }
 
+fn displayed_snapshot_eq(left: &WorkingCopySnapshot, right: &WorkingCopySnapshot) -> bool {
+    left.location == right.location
+        && displayed_identity_eq(&left.identity, &right.identity)
+        && left.changes.len() == right.changes.len()
+        && left
+            .changes
+            .iter()
+            .zip(&right.changes)
+            .all(|(left, right)| {
+                left.relative_path == right.relative_path
+                    && left.original_relative_path == right.original_relative_path
+                    && left.layer == right.layer
+                    && left.kind == right.kind
+                    && left.target.exists == right.target.exists
+            })
+}
+
+fn displayed_identity_eq(
+    left: &crate::repository::SnapshotIdentity,
+    right: &crate::repository::SnapshotIdentity,
+) -> bool {
+    match (left, right) {
+        (
+            crate::repository::SnapshotIdentity::Git(left),
+            crate::repository::SnapshotIdentity::Git(right),
+        ) => left == right,
+        (
+            crate::repository::SnapshotIdentity::Jujutsu(left),
+            crate::repository::SnapshotIdentity::Jujutsu(right),
+        ) => {
+            left.change_id == right.change_id
+                && left.description == right.description
+                && left.bookmarks == right.bookmarks
+                && left.conflicted == right.conflicted
+        }
+        _ => false,
+    }
+}
+
 fn preference_for(
     preferences: &BTreeMap<PathBuf, String>,
     project: &std::path::Path,
@@ -319,6 +472,46 @@ mod tests {
         assert!(completion.publish);
         assert!(completion.next.is_none());
         assert!(gate.finish(first).is_none());
+    }
+
+    #[test]
+    fn display_equality_ignores_snapshot_capture_time() {
+        let snapshot = WorkingCopySnapshot {
+            location: RepositoryLocation {
+                kind: crate::repository::RepositoryKind::Git,
+                workspace_root: PathBuf::from("/workspace"),
+                project_root: PathBuf::from("/workspace/project"),
+            },
+            identity: crate::repository::SnapshotIdentity::Git(Default::default()),
+            changes: Vec::new(),
+            captured_at: std::time::SystemTime::UNIX_EPOCH,
+        };
+        let mut later = snapshot.clone();
+        later.captured_at = std::time::SystemTime::now();
+
+        assert!(displayed_snapshot_eq(&snapshot, &later));
+    }
+
+    #[test]
+    fn display_equality_ignores_unrendered_jujutsu_operation_and_commit_ids() {
+        let identity = crate::repository::JujutsuIdentity {
+            operation_id: "operation-a".into(),
+            commit_id: "commit-a".into(),
+            change_id: "change".into(),
+            description: "description".into(),
+            bookmarks: vec!["main".into()],
+            conflicted_paths: Vec::new(),
+            conflicted: false,
+            empty: false,
+        };
+        let mut later = identity.clone();
+        later.operation_id = "operation-b".into();
+        later.commit_id = "commit-b".into();
+
+        assert!(displayed_identity_eq(
+            &crate::repository::SnapshotIdentity::Jujutsu(identity),
+            &crate::repository::SnapshotIdentity::Jujutsu(later),
+        ));
     }
 
     #[test]

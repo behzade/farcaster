@@ -6,6 +6,7 @@
 mod git;
 mod jj;
 mod process;
+pub(crate) mod watcher;
 
 use std::{
     ffi::OsString,

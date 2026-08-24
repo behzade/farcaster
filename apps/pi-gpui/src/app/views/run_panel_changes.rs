@@ -1,4 +1,4 @@
-//! Compact session-wide changed-file list.
+//! Session totals, path matching, and the no-repository changed-file fallback.
 
 use std::path::Path;
 
@@ -10,38 +10,34 @@ use gpui::{
 use super::super::PiApp;
 use crate::{
     assets::AppIcon,
-    primitives::{ButtonTone, icon_button},
-    session_changes::{FileChange, FileChangeKind},
+    primitives::{ButtonTone, activates_button, icon_button},
+    repository::WorkingCopyChange,
+    session_changes::{ChangeSet, FileChange, FileChangeKind},
     sessions::root_session_for_path,
     theme::{MONO_FONT_FAMILY, THEME},
 };
 
 const MAX_VISIBLE_CHANGE_FILES: usize = 5;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct SessionChangeTotals {
+    pub(super) additions: Option<u64>,
+    pub(super) deletions: Option<u64>,
+}
+
 impl PiApp {
-    pub(super) fn render_changes(&self, entity: WeakEntity<Self>) -> AnyElement {
+    pub(super) fn render_session_change_fallback(&self, entity: WeakEntity<Self>) -> AnyElement {
         if self.changes.set.files.is_empty() {
-            let (message, color) = if self.changes.set.incomplete {
-                (
-                    "The session record was too large to scan in full; some changes may be missing",
-                    THEME.colors.warning,
-                )
-            } else {
-                (
-                    "No successful edit or write calls were recorded",
-                    THEME.colors.subtle,
-                )
-            };
             return div()
                 .text_size(THEME.type_scale.caption)
-                .text_color(color)
-                .child(message)
+                .text_color(THEME.colors.subtle)
+                .child(if self.changes.set.incomplete {
+                    "No recorded file changes are available"
+                } else {
+                    "No successful edit or write calls were recorded"
+                })
                 .into_any_element();
         }
-        let additions = sum_known_counts(self.changes.set.files.iter().map(|file| file.additions))
-            .map_or_else(|| "+—".into(), |count| format!("+{count}"));
-        let deletions = sum_known_counts(self.changes.set.files.iter().map(|file| file.deletions))
-            .map_or_else(|| "-—".into(), |count| format!("-{count}"));
         let project = root_session_for_path(
             &self.all_sessions,
             self.snapshot.selected_session.as_deref(),
@@ -51,44 +47,21 @@ impl PiApp {
             .flex()
             .flex_col()
             .gap(px(2.0))
-            .when(self.changes.set.incomplete, |changes| {
-                changes.child(
-                    div()
-                        .pb(THEME.space.xs)
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.warning)
-                        .child("The session record was too large to scan in full; some changes may be missing"),
-                )
-            })
             .child(
                 div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap(THEME.space.sm)
                     .pb(THEME.space.xs)
                     .font_family(MONO_FONT_FAMILY)
                     .text_size(THEME.type_scale.caption)
-                    .child(
-                        div()
-                            .text_color(THEME.colors.subtle)
-                            .child(format!("{} files", self.changes.set.files.len())),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .gap(THEME.space.sm)
-                            .child(
-                                div()
-                                    .text_color(THEME.colors.success)
-                                    .child(additions),
-                            )
-                            .child(
-                                div()
-                                    .text_color(THEME.colors.error)
-                                    .child(deletions),
-                            ),
-                    ),
+                    .text_color(THEME.colors.subtle)
+                    .child(format!(
+                        "{} recorded session {}",
+                        self.changes.set.files.len(),
+                        if self.changes.set.files.len() == 1 {
+                            "file"
+                        } else {
+                            "files"
+                        }
+                    )),
             )
             .children(
                 self.changes
@@ -126,8 +99,12 @@ impl PiApp {
         let focus = self.changes.row_focus.get(&file.path)?.clone();
         let click_focus = focus.clone();
         let click_file = file.clone();
+        let click_entity = entity.clone();
+        let key_focus = focus.clone();
+        let key_file = file.clone();
+        let key_entity = entity.clone();
         let editor_file = file.path.clone();
-        let editor_entity = entity.clone();
+        let editor_entity = entity;
         let path = file.path.to_string_lossy().into_owned();
         let display_path = middle_truncate(&display_change_path(&file.path, project), 44);
         let state = match file.kind {
@@ -141,93 +118,162 @@ impl PiApp {
         let deletions = file
             .deletions
             .map_or_else(|| "—".into(), |count| format!("-{count}"));
+        let target = div()
+            .id(format!("change-row-{path}"))
+            .track_focus(&focus)
+            .role(Role::Button)
+            .aria_label(format!("Open recorded changes for {path}"))
+            .tab_index(0)
+            .min_w_0()
+            .flex_1()
+            .px(THEME.space.xs)
+            .py(px(6.0))
+            .rounded(THEME.radius)
+            .flex()
+            .items_center()
+            .gap(THEME.space.xs)
+            .hover(|row| row.bg(THEME.colors.hover))
+            .focus(|row| row.bg(THEME.colors.selection))
+            .cursor_pointer()
+            .on_click(move |_, window, cx| {
+                let _ = click_entity.update(cx, |this, cx| {
+                    this.open_file_diff(click_file.clone(), click_focus.clone(), window, cx)
+                });
+            })
+            .on_key_down(move |event, window, cx| {
+                if activates_button(event) {
+                    cx.stop_propagation();
+                    let _ = key_entity.update(cx, |this, cx| {
+                        this.open_file_diff(key_file.clone(), key_focus.clone(), window, cx)
+                    });
+                }
+            })
+            .child(
+                div()
+                    .w(px(14.0))
+                    .font_family(MONO_FONT_FAMILY)
+                    .text_color(match file.kind {
+                        FileChangeKind::Edited => THEME.colors.accent,
+                        FileChangeKind::Written => THEME.colors.success,
+                        FileChangeKind::Mixed => THEME.colors.warning,
+                    })
+                    .child(state),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .flex_1()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .font_family(MONO_FONT_FAMILY)
+                    .text_size(THEME.type_scale.caption)
+                    .child(display_path),
+            )
+            .when(file.diff.partial, |row| {
+                row.child(
+                    div()
+                        .flex_none()
+                        .text_size(THEME.type_scale.caption)
+                        .text_color(THEME.colors.warning)
+                        .child("partial"),
+                )
+            })
+            .child(
+                div()
+                    .min_w(px(36.0))
+                    .flex_none()
+                    .text_align(gpui::TextAlign::Right)
+                    .font_family(MONO_FONT_FAMILY)
+                    .text_size(THEME.type_scale.caption)
+                    .text_color(THEME.colors.success)
+                    .child(additions),
+            )
+            .child(
+                div()
+                    .min_w(px(36.0))
+                    .flex_none()
+                    .text_align(gpui::TextAlign::Right)
+                    .font_family(MONO_FONT_FAMILY)
+                    .text_size(THEME.type_scale.caption)
+                    .text_color(THEME.colors.error)
+                    .child(deletions),
+            );
         Some(
             div()
-                .id(format!("change-row-{path}"))
-                .track_focus(&focus)
-                .role(Role::Button)
-                .aria_label(format!("Open recorded changes for {path}"))
-                .tab_index(0)
-                .px(THEME.space.xs)
-                .py(px(6.0))
-                .rounded(THEME.radius)
                 .flex()
                 .items_center()
-                .gap(THEME.space.xs)
-                .hover(|row| row.bg(THEME.colors.hover))
-                .focus(|row| row.bg(THEME.colors.selection))
-                .cursor_pointer()
-                .on_click(move |_, window, cx| {
-                    let _ = entity.update(cx, |this, cx| {
-                        this.open_file_diff(click_file.clone(), click_focus.clone(), window, cx)
-                    });
-                })
-                .child(
-                    div()
-                        .w(px(14.0))
-                        .font_family(MONO_FONT_FAMILY)
-                        .text_color(match file.kind {
-                            FileChangeKind::Edited => THEME.colors.accent,
-                            FileChangeKind::Written => THEME.colors.success,
-                            FileChangeKind::Mixed => THEME.colors.warning,
-                        })
-                        .child(state),
-                )
-                .child(
-                    div()
-                        .min_w_0()
-                        .flex_1()
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .font_family(MONO_FONT_FAMILY)
-                        .text_size(THEME.type_scale.caption)
-                        .child(display_path),
-                )
-                .when(file.diff.partial, |row| {
-                    row.child(
-                        div()
-                            .flex_none()
-                            .text_size(THEME.type_scale.caption)
-                            .text_color(THEME.colors.warning)
-                            .child("partial"),
-                    )
-                })
+                .gap(px(2.0))
+                .child(target)
                 .child(icon_button(
                     format!("edit-change-{path}"),
                     AppIcon::PencilSimple,
                     "Edit in Neovim",
                     ButtonTone::Quiet,
                     move |window, cx| {
-                        cx.stop_propagation();
                         let _ = editor_entity.update(cx, |this, cx| {
                             this.open_file_editor(editor_file.clone(), window, cx);
                         });
                     },
                 ))
-                .child(
-                    div()
-                        .min_w(px(36.0))
-                        .flex_none()
-                        .text_align(gpui::TextAlign::Right)
-                        .font_family(MONO_FONT_FAMILY)
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.success)
-                        .child(additions),
-                )
-                .child(
-                    div()
-                        .min_w(px(36.0))
-                        .flex_none()
-                        .text_align(gpui::TextAlign::Right)
-                        .font_family(MONO_FONT_FAMILY)
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.error)
-                        .child(deletions),
-                )
                 .into_any_element(),
         )
     }
+}
+
+pub(super) fn session_change_totals(changes: &ChangeSet) -> SessionChangeTotals {
+    SessionChangeTotals {
+        additions: sum_known_counts(changes.files.iter().map(|file| file.additions)),
+        deletions: sum_known_counts(changes.files.iter().map(|file| file.deletions)),
+    }
+}
+
+pub(super) fn session_change_matches(
+    change: &WorkingCopyChange,
+    changes: &ChangeSet,
+    project: &Path,
+    repository_project: &Path,
+) -> bool {
+    changes.files.iter().any(|file| {
+        path_matches(
+            &change.relative_path,
+            &file.path,
+            &change.target.workspace_root,
+            project,
+            repository_project,
+        ) || change
+            .original_relative_path
+            .as_ref()
+            .is_some_and(|source| {
+                path_matches(
+                    source,
+                    &file.path,
+                    &change.target.workspace_root,
+                    project,
+                    repository_project,
+                )
+            })
+    })
+}
+
+fn path_matches(
+    repository_path: &Path,
+    session_path: &Path,
+    workspace_root: &Path,
+    project: &Path,
+    repository_project: &Path,
+) -> bool {
+    let repository_absolute = workspace_root.join(repository_path);
+    repository_path == session_path
+        || repository_absolute == session_path
+        || (!session_path.is_absolute()
+            && repository_project.join(session_path) == repository_absolute)
+        || session_path
+            .strip_prefix(project)
+            .is_ok_and(|relative| repository_project.join(relative) == repository_absolute)
+        || session_path
+            .strip_prefix(workspace_root)
+            .is_ok_and(|relative| relative == repository_path)
 }
 
 fn sum_known_counts(counts: impl IntoIterator<Item = Option<u64>>) -> Option<u64> {
@@ -267,6 +313,42 @@ mod tests {
     fn aggregate_counts_remain_unknown_when_any_file_is_unknown() {
         assert_eq!(sum_known_counts([Some(2), Some(3)]), Some(5));
         assert_eq!(sum_known_counts([Some(2), None]), None);
+    }
+
+    #[test]
+    fn session_paths_match_repository_paths_without_matching_outside_files() {
+        let workspace = Path::new("/workspace");
+        let project = Path::new("/project-link");
+        let repository_project = Path::new("/workspace/apps/pi-gpui");
+        let repository_path = Path::new("apps/pi-gpui/src/app.rs");
+        assert!(path_matches(
+            repository_path,
+            Path::new("/workspace/apps/pi-gpui/src/app.rs"),
+            workspace,
+            project,
+            repository_project,
+        ));
+        assert!(path_matches(
+            repository_path,
+            Path::new("src/app.rs"),
+            workspace,
+            project,
+            repository_project,
+        ));
+        assert!(path_matches(
+            repository_path,
+            Path::new("/project-link/src/app.rs"),
+            workspace,
+            project,
+            repository_project,
+        ));
+        assert!(!path_matches(
+            repository_path,
+            Path::new("/other/apps/pi-gpui/src/app.rs"),
+            workspace,
+            project,
+            repository_project,
+        ));
     }
 
     #[test]
