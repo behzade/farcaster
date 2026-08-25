@@ -720,6 +720,38 @@ impl StateStore {
             .map_err(|error| format!("commit session path relocation: {error}"))
     }
 
+    pub(crate) fn delete_session_state(&mut self, paths: &[PathBuf]) -> Result<(), String> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| format!("start session state deletion: {error}"))?;
+        for path in paths {
+            let path_text = path.to_string_lossy();
+            let target = format!("session:{path_text}");
+            transaction
+                .execute("DELETE FROM outbox WHERE session_path=?1", [&path_text])
+                .and_then(|_| {
+                    transaction.execute("DELETE FROM composer_sessions WHERE target=?1", [&target])
+                })
+                .and_then(|_| {
+                    transaction.execute("DELETE FROM drafts WHERE session_path=?1", [&path_text])
+                })
+                .and_then(|_| {
+                    transaction.execute("DELETE FROM sessions WHERE path=?1", [&path_text])
+                })
+                .and_then(|_| {
+                    transaction.execute(
+                        "DELETE FROM app_sessions WHERE session_path=?1",
+                        [&path_text],
+                    )
+                })
+                .map_err(|error| format!("delete saved state for {}: {error}", path.display()))?;
+        }
+        transaction
+            .commit()
+            .map_err(|error| format!("commit session state deletion: {error}"))
+    }
+
     pub(crate) fn set_session_category(
         &self,
         path: &Path,

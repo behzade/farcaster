@@ -4,6 +4,7 @@ mod archive;
 mod changes;
 mod composer_completion;
 mod composer_images;
+mod deletion;
 mod drafts;
 mod editor;
 mod expiries;
@@ -245,11 +246,13 @@ pub(crate) struct PiApp {
     pending_dialog_setup: bool,
     pending_title: Option<(u64, String)>,
     pending_editor_text: Option<(u64, String)>,
+    pending_composer_restore: Option<(String, ComposerSnapshot)>,
     pending_submissions: HashMap<String, PendingSubmission>,
     pending_focus_after_render: Option<FocusHandle>,
     sessions_sheet: bool,
     review_sessions_expanded: bool,
     pending_archive: Option<archive::PendingArchive>,
+    pending_delete: Option<deletion::PendingDelete>,
     archived_sessions_expanded: bool,
     run_sheet: bool,
     keybindings_help: bool,
@@ -627,11 +630,13 @@ impl PiApp {
             pending_dialog_setup: false,
             pending_title: None,
             pending_editor_text: None,
+            pending_composer_restore: None,
             pending_submissions: HashMap::new(),
             pending_focus_after_render: None,
             sessions_sheet: false,
             review_sessions_expanded: false,
             pending_archive: None,
+            pending_delete: None,
             archived_sessions_expanded: false,
             run_sheet: false,
             keybindings_help: false,
@@ -699,7 +704,7 @@ impl PiApp {
                 RuntimeEvent::Sessions { .. }
                 | RuntimeEvent::SessionsFailed { .. }
                 | RuntimeEvent::SessionFilesModified { .. } => {}
-                RuntimeEvent::SessionMoved { .. } => {
+                RuntimeEvent::SessionMoved { .. } | RuntimeEvent::SessionDeleted { .. } => {
                     root_dirty = true;
                     rail_dirty = true;
                     review_rail_dirty = true;
@@ -905,6 +910,110 @@ impl PiApp {
                         previous_workgraph_session != self.active_workgraph_session();
                     rail_dirty |= self.reconcile_submitted_drafts(cx);
                 }
+                RuntimeEvent::SessionDeleted { generation, paths } => {
+                    let selected_was_deleted = self
+                        .snapshot
+                        .selected_session
+                        .as_ref()
+                        .or(self.snapshot.live_session.as_ref())
+                        .is_some_and(|path| paths.contains(path));
+                    let deleted_draft_ids = self
+                        .drafts
+                        .iter()
+                        .filter(|draft| {
+                            draft
+                                .session_path
+                                .as_ref()
+                                .is_some_and(|path| paths.contains(path))
+                        })
+                        .map(|draft| draft.id.clone())
+                        .chain(self.submitted_drafts.iter().filter_map(|(id, path)| {
+                            path.as_ref()
+                                .is_some_and(|path| paths.contains(path))
+                                .then_some(id.clone())
+                        }))
+                        .collect::<HashSet<_>>();
+                    for path in paths.iter() {
+                        let target = session_target(path);
+                        self.composer_sessions.remove(&target);
+                        self.composer_images.remove(&target);
+                        self.pending_submissions.remove(&target);
+                        self.run_statuses.remove(&target);
+                        self.recent_completions.remove(&target);
+                        self.recent_completion_expiries.remove(&target);
+                    }
+                    for id in &deleted_draft_ids {
+                        let target = draft_target(id);
+                        self.composer_sessions.remove(&target);
+                        self.composer_images.remove(&target);
+                        self.pending_submissions.remove(&target);
+                        self.submitted_drafts.remove(id);
+                        self.draft_session_ids.remove(id);
+                        self.run_statuses.remove(&target);
+                        self.recent_completions.remove(&target);
+                        self.recent_completion_expiries.remove(&target);
+                    }
+                    if !deleted_draft_ids.is_empty() {
+                        self.drafts
+                            .retain(|draft| !deleted_draft_ids.contains(&draft.id));
+                        if self
+                            .selected_draft
+                            .as_ref()
+                            .is_some_and(|id| deleted_draft_ids.contains(id))
+                        {
+                            self.selected_draft = None;
+                        }
+                        self.save_project_registry();
+                    }
+                    if self
+                        .system_notification_target
+                        .as_ref()
+                        .is_some_and(|(path, _)| paths.contains(path))
+                    {
+                        self.system_notification_target = None;
+                    }
+                    if self
+                        .pending_session_switch
+                        .as_ref()
+                        .is_some_and(|(path, _)| paths.contains(path))
+                    {
+                        drop(self.pending_session_switch.take());
+                    }
+                    if selected_was_deleted && generation >= self.runtime_generation {
+                        let current_target = self.composer_sessions.current_target().to_owned();
+                        let (next_target, next_draft) =
+                            match projects::new_draft(self.project.clone()) {
+                                Ok(draft) => (draft_target(&draft.id), Some(draft)),
+                                Err(error) => {
+                                    self.sessions_error = Some(error);
+                                    (project_target(&self.project), None)
+                                }
+                            };
+                        let composer = self
+                            .composer_sessions
+                            .discard_and_switch(&current_target, next_target.clone());
+                        self.reset_session_ui(generation, false);
+                        self.pending_composer_restore = Some((next_target, composer));
+                        self.selected_draft = next_draft.as_ref().map(|draft| draft.id.clone());
+                        if let Some(draft) = next_draft {
+                            self.draft_session_ids
+                                .insert(draft.id.clone(), draft.app_session_id);
+                            self.drafts.push(draft.clone());
+                            self.save_project_registry();
+                            self.send(RuntimeCommand::NewSession {
+                                id: draft.id,
+                                project: draft.project,
+                            });
+                        }
+                        let snapshot = Arc::make_mut(&mut self.snapshot);
+                        snapshot.live_session = None;
+                        snapshot.selected_session = None;
+                        snapshot.session = None;
+                        snapshot.conversation = Arc::default();
+                        snapshot.history_preview = false;
+                        snapshot.pending_question = None;
+                    }
+                }
                 RuntimeEvent::SessionMoved {
                     target_root,
                     target_project,
@@ -1036,7 +1145,8 @@ impl PiApp {
                 | RuntimeEvent::PromptResult { .. }
                 | RuntimeEvent::Sessions { .. }
                 | RuntimeEvent::SessionsFailed { .. }
-                | RuntimeEvent::SessionFilesModified { .. } => {}
+                | RuntimeEvent::SessionFilesModified { .. }
+                | RuntimeEvent::SessionDeleted { .. } => {}
             }
         }
         if workgraph_data_dirty {

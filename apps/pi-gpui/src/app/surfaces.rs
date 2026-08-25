@@ -90,6 +90,7 @@ impl PiApp {
             || self.keybindings_help
             || self.project_trust_sheet
             || self.pending_archive.is_some()
+            || self.pending_delete.is_some()
             || self.extension.dialog.is_some()
             || self.extension.provider_auth.is_some()
             || self.surface == AppSurface::Work

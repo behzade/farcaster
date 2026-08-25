@@ -186,6 +186,11 @@ impl ComposerSessions {
         self.current()
     }
 
+    pub(crate) fn remove(&mut self, target: &str) {
+        self.sessions.remove(target);
+        self.persistence.delete(target.to_owned());
+    }
+
     pub(crate) fn promote(&mut self, from: &str, to: String) {
         let Some(mut source) = self.sessions.remove(from) else {
             if self.current_target == from {

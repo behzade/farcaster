@@ -553,6 +553,119 @@ fn relocating_session_paths_preserves_application_identity_and_composer_state()
 }
 
 #[test]
+fn deleting_session_state_removes_the_family_and_preserves_other_sessions()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let database = temp.path().join("gui.sqlite3");
+    let project = temp.path().join("project");
+    let root = temp.path().join("root.jsonl");
+    let child = temp.path().join("child.jsonl");
+    let other = temp.path().join("other.jsonl");
+    fs::create_dir(&project)?;
+    drop(StateStore::open_at(&database)?);
+    let connection = Connection::open(&database)?;
+    for (index, path) in [&root, &child, &other].into_iter().enumerate() {
+        let app_session_id = index as i64 + 1;
+        let id = format!("session-{index}");
+        let draft_id = format!("draft-{index}");
+        connection.execute(
+            "INSERT INTO app_sessions(id, draft_id, session_path, created_ms)
+             VALUES(?1, ?2, ?3, 1)",
+            params![app_session_id, draft_id, path.to_string_lossy()],
+        )?;
+        connection.execute(
+            "INSERT INTO sessions(
+               path, id, project, title, first_user_message, timestamp, parent_session,
+               modified_ms, file_size, message_count, input_tokens, output_tokens,
+               cache_read_tokens, cache_write_tokens, total_tokens, cost_micros,
+               search_text, settled_ms, is_running, app_session_id
+             ) VALUES(?1, ?2, ?3, 'Title', '', '', NULL, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+                      'title', 1, 0, ?4)",
+            params![
+                path.to_string_lossy(),
+                id,
+                project.to_string_lossy(),
+                app_session_id
+            ],
+        )?;
+        connection.execute(
+            "INSERT INTO drafts(
+               id, project, created_ms, submitted, session_path, provisional_title,
+               app_session_id
+             ) VALUES(?1, ?2, 1, 1, ?3, NULL, ?4)",
+            params![
+                draft_id,
+                project.to_string_lossy(),
+                path.to_string_lossy(),
+                app_session_id
+            ],
+        )?;
+        connection.execute(
+            "INSERT INTO outbox(
+               target, project, session_path, mode, message, state, created_ms, images_json
+             ) VALUES(?1, ?2, ?3, 'normal', 'failed prompt', 'failed', 1, '[]')",
+            params![
+                format!("session:{}", path.display()),
+                project.to_string_lossy(),
+                path.to_string_lossy()
+            ],
+        )?;
+        connection.execute(
+            "INSERT INTO composer_sessions(
+               target, text, cursor, selection_start, selection_end, history_json, updated_ms
+             ) VALUES(?1, 'draft', 5, 5, 5, '[]', 1)",
+            [format!("session:{}", path.display())],
+        )?;
+    }
+    drop(connection);
+
+    StateStore::open_at(&database)?.delete_session_state(&[root.clone(), child.clone()])?;
+
+    let connection = Connection::open(&database)?;
+    for path in [&root, &child] {
+        let path = path.to_string_lossy();
+        let target = format!("session:{path}");
+        for (table, column, value) in [
+            ("app_sessions", "session_path", path.as_ref()),
+            ("sessions", "path", path.as_ref()),
+            ("drafts", "session_path", path.as_ref()),
+            ("outbox", "session_path", path.as_ref()),
+            ("composer_sessions", "target", target.as_str()),
+        ] {
+            let count = connection.query_row(
+                &format!("SELECT COUNT(*) FROM {table} WHERE {column}=?1"),
+                [value],
+                |row| row.get::<_, i64>(0),
+            )?;
+            assert_eq!(count, 0, "{table} retained deleted session state");
+        }
+    }
+    let other_path = other.to_string_lossy();
+    for (table, column, value) in [
+        ("app_sessions", "session_path", other_path.as_ref()),
+        ("sessions", "path", other_path.as_ref()),
+        ("drafts", "session_path", other_path.as_ref()),
+        ("outbox", "session_path", other_path.as_ref()),
+    ] {
+        let count = connection.query_row(
+            &format!("SELECT COUNT(*) FROM {table} WHERE {column}=?1"),
+            [value],
+            |row| row.get::<_, i64>(0),
+        )?;
+        assert_eq!(count, 1, "{table} lost unrelated session state");
+    }
+    assert_eq!(
+        connection.query_row(
+            "SELECT COUNT(*) FROM composer_sessions WHERE target=?1",
+            [format!("session:{other_path}")],
+            |row| row.get::<_, i64>(0),
+        )?,
+        1
+    );
+    Ok(())
+}
+
+#[test]
 fn submitted_draft_without_session_path_survives_reopen() -> Result<(), Box<dyn std::error::Error>>
 {
     let temp = tempdir()?;

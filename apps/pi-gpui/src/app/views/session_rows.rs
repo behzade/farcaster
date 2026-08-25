@@ -336,6 +336,8 @@ pub(super) fn session_row_with_height(
     let review_entity = entity.clone();
     let archive_path = session.path.clone();
     let archive_entity = entity.clone();
+    let delete_path = session.path.clone();
+    let delete_entity = entity.clone();
     let target_app_session_id = session.app_session_id;
     let drag = DraggedSession {
         app_session_id: target_app_session_id,
@@ -648,6 +650,47 @@ pub(super) fn session_row_with_height(
                                                 this.request_session_archive(
                                                     archive_path.clone(),
                                                     !is_archived,
+                                                    window,
+                                                    cx,
+                                                );
+                                            });
+                                        }),
+                                )
+                                .child(
+                                    div()
+                                        .id(format!("delete-{}", session.id))
+                                        .role(Role::Button)
+                                        .aria_label("Delete session permanently")
+                                        .tab_index(0)
+                                        .size(THEME.controls.icon_button)
+                                        .flex_none()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .rounded(THEME.radius)
+                                        .opacity(0.0)
+                                        .group_hover(
+                                            format!("session-actions-{}", session.id),
+                                            |button| button.opacity(1.0),
+                                        )
+                                        .focus(|button| {
+                                            button
+                                                .opacity(1.0)
+                                                .border(THEME.border)
+                                                .border_color(THEME.colors.accent)
+                                        })
+                                        .text_color(THEME.colors.danger)
+                                        .hover(|button| button.bg(THEME.colors.hover))
+                                        .tooltip(move |window, cx| {
+                                            Tooltip::new("Delete session permanently")
+                                                .build(window, cx)
+                                        })
+                                        .child(app_icon(AppIcon::Trash, AppIconSize::Control))
+                                        .on_click(move |_, window, cx| {
+                                            cx.stop_propagation();
+                                            let _ = delete_entity.update(cx, |this, cx| {
+                                                this.request_session_delete(
+                                                    delete_path.clone(),
                                                     window,
                                                     cx,
                                                 );

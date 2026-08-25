@@ -4,6 +4,7 @@ mod composer;
 mod composer_footer;
 #[cfg(test)]
 mod composer_tests;
+mod delete_confirmation;
 mod editor;
 mod models;
 mod project_trust;
@@ -140,6 +141,14 @@ impl Render for PiApp {
             cx.defer_in(window, move |this, window, cx| {
                 if this.runtime_generation == generation {
                     let snapshot = crate::composer_sessions::ComposerSnapshot::new(text, 0, 0..0);
+                    this.apply_composer_snapshot(snapshot.clone(), window, cx);
+                    this.composer_sessions.capture_current(snapshot);
+                }
+            });
+        }
+        if let Some((target, snapshot)) = self.pending_composer_restore.take() {
+            cx.defer_in(window, move |this, window, cx| {
+                if this.composer_sessions.current_target() == target {
                     this.apply_composer_snapshot(snapshot.clone(), window, cx);
                     this.composer_sessions.capture_current(snapshot);
                 }
@@ -477,6 +486,9 @@ impl Render for PiApp {
             })
             .when(self.pending_archive.is_some(), |root| {
                 root.child(archive_confirmation::render(self, entity.clone()))
+            })
+            .when(self.pending_delete.is_some(), |root| {
+                root.child(delete_confirmation::render(self, entity.clone()))
             })
             .when(self.project_trust_sheet, |root| {
                 root.child(project_trust::render(self, entity.clone()))

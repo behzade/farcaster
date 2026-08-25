@@ -22,6 +22,7 @@ mod repository;
 mod rpc_process;
 mod runtime;
 mod session_changes;
+mod session_deletion;
 mod session_transfer;
 mod session_watcher;
 mod sessions;

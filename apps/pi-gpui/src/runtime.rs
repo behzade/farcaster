@@ -55,6 +55,9 @@ pub(crate) enum RuntimeCommand {
     StopSessionFamily {
         path: PathBuf,
     },
+    DeleteSessionFamily {
+        path: PathBuf,
+    },
     Reload,
     Compact {
         custom_instructions: Option<String>,
@@ -137,6 +140,10 @@ pub(crate) enum RuntimeEvent {
         target_root: PathBuf,
         target_project: PathBuf,
         paths: Arc<HashMap<PathBuf, PathBuf>>,
+    },
+    SessionDeleted {
+        generation: u64,
+        paths: Arc<HashSet<PathBuf>>,
     },
     RefreshCatalog,
     WorkGraphChanged {
@@ -420,6 +427,7 @@ fn run_supervisor(
     let mut latest = HashMap::<String, Arc<RuntimeSnapshot>>::new();
     let mut catalog_sessions = Vec::<SessionSummary>::new();
     let mut catalog_generation = 0_u64;
+    let mut catalog_exhaustive = false;
     let mut activity_tracker = ExternalActivityTracker::default();
     if let Some(path) = initial_session.clone() {
         latest.insert(
@@ -618,6 +626,11 @@ fn run_supervisor(
                     event @ (RuntimeEvent::Sessions { .. }
                     | RuntimeEvent::SessionsFailed { .. }) => {
                         if key == catalog_key
+                            && matches!(&event, RuntimeEvent::SessionsFailed { .. })
+                        {
+                            catalog_exhaustive = false;
+                        }
+                        if key == catalog_key
                             && let RuntimeEvent::Sessions {
                                 generation: next_generation,
                                 all_sessions,
@@ -627,6 +640,7 @@ fn run_supervisor(
                         {
                             catalog_generation = *next_generation;
                             if let Some((_, exhaustive)) = activities {
+                                catalog_exhaustive = *exhaustive;
                                 activity_tracker.sync_catalog(
                                     all_sessions,
                                     *exhaustive,
@@ -662,6 +676,7 @@ fn run_supervisor(
                     }
                     RuntimeEvent::Stopped
                     | RuntimeEvent::SessionMoved { .. }
+                    | RuntimeEvent::SessionDeleted { .. }
                     | RuntimeEvent::SessionStatus { .. }
                     | RuntimeEvent::SessionFilesModified { .. }
                     | RuntimeEvent::SessionReset { .. }
@@ -705,6 +720,133 @@ fn run_supervisor(
                         }
                         if let Some(catalog) = actors.get(&catalog_key) {
                             catalog.send(RuntimeCommand::RefreshSessions);
+                        }
+                    }
+                    continue;
+                }
+                if let RuntimeCommand::DeleteSessionFamily { path } = &command {
+                    let result = (|| {
+                        if !catalog_exhaustive {
+                            return Err(
+                                "Wait for a complete session scan before deleting this session"
+                                    .to_owned(),
+                            );
+                        }
+                        let requested = catalog_sessions
+                            .iter()
+                            .find(|session| session.path == *path)
+                            .ok_or_else(|| {
+                                "The session is no longer available to delete".to_owned()
+                            })?;
+                        if requested.parent_session.is_some() {
+                            return Err("Only a root session can be deleted".to_owned());
+                        }
+                        let family = session_family_for_path(&catalog_sessions, path)
+                            .expect("requested session belongs to the catalog");
+                        let root = family[0];
+                        if root.path != *path {
+                            return Err("Only a root session can be deleted".to_owned());
+                        }
+                        if family.iter().any(|session| session.is_running) {
+                            return Err("Wait for the session family to finish before deleting it"
+                                .to_owned());
+                        }
+                        let family_paths = family
+                            .iter()
+                            .map(|session| session.path.clone())
+                            .collect::<HashSet<_>>();
+                        let family_actor_keys = actor_paths
+                            .iter()
+                            .filter(|(path, key)| {
+                                family_paths.contains(*path) && *key != &catalog_key
+                            })
+                            .map(|(_, key)| key.clone())
+                            .collect::<HashSet<_>>();
+                        if family_actor_keys.iter().any(|key| {
+                            latest.get(key).is_some_and(|snapshot| {
+                                snapshot.conversation.running
+                                    || snapshot.conversation.compacting
+                                    || needs_input.contains(key)
+                            })
+                        }) {
+                            return Err(
+                                "Wait for the session family to become idle before deleting it"
+                                    .to_owned(),
+                            );
+                        }
+                        let mut state = StateStore::open()?;
+                        let paths = family_paths.iter().cloned().collect::<Vec<_>>();
+                        if state.has_queued_prompts_for(&paths)? {
+                            return Err(
+                                "Send or remove queued prompts before deleting this session"
+                                    .to_owned(),
+                            );
+                        }
+                        for key in &family_actor_keys {
+                            if let Some(actor) = actors.remove(key) {
+                                actor.send(RuntimeCommand::Shutdown);
+                                actor.join();
+                            }
+                            latest.remove(key);
+                            last_touch.remove(key);
+                            pending_extensions.remove(key);
+                            active_dialogs.remove(key);
+                            needs_input.remove(key);
+                            interacted.remove(key);
+                            published_statuses.remove(key);
+                        }
+                        document_revisions.retain(|path, _| !family_paths.contains(path));
+                        actor_paths.retain(|path, _| !family_paths.contains(path));
+                        if family_actor_keys.contains(&selected) {
+                            selected = catalog_key.clone();
+                            generation = generation.saturating_add(1);
+                        }
+                        let leftovers = crate::session_deletion::delete_family(&paths)?;
+                        let state_warning = state.delete_session_state(&paths).err();
+                        Ok((family_paths, leftovers, state_warning))
+                    })();
+                    match result {
+                        Ok((paths, leftovers, state_warning)) => {
+                            let _ = event_tx.send(RuntimeEvent::SessionDeleted {
+                                generation,
+                                paths: Arc::new(paths),
+                            });
+                            let mut warnings = Vec::new();
+                            if !leftovers.is_empty() {
+                                warnings.push(format!(
+                                    "some session files remain quarantined and must be removed manually: {}",
+                                    leftovers
+                                        .iter()
+                                        .map(|(path, error)| {
+                                            format!("{} ({error})", path.display())
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                ));
+                            }
+                            if let Some(message) = state_warning {
+                                warnings.push(format!(
+                                    "its saved UI state could not be removed: {message}"
+                                ));
+                            }
+                            if !warnings.is_empty() {
+                                let _ = event_tx.send(RuntimeEvent::SessionsFailed {
+                                    generation: catalog_generation,
+                                    message: format!(
+                                        "Session deleted, but {}",
+                                        warnings.join("; ")
+                                    ),
+                                });
+                            }
+                            if let Some(catalog) = actors.get(&catalog_key) {
+                                catalog.send(RuntimeCommand::RefreshSessions);
+                            }
+                        }
+                        Err(message) => {
+                            let _ = event_tx.send(RuntimeEvent::SessionsFailed {
+                                generation: catalog_generation,
+                                message,
+                            });
                         }
                     }
                     continue;
@@ -1491,7 +1633,9 @@ impl RuntimeOwner {
                     });
                 }
             },
-            RuntimeCommand::MoveSession { .. } | RuntimeCommand::StopSessionFamily { .. } => {}
+            RuntimeCommand::MoveSession { .. }
+            | RuntimeCommand::StopSessionFamily { .. }
+            | RuntimeCommand::DeleteSessionFamily { .. } => {}
             RuntimeCommand::NewSession { project, .. } => {
                 self.project = project;
                 self.start_process(None);
