@@ -262,10 +262,7 @@ struct TrustEnvironment {
 }
 
 fn trust_environment(project: &Path) -> Result<TrustEnvironment, String> {
-    #[cfg(target_os = "macos")]
     let imported = crate::shell_environment::project_shell_environment(project)?;
-    #[cfg(not(target_os = "macos"))]
-    let imported: Option<Vec<(std::ffi::OsString, std::ffi::OsString)>> = None;
 
     let value = |name: &OsStr| {
         imported.as_ref().map_or_else(

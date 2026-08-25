@@ -24,8 +24,6 @@
   <dict>
     <key>PI_GUI_COMPANION_EXTENSION</key>
     <string>@companion_extension@</string>
-    <key>PI_GUI_IMPORT_SHELL_ENV</key>
-    <string>1</string>
     <key>PI_GUI_PI_PATH</key>
     <string>@pi_path@</string>
   </dict>

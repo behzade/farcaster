@@ -12,7 +12,6 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
-const IMPORT_REQUESTED: &str = "PI_GUI_IMPORT_SHELL_ENV";
 const APP_ENV_IMPORTED: &str = "PI_GUI_SHELL_ENV_IMPORTED";
 const START_MARKER: &[u8] = b"\x1ePI_GPUI_ENV_START\x1f\0";
 const END_MARKER: &[u8] = b"\x1ePI_GPUI_ENV_END\x1f\0";
@@ -23,20 +22,20 @@ type Environment = Vec<(OsString, OsString)>;
 static SHELL_ENVIRONMENTS: OnceLock<Mutex<HashMap<PathBuf, Environment>>> = OnceLock::new();
 
 pub(crate) fn project_shell_environment(project: &Path) -> Result<Option<Environment>, String> {
-    if !environment_import_requested() {
+    #[cfg(test)]
+    {
+        let _ = project;
         return Ok(None);
     }
+    #[cfg(not(test))]
     shell_environment_at(project).map(Some)
 }
 
-fn app_shell_environment() -> Result<Option<Environment>, String> {
-    if !environment_import_requested() {
-        return Ok(None);
-    }
+fn app_shell_environment() -> Result<Environment, String> {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .ok_or_else(|| "HOME is not set".to_owned())?;
-    shell_environment_at(&home).map(Some)
+    shell_environment_at(&home)
 }
 
 fn shell_environment_at(working_directory: &Path) -> Result<Environment, String> {
@@ -55,19 +54,13 @@ fn shell_environment_at(working_directory: &Path) -> Result<Environment, String>
     Ok(environment)
 }
 
-fn environment_import_requested() -> bool {
-    std::env::var(IMPORT_REQUESTED).as_deref() == Ok("1")
-}
-
 pub(crate) fn import_app_shell_environment() -> Result<(), String> {
     use std::os::unix::process::CommandExt as _;
 
     if std::env::var(APP_ENV_IMPORTED).as_deref() == Ok("1") {
         return Ok(());
     }
-    let Some(environment) = app_shell_environment()? else {
-        return Ok(());
-    };
+    let environment = app_shell_environment()?;
     let executable = std::env::current_exe()
         .map_err(|error| format!("resolve pi-gpui executable for shell environment: {error}"))?;
     let error = Command::new(executable)

@@ -50,6 +50,7 @@ pub(crate) struct Colors {
     pub skill_surface: Rgba,
     pub warning: Rgba,
     pub error: Rgba,
+    pub danger: Rgba,
     pub success: Rgba,
     pub backdrop: Rgba,
 }
@@ -141,6 +142,7 @@ pub(crate) const THEME: Theme = Theme {
         skill_surface: rgba(0xd3869b24),
         warning: rgb(0xfabd2f),
         error: rgb(0xfb4934),
+        danger: rgb(0xfb4934),
         success: rgb(0xb8bb26),
         backdrop: rgba(0x000000b3),
     },
@@ -230,7 +232,7 @@ pub(crate) fn install_component_theme(cx: &mut App) {
     colors.button_primary_hover = THEME.colors.accent_hover.into();
     colors.button_primary_active = THEME.colors.accent_active.into();
     colors.button_primary_foreground = THEME.colors.canvas.into();
-    colors.danger = THEME.colors.error.into();
+    colors.danger = THEME.colors.danger.into();
     colors.danger_foreground = THEME.colors.canvas.into();
     colors.warning = THEME.colors.warning.into();
     colors.warning_foreground = THEME.colors.canvas.into();
