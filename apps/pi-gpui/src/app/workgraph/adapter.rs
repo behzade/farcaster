@@ -409,17 +409,19 @@ impl Render for WorkGraphBoardView {
                                                     refresh.update(cx, |this, cx| this.refresh(cx));
                                                 },
                                             ))
-                                            .child(button(
-                                                "workgraph-create-open",
-                                                if has_plan { "Add node" } else { "New plan" },
-                                                ButtonTone::Neutral,
-                                                true,
-                                                move |window, cx| {
-                                                    create.update(cx, |this, cx| {
-                                                        this.start_create(window, cx);
-                                                    });
-                                                },
-                                            )),
+                                            .when(self.selected.is_none(), |actions| {
+                                                actions.child(button(
+                                                    "workgraph-create-open",
+                                                    if has_plan { "Add node" } else { "New plan" },
+                                                    ButtonTone::Neutral,
+                                                    true,
+                                                    move |window, cx| {
+                                                        create.update(cx, |this, cx| {
+                                                            this.start_create(window, cx);
+                                                        });
+                                                    },
+                                                ))
+                                            }),
                                     ),
                             )
                             .child(

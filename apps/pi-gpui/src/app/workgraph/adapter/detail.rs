@@ -8,7 +8,10 @@ use gpui::{
 use super::WorkGraphBoardView;
 use crate::{
     app::workgraph::{
-        components::{detail_card, detail_label, evidence_label, requirement_label},
+        components::{
+            detail_action, detail_copy, detail_empty, detail_rule, detail_section, evidence_label,
+            requirement_label,
+        },
         contract::{PlanData, PlanLoadState},
         core::active_outcome,
         layout::{BoardLayoutMode, DETAIL_MIN_WIDTH, DETAIL_WIDTH},
@@ -69,38 +72,33 @@ impl WorkGraphBoardView {
                             .as_ref()
                             .is_some_and(|walk| link.walk_number == walk.number)
                     });
-                    let session_action = snapshot.walk.as_ref().and_then(|walk| {
-                        self.active_session.as_ref().map(|_| {
+                    let session_action = match (&snapshot.walk, &self.active_session) {
+                        (Some(walk), Some(_)) if !linked_here => {
                             let walk = walk.number;
                             let entity = entity.clone();
-                            button(
+                            Some(button(
                                 format!("workgraph-link-walk-{walk}"),
-                                if linked_here {
-                                    "Current session attached"
-                                } else {
-                                    "Attach current session"
-                                },
-                                if linked_here {
-                                    ButtonTone::Quiet
-                                } else {
-                                    ButtonTone::Neutral
-                                },
-                                !linked_here,
+                                "Attach current session",
+                                ButtonTone::Quiet,
+                                true,
                                 move |_, cx| {
                                     entity.update(cx, |this, cx| {
                                         this.link_active_session(walk, cx);
                                     });
                                 },
-                            )
-                        })
-                    });
+                            ))
+                        }
+                        _ => None,
+                    };
                     let back = entity.clone();
+                    let add_successor = entity.clone();
+                    let leaf = successors.is_empty();
                     div()
                         .flex()
                         .flex_col()
-                        .gap(THEME.space.sm)
+                        .gap(THEME.space.md)
                         .when(narrow, |detail| {
-                            detail.child(button(
+                            detail.child(detail_action(button(
                                 "workgraph-detail-back",
                                 "Back to plan",
                                 ButtonTone::Quiet,
@@ -108,25 +106,50 @@ impl WorkGraphBoardView {
                                 move |_, cx| {
                                     back.update(cx, |this, cx| this.clear_selection(cx));
                                 },
-                            ))
+                            )))
                         })
                         .child(
-                            detail_card()
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .gap(THEME.space.sm)
+                                .child(div().flex().items_center().gap(THEME.space.xs).when(
+                                    current,
+                                    |status| {
+                                        status
+                                            .child(
+                                                div()
+                                                    .size(px(8.0))
+                                                    .rounded_full()
+                                                    .bg(THEME.colors.accent),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(THEME.type_scale.caption)
+                                                    .font_weight(FontWeight::SEMIBOLD)
+                                                    .text_color(THEME.colors.accent)
+                                                    .child("CURRENT"),
+                                            )
+                                    },
+                                ))
                                 .child(
                                     div()
                                         .text_size(THEME.type_scale.caption)
                                         .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(if current {
-                                            THEME.colors.accent
-                                        } else {
-                                            THEME.colors.muted
-                                        })
-                                        .child(if current {
-                                            format!("CURRENT · NODE {}", node.number)
-                                        } else {
-                                            format!("NODE {}", node.number)
-                                        }),
-                                )
+                                        .text_color(THEME.colors.muted)
+                                        .child(format!(
+                                            "NODE {}{}",
+                                            node.number,
+                                            if leaf { " · LEAF" } else { "" }
+                                        )),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(THEME.space.xs)
                                 .child(
                                     div()
                                         .text_size(THEME.type_scale.display)
@@ -141,35 +164,26 @@ impl WorkGraphBoardView {
                                         .child(requirement_label(node.completion)),
                                 ),
                         )
+                        .child(detail_rule())
                         .child(
-                            detail_card()
-                                .child(detail_label("Acceptance"))
-                                .child(
-                                    div()
-                                        .text_size(THEME.type_scale.body_small)
-                                        .line_height(THEME.type_scale.line_body)
-                                        .text_color(if node.acceptance.is_empty() {
-                                            THEME.colors.subtle
-                                        } else {
-                                            THEME.colors.text
-                                        })
-                                        .child(if node.acceptance.is_empty() {
-                                            "No acceptance condition recorded.".to_owned()
-                                        } else {
-                                            node.acceptance.clone()
-                                        }),
-                                ),
+                            detail_section("ACCEPTANCE").child(
+                                detail_copy()
+                                    .text_color(if node.acceptance.is_empty() {
+                                        THEME.colors.subtle
+                                    } else {
+                                        THEME.colors.text
+                                    })
+                                    .child(if node.acceptance.is_empty() {
+                                        "No acceptance condition recorded.".to_owned()
+                                    } else {
+                                        node.acceptance.clone()
+                                    }),
+                            ),
                         )
                         .child(
-                            detail_card()
-                                .child(detail_label("Scoped paths"))
-                                .when(node.files.is_empty(), |card| {
-                                    card.child(
-                                        div()
-                                            .text_size(THEME.type_scale.body_small)
-                                            .text_color(THEME.colors.subtle)
-                                            .child("No paths recorded."),
-                                    )
+                            detail_section("SCOPED PATHS")
+                                .when(node.files.is_empty(), |section| {
+                                    section.child(detail_empty("No paths recorded."))
                                 })
                                 .children(node.files.iter().map(|path| {
                                     div()
@@ -178,50 +192,38 @@ impl WorkGraphBoardView {
                                         .child(path.clone())
                                 })),
                         )
+                        .child(detail_rule())
                         .child(
-                            detail_card()
-                                .child(detail_label("Outcome"))
-                                .when_some(outcome, |card, step| {
-                                    card.child(
-                                        div()
-                                            .text_size(THEME.type_scale.body_small)
-                                            .line_height(THEME.type_scale.line_body)
-                                            .child(step.outcome.note.clone()),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(THEME.type_scale.caption)
-                                            .text_color(THEME.colors.subtle)
-                                            .child(format!(
-                                                "{} · {}",
-                                                evidence_label(step.outcome.evidence.kind),
-                                                step.outcome.evidence.reference
-                                            )),
-                                    )
+                            detail_section("OUTCOME")
+                                .when_some(outcome, |section, step| {
+                                    section
+                                        .child(detail_copy().child(step.outcome.note.clone()))
+                                        .child(
+                                            div()
+                                                .text_size(THEME.type_scale.caption)
+                                                .text_color(THEME.colors.subtle)
+                                                .child(format!(
+                                                    "{} · {}",
+                                                    evidence_label(step.outcome.evidence.kind),
+                                                    step.outcome.evidence.reference
+                                                )),
+                                        )
                                 })
-                                .when(outcome.is_none(), |card| {
-                                    card.child(
-                                        div()
-                                            .text_size(THEME.type_scale.body_small)
-                                            .text_color(THEME.colors.subtle)
-                                            .child(if current {
-                                                "Record one concise outcome to advance."
-                                            } else {
-                                                "This state has not been reached on the active walk."
-                                            }),
-                                    )
+                                .when(outcome.is_none(), |section| {
+                                    section.child(detail_empty(if current {
+                                        "Record one concise outcome to advance."
+                                    } else {
+                                        "This state has not been reached on the active walk."
+                                    }))
                                 }),
                         )
+                        .child(detail_rule())
                         .child(
-                            detail_card()
-                                .child(detail_label("Next states"))
-                                .when(successors.is_empty(), |card| {
-                                    card.child(
-                                        div()
-                                            .text_size(THEME.type_scale.body_small)
-                                            .text_color(THEME.colors.subtle)
-                                            .child("Leaf outcome"),
-                                    )
+                            detail_section("NEXT STATES")
+                                .when(leaf, |section| {
+                                    section.child(detail_empty(
+                                        "Leaf — completing this node ends the branch",
+                                    ))
                                 })
                                 .children(successors.into_iter().map(|successor| {
                                     let number = successor.number;
@@ -240,9 +242,22 @@ impl WorkGraphBoardView {
                                         })
                                         .text_size(THEME.type_scale.body_small)
                                         .child(successor.title)
-                                })),
+                                }))
+                                .child(detail_action(button(
+                                    "workgraph-detail-add-successor",
+                                    "Add successor",
+                                    ButtonTone::Quiet,
+                                    true,
+                                    move |window, cx| {
+                                        add_successor.update(cx, |this, cx| {
+                                            this.start_create(window, cx);
+                                        });
+                                    },
+                                ))),
                         )
-                        .children(session_action)
+                        .when_some(session_action, |detail, action| {
+                            detail.child(detail_action(action))
+                        })
                         .into_any_element()
                 }
                 _ => div()

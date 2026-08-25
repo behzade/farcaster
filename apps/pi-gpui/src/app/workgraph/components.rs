@@ -304,24 +304,35 @@ fn compact_field(label: &'static str, control: impl IntoElement) -> impl IntoEle
         .child(control)
 }
 
-pub(super) fn detail_card() -> Div {
-    div()
-        .p(THEME.space.sm)
-        .rounded(THEME.radius)
-        .border(THEME.border)
-        .border_color(THEME.colors.border)
-        .bg(THEME.colors.canvas)
-        .flex()
-        .flex_col()
-        .gap(THEME.space.sm)
+pub(super) fn detail_section(label: &'static str) -> Div {
+    div().flex().flex_col().gap(THEME.space.xs).child(
+        div()
+            .text_size(THEME.type_scale.caption)
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(THEME.colors.muted)
+            .child(label),
+    )
 }
 
-pub(super) fn detail_label(label: &'static str) -> Div {
+pub(super) fn detail_rule() -> Div {
+    div().h(THEME.border).w_full().bg(THEME.colors.border)
+}
+
+pub(super) fn detail_empty(text: &'static str) -> Div {
     div()
-        .text_size(THEME.type_scale.caption)
-        .font_weight(FontWeight::SEMIBOLD)
-        .text_color(THEME.colors.muted)
-        .child(label)
+        .text_size(THEME.type_scale.body_small)
+        .text_color(THEME.colors.subtle)
+        .child(text)
+}
+
+pub(super) fn detail_action(control: impl IntoElement) -> Div {
+    div().flex().child(control)
+}
+
+pub(super) fn detail_copy() -> Div {
+    div()
+        .text_size(THEME.type_scale.body_small)
+        .line_height(THEME.type_scale.line_body)
 }
 
 pub(super) const fn requirement_label(
