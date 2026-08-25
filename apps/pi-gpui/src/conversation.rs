@@ -662,7 +662,9 @@ impl ConversationState {
         let name = text_field(event, "toolName");
         let args_value = event.get("args");
         let presentation = args_value.and_then(|args| tool_presentation(&name, args));
-        let args = args_value.map(readable_json).unwrap_or_default();
+        let args = args_value
+            .map(|args| format_tool_arguments(&name, args))
+            .unwrap_or_default();
         if let Some(index) = self.items.rposition(|item| {
             item.kind == TranscriptKind::Tool && item.tool_call_id.as_deref() == Some(id.as_str())
         }) {
@@ -1020,8 +1022,39 @@ fn tool_name(value: &Value) -> Option<&str> {
 fn tool_arguments(value: &Value) -> String {
     value
         .get("arguments")
-        .map(readable_json)
-        .unwrap_or_default()
+        .map_or_else(String::new, |arguments| {
+            format_tool_arguments(tool_name(value).unwrap_or_default(), arguments)
+        })
+}
+
+fn format_tool_arguments(name: &str, arguments: &Value) -> String {
+    if name == "request_user_input"
+        && let Some(script) = arguments.get("script").and_then(Value::as_str)
+        && !script.is_empty()
+    {
+        let question = arguments
+            .get("question")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim();
+        return if question.is_empty() {
+            format!("{COMMAND_BLOCK_PREFIX}{script}")
+        } else {
+            format!("{question}\n\n{COMMAND_BLOCK_PREFIX}{script}")
+        };
+    }
+    readable_json(arguments)
+}
+
+const COMMAND_BLOCK_MARKER: &str = "\n\nCommand:\n";
+const COMMAND_BLOCK_PREFIX: &str = "Command:\n";
+
+pub(crate) fn split_command_block(text: &str) -> Option<(&str, &str)> {
+    if let Some(index) = text.rfind(COMMAND_BLOCK_MARKER) {
+        return Some((&text[..index], &text[index + COMMAND_BLOCK_MARKER.len()..]));
+    }
+    text.strip_prefix(COMMAND_BLOCK_PREFIX)
+        .map(|command| ("", command))
 }
 
 fn tool_presentation(name: &str, arguments: &Value) -> Option<ToolPresentation> {

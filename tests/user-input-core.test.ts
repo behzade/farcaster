@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { executeHostScript } from "../extensions/lib/user-input-core.ts";
+import { executeHostScript, formatHostScriptPrompt } from "../extensions/lib/user-input-core.ts";
 
 test("host script execution returns success output and runs exactly once", async () => {
   const calls: Array<{ command: string; cwd: string }> = [];
@@ -61,4 +61,24 @@ test("host script output is bounded while retaining the tail", async () => {
   assert.equal(result.status, "success");
   assert.equal(result.truncated, true);
   assert.equal(result.output, "[output truncated to last 8 bytes]\nefghijkl");
+});
+
+test("host script confirm copy keeps the command after the reason", () => {
+  const message = formatHostScriptPrompt(
+    "Need sudo to install docker",
+    "/project",
+    "sudo apt install docker",
+  );
+
+  assert.equal(
+    message,
+    [
+      "Need sudo to install docker",
+      "",
+      "Working directory: /project",
+      "",
+      "Command:",
+      "sudo apt install docker",
+    ].join("\n"),
+  );
 });

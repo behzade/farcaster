@@ -5,7 +5,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
 import { type Static, Type } from "typebox";
-import { executeHostScript } from "./lib/user-input-core.ts";
+import { executeHostScript, formatHostScriptPrompt } from "./lib/user-input-core.ts";
 
 const Params = Type.Union([
   Type.Object({
@@ -52,7 +52,7 @@ export default function (pi: ExtensionAPI) {
       yield* Effect.tryPromise({
         try: (signal) => ctx.ui.confirm(
           "Run outside sandbox?",
-          `${params.question}\n\nWorking directory: ${ctx.cwd}\n\n${params.script}`,
+          formatHostScriptPrompt(params.question, ctx.cwd, params.script),
           { signal },
         ),
         catch: (cause) => cause,

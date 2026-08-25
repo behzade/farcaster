@@ -469,7 +469,7 @@ fn role_label(title: &str) -> String {
 }
 
 fn tool_target(arguments: &Value) -> String {
-    for key in ["path", "command", "query", "pattern", "action"] {
+    for key in ["path", "command", "script", "query", "pattern", "action"] {
         if let Some(value) = arguments.get(key).and_then(Value::as_str)
             && !value.is_empty()
         {

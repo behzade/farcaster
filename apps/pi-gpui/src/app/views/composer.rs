@@ -15,7 +15,7 @@ use super::super::{
 use crate::{
     app::file_mentions::MentionQuery,
     composer_sessions::ComposerSnapshot,
-    conversation::QueueState,
+    conversation::{self, QueueState},
     primitives::{ButtonTone, button},
     protocol::ExtensionUiRequest,
     theme::{MONO_FONT_FAMILY, THEME},
@@ -352,16 +352,31 @@ impl PiApp {
                 let no_id = id.clone();
                 let yes = entity.clone();
                 let no = entity.clone();
+                let (reason, command) = conversation::split_command_block(message)
+                    .map_or((message.as_str(), None), |(reason, command)| {
+                        (reason, Some(command))
+                    });
                 (
                     SharedString::from(title.clone()),
                     div()
                         .flex()
                         .flex_col()
                         .gap(THEME.space.md)
-                        .child(selectable_dialog_text(
-                            "dialog-confirm-message",
-                            message.clone(),
-                        ))
+                        .when(!reason.is_empty(), |body| {
+                            body.child(
+                                selectable_dialog_text("dialog-confirm-message", reason)
+                                    .text_size(THEME.type_scale.body)
+                                    .text_color(THEME.colors.muted),
+                            )
+                        })
+                        .when_some(command, |body, command| {
+                            body.child(
+                                selectable_dialog_text("dialog-confirm-command", command)
+                                    .font_family(MONO_FONT_FAMILY)
+                                    .text_size(THEME.type_scale.body_small)
+                                    .text_color(THEME.colors.text),
+                            )
+                        })
                         .child(
                             div()
                                 .flex()

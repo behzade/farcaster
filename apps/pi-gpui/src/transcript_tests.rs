@@ -528,3 +528,11 @@ fn targets_use_the_first_readable_argument_value() {
     assert_eq!(tool_target("Path: src/main.rs\nOffset: 2"), "src/main.rs");
     assert_eq!(tool_target(""), "");
 }
+
+#[test]
+fn host_script_targets_prefer_the_command_over_the_reason() {
+    assert_eq!(
+        tool_target("Need sudo to install docker\n\nCommand:\nsudo apt install docker"),
+        "sudo apt install docker"
+    );
+}

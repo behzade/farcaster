@@ -524,6 +524,40 @@ fn tool_arguments_are_readable_fields_instead_of_raw_json() {
 }
 
 #[test]
+fn host_script_arguments_put_the_command_after_the_reason() {
+    let mut state = ConversationState::default();
+    state.replace_history(&[json!({
+        "role":"assistant",
+        "content":[{
+            "type":"toolCall",
+            "id":"a",
+            "name":"request_user_input",
+            "arguments":{
+                "question":"Need sudo to install docker",
+                "script":"sudo apt install docker"
+            }
+        }]
+    })]);
+    assert_eq!(
+        state.items[0].text,
+        "Need sudo to install docker\n\nCommand:\nsudo apt install docker"
+    );
+    assert_eq!(
+        split_command_block(&state.items[0].text),
+        Some(("Need sudo to install docker", "sudo apt install docker"))
+    );
+    assert_eq!(
+        split_command_block(
+            "Need sudo\n\nWorking directory: /project\n\nCommand:\nsudo apt install docker",
+        ),
+        Some((
+            "Need sudo\n\nWorking directory: /project",
+            "sudo apt install docker"
+        ))
+    );
+}
+
+#[test]
 fn queue_retry_compaction_and_settlement_project_correctly() {
     let mut state = ConversationState::default();
     state.reduce(&json!({"type":"agent_start"}));

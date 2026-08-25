@@ -1,4 +1,5 @@
 const HOST_SCRIPT_MAX_OUTPUT_BYTES = 64 * 1024;
+const HOST_SCRIPT_COMMAND_HEADING = "Command:";
 
 export interface HostScriptResult {
   status: "success" | "failure";
@@ -12,6 +13,12 @@ interface HostScriptOperations {
     onData: (data: Buffer) => void;
     signal?: AbortSignal;
   }): Promise<{ exitCode: number | null }>;
+}
+
+export function formatHostScriptPrompt(question: string, cwd: string, script: string): string {
+  const reason = question.trim();
+  const body = `Working directory: ${cwd}\n\n${HOST_SCRIPT_COMMAND_HEADING}\n${script}`;
+  return reason.length > 0 ? `${reason}\n\n${body}` : body;
 }
 
 export async function executeHostScript(

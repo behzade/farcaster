@@ -18,7 +18,7 @@ use gpui_component::{
 
 use crate::{
     app::PiApp,
-    conversation::{TranscriptItem, TranscriptKind},
+    conversation::{self, TranscriptItem, TranscriptKind},
     persistent_vec::{Indexed, PersistentVec},
     primitives::{ButtonTone, button, disclosure_button, disclosure_indicator},
     theme::{MONO_FONT_FAMILY, THEME},
@@ -1780,15 +1780,17 @@ fn fenced_text(text: &str) -> String {
 }
 
 fn tool_target(arguments: &str) -> String {
-    let first = arguments.lines().next().unwrap_or_default();
-    first
-        .split_once(':')
-        .map(|(_, value)| value.trim())
-        .filter(|value| !value.is_empty())
-        .unwrap_or(first)
-        .chars()
-        .take(96)
-        .collect()
+    let first = if let Some((_, command)) = conversation::split_command_block(arguments) {
+        command.lines().next().unwrap_or_default().trim()
+    } else {
+        let first = arguments.lines().next().unwrap_or_default();
+        first
+            .split_once(':')
+            .map(|(_, value)| value.trim())
+            .filter(|value| !value.is_empty())
+            .unwrap_or(first)
+    };
+    first.chars().take(96).collect()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
