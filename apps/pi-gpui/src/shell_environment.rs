@@ -1,6 +1,5 @@
 //! Login-shell environment import for app and project processes.
 
-#[cfg(target_os = "linux")]
 use std::io::Write as _;
 
 use std::{
@@ -153,9 +152,7 @@ fn capture_login_shell_environment(shell: &Path, project: &Path) -> Result<Envir
     let child = command
         .spawn()
         .map_err(|error| format!("start login shell {} in terminal: {error}", shell.display()))?;
-    #[cfg(target_os = "linux")]
     let mut child = child;
-    #[cfg(target_os = "linux")]
     let _input = {
         let mut input = child
             .stdin
@@ -186,7 +183,7 @@ fn script_command(shell: &Path) -> Result<Command, String> {
     command
         .args(["-q", "/dev/null"])
         .arg(shell)
-        .args(["-l", "-i", "-c", CAPTURE_COMMAND]);
+        .args(["-l", "-i"]);
     Ok(command)
 }
 
@@ -306,13 +303,6 @@ mod tests {
     fn capture_runs_a_real_interactive_login_shell() -> TestResult {
         let temp = tempdir()?;
         let shell = temp.path().join("shell");
-        #[cfg(target_os = "macos")]
-        let run_capture = r#"
-test "$3" = "-c"
-test "$#" = "4"
-exec /bin/sh -c "$4"
-"#;
-        #[cfg(target_os = "linux")]
         let run_capture = r#"
 test "$#" = "2"
 exec /bin/sh
@@ -355,6 +345,40 @@ printf 'prompt hook output before environment\n'
             .map(|(_, value)| PathBuf::from(value))
             .ok_or("PROJECT_VALUE was not captured")?;
         assert_eq!(fs::canonicalize(project)?, fs::canonicalize(temp.path())?);
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn capture_includes_environment_loaded_by_first_interactive_prompt() -> TestResult {
+        let temp = tempdir()?;
+        let shell = temp.path().join("shell");
+        let shell_script = r#"#!/bin/sh
+set -eu
+test "$1" = "-l"
+test "$2" = "-i"
+test -t 0
+test -t 1
+shift 2
+if test "$#" -gt 0; then
+    test "$1" = "-c"
+    exec /bin/sh -c "$2"
+fi
+# Simulate environment loaded by fish_prompt, precmd, or PROMPT_COMMAND.
+export FIRST_PROMPT_VALUE=loaded
+exec /bin/sh
+"#;
+        fs::write(&shell, shell_script)?;
+        let mut permissions = fs::metadata(&shell)?.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&shell, permissions)?;
+
+        let environment = capture_login_shell_environment(&shell, temp.path())?;
+        assert!(
+            environment
+                .iter()
+                .any(|(name, value)| { name == "FIRST_PROMPT_VALUE" && value == "loaded" })
+        );
         Ok(())
     }
 
