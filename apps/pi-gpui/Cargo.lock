@@ -2476,17 +2476,26 @@ dependencies = [
 
 [[package]]
 name = "gpui-libghostty"
-version = "0.1.3"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb879c5f5b6219eaabe74fddbd095e400245887035bce60f01a3577f187128b1"
+checksum = "7585484bdab52b9d47624c808ccd89f787309b6d958620302367ac86d7a4afb4"
 dependencies = [
+ "async-channel",
  "gpui",
+ "khronos-egl",
+ "libc",
+ "libloading",
  "raw-window-handle",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
 ]
 
 [[package]]
 name = "gpui-neovim"
-version = "0.1.0"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edba9b9adbb3889317b490f986dc7020c540bbed0f9c2fbf1e2e89f6f7d7a0ad"
 dependencies = [
  "gpui",
  "gpui-libghostty",

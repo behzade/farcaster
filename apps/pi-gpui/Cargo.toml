@@ -14,8 +14,8 @@ gpui-base = { git = "https://github.com/longbridge/gpui-component", rev = "bd833
 gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "bd833291311289f3468479d31b629d3de279d3d4" }
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "bd833291311289f3468479d31b629d3de279d3d4" }
 gpui-fps = { git = "https://github.com/longbridge/gpui-component", rev = "bd833291311289f3468479d31b629d3de279d3d4" }
-gpui-libghostty = "0.1.3"
-gpui-neovim = "0.1.0"
+gpui-libghostty = "0.1.4"
+gpui-neovim = "0.1.1"
 gpui_platform = { path = "third_party/zed-gpui-cc053a4/crates/gpui_platform", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
 notify = "7.0.0"
 rusqlite = { version = "0.37.0", features = ["bundled"] }
@@ -40,7 +40,6 @@ harness = false
 
 [patch.crates-io]
 gpui = { path = "third_party/zed-gpui-cc053a4/crates/gpui" }
-gpui-neovim = { path = "third_party/gpui-neovim-0.1.0" }
 
 [patch."https://github.com/zed-industries/zed"]
 collections = { path = "third_party/zed-gpui-cc053a4/crates/collections" }

@@ -55,11 +55,11 @@ GPL-3.0-or-later licensing. Exact upstream license texts and detailed source
 provenance are included in that directory as `LICENSE-APACHE`, `LICENSE-GPL`,
 and `README.md`.
 
-The locally patched `gpui-neovim` dependency derives from release `0.1.0`, and
-`gpui-libghostty` uses release `0.1.2`, from
-<https://github.com/behzade/gpui-libghostty>. The patched Neovim source is under
-`third_party/gpui-neovim-0.1.0`; it and the pinned Ghostty source are distributed
-under MIT, with exact licenses and provenance retained in that repository.
+The `gpui-neovim` and `gpui-libghostty` dependencies use crates.io releases
+`0.1.1` and `0.1.4`, respectively, from
+<https://github.com/behzade/gpui-libghostty>. They and the pinned Ghostty source
+are distributed under MIT, with exact licenses and provenance retained in that
+repository.
 
 Application icons copied from Phosphor Icons are distributed under MIT. The
 exact upstream license is included at
