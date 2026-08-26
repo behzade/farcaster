@@ -110,11 +110,7 @@ pub(crate) fn run(project: PathBuf) -> Result<(), LaunchError> {
                     let _ = cx.update_window(window, |_, window, _| window.activate_window());
                 }
             });
-            cx.bind_keys(
-                keybindings::registry()
-                    .into_iter()
-                    .map(|entry| entry.binding),
-            );
+            cx.bind_keys(keybindings::bindings());
             cx.on_window_closed(|cx, _| {
                 if cx.windows().is_empty() {
                     cx.quit();

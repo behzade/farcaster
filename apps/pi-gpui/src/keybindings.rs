@@ -12,7 +12,7 @@ use crate::app::{
 use crate::app::{WORKGRAPH_KEY_CONTEXT, WORKGRAPH_NAV_KEY_CONTEXT};
 use crate::keyboard::CopySelection;
 use crate::transcript_list::TRANSCRIPT_SELECTION_KEY_CONTEXT;
-use gpui::KeyBinding;
+use gpui::{KeyBinding, Unbind};
 use gpui_base::actions::{SelectDown, SelectUp};
 
 pub(crate) struct Shortcut {
@@ -35,8 +35,19 @@ macro_rules! shortcut {
     };
 }
 
-/// Returns the complete application shortcut registry. The same entries install
-/// the bindings and render the help modal, so a binding cannot omit its help row.
+/// Returns application shortcuts plus overrides for dependency-owned defaults.
+pub(crate) fn bindings() -> Vec<KeyBinding> {
+    registry()
+        .into_iter()
+        .map(|shortcut| shortcut.binding)
+        .chain([
+            KeyBinding::new("tab", Unbind("root::Tab".into()), Some("Root")),
+            KeyBinding::new("shift-tab", Unbind("root::TabPrev".into()), Some("Root")),
+        ])
+        .collect()
+}
+
+/// Returns the user-facing shortcut registry used by keyboard help.
 pub(crate) fn registry() -> Vec<Shortcut> {
     vec![
         shortcut!("Sessions", "Open session 1", "cmd-1", SwitchSession1, None),
@@ -244,7 +255,26 @@ pub(crate) fn registry() -> Vec<Shortcut> {
 
 #[cfg(test)]
 mod tests {
-    use super::registry;
+    use super::{bindings, registry};
+
+    #[test]
+    fn root_focus_traversal_is_unbound() {
+        let bindings = bindings();
+        let root_context = gpui::KeyBindingContextPredicate::parse("Root").expect("root context");
+        for (keystroke, target) in [("tab", "root::Tab"), ("shift-tab", "root::TabPrev")] {
+            assert!(bindings.iter().any(|binding| {
+                binding
+                    .action()
+                    .as_any()
+                    .downcast_ref::<gpui::Unbind>()
+                    .is_some_and(|unbind| unbind.0.as_ref() == target)
+                    && binding.match_keystrokes(&[
+                        gpui::Keystroke::parse(keystroke).expect("test keystroke")
+                    ]) == Some(false)
+                    && binding.predicate().as_deref() == Some(&root_context)
+            }));
+        }
+    }
 
     #[test]
     fn copy_shortcuts_route_through_the_application_command() {
