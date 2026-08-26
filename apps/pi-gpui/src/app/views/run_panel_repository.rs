@@ -380,6 +380,7 @@ fn repository_sync_row(
             };
             row.child(
                 div()
+                    .id("repository-syncing-status")
                     .role(Role::Status)
                     .aria_label(label)
                     .size(THEME.controls.icon_button)
