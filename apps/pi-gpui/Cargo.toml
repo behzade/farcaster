@@ -12,7 +12,7 @@ base64 = "0.22.1"
 gpui = { path = "third_party/zed-gpui-cc053a4/crates/gpui", features = ["profiler"] }
 gpui-base = { path = "third_party/gpui-component-bd83329/base" }
 gpui-component = { path = "third_party/gpui-component-bd83329/ui" }
-gpui-libghostty = "0.1.7"
+gpui-libghostty = "0.1.8"
 gpui-neovim = "0.1.1"
 gpui_platform = { path = "third_party/zed-gpui-cc053a4/crates/gpui_platform", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
 notify = "7.0.0"
