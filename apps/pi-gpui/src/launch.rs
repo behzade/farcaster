@@ -77,9 +77,23 @@ pub(crate) fn run(project: PathBuf) -> Result<(), LaunchError> {
                 return;
             }
             install_component_theme(cx);
-            cx.on_action(quit);
             let notification_app: Rc<RefCell<Option<WeakEntity<PiApp>>>> =
                 Rc::new(RefCell::new(None));
+            let quit_app = notification_app.clone();
+            cx.on_action(move |_: &QuitApplication, cx| {
+                let Some(app) = quit_app.borrow().clone() else {
+                    cx.quit();
+                    return;
+                };
+                if app
+                    .update_in(cx, |app, window, cx| {
+                        app.request_application_quit(window, cx)
+                    })
+                    .is_err()
+                {
+                    cx.quit();
+                }
+            });
             let response_app = notification_app.clone();
             cx.on_system_notification_response(move |response, cx| {
                 cx.activate(true);
@@ -275,10 +289,6 @@ fn capture_window_placement(window: &Window, cx: &App) -> WindowPlacement {
             WindowBounds::Fullscreen(_) => WindowState::Fullscreen,
         },
     }
-}
-
-fn quit(_: &QuitApplication, cx: &mut App) {
-    cx.quit();
 }
 
 #[cfg(test)]

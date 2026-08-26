@@ -10,6 +10,7 @@ mod editor;
 mod expiries;
 mod file_mentions;
 mod picker;
+mod quit;
 mod region_state;
 mod repository;
 mod session_titles;
