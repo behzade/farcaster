@@ -46,6 +46,17 @@ export function summarizeRuns(runs: readonly RunSnapshot[]): string {
 	}).join("\n");
 }
 
+export function completionResults(runs: readonly RunSnapshot[]): string {
+	return runs.map((run) => {
+		const body = run.output ?? run.error ?? "Subagent finished without text.";
+		return `Subagent ${run.id} (${run.status}) returned:\n${body}`;
+	}).join("\n\n");
+}
+
+export function completionReprompt(runs: readonly RunSnapshot[]): string {
+	return `${completionResults(runs)}\n\nContinue the interrupted task now. Use the result above, take any appropriate next actions, and provide a user-visible response before ending your turn.`;
+}
+
 function startRequest(
 	params: {
 		prompt: string;
@@ -68,8 +79,10 @@ function startRequest(
 
 export default function subagentsExtension(pi: ExtensionAPI) {
 	pi.registerMessageRenderer("subagent-result", (message, { expanded, outputPad }, theme) => {
-		if (expanded) return new Text(message.content, outputPad, 0);
 		const runs = (message.details as { runs?: RunSnapshot[] } | undefined)?.runs ?? [];
+		if (expanded) {
+			return new Text(runs.length > 0 ? completionResults(runs) : message.content, outputPad, 0);
+		}
 		let text = runs.length > 0 ? summarizeRuns(runs) : "Subagent finished.";
 		text += theme.fg("dim", `\n${keyHint("app.tools.expand", "to expand")}`);
 		return new Text(text, outputPad, 0);
@@ -82,10 +95,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		const batch = settled;
 		settled = [];
 		if (batch.length === 0) return;
-		const content = batch.map((run) => {
-			const body = run.output ?? run.error ?? "Subagent finished without text.";
-			return `Subagent ${run.id} (${run.status}) returned:\n${body}`;
-		}).join("\n\n");
+		const content = completionReprompt(batch);
 		pi.sendMessage({
 			customType: "subagent-result",
 			content,

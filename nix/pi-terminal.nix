@@ -16,6 +16,11 @@ let
       os = "darwin";
       hash = "sha256-JO86+OIg2/JaWL7TmYMnvfNgU8eSnLJwHZVIFHzyr0k=";
     };
+    aarch64-linux = {
+      cpu = "arm64";
+      os = "linux";
+      hash = lib.fakeHash;
+    };
     x86_64-linux = {
       cpu = "x64";
       os = "linux";

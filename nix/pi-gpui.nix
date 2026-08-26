@@ -7,6 +7,7 @@
   piTerminal,
   pkg-config,
   rustPlatform,
+  sqlite,
   stdenv,
   alsa-lib,
   at-spi2-atk,
@@ -93,6 +94,7 @@ let
       "git+https://github.com/zed-industries/xim-rs.git?rev=16f35a2c881b815a2b6cdfd6687988e84f8447d8#16f35a2c881b815a2b6cdfd6687988e84f8447d8" =
         "sha256-pRT4Sz1JU9ros47/7pmIW9kosWOGMOItcnNd+VrvnpE=";
     };
+    LIBSQLITE3_SYS_USE_PKG_CONFIG = "1";
     strictDeps = true;
 
     nativeBuildInputs = [
@@ -104,7 +106,7 @@ let
       util-linux
     ];
 
-    buildInputs = lib.optionals stdenv.hostPlatform.isLinux [
+    buildInputs = [ sqlite ] ++ lib.optionals stdenv.hostPlatform.isLinux [
       alsa-lib
       at-spi2-atk
       cairo
