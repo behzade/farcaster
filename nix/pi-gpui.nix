@@ -145,6 +145,14 @@ let
     // {
       inherit dummySrc;
     }
+    # gpui-libghostty's Zig build fetches content-addressed Ghostty packages.
+    # Pin the complete ARM dependency artifact so that this one fixed-output
+    # build may fetch them while the final pi-gpui build remains offline.
+    // lib.optionalAttrs (stdenv.hostPlatform.system == "aarch64-linux") {
+      outputHashAlgo = "sha256";
+      outputHashMode = "recursive";
+      outputHash = lib.fakeHash;
+    }
   );
 in
 craneLib.buildPackage (
