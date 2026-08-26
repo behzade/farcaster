@@ -468,17 +468,18 @@ Use a restrained terminal-console treatment built from three edge-to-edge bands:
 │ Ask Pi                                                                │
 │                                                                       │
 ├───────────────────────────────────────────────────────────────────────┤
-│ PROVIDER        MODEL                 EFFORT                Abort/Send │
-│ openai-codex    GPT-5.6 Sol           High                            │
+│ PROVIDER        MODEL           EFFORT      PERMISSION      Abort/Send │
+│ openai-codex    GPT-5.6 Sol     High        Sandboxed                  │
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
 Rules:
 
 - The status strip shows semantic state, project, compact session ID, and user-turn count from real runtime data.
-- Do not invent memory, sandbox, or lock metadata that the runtime does not expose.
+- Do not invent memory or lock metadata that the runtime does not expose.
+- Permission is Sandboxed or Full access and restarts the live Pi process with or without `--no-sandbox`.
 - The input body is the dominant region and keeps the existing textarea behavior and `Ask Pi` placeholder.
-- Provider, model, and effort are vertically labeled cells with their existing keyboard-accessible dropdown behavior.
+- Provider, model, effort, and permission are keyboard-accessible dropdowns.
 - Keep Abort and Send/Steer at the far right; Abort uses the existing Phosphor stop icon and danger color.
 - Use the theme's system font for labels and Lilex for technical metadata, input, and selected values.
 - Preserve queues, extension widgets and status, attachments, slash commands, file mentions, image paste, history, and submission behavior.

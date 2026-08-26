@@ -21,6 +21,7 @@ use crate::{
 pub(crate) struct ProcessCommand {
     pub program: PathBuf,
     pub prefix_args: Vec<String>,
+    pub sandbox_disabled: bool,
 }
 
 impl Default for ProcessCommand {
@@ -28,6 +29,7 @@ impl Default for ProcessCommand {
         Self {
             program: pi_program(std::env::var_os("PI_GUI_PI_PATH")),
             prefix_args: Vec::new(),
+            sandbox_disabled: false,
         }
     }
 }
@@ -41,12 +43,16 @@ impl ProcessCommand {
         Self {
             program: PathBuf::from("sh"),
             prefix_args,
+            sandbox_disabled: false,
         }
     }
 
     pub(crate) fn command(&self, project: &Path) -> Result<Command, String> {
         let mut process = Command::new(&self.program);
         process.args(&self.prefix_args).current_dir(project);
+        if self.sandbox_disabled {
+            process.arg("--no-sandbox");
+        }
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(environment) = crate::shell_environment::project_shell_environment(project)? {
             process.env_clear().envs(environment);

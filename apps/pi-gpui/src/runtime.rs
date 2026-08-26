@@ -2,9 +2,12 @@
 
 mod catalog;
 mod documents;
+mod permission_level;
 mod prompts;
 mod session_controls;
 mod session_identity;
+
+pub(crate) use permission_level::PermissionLevel;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -101,6 +104,7 @@ pub(crate) enum RuntimeCommand {
     },
     Login(Option<String>),
     SetThinking(String),
+    SetPermissionLevel(PermissionLevel),
     ExtensionResponse(ExtensionUiResponse),
     DeliverQueued(crate::state::QueuedPrompt),
     SetSessionCategory {
@@ -189,6 +193,7 @@ pub(crate) struct RuntimeSnapshot {
     pub commands: Vec<SlashCommand>,
     pub stderr: String,
     pub auto_retry: bool,
+    pub permission_level: PermissionLevel,
     pub history_preview: bool,
     pub pending_question: Option<ExtensionUiRequest>,
     pub transcript_changed_from: Option<usize>,
@@ -1656,6 +1661,7 @@ impl RuntimeOwner {
                 }
             }
             RuntimeCommand::SetThinking(level) => self.set_thinking(level),
+            RuntimeCommand::SetPermissionLevel(level) => self.set_permission_level(level),
             RuntimeCommand::ExtensionResponse(response) => {
                 if let Some(process) = self.process.as_mut()
                     && let Err(error) = process.send_extension_response(response)
@@ -2328,6 +2334,8 @@ impl RuntimeOwner {
 
     fn publish(&mut self) {
         crate::performance::count_snapshot();
+        self.snapshot.permission_level =
+            PermissionLevel::from_sandbox_disabled(self.process_command.sandbox_disabled);
         conversation_mut(self.active_snapshot_mut()).flush_live_projection();
         let active_snapshot = self.active_snapshot();
         let mut snapshot = self.snapshot.clone();
@@ -2600,6 +2608,7 @@ mod tests {
                 process_command: ProcessCommand {
                     program: PathBuf::from("/definitely/missing/pi-gpui-test-command"),
                     prefix_args: Vec::new(),
+                    sandbox_disabled: false,
                 },
                 process: None,
                 login_process_only: false,
@@ -2647,6 +2656,27 @@ mod tests {
             "timestamp": 1
         })]);
         owner.parked_snapshot = Some(RuntimeSnapshot::default());
+    }
+
+    #[test]
+    fn permission_level_restarts_with_the_sandbox_flag() {
+        let (mut owner, _events, _discovery) = owner_without_process(std::env::temp_dir());
+        owner.snapshot.selected_session = Some(PathBuf::from("/session.jsonl"));
+        let generation = owner.process_generation;
+
+        owner.apply_command(RuntimeCommand::SetPermissionLevel(
+            PermissionLevel::Sandboxed,
+        ));
+        assert_eq!(owner.process_generation, generation);
+        assert!(!owner.process_command.sandbox_disabled);
+        assert_eq!(owner.snapshot.permission_level, PermissionLevel::Sandboxed);
+
+        owner.apply_command(RuntimeCommand::SetPermissionLevel(
+            PermissionLevel::FullAccess,
+        ));
+        assert!(owner.process_generation > generation);
+        assert!(owner.process_command.sandbox_disabled);
+        assert_eq!(owner.snapshot.permission_level, PermissionLevel::FullAccess);
     }
 
     #[test]
@@ -4002,6 +4032,7 @@ mod tests {
         owner.process_command = ProcessCommand {
             program: PathBuf::from("/definitely/missing/pi-gpui-test-command"),
             prefix_args: Vec::new(),
+            sandbox_disabled: false,
         };
         preview_history(&mut owner, session.clone(), "keep this history");
 
@@ -4032,6 +4063,7 @@ mod tests {
             process_command: ProcessCommand {
                 program: PathBuf::from("/definitely/missing/pi-gpui-test-command"),
                 prefix_args: Vec::new(),
+                sandbox_disabled: false,
             },
             process: None,
             login_process_only: false,
@@ -4130,6 +4162,7 @@ mod tests {
         owner.process_command = ProcessCommand {
             program: PathBuf::from("/definitely/missing/pi-gpui-test-command"),
             prefix_args: Vec::new(),
+            sandbox_disabled: false,
         };
         owner.state = Some(StateStore::open_at(&database)?);
 

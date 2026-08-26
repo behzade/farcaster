@@ -1,4 +1,4 @@
-//! Provider, model, and effort selectors for the composer footer.
+//! Provider, model, effort, and permission selectors for the composer footer.
 
 use gpui::{
     Anchor, AnyElement, IntoElement as _, ParentElement as _, Styled as _, WeakEntity, div,
@@ -8,6 +8,7 @@ use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
 use super::{super::PiApp, composer_footer::separator};
 use crate::{
     primitives::{ButtonTone, dropdown_button},
+    runtime::PermissionLevel,
     theme::{MONO_FONT_FAMILY, THEME},
 };
 
@@ -113,7 +114,9 @@ pub(super) fn render(app: &PiApp, entity: WeakEntity<PiApp>) -> AnyElement {
         .child(separator())
         .child(model)
         .child(separator())
-        .child(effort_selector(effort, &efforts, entity))
+        .child(effort_selector(effort, &efforts, entity.clone()))
+        .child(separator())
+        .child(permission_selector(app.snapshot.permission_level, entity))
         .into_any_element()
 }
 
@@ -169,4 +172,34 @@ fn effort_label(level: &str) -> String {
         Some(first) => first.to_uppercase().chain(characters).collect(),
         None => "Off".into(),
     }
+}
+
+fn permission_selector(selected: PermissionLevel, entity: WeakEntity<PiApp>) -> AnyElement {
+    dropdown_button(
+        "select-permission",
+        selected.label(),
+        ButtonTone::Quiet,
+        true,
+    )
+    .flex_none()
+    .font_family(MONO_FONT_FAMILY)
+    .text_color(match selected {
+        PermissionLevel::Sandboxed => THEME.colors.success,
+        PermissionLevel::FullAccess => THEME.colors.warning,
+    })
+    .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+        let mut menu = menu
+            .max_h(THEME.layout.dialog_max_height)
+            .label("Permission");
+        for level in PermissionLevel::all() {
+            let entity = entity.clone();
+            menu = menu.item(PopupMenuItem::new(level.label()).on_click(move |_, _, cx| {
+                let _ = entity.update(cx, |this, cx| {
+                    this.set_permission_level(level, cx);
+                });
+            }));
+        }
+        menu
+    })
+    .into_any_element()
 }

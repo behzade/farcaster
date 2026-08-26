@@ -1794,6 +1794,15 @@ impl PiApp {
         self.send(RuntimeCommand::SetThinking(level));
         cx.notify();
     }
+
+    fn set_permission_level(
+        &mut self,
+        level: crate::runtime::PermissionLevel,
+        cx: &mut Context<Self>,
+    ) {
+        self.send(RuntimeCommand::SetPermissionLevel(level));
+        cx.notify();
+    }
 }
 
 fn transcript_follow_state_needs_update(current: bool, unseen: usize, following: bool) -> bool {
