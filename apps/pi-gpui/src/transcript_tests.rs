@@ -387,6 +387,27 @@ fn markdown_row_height_estimates_reflect_wrapping_and_physical_lines() {
 }
 
 #[test]
+fn thinking_rows_have_details_only_when_body_exceeds_the_title() {
+    let single = item(TranscriptKind::Thinking, "", "one line");
+    let trailing = item(TranscriptKind::Thinking, "", "one line\n");
+    let empty = item(TranscriptKind::Thinking, "", "");
+    let multiline = item(TranscriptKind::Thinking, "", "first line\nmore");
+    let mut continued = item(TranscriptKind::Thinking, "", " world");
+    Arc::make_mut(&mut continued).stream_chunks = Arc::new(vec!["hello".into()]);
+    let mut whitespace_tail = item(TranscriptKind::Thinking, "", "   ");
+    Arc::make_mut(&mut whitespace_tail).stream_chunks = Arc::new(vec!["hello".into()]);
+
+    assert!(!thinking_has_details(&single));
+    assert!(!thinking_has_details(&trailing));
+    assert!(!thinking_has_details(&empty));
+    assert!(!thinking_has_details(&whitespace_tail));
+    assert!(thinking_has_details(&multiline));
+    assert!(thinking_has_details(&continued));
+    assert_eq!(thinking_preview(&single), "one line");
+    assert_eq!(thinking_preview(&empty), "Thinking…");
+}
+
+#[test]
 fn agent_results_are_collapsed_by_default() {
     let result = item(
         TranscriptKind::AgentResult,

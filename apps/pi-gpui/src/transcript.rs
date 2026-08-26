@@ -1434,26 +1434,51 @@ fn message_role(label: &'static str, user: bool) -> impl gpui::IntoElement {
         .child(label)
 }
 
+fn thinking_source(item: &TranscriptItem) -> &str {
+    item.stream_chunks
+        .first()
+        .map_or(item.text.as_str(), |chunk| chunk.as_ref())
+}
+
+fn thinking_preview(item: &TranscriptItem) -> &str {
+    thinking_source(item).lines().next().unwrap_or("Thinking…")
+}
+
+fn thinking_has_non_whitespace(text: &str) -> bool {
+    text.chars().any(|character| !character.is_whitespace())
+}
+
+fn thinking_has_details(item: &TranscriptItem) -> bool {
+    if thinking_source(item)
+        .split_once('\n')
+        .is_some_and(|(_, rest)| thinking_has_non_whitespace(rest))
+    {
+        return true;
+    }
+    !item.stream_chunks.is_empty()
+        && (item
+            .stream_chunks
+            .iter()
+            .skip(1)
+            .any(|chunk| thinking_has_non_whitespace(chunk))
+            || thinking_has_non_whitespace(&item.text))
+}
+
 fn render_thinking(
     key: usize,
     item: &TranscriptItem,
     expanded: bool,
     entity: WeakEntity<PiApp>,
 ) -> AnyElement {
-    let body = if expanded {
+    let has_details = thinking_has_details(item);
+    let body = if expanded && has_details {
         let _timing = crate::performance::OperationTiming::new(
             crate::performance::OperationKind::ThinkingAssembly,
             item.stream_chunks.len(),
         );
         item.complete_text()
     } else {
-        item.stream_chunks
-            .first()
-            .map_or(item.text.as_str(), |chunk| chunk.as_ref())
-            .lines()
-            .next()
-            .unwrap_or("Thinking…")
-            .to_owned()
+        thinking_preview(item).to_owned()
     };
     div()
         .id(("thinking-row", key))
@@ -1463,13 +1488,15 @@ fn render_thinking(
         .gap(THEME.space.xs)
         .px(THEME.space.md)
         .py(px(2.0))
-        .child(transcript_disclosure_button(
-            ("thinking-toggle", key),
-            expanded,
-            "thinking details".into(),
-            key,
-            entity,
-        ))
+        .when(has_details, |row| {
+            row.child(transcript_disclosure_button(
+                ("thinking-toggle", key),
+                expanded,
+                "thinking details".into(),
+                key,
+                entity,
+            ))
+        })
         .child(
             selectable_text(("thinking-text", key), body)
                 .flex_1()
