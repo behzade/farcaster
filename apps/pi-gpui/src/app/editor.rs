@@ -1,4 +1,4 @@
-//! In-app editor orchestration and project-file boundary checks.
+//! In-app editor orchestration and path resolution.
 
 use std::path::{Path, PathBuf};
 
@@ -166,12 +166,6 @@ fn resolve_editor_path(project: &Path, path: &Path) -> Result<PathBuf, String> {
             let candidate = candidate
                 .canonicalize()
                 .map_err(|error| format!("open {}: {error}", candidate.display()))?;
-            if !candidate.starts_with(&project) {
-                return Err(format!(
-                    "refusing to open a file outside the project: {}",
-                    candidate.display()
-                ));
-            }
             if !candidate.is_file() {
                 return Err(format!(
                     "editor target is not a file: {}",
@@ -192,12 +186,6 @@ fn resolve_editor_path(project: &Path, path: &Path) -> Result<PathBuf, String> {
         .ok_or_else(|| format!("editor target has no parent: {}", candidate.display()))?
         .canonicalize()
         .map_err(|error| format!("open {}: {error}", candidate.display()))?;
-    if !parent.starts_with(&project) {
-        return Err(format!(
-            "refusing to open a file outside the project: {}",
-            candidate.display()
-        ));
-    }
     Ok(parent.join(file_name))
 }
 
@@ -207,8 +195,8 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn editor_paths_are_confined_to_the_selected_project() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn editor_paths_allow_targets_outside_the_selected_project()
+    -> Result<(), Box<dyn std::error::Error>> {
         let project = tempdir()?;
         let file = project.path().join("src.rs");
         std::fs::write(&file, "fn main() {}")?;
@@ -224,7 +212,15 @@ mod tests {
         let outside = tempdir()?;
         let outside_file = outside.path().join("outside.rs");
         std::fs::write(&outside_file, "")?;
-        assert!(resolve_editor_path(project.path(), &outside_file).is_err());
+        assert_eq!(
+            resolve_editor_path(project.path(), &outside_file)?,
+            outside_file.canonicalize()?
+        );
+        let new_outside_file = outside.path().join("new.rs");
+        assert_eq!(
+            resolve_editor_path(project.path(), &new_outside_file)?,
+            new_outside_file
+        );
 
         #[cfg(unix)]
         {
