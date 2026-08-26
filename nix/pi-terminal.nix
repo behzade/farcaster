@@ -19,7 +19,7 @@ let
     aarch64-linux = {
       cpu = "arm64";
       os = "linux";
-      hash = lib.fakeHash;
+      hash = "sha256-Z8SVP6SWJlUVus3cys0mdk2HzOpDCzmfoKdS/zntdy8=";
     };
     x86_64-linux = {
       cpu = "x64";

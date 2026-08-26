@@ -62,7 +62,7 @@ let
     owner = "philschmid";
     repo = "mcp-cli";
     rev = "v${version}";
-    hash = lib.fakeHash;
+    hash = "sha256-S924rqlVKzUFD63NDyK5bbXnonra+/UoH6j78AAj3d0=";
   };
   sourceDeps = stdenvNoCC.mkDerivation {
     pname = "mcp-cli-bun-deps";
@@ -93,7 +93,7 @@ let
 
     outputHashAlgo = "sha256";
     outputHashMode = "recursive";
-    outputHash = lib.fakeHash;
+    outputHash = "sha256-xTNzSZAGvl/50UwllypR07U6h9biGZHhfMd92KW7MNs=";
   };
   sourcePackage = stdenvNoCC.mkDerivation {
     pname = "mcp-cli";
