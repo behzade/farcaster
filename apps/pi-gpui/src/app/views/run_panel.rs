@@ -88,7 +88,6 @@ impl PiApp {
             .overflow_y_scroll()
             .track_scroll(&self.run_panel_scroll)
             .child(self.workgraph_sidebar_view.clone())
-            .when_some(self.fps_monitor.clone(), |run, monitor| run.child(monitor))
             .when_some(self.performance_monitor.as_ref(), |run, monitor| {
                 run.child(render_performance(&monitor.summary))
             })

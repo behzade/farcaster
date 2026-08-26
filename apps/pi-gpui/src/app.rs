@@ -47,7 +47,6 @@ use gpui::{
     point, px,
 };
 use gpui_component::input::{InputEvent, InputState, TextareaState};
-use gpui_fps::FpsMonitor;
 use gpui_libghostty::Terminal;
 use gpui_neovim::NvimEditor;
 
@@ -235,7 +234,6 @@ pub(crate) struct PiApp {
     transcript_unseen: usize,
     pub(crate) transcript_disclosure_states: HashMap<usize, bool>,
     last_transcript_count: usize,
-    fps_monitor: Option<Entity<FpsMonitor>>,
     performance_monitor: Option<crate::performance::PerformanceMonitor>,
     _performance_task: Option<Task<()>>,
     pending_session_switch: Option<(PathBuf, crate::performance::Timing)>,
@@ -443,13 +441,6 @@ impl PiApp {
         let transcript_list = TranscriptListState::new();
         transcript_list.scroll_to_end();
         let debug = std::env::var("DEBUG").ok().as_deref() == Some("true");
-        let fps_monitor = debug.then(|| {
-            cx.new(|cx| {
-                FpsMonitor::new(window, cx)
-                    .continuous(false)
-                    .show_resources(false)
-            })
-        });
         let performance_monitor = debug.then(|| {
             crate::performance::PerformanceMonitor::new(window.window_handle().window_id())
         });
@@ -619,7 +610,6 @@ impl PiApp {
             transcript_unseen: 0,
             transcript_disclosure_states: HashMap::new(),
             last_transcript_count: 0,
-            fps_monitor,
             performance_monitor,
             _performance_task: performance_task,
             pending_session_switch: None,

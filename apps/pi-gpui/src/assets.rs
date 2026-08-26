@@ -161,21 +161,15 @@ impl AssetSource for AppAssets {
             }
             _ => None,
         };
-        bytes.map_or_else(
-            || gpui_component_assets::Assets.load(path),
-            |bytes| Ok(Some(Cow::Borrowed(bytes))),
-        )
+        Ok(bytes.map(Cow::Borrowed))
     }
 
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {
-        let mut assets = gpui_component_assets::Assets.list(path)?;
-        assets.extend(
-            ICON_PATHS
-                .iter()
-                .filter(|icon_path| icon_path.starts_with(path))
-                .map(|icon_path| SharedString::from(*icon_path)),
-        );
-        Ok(assets)
+        Ok(ICON_PATHS
+            .iter()
+            .filter(|icon_path| icon_path.starts_with(path))
+            .map(|icon_path| SharedString::from(*icon_path))
+            .collect())
     }
 }
 
@@ -285,7 +279,14 @@ mod tests {
     }
 
     #[test]
-    fn phosphor_icons_are_embedded_and_themeable() {
+    fn asset_source_serves_only_themeable_phosphor_icons() {
+        assert!(
+            AppAssets
+                .load("icons/search.svg")
+                .expect("asset lookup should work")
+                .is_none()
+        );
+
         for icon in [
             AppIcon::Archive,
             AppIcon::ArrowsClockwise,
