@@ -41,13 +41,11 @@ Pierre Diffs is distributed under Apache-2.0; its license is included at
 `THIRD_PARTY_LICENSES/PIERRE_DIFFS_APACHE-2.0.txt`. Upstream:
 <https://github.com/pierrecomputer/pierre/tree/55a941914056af44c78c4ba607b37130f189fb70/packages/diffs>.
 
-The direct Longbridge GPUI Component dependencies `gpui-base` and
-`gpui-component` are pinned to commit
+The application-specific `gpui-base` and `gpui-component` source subset is
+extracted from Longbridge GPUI Component commit
 `bd833291311289f3468479d31b629d3de279d3d4` and distributed under Apache-2.0.
-The transitive `gpui-component-assets` dependency is retained by
-`gpui-component`, but its icons are not exposed by the application asset
-source. The exact upstream `LICENSE-APACHE` is included at
-`THIRD_PARTY_LICENSES/GPUI_COMPONENT_ASSETS_APACHE-2.0.txt`.
+The exact upstream license and extraction details are included under
+`third_party/gpui-component-bd83329` as `LICENSE-APACHE` and `PROVENANCE.md`.
 
 The GPUI framework and its narrow Zed package closure are included from Zed
 commit `cc053a4a6fa2fd0e8793201ed9099466af1be0b1` under
@@ -65,8 +63,3 @@ repository.
 Application icons copied from Phosphor Icons are distributed under MIT. The
 exact upstream license is included at
 `THIRD_PARTY_LICENSES/PHOSPHOR-ICONS-MIT.txt`.
-
-The transitive `gpui-component-assets` package contains a Lucide SVG icon set
-that includes work derived from Feather. Its ISC and Feather MIT terms and
-notices are retained at `THIRD_PARTY_LICENSES/LUCIDE-ISC.txt`; the application
-asset source does not serve this set.

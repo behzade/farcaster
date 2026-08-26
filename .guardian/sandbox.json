@@ -40,6 +40,18 @@
     {
       "kind": "filesystem",
       "access": "read",
+      "path": "~/Projects/personal/gpui-ghostty",
+      "scope": "tree"
+    },
+    {
+      "kind": "filesystem",
+      "access": "read",
+      "path": "~/Projects/personal/issues/assets/phosphor-icons",
+      "scope": "tree"
+    },
+    {
+      "kind": "filesystem",
+      "access": "read",
       "path": "~/Projects/personal/pi-guardian",
       "scope": "tree"
     },

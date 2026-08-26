@@ -4,7 +4,7 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 35] = [
+const ICON_PATHS: [&str; 41] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrows-clockwise.svg",
     "icons/phosphor/arrows-out.svg",
@@ -14,17 +14,21 @@ const ICON_PATHS: [&str; 35] = [
     "icons/phosphor/arrow-up.svg",
     "icons/phosphor/binoculars.svg",
     "icons/phosphor/caret-down.svg",
+    "icons/phosphor/caret-left.svg",
     "icons/phosphor/caret-right.svg",
     "icons/phosphor/chat-circle.svg",
     "icons/phosphor/chat-circle-dots.svg",
+    "icons/phosphor/check.svg",
     "icons/phosphor/check-circle.svg",
     "icons/phosphor/code.svg",
     "icons/phosphor/dots-six-vertical.svg",
     "icons/phosphor/eye.svg",
+    "icons/phosphor/eye-slash.svg",
     "icons/phosphor/folder.svg",
     "icons/phosphor/folder-plus.svg",
     "icons/phosphor/hammer.svg",
     "icons/phosphor/hourglass.svg",
+    "icons/phosphor/info.svg",
     "icons/phosphor/key.svg",
     "icons/phosphor/list.svg",
     "icons/phosphor/magnifying-glass.svg",
@@ -35,7 +39,9 @@ const ICON_PATHS: [&str; 35] = [
     "icons/phosphor/spinner-gap.svg",
     "icons/phosphor/stop.svg",
     "icons/phosphor/terminal-window.svg",
+    "icons/phosphor/text-aa.svg",
     "icons/phosphor/trash.svg",
+    "icons/phosphor/tray.svg",
     "icons/phosphor/user-focus.svg",
     "icons/phosphor/warning-circle.svg",
     "icons/phosphor/x.svg",
@@ -89,6 +95,9 @@ impl AssetSource for AppAssets {
             "icons/phosphor/caret-down.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/caret-down.svg"))
             }
+            "icons/phosphor/caret-left.svg" => {
+                Some(include_bytes!("../assets/phosphor-icons/caret-left.svg"))
+            }
             "icons/phosphor/caret-right.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/caret-right.svg"))
             }
@@ -98,6 +107,9 @@ impl AssetSource for AppAssets {
             "icons/phosphor/chat-circle-dots.svg" => Some(include_bytes!(
                 "../assets/phosphor-icons/chat-circle-dots.svg"
             )),
+            "icons/phosphor/check.svg" => {
+                Some(include_bytes!("../assets/phosphor-icons/check.svg"))
+            }
             "icons/phosphor/check-circle.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/check-circle.svg"))
             }
@@ -106,6 +118,9 @@ impl AssetSource for AppAssets {
                 "../assets/phosphor-icons/dots-six-vertical.svg"
             )),
             "icons/phosphor/eye.svg" => Some(include_bytes!("../assets/phosphor-icons/eye.svg")),
+            "icons/phosphor/eye-slash.svg" => {
+                Some(include_bytes!("../assets/phosphor-icons/eye-slash.svg"))
+            }
             "icons/phosphor/plus.svg" => Some(include_bytes!("../assets/phosphor-icons/plus.svg")),
             "icons/phosphor/question.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/question.svg"))
@@ -125,6 +140,7 @@ impl AssetSource for AppAssets {
             "icons/phosphor/hourglass.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/hourglass.svg"))
             }
+            "icons/phosphor/info.svg" => Some(include_bytes!("../assets/phosphor-icons/info.svg")),
             "icons/phosphor/key.svg" => Some(include_bytes!("../assets/phosphor-icons/key.svg")),
             "icons/phosphor/list.svg" => Some(include_bytes!("../assets/phosphor-icons/list.svg")),
             "icons/phosphor/magnifying-glass.svg" => Some(include_bytes!(
@@ -146,9 +162,13 @@ impl AssetSource for AppAssets {
             "icons/phosphor/terminal-window.svg" => Some(include_bytes!(
                 "../assets/phosphor-icons/terminal-window.svg"
             )),
+            "icons/phosphor/text-aa.svg" => {
+                Some(include_bytes!("../assets/phosphor-icons/text-aa.svg"))
+            }
             "icons/phosphor/trash.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/trash.svg"))
             }
+            "icons/phosphor/tray.svg" => Some(include_bytes!("../assets/phosphor-icons/tray.svg")),
             "icons/phosphor/user-focus.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/user-focus.svg"))
             }
@@ -258,7 +278,7 @@ impl IconNamed for AppIcon {
 #[cfg(test)]
 mod tests {
     use gpui::AssetSource as _;
-    use gpui_component::IconNamed as _;
+    use gpui_component::{IconName, IconNamed as _};
 
     use super::{AppAssets, AppIcon};
 
@@ -324,17 +344,43 @@ mod tests {
             AppIcon::X,
             AppIcon::XCircle,
         ] {
-            let path = icon.path();
-            let bytes = AppAssets
-                .load(path.as_ref())
-                .expect("asset lookup should work")
-                .expect("icon should be embedded");
-            assert!(bytes.starts_with(b"<svg"));
-            assert!(
-                bytes
-                    .windows(b"currentColor".len())
-                    .any(|window| window == b"currentColor")
-            );
+            assert_themeable(icon.path().as_ref());
         }
+
+        for icon in [
+            IconName::CaseSensitive,
+            IconName::Check,
+            IconName::ChevronDown,
+            IconName::ChevronLeft,
+            IconName::ChevronRight,
+            IconName::CircleCheck,
+            IconName::CircleX,
+            IconName::Close,
+            IconName::ExternalLink,
+            IconName::Eye,
+            IconName::EyeOff,
+            IconName::Inbox,
+            IconName::Info,
+            IconName::Loader,
+            IconName::Plus,
+            IconName::Replace,
+            IconName::Search,
+            IconName::TriangleAlert,
+        ] {
+            assert_themeable(icon.path().as_ref());
+        }
+    }
+
+    fn assert_themeable(path: &str) {
+        let bytes = AppAssets
+            .load(path)
+            .expect("asset lookup should work")
+            .expect("icon should be embedded");
+        assert!(bytes.starts_with(b"<svg"));
+        assert!(
+            bytes
+                .windows(b"currentColor".len())
+                .any(|window| window == b"currentColor")
+        );
     }
 }

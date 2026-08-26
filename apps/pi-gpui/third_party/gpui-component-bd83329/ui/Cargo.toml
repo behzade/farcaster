@@ -1,0 +1,41 @@
+[package]
+name = "gpui-component"
+version = "0.5.2"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+doctest = false
+test = false
+
+[dependencies]
+anyhow = "1"
+gpui = { path = "../../zed-gpui-cc053a4/crates/gpui" }
+gpui-base = { path = "../base" }
+notify = "7.0.0"
+ropey = { version = "=2.0.0-beta.1", features = ["metric_chars", "metric_lines_lf", "metric_utf16"] }
+rust-i18n = "4.2.0"
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_repr = "0.1"
+smallvec = "1"
+tracing = "0.1"
+once_cell = "1.19.0"
+paste = "1"
+futures = "0.3"
+markdown = { version = "1.0.0", features = ["serde"] }
+html5ever = "0.27"
+markup5ever_rcdom = "0.3.0"
+lsp-types = { version = "0.97.0", features = ["proposed"] }
+instant = { version = "0.1", features = ["wasm-bindgen"] }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+smol = "2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+raw-window-handle = "0.6.2"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSCell", "NSMenu", "NSMenuItem", "NSView", "NSWindow", "NSResponder", "NSEvent", "NSImage"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSData", "NSString", "NSGeometry"] }
