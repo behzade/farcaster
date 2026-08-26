@@ -4,6 +4,7 @@
   lib,
   makeWrapper,
   neovim,
+  nukeReferences,
   piTerminal,
   pkg-config,
   rustPlatform,
@@ -11,17 +12,21 @@
   stdenv,
   alsa-lib,
   at-spi2-atk,
+  bzip2,
   cairo,
   cups,
   dbus,
   expat,
+  fetchurl,
   fontconfig,
   freetype,
   glib,
+  harfbuzz,
   gtk3,
   libdrm,
   libgbm,
   libGL,
+  libcxx,
   libx11,
   libxcb,
   libxcomposite,
@@ -34,6 +39,7 @@
   libxshmfence,
   nspr,
   nss,
+  oniguruma,
   pango,
   pciutils,
   systemd,
@@ -48,7 +54,10 @@ let
   version = "0.1.0";
   sourceRoot = ../apps/pi-gpui;
   linuxRuntimeLibraryPath = lib.makeLibraryPath [
+    bzip2
+    harfbuzz
     libGL
+    oniguruma
     vulkan-loader
     wayland
   ];
@@ -65,6 +74,39 @@ let
         relative = lib.removePrefix "${toString sourceRoot}/" (toString path);
       in
       relative == "third_party" || lib.hasPrefix "third_party/" relative;
+  };
+  ghosttyZigDeps = stdenv.mkDerivation {
+    pname = "gpui-libghostty-zig-deps";
+    version = "0.1.7";
+    src = fetchurl {
+      url = "https://static.crates.io/crates/gpui-libghostty/gpui-libghostty-0.1.7.crate";
+      sha256 = "0f4e85621027e275951a000637915a79ccb2841ce7ca45624c451f544f60d022";
+    };
+    nativeBuildInputs = [ nukeReferences zig_0_16 ];
+    dontConfigure = true;
+    unpackPhase = ''
+      runHook preUnpack
+      mkdir source
+      tar -xzf "$src" -C source --strip-components=1
+      cd source
+      runHook postUnpack
+    '';
+    buildPhase = ''
+      runHook preBuild
+      cd "$NIX_BUILD_TOP/source/vendor/ghostty"
+      mkdir -p "$out" "$TMPDIR/zig-global-cache"
+      ln -s "$out" zig-pkg
+      export ZIG_GLOBAL_CACHE_DIR="$TMPDIR/zig-global-cache"
+      zig build --fetch=all
+      runHook postBuild
+    '';
+    installPhase = "true";
+    postFixup = ''
+      find "$out" -type f -exec nuke-refs {} +
+    '';
+    outputHashAlgo = "sha256";
+    outputHashMode = "recursive";
+    outputHash = "sha256-biyXAcq4vLI+iauV8R2D9FQciolIC3R9fUYbg0sbv8U=";
   };
   cargoOutputHashes = {
     "git+https://github.com/proptest-rs/proptest?rev=3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b#3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b" =
@@ -97,6 +139,11 @@ let
     outputHashes = cargoOutputHashes;
     LIBSQLITE3_SYS_USE_PKG_CONFIG = "1";
     strictDeps = true;
+  } // lib.optionalAttrs stdenv.hostPlatform.isLinux {
+    LD_LIBRARY_PATH = linuxRuntimeLibraryPath;
+  } // lib.optionalAttrs (stdenv.hostPlatform.system == "aarch64-linux") {
+    GHOSTTY_ZIG_SYSTEM_PACKAGE_DIR = ghosttyZigDeps;
+  } // {
 
     nativeBuildInputs = [
       makeWrapper
@@ -110,6 +157,7 @@ let
     buildInputs = [ sqlite ] ++ lib.optionals stdenv.hostPlatform.isLinux [
       alsa-lib
       at-spi2-atk
+      bzip2
       cairo
       cups
       dbus
@@ -117,10 +165,12 @@ let
       fontconfig
       freetype
       glib
+      harfbuzz
       gtk3
       libdrm
       libgbm
       libGL
+      libcxx
       libx11
       libxcb
       libxcomposite
@@ -133,6 +183,7 @@ let
       libxshmfence
       nspr
       nss
+      oniguruma
       pango
       pciutils
       systemd
@@ -145,14 +196,6 @@ let
     commonArgs
     // {
       inherit dummySrc;
-    }
-    # gpui-libghostty's Zig build fetches content-addressed Ghostty packages.
-    # Pin the complete ARM dependency artifact so that this one fixed-output
-    # build may fetch them while the final pi-gpui build remains offline.
-    // lib.optionalAttrs (stdenv.hostPlatform.system == "aarch64-linux") {
-      outputHashAlgo = "sha256";
-      outputHashMode = "recursive";
-      outputHash = "sha256-XFGkb4ejEE1JMfI2hsBMzmr7mLmB1o/fNUTw9DC+N2o=";
     }
   );
 in

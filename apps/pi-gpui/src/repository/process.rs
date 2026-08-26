@@ -214,7 +214,7 @@ fn terminate_child(child: &mut std::process::Child, process_group: u32) {
 fn kill_process_group(process_group: u32, force: bool) {
     let signal = if force { "-KILL" } else { "-TERM" };
     let group = format!("-{process_group}");
-    let _status = Command::new("/bin/kill")
+    let _status = Command::new("kill")
         .args([signal, &group])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
