@@ -152,7 +152,7 @@ let
     // lib.optionalAttrs (stdenv.hostPlatform.system == "aarch64-linux") {
       outputHashAlgo = "sha256";
       outputHashMode = "recursive";
-      outputHash = lib.fakeHash;
+      outputHash = "sha256-XFGkb4ejEE1JMfI2hsBMzmr7mLmB1o/fNUTw9DC+N2o=";
     }
   );
 in
