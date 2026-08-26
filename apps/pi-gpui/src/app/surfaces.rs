@@ -383,7 +383,9 @@ impl PiApp {
     }
 
     pub(super) fn dismiss_surface(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.picker.is_some() {
+        if self.repository.pending_jj_init.is_some() {
+            self.close_jj_init_confirmation(window, cx);
+        } else if self.picker.is_some() {
             self.close_picker(window, cx);
         } else if self.extension.dialog.is_some() {
             self.cancel_dialog(window, cx);

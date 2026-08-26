@@ -10,15 +10,17 @@ use super::{
     run_panel_repository_presentation::{
         accessible_change_path, bounded_message, change_color, change_kind_label,
         change_status_label, display_change_path, git_identity, group_title, middle_truncate,
-        repository_row_id,
+        repository_row_id, repository_sync_metadata,
     },
 };
 use crate::{
     assets::AppIcon,
-    primitives::{ButtonTone, activates_button, disclosure_button, icon_button},
+    primitives::{
+        AppIconSize, ButtonTone, activates_button, app_icon, disclosure_button, icon_button,
+    },
     repository::{
-        BackendPreference, RepositoryBackend, RepositoryKind, SnapshotIdentity, WorkingCopyChange,
-        WorkingCopySnapshot,
+        BackendPreference, RepositoryBackend, RepositoryKind, RepositorySyncAction,
+        SnapshotIdentity, WorkingCopyChange, WorkingCopySnapshot,
     },
     theme::{MONO_FONT_FAMILY, THEME},
 };
@@ -39,6 +41,9 @@ impl PiApp {
             .flex_col()
             .gap(THEME.space.xs)
             .child(header)
+            .when_some(snapshot, |section, snapshot| {
+                section.child(repository_sync_row(self, snapshot, entity.clone()))
+            })
             .when(
                 self.repository.loading && !self.repository.initialized,
                 |section| {
@@ -73,6 +78,12 @@ impl PiApp {
                     ))
                 },
             )
+            .when_some(self.repository.sync.error.as_deref(), |section, error| {
+                section.child(repository_notice(
+                    &format!("Repository sync failed: {}", bounded_message(error)),
+                    THEME.colors.error,
+                ))
+            })
             .when_some(self.repository.error.as_deref(), |section, error| {
                 let message = if self.repository.snapshot.is_some() {
                     format!(
@@ -313,6 +324,102 @@ fn repository_header(
         .into_any_element()
 }
 
+fn repository_sync_row(
+    app: &PiApp,
+    snapshot: &WorkingCopySnapshot,
+    entity: WeakEntity<PiApp>,
+) -> AnyElement {
+    let metadata = repository_sync_metadata(&snapshot.identity);
+    let syncing = app.repository.sync.action;
+    let actions_enabled = app.repository.execution_allowed && syncing.is_none();
+    let pull_enabled =
+        actions_enabled && RepositorySyncAction::PullOrFetch.is_available_for(&snapshot.identity);
+    let push_enabled =
+        actions_enabled && RepositorySyncAction::Push.is_available_for(&snapshot.identity);
+    let pull_label = match snapshot.location.kind {
+        RepositoryKind::Git => format!("Pull {metadata}"),
+        RepositoryKind::Jujutsu => "Fetch repository".to_owned(),
+    };
+    let push_label = match &snapshot.identity {
+        SnapshotIdentity::Git(_) => format!("Push {metadata}"),
+        SnapshotIdentity::Jujutsu(identity) => identity.bookmarks.first().map_or_else(
+            || "Push unavailable: current change has no bookmark".to_owned(),
+            |bookmark| format!("Push bookmark {bookmark}"),
+        ),
+    };
+    let pull = entity.clone();
+    let push = entity;
+
+    div()
+        .id("repository-sync-row")
+        .role(Role::Group)
+        .aria_label("Repository remote synchronization")
+        .min_w_0()
+        .flex()
+        .items_center()
+        .gap(THEME.space.xs)
+        .font_family(MONO_FONT_FAMILY)
+        .text_size(THEME.type_scale.caption)
+        .child(
+            div()
+                .min_w_0()
+                .flex_1()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .text_color(THEME.colors.subtle)
+                .child(metadata),
+        )
+        .when_some(syncing, |row, action| {
+            let label = match (snapshot.location.kind, action) {
+                (RepositoryKind::Git, RepositorySyncAction::PullOrFetch) => "Pulling repository",
+                (RepositoryKind::Jujutsu, RepositorySyncAction::PullOrFetch) => {
+                    "Fetching repository"
+                }
+                (_, RepositorySyncAction::Push) => "Pushing repository",
+            };
+            row.child(
+                div()
+                    .role(Role::Status)
+                    .aria_label(label)
+                    .size(THEME.controls.icon_button)
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(THEME.colors.accent)
+                    .child(app_icon(AppIcon::SpinnerGap, AppIconSize::Control)),
+            )
+        })
+        .when(pull_enabled, |row| {
+            row.child(icon_button(
+                "repository-pull-or-fetch",
+                AppIcon::ArrowDown,
+                pull_label,
+                ButtonTone::Quiet,
+                move |_, cx| {
+                    let _ = pull.update(cx, |this, cx| {
+                        this.request_repository_sync(RepositorySyncAction::PullOrFetch, cx);
+                    });
+                },
+            ))
+        })
+        .when(push_enabled, |row| {
+            row.child(icon_button(
+                "repository-push",
+                AppIcon::ArrowUp,
+                push_label,
+                ButtonTone::Quiet,
+                move |_, cx| {
+                    let _ = push.update(cx, |this, cx| {
+                        this.request_repository_sync(RepositorySyncAction::Push, cx);
+                    });
+                },
+            ))
+        })
+        .into_any_element()
+}
+
 fn selected_backend(
     discovered: Option<RepositoryKind>,
     preference: BackendPreference,
@@ -393,18 +500,18 @@ fn backend_option(
             THEME.colors.subtle
         })
         .hover(|option| option.text_color(THEME.colors.accent))
-        .on_click(move |_, _, cx| {
+        .on_click(move |_, window, cx| {
             if enabled {
                 let _ = entity.update(cx, |this, cx| {
-                    this.set_repository_backend_preference(preference, cx);
+                    this.set_repository_backend_preference(preference, window, cx);
                 });
             }
         })
-        .on_key_down(move |event, _, cx| {
+        .on_key_down(move |event, window, cx| {
             if enabled && activates_button(event) {
                 cx.stop_propagation();
                 let _ = key_entity.update(cx, |this, cx| {
-                    this.set_repository_backend_preference(preference, cx);
+                    this.set_repository_backend_preference(preference, window, cx);
                 });
             }
         })

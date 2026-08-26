@@ -118,6 +118,67 @@ fn no_repository_is_distinct_from_failure() {
     assert!(result.is_none());
 }
 
+#[test]
+fn jj_init_is_required_only_for_git_without_a_jj_marker() {
+    let temp = TestDirectory::new("jj-init-required");
+    fs::create_dir(temp.path().join(".git")).expect("create Git marker");
+    let mut location = RepositoryLocation {
+        kind: RepositoryKind::Git,
+        workspace_root: temp.path().to_path_buf(),
+        project_root: temp.path().to_path_buf(),
+    };
+
+    assert!(RepositoryBackend::jj_init_required(&location).expect("inspect Git repository"));
+    fs::create_dir(temp.path().join(".jj")).expect("create JJ marker");
+    assert!(!RepositoryBackend::jj_init_required(&location).expect("inspect colocated repository"));
+    location.kind = RepositoryKind::Jujutsu;
+    assert!(!RepositoryBackend::jj_init_required(&location).expect("inspect JJ repository"));
+}
+
+#[cfg(unix)]
+#[test]
+fn jj_init_runs_git_init_in_the_repository() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let temp = TestDirectory::new("jj-init-command");
+    let repository = temp.path().join("repo");
+    let executable = temp.path().join("jj");
+    let log = temp.path().join("jj.log");
+    fs::create_dir_all(repository.join(".git")).expect("create Git repository");
+    fs::write(
+        &executable,
+        "#!/bin/sh\nprintf '%s\\n' \"$PWD\" \"$@\" > \"$PI_TEST_LOG\"\n",
+    )
+    .expect("write fake JJ");
+    let mut permissions = fs::metadata(&executable)
+        .expect("read fake JJ metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&executable, permissions).expect("make fake JJ executable");
+    let options = RepositoryOptions {
+        jj_executable: executable.into_os_string(),
+        environment: vec![(
+            OsString::from("PI_TEST_LOG"),
+            log.as_os_str().to_os_string(),
+        )],
+        ..RepositoryOptions::default()
+    };
+
+    RepositoryBackend::init_jj_colocated_with_options(&repository, options)
+        .expect("initialize colocated JJ repository");
+
+    let invocation = fs::read_to_string(log).expect("read fake JJ invocation");
+    let expected_root = repository
+        .canonicalize()
+        .expect("canonical repository")
+        .display()
+        .to_string();
+    assert_eq!(
+        invocation.lines().collect::<Vec<_>>(),
+        [expected_root.as_str(), "git", "init"]
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn stable_keys_do_not_use_lossy_path_display() {

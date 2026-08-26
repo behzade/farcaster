@@ -6,6 +6,7 @@ mod composer_footer;
 mod composer_tests;
 mod delete_confirmation;
 mod editor;
+mod jj_init_confirmation;
 mod models;
 mod project_trust;
 mod regions;
@@ -489,6 +490,9 @@ impl Render for PiApp {
             })
             .when(self.pending_delete.is_some(), |root| {
                 root.child(delete_confirmation::render(self, entity.clone()))
+            })
+            .when(self.repository.pending_jj_init.is_some(), |root| {
+                root.child(jj_init_confirmation::render(self, entity.clone()))
             })
             .when(self.project_trust_sheet, |root| {
                 root.child(project_trust::render(self, entity.clone()))

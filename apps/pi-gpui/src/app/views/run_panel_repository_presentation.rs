@@ -6,7 +6,9 @@ use std::{
 };
 
 use crate::{
-    repository::{ChangeKind, ChangeLayer, DiffTargetKey, GitIdentity, WorkingCopyChange},
+    repository::{
+        ChangeKind, ChangeLayer, DiffTargetKey, GitIdentity, SnapshotIdentity, WorkingCopyChange,
+    },
     theme::THEME,
 };
 
@@ -22,6 +24,29 @@ pub(super) fn git_identity(identity: &GitIdentity) -> String {
         (Some(branch), None) => format!("{branch} · unborn"),
         (None, Some(oid)) => format!("detached {}", short_id(oid)),
         (None, None) => "unborn HEAD".to_owned(),
+    }
+}
+
+pub(super) fn repository_sync_metadata(identity: &SnapshotIdentity) -> String {
+    match identity {
+        SnapshotIdentity::Git(identity) => {
+            let mut metadata = identity
+                .upstream
+                .clone()
+                .unwrap_or_else(|| "No upstream".to_owned());
+            if identity.ahead > 0 {
+                metadata.push_str(&format!(" · {} ahead", identity.ahead));
+            }
+            if identity.behind > 0 {
+                metadata.push_str(&format!(" · {} behind", identity.behind));
+            }
+            metadata
+        }
+        SnapshotIdentity::Jujutsu(identity) => match identity.bookmarks.as_slice() {
+            [] => "No bookmark".to_owned(),
+            [bookmark] => bookmark.clone(),
+            [first, rest @ ..] => format!("{first} +{} bookmarks", rest.len()),
+        },
     }
 }
 

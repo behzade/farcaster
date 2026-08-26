@@ -5,13 +5,13 @@ mod watching;
 
 use std::{collections::BTreeMap, path::PathBuf};
 
-use gpui::{AppContext as _, Context, FocusHandle};
+use gpui::{AppContext as _, Context, FocusHandle, Window};
 
 use super::PiApp;
 use crate::{
     repository::{
         BackendPreference, DiffTargetKey, RepositoryBackend, RepositoryLocation,
-        WorkingCopySnapshot, watcher::RepositoryWatcher,
+        RepositorySyncAction, WorkingCopySnapshot, watcher::RepositoryWatcher,
     },
     state::StateStore,
 };
@@ -26,6 +26,27 @@ struct RefreshGate {
 struct RefreshCompletion {
     publish: bool,
     next: Option<u64>,
+}
+
+pub(super) struct PendingJjInit {
+    pub(super) repository: PathBuf,
+    project: PathBuf,
+    return_focus: Option<FocusHandle>,
+}
+
+#[derive(Default)]
+pub(super) struct RepositorySyncState {
+    pub(super) action: Option<RepositorySyncAction>,
+    pub(super) error: Option<String>,
+    generation: u64,
+}
+
+impl RepositorySyncState {
+    fn clear(&mut self) {
+        self.action = None;
+        self.error = None;
+        self.generation = self.generation.saturating_add(1);
+    }
 }
 
 impl RefreshGate {
@@ -73,6 +94,9 @@ pub(super) struct RepositoryState {
     pub(super) error: Option<String>,
     pub(super) preference_error: Option<String>,
     pub(super) watcher_error: Option<String>,
+    pub(super) pending_jj_init: Option<PendingJjInit>,
+    jj_init_in_flight: bool,
+    pub(super) sync: RepositorySyncState,
     pub(super) additions: Option<u64>,
     pub(super) deletions: Option<u64>,
     pub(super) visible_changes: usize,
@@ -106,6 +130,9 @@ impl RepositoryState {
             error: None,
             preference_error,
             watcher_error: None,
+            pending_jj_init: None,
+            jj_init_in_flight: false,
+            sync: RepositorySyncState::default(),
             additions: None,
             deletions: None,
             visible_changes: 5,
@@ -129,6 +156,8 @@ impl RepositoryState {
         self.execution_allowed = execution_allowed;
         if project_changed {
             self.preference = preference_for(&self.preferences, &self.project);
+            self.pending_jj_init = None;
+            self.jj_init_in_flight = false;
         }
         self.clear_observation();
         true
@@ -152,6 +181,7 @@ impl RepositoryState {
         self.initialized = false;
         self.error = None;
         self.watcher_error = None;
+        self.sync.clear();
         self.additions = None;
         self.deletions = None;
         self.visible_changes = 5;
@@ -188,9 +218,63 @@ impl PiApp {
     pub(super) fn set_repository_backend_preference(
         &mut self,
         preference: BackendPreference,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if preference == BackendPreference::Jujutsu {
+            if self.repository.jj_init_in_flight {
+                return;
+            }
+            let location = self
+                .repository
+                .snapshot
+                .as_ref()
+                .map(|snapshot| Ok(Some(snapshot.location.clone())))
+                .unwrap_or_else(|| {
+                    RepositoryBackend::discover(&self.repository.project, BackendPreference::Auto)
+                        .map(|backend| backend.map(|backend| backend.location().clone()))
+                });
+            match location.and_then(|location| {
+                location
+                    .map(|location| {
+                        RepositoryBackend::jj_init_required(&location)
+                            .map(|required| (location, required))
+                    })
+                    .transpose()
+            }) {
+                Ok(Some((location, true))) => {
+                    self.repository.pending_jj_init = Some(PendingJjInit {
+                        repository: location.workspace_root.clone(),
+                        project: self.repository.project.clone(),
+                        return_focus: window.focused(cx),
+                    });
+                    self.hide_native_workspace_surfaces(cx);
+                    self.sheet_focus.focus(window, cx);
+                    cx.notify();
+                    return;
+                }
+                Ok(Some((_, false)) | None) => {}
+                Err(error) => {
+                    self.repository.error = Some(error.to_string());
+                    self.notify_run_panel(cx);
+                    return;
+                }
+            }
+        }
+        self.apply_repository_backend_preference(preference, false, cx);
+    }
+
+    fn apply_repository_backend_preference(
+        &mut self,
+        preference: BackendPreference,
+        refresh_unchanged: bool,
         cx: &mut Context<Self>,
     ) {
         if !self.repository.select_preference(preference) {
+            if refresh_unchanged {
+                self.repository.clear_observation();
+                self.request_repository_refresh(cx);
+            }
             return;
         }
         self.composer_project_files.clear();
@@ -198,6 +282,93 @@ impl PiApp {
         self.composer_project_files_loading = None;
         self.persist_repository_preferences(cx);
         self.request_repository_refresh(cx);
+    }
+
+    pub(super) fn close_jj_init_confirmation(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<PendingJjInit> {
+        let pending = self.repository.pending_jj_init.take()?;
+        pending
+            .return_focus
+            .clone()
+            .unwrap_or_else(|| self.composer_focus.clone())
+            .focus(window, cx);
+        self.restore_active_native_workspace_surface(cx);
+        cx.notify();
+        Some(pending)
+    }
+
+    pub(super) fn confirm_jj_init(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(pending) = self.close_jj_init_confirmation(window, cx) else {
+            return;
+        };
+        let repository = pending.repository;
+        let project = pending.project;
+        self.repository.jj_init_in_flight = true;
+        let task =
+            cx.background_spawn(async move { RepositoryBackend::init_jj_colocated(&repository) });
+        cx.spawn(async move |weak, cx| {
+            let result = task.await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.repository.project != project {
+                    return;
+                }
+                this.repository.jj_init_in_flight = false;
+                match result {
+                    Ok(()) => this.apply_repository_backend_preference(
+                        BackendPreference::Jujutsu,
+                        true,
+                        cx,
+                    ),
+                    Err(error) => {
+                        this.repository.error =
+                            Some(format!("Jujutsu initialization failed: {error}"));
+                        this.notify_run_panel(cx);
+                    }
+                }
+            });
+        })
+        .detach();
+    }
+
+    pub(super) fn request_repository_sync(
+        &mut self,
+        action: RepositorySyncAction,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.repository.execution_allowed || self.repository.sync.action.is_some() {
+            return;
+        }
+        let (Some(backend), Some(snapshot)) = (
+            self.repository.backend.clone(),
+            self.repository.snapshot.clone(),
+        ) else {
+            return;
+        };
+        self.repository.sync.action = Some(action);
+        self.repository.sync.error = None;
+        let generation = self.repository.sync.generation;
+        self.notify_run_panel(cx);
+        let task = cx.background_spawn(async move { backend.sync(&snapshot, action) });
+        cx.spawn(async move |weak, cx| {
+            let result = task.await;
+            let _ = weak.update(cx, |this, cx| {
+                if this.repository.sync.generation != generation
+                    || this.repository.sync.action != Some(action)
+                {
+                    return;
+                }
+                this.repository.sync.action = None;
+                this.repository.sync.error = result.err().map(|error| error.to_string());
+                this.notify_run_panel(cx);
+                if this.repository.sync.error.is_none() {
+                    this.request_repository_refresh(cx);
+                }
+            });
+        })
+        .detach();
     }
 
     pub(crate) fn request_repository_refresh(&mut self, cx: &mut Context<Self>) {

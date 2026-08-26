@@ -6,6 +6,7 @@
 mod git;
 mod jj;
 mod process;
+mod sync;
 pub(crate) mod watcher;
 
 use std::{
@@ -20,6 +21,7 @@ use std::{
 use process::{CommandOutput, CommandRunner};
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(8);
+const DEFAULT_SYNC_TIMEOUT: Duration = Duration::from_secs(120);
 const DEFAULT_OUTPUT_LIMIT: usize = 8 * 1024 * 1024;
 static REPOSITORY_OPERATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -64,6 +66,12 @@ impl FromStr for BackendPreference {
 pub(crate) enum RepositoryKind {
     Git,
     Jujutsu,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RepositorySyncAction {
+    PullOrFetch,
+    Push,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -204,6 +212,7 @@ struct RepositoryOptions {
     git_executable: OsString,
     jj_executable: OsString,
     timeout: Duration,
+    sync_timeout: Duration,
     output_limit: usize,
     environment: Vec<(OsString, OsString)>,
 }
@@ -214,6 +223,7 @@ impl Default for RepositoryOptions {
             git_executable: std::env::var_os("PI_GUI_GIT").unwrap_or_else(|| OsString::from("git")),
             jj_executable: std::env::var_os("PI_GUI_JJ").unwrap_or_else(|| OsString::from("jj")),
             timeout: DEFAULT_TIMEOUT,
+            sync_timeout: DEFAULT_SYNC_TIMEOUT,
             output_limit: DEFAULT_OUTPUT_LIMIT,
             environment: Vec::new(),
         }
@@ -292,6 +302,40 @@ impl RepositoryBackend {
             executable_available(&options.git_executable),
             executable_available(&options.jj_executable),
         )
+    }
+
+    pub(crate) fn jj_init_required(location: &RepositoryLocation) -> Result<bool, RepositoryError> {
+        Ok(location.kind == RepositoryKind::Git
+            && !marker_exists(&location.workspace_root.join(".jj"))?)
+    }
+
+    pub(crate) fn init_jj_colocated(repository: &Path) -> Result<(), RepositoryError> {
+        Self::init_jj_colocated_with_options(repository, RepositoryOptions::default())
+    }
+
+    fn init_jj_colocated_with_options(
+        repository: &Path,
+        options: RepositoryOptions,
+    ) -> Result<(), RepositoryError> {
+        if !marker_exists(&repository.join(".git"))? {
+            return Err(RepositoryError::BackendUnavailable {
+                kind: RepositoryKind::Git,
+                project: repository.to_path_buf(),
+            });
+        }
+        let _operation = repository_operation()?;
+        let runner = CommandRunner::new(
+            options.timeout,
+            options.output_limit,
+            options.environment.clone(),
+        );
+        let arguments = [OsString::from("git"), OsString::from("init")];
+        let output = runner.run(&options.jj_executable, &arguments, repository)?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(command_failed(&options.jj_executable, &output))
+        }
     }
 
     pub(crate) const fn location(&self) -> &RepositoryLocation {
@@ -444,8 +488,16 @@ impl RepositoryBackend {
     }
 
     fn runner(&self) -> CommandRunner {
+        self.runner_with_timeout(self.options.timeout)
+    }
+
+    fn sync_runner(&self) -> CommandRunner {
+        self.runner_with_timeout(self.options.sync_timeout)
+    }
+
+    fn runner_with_timeout(&self, timeout: Duration) -> CommandRunner {
         CommandRunner::new(
-            self.options.timeout,
+            timeout,
             self.options.output_limit,
             self.options.environment.clone(),
         )
@@ -680,6 +732,7 @@ pub(crate) enum RepositoryError {
     InvalidPath(PathBuf),
     TargetMismatch(String),
     StaleSnapshot,
+    SyncUnavailable(String),
 }
 
 impl fmt::Display for RepositoryError {
@@ -731,6 +784,7 @@ impl fmt::Display for RepositoryError {
                 formatter,
                 "working copy changed; refresh before loading diff"
             ),
+            Self::SyncUnavailable(detail) => formatter.write_str(detail),
         }
     }
 }
