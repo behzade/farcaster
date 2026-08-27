@@ -17,14 +17,32 @@ pub(crate) enum RepositoryWatchEvent {
 }
 
 pub(crate) struct RepositoryWatcher {
-    _watcher: RecommendedWatcher,
+    watcher: Option<RecommendedWatcher>,
+}
+
+impl Drop for RepositoryWatcher {
+    fn drop(&mut self) {
+        let Some(watcher) = self.watcher.take() else {
+            return;
+        };
+        // notify may synchronously stop and join its platform watcher thread.
+        // Repository state is replaced from GPUI callbacks, so never perform
+        // that shutdown on the UI thread.
+        let _ = std::thread::Builder::new()
+            .name("repository-watcher-drop".into())
+            .spawn(move || drop(watcher));
+    }
 }
 
 impl RepositoryWatcher {
     pub(crate) fn start(
         location: &RepositoryLocation,
     ) -> Result<(Self, Receiver<RepositoryWatchEvent>), String> {
-        Self::start_targets(watch_targets(location)?, repository_event)
+        let classify = match location.kind {
+            RepositoryKind::Git => repository_event,
+            RepositoryKind::Jujutsu => jujutsu_working_copy_event,
+        };
+        Self::start_targets(watch_targets(location)?, classify)
     }
 
     pub(crate) fn start_discovery(
@@ -49,7 +67,12 @@ impl RepositoryWatcher {
                 .watch(&target.path, target.mode)
                 .map_err(|error| format!("watch {}: {error}", target.path.display()))?;
         }
-        Ok((Self { _watcher: watcher }, receiver))
+        Ok((
+            Self {
+                watcher: Some(watcher),
+            },
+            receiver,
+        ))
     }
 }
 
@@ -62,6 +85,28 @@ struct WatchTarget {
 fn repository_event(result: notify::Result<Event>) -> Option<RepositoryWatchEvent> {
     match result {
         Ok(event) if matches!(event.kind, EventKind::Access(_)) => None,
+        Ok(_) => Some(RepositoryWatchEvent::Changed),
+        Err(error) => watcher_failure(error),
+    }
+}
+
+fn jujutsu_working_copy_event(result: notify::Result<Event>) -> Option<RepositoryWatchEvent> {
+    match result {
+        Ok(event) if matches!(event.kind, EventKind::Access(_)) => None,
+        // Colocated JJ reads can write lock and snapshot state below `.jj`
+        // and `.git`. Watching those writes feeds repository refresh back
+        // into itself. Coarse, pathless events cannot be distinguished safely.
+        Ok(event)
+            if event.paths.is_empty()
+                || event.paths.iter().all(|path| {
+                    path.components().any(|component| {
+                        let component = component.as_os_str();
+                        component == ".jj" || component == ".git"
+                    })
+                }) =>
+        {
+            None
+        }
         Ok(_) => Some(RepositoryWatchEvent::Changed),
         Err(error) => watcher_failure(error),
     }
@@ -119,31 +164,10 @@ fn watch_targets(location: &RepositoryLocation) -> Result<Vec<WatchTarget>, Stri
         location.project_root.clone(),
         RecursiveMode::Recursive,
     );
-    match location.kind {
-        RepositoryKind::Git => add_git_targets(&mut targets, &location.workspace_root)?,
-        RepositoryKind::Jujutsu => add_jj_targets(&mut targets, &location.workspace_root)?,
+    if location.kind == RepositoryKind::Git {
+        add_git_targets(&mut targets, &location.workspace_root)?;
     }
     Ok(targets)
-}
-
-fn add_jj_targets(targets: &mut Vec<WatchTarget>, workspace_root: &Path) -> Result<(), String> {
-    let marker = workspace_root.join(".jj");
-    add_existing_target(targets, marker.clone(), RecursiveMode::Recursive)?;
-    let repo = marker.join("repo");
-    if repo.is_file() {
-        let value = fs::read_to_string(&repo)
-            .map_err(|error| format!("read {}: {error}", repo.display()))?;
-        let value = value.trim();
-        if value.is_empty() {
-            return Err(format!(
-                "invalid Jujutsu repository pointer: {}",
-                repo.display()
-            ));
-        }
-        let shared_repo = resolve_relative(&marker, Path::new(value))?;
-        add_existing_target(targets, shared_repo, RecursiveMode::Recursive)?;
-    }
-    Ok(())
 }
 
 fn add_git_targets(targets: &mut Vec<WatchTarget>, workspace_root: &Path) -> Result<(), String> {
@@ -304,34 +328,61 @@ mod tests {
     }
 
     #[test]
-    fn nested_jujutsu_project_watches_project_and_repository_metadata() {
+    fn jujutsu_watches_only_project_files_and_ignores_its_metadata() {
         let temp = tempfile::tempdir().expect("tempdir");
         let workspace = temp.path().join("workspace");
-        let project = workspace.join("app");
         fs::create_dir_all(workspace.join(".jj")).expect("jj metadata");
-        fs::create_dir_all(&project).expect("project");
         let workspace = workspace.canonicalize().expect("workspace");
-        let project = project.canonicalize().expect("project");
 
         let targets = watch_targets(&RepositoryLocation {
             kind: RepositoryKind::Jujutsu,
             workspace_root: workspace.clone(),
-            project_root: project.clone(),
+            project_root: workspace.clone(),
         })
         .expect("targets");
 
-        assert!(targets.contains(&WatchTarget {
-            path: project,
-            mode: RecursiveMode::Recursive,
-        }));
-        assert!(targets.contains(&WatchTarget {
-            path: workspace.join(".jj"),
-            mode: RecursiveMode::Recursive,
-        }));
+        assert_eq!(
+            targets,
+            [WatchTarget {
+                path: workspace.clone(),
+                mode: RecursiveMode::Recursive,
+            }]
+        );
+        let metadata = workspace.join(".jj/repo/lock");
+        let colocated_git_metadata = workspace.join(".git/refs/heads/main");
+        let source = workspace.join("source.rs");
+        assert_eq!(
+            jujutsu_working_copy_event(Ok(
+                Event::new(EventKind::Create(CreateKind::File)).add_path(metadata.clone())
+            )),
+            None
+        );
+        assert_eq!(
+            jujutsu_working_copy_event(Ok(
+                Event::new(EventKind::Create(CreateKind::File)).add_path(colocated_git_metadata)
+            )),
+            None
+        );
+        assert_eq!(
+            jujutsu_working_copy_event(Ok(Event::new(EventKind::Create(CreateKind::File)))),
+            None
+        );
+        assert_eq!(
+            jujutsu_working_copy_event(Ok(
+                Event::new(EventKind::Create(CreateKind::File)).add_path(source.clone())
+            )),
+            Some(RepositoryWatchEvent::Changed)
+        );
+        assert_eq!(
+            jujutsu_working_copy_event(Ok(Event::new(EventKind::Create(CreateKind::File))
+                .add_path(metadata)
+                .add_path(source))),
+            Some(RepositoryWatchEvent::Changed)
+        );
     }
 
     #[test]
-    fn secondary_jujutsu_workspace_watches_shared_repository_metadata() {
+    fn secondary_jujutsu_workspace_does_not_watch_shared_metadata() {
         let temp = tempfile::tempdir().expect("tempdir");
         let workspace = temp.path().join("workspace");
         let shared_repo = temp.path().join("primary/.jj/repo");
@@ -339,18 +390,21 @@ mod tests {
         fs::create_dir_all(&shared_repo).expect("shared metadata");
         fs::write(workspace.join(".jj/repo"), "../../primary/.jj/repo").expect("repo pointer");
         let workspace = workspace.canonicalize().expect("workspace");
-        let shared_repo = shared_repo.canonicalize().expect("shared metadata");
 
         let targets = watch_targets(&RepositoryLocation {
             kind: RepositoryKind::Jujutsu,
             workspace_root: workspace.clone(),
-            project_root: workspace,
+            project_root: workspace.clone(),
         })
         .expect("targets");
 
-        assert!(targets.iter().any(|target| {
-            target.path == shared_repo && target.mode == RecursiveMode::Recursive
-        }));
+        assert_eq!(
+            targets,
+            [WatchTarget {
+                path: workspace,
+                mode: RecursiveMode::Recursive,
+            }]
+        );
     }
 
     #[test]

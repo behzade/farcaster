@@ -22,13 +22,17 @@ impl PiApp {
         cx: &mut Context<Self>,
     ) -> bool {
         let binding = WatchBinding::Repository(location.clone());
-        self.install_watcher(binding, || RepositoryWatcher::start(&location), cx)
+        self.install_watcher(binding, move || RepositoryWatcher::start(&location), cx)
     }
 
     pub(super) fn install_repository_discovery_watcher(&mut self, cx: &mut Context<Self>) -> bool {
         let project = self.repository.project.clone();
         let binding = WatchBinding::Discovery(project.clone());
-        self.install_watcher(binding, || RepositoryWatcher::start_discovery(&project), cx)
+        self.install_watcher(
+            binding,
+            move || RepositoryWatcher::start_discovery(&project),
+            cx,
+        )
     }
 
     fn install_watcher(
@@ -40,30 +44,50 @@ impl PiApp {
                 async_channel::Receiver<RepositoryWatchEvent>,
             ),
             String,
-        >,
+        > + Send
+        + 'static,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.repository.watcher_binding.as_ref() == Some(&binding)
-            && self.repository.watcher.is_some()
-        {
+        if self.repository.watcher_binding.as_ref() == Some(&binding) {
             return false;
         }
         self.repository.watcher = None;
-        self.repository.watcher_binding = None;
+        self.repository.watcher_binding = Some(binding.clone());
         self.repository.watcher_generation = self.repository.watcher_generation.saturating_add(1);
         let generation = self.repository.watcher_generation;
-        let (watcher, events) = match start() {
-            Ok(watcher) => watcher,
-            Err(error) => {
-                let changed = self.repository.watcher_error.as_deref() != Some(error.as_str());
-                self.repository.watcher_error = Some(error);
-                return changed;
-            }
-        };
-        self.repository.watcher = Some(watcher);
-        self.repository.watcher_binding = Some(binding);
-        let changed = self.repository.watcher_error.take().is_some();
+        let task = cx.background_spawn(async move { start() });
         cx.spawn(async move |weak, cx| {
+            let result = task.await;
+            let events = match weak.update(cx, |this, cx| {
+                if this.repository.watcher_generation != generation
+                    || this.repository.watcher_binding.as_ref() != Some(&binding)
+                {
+                    return None;
+                }
+                match result {
+                    Ok((watcher, events)) => {
+                        this.repository.watcher = Some(watcher);
+                        if this.repository.watcher_error.take().is_some() {
+                            this.notify_run_panel(cx);
+                        }
+                        this.request_repository_refresh(cx);
+                        Some(events)
+                    }
+                    Err(error) => {
+                        this.repository.watcher_binding = None;
+                        let changed =
+                            this.repository.watcher_error.as_deref() != Some(error.as_str());
+                        this.repository.watcher_error = Some(error);
+                        if changed {
+                            this.notify_run_panel(cx);
+                        }
+                        None
+                    }
+                }
+            }) {
+                Ok(Some(events)) => events,
+                Ok(None) | Err(_) => return,
+            };
             while let Ok(first) = events.recv().await {
                 let (mut changed, mut error) = match first {
                     RepositoryWatchEvent::Changed => (true, None),
@@ -108,6 +132,6 @@ impl PiApp {
             }
         })
         .detach();
-        changed
+        false
     }
 }
