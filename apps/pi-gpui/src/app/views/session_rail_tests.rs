@@ -2,8 +2,9 @@ use std::{path::PathBuf, time::SystemTime};
 
 use super::{
     ActiveSessionItem, SessionRailItem, SessionRailKind, collapsed_inactive_rail_height,
-    minimal_row_splice, roots_waiting_for_descendants, session_accessible_label, session_badge,
-    status_visual, subagent_counts, visible_session_shortcuts,
+    first_unsubmitted_draft, minimal_row_splice, roots_waiting_for_descendants,
+    session_accessible_label, session_badge, status_visual, subagent_counts,
+    visible_session_shortcuts,
 };
 use crate::{
     app::views::session_hover::session_tooltip_lines,
@@ -14,24 +15,32 @@ use crate::{
 };
 
 #[test]
-fn shortcuts_follow_flat_id_order_and_skip_empty_drafts() {
-    let mut empty = DraftSession::with_id("empty".into(), PathBuf::from("/project"));
-    empty.app_session_id = 12;
+fn shortcuts_reserve_zero_for_the_first_unsubmitted_draft() {
+    let mut first_draft = DraftSession::with_id("first".into(), PathBuf::from("/project"));
+    first_draft.app_session_id = 12;
+    let mut second_draft = DraftSession::with_id("second".into(), PathBuf::from("/project"));
+    second_draft.app_session_id = 11;
     let mut submitted = DraftSession::with_id("submitted".into(), PathBuf::from("/project"));
-    submitted.app_session_id = 11;
+    submitted.app_session_id = 10;
     submitted.submitted = true;
-    let persisted = item("persisted", 10, "/other", SessionRailKind::Project, false);
+    let persisted = item("persisted", 9, "/other", SessionRailKind::Project, false);
     let rows = vec![
-        ActiveSessionItem::Draft(empty),
+        ActiveSessionItem::Draft(first_draft),
+        ActiveSessionItem::Draft(second_draft),
         ActiveSessionItem::Draft(submitted),
         ActiveSessionItem::Session(persisted),
     ];
 
     let shortcuts = visible_session_shortcuts(&rows);
 
-    assert!(!shortcuts.contains_key(&12));
-    assert_eq!(shortcuts.get(&11), Some(&1));
-    assert_eq!(shortcuts.get(&10), Some(&2));
+    assert_eq!(
+        first_unsubmitted_draft(&rows).map(|draft| draft.id.as_str()),
+        Some("first")
+    );
+    assert_eq!(shortcuts.get(&12), Some(&0));
+    assert!(!shortcuts.contains_key(&11));
+    assert_eq!(shortcuts.get(&10), Some(&1));
+    assert_eq!(shortcuts.get(&9), Some(&2));
 }
 
 #[test]

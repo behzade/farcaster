@@ -95,6 +95,7 @@ actions!(
         DismissSurface,
         QuitApplication,
         SubmitFollowUp,
+        SwitchSession0,
         SwitchSession1,
         SwitchSession2,
         SwitchSession3,

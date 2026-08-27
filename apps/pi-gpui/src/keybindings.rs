@@ -5,9 +5,10 @@ use crate::app::{
     ComposerHistoryPrevious, DismissSurface, FocusComposer, NewSession, NextSession,
     OVERLAY_KEY_CONTEXT, PICKER_KEY_CONTEXT, PickerBack, PreviousSession, QuitApplication,
     ShowActionPicker, ShowEditor, ShowKeybindings, ShowTerminal, ShowWorkGraph, SubmitFollowUp,
-    SubmitPrompt, SwitchSession1, SwitchSession2, SwitchSession3, SwitchSession4, SwitchSession5,
-    SwitchSession6, SwitchSession7, SwitchSession8, SwitchSession9, ToggleArchivedSessions,
-    WorkCreateIssue, WorkDismiss, WorkFocusSearch, WorkNextIssue, WorkPreviousIssue,
+    SubmitPrompt, SwitchSession0, SwitchSession1, SwitchSession2, SwitchSession3, SwitchSession4,
+    SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8, SwitchSession9,
+    ToggleArchivedSessions, WorkCreateIssue, WorkDismiss, WorkFocusSearch, WorkNextIssue,
+    WorkPreviousIssue,
 };
 use crate::app::{WORKGRAPH_KEY_CONTEXT, WORKGRAPH_NAV_KEY_CONTEXT};
 use crate::keyboard::CopySelection;
@@ -50,6 +51,13 @@ pub(crate) fn bindings() -> Vec<KeyBinding> {
 /// Returns the user-facing shortcut registry used by keyboard help.
 pub(crate) fn registry() -> Vec<Shortcut> {
     vec![
+        shortcut!(
+            "Sessions",
+            "Open first unsubmitted draft",
+            "cmd-0",
+            SwitchSession0,
+            None
+        ),
         shortcut!("Sessions", "Open session 1", "cmd-1", SwitchSession1, None),
         shortcut!("Sessions", "Open session 2", "cmd-2", SwitchSession2, None),
         shortcut!("Sessions", "Open session 3", "cmd-3", SwitchSession3, None),
@@ -313,6 +321,9 @@ mod tests {
     #[test]
     fn keyboard_help_has_both_question_mark_shortcuts_and_workgraph_navigation() {
         let shortcuts = registry();
+        assert!(shortcuts.iter().any(|shortcut| {
+            shortcut.label == "Open first unsubmitted draft" && shortcut.keystroke == "cmd-0"
+        }));
         assert!(
             shortcuts
                 .iter()

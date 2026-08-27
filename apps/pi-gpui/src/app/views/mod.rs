@@ -39,10 +39,10 @@ use super::{
     AbortRun, AddProject, AppSurface, CloseCurrent, ComposerEscape, CurrentCloseTarget,
     DismissSurface, FocusComposer, FocusSessionSearch, NewSession, NextSession, PiApp, PickerBack,
     PickerScope, PreviousSession, ProjectPickerIntent, RemoveProject, ShowActionPicker, ShowEditor,
-    ShowKeybindings, ShowTerminal, ShowWorkGraph, SubmitFollowUp, SubmitPrompt, SwitchSession1,
-    SwitchSession2, SwitchSession3, SwitchSession4, SwitchSession5, SwitchSession6, SwitchSession7,
-    SwitchSession8, SwitchSession9, ToggleArchivedSessions, WorkCreateIssue, WorkDismiss,
-    WorkFocusSearch, WorkNextIssue, WorkPreviousIssue, current_close_target,
+    ShowKeybindings, ShowTerminal, ShowWorkGraph, SubmitFollowUp, SubmitPrompt, SwitchSession0,
+    SwitchSession1, SwitchSession2, SwitchSession3, SwitchSession4, SwitchSession5, SwitchSession6,
+    SwitchSession7, SwitchSession8, SwitchSession9, ToggleArchivedSessions, WorkCreateIssue,
+    WorkDismiss, WorkFocusSearch, WorkNextIssue, WorkPreviousIssue, current_close_target,
 };
 pub(crate) const OVERLAY_KEY_CONTEXT: &str = "PiGpuiOverlay";
 
@@ -349,6 +349,9 @@ impl Render for PiApp {
                 if !handled {
                     this.show_chat_surface(window, cx);
                 }
+            }))
+            .on_action(cx.listener(|this, _: &SwitchSession0, window, cx| {
+                this.switch_to_first_unsubmitted_draft(window, cx);
             }))
             .on_action(cx.listener(|this, _: &SwitchSession1, window, cx| {
                 this.switch_to_session_number(1, window, cx);

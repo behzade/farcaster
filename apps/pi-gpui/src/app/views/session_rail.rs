@@ -661,8 +661,16 @@ fn minimal_row_splice<T: Eq>(current: &[T], next: &[T]) -> Option<(std::ops::Ran
     (prefix != old_end || replacement_count != 0).then_some((prefix..old_end, replacement_count))
 }
 
+fn first_unsubmitted_draft(rows: &[ActiveSessionItem]) -> Option<&DraftSession> {
+    rows.iter().find_map(|row| match row {
+        ActiveSessionItem::Draft(draft) if !draft.submitted => Some(draft),
+        ActiveSessionItem::Draft(_) | ActiveSessionItem::Session(_) => None,
+    })
+}
+
 fn visible_session_shortcuts(rows: &[ActiveSessionItem]) -> HashMap<i64, u8> {
-    rows.iter()
+    let mut shortcuts = rows
+        .iter()
         .filter_map(|row| match row {
             ActiveSessionItem::Draft(draft) if draft.submitted => Some(draft.app_session_id),
             ActiveSessionItem::Session(item) => Some(item.session.app_session_id),
@@ -672,10 +680,32 @@ fn visible_session_shortcuts(rows: &[ActiveSessionItem]) -> HashMap<i64, u8> {
         .take(9)
         .enumerate()
         .map(|(index, id)| (id, (index + 1) as u8))
-        .collect()
+        .collect::<HashMap<_, _>>();
+    if let Some(draft) = first_unsubmitted_draft(rows)
+        && draft.app_session_id > 0
+    {
+        shortcuts.insert(draft.app_session_id, 0);
+    }
+    shortcuts
 }
 
 impl PiApp {
+    pub(super) fn switch_to_first_unsubmitted_draft(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let lists = session_rail_lists(
+            &self.sessions,
+            &self.drafts,
+            self.session_project_filter.as_deref(),
+            &self.session_order,
+        );
+        if let Some(draft) = first_unsubmitted_draft(&lists.active).cloned() {
+            self.select_visible_session(VisibleSessionTarget::Draft(draft), window, cx);
+        }
+    }
+
     pub(super) fn switch_to_session_number(
         &mut self,
         number: usize,
