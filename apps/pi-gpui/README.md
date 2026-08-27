@@ -27,9 +27,10 @@ remain disabled for explicitly untrusted projects. Set `PI_GUI_GIT` or
 `PI_GUI_JJ` to override either executable.
 
 Changed files in Session details can be opened in an embedded Neovim editor.
-The editor uses Ghostty's VT core rendered directly by GPUI and keeps one
-Neovim process per open editor surface. Set `PI_GUI_NVIM` to override the
-`nvim` executable.
+The editor uses Ghostty's VT core in a native surface and keeps one Neovim
+process per open editor surface. App modals temporarily composite its last
+frame in GPUI so the editor remains visible beneath the backdrop. Set
+`PI_GUI_NVIM` to override the `nvim` executable.
 
 Chat, Neovim, and a project terminal share the center workspace. Hover the
 window's top-left corner to reveal the three surface controls. `Cmd+L` returns

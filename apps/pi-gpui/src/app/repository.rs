@@ -248,7 +248,7 @@ impl PiApp {
                         project: self.repository.project.clone(),
                         return_focus: window.focused(cx),
                     });
-                    self.hide_native_workspace_surfaces(cx);
+                    self.cover_native_workspace_surface(cx);
                     self.sheet_focus.focus(window, cx);
                     cx.notify();
                     return;
@@ -295,7 +295,7 @@ impl PiApp {
             .clone()
             .unwrap_or_else(|| self.composer_focus.clone())
             .focus(window, cx);
-        self.restore_active_native_workspace_surface(cx);
+        self.restore_active_native_workspace_surface(window, cx);
         cx.notify();
         Some(pending)
     }

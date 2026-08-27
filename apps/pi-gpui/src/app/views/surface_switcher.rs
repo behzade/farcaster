@@ -44,12 +44,12 @@ impl PiApp {
                     .border_color(THEME.colors.border)
             })
             .when(overlaps_native_surface, |switcher| {
-                switcher.on_hover(move |hovered, _, cx| {
+                switcher.on_hover(move |hovered, window, cx| {
                     let _ = hover.update(cx, |app, cx| {
                         if *hovered {
                             app.hide_native_workspace_surfaces(cx);
                         } else {
-                            app.restore_active_native_workspace_surface(cx);
+                            app.restore_active_native_workspace_surface(window, cx);
                         }
                     });
                 })

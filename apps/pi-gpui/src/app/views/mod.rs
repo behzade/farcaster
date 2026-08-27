@@ -29,8 +29,9 @@ pub(super) use regions::{
 pub(super) use session_groups::{SessionRailKind, roots_waiting_for_descendants};
 
 use gpui::{
-    Context, Focusable as _, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    StatefulInteractiveElement as _, Styled as _, Window, div, prelude::FluentBuilder as _,
+    Context, Focusable as _, InteractiveElement as _, IntoElement, ObjectFit, ParentElement as _,
+    Render, StatefulInteractiveElement as _, Styled as _, StyledImage as _, Window, div, img,
+    prelude::FluentBuilder as _,
 };
 use gpui_base::{Button as BaseButton, TextSelection};
 use gpui_component::kbd::Kbd;
@@ -132,6 +133,9 @@ impl Render for PiApp {
                 focus.focus(window, cx);
             });
         }
+        if self.native_surface_covered && !self.native_workspace_modal_active() {
+            self.restore_active_native_workspace_surface(window, cx);
+        }
         if let Some((generation, title)) = self.pending_title.take() {
             cx.defer_in(window, move |this, window, _| {
                 if this.runtime_generation == generation {
@@ -208,10 +212,23 @@ impl Render for PiApp {
                 main.child(self.composer_view.clone())
             })
             .into_any_element();
-        let main = match self.surface {
-            AppSurface::Editor => self.render_editor_surface(),
-            AppSurface::Terminal => self.render_terminal_workspace(),
-            AppSurface::Chat | AppSurface::Work => chat_main,
+        let native_surface_covered = self.native_surface_covered
+            && self.native_workspace_modal_active()
+            && matches!(self.surface, AppSurface::Editor | AppSurface::Terminal);
+        let main = if native_surface_covered {
+            div()
+                .size_full()
+                .min_h_0()
+                .when_some(self.native_surface_snapshot.clone(), |surface, snapshot| {
+                    surface.child(img(snapshot).size_full().object_fit(ObjectFit::Fill))
+                })
+                .into_any_element()
+        } else {
+            match self.surface {
+                AppSurface::Editor => self.render_editor_surface(),
+                AppSurface::Terminal => self.render_terminal_workspace(),
+                AppSurface::Chat | AppSurface::Work => chat_main,
+            }
         };
         let workgraph_focus = self.workgraph_view.read(cx).focus_handle();
         let picker = self.render_picker(entity.clone(), cx);

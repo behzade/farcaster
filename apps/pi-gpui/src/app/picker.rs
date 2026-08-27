@@ -103,7 +103,7 @@ impl PiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.hide_native_workspace_surfaces(cx);
+        self.cover_native_workspace_surface(cx);
         if self.picker.is_none() {
             let sheet_open = self.sessions_sheet || self.run_sheet || self.keybindings_help;
             self.picker_return_focus = if sheet_open {
@@ -185,7 +185,7 @@ impl PiApp {
             .take()
             .unwrap_or_else(|| self.composer_focus.clone())
             .focus(window, cx);
-        self.restore_active_native_workspace_surface(cx);
+        self.restore_active_native_workspace_surface(window, cx);
         cx.notify();
     }
 

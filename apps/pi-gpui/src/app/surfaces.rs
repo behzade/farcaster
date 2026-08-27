@@ -52,7 +52,43 @@ impl PiApp {
         self.hide_terminal(cx);
     }
 
-    pub(super) fn restore_active_native_workspace_surface(&self, cx: &mut Context<Self>) {
+    pub(super) fn cover_native_workspace_surface(&mut self, cx: &mut Context<Self>) {
+        if !self.native_surface_covered {
+            self.native_surface_covered = match self.surface {
+                AppSurface::Editor => self.editor_error.is_none() && self.editor.is_some(),
+                AppSurface::Terminal => self.terminal_error.is_none() && self.terminal.is_some(),
+                AppSurface::Chat | AppSurface::Work => false,
+            };
+            if self.native_surface_covered {
+                self.native_surface_snapshot = match self.surface {
+                    AppSurface::Editor => self.editor.as_ref().and_then(|editor| {
+                        editor.update(cx, |editor, cx| editor.snapshot(cx)).ok()
+                    }),
+                    AppSurface::Terminal => self.terminal.as_ref().and_then(|terminal| {
+                        terminal.update(cx, |terminal, _| terminal.snapshot()).ok()
+                    }),
+                    AppSurface::Chat | AppSurface::Work => None,
+                };
+            }
+        }
+        self.hide_native_workspace_surfaces(cx);
+    }
+
+    pub(super) fn restore_active_native_workspace_surface(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.native_workspace_modal_active() {
+            self.native_surface_covered = false;
+            if let Some(snapshot) = self.native_surface_snapshot.take() {
+                let _ = window.drop_image(snapshot);
+            }
+        }
+        if self.native_workspace_covered_by_overlay() {
+            self.hide_native_workspace_surfaces(cx);
+            return;
+        }
         self.restore_editor_visibility(cx);
         self.restore_terminal_visibility(cx);
     }
@@ -138,9 +174,9 @@ impl PiApp {
         self.surface = surface;
         self.pending_focus_after_render = None;
         if self.native_workspace_covered_by_overlay() {
-            self.hide_native_workspace_surfaces(cx);
+            self.cover_native_workspace_surface(cx);
         } else {
-            self.restore_active_native_workspace_surface(cx);
+            self.restore_active_native_workspace_surface(window, cx);
             match surface {
                 AppSurface::Editor => {
                     if let Some(editor) = self.editor.as_ref() {
@@ -158,7 +194,7 @@ impl PiApp {
         cx.notify();
     }
 
-    fn native_workspace_covered_by_overlay(&self) -> bool {
+    pub(super) fn native_workspace_modal_active(&self) -> bool {
         self.picker.is_some()
             || self.sessions_sheet
             || self.run_sheet
@@ -167,6 +203,11 @@ impl PiApp {
             || self.pending_archive.is_some()
             || self.pending_delete.is_some()
             || self.image_preview.is_some()
+            || self.repository.pending_jj_init.is_some()
+    }
+
+    fn native_workspace_covered_by_overlay(&self) -> bool {
+        self.native_workspace_modal_active()
             || self.extension.dialog.is_some()
             || self.extension.provider_auth.is_some()
     }
@@ -421,7 +462,7 @@ impl PiApp {
     }
 
     fn open_sheet(&mut self, sheet: AppSheet, window: &mut Window, cx: &mut Context<Self>) {
-        self.hide_native_workspace_surfaces(cx);
+        self.cover_native_workspace_surface(cx);
         if self.picker.take().is_some() {
             self.picker_return_focus = None;
         }
@@ -460,6 +501,7 @@ impl PiApp {
         if self.image_preview.is_none() {
             self.image_preview_return_focus = window.focused(cx);
         }
+        self.cover_native_workspace_surface(cx);
         self.image_preview = Some(ImagePreview {
             image,
             index,
@@ -477,6 +519,7 @@ impl PiApp {
             .take()
             .unwrap_or_else(|| self.composer_focus.clone())
             .focus(window, cx);
+        self.restore_active_native_workspace_surface(window, cx);
         cx.notify();
     }
 
@@ -488,7 +531,7 @@ impl PiApp {
             .take()
             .unwrap_or_else(|| self.composer_focus.clone());
         focus.focus(window, cx);
-        self.restore_active_native_workspace_surface(cx);
+        self.restore_active_native_workspace_surface(window, cx);
         cx.notify();
     }
 

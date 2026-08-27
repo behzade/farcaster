@@ -602,7 +602,7 @@ dependencies = [
  "bitflags 2.13.1",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.11.0",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -2337,16 +2337,18 @@ dependencies = [
 
 [[package]]
 name = "gpui-libghostty"
-version = "0.1.8"
+version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af4d50b876c354dd7202ad8f79d35f98c4d948cbae6b9c601571e43f3d7f2135"
+checksum = "bae523f676c6ec644a281580333c11bb16fedefc89fb9fe5b55fbf8c8f114506"
 dependencies = [
  "async-channel",
  "gpui",
+ "image",
  "khronos-egl",
  "libc",
  "libloading",
  "raw-window-handle",
+ "smallvec",
  "wayland-backend",
  "wayland-client",
  "wayland-protocols",
@@ -2354,9 +2356,9 @@ dependencies = [
 
 [[package]]
 name = "gpui-neovim"
-version = "0.1.1"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edba9b9adbb3889317b490f986dc7020c540bbed0f9c2fbf1e2e89f6f7d7a0ad"
+checksum = "a93da9e8548c4ce1d5dcb9d13ba689c9312b81257f0d1b3491b42e01b7fef760"
 dependencies = [
  "gpui",
  "gpui-libghostty",
@@ -3089,15 +3091,6 @@ name = "itertools"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1c173a5686ce8bfa551b3563d0c2170bf24ca44da99c7ca4bfdab5418c3fe57"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
 dependencies = [
  "either",
 ]

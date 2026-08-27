@@ -43,8 +43,8 @@ use std::{
 
 use gpui::{
     AppContext as _, Context, Entity, FocusHandle, Focusable as _, Image, ListAlignment, ListState,
-    PathPromptOptions, ScrollHandle, Subscription, SystemNotification, Task, Window, actions,
-    point, px,
+    PathPromptOptions, RenderImage, ScrollHandle, Subscription, SystemNotification, Task, Window,
+    actions, point, px,
 };
 use gpui_component::input::{InputEvent, InputState, TextareaState};
 use gpui_libghostty::Terminal;
@@ -217,6 +217,8 @@ pub(crate) struct PiApp {
     terminal: Option<Entity<Terminal>>,
     terminal_project: Option<PathBuf>,
     terminal_error: Option<String>,
+    native_surface_snapshot: Option<Arc<RenderImage>>,
+    native_surface_covered: bool,
     surface: AppSurface,
     workgraph_inspector_issue: Option<u64>,
     run_panel_scroll: ScrollHandle,
@@ -598,6 +600,8 @@ impl PiApp {
             terminal: None,
             terminal_project: None,
             terminal_error: None,
+            native_surface_snapshot: None,
+            native_surface_covered: false,
             surface: AppSurface::Chat,
             workgraph_inspector_issue: None,
             run_panel_scroll: ScrollHandle::new(),

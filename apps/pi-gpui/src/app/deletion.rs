@@ -27,6 +27,7 @@ impl PiApp {
             self.notify_session_rail(cx);
             return;
         }
+        self.cover_native_workspace_surface(cx);
         self.pending_delete = Some(PendingDelete {
             path,
             return_focus: window.focused(cx),
@@ -52,6 +53,7 @@ impl PiApp {
             .return_focus
             .unwrap_or_else(|| self.composer_focus.clone())
             .focus(window, cx);
+        self.restore_active_native_workspace_surface(window, cx);
         cx.notify();
         Some(pending.path)
     }

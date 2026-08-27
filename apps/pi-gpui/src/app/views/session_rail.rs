@@ -757,6 +757,9 @@ impl PiApp {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
+        if self.workspace_switch_blocked() {
+            return;
+        }
         match target {
             VisibleSessionTarget::Draft(draft) => {
                 self.resume_draft(draft.id, draft.project, window, cx);
