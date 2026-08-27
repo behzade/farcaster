@@ -11,8 +11,7 @@ pub(super) fn snapshot(
 ) -> Result<WorkingCopySnapshot, RepositoryError> {
     let output = status_output(backend)?;
     let token = SnapshotToken::Git(Arc::from(output.stdout.clone()));
-    let (mut identity, parsed) = parse_status(&output.stdout)?;
-    enrich_detached_identity(backend, &mut identity);
+    let (identity, parsed) = parse_status(&output.stdout)?;
     let changes = parsed
         .into_iter()
         .map(|parsed| {
@@ -185,59 +184,6 @@ struct ParsedChange {
     original_relative_path: Option<PathBuf>,
     layer: ChangeLayer,
     kind: ChangeKind,
-}
-
-fn enrich_detached_identity(backend: &RepositoryBackend, identity: &mut GitIdentity) {
-    if identity.branch.is_some() || identity.head_oid.is_none() {
-        return;
-    }
-    let arguments = [
-        "--no-pager",
-        "--no-optional-locks",
-        "for-each-ref",
-        "--format=%(refname:short)%09%(ahead-behind:HEAD)",
-        "refs/heads",
-    ]
-    .map(OsString::from);
-    if let Ok(output) = backend.run(&arguments)
-        && output.status.success()
-        && let Some((name, ref_ahead, ref_behind)) = parse_nearest_branch(&output.stdout)
-    {
-        identity.nearest_branch = Some(name);
-        identity.behind = ref_ahead;
-        identity.ahead = ref_behind;
-    }
-}
-
-fn parse_nearest_branch(input: &[u8]) -> Option<(String, u64, u64)> {
-    let text = std::str::from_utf8(input).ok()?;
-    let mut nearest = None::<(String, u64, u64)>;
-    for line in text.lines().filter(|line| !line.is_empty()) {
-        let Some((name, counts)) = line.split_once('\t').filter(|(name, _)| !name.is_empty())
-        else {
-            continue;
-        };
-        let Some((ahead, behind)) = counts.split_once(' ') else {
-            continue;
-        };
-        let Ok(ahead) = ahead.parse::<u64>() else {
-            continue;
-        };
-        let Ok(behind) = behind.parse::<u64>() else {
-            continue;
-        };
-        let closer = nearest
-            .as_ref()
-            .is_none_or(|(_, current_ahead, current_behind)| {
-                let next = ahead.saturating_add(behind);
-                let current = current_ahead.saturating_add(*current_behind);
-                next < current || (next == current && behind < *current_behind)
-            });
-        if closer {
-            nearest = Some((name.to_owned(), ahead, behind));
-        }
-    }
-    nearest
 }
 
 fn parse_status(input: &[u8]) -> Result<(GitIdentity, Vec<ParsedChange>), RepositoryError> {
@@ -441,13 +387,6 @@ u UU N... 100644 100644 100644 100644 aaaaaa bbbbbb cccccc conflict.txt\0";
         );
         assert_eq!(changes[3].kind, ChangeKind::Untracked);
         assert_eq!(changes[4].kind, ChangeKind::Conflict);
-    }
-
-    #[test]
-    fn nearest_detached_branch_is_the_closest_local_tip() {
-        let (name, ahead, behind) =
-            parse_nearest_branch(b"old\t0 20\nfeature\t3 0\nmain\t0 2\n").expect("nearest branch");
-        assert_eq!((name.as_str(), ahead, behind), ("main", 0, 2));
     }
 
     #[cfg(unix)]

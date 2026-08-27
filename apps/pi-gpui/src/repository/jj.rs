@@ -16,10 +16,6 @@ const IDENTITY_TEMPLATE: &str = concat!(
     "bookmarks.map(|bookmark| json(bookmark.name())).join(\"\\t\") ++ \"\\n\" ++ ",
     "conflicted_files.map(|file| json(file.path())).join(\"\\t\") ++ \"\\n\""
 );
-const CLOSEST_BOOKMARKS: &str = "heads(::@ & bookmarks())";
-const CLOSEST_BOOKMARK_TEMPLATE: &str =
-    "local_bookmarks.map(|bookmark| json(bookmark.name())).join(\"\\t\") ++ \"\\n\"";
-const COMMIT_LIST_TEMPLATE: &str = "commit_id ++ \"\\n\"";
 const STATUS_TEMPLATE: &str = concat!(
     "json(status) ++ \"\\t\" ++ ",
     "json(source.path()) ++ \"\\t\" ++ ",
@@ -34,12 +30,11 @@ pub(super) fn snapshot(
     // This first read snapshots the working copy. The other reads are pinned to
     // the resulting operation, so Jujutsu identity and status cannot be torn.
     let operation_id = current_operation(backend)?;
-    let identity_output = log_revset(backend, &operation_id, "@", IDENTITY_TEMPLATE)?;
-    let closest_output = log_revset(
+    let identity_output = run_at_operation(
         backend,
         &operation_id,
-        CLOSEST_BOOKMARKS,
-        CLOSEST_BOOKMARK_TEMPLATE,
+        &["log", "-r", "@", "--no-graph", "-T", IDENTITY_TEMPLATE],
+        false,
     )?;
     let status_output = run_at_operation(
         backend,
@@ -49,12 +44,6 @@ pub(super) fn snapshot(
     )?;
     let mut identity = parse_identity(&identity_output.stdout)?;
     identity.operation_id.clone_from(&operation_id);
-    identity.closest_bookmarks = parse_closest_bookmarks(&closest_output.stdout)?;
-    if !identity.closest_bookmarks.is_empty() {
-        let ahead_revset = format!("{CLOSEST_BOOKMARKS}..@");
-        let ahead_output = log_revset(backend, &operation_id, &ahead_revset, COMMIT_LIST_TEMPLATE)?;
-        identity.ahead = count_log_commits(&ahead_output.stdout)?;
-    }
     let token = SnapshotToken::Jujutsu(Arc::from(operation_id));
     let mut parsed = parse_status(&status_output.stdout)?;
     for path in &identity.conflicted_paths {
@@ -171,20 +160,6 @@ fn current_operation(backend: &RepositoryBackend) -> Result<String, RepositoryEr
         return Err(invalid("operation id is empty or malformed"));
     }
     Ok(operation.to_owned())
-}
-
-fn log_revset(
-    backend: &RepositoryBackend,
-    operation_id: &str,
-    revset: &str,
-    template: &str,
-) -> Result<super::process::CommandOutput, RepositoryError> {
-    run_at_operation(
-        backend,
-        operation_id,
-        &["log", "-r", revset, "--no-graph", "-T", template],
-        false,
-    )
 }
 
 fn run_at_operation(
@@ -351,25 +326,6 @@ fn encode_json_string(value: &str) -> String {
     }
     encoded.push('"');
     encoded
-}
-
-fn count_log_commits(input: &[u8]) -> Result<u64, RepositoryError> {
-    let text = std::str::from_utf8(input).map_err(|_| invalid("revision list is not UTF-8"))?;
-    Ok(text.lines().filter(|line| !line.is_empty()).count() as u64)
-}
-
-fn parse_closest_bookmarks(input: &[u8]) -> Result<Vec<String>, RepositoryError> {
-    let text =
-        std::str::from_utf8(input).map_err(|_| invalid("closest bookmarks are not UTF-8"))?;
-    let mut bookmarks = Vec::new();
-    for line in text.lines().filter(|line| !line.is_empty()) {
-        for bookmark in decode_json_string_list(line)? {
-            if !bookmarks.contains(&bookmark) {
-                bookmarks.push(bookmark);
-            }
-        }
-    }
-    Ok(bookmarks)
 }
 
 fn decode_json_string_list(value: &str) -> Result<Vec<String>, RepositoryError> {
@@ -544,14 +500,6 @@ mod tests {
         assert_eq!(moved_in.relative_path, PathBuf::from("project/file.rs"));
         assert_eq!(moved_in.original_relative_path, None);
         assert_eq!(moved_in.kind, ChangeKind::Added);
-    }
-
-    #[test]
-    fn closest_bookmarks_flatten_unique_names() {
-        let bookmarks =
-            parse_closest_bookmarks(b"\"main\"\t\"topic\"\n\"topic\"\t\"quote\\\"name\"\n")
-                .expect("closest bookmarks should parse");
-        assert_eq!(bookmarks, ["main", "topic", "quote\"name"]);
     }
 
     #[test]
