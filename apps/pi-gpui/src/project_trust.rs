@@ -2,7 +2,6 @@
 
 use std::{
     collections::BTreeMap,
-    ffi::OsStr,
     fs,
     path::{Path, PathBuf},
     thread,
@@ -262,23 +261,13 @@ struct TrustEnvironment {
 }
 
 fn trust_environment(project: &Path) -> Result<TrustEnvironment, String> {
-    let imported = crate::shell_environment::project_shell_environment(project)?;
-
-    let value = |name: &OsStr| {
-        imported.as_ref().map_or_else(
-            || std::env::var_os(name),
-            |environment| {
-                environment
-                    .iter()
-                    .find(|(key, _)| key == name)
-                    .map(|(_, value)| value.clone())
-            },
-        )
-    };
-    let home = value(OsStr::new("HOME"))
+    // Trust must be decided before executing project-controlled shell hooks.
+    // Pi-GPUI imports the user's login environment before opening its window;
+    // project-specific shell capture belongs to the background RPC startup path.
+    let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .and_then(|path| canonical(&path).ok());
-    let root = value(OsStr::new("PI_CODING_AGENT_DIR"))
+    let root = std::env::var_os("PI_CODING_AGENT_DIR")
         .map(PathBuf::from)
         .or_else(|| home.as_ref().map(|home| home.join(".pi/agent")))
         .ok_or_else(|| "HOME is not set and PI_CODING_AGENT_DIR is not set".to_owned())?;
