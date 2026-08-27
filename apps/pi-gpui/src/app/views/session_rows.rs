@@ -656,47 +656,49 @@ pub(super) fn session_row_with_height(
                                             });
                                         }),
                                 )
-                                .child(
-                                    div()
-                                        .id(format!("delete-{}", session.id))
-                                        .role(Role::Button)
-                                        .aria_label("Delete session permanently")
-                                        .tab_index(0)
-                                        .size(THEME.controls.icon_button)
-                                        .flex_none()
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .rounded(THEME.radius)
-                                        .opacity(0.0)
-                                        .group_hover(
-                                            format!("session-actions-{}", session.id),
-                                            |button| button.opacity(1.0),
-                                        )
-                                        .focus(|button| {
-                                            button
-                                                .opacity(1.0)
-                                                .border(THEME.border)
-                                                .border_color(THEME.colors.accent)
-                                        })
-                                        .text_color(THEME.colors.danger)
-                                        .hover(|button| button.bg(THEME.colors.hover))
-                                        .tooltip(move |window, cx| {
-                                            Tooltip::new("Delete session permanently")
-                                                .build(window, cx)
-                                        })
-                                        .child(app_icon(AppIcon::Trash, AppIconSize::Control))
-                                        .on_click(move |_, window, cx| {
-                                            cx.stop_propagation();
-                                            let _ = delete_entity.update(cx, |this, cx| {
-                                                this.request_session_delete(
-                                                    delete_path.clone(),
-                                                    window,
-                                                    cx,
-                                                );
-                                            });
-                                        }),
-                                ),
+                                .when(is_archived, |metadata| {
+                                    metadata.child(
+                                        div()
+                                            .id(format!("delete-{}", session.id))
+                                            .role(Role::Button)
+                                            .aria_label("Delete session permanently")
+                                            .tab_index(0)
+                                            .size(THEME.controls.icon_button)
+                                            .flex_none()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .rounded(THEME.radius)
+                                            .opacity(0.0)
+                                            .group_hover(
+                                                format!("session-actions-{}", session.id),
+                                                |button| button.opacity(1.0),
+                                            )
+                                            .focus(|button| {
+                                                button
+                                                    .opacity(1.0)
+                                                    .border(THEME.border)
+                                                    .border_color(THEME.colors.accent)
+                                            })
+                                            .text_color(THEME.colors.danger)
+                                            .hover(|button| button.bg(THEME.colors.hover))
+                                            .tooltip(move |window, cx| {
+                                                Tooltip::new("Delete session permanently")
+                                                    .build(window, cx)
+                                            })
+                                            .child(app_icon(AppIcon::Trash, AppIconSize::Control))
+                                            .on_click(move |_, window, cx| {
+                                                cx.stop_propagation();
+                                                let _ = delete_entity.update(cx, |this, cx| {
+                                                    this.request_session_delete(
+                                                        delete_path.clone(),
+                                                        window,
+                                                        cx,
+                                                    );
+                                                });
+                                            }),
+                                    )
+                                }),
                         ),
                 ),
         );

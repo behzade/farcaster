@@ -31,8 +31,8 @@ use crate::{
     session_watcher::{SessionWatchEvent, SessionWatcher},
     sessions::{
         LoadedHistory, RUNNING_ACTIVITY_TIMEOUT, SessionDiscovery, SessionSummary,
-        configured_session_root, discover, load_history, project_display_history,
-        session_family_for_path,
+        archived_root_family_for_path, configured_session_root, discover, load_history,
+        project_display_history, session_family_for_path,
     },
     state::StateStore,
 };
@@ -432,7 +432,6 @@ fn run_supervisor(
     let mut latest = HashMap::<String, Arc<RuntimeSnapshot>>::new();
     let mut catalog_sessions = Vec::<SessionSummary>::new();
     let mut catalog_generation = 0_u64;
-    let mut catalog_exhaustive = false;
     let mut activity_tracker = ExternalActivityTracker::default();
     if let Some(path) = initial_session.clone() {
         latest.insert(
@@ -631,11 +630,6 @@ fn run_supervisor(
                     event @ (RuntimeEvent::Sessions { .. }
                     | RuntimeEvent::SessionsFailed { .. }) => {
                         if key == catalog_key
-                            && matches!(&event, RuntimeEvent::SessionsFailed { .. })
-                        {
-                            catalog_exhaustive = false;
-                        }
-                        if key == catalog_key
                             && let RuntimeEvent::Sessions {
                                 generation: next_generation,
                                 all_sessions,
@@ -645,7 +639,6 @@ fn run_supervisor(
                         {
                             catalog_generation = *next_generation;
                             if let Some((_, exhaustive)) = activities {
-                                catalog_exhaustive = *exhaustive;
                                 activity_tracker.sync_catalog(
                                     all_sessions,
                                     *exhaustive,
@@ -731,27 +724,10 @@ fn run_supervisor(
                 }
                 if let RuntimeCommand::DeleteSessionFamily { path } = &command {
                     let result = (|| {
-                        if !catalog_exhaustive {
-                            return Err(
-                                "Wait for a complete session scan before deleting this session"
-                                    .to_owned(),
-                            );
-                        }
-                        let requested = catalog_sessions
-                            .iter()
-                            .find(|session| session.path == *path)
+                        let family = archived_root_family_for_path(&catalog_sessions, path)
                             .ok_or_else(|| {
-                                "The session is no longer available to delete".to_owned()
+                                "Only an archived root session can be deleted".to_owned()
                             })?;
-                        if requested.parent_session.is_some() {
-                            return Err("Only a root session can be deleted".to_owned());
-                        }
-                        let family = session_family_for_path(&catalog_sessions, path)
-                            .expect("requested session belongs to the catalog");
-                        let root = family[0];
-                        if root.path != *path {
-                            return Err("Only a root session can be deleted".to_owned());
-                        }
                         if family.iter().any(|session| session.is_running) {
                             return Err("Wait for the session family to finish before deleting it"
                                 .to_owned());
@@ -852,6 +828,9 @@ fn run_supervisor(
                                 generation: catalog_generation,
                                 message,
                             });
+                            if let Some(catalog) = actors.get(&catalog_key) {
+                                catalog.send(RuntimeCommand::RefreshSessions);
+                            }
                         }
                     }
                     continue;
