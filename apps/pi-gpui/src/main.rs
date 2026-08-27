@@ -34,6 +34,7 @@ mod state_test;
 mod theme;
 mod tool_changes;
 mod transcript;
+mod transcript_attachments;
 mod transcript_list;
 mod transcript_markdown;
 mod user_invocations;

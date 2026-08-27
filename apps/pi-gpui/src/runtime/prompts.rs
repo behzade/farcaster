@@ -60,8 +60,9 @@ impl RuntimeOwner {
         let invocation =
             crate::user_invocations::contains_invocation(&message, &self.snapshot.commands);
         let conversation = Arc::make_mut(&mut self.snapshot.conversation);
-        self.pending_prompt_item = (!was_running)
-            .then(|| conversation.push_local_user(message.clone(), images.len(), invocation));
+        self.pending_prompt_item = (!was_running).then(|| {
+            conversation.push_local_user_with_prompt_images(message.clone(), &images, invocation)
+        });
         conversation.running = true;
         self.snapshot.status = "Working".into();
         self.publish();
@@ -76,9 +77,9 @@ impl RuntimeOwner {
         let invocation =
             crate::user_invocations::contains_invocation(&prompt.message, &self.snapshot.commands);
         let conversation = Arc::make_mut(&mut self.snapshot.conversation);
-        self.pending_prompt_item = Some(conversation.push_local_user(
+        self.pending_prompt_item = Some(conversation.push_local_user_with_prompt_images(
             prompt.message.clone(),
-            prompt.images.len(),
+            &prompt.images,
             invocation,
         ));
         conversation.running = true;
@@ -199,11 +200,12 @@ impl RuntimeOwner {
                     &prompt.message,
                     &self.active_snapshot().commands,
                 );
-                let optimistic = conversation_mut(self.active_snapshot_mut()).push_local_user(
-                    prompt.message.clone(),
-                    prompt.images.len(),
-                    invocation,
-                );
+                let optimistic = conversation_mut(self.active_snapshot_mut())
+                    .push_local_user_with_prompt_images(
+                        prompt.message.clone(),
+                        &prompt.images,
+                        invocation,
+                    );
                 self.pending_prompt_item = Some(optimistic);
             }
             let snapshot = self.active_snapshot_mut();

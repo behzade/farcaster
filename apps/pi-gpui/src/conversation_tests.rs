@@ -313,30 +313,35 @@ fn assistant_usage_without_prompt_tokens_does_not_change_average_cache_hit_rate(
 }
 
 #[test]
-fn user_images_are_visible_even_without_prompt_text() {
+fn user_images_are_preserved_as_transcript_attachments() {
+    let png = "iVBORw0KGgo=";
     let mut state = ConversationState::default();
     state.replace_history(&[json!({
         "role":"user",
-        "content":[{"type":"image","data":"a","mimeType":"image/png"}]
+        "content":[{"type":"image","data":png,"mimeType":"image/png"}]
     })]);
-    assert_eq!(state.items[0].text, "Attached image");
+    assert_eq!(state.items[0].text, "");
+    assert_eq!(state.items[0].images.len(), 1);
 
-    state.push_local_user("look".into(), 2, false);
-    assert_eq!(state.items[1].text, "look\n\nAttached 2 images");
+    let images = [
+        PromptImage::new(png.into(), "image/png".into()),
+        PromptImage::new(png.into(), "image/png".into()),
+    ];
+    state.push_local_user_with_prompt_images("look".into(), &images, false);
+    assert_eq!(state.items[1].text, "look");
+    assert_eq!(state.items[1].images.len(), 2);
 
     state.replace_history(&[json!({
         "role":"user",
         "piUserInvocation":"$simplify",
         "content":[
             {"type":"text","text":"expanded"},
-            {"type":"image","data":"a","mimeType":"image/png"}
+            {"type":"image","data":png,"mimeType":"image/png"}
         ]
     })]);
-    assert_eq!(state.items[0].text, "$simplify\n\nAttached image");
-    assert_eq!(
-        state.items[0].invocation.as_deref(),
-        Some("expanded\n\nAttached image")
-    );
+    assert_eq!(state.items[0].text, "$simplify");
+    assert_eq!(state.items[0].images.len(), 1);
+    assert_eq!(state.items[0].invocation.as_deref(), Some("expanded"));
 }
 
 #[test]

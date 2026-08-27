@@ -5,9 +5,11 @@ use std::{
     sync::Arc,
 };
 
+use base64::Engine as _;
+use gpui::{Image, ImageFormat};
 use serde_json::Value;
 
-use crate::persistent_vec::PersistentVec;
+use crate::{persistent_vec::PersistentVec, protocol::PromptImage};
 
 const MAX_DIAGNOSTICS: usize = 32;
 const STREAM_CHUNK_BYTES: usize = 2 * 1024;
@@ -85,6 +87,7 @@ pub(crate) struct TranscriptItem {
     pub kind: TranscriptKind,
     pub label: String,
     pub text: String,
+    pub images: Arc<Vec<Arc<Image>>>,
     pub stream_chunks: Arc<Vec<Arc<str>>>,
     pub streaming: bool,
     pub is_error: bool,
@@ -180,10 +183,33 @@ impl ConversationState {
         image_count: usize,
         invocation: bool,
     ) -> Arc<TranscriptItem> {
+        self.push_local_user_with_images(
+            user_message_text(&message, image_count),
+            Arc::default(),
+            invocation,
+        )
+    }
+
+    pub(crate) fn push_local_user_with_prompt_images(
+        &mut self,
+        message: String,
+        images: &[PromptImage],
+        invocation: bool,
+    ) -> Arc<TranscriptItem> {
+        self.push_local_user_with_images(message, decode_prompt_images(images), invocation)
+    }
+
+    fn push_local_user_with_images(
+        &mut self,
+        message: String,
+        images: Arc<Vec<Arc<Image>>>,
+        invocation: bool,
+    ) -> Arc<TranscriptItem> {
         let item = Arc::new(TranscriptItem {
             kind: TranscriptKind::User,
             label: String::new(),
-            text: user_message_text(&message, image_count),
+            text: message,
+            images,
             stream_chunks: Arc::default(),
             streaming: false,
             is_error: false,
@@ -387,6 +413,7 @@ impl ConversationState {
             kind: TranscriptKind::Error,
             label: "Connection error".into(),
             text: message,
+            images: Arc::default(),
             stream_chunks: Arc::default(),
             streaming: false,
             is_error: true,
@@ -402,6 +429,7 @@ impl ConversationState {
             kind: TranscriptKind::Error,
             label: "Extension error".into(),
             text: message,
+            images: Arc::default(),
             stream_chunks: Arc::default(),
             streaming: false,
             is_error: true,
@@ -426,6 +454,7 @@ impl ConversationState {
             kind: TranscriptKind::Error,
             label: label.into(),
             text: message,
+            images: Arc::default(),
             stream_chunks: Arc::default(),
             streaming: false,
             is_error: true,
@@ -581,6 +610,7 @@ impl ConversationState {
             }
             .into(),
             text: partial.value.clone(),
+            images: Arc::default(),
             stream_chunks: partial.chunks.clone(),
             streaming: true,
             is_error: false,
@@ -682,6 +712,7 @@ impl ConversationState {
             kind: TranscriptKind::Tool,
             label: display_tool_name(&name),
             text: args,
+            images: Arc::default(),
             stream_chunks: Arc::default(),
             streaming: true,
             is_error: false,
@@ -739,6 +770,7 @@ impl ConversationState {
             kind: TranscriptKind::Notice,
             label: "Run".into(),
             text,
+            images: Arc::default(),
             stream_chunks: Arc::default(),
             streaming: false,
             is_error: false,
@@ -863,6 +895,7 @@ fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
                             kind,
                             label,
                             text,
+                            images: Arc::default(),
                             stream_chunks: Arc::default(),
                             streaming: false,
                             is_error: false,
@@ -941,6 +974,11 @@ fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
         } else {
             message_text(message)
         },
+        images: if kind == TranscriptKind::User {
+            message_images(message)
+        } else {
+            Arc::default()
+        },
         stream_chunks: Arc::default(),
         streaming: false,
         is_error,
@@ -966,12 +1004,11 @@ fn message_text(message: &Value) -> String {
             .filter_map(|block| block.get("text").and_then(Value::as_str))
             .collect::<Vec<_>>()
             .join("\n");
-        let image_count = blocks
+        let has_image = blocks
             .iter()
-            .filter(|block| block.get("type").and_then(Value::as_str) == Some("image"))
-            .count();
-        if !text.is_empty() || image_count > 0 {
-            return user_message_text(&text, image_count);
+            .any(|block| block.get("type").and_then(Value::as_str) == Some("image"));
+        if !text.is_empty() || has_image {
+            return text;
         }
     }
     message
@@ -986,14 +1023,7 @@ fn projected_user_message_text(message: &Value) -> String {
     let Some(display) = message.get("piUserInvocation").and_then(Value::as_str) else {
         return message_text(message);
     };
-    let image_count = message
-        .get("content")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|block| block.get("type").and_then(Value::as_str) == Some("image"))
-        .count();
-    user_message_text(display, image_count)
+    display.to_owned()
 }
 
 fn user_message_text(message: &str, image_count: usize) -> String {
@@ -1010,6 +1040,48 @@ fn user_message_text(message: &str, image_count: usize) -> String {
     } else {
         format!("{message}\n\n{attachment}")
     }
+}
+
+fn decode_prompt_images(images: &[PromptImage]) -> Arc<Vec<Arc<Image>>> {
+    decode_images(
+        images
+            .iter()
+            .map(|image| (image.data.as_str(), image.mime_type.as_str())),
+    )
+}
+
+fn message_images(message: &Value) -> Arc<Vec<Arc<Image>>> {
+    decode_images(
+        message
+            .get("content")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|block| block.get("type").and_then(Value::as_str) == Some("image"))
+            .filter_map(|block| {
+                block
+                    .get("data")
+                    .and_then(Value::as_str)
+                    .zip(block.get("mimeType").and_then(Value::as_str))
+            }),
+    )
+}
+
+fn decode_images<'a>(images: impl IntoIterator<Item = (&'a str, &'a str)>) -> Arc<Vec<Arc<Image>>> {
+    Arc::new(
+        images
+            .into_iter()
+            .filter_map(|(data, mime_type)| decode_image(data, mime_type))
+            .collect(),
+    )
+}
+
+fn decode_image(data: &str, mime_type: &str) -> Option<Arc<Image>> {
+    let format = ImageFormat::from_mime_type(mime_type)?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .ok()?;
+    (!bytes.is_empty()).then(|| Arc::new(Image::from_bytes(format, bytes)))
 }
 
 fn tool_name(value: &Value) -> Option<&str> {
@@ -1287,6 +1359,7 @@ fn model_error_item(text: String) -> TranscriptItem {
         kind: TranscriptKind::Error,
         label: "Model error".into(),
         text,
+        images: Arc::default(),
         stream_chunks: Arc::default(),
         streaming: false,
         is_error: true,

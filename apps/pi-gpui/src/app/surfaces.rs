@@ -1,10 +1,10 @@
 //! Focus restoration and dismissal policy for app-owned overlays.
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
-use gpui::{Context, FocusHandle, Window};
+use gpui::{Context, FocusHandle, Image, Window};
 
-use super::{AppSurface, PiApp};
+use super::{AppSurface, ImagePreview, PiApp};
 use crate::{
     protocol::{ExtensionUiRequest, PromptMode},
     runtime::RuntimeCommand,
@@ -166,6 +166,7 @@ impl PiApp {
             || self.project_trust_sheet
             || self.pending_archive.is_some()
             || self.pending_delete.is_some()
+            || self.image_preview.is_some()
             || self.extension.dialog.is_some()
             || self.extension.provider_auth.is_some()
     }
@@ -448,6 +449,37 @@ impl PiApp {
         self.project_trust_sheet = flags.project_trust;
     }
 
+    pub(crate) fn open_image_preview(
+        &mut self,
+        image: Arc<Image>,
+        index: usize,
+        total: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.image_preview.is_none() {
+            self.image_preview_return_focus = window.focused(cx);
+        }
+        self.image_preview = Some(ImagePreview {
+            image,
+            index,
+            total,
+        });
+        self.pending_focus_after_render = Some(self.image_preview_focus.clone());
+        cx.notify();
+    }
+
+    pub(super) fn close_image_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.image_preview.take().is_none() {
+            return;
+        }
+        self.image_preview_return_focus
+            .take()
+            .unwrap_or_else(|| self.composer_focus.clone())
+            .focus(window, cx);
+        cx.notify();
+    }
+
     pub(super) fn close_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.apply_sheet_flags(sheet_flags(None));
         self.pending_sheet_setup = false;
@@ -461,7 +493,9 @@ impl PiApp {
     }
 
     pub(super) fn dismiss_surface(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.repository.pending_jj_init.is_some() {
+        if self.image_preview.is_some() {
+            self.close_image_preview(window, cx);
+        } else if self.repository.pending_jj_init.is_some() {
             self.close_jj_init_confirmation(window, cx);
         } else if self.picker.is_some() {
             self.close_picker(window, cx);

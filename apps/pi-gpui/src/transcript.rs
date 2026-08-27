@@ -22,6 +22,7 @@ use crate::{
     persistent_vec::{Indexed, PersistentVec},
     primitives::{ButtonTone, button, disclosure_button, disclosure_indicator},
     theme::{MONO_FONT_FAMILY, THEME},
+    transcript_attachments::{ATTACHMENT_ROW_HEIGHT, render_attachments},
     transcript_list::{TranscriptListState, transcript_list_grouped},
     transcript_markdown::{MarkdownStateKey, TranscriptMarkdownCache},
 };
@@ -69,6 +70,11 @@ pub(crate) fn estimated_row_height(
         .sum::<usize>()
         .max(1);
     px((visual_lines.min(320) as f32).mul_add(20.0, 36.0))
+        + if item(row.item_start()).images.is_empty() {
+            px(0.0)
+        } else {
+            ATTACHMENT_ROW_HEIGHT
+        }
 }
 
 #[derive(Clone, Copy)]
@@ -763,7 +769,20 @@ fn copy_transcript_items(
     range
         .filter_map(|index| items.get(index))
         .map(|item| {
-            let text = item.complete_text();
+            let mut text = item.complete_text();
+            if !item.images.is_empty() {
+                let label = if item.images.len() == 1 {
+                    "[Image attachment]".to_owned()
+                } else {
+                    format!("[{} image attachments]", item.images.len())
+                };
+                if text.trim().is_empty() {
+                    text = label;
+                } else {
+                    text.push_str("\n\n");
+                    text.push_str(&label);
+                }
+            }
             if !text.trim().is_empty() {
                 text
             } else if !item.tool_output.trim().is_empty() {
@@ -934,6 +953,7 @@ fn render_row(
                     &markdown,
                     cx,
                 ),
+                entity.clone(),
             )
         }
         TranscriptRow::StreamChunk {
@@ -959,6 +979,7 @@ fn render_row(
                     text,
                     cx,
                 ),
+                entity.clone(),
             )
         }
         TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Error => {
@@ -977,6 +998,7 @@ fn render_row(
                 follows_tool,
                 Some(markdown_cache.state(MarkdownStateKey::item(index, revision), &markdown, cx)),
                 Some(invocation_transcript_markdown_style(resolved)),
+                entity.clone(),
             )
         }
         TranscriptRow::Item { index, .. } if items[index].invocation.is_some() => {
@@ -1012,7 +1034,14 @@ fn render_row(
                     cx,
                 )
             });
-            render_message(key, &items[index], follows_tool, markdown_state, None)
+            render_message(
+                key,
+                &items[index],
+                follows_tool,
+                markdown_state,
+                None,
+                entity,
+            )
         }
     }
 }
@@ -1025,6 +1054,7 @@ fn render_invocation(
 ) -> AnyElement {
     let resolved = invocation_resolution(item);
     let kind = invocation_kind(&item.text, resolved);
+    let attachments_entity = entity.clone();
     let resolved_ready = !resolved.is_empty();
     let skill = kind == "Skill";
     div()
@@ -1034,6 +1064,9 @@ fn render_invocation(
         .py(THEME.space.sm)
         .flex()
         .flex_col()
+        .when(!item.images.is_empty(), |row| {
+            row.child(render_attachments(key, item, attachments_entity))
+        })
         .child(
             div()
                 .flex()
@@ -1216,6 +1249,7 @@ fn render_message(
     follows_tool: bool,
     markdown_state: Option<Entity<TextViewState>>,
     markdown_style: Option<TextViewStyle>,
+    entity: WeakEntity<PiApp>,
 ) -> AnyElement {
     let user = item.kind == TranscriptKind::User;
     let role = message_role_label(item.kind);
@@ -1233,6 +1267,9 @@ fn render_message(
             row.mt(THEME.space.md).pt(THEME.space.sm)
         })
         .children(role.map(|role| message_role(role, user)))
+        .when(user && !item.images.is_empty(), |row| {
+            row.child(render_attachments(key, item, entity))
+        })
         .child({
             let text = markdown_state.map_or_else(
                 || selectable_text(("transcript-text", key), &item.text),
@@ -1256,6 +1293,7 @@ fn render_message_chunk(
     last: bool,
     follows_tool: bool,
     markdown_state: Entity<TextViewState>,
+    entity: WeakEntity<PiApp>,
 ) -> AnyElement {
     let user = item.kind == TranscriptKind::User;
     div()
@@ -1274,6 +1312,9 @@ fn render_message_chunk(
         .when(last, |row| row.pb(THEME.space.md))
         .when(first, |row| {
             row.children(message_role_label(item.kind).map(|role| message_role(role, user)))
+        })
+        .when(first && user && !item.images.is_empty(), |row| {
+            row.child(render_attachments(key, item, entity))
         })
         .child(
             selectable_text_state(&markdown_state)

@@ -1,10 +1,12 @@
 use super::*;
+use gpui::{Image, ImageFormat};
 
 fn item(kind: TranscriptKind, label: &str, text: &str) -> Arc<TranscriptItem> {
     Arc::new(TranscriptItem {
         kind,
         label: label.into(),
         text: text.into(),
+        images: Arc::default(),
         stream_chunks: Arc::default(),
         streaming: false,
         is_error: false,
@@ -13,6 +15,22 @@ fn item(kind: TranscriptKind, label: &str, text: &str) -> Arc<TranscriptItem> {
         tool_presentation: None,
         invocation: None,
     })
+}
+
+#[test]
+fn transcript_copy_keeps_image_attachment_markers() {
+    let mut attached = item(TranscriptKind::User, "", "look here");
+    Arc::make_mut(&mut attached).images = Arc::new(vec![Arc::new(Image::from_bytes(
+        ImageFormat::Png,
+        vec![1, 2, 3],
+    ))]);
+    let mut items = PersistentVec::default();
+    items.push(attached);
+
+    assert_eq!(
+        copy_transcript_items(&items, 0..=0),
+        "look here\n\n[Image attachment]"
+    );
 }
 
 #[test]

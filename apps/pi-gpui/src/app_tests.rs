@@ -33,6 +33,7 @@ fn item(text: &str) -> TranscriptItem {
         kind: TranscriptKind::Assistant,
         label: "Pi".into(),
         text: text.into(),
+        images: Arc::default(),
         stream_chunks: Arc::default(),
         streaming: false,
         is_error: false,

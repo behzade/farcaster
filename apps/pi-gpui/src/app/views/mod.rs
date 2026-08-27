@@ -6,6 +6,7 @@ mod composer_footer;
 mod composer_tests;
 mod delete_confirmation;
 mod editor;
+mod image_preview;
 mod jj_init_confirmation;
 mod models;
 mod project_trust;
@@ -488,6 +489,10 @@ impl Render for PiApp {
                     },
                 ))
             })
+            .when_some(
+                image_preview::render(self, entity.clone()),
+                |root, preview| root.child(preview),
+            )
             .when(self.pending_archive.is_some(), |root| {
                 root.child(archive_confirmation::render(self, entity.clone()))
             })
