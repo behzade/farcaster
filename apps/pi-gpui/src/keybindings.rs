@@ -1,13 +1,13 @@
 //! Single registry for application keybindings and keyboard-help metadata.
 
 use crate::app::{
-    AbortRun, AddProject, CloseCurrent, ComposerHistoryNext, ComposerHistoryPrevious,
-    DismissSurface, FocusComposer, NewSession, NextSession, OVERLAY_KEY_CONTEXT,
-    PICKER_KEY_CONTEXT, PickerBack, PreviousSession, QuitApplication, ShowActionPicker, ShowEditor,
-    ShowKeybindings, ShowTerminal, ShowWorkGraph, SubmitFollowUp, SubmitPrompt, SwitchSession1,
-    SwitchSession2, SwitchSession3, SwitchSession4, SwitchSession5, SwitchSession6, SwitchSession7,
-    SwitchSession8, SwitchSession9, ToggleArchivedSessions, WorkCreateIssue, WorkDismiss,
-    WorkFocusSearch, WorkNextIssue, WorkPreviousIssue,
+    AbortRun, AddProject, CloseCurrent, ComposerEscape, ComposerHistoryNext,
+    ComposerHistoryPrevious, DismissSurface, FocusComposer, NewSession, NextSession,
+    OVERLAY_KEY_CONTEXT, PICKER_KEY_CONTEXT, PickerBack, PreviousSession, QuitApplication,
+    ShowActionPicker, ShowEditor, ShowKeybindings, ShowTerminal, ShowWorkGraph, SubmitFollowUp,
+    SubmitPrompt, SwitchSession1, SwitchSession2, SwitchSession3, SwitchSession4, SwitchSession5,
+    SwitchSession6, SwitchSession7, SwitchSession8, SwitchSession9, ToggleArchivedSessions,
+    WorkCreateIssue, WorkDismiss, WorkFocusSearch, WorkNextIssue, WorkPreviousIssue,
 };
 use crate::app::{WORKGRAPH_KEY_CONTEXT, WORKGRAPH_NAV_KEY_CONTEXT};
 use crate::keyboard::CopySelection;
@@ -158,6 +158,13 @@ pub(crate) fn registry() -> Vec<Shortcut> {
             Some("PiComposer > Input")
         ),
         shortcut!("Run", "Abort current run", "cmd-.", AbortRun, None),
+        shortcut!(
+            "Run",
+            "Apply queued steer, double-Esc aborts",
+            "escape",
+            ComposerEscape,
+            Some("PiComposer > Input")
+        ),
         shortcut!(
             "Work",
             "Previous node",

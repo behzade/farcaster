@@ -1,6 +1,10 @@
 //! Composer submission lifecycle, including image attachment ownership.
 
-use std::{path::Path, sync::Arc};
+use std::{
+    path::Path,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use gpui::{ClipboardItem, Context, Window};
 
@@ -286,6 +290,20 @@ impl PiApp {
         )
     }
 
+    pub(crate) fn handle_composer_escape(&mut self) {
+        let (abort, arm) = composer_escape(
+            self.snapshot.conversation.running,
+            !self.snapshot.conversation.queue.steering.is_empty(),
+            self.composer_sessions.current_target(),
+            self.composer_escape_armed.as_ref(),
+            Instant::now(),
+        );
+        self.composer_escape_armed = arm;
+        if abort {
+            self.send(RuntimeCommand::Abort);
+        }
+    }
+
     pub(crate) fn enter_mode(&self) -> PromptMode {
         prompt_mode_for_enter(self.snapshot.conversation.running)
     }
@@ -400,9 +418,31 @@ fn prompt_mode_for_follow_up(running: bool) -> PromptMode {
     }
 }
 
+const COMPOSER_ABORT_DOUBLE_TAP: Duration = Duration::from_millis(500);
+
+fn composer_escape(
+    running: bool,
+    has_queued_steer: bool,
+    current_target: &str,
+    armed: Option<&(String, Instant)>,
+    now: Instant,
+) -> (bool, Option<(String, Instant)>) {
+    if !running {
+        return (false, None);
+    }
+    let armed_here = armed.is_some_and(|(target, at)| {
+        target == current_target && now.saturating_duration_since(*at) <= COMPOSER_ABORT_DOUBLE_TAP
+    });
+    if has_queued_steer || armed_here {
+        (true, None)
+    } else {
+        (false, Some((current_target.to_owned(), now)))
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use std::time::SystemTime;
+    use std::time::{Duration, Instant, SystemTime};
 
     use super::*;
     use crate::sessions::UsageSummary;
@@ -493,5 +533,37 @@ mod tests {
     fn tab_prompts_when_idle_and_queues_a_follow_up_while_running() {
         assert_eq!(prompt_mode_for_follow_up(false), PromptMode::Normal);
         assert_eq!(prompt_mode_for_follow_up(true), PromptMode::FollowUp);
+    }
+
+    #[test]
+    fn composer_escape_flushes_steer_or_double_taps_to_abort() {
+        let t0 = Instant::now();
+        let within = t0 + Duration::from_millis(400);
+        let expired = t0 + Duration::from_millis(501);
+        let one = "session:one";
+        let two = "session:two";
+        let armed = (one.to_owned(), t0);
+
+        assert_eq!(composer_escape(false, true, one, None, t0), (false, None));
+        assert_eq!(
+            composer_escape(true, true, one, Some(&armed), t0),
+            (true, None)
+        );
+        assert_eq!(
+            composer_escape(true, false, one, None, t0),
+            (false, Some((one.into(), t0)))
+        );
+        assert_eq!(
+            composer_escape(true, false, one, Some(&armed), within),
+            (true, None)
+        );
+        assert_eq!(
+            composer_escape(true, false, one, Some(&armed), expired),
+            (false, Some((one.into(), expired)))
+        );
+        assert_eq!(
+            composer_escape(true, false, two, Some(&armed), t0),
+            (false, Some((two.into(), t0)))
+        );
     }
 }

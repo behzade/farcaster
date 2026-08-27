@@ -35,9 +35,9 @@ use gpui_base::{Button as BaseButton, TextSelection};
 use gpui_component::kbd::Kbd;
 
 use super::{
-    AbortRun, AddProject, AppSurface, CloseCurrent, CurrentCloseTarget, DismissSurface,
-    FocusComposer, FocusSessionSearch, NewSession, NextSession, PiApp, PickerBack, PickerScope,
-    PreviousSession, ProjectPickerIntent, RemoveProject, ShowActionPicker, ShowEditor,
+    AbortRun, AddProject, AppSurface, CloseCurrent, ComposerEscape, CurrentCloseTarget,
+    DismissSurface, FocusComposer, FocusSessionSearch, NewSession, NextSession, PiApp, PickerBack,
+    PickerScope, PreviousSession, ProjectPickerIntent, RemoveProject, ShowActionPicker, ShowEditor,
     ShowKeybindings, ShowTerminal, ShowWorkGraph, SubmitFollowUp, SubmitPrompt, SwitchSession1,
     SwitchSession2, SwitchSession3, SwitchSession4, SwitchSession5, SwitchSession6, SwitchSession7,
     SwitchSession8, SwitchSession9, ToggleArchivedSessions, WorkCreateIssue, WorkDismiss,
@@ -290,6 +290,9 @@ impl Render for PiApp {
                 if this.snapshot.conversation.running {
                     this.send(crate::runtime::RuntimeCommand::Abort);
                 }
+            }))
+            .on_action(cx.listener(|this, _: &ComposerEscape, _, _| {
+                this.handle_composer_escape();
             }))
             .on_action(cx.listener(|this, _: &CloseCurrent, window, cx| {
                 if this.surface == AppSurface::Editor {
