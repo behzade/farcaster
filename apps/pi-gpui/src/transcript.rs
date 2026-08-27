@@ -7,9 +7,9 @@ use std::{
 };
 
 use gpui::{
-    AnyElement, Entity, FontWeight, HighlightStyle, InteractiveElement as _, IntoElement as _,
-    Overflow, ParentElement as _, Pixels, StatefulInteractiveElement as _, StyleRefinement,
-    Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px, rems,
+    AnyElement, Div, Entity, FontWeight, HighlightStyle, InteractiveElement as _, IntoElement as _,
+    Overflow, ParentElement as _, Pixels, Stateful, StatefulInteractiveElement as _,
+    StyleRefinement, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px, rems,
 };
 use gpui_component::{
     highlighter::HighlightTheme,
@@ -20,7 +20,7 @@ use crate::{
     app::PiApp,
     conversation::{self, TranscriptItem, TranscriptKind},
     persistent_vec::{Indexed, PersistentVec},
-    primitives::{ButtonTone, button, disclosure_button, disclosure_indicator},
+    primitives::{ButtonTone, button, disclosure_detail, disclosure_title_row},
     theme::{MONO_FONT_FAMILY, THEME},
     transcript_attachments::{ATTACHMENT_ROW_HEIGHT, render_attachments},
     transcript_list::{TranscriptListState, transcript_list_grouped},
@@ -1068,70 +1068,51 @@ fn render_invocation(
             row.child(render_attachments(key, item, attachments_entity))
         })
         .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(THEME.space.xs)
-                .when(resolved_ready, |row| {
-                    row.child(transcript_disclosure_button(
-                        ("invocation-toggle", key),
-                        expanded,
-                        format!("resolved {kind}"),
-                        key,
-                        entity,
-                    ))
-                })
-                .when(!resolved_ready, |row| {
-                    row.child(
-                        div()
-                            .size(THEME.controls.icon_button)
-                            .flex_none()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .text_color(THEME.colors.subtle)
-                            .child(disclosure_indicator(false)),
-                    )
-                })
-                .child(
-                    technical_text(("invocation-name", key), item.text.clone())
-                        .flex_1()
-                        .min_w_0()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(if skill {
-                            THEME.colors.skill
-                        } else {
-                            THEME.colors.accent
-                        }),
-                )
-                .child(
-                    div()
-                        .flex_none()
-                        .px(THEME.space.xs)
-                        .py(px(1.0))
-                        .rounded(THEME.radius)
-                        .border(THEME.border)
-                        .border_color(THEME.colors.border)
-                        .bg(if skill {
-                            THEME.colors.skill_surface
-                        } else {
-                            THEME.colors.panel
-                        })
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(if skill {
-                            THEME.colors.skill
-                        } else {
-                            THEME.colors.muted
-                        })
-                        .child(if resolved_ready { kind } else { "Resolving" }),
-                ),
+            transcript_title_row(
+                ("invocation-title", key),
+                expanded,
+                resolved_ready,
+                format!("resolved {kind}"),
+                key,
+                entity,
+            )
+            .child(
+                technical_text(("invocation-name", key), item.text.clone())
+                    .flex_1()
+                    .min_w_0()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(if skill {
+                        THEME.colors.skill
+                    } else {
+                        THEME.colors.accent
+                    }),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .px(THEME.space.xs)
+                    .py(px(1.0))
+                    .rounded(THEME.radius)
+                    .border(THEME.border)
+                    .border_color(THEME.colors.border)
+                    .bg(if skill {
+                        THEME.colors.skill_surface
+                    } else {
+                        THEME.colors.panel
+                    })
+                    .text_size(THEME.type_scale.caption)
+                    .text_color(if skill {
+                        THEME.colors.skill
+                    } else {
+                        THEME.colors.muted
+                    })
+                    .child(if resolved_ready { kind } else { "Resolving" }),
+            ),
         )
         .when(expanded && resolved_ready, |row| {
             row.child(
-                div()
+                disclosure_detail()
                     .id(("invocation-detail-scroll", key))
-                    .ml(px(22.0))
-                    .mt(THEME.space.xs)
                     .max_h(THEME.layout.tool_max_height)
                     .overflow_y_scroll()
                     .border_l(THEME.border)
@@ -1348,36 +1329,31 @@ fn render_agent_result(
         .flex()
         .flex_col()
         .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(THEME.space.xs)
-                .child(transcript_disclosure_button(
-                    ("agent-result-toggle", key),
-                    expanded,
-                    format!("subagent result details for {summary}"),
-                    key,
-                    entity,
-                ))
-                .child(
-                    div()
-                        .text_size(THEME.type_scale.body_small)
-                        .text_color(THEME.colors.muted)
-                        .child(item.label.clone()),
-                )
-                .child(
-                    technical_text(("agent-result-summary", key), summary)
-                        .flex_1()
-                        .min_w_0()
-                        .text_color(THEME.colors.text),
-                ),
+            transcript_title_row(
+                ("agent-result-title", key),
+                expanded,
+                true,
+                format!("subagent result details for {summary}"),
+                key,
+                entity,
+            )
+            .child(
+                div()
+                    .text_size(THEME.type_scale.body_small)
+                    .text_color(THEME.colors.muted)
+                    .child(item.label.clone()),
+            )
+            .child(
+                technical_text(("agent-result-summary", key), summary)
+                    .flex_1()
+                    .min_w_0()
+                    .text_color(THEME.colors.text),
+            ),
         )
         .when_some(markdown_state, |row, state| {
             row.child(
-                div()
+                disclosure_detail()
                     .id(("agent-result-detail-scroll", key))
-                    .ml(px(22.0))
-                    .mt(THEME.space.xs)
                     .max_h(THEME.layout.tool_max_height)
                     .overflow_y_scroll()
                     .border_l(THEME.border)
@@ -1405,42 +1381,37 @@ fn render_error(
         .flex()
         .flex_col()
         .child(
-            div()
-                .flex()
-                .items_start()
-                .gap(THEME.space.xs)
-                .when(has_details, |row| {
-                    row.child(transcript_disclosure_button(
-                        ("error-toggle", key),
-                        expanded,
-                        format!("technical details for {}", item.label),
-                        key,
-                        entity,
-                    ))
-                })
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .flex()
-                        .flex_col()
-                        .gap(THEME.space.xs)
-                        .child(
-                            div()
-                                .text_size(THEME.type_scale.caption)
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(THEME.colors.error)
-                                .child(item.label.clone()),
-                        )
-                        .child(
-                            selectable_text(("error-text", key), &item.text)
-                                .text_color(THEME.colors.error),
-                        ),
-                ),
+            transcript_title_row(
+                ("error-title", key),
+                expanded,
+                has_details,
+                format!("technical details for {}", item.label),
+                key,
+                entity,
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(THEME.space.xs)
+                    .child(
+                        div()
+                            .text_size(THEME.type_scale.caption)
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(THEME.colors.error)
+                            .child(item.label.clone()),
+                    )
+                    .child(
+                        selectable_text(("error-text", key), &item.text)
+                            .text_color(THEME.colors.error),
+                    ),
+            ),
         )
         .when(expanded && has_details, |error| {
             error.child(
-                div().ml(px(22.0)).mt(THEME.space.xs).child(
+                disclosure_detail().child(
                     technical_text(("error-details", key), fenced_text(&item.tool_output))
                         .text_color(THEME.colors.muted),
                 ),
@@ -1512,39 +1483,46 @@ fn render_thinking(
     entity: WeakEntity<PiApp>,
 ) -> AnyElement {
     let has_details = thinking_has_details(item);
-    let body = if expanded && has_details {
-        let _timing = crate::performance::OperationTiming::new(
-            crate::performance::OperationKind::ThinkingAssembly,
-            item.stream_chunks.len(),
-        );
-        item.complete_text()
-    } else {
-        thinking_preview(item).to_owned()
-    };
+    let preview = thinking_preview(item).to_owned();
     div()
         .id(("thinking-row", key))
         .w_full()
-        .flex()
-        .items_start()
-        .gap(THEME.space.xs)
         .px(THEME.space.md)
         .py(px(2.0))
-        .when(has_details, |row| {
-            row.child(transcript_disclosure_button(
-                ("thinking-toggle", key),
+        .flex()
+        .flex_col()
+        .child(
+            transcript_title_row(
+                ("thinking-title", key),
                 expanded,
+                has_details,
                 "thinking details".into(),
                 key,
                 entity,
-            ))
-        })
-        .child(
-            selectable_text(("thinking-text", key), body)
-                .flex_1()
-                .min_w_0()
-                .italic()
-                .text_color(THEME.colors.subtle),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .italic()
+                    .text_size(THEME.type_scale.body_small)
+                    .text_color(THEME.colors.subtle)
+                    .child(preview),
+            ),
         )
+        .when(expanded && has_details, |row| {
+            let _timing = crate::performance::OperationTiming::new(
+                crate::performance::OperationKind::ThinkingAssembly,
+                item.stream_chunks.len(),
+            );
+            row.child(
+                disclosure_detail().child(
+                    selectable_text(("thinking-text", key), item.complete_text())
+                        .italic()
+                        .text_color(THEME.colors.subtle),
+                ),
+            )
+        })
         .into_any_element()
 }
 
@@ -1581,43 +1559,38 @@ fn render_read_group(
         .flex()
         .flex_col()
         .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(THEME.space.xs)
-                .child(transcript_disclosure_button(
-                    ("read-toggle", key),
-                    expanded,
-                    disclosure_label,
-                    key,
-                    entity.clone(),
-                ))
-                .child(
-                    div()
-                        .text_size(THEME.type_scale.body_small)
-                        .text_color(THEME.colors.muted)
-                        .when(!has_target, |label| label.flex_1())
-                        .child(summary),
-                )
-                .children(target.filter(|target| !target.is_empty()).map(|target| {
-                    technical_text(("read-target", key), target)
-                        .flex_1()
-                        .min_w_0()
-                        .text_color(THEME.colors.text)
-                }))
-                .children(state.map(|state| {
-                    div()
-                        .flex_none()
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.subtle)
-                        .child(state.glyph)
-                })),
+            transcript_title_row(
+                ("read-title", key),
+                expanded,
+                true,
+                disclosure_label,
+                key,
+                entity.clone(),
+            )
+            .child(
+                div()
+                    .text_size(THEME.type_scale.body_small)
+                    .text_color(THEME.colors.muted)
+                    .when(!has_target, |label| label.flex_1())
+                    .child(summary),
+            )
+            .children(target.filter(|target| !target.is_empty()).map(|target| {
+                technical_text(("read-target", key), target)
+                    .flex_1()
+                    .min_w_0()
+                    .text_color(THEME.colors.text)
+            }))
+            .children(state.map(|state| {
+                div()
+                    .flex_none()
+                    .text_size(THEME.type_scale.caption)
+                    .text_color(THEME.colors.subtle)
+                    .child(state.glyph)
+            })),
         )
         .when(expanded, |group| {
             group.child(
-                div()
-                    .ml(px(22.0))
-                    .mt(THEME.space.xs)
+                disclosure_detail()
                     .flex()
                     .flex_col()
                     .gap(THEME.space.xs)
@@ -1661,13 +1634,9 @@ fn render_tool(
             presentation,
             key,
             state.map(|state| state.glyph),
-            transcript_disclosure_button(
-                ("tool-toggle", key),
-                expanded,
-                disclosure_label,
-                key,
-                entity,
-            ),
+            expanded,
+            disclosure_label,
+            toggle_transcript_item(entity.clone(), key, expanded),
             expanded.then(|| expanded_tool_body(("tool-detail", key), item)),
             move |window, cx| {
                 let _ = open_entity.update(cx, |this, cx| {
@@ -1689,47 +1658,39 @@ fn render_tool(
         .flex()
         .flex_col()
         .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(THEME.space.xs)
-                .child(transcript_disclosure_button(
-                    ("tool-toggle", key),
-                    expanded,
-                    disclosure_label,
-                    key,
-                    entity.clone(),
-                ))
-                .child(
-                    div()
-                        .text_size(THEME.type_scale.body_small)
-                        .text_color(THEME.colors.muted)
-                        .when(!has_target, |label| label.flex_1())
-                        .child(item.label.clone()),
+            transcript_title_row(
+                ("tool-title", key),
+                expanded,
+                true,
+                disclosure_label,
+                key,
+                entity,
+            )
+            .child(
+                div()
+                    .text_size(THEME.type_scale.body_small)
+                    .text_color(THEME.colors.muted)
+                    .when(!has_target, |label| label.flex_1())
+                    .child(item.label.clone()),
+            )
+            .when(has_target, |row| {
+                row.child(
+                    technical_text(("tool-target", key), target)
+                        .flex_1()
+                        .min_w_0()
+                        .text_color(THEME.colors.text),
                 )
-                .when(has_target, |row| {
-                    row.child(
-                        technical_text(("tool-target", key), target)
-                            .flex_1()
-                            .min_w_0()
-                            .text_color(THEME.colors.text),
-                    )
-                })
-                .children(state.map(|state| {
-                    div()
-                        .flex_none()
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.subtle)
-                        .child(state.glyph)
-                })),
+            })
+            .children(state.map(|state| {
+                div()
+                    .flex_none()
+                    .text_size(THEME.type_scale.caption)
+                    .text_color(THEME.colors.subtle)
+                    .child(state.glyph)
+            })),
         )
         .when(expanded, |tool| {
-            tool.child(
-                div()
-                    .ml(px(22.0))
-                    .mt(THEME.space.xs)
-                    .child(expanded_tool_body(("tool-detail", key), item)),
-            )
+            tool.child(disclosure_detail().child(expanded_tool_body(("tool-detail", key), item)))
         })
         .into_any_element()
 }
@@ -1756,18 +1717,34 @@ fn expanded_tool_body(id: impl Into<gpui::ElementId>, item: &TranscriptItem) -> 
         .into_any_element()
 }
 
-fn transcript_disclosure_button(
+fn transcript_title_row(
     id: impl Into<gpui::ElementId>,
     expanded: bool,
+    expandable: bool,
     label: String,
     key: usize,
     entity: WeakEntity<PiApp>,
-) -> AnyElement {
-    disclosure_button(id, expanded, label, move |_, cx| {
+) -> Stateful<Div> {
+    disclosure_title_row(
+        id,
+        key,
+        expanded,
+        expandable,
+        label,
+        toggle_transcript_item(entity, key, expanded),
+    )
+}
+
+fn toggle_transcript_item(
+    entity: WeakEntity<PiApp>,
+    key: usize,
+    expanded: bool,
+) -> impl Fn(&mut gpui::Window, &mut gpui::App) + 'static {
+    move |_, cx| {
         let _ = entity.update(cx, |this, cx| {
             this.set_transcript_item_expanded(key, !expanded, cx)
         });
-    })
+    }
 }
 
 fn selectable_text(
