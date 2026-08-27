@@ -21,6 +21,7 @@ use gpui_component::{
 use super::PiApp;
 use crate::{
     assets::AppIcon,
+    keybindings::primary_key,
     primitives::{PickerDelegate, PickerRow, modal},
     protocol::{ExtensionUiRequest, ExtensionUiResponse},
     runtime::RuntimeCommand,
@@ -325,7 +326,7 @@ impl PiApp {
                     AppIcon::Plus,
                     "New session…",
                     None,
-                    Some("cmd-n"),
+                    Some(primary_key("cmd-n", "ctrl-n")),
                     "project thread",
                 ),
                 picker_row(
@@ -345,7 +346,7 @@ impl PiApp {
                     AppIcon::FolderPlus,
                     "Add project",
                     None,
-                    Some("cmd-shift-n"),
+                    Some(primary_key("cmd-shift-n", "ctrl-shift-n")),
                     "folder checkout",
                 ),
                 picker_row(

@@ -16,6 +16,19 @@ use crate::transcript_list::TRANSCRIPT_SELECTION_KEY_CONTEXT;
 use gpui::{KeyBinding, Unbind};
 use gpui_base::actions::{SelectDown, SelectUp};
 
+#[cfg(target_os = "macos")]
+pub(crate) const PRIMARY_MODIFIER: &str = "cmd";
+#[cfg(not(target_os = "macos"))]
+pub(crate) const PRIMARY_MODIFIER: &str = "ctrl";
+
+pub(crate) const fn primary_key(macos: &'static str, non_macos: &'static str) -> &'static str {
+    if cfg!(target_os = "macos") {
+        macos
+    } else {
+        non_macos
+    }
+}
+
 pub(crate) struct Shortcut {
     pub section: &'static str,
     pub label: &'static str,
@@ -24,8 +37,14 @@ pub(crate) struct Shortcut {
     pub binding: KeyBinding,
 }
 
+macro_rules! primary {
+    ($key:literal) => {
+        primary_key(concat!("cmd-", $key), concat!("ctrl-", $key))
+    };
+}
+
 macro_rules! shortcut {
-    ($section:literal, $label:literal, $key:literal, $action:expr, $context:expr) => {
+    ($section:literal, $label:literal, $key:expr, $action:expr, $context:expr) => {
         Shortcut {
             section: $section,
             label: $label,
@@ -33,6 +52,12 @@ macro_rules! shortcut {
             show_in_help: true,
             binding: KeyBinding::new($key, $action, $context),
         }
+    };
+}
+
+macro_rules! primary_shortcut {
+    ($section:literal, $label:literal, $key:literal, $action:expr) => {
+        shortcut!($section, $label, primary!($key), $action, None)
     };
 }
 
@@ -51,52 +76,37 @@ pub(crate) fn bindings() -> Vec<KeyBinding> {
 /// Returns the user-facing shortcut registry used by keyboard help.
 pub(crate) fn registry() -> Vec<Shortcut> {
     vec![
-        shortcut!(
+        primary_shortcut!(
             "Sessions",
             "Open first unsubmitted draft",
-            "cmd-0",
-            SwitchSession0,
-            None
+            "0",
+            SwitchSession0
         ),
-        shortcut!("Sessions", "Open session 1", "cmd-1", SwitchSession1, None),
-        shortcut!("Sessions", "Open session 2", "cmd-2", SwitchSession2, None),
-        shortcut!("Sessions", "Open session 3", "cmd-3", SwitchSession3, None),
-        shortcut!("Sessions", "Open session 4", "cmd-4", SwitchSession4, None),
-        shortcut!("Sessions", "Open session 5", "cmd-5", SwitchSession5, None),
-        shortcut!("Sessions", "Open session 6", "cmd-6", SwitchSession6, None),
-        shortcut!("Sessions", "Open session 7", "cmd-7", SwitchSession7, None),
-        shortcut!("Sessions", "Open session 8", "cmd-8", SwitchSession8, None),
-        shortcut!("Sessions", "Open session 9", "cmd-9", SwitchSession9, None),
-        shortcut!("Sessions", "New session", "cmd-n", NewSession, None),
-        shortcut!("Sessions", "Add project", "cmd-shift-n", AddProject, None),
-        shortcut!(
-            "Application",
-            "Open action picker",
-            "cmd-k",
-            ShowActionPicker,
-            None
-        ),
-        shortcut!(
-            "Sessions",
-            "Previous session",
-            "cmd-[",
-            PreviousSession,
-            None
-        ),
-        shortcut!("Sessions", "Next session", "cmd-]", NextSession, None),
-        shortcut!(
+        primary_shortcut!("Sessions", "Open session 1", "1", SwitchSession1),
+        primary_shortcut!("Sessions", "Open session 2", "2", SwitchSession2),
+        primary_shortcut!("Sessions", "Open session 3", "3", SwitchSession3),
+        primary_shortcut!("Sessions", "Open session 4", "4", SwitchSession4),
+        primary_shortcut!("Sessions", "Open session 5", "5", SwitchSession5),
+        primary_shortcut!("Sessions", "Open session 6", "6", SwitchSession6),
+        primary_shortcut!("Sessions", "Open session 7", "7", SwitchSession7),
+        primary_shortcut!("Sessions", "Open session 8", "8", SwitchSession8),
+        primary_shortcut!("Sessions", "Open session 9", "9", SwitchSession9),
+        primary_shortcut!("Sessions", "New session", "n", NewSession),
+        primary_shortcut!("Sessions", "Add project", "shift-n", AddProject),
+        primary_shortcut!("Application", "Open action picker", "k", ShowActionPicker),
+        primary_shortcut!("Sessions", "Previous session", "[", PreviousSession),
+        primary_shortcut!("Sessions", "Next session", "]", NextSession),
+        primary_shortcut!(
             "Sessions",
             "Show archived sessions",
-            "cmd-shift-a",
-            ToggleArchivedSessions,
-            None
+            "shift-a",
+            ToggleArchivedSessions
         ),
-        shortcut!(
+        primary_shortcut!(
             "Sessions",
             "Close workspace, draft, or session",
-            "cmd-w",
-            CloseCurrent,
-            None
+            "w",
+            CloseCurrent
         ),
         Shortcut {
             section: "Composer",
@@ -130,22 +140,16 @@ pub(crate) fn registry() -> Vec<Shortcut> {
             show_in_help: false,
             binding: KeyBinding::new("ctrl-n", ComposerHistoryNext, Some("PiComposer > Input")),
         },
-        shortcut!(
-            "Workspace",
-            "Chat and composer",
-            "cmd-l",
-            FocusComposer,
-            None
-        ),
-        shortcut!("Workspace", "Open Neovim", "cmd-e", ShowEditor, None),
-        shortcut!("Workspace", "Open terminal", "cmd-t", ShowTerminal, None),
+        primary_shortcut!("Workspace", "Chat and composer", "l", FocusComposer),
+        primary_shortcut!("Workspace", "Open Neovim", "e", ShowEditor),
+        primary_shortcut!("Workspace", "Open terminal", "t", ShowTerminal),
         Shortcut {
             section: "Transcript",
             label: "Copy visual selection",
-            keystroke: "cmd-c",
+            keystroke: primary!("c"),
             show_in_help: false,
             binding: KeyBinding::new(
-                "cmd-c",
+                primary!("c"),
                 CopySelection,
                 Some(TRANSCRIPT_SELECTION_KEY_CONTEXT),
             ),
@@ -153,11 +157,11 @@ pub(crate) fn registry() -> Vec<Shortcut> {
         Shortcut {
             section: "Composer",
             label: "Copy selection",
-            keystroke: "cmd-c",
+            keystroke: primary!("c"),
             show_in_help: false,
-            binding: KeyBinding::new("cmd-c", CopySelection, Some("PiComposer > Input")),
+            binding: KeyBinding::new(primary!("c"), CopySelection, Some("PiComposer > Input")),
         },
-        shortcut!("Composer", "Send prompt", "cmd-enter", SubmitPrompt, None),
+        primary_shortcut!("Composer", "Send prompt", "enter", SubmitPrompt),
         shortcut!(
             "Composer",
             "Send follow-up",
@@ -165,7 +169,7 @@ pub(crate) fn registry() -> Vec<Shortcut> {
             SubmitFollowUp,
             Some("PiComposer > Input")
         ),
-        shortcut!("Run", "Abort current run", "cmd-.", AbortRun, None),
+        primary_shortcut!("Run", "Abort current run", ".", AbortRun),
         shortcut!(
             "Run",
             "Apply queued steer, double-Esc aborts",
@@ -208,26 +212,19 @@ pub(crate) fn registry() -> Vec<Shortcut> {
             WorkDismiss,
             Some(WORKGRAPH_KEY_CONTEXT)
         ),
-        shortcut!(
+        primary_shortcut!(
             "Application",
             "Open / close project work",
-            "cmd-shift-i",
-            ShowWorkGraph,
-            None
+            "shift-i",
+            ShowWorkGraph
         ),
-        shortcut!(
-            "Application",
-            "Keyboard shortcuts",
-            "cmd-?",
-            ShowKeybindings,
-            None
-        ),
+        primary_shortcut!("Application", "Keyboard shortcuts", "?", ShowKeybindings),
         Shortcut {
             section: "Application",
             label: "Keyboard shortcuts",
-            keystroke: "cmd-/",
+            keystroke: primary!("/"),
             show_in_help: false,
-            binding: KeyBinding::new("cmd-/", ShowKeybindings, None),
+            binding: KeyBinding::new(primary!("/"), ShowKeybindings, None),
         },
         shortcut!(
             "Application",
@@ -264,13 +261,13 @@ pub(crate) fn registry() -> Vec<Shortcut> {
             show_in_help: false,
             binding: KeyBinding::new("escape", DismissSurface, Some(PICKER_KEY_CONTEXT)),
         },
-        shortcut!("Application", "Quit", "cmd-q", QuitApplication, None),
+        primary_shortcut!("Application", "Quit", "q", QuitApplication),
     ]
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{bindings, registry};
+    use super::{bindings, primary_key, registry};
 
     #[test]
     fn root_focus_traversal_is_unbound() {
@@ -291,14 +288,41 @@ mod tests {
         }
     }
 
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn non_macos_application_shortcuts_do_not_use_the_system_modifier() {
+        let shortcuts = registry();
+        assert!(
+            shortcuts
+                .iter()
+                .all(|shortcut| !shortcut.keystroke.starts_with("cmd-"))
+        );
+        assert!(
+            shortcuts.iter().any(|shortcut| {
+                shortcut.label == "New session" && shortcut.keystroke == "ctrl-n"
+            })
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_application_shortcuts_keep_the_command_modifier() {
+        let shortcuts = registry();
+        assert!(
+            shortcuts.iter().any(|shortcut| {
+                shortcut.label == "New session" && shortcut.keystroke == "cmd-n"
+            })
+        );
+    }
+
     #[test]
     fn copy_shortcuts_route_through_the_application_command() {
         let shortcuts = registry();
         assert!(shortcuts.iter().any(|shortcut| {
-            shortcut.label == "Copy visual selection" && shortcut.keystroke == "cmd-c"
+            shortcut.label == "Copy visual selection" && shortcut.keystroke == primary!("c")
         }));
         assert!(shortcuts.iter().any(|shortcut| {
-            shortcut.label == "Copy selection" && shortcut.keystroke == "cmd-c"
+            shortcut.label == "Copy selection" && shortcut.keystroke == primary!("c")
         }));
     }
 
@@ -306,9 +330,9 @@ mod tests {
     fn workspace_shortcuts_are_registered() {
         let shortcuts = registry();
         for (label, keystroke) in [
-            ("Chat and composer", "cmd-l"),
-            ("Open Neovim", "cmd-e"),
-            ("Open terminal", "cmd-t"),
+            ("Chat and composer", primary!("l")),
+            ("Open Neovim", primary!("e")),
+            ("Open terminal", primary!("t")),
         ] {
             assert!(
                 shortcuts
@@ -322,23 +346,25 @@ mod tests {
     fn keyboard_help_has_both_question_mark_shortcuts_and_workgraph_navigation() {
         let shortcuts = registry();
         assert!(shortcuts.iter().any(|shortcut| {
-            shortcut.label == "Open first unsubmitted draft" && shortcut.keystroke == "cmd-0"
+            shortcut.label == "Open first unsubmitted draft" && shortcut.keystroke == primary!("0")
         }));
         assert!(
             shortcuts
                 .iter()
-                .any(|shortcut| shortcut.keystroke == "cmd-?")
+                .any(|shortcut| shortcut.keystroke == primary!("?"))
         );
         assert!(
             shortcuts
                 .iter()
-                .any(|shortcut| shortcut.keystroke == "cmd-/")
+                .any(|shortcut| shortcut.keystroke == primary!("/"))
         );
         assert!(shortcuts.iter().any(|shortcut| {
-            shortcut.label == "Open / close project work" && shortcut.keystroke == "cmd-shift-i"
+            shortcut.label == "Open / close project work"
+                && shortcut.keystroke == primary!("shift-i")
         }));
         assert!(shortcuts.iter().any(|shortcut| {
-            shortcut.label == "Close workspace, draft, or session" && shortcut.keystroke == "cmd-w"
+            shortcut.label == "Close workspace, draft, or session"
+                && shortcut.keystroke == primary!("w")
         }));
         assert!(
             shortcuts.iter().any(|shortcut| {

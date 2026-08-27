@@ -24,6 +24,7 @@ use super::{
 };
 use crate::{
     assets::AppIcon,
+    keybindings::PRIMARY_MODIFIER,
     primitives::{AppIconSize, ReorderPosition, ReorderTargetExt as _, app_icon, icon_control},
     projects::DraftSession,
     theme::THEME,
@@ -216,8 +217,10 @@ pub(super) fn draft_session_row(
                                     })
                                     .when_some(shortcut, |metadata, number| {
                                         metadata.child(Kbd::new(
-                                            gpui::Keystroke::parse(&format!("cmd-{number}"))
-                                                .expect("fixed session shortcut must parse"),
+                                            gpui::Keystroke::parse(&format!(
+                                                "{PRIMARY_MODIFIER}-{number}"
+                                            ))
+                                            .expect("fixed session shortcut must parse"),
                                         ))
                                     })
                                     .when(!draft.submitted, |metadata| {
@@ -565,8 +568,10 @@ pub(super) fn session_row_with_height(
                                 )
                                 .when_some(shortcut, |metadata, number| {
                                     metadata.child(Kbd::new(
-                                        gpui::Keystroke::parse(&format!("cmd-{number}"))
-                                            .expect("fixed session shortcut must parse"),
+                                        gpui::Keystroke::parse(&format!(
+                                            "{PRIMARY_MODIFIER}-{number}"
+                                        ))
+                                        .expect("fixed session shortcut must parse"),
                                     ))
                                 })
                                 .when(item.kind == SessionRailKind::Project, |metadata| {
