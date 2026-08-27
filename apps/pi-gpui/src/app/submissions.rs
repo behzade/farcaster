@@ -360,6 +360,7 @@ impl PiApp {
                 session.as_deref(),
             ) {
                 self.composer_sessions.promote(&target, session_key.clone());
+                self.promote_center_surface(&target, &session_key);
                 self.promote_composer_images(&target, &session_key);
             }
         }
