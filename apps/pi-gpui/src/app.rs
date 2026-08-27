@@ -42,7 +42,7 @@ use std::{
 };
 
 use gpui::{
-    AppContext as _, Context, Entity, FocusHandle, Focusable as _, ListAlignment, ListState,
+    AppContext as _, Context, Entity, FocusHandle, Focusable as _, Image, ListAlignment, ListState,
     PathPromptOptions, ScrollHandle, Subscription, SystemNotification, Task, Window, actions,
     point, px,
 };
@@ -153,6 +153,13 @@ struct SessionTitleEdit {
     original: String,
 }
 
+#[derive(Clone)]
+pub(crate) struct ImagePreview {
+    pub(crate) image: Arc<Image>,
+    pub(crate) index: usize,
+    pub(crate) total: usize,
+}
+
 pub(crate) struct PiApp {
     project: PathBuf,
     runtime: RuntimeHandle,
@@ -214,6 +221,7 @@ pub(crate) struct PiApp {
     run_panel_scroll: ScrollHandle,
     composer_footer_scroll: ScrollHandle,
     composer_sessions: ComposerSessions,
+    session_surfaces: HashMap<String, AppSurface>,
     composer_history_marker: Option<(String, usize, String)>,
     composer_escape_armed: Option<(String, Instant)>,
     composer_images: HashMap<String, Vec<ComposerImage>>,
@@ -227,6 +235,9 @@ pub(crate) struct PiApp {
     composer_focus: FocusHandle,
     dialog_focus: FocusHandle,
     dialog_return_focus: Option<FocusHandle>,
+    image_preview: Option<ImagePreview>,
+    image_preview_focus: FocusHandle,
+    image_preview_return_focus: Option<FocusHandle>,
     sheet_focus: FocusHandle,
     sheet_return_focus: Option<FocusHandle>,
     pending_sheet_setup: bool,
@@ -591,6 +602,7 @@ impl PiApp {
             run_panel_scroll: ScrollHandle::new(),
             composer_footer_scroll: ScrollHandle::new(),
             composer_sessions,
+            session_surfaces: HashMap::new(),
             composer_history_marker: None,
             composer_escape_armed: None,
             composer_images: HashMap::new(),
@@ -604,6 +616,9 @@ impl PiApp {
             composer_focus,
             dialog_focus,
             dialog_return_focus: None,
+            image_preview: None,
+            image_preview_focus: cx.focus_handle(),
+            image_preview_return_focus: None,
             sheet_focus: cx.focus_handle(),
             sheet_return_focus: None,
             pending_sheet_setup: false,
@@ -930,6 +945,7 @@ impl PiApp {
                     for path in paths.iter() {
                         let target = session_target(path);
                         self.composer_sessions.remove(&target);
+                        self.session_surfaces.remove(&target);
                         self.composer_images.remove(&target);
                         self.pending_submissions.remove(&target);
                         self.run_statuses.remove(&target);
@@ -939,6 +955,7 @@ impl PiApp {
                     for id in &deleted_draft_ids {
                         let target = draft_target(id);
                         self.composer_sessions.remove(&target);
+                        self.session_surfaces.remove(&target);
                         self.composer_images.remove(&target);
                         self.pending_submissions.remove(&target);
                         self.submitted_drafts.remove(id);
@@ -986,6 +1003,10 @@ impl PiApp {
                         let composer = self
                             .composer_sessions
                             .discard_and_switch(&current_target, next_target.clone());
+                        self.hide_native_workspace_surfaces(cx);
+                        if self.surface != AppSurface::Work {
+                            self.surface = AppSurface::Chat;
+                        }
                         self.reset_session_ui(generation, false);
                         self.pending_composer_restore = Some((next_target, composer));
                         self.selected_draft = next_draft.as_ref().map(|draft| draft.id.clone());
@@ -1018,6 +1039,7 @@ impl PiApp {
                         let target_target = session_target(target);
                         self.composer_sessions
                             .promote(&source_target, target_target.clone());
+                        self.promote_center_surface(&source_target, &target_target);
                         if let Some(images) = self.composer_images.remove(&source_target) {
                             self.composer_images.insert(target_target.clone(), images);
                         }
@@ -1315,7 +1337,6 @@ impl PiApp {
         if self.pending_project_trust_command.is_some() {
             return;
         }
-        self.return_to_chat_from_native_workspace(window, cx);
         let _timing = crate::performance::Timing::new("switch.session_request");
         if self.snapshot.selected_session.as_deref() == Some(path.as_path())
             && self.selected_draft.is_none()
@@ -1331,6 +1352,7 @@ impl PiApp {
         self.switch_composer_target(session_target(&path), window, cx);
         self.selected_draft = None;
         self.select_project(project.clone(), cx);
+        self.restore_center_surface(project.clone(), window, cx);
         if let Some((_, timing)) = self.pending_session_switch.take() {
             timing.cancel();
         }
@@ -1362,7 +1384,6 @@ impl PiApp {
         if self.pending_project_trust_command.is_some() {
             return;
         }
-        self.return_to_chat_from_native_workspace(window, cx);
         self.run_panel_scroll.set_offset(point(px(0.0), px(0.0)));
         let draft = match projects::new_draft(project.clone()) {
             Ok(draft) => draft,
@@ -1389,7 +1410,8 @@ impl PiApp {
             window,
             cx,
         );
-        self.select_project(project, cx);
+        self.select_project(project.clone(), cx);
+        self.restore_center_surface(project, window, cx);
         self.search
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.close_sessions_sheet_after_selection(window, cx);
@@ -1410,7 +1432,6 @@ impl PiApp {
         if self.pending_project_trust_command.is_some() {
             return;
         }
-        self.return_to_chat_from_native_workspace(window, cx);
         if self.selected_draft.as_deref() == Some(id.as_str()) && !self.snapshot.history_preview {
             self.close_sessions_sheet_after_selection(window, cx);
             return;
@@ -1419,6 +1440,7 @@ impl PiApp {
         self.switch_composer_target(draft_target(&id), window, cx);
         self.selected_draft = Some(id.clone());
         self.select_project(project.clone(), cx);
+        self.restore_center_surface(project.clone(), window, cx);
         let command = if let Some(Some(path)) = self.submitted_drafts.get(&id).cloned() {
             RuntimeCommand::SelectSession {
                 path,
@@ -1592,6 +1614,7 @@ impl PiApp {
         let was_selected = self.selected_draft.as_deref() == Some(id);
         let target = draft_target(id);
         self.composer_images.remove(&target);
+        self.session_surfaces.remove(&target);
         self.drafts.retain(|draft| draft.id != id);
         self.draft_session_ids.remove(id);
         self.submitted_drafts.remove(id);
@@ -1606,6 +1629,7 @@ impl PiApp {
                     .composer_sessions
                     .discard_and_switch(&target, session_target(&session.path));
                 self.apply_composer_snapshot(snapshot, window, cx);
+                self.restore_center_surface(session.project.clone(), window, cx);
                 self.send_project_command(
                     &session.project,
                     RuntimeCommand::SelectSession {
@@ -1620,6 +1644,7 @@ impl PiApp {
                     .composer_sessions
                     .discard_and_switch(&target, project_target(&self.project));
                 self.apply_composer_snapshot(snapshot, window, cx);
+                self.restore_center_surface(self.project.clone(), window, cx);
             }
         } else {
             let current = self.composer_sessions.current_target().to_owned();
@@ -1724,9 +1749,11 @@ impl PiApp {
         let current_target = self.composer_sessions.current_target().to_owned();
         let discard = self.sync_current_draft(&current, &current_target);
         let snapshot = if discard {
+            self.session_surfaces.remove(&current_target);
             self.composer_sessions
                 .discard_and_switch(&current_target, target)
         } else {
+            self.capture_center_surface();
             self.composer_sessions.switch_to(target, current)
         };
         self.apply_composer_snapshot(snapshot, window, cx);

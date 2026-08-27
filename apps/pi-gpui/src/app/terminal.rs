@@ -1,5 +1,7 @@
 //! Project terminal lifecycle and shell selection.
 
+use std::path::PathBuf;
+
 use gpui::{Context, Window};
 use gpui_libghostty::{Terminal, TerminalOptions};
 
@@ -10,6 +12,15 @@ impl PiApp {
         if self.workspace_switch_blocked() {
             return;
         }
+        self.activate_terminal_for_project(self.workspace_project(), window, cx);
+    }
+
+    pub(super) fn activate_terminal_for_project(
+        &mut self,
+        project: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.hide_editor(cx);
 
         if !self.repository.execution_allowed {
@@ -21,7 +32,6 @@ impl PiApp {
             return;
         }
 
-        let project = self.workspace_project();
         let can_reuse = self.terminal_project.as_ref() == Some(&project)
             && self
                 .terminal
@@ -45,11 +55,7 @@ impl PiApp {
             }
         }
 
-        self.surface = AppSurface::Terminal;
-        if let Some(terminal) = self.terminal.as_ref() {
-            terminal.update(cx, |terminal, cx| terminal.focus(window, cx));
-        }
-        cx.notify();
+        self.reveal_native_center_surface(AppSurface::Terminal, window, cx);
     }
 
     fn clear_terminal_process(&mut self) {

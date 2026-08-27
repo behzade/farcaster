@@ -73,17 +73,92 @@ impl PiApp {
         .unwrap_or_else(|| self.project.clone())
     }
 
-    pub(super) fn return_to_chat_from_native_workspace(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if matches!(self.surface, AppSurface::Editor | AppSurface::Terminal) {
-            self.show_chat_surface(window, cx);
+    pub(super) fn capture_center_surface(&mut self) {
+        let target = self.composer_sessions.current_target().to_owned();
+        match self.surface {
+            AppSurface::Editor | AppSurface::Terminal => {
+                self.session_surfaces.insert(target, self.surface);
+            }
+            AppSurface::Chat | AppSurface::Work => {
+                self.session_surfaces.remove(&target);
+            }
         }
     }
 
-    pub(super) fn workspace_switch_blocked(&self) -> bool {
+    pub(super) fn restore_center_surface(
+        &mut self,
+        project: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.sessions_sheet {
+            self.apply_sheet_flags(sheet_flags(None));
+            self.pending_sheet_setup = false;
+            self.sheet_return_focus = None;
+        }
+        if self.surface == AppSurface::Work {
+            return;
+        }
+        match self
+            .session_surfaces
+            .get(self.composer_sessions.current_target())
+            .copied()
+            .unwrap_or(AppSurface::Chat)
+        {
+            AppSurface::Editor => self.activate_editor_for_project(project, window, cx),
+            AppSurface::Terminal => self.activate_terminal_for_project(project, window, cx),
+            AppSurface::Chat | AppSurface::Work => self.activate_chat_center(cx),
+        }
+    }
+
+    pub(super) fn promote_center_surface(&mut self, from: &str, to: &str) {
+        if let Some(surface) = self.session_surfaces.remove(from) {
+            self.session_surfaces.insert(to.to_owned(), surface);
+        }
+    }
+
+    pub(super) fn activate_chat_center(&mut self, cx: &mut Context<Self>) {
+        if self.native_workspace_covered_by_overlay() {
+            if self.surface != AppSurface::Chat {
+                self.hide_native_workspace_surfaces(cx);
+                self.surface = AppSurface::Chat;
+                cx.notify();
+            }
+            return;
+        }
+        let _ = self.enter_chat_surface(self.composer_focus.clone(), cx);
+    }
+
+    pub(super) fn reveal_native_center_surface(
+        &mut self,
+        surface: AppSurface,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.surface = surface;
+        self.pending_focus_after_render = None;
+        if self.native_workspace_covered_by_overlay() {
+            self.hide_native_workspace_surfaces(cx);
+        } else {
+            self.restore_active_native_workspace_surface(cx);
+            match surface {
+                AppSurface::Editor => {
+                    if let Some(editor) = self.editor.as_ref() {
+                        editor.update(cx, |editor, cx| editor.focus(window, cx));
+                    }
+                }
+                AppSurface::Terminal => {
+                    if let Some(terminal) = self.terminal.as_ref() {
+                        terminal.update(cx, |terminal, cx| terminal.focus(window, cx));
+                    }
+                }
+                AppSurface::Chat | AppSurface::Work => {}
+            }
+        }
+        cx.notify();
+    }
+
+    fn native_workspace_covered_by_overlay(&self) -> bool {
         self.picker.is_some()
             || self.sessions_sheet
             || self.run_sheet
@@ -93,7 +168,10 @@ impl PiApp {
             || self.pending_delete.is_some()
             || self.extension.dialog.is_some()
             || self.extension.provider_auth.is_some()
-            || self.surface == AppSurface::Work
+    }
+
+    pub(super) fn workspace_switch_blocked(&self) -> bool {
+        self.native_workspace_covered_by_overlay() || self.surface == AppSurface::Work
     }
 
     pub(super) fn respond_value(

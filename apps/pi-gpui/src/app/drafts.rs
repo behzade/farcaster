@@ -229,6 +229,7 @@ impl PiApp {
         let session_key = session_target(path);
         self.composer_sessions
             .promote(&draft_key, session_key.clone());
+        self.promote_center_surface(&draft_key, &session_key);
         self.promote_composer_images(&draft_key, &session_key);
         if let Some(pending) = self.pending_submissions.remove(&draft_key) {
             self.pending_submissions

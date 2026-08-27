@@ -70,8 +70,16 @@ impl PiApp {
         if self.workspace_switch_blocked() {
             return;
         }
+        self.activate_editor_for_project(self.workspace_project(), window, cx);
+    }
+
+    pub(super) fn activate_editor_for_project(
+        &mut self,
+        project: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.hide_terminal(cx);
-        let project = self.workspace_project();
         if !self.repository.execution_allowed {
             self.editor = None;
             self.editor_error =
@@ -86,11 +94,7 @@ impl PiApp {
         } else {
             self.spawn_editor(nvim_options(project.clone(), project, None), window, cx);
         }
-        self.surface = AppSurface::Editor;
-        if let Some(editor) = self.editor.as_ref() {
-            editor.update(cx, |editor, cx| editor.focus(window, cx));
-        }
-        cx.notify();
+        self.reveal_native_center_surface(AppSurface::Editor, window, cx);
     }
 
     fn reusable_editor(&self, project: &Path, cx: &gpui::App) -> Option<gpui::Entity<NvimEditor>> {
