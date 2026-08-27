@@ -1166,8 +1166,7 @@ impl PiApp {
                 | RuntimeEvent::PromptResult { .. }
                 | RuntimeEvent::Sessions { .. }
                 | RuntimeEvent::SessionsFailed { .. }
-                | RuntimeEvent::SessionFilesModified { .. }
-                | RuntimeEvent::SessionDeleted { .. } => {}
+                | RuntimeEvent::SessionFilesModified { .. } => {}
             }
         }
         if workgraph_data_dirty {

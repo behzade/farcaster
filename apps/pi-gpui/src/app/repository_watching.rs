@@ -2,7 +2,7 @@
 
 use std::{path::PathBuf, time::Duration};
 
-use gpui::Context;
+use gpui::{AppContext as _, Context};
 
 use super::{super::PiApp, RepositoryLocation};
 use crate::repository::watcher::{RepositoryWatchEvent, RepositoryWatcher};
