@@ -141,7 +141,7 @@ let
     strictDeps = true;
   } // lib.optionalAttrs stdenv.hostPlatform.isLinux {
     LD_LIBRARY_PATH = linuxRuntimeLibraryPath;
-  } // lib.optionalAttrs (stdenv.hostPlatform.system == "aarch64-linux") {
+  } // lib.optionalAttrs stdenv.hostPlatform.isLinux {
     GHOSTTY_ZIG_SYSTEM_PACKAGE_DIR = ghosttyZigDeps;
   } // {
 
