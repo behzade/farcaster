@@ -152,6 +152,8 @@ mod tests {
             change_id: "change".into(),
             description: String::new(),
             bookmarks,
+            closest_bookmarks: Vec::new(),
+            ahead: 0,
             conflicted_paths: Vec::new(),
             conflicted: false,
             empty: false,

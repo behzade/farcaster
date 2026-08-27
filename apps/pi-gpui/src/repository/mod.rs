@@ -94,6 +94,8 @@ pub(crate) struct GitIdentity {
     pub(crate) head_oid: Option<String>,
     pub(crate) branch: Option<String>,
     pub(crate) upstream: Option<String>,
+    /// Local branch closest to a detached HEAD; never used for push/pull.
+    pub(crate) nearest_branch: Option<String>,
     pub(crate) ahead: u64,
     pub(crate) behind: u64,
 }
@@ -105,6 +107,10 @@ pub(crate) struct JujutsuIdentity {
     pub(crate) change_id: String,
     pub(crate) description: String,
     pub(crate) bookmarks: Vec<String>,
+    /// Local bookmarks nearest `@`, including `@` itself when it is bookmarked.
+    pub(crate) closest_bookmarks: Vec<String>,
+    /// Commits on `@` that are not in the closest ancestor bookmarks.
+    pub(crate) ahead: u64,
     pub(crate) conflicted_paths: Vec<PathBuf>,
     pub(crate) conflicted: bool,
     pub(crate) empty: bool,

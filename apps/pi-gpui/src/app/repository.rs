@@ -585,6 +585,8 @@ fn displayed_identity_eq(
             left.change_id == right.change_id
                 && left.description == right.description
                 && left.bookmarks == right.bookmarks
+                && left.closest_bookmarks == right.closest_bookmarks
+                && left.ahead == right.ahead
                 && left.conflicted == right.conflicted
         }
         _ => false,
@@ -648,6 +650,8 @@ mod tests {
             change_id: "change".into(),
             description: "description".into(),
             bookmarks: vec!["main".into()],
+            closest_bookmarks: vec!["main".into()],
+            ahead: 0,
             conflicted_paths: Vec::new(),
             conflicted: false,
             empty: false,

@@ -30,23 +30,40 @@ pub(super) fn git_identity(identity: &GitIdentity) -> String {
 pub(super) fn repository_sync_metadata(identity: &SnapshotIdentity) -> String {
     match identity {
         SnapshotIdentity::Git(identity) => {
-            let mut metadata = identity
+            let metadata = identity
                 .upstream
                 .clone()
-                .unwrap_or_else(|| "No upstream".to_owned());
-            if identity.ahead > 0 {
-                metadata.push_str(&format!(" · {} ahead", identity.ahead));
-            }
-            if identity.behind > 0 {
-                metadata.push_str(&format!(" · {} behind", identity.behind));
-            }
-            metadata
+                .or_else(|| identity.nearest_branch.clone())
+                .or_else(|| identity.branch.as_ref().map(|_| "No upstream".to_owned()))
+                .unwrap_or_else(|| "detached".to_owned());
+            with_ahead_behind(metadata, identity.ahead, identity.behind)
         }
-        SnapshotIdentity::Jujutsu(identity) => match identity.bookmarks.as_slice() {
-            [] => "No bookmark".to_owned(),
-            [bookmark] => bookmark.clone(),
-            [first, rest @ ..] => format!("{first} +{} bookmarks", rest.len()),
-        },
+        SnapshotIdentity::Jujutsu(identity) => {
+            let metadata = bookmark_metadata(if identity.closest_bookmarks.is_empty() {
+                &identity.bookmarks
+            } else {
+                &identity.closest_bookmarks
+            });
+            with_ahead_behind(metadata, identity.ahead, 0)
+        }
+    }
+}
+
+fn with_ahead_behind(mut metadata: String, ahead: u64, behind: u64) -> String {
+    if ahead > 0 {
+        metadata.push_str(&format!(" · {} ahead", ahead));
+    }
+    if behind > 0 {
+        metadata.push_str(&format!(" · {} behind", behind));
+    }
+    metadata
+}
+
+fn bookmark_metadata(bookmarks: &[String]) -> String {
+    match bookmarks {
+        [] => "No bookmark".to_owned(),
+        [bookmark] => bookmark.clone(),
+        [first, rest @ ..] => format!("{first} +{} bookmarks", rest.len()),
     }
 }
 
@@ -155,6 +172,7 @@ pub(super) fn change_color(kind: &ChangeKind) -> gpui::Rgba {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::repository::JujutsuIdentity;
 
     #[test]
     fn unborn_and_detached_git_heads_are_explicit() {
@@ -171,6 +189,33 @@ mod tests {
                 ..GitIdentity::default()
             }),
             "detached 01234567"
+        );
+    }
+
+    #[test]
+    fn sync_metadata_uses_nearest_git_branch_and_jj_ancestor_bookmark() {
+        assert_eq!(
+            repository_sync_metadata(&SnapshotIdentity::Git(GitIdentity {
+                nearest_branch: Some("main".into()),
+                ahead: 2,
+                ..GitIdentity::default()
+            })),
+            "main · 2 ahead"
+        );
+        assert_eq!(
+            repository_sync_metadata(&SnapshotIdentity::Jujutsu(JujutsuIdentity {
+                operation_id: String::new(),
+                commit_id: "commit".into(),
+                change_id: "change".into(),
+                description: String::new(),
+                bookmarks: Vec::new(),
+                closest_bookmarks: vec!["main".into()],
+                ahead: 2,
+                conflicted_paths: Vec::new(),
+                conflicted: false,
+                empty: true,
+            })),
+            "main · 2 ahead"
         );
     }
 
