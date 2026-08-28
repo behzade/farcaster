@@ -52,11 +52,11 @@
         "nixpkgs": "nixpkgs_2"
       },
       "locked": {
-        "lastModified": 1787837825,
-        "narHash": "sha256-NIkotymyCnep3bQlGVjboapGYE1VSoyWk9LrX8q3NE0=",
+        "lastModified": 1787908127,
+        "narHash": "sha256-VAbVs9RyvW/9lARf0g7y8lLk4VfXF0MdFkbs7TJd4xQ=",
         "owner": "behzade",
         "repo": "pi-nono",
-        "rev": "4188687d623bf1e4a1a119905a346b02acf7ef6e",
+        "rev": "27d5a64916eaefbacde377b490fc0e3fd7e9233c",
         "type": "github"
       },
       "original": {
