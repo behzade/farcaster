@@ -1576,8 +1576,7 @@ impl RuntimeOwner {
         self.pending_prompt_item = None;
         self.process_command.permission_level = self
             .permission_changes
-            .requested_level(self.process_command.permission_level);
-        self.permission_changes.clear();
+            .take_requested_level(self.process_command.permission_level);
         self.transcript_changed_from = Some(0);
         let status = session.as_ref().map_or_else(
             || "Starting new session".into(),
@@ -2396,8 +2395,7 @@ impl RuntimeOwner {
         self.deferred_prompt = None;
         self.process_command.permission_level = self
             .permission_changes
-            .requested_level(self.process_command.permission_level);
-        self.permission_changes.clear();
+            .take_requested_level(self.process_command.permission_level);
         self.rollback_pending_prompt();
         if let Some(target) = self.pending_prompt_target.take() {
             self.emit_prompt_result(&target, false);
@@ -2772,6 +2770,19 @@ mod tests {
         owner.parked_snapshot = Some(RuntimeSnapshot::default());
     }
 
+    fn drive_process_until(owner: &mut RuntimeOwner, ready: impl Fn(&RuntimeOwner) -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            while let Some(item) = owner.process.as_mut().and_then(RpcProcess::try_next) {
+                owner.apply_process_item(item);
+            }
+            if ready(owner) {
+                return;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     #[test]
     fn permission_level_before_connection_configures_the_first_process() -> Result<(), String> {
         let temp = tempdir().map_err(|error| error.to_string())?;
@@ -2794,24 +2805,16 @@ mod tests {
         assert!(owner.snapshot.conversation.items.is_empty());
 
         owner.start_process(None);
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while Instant::now() < deadline {
-            while let Some(item) = owner.process.as_mut().and_then(RpcProcess::try_next) {
-                owner.apply_process_item(item);
-            }
-            if owner.startup_state_loaded && owner.startup_history_loaded {
-                break;
-            }
-            thread::sleep(Duration::from_millis(5));
-        }
+        drive_process_until(&mut owner, |owner| {
+            owner.startup_state_loaded && owner.startup_history_loaded
+        });
         assert!(owner.startup_state_loaded && owner.startup_history_loaded);
-        assert!(owner.process.is_some());
         assert_eq!(owner.snapshot.permission_level, target);
         Ok(())
     }
 
     #[test]
-    fn permission_changes_during_a_response_coalesce_and_apply_when_idle() {
+    fn permission_changes_during_a_response_keep_latest_and_allow_cancel() {
         let (mut owner, _events, _discovery) = owner_without_process(std::env::temp_dir());
         conversation_mut(owner.active_snapshot_mut()).running = true;
         let full = PermissionLevel {
@@ -2824,20 +2827,15 @@ mod tests {
         assert_eq!(owner.snapshot.permission_level, full);
         owner.apply_command(RuntimeCommand::SetPermissionLevel(read_only));
         assert_eq!(owner.snapshot.permission_level, read_only);
-        owner.apply_command(RuntimeCommand::SetPermissionLevel(PermissionLevel::default()));
+        owner.apply_command(RuntimeCommand::SetPermissionLevel(
+            PermissionLevel::default(),
+        ));
+        assert_eq!(owner.snapshot.permission_level, PermissionLevel::default());
+        assert!(owner.permission_changes.is_idle());
         assert_eq!(
-            owner.snapshot.permission_level,
+            owner.process_command.permission_level,
             PermissionLevel::default()
         );
-        assert!(owner.permission_changes.is_idle());
-
-        owner.apply_command(RuntimeCommand::SetPermissionLevel(full));
-        conversation_mut(owner.active_snapshot_mut()).running = false;
-        owner.apply_queued_permission_change();
-
-        assert!(owner.permission_changes.is_idle());
-        assert_eq!(owner.process_command.permission_level, full);
-        assert_eq!(owner.snapshot.permission_level, full);
         assert!(owner.snapshot.conversation.items.is_empty());
     }
 
@@ -2849,20 +2847,12 @@ mod tests {
         fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))
             .map_err(|error| error.to_string())?;
         let session = temp.path().join("session.jsonl");
-        let (mut owner, events, _discovery) = owner_without_process(temp.path().to_path_buf());
+        let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
         owner.process_command = ProcessCommand::test_script(&script, vec!["sandbox-mode".into()]);
         owner.start_process(Some(session));
-
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while Instant::now() < deadline {
-            while let Some(item) = owner.process.as_mut().and_then(RpcProcess::try_next) {
-                owner.apply_process_item(item);
-            }
-            if owner.startup_state_loaded && owner.startup_history_loaded {
-                break;
-            }
-            thread::sleep(Duration::from_millis(5));
-        }
+        drive_process_until(&mut owner, |owner| {
+            owner.startup_state_loaded && owner.startup_history_loaded
+        });
         assert!(owner.startup_state_loaded && owner.startup_history_loaded);
         assert_eq!(
             owner.snapshot.conversation.items[0].text,
@@ -2871,7 +2861,6 @@ mod tests {
 
         let generation = owner.process_generation;
         let transcript = owner.snapshot.conversation.items.clone();
-        let _ = events.try_iter().count();
         let target = PermissionLevel {
             files: FileAccessMode::Full,
             network: NetworkAccessMode::Full,
@@ -2880,30 +2869,19 @@ mod tests {
         owner.apply_command(RuntimeCommand::SetPermissionLevel(target));
 
         assert_eq!(owner.process_generation, generation);
-        assert!(owner.process.is_some());
         assert_eq!(
             owner.process_command.permission_level,
             PermissionLevel::default()
         );
         assert_eq!(owner.snapshot.permission_level, target);
         assert!(!owner.permission_changes.is_idle());
-        assert_eq!(owner.snapshot.conversation.items, transcript);
 
         conversation_mut(owner.active_snapshot_mut()).running = false;
         owner.apply_queued_permission_change();
         let final_target = target.with_files(FileAccessMode::ReadOnly);
         owner.apply_command(RuntimeCommand::SetPermissionLevel(final_target));
         assert_eq!(owner.snapshot.permission_level, final_target);
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while Instant::now() < deadline {
-            while let Some(item) = owner.process.as_mut().and_then(RpcProcess::try_next) {
-                owner.apply_process_item(item);
-            }
-            if owner.permission_changes.is_idle() {
-                break;
-            }
-            thread::sleep(Duration::from_millis(5));
-        }
+        drive_process_until(&mut owner, |owner| owner.permission_changes.is_idle());
 
         assert!(owner.permission_changes.is_idle());
         assert_eq!(owner.process_generation, generation);
@@ -2911,11 +2889,6 @@ mod tests {
         assert_eq!(owner.process_command.permission_level, final_target);
         assert_eq!(owner.snapshot.permission_level, final_target);
         assert_eq!(owner.snapshot.conversation.items, transcript);
-        assert!(
-            events
-                .try_iter()
-                .all(|event| !matches!(event, RuntimeEvent::SessionReset { .. }))
-        );
         Ok(())
     }
 

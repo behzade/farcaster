@@ -97,12 +97,7 @@ pub(super) struct PermissionChangeState {
 }
 
 impl PermissionChangeState {
-    pub(super) fn clear(&mut self) {
-        self.pending = None;
-        self.queued = None;
-        self.command_id = None;
-    }
-
+    #[cfg(test)]
     pub(super) fn is_idle(&self) -> bool {
         !self.is_transitioning() && self.queued.is_none()
     }
@@ -111,25 +106,46 @@ impl PermissionChangeState {
         self.pending.is_some() || self.command_id.is_some()
     }
 
+    fn queue(&mut self, requested: PermissionLevel, effective: PermissionLevel) {
+        let active_target = self
+            .pending
+            .as_ref()
+            .map(|pending| pending.level)
+            .unwrap_or(effective);
+        self.queued = (requested != active_target).then_some(requested);
+    }
+
+    fn take_queued(&mut self) -> Option<PermissionLevel> {
+        self.queued.take()
+    }
+
     pub(super) fn requested_level(&self, effective: PermissionLevel) -> PermissionLevel {
         self.queued
             .or_else(|| self.pending.as_ref().map(|pending| pending.level))
             .unwrap_or(effective)
     }
+
+    pub(super) fn take_requested_level(&mut self, effective: PermissionLevel) -> PermissionLevel {
+        let requested = self.requested_level(effective);
+        self.pending = None;
+        self.queued = None;
+        self.command_id = None;
+        requested
+    }
 }
 
 impl RuntimeOwner {
+    fn permission_change_ready(&self) -> bool {
+        let conversation = &self.active_snapshot().conversation;
+        !conversation.running
+            && !conversation.compacting
+            && !self.permission_changes.is_transitioning()
+    }
+
     pub(super) fn set_permission_level(&mut self, level: PermissionLevel) {
-        let busy = self.active_snapshot().conversation.running
-            || self.active_snapshot().conversation.compacting;
-        if busy || self.permission_changes.is_transitioning() {
-            let active_target = self
-                .permission_changes
-                .pending
-                .as_ref()
-                .map(|pending| pending.level)
-                .unwrap_or(self.process_command.permission_level);
-            self.permission_changes.queued = (level != active_target).then_some(level);
+        if !self.permission_change_ready() {
+            self.permission_changes
+                .queue(level, self.process_command.permission_level);
             self.publish();
             return;
         }
@@ -167,16 +183,12 @@ impl RuntimeOwner {
     }
 
     pub(super) fn apply_queued_permission_change(&mut self) {
-        if self.active_snapshot().conversation.running
-            || self.active_snapshot().conversation.compacting
-            || self.permission_changes.is_transitioning()
-        {
+        if !self.permission_change_ready() {
             return;
         }
-        let Some(level) = self.permission_changes.queued.take() else {
-            return;
-        };
-        self.set_permission_level(level);
+        if let Some(level) = self.permission_changes.take_queued() {
+            self.set_permission_level(level);
+        }
     }
 
     pub(super) fn apply_sandbox_mode_result(
@@ -243,7 +255,6 @@ impl RuntimeOwner {
                     .unwrap_or_else(|| "pi-nono did not accept the sandbox mode command".into()),
             );
         } else {
-            self.publish();
             self.apply_queued_permission_change();
         }
         true

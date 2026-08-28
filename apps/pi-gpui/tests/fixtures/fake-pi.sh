@@ -31,6 +31,9 @@ read_id() {
 read_type() {
   printf '%s' "$1" | sed -n 's/.*"type":"\([^"]*\)".*/\1/p'
 }
+emit_sandbox_mode_result() {
+  printf '{"type":"extension_ui_request","id":"sandbox-mode-result","method":"setStatus","statusKey":"\\u001fpi-gpui-sandbox-mode\\u001f","statusText":"{\\"version\\":1,\\"requestId\\":\\"%s\\",\\"files\\":\\"%s\\",\\"network\\":\\"%s\\",\\"success\\":true}"}\n' "$1" "$2" "$3"
+}
 
 IFS= read -r line || exit 2
 id=$(read_id "$line")
@@ -110,10 +113,10 @@ while IFS= read -r line; do
         [ "$entries_loaded" -eq 1 ] || exit 11
         case "$line" in
           *'gpui-permission-1'*'\"files\":\"full\"'*'\"network\":\"full\"'*)
-            printf '%s\n' '{"type":"extension_ui_request","id":"sandbox-mode-result","method":"setStatus","statusKey":"\u001fpi-gpui-sandbox-mode\u001f","statusText":"{\"version\":1,\"requestId\":\"gpui-permission-1\",\"files\":\"full\",\"network\":\"full\",\"success\":true}"}'
+            emit_sandbox_mode_result gpui-permission-1 full full
             ;;
           *'gpui-permission-2'*'\"files\":\"read-only\"'*'\"network\":\"full\"'*)
-            printf '%s\n' '{"type":"extension_ui_request","id":"sandbox-mode-result","method":"setStatus","statusKey":"\u001fpi-gpui-sandbox-mode\u001f","statusText":"{\"version\":1,\"requestId\":\"gpui-permission-2\",\"files\":\"read-only\",\"network\":\"full\",\"success\":true}"}'
+            emit_sandbox_mode_result gpui-permission-2 read-only full
             ;;
           *) exit 12 ;;
         esac
