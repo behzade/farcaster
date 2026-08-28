@@ -12,6 +12,7 @@ use std::{
 };
 
 const APP_ENV_IMPORTED: &str = "PI_GUI_SHELL_ENV_IMPORTED";
+const PROJECT_PATH_HANDOFF: &str = "PI_GUI_CAPTURED_PROJECT_PATH";
 const START_MARKER: &[u8] = b"\x1ePI_GPUI_ENV_START\x1f\0";
 const END_MARKER: &[u8] = b"\x1ePI_GPUI_ENV_END\x1f\0";
 const CAPTURE_COMMAND: &str = "/bin/sh -c \"command stty -echo -opost; command printf '\\\\036PI_GPUI_ENV_START\\\\037\\\\0'; command env -0; command printf '\\\\036PI_GPUI_ENV_END\\\\037\\\\0'\" 2>/dev/null; exit\n";
@@ -27,7 +28,21 @@ pub(crate) fn project_shell_environment(project: &Path) -> Result<Option<Environ
         return Ok(None);
     }
     #[cfg(not(test))]
-    shell_environment_at(project).map(Some)
+    shell_environment_at(project)
+        .map(with_project_path_handoff)
+        .map(Some)
+}
+
+fn with_project_path_handoff(mut environment: Environment) -> Environment {
+    let path = environment
+        .iter()
+        .find(|(name, _)| name == "PATH")
+        .map(|(_, value)| value.clone());
+    environment.retain(|(name, _)| name != PROJECT_PATH_HANDOFF);
+    if let Some(path) = path {
+        environment.push((OsString::from(PROJECT_PATH_HANDOFF), path));
+    }
+    environment
 }
 
 fn app_shell_environment() -> Result<Environment, String> {
@@ -272,6 +287,27 @@ mod tests {
             Some(PathBuf::from("/bin/fish"))
         );
         assert_eq!(parse_account_login_shell(b"malformed"), None);
+    }
+
+    #[test]
+    fn project_path_handoff_uses_the_captured_path() {
+        let environment = with_project_path_handoff(vec![
+            (OsString::from("PATH"), OsString::from("/captured/bin")),
+            (
+                OsString::from(PROJECT_PATH_HANDOFF),
+                OsString::from("/stale/bin"),
+            ),
+            (OsString::from("HOME"), OsString::from("/home/user")),
+        ]);
+
+        assert_eq!(
+            environment
+                .iter()
+                .filter(|(name, _)| name == PROJECT_PATH_HANDOFF)
+                .map(|(_, value)| value.clone())
+                .collect::<Vec<_>>(),
+            vec![OsString::from("/captured/bin")],
+        );
     }
 
     #[test]

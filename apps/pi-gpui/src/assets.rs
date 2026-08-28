@@ -4,7 +4,7 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 41] = [
+const ICON_PATHS: [&str; 43] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrows-clockwise.svg",
     "icons/phosphor/arrows-out.svg",
@@ -26,6 +26,7 @@ const ICON_PATHS: [&str; 41] = [
     "icons/phosphor/eye-slash.svg",
     "icons/phosphor/folder.svg",
     "icons/phosphor/folder-plus.svg",
+    "icons/phosphor/globe.svg",
     "icons/phosphor/hammer.svg",
     "icons/phosphor/hourglass.svg",
     "icons/phosphor/info.svg",
@@ -35,6 +36,7 @@ const ICON_PATHS: [&str; 41] = [
     "icons/phosphor/microscope.svg",
     "icons/phosphor/plus.svg",
     "icons/phosphor/question.svg",
+    "icons/phosphor/shield.svg",
     "icons/phosphor/sign-in.svg",
     "icons/phosphor/spinner-gap.svg",
     "icons/phosphor/stop.svg",
@@ -131,6 +133,9 @@ impl AssetSource for AppAssets {
             "icons/phosphor/folder-plus.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/folder-plus.svg"))
             }
+            "icons/phosphor/globe.svg" => {
+                Some(include_bytes!("../assets/phosphor-icons/globe.svg"))
+            }
             "icons/phosphor/git-branch.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/git-branch.svg"))
             }
@@ -148,6 +153,9 @@ impl AssetSource for AppAssets {
             )),
             "icons/phosphor/microscope.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/microscope.svg"))
+            }
+            "icons/phosphor/shield.svg" => {
+                Some(include_bytes!("../assets/phosphor-icons/shield.svg"))
             }
             "icons/phosphor/sign-in.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/sign-in.svg"))
@@ -213,6 +221,7 @@ pub(crate) enum AppIcon {
     Eye,
     Folder,
     FolderPlus,
+    Globe,
     Hammer,
     Hourglass,
     Key,
@@ -221,6 +230,7 @@ pub(crate) enum AppIcon {
     Microscope,
     Plus,
     Question,
+    Shield,
     SignIn,
     SpinnerGap,
     Stop,
@@ -253,6 +263,7 @@ impl IconNamed for AppIcon {
             Self::Eye => "eye",
             Self::Folder => "folder",
             Self::FolderPlus => "folder-plus",
+            Self::Globe => "globe",
             Self::Hammer => "hammer",
             Self::Hourglass => "hourglass",
             Self::Key => "key",
@@ -261,6 +272,7 @@ impl IconNamed for AppIcon {
             Self::Microscope => "microscope",
             Self::Plus => "plus",
             Self::Question => "question",
+            Self::Shield => "shield",
             Self::SignIn => "sign-in",
             Self::SpinnerGap => "spinner-gap",
             Self::Stop => "stop",
@@ -326,6 +338,7 @@ mod tests {
             AppIcon::Eye,
             AppIcon::Folder,
             AppIcon::FolderPlus,
+            AppIcon::Globe,
             AppIcon::Hammer,
             AppIcon::Hourglass,
             AppIcon::Key,
@@ -334,6 +347,7 @@ mod tests {
             AppIcon::Microscope,
             AppIcon::Plus,
             AppIcon::Question,
+            AppIcon::Shield,
             AppIcon::SignIn,
             AppIcon::SpinnerGap,
             AppIcon::Stop,

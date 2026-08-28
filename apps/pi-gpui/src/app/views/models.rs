@@ -178,22 +178,14 @@ fn effort_label(level: &str) -> String {
 }
 
 fn permission_selector(selected: PermissionLevel, entity: WeakEntity<PiApp>) -> AnyElement {
-    let (file_state_icon, file_state_color) = file_access_presentation(selected.files);
-    let (network_state_icon, network_state_color) = network_access_presentation(selected.network);
+    let file_state_icon = file_access_icon(selected.files);
+    let network_state_icon = network_access_icon(selected.network);
     let content = div()
         .flex()
         .items_center()
         .gap(THEME.space.sm)
-        .child(permission_icon_pair(
-            AppIcon::Folder,
-            file_state_icon,
-            file_state_color,
-        ))
-        .child(permission_icon_pair(
-            AppIcon::ArrowSquareOut,
-            network_state_icon,
-            network_state_color,
-        ));
+        .child(permission_icon_pair(AppIcon::Folder, file_state_icon))
+        .child(permission_icon_pair(AppIcon::Globe, network_state_icon));
 
     dropdown_content_button(
         "select-permission",
@@ -237,34 +229,28 @@ fn permission_selector(selected: PermissionLevel, entity: WeakEntity<PiApp>) -> 
     .into_any_element()
 }
 
-fn permission_icon_pair(
-    resource: AppIcon,
-    access: AppIcon,
-    access_color: gpui::Rgba,
-) -> AnyElement {
+fn permission_icon_pair(resource: AppIcon, access: AppIcon) -> AnyElement {
     div()
         .flex()
         .items_center()
         .gap(THEME.space.xs)
-        .child(
-            app_icon(resource, AppIconSize::Inline).text_color(THEME.colors.subtle),
-        )
-        .child(app_icon(access, AppIconSize::Inline).text_color(access_color))
+        .child(app_icon(resource, AppIconSize::Inline).text_color(THEME.colors.subtle))
+        .child(app_icon(access, AppIconSize::Inline).text_color(THEME.colors.text))
         .into_any_element()
 }
 
-fn file_access_presentation(mode: FileAccessMode) -> (AppIcon, gpui::Rgba) {
+fn file_access_icon(mode: FileAccessMode) -> AppIcon {
     match mode {
-        FileAccessMode::ReadOnly => (AppIcon::Eye, THEME.colors.link),
-        FileAccessMode::Sandboxed => (AppIcon::Archive, THEME.colors.success),
-        FileAccessMode::Full => (AppIcon::ArrowsOut, THEME.colors.warning),
+        FileAccessMode::ReadOnly => AppIcon::Eye,
+        FileAccessMode::Sandboxed => AppIcon::Shield,
+        FileAccessMode::Full => AppIcon::ArrowsOut,
     }
 }
 
-fn network_access_presentation(mode: NetworkAccessMode) -> (AppIcon, gpui::Rgba) {
+fn network_access_icon(mode: NetworkAccessMode) -> AppIcon {
     match mode {
-        NetworkAccessMode::Sandboxed => (AppIcon::Archive, THEME.colors.success),
-        NetworkAccessMode::Full => (AppIcon::ArrowsOut, THEME.colors.warning),
+        NetworkAccessMode::Sandboxed => AppIcon::Shield,
+        NetworkAccessMode::Full => AppIcon::ArrowsOut,
     }
 }
 
@@ -274,25 +260,10 @@ mod tests {
 
     #[test]
     fn permission_modes_have_distinct_compact_icons() {
-        assert_eq!(
-            file_access_presentation(FileAccessMode::ReadOnly).0,
-            AppIcon::Eye
-        );
-        assert_eq!(
-            file_access_presentation(FileAccessMode::Sandboxed).0,
-            AppIcon::Archive
-        );
-        assert_eq!(
-            file_access_presentation(FileAccessMode::Full).0,
-            AppIcon::ArrowsOut
-        );
-        assert_eq!(
-            network_access_presentation(NetworkAccessMode::Sandboxed).0,
-            AppIcon::Archive
-        );
-        assert_eq!(
-            network_access_presentation(NetworkAccessMode::Full).0,
-            AppIcon::ArrowsOut
-        );
+        assert_eq!(file_access_icon(FileAccessMode::ReadOnly), AppIcon::Eye);
+        assert_eq!(file_access_icon(FileAccessMode::Sandboxed), AppIcon::Shield);
+        assert_eq!(file_access_icon(FileAccessMode::Full), AppIcon::ArrowsOut);
+        assert_eq!(network_access_icon(NetworkAccessMode::Sandboxed), AppIcon::Shield);
+        assert_eq!(network_access_icon(NetworkAccessMode::Full), AppIcon::ArrowsOut);
     }
 }

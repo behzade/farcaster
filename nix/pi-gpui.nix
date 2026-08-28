@@ -5,6 +5,7 @@
   makeWrapper,
   neovim,
   nukeReferences,
+  patchelf,
   piTerminal,
   pkg-config,
   rustPlatform,
@@ -204,6 +205,8 @@ craneLib.buildPackage (
   // {
     inherit cargoArtifacts;
     passthru = { inherit cargoArtifacts; };
+    nativeBuildInputs =
+      commonArgs.nativeBuildInputs ++ lib.optionals stdenv.hostPlatform.isLinux [ patchelf ];
 
     postInstall = ''
       ln -s "$out/bin/pi-gpui" "$out/bin/pi-gui"
@@ -222,11 +225,14 @@ craneLib.buildPackage (
     '';
 
     postFixup = ''
+      ${lib.optionalString stdenv.hostPlatform.isLinux ''
+        patchelf --add-rpath ${linuxRuntimeLibraryPath} "$out/bin/pi-gpui"
+      ''}
       wrapProgram "$out/bin/pi-gpui" \
         --set PI_GUI_PI_PATH ${piTerminal}/bin/pi \
         --set PI_GUI_COMPANION_EXTENSION "$out/lib/pi-gpui/companion/index.ts" \
         --prefix PATH : ${lib.makeBinPath [ neovim ]} \
-        ${lib.optionalString stdenv.hostPlatform.isLinux "--prefix PATH : ${lib.makeBinPath [ coreutils util-linux ]} --prefix LD_LIBRARY_PATH : ${linuxRuntimeLibraryPath}"}
+        ${lib.optionalString stdenv.hostPlatform.isLinux "--prefix PATH : ${lib.makeBinPath [ coreutils util-linux ]}"}
     ''
     + lib.optionalString stdenv.hostPlatform.isDarwin ''
       # UNUserNotificationCenter rejects unsigned application bundles.
