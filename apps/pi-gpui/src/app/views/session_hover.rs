@@ -85,10 +85,12 @@ pub(super) fn draft_hover_details(draft: &DraftSession, status: &str) -> Session
     }
 }
 
+#[cfg(test)]
 pub(super) fn session_tooltip_lines(session: &SessionSummary, subagents: usize) -> Vec<String> {
     flatten_details(&session_hover_details(session, "", "", subagents))
 }
 
+#[cfg(test)]
 pub(super) fn flatten_details(details: &SessionHoverDetails) -> Vec<String> {
     let mut lines = vec![details.title.clone()];
     lines.extend(

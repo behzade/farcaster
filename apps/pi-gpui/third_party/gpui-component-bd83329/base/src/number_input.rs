@@ -22,6 +22,7 @@ impl NumberStep {
         Self::ByValue(Rc::new(f))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn value(&self, current: f64, action: StepAction, cx: &mut gpui::App) -> f64 {
         match self {
             Self::Fixed(step) => *step,

@@ -223,6 +223,7 @@ pub(crate) fn project_rows(
     project_rows_from(items, 0)
 }
 
+#[cfg(test)]
 pub(crate) fn update_rows(
     previous_rows: &PersistentVec<TranscriptRow>,
     previous_items: &(impl Indexed<Arc<TranscriptItem>> + ?Sized),

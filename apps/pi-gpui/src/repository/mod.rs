@@ -424,6 +424,7 @@ impl RepositoryBackend {
         Ok(patch_counts(&String::from_utf8_lossy(&output)))
     }
 
+    #[cfg(test)]
     pub(crate) fn load_diff(&self, target: DiffTarget) -> Result<DiffResult, RepositoryError> {
         self.validate_target(&target)?;
         let _operation = repository_operation()?;
@@ -450,6 +451,7 @@ impl RepositoryBackend {
         }
     }
 
+    #[cfg(test)]
     fn validate_target(&self, target: &DiffTarget) -> Result<(), RepositoryError> {
         if target.workspace_root != self.location.workspace_root {
             return Err(RepositoryError::TargetMismatch(format!(

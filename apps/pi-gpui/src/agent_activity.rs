@@ -22,6 +22,8 @@ pub(crate) enum AgentOutcome {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AgentLifecycle {
+    /// Reserved for agents paused on an external response.
+    #[allow(dead_code)]
     NeedsInput,
     Working,
     Unknown,

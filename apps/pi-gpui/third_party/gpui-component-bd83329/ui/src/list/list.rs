@@ -157,11 +157,6 @@ where
         self.focus_handle(cx).focus(window, cx);
     }
 
-    /// Return true if either the list or the search input is focused.
-    pub(crate) fn is_focused(&self, window: &Window, cx: &App) -> bool {
-        self.focus_handle.is_focused(window) || self.query_input.focus_handle(cx).is_focused(window)
-    }
-
     /// Set the selected index of the list,
     /// this will also scroll to the selected item.
     pub(crate) fn _set_selected_index(
@@ -345,11 +340,6 @@ where
                 });
             });
         }
-    }
-
-    pub(crate) fn reset_on_cancel(mut self, reset: bool) -> Self {
-        self.reset_on_cancel = reset;
-        self
     }
 
     fn on_action_cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {

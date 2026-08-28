@@ -75,20 +75,6 @@ impl Text {
             Self::TextView(e) => Self::TextView(Box::new(e.style(style))),
         }
     }
-
-    /// Get the text content.
-    pub(crate) fn get_text(&self, cx: &App) -> SharedString {
-        match self {
-            Self::String(s) => s.clone(),
-            Self::TextView(view) => {
-                if let Some(state) = &view.state {
-                    state.read(cx).source()
-                } else {
-                    SharedString::default()
-                }
-            }
-        }
-    }
 }
 
 impl RenderOnce for Text {

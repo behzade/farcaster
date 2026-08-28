@@ -189,41 +189,6 @@ pub(crate) fn render_tooltip(
 
 // ── Extension trait for managed tooltips ─────────────────────────────────────
 
-// ── Shared tooltip state for components ─────────────────────────────────────
-
-/// Shared tooltip state that components (Button, Switch, Checkbox, Radio, etc.)
-/// can embed to get `.tooltip()` support with minimal boilerplate.
-#[derive(Default)]
-pub(crate) struct ComponentTooltip {
-    pub text: Option<(
-        SharedString,
-        Option<(Rc<Box<dyn Action>>, Option<SharedString>)>,
-    )>,
-    pub builder: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyView>>,
-}
-
-impl ComponentTooltip {
-    /// Apply this tooltip to a `Stateful<Div>` (or any `ManagedTooltipExt` element).
-    pub fn apply<E: ManagedTooltipExt>(self, el: E) -> E {
-        if let Some(builder) = self.builder {
-            el.managed_tooltip(move |window, cx| builder(window, cx))
-        } else if let Some((text, action)) = self.text {
-            el.managed_tooltip(move |window, cx| {
-                Tooltip::new(text.clone())
-                    .when_some(action.clone(), |this, (action, context)| {
-                        this.action(
-                            action.boxed_clone().as_ref(),
-                            context.as_ref().map(|c| c.as_ref()),
-                        )
-                    })
-                    .build(window, cx)
-            })
-        } else {
-            el
-        }
-    }
-}
-
 // ── Internal managed tooltip trait ──────────────────────────────────────────
 
 pub(crate) trait ManagedTooltipExt:
@@ -234,14 +199,6 @@ pub(crate) trait ManagedTooltipExt:
         build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
     ) -> Self {
         self.managed_tooltip_with_placement(None, build_tooltip)
-    }
-
-    fn managed_tooltip_at(
-        self,
-        placement: Placement,
-        build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
-    ) -> Self {
-        self.managed_tooltip_with_placement(Some(placement), build_tooltip)
     }
 
     fn managed_tooltip_with_placement(

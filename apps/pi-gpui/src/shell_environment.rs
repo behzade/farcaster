@@ -142,6 +142,7 @@ fn parse_passwd_login_shell(passwd: &[u8], user: &str) -> Option<PathBuf> {
     })
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn parse_account_login_shell(output: &[u8]) -> Option<PathBuf> {
     let shell = output
         .trim_ascii_end()

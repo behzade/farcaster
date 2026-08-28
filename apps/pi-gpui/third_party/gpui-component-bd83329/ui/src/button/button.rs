@@ -280,18 +280,6 @@ impl Button {
         self
     }
 
-    /// Set the border corners side of the Button.
-    pub(crate) fn border_corners(mut self, corners: impl Into<Corners<bool>>) -> Self {
-        self.border_corners = corners.into();
-        self
-    }
-
-    /// Set the border edges of the Button.
-    pub(crate) fn border_edges(mut self, edges: impl Into<Edges<bool>>) -> Self {
-        self.border_edges = edges.into();
-        self
-    }
-
     /// Set label to the Button, if no label is set, the button will be in Icon Button mode.
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
         self.label = Some(label.into());

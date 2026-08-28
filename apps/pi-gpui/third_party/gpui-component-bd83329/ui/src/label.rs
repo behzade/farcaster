@@ -12,6 +12,7 @@ const MASKED: &'static str = "•";
 /// Represents the type of match for highlighting text in a label.
 #[derive(Clone)]
 pub enum HighlightsMatch {
+    #[allow(dead_code)]
     Prefix(SharedString),
     Full(SharedString),
 }
@@ -73,18 +74,21 @@ impl Label {
 
     /// Set the secondary text for the label,
     /// the secondary text will be displayed after the label text with `muted` color.
+    #[allow(dead_code)]
     pub fn secondary(mut self, secondary: impl Into<SharedString>) -> Self {
         self.secondary = Some(secondary.into());
         self
     }
 
     /// Set whether to mask the label text.
+    #[allow(dead_code)]
     pub fn masked(mut self, masked: bool) -> Self {
         self.masked = masked;
         self
     }
 
     /// Set for matching text to highlight in the label.
+    #[allow(dead_code)]
     pub fn highlights(mut self, text: impl Into<HighlightsMatch>) -> Self {
         self.highlights_text = Some(text.into());
         self

@@ -1,10 +1,11 @@
 use std::{ffi::OsString, path::PathBuf, sync::Arc, time::SystemTime};
 
 use super::{
-    ChangeKind, ChangeLayer, DiffResult, DiffTarget, JujutsuIdentity, RepositoryBackend,
-    RepositoryError, RepositoryKind, SnapshotIdentity, SnapshotToken, WorkingCopySnapshot, change,
-    diff_result, require_complete_stdout,
+    ChangeKind, ChangeLayer, JujutsuIdentity, RepositoryBackend, RepositoryError, RepositoryKind,
+    SnapshotIdentity, SnapshotToken, WorkingCopySnapshot, change, require_complete_stdout,
 };
+#[cfg(test)]
+use super::{DiffResult, DiffTarget, diff_result};
 
 const OPERATION_TEMPLATE: &str = "id ++ \"\\n\"";
 const IDENTITY_TEMPLATE: &str = concat!(
@@ -105,6 +106,7 @@ pub(super) fn list_project_files(
     Ok(files)
 }
 
+#[cfg(test)]
 pub(super) fn load_diff(
     backend: &RepositoryBackend,
     target: DiffTarget,
@@ -289,6 +291,7 @@ fn scope_change_to_project(
     }
 }
 
+#[cfg(test)]
 fn diff_fileset(target: &DiffTarget) -> Result<String, RepositoryError> {
     let target_fileset = literal_fileset(&target.relative_path)?;
     if let Some(source) = target.original_relative_path.as_deref() {
@@ -298,6 +301,7 @@ fn diff_fileset(target: &DiffTarget) -> Result<String, RepositoryError> {
     }
 }
 
+#[cfg(test)]
 fn literal_fileset(path: &std::path::Path) -> Result<String, RepositoryError> {
     let path = path
         .to_str()
@@ -305,6 +309,7 @@ fn literal_fileset(path: &std::path::Path) -> Result<String, RepositoryError> {
     Ok(format!("root-file:{}", encode_json_string(path)))
 }
 
+#[cfg(test)]
 fn encode_json_string(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len().saturating_add(2));
     encoded.push('"');

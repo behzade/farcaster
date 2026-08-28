@@ -11,7 +11,7 @@ use gpui::{
     ParentElement, Pixels, Render, Role, ScrollHandle, SharedString, StatefulInteractiveElement,
     Styled, WeakEntity, Window, anchored, deferred, div, prelude::FluentBuilder, px, rems,
 };
-use gpui::{ClickEvent, Half, MouseDownEvent, OwnedMenuItem, Point, Subscription};
+use gpui::{ClickEvent, Half, MouseDownEvent, Point, Subscription};
 
 use std::rc::Rc;
 
@@ -361,40 +361,6 @@ impl PopupMenu {
     pub fn action_context(mut self, handle: FocusHandle) -> Self {
         self.action_context = Some(handle);
         self
-    }
-
-    pub(crate) fn set_action_context(
-        &mut self,
-        action_context: Option<FocusHandle>,
-        cx: &mut Context<Self>,
-    ) {
-        self.action_context = action_context.clone();
-
-        for item in &self.menu_items {
-            if let PopupMenuItem::Submenu { menu, .. } = item {
-                menu.update(cx, |menu, cx| {
-                    menu.set_action_context(action_context.clone(), cx);
-                });
-            }
-        }
-    }
-
-    /// Set the focus to restore when the menu is dismissed, without changing
-    /// where actions are dispatched.
-    pub(crate) fn set_previous_focus(
-        &mut self,
-        handle: Option<FocusHandle>,
-        cx: &mut Context<Self>,
-    ) {
-        self.previous_focus_handle = handle.clone();
-
-        for item in &self.menu_items {
-            if let PopupMenuItem::Submenu { menu, .. } = item {
-                menu.update(cx, |menu, cx| {
-                    menu.set_previous_focus(handle.clone(), cx);
-                });
-            }
-        }
     }
 
     /// Set min width of the popup menu, default is 120px
@@ -752,50 +718,6 @@ impl PopupMenu {
                 .checked(checked)
                 .action(action),
         );
-        self
-    }
-
-    pub(super) fn with_menu_items<I>(
-        mut self,
-        items: impl IntoIterator<Item = I>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self
-    where
-        I: Into<OwnedMenuItem>,
-    {
-        for item in items {
-            match item.into() {
-                OwnedMenuItem::Action {
-                    name,
-                    action,
-                    checked,
-                    disabled,
-                    ..
-                } => {
-                    self = self.menu_with_check_and_disabled(
-                        name,
-                        checked,
-                        action.boxed_clone(),
-                        disabled,
-                    )
-                }
-                OwnedMenuItem::Separator => {
-                    self = self.separator();
-                }
-                OwnedMenuItem::Submenu(submenu) => {
-                    self = self.submenu(submenu.name, window, cx, move |menu, window, cx| {
-                        menu.with_menu_items(submenu.items.clone(), window, cx)
-                    })
-                }
-                OwnedMenuItem::SystemMenu(_) => {}
-            }
-        }
-
-        if self.menu_items.len() > 20 {
-            self.scrollable = true;
-        }
-
         self
     }
 
