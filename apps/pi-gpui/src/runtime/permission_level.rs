@@ -1,42 +1,94 @@
-//! Session process permission level: OS sandbox vs unsandboxed host tools.
+//! Independent filesystem and network access modes for the Pi child process.
 
 use super::*;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) enum PermissionLevel {
+pub(crate) enum FileAccessMode {
+    ReadOnly,
     #[default]
     Sandboxed,
-    FullAccess,
+    Full,
 }
 
-impl PermissionLevel {
+impl FileAccessMode {
+    pub(crate) fn all() -> [Self; 3] {
+        [Self::ReadOnly, Self::Sandboxed, Self::Full]
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::ReadOnly => "Read-only",
+            Self::Sandboxed => "Sandboxed",
+            Self::Full => "Full",
+        }
+    }
+
+    pub(crate) fn flag_value(self) -> &'static str {
+        match self {
+            Self::ReadOnly => "read-only",
+            Self::Sandboxed => "sandboxed",
+            Self::Full => "full",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum NetworkAccessMode {
+    #[default]
+    Sandboxed,
+    Full,
+}
+
+impl NetworkAccessMode {
     pub(crate) fn all() -> [Self; 2] {
-        [Self::Sandboxed, Self::FullAccess]
+        [Self::Sandboxed, Self::Full]
     }
 
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Sandboxed => "Sandboxed",
-            Self::FullAccess => "Full access",
+            Self::Full => "Full",
         }
     }
 
-    pub(crate) fn from_sandbox_disabled(disabled: bool) -> Self {
-        if disabled {
-            Self::FullAccess
-        } else {
-            Self::Sandboxed
+    pub(crate) fn flag_value(self) -> &'static str {
+        match self {
+            Self::Sandboxed => "sandboxed",
+            Self::Full => "full",
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct PermissionLevel {
+    pub(crate) files: FileAccessMode,
+    pub(crate) network: NetworkAccessMode,
+}
+
+impl PermissionLevel {
+    pub(crate) fn label(self) -> String {
+        format!(
+            "Files: {} · Network: {}",
+            self.files.label(),
+            self.network.label()
+        )
+    }
+
+    pub(crate) fn with_files(self, files: FileAccessMode) -> Self {
+        Self { files, ..self }
+    }
+
+    pub(crate) fn with_network(self, network: NetworkAccessMode) -> Self {
+        Self { network, ..self }
     }
 }
 
 impl RuntimeOwner {
     pub(super) fn set_permission_level(&mut self, level: PermissionLevel) {
-        let sandbox_disabled = matches!(level, PermissionLevel::FullAccess);
-        if self.process_command.sandbox_disabled == sandbox_disabled {
+        if self.process_command.permission_level == level {
             return;
         }
-        self.process_command.sandbox_disabled = sandbox_disabled;
+        self.process_command.permission_level = level;
         let session = self
             .snapshot
             .selected_session

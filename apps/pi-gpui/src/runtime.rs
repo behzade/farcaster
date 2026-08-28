@@ -7,7 +7,7 @@ mod prompts;
 mod session_controls;
 mod session_identity;
 
-pub(crate) use permission_level::PermissionLevel;
+pub(crate) use permission_level::{FileAccessMode, NetworkAccessMode, PermissionLevel};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -388,6 +388,29 @@ fn rpc_owned_session_paths(latest: &HashMap<String, Arc<RuntimeSnapshot>>) -> Ha
         .collect()
 }
 
+fn changed_external_documents(
+    latest: &HashMap<String, Arc<RuntimeSnapshot>>,
+    paths: &[PathBuf],
+) -> Vec<(String, PathBuf, PathBuf)> {
+    latest
+        .iter()
+        .filter_map(|(key, snapshot)| {
+            let path = snapshot.selected_session.as_ref()?;
+            if !snapshot.history_preview
+                || !paths.iter().any(|candidate| {
+                    candidate == path
+                        || crate::sessions::normalize_session_path(candidate).as_path()
+                            == path.as_path()
+                })
+            {
+                None
+            } else {
+                Some((key.clone(), path.clone(), snapshot.project.clone()))
+            }
+        })
+        .collect()
+}
+
 fn run_supervisor(
     project: PathBuf,
     draft_id: String,
@@ -614,6 +637,14 @@ fn run_supervisor(
                         }
                     }
                     RuntimeEvent::SessionFilesModified { paths } if key == catalog_key => {
+                        for (actor_key, path, project) in
+                            changed_external_documents(&latest, &paths)
+                        {
+                            if let Some(actor) = actors.get(&actor_key) {
+                                actor
+                                    .send(RuntimeCommand::RefreshSessionDocument { path, project });
+                            }
+                        }
                         let refresh = activity_tracker.observe_files(
                             &catalog_sessions,
                             &rpc_owned_session_paths(&latest),
@@ -1347,6 +1378,9 @@ struct RuntimeOwner {
     discovery_tx: mpsc::Sender<DiscoveryResult>,
     history_tx: mpsc::Sender<HistoryResult>,
     history_generation: u64,
+    history_selection_generation: Option<u64>,
+    document_refresh_generation: Option<u64>,
+    pending_document_refresh: Option<(PathBuf, PathBuf)>,
     active_session: Option<PathBuf>,
     parked_snapshot: Option<RuntimeSnapshot>,
     deferred_prompt: Option<DeferredPrompt>,
@@ -1366,6 +1400,7 @@ struct HistoryResult {
     generation: u64,
     path: PathBuf,
     project: PathBuf,
+    document_refresh: bool,
     result: Result<LoadedHistory, String>,
 }
 
@@ -1419,6 +1454,9 @@ fn run(
         discovery_tx,
         history_tx,
         history_generation: 0,
+        history_selection_generation: None,
+        document_refresh_generation: None,
+        pending_document_refresh: None,
         active_session: None,
         parked_snapshot: None,
         deferred_prompt: None,
@@ -1631,7 +1669,7 @@ impl RuntimeOwner {
                 self.start_process(Some(path));
             }
             RuntimeCommand::RefreshSessionDocument { path, project } => {
-                self.refresh_history(path, project)
+                self.refresh_session_document(path, project)
             }
             RuntimeCommand::SetModel { provider, model_id } => self.set_model(provider, model_id),
             RuntimeCommand::Login(provider) => {
@@ -1872,6 +1910,7 @@ impl RuntimeOwner {
     fn select_history(&mut self, path: PathBuf, project: PathBuf) {
         let _timing = crate::performance::Timing::new("switch.select_document");
         self.history_generation = self.history_generation.saturating_add(1);
+        self.pending_document_refresh = None;
         if self.snapshot.selected_session.as_deref() == Some(path.as_path())
             && (self.snapshot.history_preview || self.process.is_some())
         {
@@ -1890,18 +1929,35 @@ impl RuntimeOwner {
             }
             return;
         }
-        self.refresh_history(path, project);
+        self.refresh_history(path, project, false);
     }
 
-    fn refresh_history(&mut self, path: PathBuf, project: PathBuf) {
-        if self.active_session.as_deref() == Some(path.as_path()) && self.process.is_some() {
+    fn refresh_session_document(&mut self, path: PathBuf, project: PathBuf) {
+        if self.history_selection_generation.is_some()
+            || (self.active_session.as_deref() == Some(path.as_path()) && self.process.is_some())
+        {
             return;
         }
+        if self.document_refresh_generation.is_some() {
+            self.pending_document_refresh = Some((path, project));
+            return;
+        }
+        self.refresh_history(path, project, true);
+    }
+
+    fn refresh_history(&mut self, path: PathBuf, project: PathBuf, document_refresh: bool) {
         self.history_generation = self.history_generation.saturating_add(1);
         let generation = self.history_generation;
+        if document_refresh {
+            self.document_refresh_generation = Some(generation);
+        } else {
+            self.history_selection_generation = Some(generation);
+        }
         let sender = self.history_tx.clone();
         let wake = thread::current();
-        thread::Builder::new()
+        let failed_path = path.clone();
+        let failed_project = project.clone();
+        if let Err(error) = thread::Builder::new()
             .name("pi-gpui-history".into())
             .spawn(move || {
                 let _timing = crate::performance::Timing::new("switch.load_history");
@@ -1910,11 +1966,20 @@ impl RuntimeOwner {
                     generation,
                     path,
                     project,
+                    document_refresh,
                     result,
                 });
                 wake.unpark();
             })
-            .ok();
+        {
+            self.apply_history(HistoryResult {
+                generation,
+                path: failed_path,
+                project: failed_project,
+                document_refresh,
+                result: Err(format!("start session history load: {error}")),
+            });
+        }
     }
 
     fn resume_draft(&mut self, project: PathBuf) {
@@ -1945,15 +2010,28 @@ impl RuntimeOwner {
     }
 
     fn apply_history(&mut self, result: HistoryResult) {
+        if result.document_refresh
+            && self.document_refresh_generation == Some(result.generation)
+        {
+            self.document_refresh_generation = None;
+        } else if !result.document_refresh
+            && self.history_selection_generation == Some(result.generation)
+        {
+            self.history_selection_generation = None;
+        }
         if result.generation != self.history_generation {
+            self.start_pending_document_refresh();
             return;
         }
+        let refreshing_visible_history = self.snapshot.history_preview
+            && self.snapshot.selected_session.as_ref() == Some(&result.path);
         let history = match result.result {
             Ok(history) => history,
             Err(error) => {
                 self.snapshot.status = "Could not load history".into();
                 conversation_mut(&mut self.snapshot).push_local_error("History unavailable", error);
                 self.publish();
+                self.start_pending_document_refresh();
                 return;
             }
         };
@@ -1986,10 +2064,24 @@ impl RuntimeOwner {
             prefill_thinking_level: history.thinking_level,
             ..RuntimeSnapshot::default()
         };
-        let _ = self.event_tx.send(RuntimeEvent::HistoryReset {
-            generation: self.process_generation,
-        });
+        if !refreshing_visible_history {
+            let _ = self.event_tx.send(RuntimeEvent::HistoryReset {
+                generation: self.process_generation,
+            });
+        }
         self.publish();
+        self.start_pending_document_refresh();
+    }
+
+    fn start_pending_document_refresh(&mut self) {
+        if self.history_selection_generation.is_some()
+            || self.document_refresh_generation.is_some()
+        {
+            return;
+        }
+        if let Some((path, project)) = self.pending_document_refresh.take() {
+            self.refresh_session_document(path, project);
+        }
     }
 
     fn apply_response(&mut self, response: crate::protocol::RpcResponse) {
@@ -2313,8 +2405,7 @@ impl RuntimeOwner {
 
     fn publish(&mut self) {
         crate::performance::count_snapshot();
-        self.snapshot.permission_level =
-            PermissionLevel::from_sandbox_disabled(self.process_command.sandbox_disabled);
+        self.snapshot.permission_level = self.process_command.permission_level;
         conversation_mut(self.active_snapshot_mut()).flush_live_projection();
         let active_snapshot = self.active_snapshot();
         let mut snapshot = self.snapshot.clone();
@@ -2587,7 +2678,7 @@ mod tests {
                 process_command: ProcessCommand {
                     program: PathBuf::from("/definitely/missing/pi-gpui-test-command"),
                     prefix_args: Vec::new(),
-                    sandbox_disabled: false,
+                    permission_level: PermissionLevel::default(),
                 },
                 process: None,
                 login_process_only: false,
@@ -2612,6 +2703,9 @@ mod tests {
                 discovery_tx,
                 history_tx,
                 history_generation: 0,
+                history_selection_generation: None,
+                document_refresh_generation: None,
+                pending_document_refresh: None,
                 active_session: None,
                 parked_snapshot: None,
                 deferred_prompt: None,
@@ -2638,24 +2732,28 @@ mod tests {
     }
 
     #[test]
-    fn permission_level_restarts_with_the_sandbox_flag() {
+    fn permission_level_restarts_for_each_changed_access_axis() {
         let (mut owner, _events, _discovery) = owner_without_process(std::env::temp_dir());
         owner.snapshot.selected_session = Some(PathBuf::from("/session.jsonl"));
         let generation = owner.process_generation;
 
         owner.apply_command(RuntimeCommand::SetPermissionLevel(
-            PermissionLevel::Sandboxed,
+            PermissionLevel::default(),
         ));
         assert_eq!(owner.process_generation, generation);
-        assert!(!owner.process_command.sandbox_disabled);
-        assert_eq!(owner.snapshot.permission_level, PermissionLevel::Sandboxed);
 
-        owner.apply_command(RuntimeCommand::SetPermissionLevel(
-            PermissionLevel::FullAccess,
-        ));
+        let network_full = PermissionLevel::default().with_network(NetworkAccessMode::Full);
+        owner.apply_command(RuntimeCommand::SetPermissionLevel(network_full));
         assert!(owner.process_generation > generation);
-        assert!(owner.process_command.sandbox_disabled);
-        assert_eq!(owner.snapshot.permission_level, PermissionLevel::FullAccess);
+        assert_eq!(owner.process_command.permission_level, network_full);
+        assert_eq!(owner.snapshot.permission_level, network_full);
+
+        let files_read_only = network_full.with_files(FileAccessMode::ReadOnly);
+        let network_generation = owner.process_generation;
+        owner.apply_command(RuntimeCommand::SetPermissionLevel(files_read_only));
+        assert!(owner.process_generation > network_generation);
+        assert_eq!(owner.process_command.permission_level, files_read_only);
+        assert_eq!(owner.snapshot.permission_level, files_read_only);
     }
 
     #[test]
@@ -4011,7 +4109,7 @@ mod tests {
         owner.process_command = ProcessCommand {
             program: PathBuf::from("/definitely/missing/pi-gpui-test-command"),
             prefix_args: Vec::new(),
-            sandbox_disabled: false,
+            permission_level: PermissionLevel::default(),
         };
         preview_history(&mut owner, session.clone(), "keep this history");
 
@@ -4042,7 +4140,7 @@ mod tests {
             process_command: ProcessCommand {
                 program: PathBuf::from("/definitely/missing/pi-gpui-test-command"),
                 prefix_args: Vec::new(),
-                sandbox_disabled: false,
+                permission_level: PermissionLevel::default(),
             },
             process: None,
             login_process_only: false,
@@ -4083,6 +4181,9 @@ mod tests {
             discovery_tx,
             history_tx,
             history_generation: 0,
+            history_selection_generation: None,
+            document_refresh_generation: None,
+            pending_document_refresh: None,
             active_session: Some(PathBuf::from("/old")),
             parked_snapshot: None,
             deferred_prompt: None,
@@ -4141,7 +4242,7 @@ mod tests {
         owner.process_command = ProcessCommand {
             program: PathBuf::from("/definitely/missing/pi-gpui-test-command"),
             prefix_args: Vec::new(),
-            sandbox_disabled: false,
+            permission_level: PermissionLevel::default(),
         };
         owner.state = Some(StateStore::open_at(&database)?);
 
@@ -4239,6 +4340,9 @@ mod tests {
             discovery_tx,
             history_tx,
             history_generation: 1,
+            history_selection_generation: None,
+            document_refresh_generation: None,
+            pending_document_refresh: None,
             active_session: Some(old_path.clone()),
             parked_snapshot: None,
             deferred_prompt: None,
@@ -4255,6 +4359,7 @@ mod tests {
             generation: 1,
             path: new_path.clone(),
             project: new_project.clone(),
+            document_refresh: false,
             result: Ok(crate::sessions::LoadedHistory {
                 messages: vec![json!({"role":"user","content":"previewed"})],
                 model: None,
@@ -4267,6 +4372,7 @@ mod tests {
             generation: 2,
             path: new_path.clone(),
             project: new_project.clone(),
+            document_refresh: false,
             result: Ok(crate::sessions::LoadedHistory {
                 messages: vec![json!({"role":"user","content":"previewed"})],
                 model: None,
@@ -4412,6 +4518,9 @@ mod tests {
             discovery_tx,
             history_tx,
             history_generation: 0,
+            history_selection_generation: None,
+            document_refresh_generation: None,
+            pending_document_refresh: None,
             active_session: Some(active_path.clone()),
             parked_snapshot: None,
             deferred_prompt: None,
@@ -4505,5 +4614,104 @@ mod tests {
                 .any(|item| item.text == "active output")
         );
         Ok(())
+    }
+
+    #[test]
+    fn refreshing_visible_external_history_preserves_transcript_ui_state() {
+        let path = PathBuf::from("/sessions/external.jsonl");
+        let project = PathBuf::from("/project");
+        let (mut owner, events, _discovery) = owner_without_process(project.clone());
+        owner.history_generation = 1;
+        preview_history(&mut owner, path.clone(), "before");
+
+        owner.document_refresh_generation = Some(1);
+        owner.apply_history(HistoryResult {
+            generation: 1,
+            path,
+            project,
+            document_refresh: true,
+            result: Ok(LoadedHistory {
+                messages: vec![json!({"role":"user","content":"after"})],
+                model: None,
+                thinking_level: None,
+                pending_question: None,
+            }),
+        });
+
+        let published = events.try_iter().collect::<Vec<_>>();
+        assert!(published.iter().any(|event| matches!(
+            event,
+            RuntimeEvent::Snapshot { snapshot, .. }
+                if snapshot.conversation.items[0].text == "after"
+        )));
+        assert!(
+            published
+                .iter()
+                .all(|event| !matches!(event, RuntimeEvent::HistoryReset { .. }))
+        );
+    }
+
+    #[test]
+    fn external_writes_refresh_only_resident_history_documents() {
+        let external = PathBuf::from("/sessions/external.jsonl");
+        let live = PathBuf::from("/sessions/live.jsonl");
+        let project = PathBuf::from("/project");
+        let latest = HashMap::from([
+            (
+                "external".into(),
+                Arc::new(RuntimeSnapshot {
+                    project: project.clone(),
+                    selected_session: Some(external.clone()),
+                    history_preview: true,
+                    ..RuntimeSnapshot::default()
+                }),
+            ),
+            (
+                "live".into(),
+                Arc::new(RuntimeSnapshot {
+                    project,
+                    selected_session: Some(live.clone()),
+                    history_preview: false,
+                    ..RuntimeSnapshot::default()
+                }),
+            ),
+        ]);
+
+        assert_eq!(
+            changed_external_documents(&latest, &[external.clone(), live]),
+            vec![("external".into(), external, PathBuf::from("/project"))]
+        );
+    }
+
+    #[test]
+    fn external_document_refreshes_coalesce_while_a_load_is_in_flight() {
+        let path = PathBuf::from("/sessions/external.jsonl");
+        let project = PathBuf::from("/project");
+        let (mut owner, _events, _discovery) = owner_without_process(project.clone());
+        owner.history_generation = 1;
+        owner.document_refresh_generation = Some(1);
+        preview_history(&mut owner, path.clone(), "before");
+
+        owner.refresh_session_document(path.clone(), project.clone());
+
+        assert_eq!(
+            owner.pending_document_refresh,
+            Some((path.clone(), project.clone()))
+        );
+        owner.apply_history(HistoryResult {
+            generation: 1,
+            path,
+            project,
+            document_refresh: true,
+            result: Ok(LoadedHistory {
+                messages: Vec::new(),
+                model: None,
+                thinking_level: None,
+                pending_question: None,
+            }),
+        });
+        assert_eq!(owner.document_refresh_generation, Some(2));
+        assert!(owner.pending_document_refresh.is_none());
+        assert_eq!(owner.history_generation, 2);
     }
 }

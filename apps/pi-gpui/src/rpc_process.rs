@@ -15,13 +15,14 @@ use serde_json::Value;
 use crate::{
     framing::{JsonlFramer, encode_json_line},
     protocol::{ExtensionUiResponse, RpcResponse, WireMessage, parse_frame},
+    runtime::PermissionLevel,
 };
 
 #[derive(Clone, Debug)]
 pub(crate) struct ProcessCommand {
     pub program: PathBuf,
     pub prefix_args: Vec<String>,
-    pub sandbox_disabled: bool,
+    pub permission_level: PermissionLevel,
 }
 
 impl Default for ProcessCommand {
@@ -29,7 +30,7 @@ impl Default for ProcessCommand {
         Self {
             program: pi_program(std::env::var_os("PI_GUI_PI_PATH")),
             prefix_args: Vec::new(),
-            sandbox_disabled: false,
+            permission_level: PermissionLevel::default(),
         }
     }
 }
@@ -43,15 +44,22 @@ impl ProcessCommand {
         Self {
             program: PathBuf::from("sh"),
             prefix_args,
-            sandbox_disabled: false,
+            permission_level: PermissionLevel::default(),
         }
     }
 
     pub(crate) fn command(&self, project: &Path) -> Result<Command, String> {
         let mut process = Command::new(&self.program);
         process.args(&self.prefix_args).current_dir(project);
-        if self.sandbox_disabled {
-            process.arg("--no-sandbox");
+        let defaults = PermissionLevel::default();
+        if self.permission_level.files != defaults.files {
+            process.args(["--sandbox-files", self.permission_level.files.flag_value()]);
+        }
+        if self.permission_level.network != defaults.network {
+            process.args([
+                "--sandbox-network",
+                self.permission_level.network.flag_value(),
+            ]);
         }
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(environment) = crate::shell_environment::project_shell_environment(project)? {
@@ -542,6 +550,7 @@ fn spawn_stderr_reader(mut stderr: impl std::io::Read + Send + 'static, sender: 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::{FileAccessMode, NetworkAccessMode};
     use std::{error::Error, fs};
     use tempfile::tempdir;
 
@@ -575,6 +584,29 @@ mod tests {
             PathBuf::from("/nix/store/pi/bin/pi")
         );
         assert_eq!(pi_program(None), PathBuf::from("pi"));
+    }
+
+    #[test]
+    fn process_command_passes_independent_sandbox_modes() -> TestResult {
+        let arguments = |command: ProcessCommand| -> TestResult<Vec<String>> {
+            Ok(command
+                .command(Path::new("/tmp"))?
+                .get_args()
+                .map(|argument| argument.to_string_lossy().into_owned())
+                .collect())
+        };
+        assert!(arguments(ProcessCommand::default())?.is_empty());
+
+        let mut command = ProcessCommand::default();
+        command.permission_level = PermissionLevel {
+            files: FileAccessMode::ReadOnly,
+            network: NetworkAccessMode::Full,
+        };
+        assert_eq!(
+            arguments(command)?.join(" "),
+            "--sandbox-files read-only --sandbox-network full"
+        );
+        Ok(())
     }
 
     #[test]

@@ -8,7 +8,7 @@ use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
 use super::{super::PiApp, composer_footer::separator};
 use crate::{
     primitives::{ButtonTone, dropdown_button},
-    runtime::PermissionLevel,
+    runtime::{FileAccessMode, NetworkAccessMode, PermissionLevel},
     theme::{MONO_FONT_FAMILY, THEME},
 };
 
@@ -183,21 +183,43 @@ fn permission_selector(selected: PermissionLevel, entity: WeakEntity<PiApp>) -> 
     )
     .flex_none()
     .font_family(MONO_FONT_FAMILY)
-    .text_color(match selected {
-        PermissionLevel::Sandboxed => THEME.colors.success,
-        PermissionLevel::FullAccess => THEME.colors.warning,
-    })
+    .text_color(
+        if selected.files == FileAccessMode::Full || selected.network == NetworkAccessMode::Full {
+            THEME.colors.warning
+        } else if selected.files == FileAccessMode::ReadOnly {
+            THEME.colors.link
+        } else {
+            THEME.colors.success
+        },
+    )
     .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
         let mut menu = menu
             .max_h(THEME.layout.dialog_max_height)
-            .label("Permission");
-        for level in PermissionLevel::all() {
+            .label("Sandbox access");
+        for files in FileAccessMode::all() {
             let entity = entity.clone();
-            menu = menu.item(PopupMenuItem::new(level.label()).on_click(move |_, _, cx| {
-                let _ = entity.update(cx, |this, cx| {
-                    this.set_permission_level(level, cx);
-                });
-            }));
+            menu = menu.item(
+                PopupMenuItem::new(format!("Files · {}", files.label())).on_click(
+                    move |_, _, cx| {
+                        let _ = entity.update(cx, |this, cx| {
+                            this.set_permission_level(selected.with_files(files), cx);
+                        });
+                    },
+                ),
+            );
+        }
+        menu = menu.separator();
+        for network in NetworkAccessMode::all() {
+            let entity = entity.clone();
+            menu = menu.item(
+                PopupMenuItem::new(format!("Network · {}", network.label())).on_click(
+                    move |_, _, cx| {
+                        let _ = entity.update(cx, |this, cx| {
+                            this.set_permission_level(selected.with_network(network), cx);
+                        });
+                    },
+                ),
+            );
         }
         menu
     })

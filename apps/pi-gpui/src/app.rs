@@ -2076,6 +2076,7 @@ fn composer_snapshot_changed(previous: &RuntimeSnapshot, next: &RuntimeSnapshot)
         || previous.session_identity() != next.session_identity()
         || previous.models != next.models
         || previous.thinking_levels != next.thinking_levels
+        || previous.permission_level != next.permission_level
 }
 
 fn run_panel_snapshot_changed(previous: &RuntimeSnapshot, next: &RuntimeSnapshot) -> bool {
