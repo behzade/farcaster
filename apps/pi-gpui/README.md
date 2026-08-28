@@ -19,8 +19,9 @@ branch or change ID; a trailing `*` marks a dirty working copy. The file list
 shows five entries initially and reveals twenty more per expansion. Session-only
 additions and deletions appear in the composer before cost. The composer
 permission controls are Sandboxed by default. File and network changes apply to
-subsequent commands without restarting Pi or clearing the transcript;
-already-running sandboxed processes retain their launch policy. A Jujutsu
+subsequent commands without restarting Pi or clearing the transcript. Changes
+selected during a response or sandbox transition are coalesced and applied at
+the next safe boundary; already-running processes retain their launch policy. A Jujutsu
 refresh may snapshot the working copy as part of normal `jj` behavior.
 Filesystem watching refreshes status when the selected project or repository
 metadata changes; unchanged refreshes do not invalidate the sidebar. Repository commands

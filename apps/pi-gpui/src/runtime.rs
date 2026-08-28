@@ -195,7 +195,6 @@ pub(crate) struct RuntimeSnapshot {
     pub stderr: String,
     pub auto_retry: bool,
     pub permission_level: PermissionLevel,
-    pub permission_change_blocked: bool,
     pub history_preview: bool,
     pub pending_question: Option<ExtensionUiRequest>,
     pub transcript_changed_from: Option<usize>,
@@ -1530,6 +1529,7 @@ fn run(
                 SnapshotChange::Immediate => immediate_snapshot_change = true,
             }
         }
+        owner.apply_queued_permission_change();
         if immediate_snapshot_change
             || stream_publish_due.is_some_and(|deadline| Instant::now() >= deadline)
         {
@@ -1574,6 +1574,9 @@ impl RuntimeOwner {
         self.startup_history_loaded = false;
         self.pending_prompt_id = None;
         self.pending_prompt_item = None;
+        self.process_command.permission_level = self
+            .permission_changes
+            .requested_level(self.process_command.permission_level);
         self.permission_changes.clear();
         self.transcript_changed_from = Some(0);
         let status = session.as_ref().map_or_else(
@@ -2391,6 +2394,9 @@ impl RuntimeOwner {
         self.mark_outbox_failed(&details);
         self.pending_prompt_id = None;
         self.deferred_prompt = None;
+        self.process_command.permission_level = self
+            .permission_changes
+            .requested_level(self.process_command.permission_level);
         self.permission_changes.clear();
         self.rollback_pending_prompt();
         if let Some(target) = self.pending_prompt_target.take() {
@@ -2437,10 +2443,9 @@ impl RuntimeOwner {
 
     fn publish(&mut self) {
         crate::performance::count_snapshot();
-        self.snapshot.permission_level = self.process_command.permission_level;
-        self.snapshot.permission_change_blocked = !self.permission_changes.is_idle()
-            || self.active_snapshot().conversation.running
-            || self.active_snapshot().conversation.compacting;
+        self.snapshot.permission_level = self
+            .permission_changes
+            .requested_level(self.process_command.permission_level);
         conversation_mut(self.active_snapshot_mut()).flush_live_projection();
         let active_snapshot = self.active_snapshot();
         let mut snapshot = self.snapshot.clone();
@@ -2786,7 +2791,6 @@ mod tests {
         assert!(owner.process.is_none());
         assert_eq!(owner.process_command.permission_level, target);
         assert_eq!(owner.snapshot.permission_level, target);
-        assert!(!owner.snapshot.permission_change_blocked);
         assert!(owner.snapshot.conversation.items.is_empty());
 
         owner.start_process(None);
@@ -2807,22 +2811,33 @@ mod tests {
     }
 
     #[test]
-    fn permission_change_during_a_response_is_silent_and_blocked() {
+    fn permission_changes_during_a_response_coalesce_and_apply_when_idle() {
         let (mut owner, _events, _discovery) = owner_without_process(std::env::temp_dir());
         conversation_mut(owner.active_snapshot_mut()).running = true;
-        owner.publish();
-        let target = PermissionLevel {
+        let full = PermissionLevel {
             files: FileAccessMode::Full,
             network: NetworkAccessMode::Full,
         };
+        let read_only = full.with_files(FileAccessMode::ReadOnly);
 
-        owner.apply_command(RuntimeCommand::SetPermissionLevel(target));
-
+        owner.apply_command(RuntimeCommand::SetPermissionLevel(full));
+        assert_eq!(owner.snapshot.permission_level, full);
+        owner.apply_command(RuntimeCommand::SetPermissionLevel(read_only));
+        assert_eq!(owner.snapshot.permission_level, read_only);
+        owner.apply_command(RuntimeCommand::SetPermissionLevel(PermissionLevel::default()));
         assert_eq!(
-            owner.process_command.permission_level,
+            owner.snapshot.permission_level,
             PermissionLevel::default()
         );
-        assert!(owner.snapshot.permission_change_blocked);
+        assert!(owner.permission_changes.is_idle());
+
+        owner.apply_command(RuntimeCommand::SetPermissionLevel(full));
+        conversation_mut(owner.active_snapshot_mut()).running = false;
+        owner.apply_queued_permission_change();
+
+        assert!(owner.permission_changes.is_idle());
+        assert_eq!(owner.process_command.permission_level, full);
+        assert_eq!(owner.snapshot.permission_level, full);
         assert!(owner.snapshot.conversation.items.is_empty());
     }
 
@@ -2861,6 +2876,7 @@ mod tests {
             files: FileAccessMode::Full,
             network: NetworkAccessMode::Full,
         };
+        conversation_mut(owner.active_snapshot_mut()).running = true;
         owner.apply_command(RuntimeCommand::SetPermissionLevel(target));
 
         assert_eq!(owner.process_generation, generation);
@@ -2869,8 +2885,15 @@ mod tests {
             owner.process_command.permission_level,
             PermissionLevel::default()
         );
+        assert_eq!(owner.snapshot.permission_level, target);
+        assert!(!owner.permission_changes.is_idle());
         assert_eq!(owner.snapshot.conversation.items, transcript);
 
+        conversation_mut(owner.active_snapshot_mut()).running = false;
+        owner.apply_queued_permission_change();
+        let final_target = target.with_files(FileAccessMode::ReadOnly);
+        owner.apply_command(RuntimeCommand::SetPermissionLevel(final_target));
+        assert_eq!(owner.snapshot.permission_level, final_target);
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
             while let Some(item) = owner.process.as_mut().and_then(RpcProcess::try_next) {
@@ -2883,11 +2906,10 @@ mod tests {
         }
 
         assert!(owner.permission_changes.is_idle());
-        assert!(!owner.snapshot.permission_change_blocked);
         assert_eq!(owner.process_generation, generation);
         assert!(owner.process.is_some());
-        assert_eq!(owner.process_command.permission_level, target);
-        assert_eq!(owner.snapshot.permission_level, target);
+        assert_eq!(owner.process_command.permission_level, final_target);
+        assert_eq!(owner.snapshot.permission_level, final_target);
         assert_eq!(owner.snapshot.conversation.items, transcript);
         assert!(
             events
