@@ -1396,11 +1396,17 @@ struct DiscoveryResult {
     result: Result<SessionDiscovery, String>,
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum HistoryLoadKind {
+    Selection,
+    DocumentRefresh,
+}
+
 struct HistoryResult {
     generation: u64,
     path: PathBuf,
     project: PathBuf,
-    document_refresh: bool,
+    kind: HistoryLoadKind,
     result: Result<LoadedHistory, String>,
 }
 
@@ -1549,6 +1555,7 @@ fn run(
 
 impl RuntimeOwner {
     fn start_process(&mut self, session: Option<PathBuf>) {
+        self.invalidate_history_loads();
         self.process_generation = self.process_generation.saturating_add(1);
         let preserve_transcript = self.deferred_prompt.is_some()
             || (!self.pending_session_controls.is_empty() && self.snapshot.history_preview);
@@ -1929,30 +1936,28 @@ impl RuntimeOwner {
             }
             return;
         }
-        self.refresh_history(path, project, false);
+        self.refresh_history(path, project, HistoryLoadKind::Selection);
     }
 
     fn refresh_session_document(&mut self, path: PathBuf, project: PathBuf) {
-        if self.history_selection_generation.is_some()
-            || (self.active_session.as_deref() == Some(path.as_path()) && self.process.is_some())
-        {
+        if self.active_session.as_deref() == Some(path.as_path()) && self.process.is_some() {
+            return;
+        }
+        if self.history_selection_generation.is_some() {
+            self.pending_document_refresh = Some((path, project));
             return;
         }
         if self.document_refresh_generation.is_some() {
             self.pending_document_refresh = Some((path, project));
             return;
         }
-        self.refresh_history(path, project, true);
+        self.refresh_history(path, project, HistoryLoadKind::DocumentRefresh);
     }
 
-    fn refresh_history(&mut self, path: PathBuf, project: PathBuf, document_refresh: bool) {
+    fn refresh_history(&mut self, path: PathBuf, project: PathBuf, kind: HistoryLoadKind) {
         self.history_generation = self.history_generation.saturating_add(1);
         let generation = self.history_generation;
-        if document_refresh {
-            self.document_refresh_generation = Some(generation);
-        } else {
-            self.history_selection_generation = Some(generation);
-        }
+        *self.history_load_generation_mut(kind) = Some(generation);
         let sender = self.history_tx.clone();
         let wake = thread::current();
         let failed_path = path.clone();
@@ -1966,7 +1971,7 @@ impl RuntimeOwner {
                     generation,
                     path,
                     project,
-                    document_refresh,
+                    kind,
                     result,
                 });
                 wake.unpark();
@@ -1976,10 +1981,24 @@ impl RuntimeOwner {
                 generation,
                 path: failed_path,
                 project: failed_project,
-                document_refresh,
+                kind,
                 result: Err(format!("start session history load: {error}")),
             });
         }
+    }
+
+    fn history_load_generation_mut(&mut self, kind: HistoryLoadKind) -> &mut Option<u64> {
+        match kind {
+            HistoryLoadKind::Selection => &mut self.history_selection_generation,
+            HistoryLoadKind::DocumentRefresh => &mut self.document_refresh_generation,
+        }
+    }
+
+    fn invalidate_history_loads(&mut self) {
+        self.history_generation = self.history_generation.saturating_add(1);
+        self.history_selection_generation = None;
+        self.document_refresh_generation = None;
+        self.pending_document_refresh = None;
     }
 
     fn resume_draft(&mut self, project: PathBuf) {
@@ -1997,6 +2016,7 @@ impl RuntimeOwner {
                 .as_ref()
                 .is_some_and(|snapshot| snapshot.project == project);
         if can_restore && let Some(snapshot) = self.parked_snapshot.take() {
+            self.invalidate_history_loads();
             self.snapshot = snapshot;
             self.project = project;
             let _ = self.event_tx.send(RuntimeEvent::HistoryReset {
@@ -2010,20 +2030,16 @@ impl RuntimeOwner {
     }
 
     fn apply_history(&mut self, result: HistoryResult) {
-        if result.document_refresh
-            && self.document_refresh_generation == Some(result.generation)
-        {
-            self.document_refresh_generation = None;
-        } else if !result.document_refresh
-            && self.history_selection_generation == Some(result.generation)
-        {
-            self.history_selection_generation = None;
+        let active_generation = self.history_load_generation_mut(result.kind);
+        if *active_generation == Some(result.generation) {
+            *active_generation = None;
         }
         if result.generation != self.history_generation {
             self.start_pending_document_refresh();
             return;
         }
-        let refreshing_visible_history = self.snapshot.history_preview
+        let refreshing_visible_history = result.kind == HistoryLoadKind::DocumentRefresh
+            && self.snapshot.history_preview
             && self.snapshot.selected_session.as_ref() == Some(&result.path);
         let history = match result.result {
             Ok(history) => history,
@@ -2079,7 +2095,10 @@ impl RuntimeOwner {
         {
             return;
         }
-        if let Some((path, project)) = self.pending_document_refresh.take() {
+        if let Some((path, project)) = self.pending_document_refresh.take()
+            && self.snapshot.history_preview
+            && self.snapshot.selected_session.as_ref() == Some(&path)
+        {
             self.refresh_session_document(path, project);
         }
     }
@@ -4180,9 +4199,9 @@ mod tests {
             event_tx,
             discovery_tx,
             history_tx,
-            history_generation: 0,
+            history_generation: 1,
             history_selection_generation: None,
-            document_refresh_generation: None,
+            document_refresh_generation: Some(1),
             pending_document_refresh: None,
             active_session: Some(PathBuf::from("/old")),
             parked_snapshot: None,
@@ -4231,6 +4250,31 @@ mod tests {
                 .diagnostics
                 .iter()
                 .any(|item| item.contains("definitely/missing"))
+        );
+
+        owner.apply_history(HistoryResult {
+            generation: 1,
+            path: PathBuf::from("/stale-history"),
+            project: std::env::temp_dir(),
+            kind: HistoryLoadKind::DocumentRefresh,
+            result: Ok(LoadedHistory {
+                messages: vec![json!({"role":"user","content":"stale"})],
+                model: None,
+                thinking_level: None,
+                pending_question: None,
+            }),
+        });
+        assert_eq!(
+            owner.snapshot.selected_session,
+            Some(PathBuf::from("/new"))
+        );
+        assert!(
+            owner
+                .snapshot
+                .conversation
+                .items
+                .iter()
+                .all(|item| item.text != "stale")
         );
     }
 
@@ -4359,7 +4403,7 @@ mod tests {
             generation: 1,
             path: new_path.clone(),
             project: new_project.clone(),
-            document_refresh: false,
+            kind: HistoryLoadKind::Selection,
             result: Ok(crate::sessions::LoadedHistory {
                 messages: vec![json!({"role":"user","content":"previewed"})],
                 model: None,
@@ -4372,7 +4416,7 @@ mod tests {
             generation: 2,
             path: new_path.clone(),
             project: new_project.clone(),
-            document_refresh: false,
+            kind: HistoryLoadKind::Selection,
             result: Ok(crate::sessions::LoadedHistory {
                 messages: vec![json!({"role":"user","content":"previewed"})],
                 model: None,
@@ -4629,7 +4673,7 @@ mod tests {
             generation: 1,
             path,
             project,
-            document_refresh: true,
+            kind: HistoryLoadKind::DocumentRefresh,
             result: Ok(LoadedHistory {
                 messages: vec![json!({"role":"user","content":"after"})],
                 model: None,
@@ -4684,6 +4728,33 @@ mod tests {
     }
 
     #[test]
+    fn external_write_during_selection_refreshes_the_newly_loaded_document() {
+        let path = PathBuf::from("/sessions/external.jsonl");
+        let project = PathBuf::from("/project");
+        let (mut owner, _events, _discovery) = owner_without_process(project.clone());
+        owner.history_generation = 1;
+        owner.history_selection_generation = Some(1);
+
+        owner.refresh_session_document(path.clone(), project.clone());
+        owner.apply_history(HistoryResult {
+            generation: 1,
+            path,
+            project,
+            kind: HistoryLoadKind::Selection,
+            result: Ok(LoadedHistory {
+                messages: Vec::new(),
+                model: None,
+                thinking_level: None,
+                pending_question: None,
+            }),
+        });
+
+        assert_eq!(owner.document_refresh_generation, Some(2));
+        assert!(owner.pending_document_refresh.is_none());
+        assert_eq!(owner.history_generation, 2);
+    }
+
+    #[test]
     fn external_document_refreshes_coalesce_while_a_load_is_in_flight() {
         let path = PathBuf::from("/sessions/external.jsonl");
         let project = PathBuf::from("/project");
@@ -4702,7 +4773,7 @@ mod tests {
             generation: 1,
             path,
             project,
-            document_refresh: true,
+            kind: HistoryLoadKind::DocumentRefresh,
             result: Ok(LoadedHistory {
                 messages: Vec::new(),
                 model: None,
