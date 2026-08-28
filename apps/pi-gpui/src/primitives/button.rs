@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, Div, ElementId, InteractiveElement as _, IntoElement as _, KeyDownEvent,
+    AnyElement, App, Div, ElementId, InteractiveElement as _, IntoElement, KeyDownEvent,
     ParentElement as _, SharedString, Stateful, StatefulInteractiveElement as _, Styled as _,
     Window,
 };
