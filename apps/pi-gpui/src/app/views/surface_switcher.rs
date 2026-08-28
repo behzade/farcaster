@@ -1,4 +1,4 @@
-//! Visible controls for the center workspace surfaces and input-routing mode.
+//! Visible controls for the center workspace surfaces.
 
 use gpui::{
     Context, InteractiveElement as _, IntoElement, ParentElement as _,
@@ -12,13 +12,6 @@ use crate::{
     primitives::{AppIconSize, app_icon, icon_control},
     theme::THEME,
 };
-
-const fn input_mode_label(surface: AppSurface) -> &'static str {
-    match surface {
-        AppSurface::Chat | AppSurface::Work => "NORMAL",
-        AppSurface::Editor | AppSurface::Terminal => "INSERT",
-    }
-}
 
 impl PiApp {
     pub(super) fn render_surface_switcher(&self, entity: WeakEntity<Self>) -> impl IntoElement {
@@ -50,18 +43,6 @@ impl PiApp {
                 entity,
                 PiApp::show_terminal_surface,
             ))
-            .child(
-                div()
-                    .h(THEME.controls.icon_button)
-                    .px(THEME.space.xs)
-                    .flex()
-                    .items_center()
-                    .rounded(THEME.radius)
-                    .bg(THEME.colors.surface)
-                    .text_size(THEME.type_scale.caption)
-                    .text_color(THEME.colors.muted)
-                    .child(input_mode_label(self.surface)),
-            )
     }
 
     pub(super) fn render_floating_surface_switcher(

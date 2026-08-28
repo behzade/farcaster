@@ -34,9 +34,8 @@ frame in GPUI so the editor remains visible beneath the backdrop. Set
 
 Chat, Neovim, and a project terminal share the center workspace. The session
 sidebar header keeps the three surface controls visible; narrow layouts show the
-same control over the center workspace. It reports `NORMAL` for app-owned
-surfaces and `INSERT` while input routes to Neovim or the terminal. `F1` opens
-Chat and focuses the composer, `F2` opens Neovim, and `F3` opens the terminal
+same control over the center workspace. `F1` opens Chat and focuses the
+composer, `F2` opens Neovim, and `F3` opens the terminal
 from every surface. macOS also keeps the `Cmd+L`, `Cmd+E`, and `Cmd+T` aliases.
 On non-macOS platforms, `Ctrl+T` creates a session in app-owned UI while
 contextual `Ctrl+N` and `Ctrl+P` navigate completions. Every app `Ctrl` binding
