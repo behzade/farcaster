@@ -724,6 +724,13 @@ fn render_keybindings_help() -> impl IntoElement {
             keys = keys.child(Kbd::new(
                 gpui::Keystroke::parse(binding.keystroke).expect("registered shortcut must parse"),
             ));
+            #[cfg(not(target_os = "macos"))]
+            if let Some(key) = binding.keystroke.strip_prefix("ctrl-") {
+                keys = keys.child(Kbd::new(
+                    gpui::Keystroke::parse(&format!("super-{key}"))
+                        .expect("generated Super shortcut must parse"),
+                ));
+            }
         }
         section = section.map(|section| {
             section.child(

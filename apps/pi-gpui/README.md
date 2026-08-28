@@ -39,12 +39,14 @@ surfaces and `INSERT` while input routes to Neovim or the terminal. `F1` opens
 Chat and focuses the composer, `F2` opens Neovim, and `F3` opens the terminal
 from every surface. macOS also keeps the `Cmd+L`, `Cmd+E`, and `Cmd+T` aliases.
 On non-macOS platforms, `Ctrl+T` creates a session in app-owned UI while
-contextual `Ctrl+N` and `Ctrl+P` navigate completions. App-level `Ctrl`
-shortcuts are inactive while Neovim or the terminal owns input, so their native
-control sequences pass through. Neovim and terminal processes remain alive
-while switching surfaces; changing sessions returns to Chat. The terminal
-starts the account login shell in the
-selected project. Set `PI_GUI_SHELL` to override its executable.
+contextual `Ctrl+N` and `Ctrl+P` navigate completions. Every app `Ctrl` binding
+also has a `Super` fallback; `Super+C` and `Super+V` copy and paste in app-owned
+text input. Compositor bindings take precedence when they capture the same
+`Super` combination. App-level shortcuts are inactive while Neovim or the
+terminal owns input, so their native control sequences pass through. Neovim and
+terminal processes remain alive while switching surfaces; changing sessions
+returns to Chat. The terminal starts the account login shell in the selected
+project. Set `PI_GUI_SHELL` to override its executable.
 
 ## Run
 

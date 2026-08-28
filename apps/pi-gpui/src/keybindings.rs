@@ -19,6 +19,8 @@ use crate::keyboard::CopySelection;
 use crate::transcript_list::TRANSCRIPT_SELECTION_KEY_CONTEXT;
 use gpui::{KeyBinding, Unbind};
 use gpui_base::actions::{SelectDown, SelectUp};
+#[cfg(not(target_os = "macos"))]
+use gpui_component::input::{Copy as InputCopy, Paste};
 
 #[cfg(target_os = "macos")]
 pub(crate) const PRIMARY_MODIFIER: &str = "cmd";
@@ -76,6 +78,16 @@ macro_rules! primary_shortcut {
     };
 }
 
+#[cfg(not(target_os = "macos"))]
+macro_rules! linux_super_binding {
+    ($key:literal, $action:expr) => {
+        linux_super_binding!($key, $action, Some(APP_SHORTCUT_CONTEXT))
+    };
+    ($key:literal, $action:expr, $context:expr) => {
+        KeyBinding::new(concat!("super-", $key), $action, $context)
+    };
+}
+
 #[cfg(target_os = "macos")]
 fn platform_shortcut_aliases() -> [Shortcut; 4] {
     [
@@ -115,16 +127,55 @@ const fn platform_shortcut_aliases() -> [Shortcut; 0] {
     []
 }
 
+#[cfg(not(target_os = "macos"))]
+fn linux_super_bindings() -> Vec<KeyBinding> {
+    vec![
+        linux_super_binding!("0", SwitchSession0),
+        linux_super_binding!("1", SwitchSession1),
+        linux_super_binding!("2", SwitchSession2),
+        linux_super_binding!("3", SwitchSession3),
+        linux_super_binding!("4", SwitchSession4),
+        linux_super_binding!("5", SwitchSession5),
+        linux_super_binding!("6", SwitchSession6),
+        linux_super_binding!("7", SwitchSession7),
+        linux_super_binding!("8", SwitchSession8),
+        linux_super_binding!("9", SwitchSession9),
+        linux_super_binding!("t", NewSession),
+        linux_super_binding!("shift-n", AddProject),
+        linux_super_binding!("[", PreviousSession),
+        linux_super_binding!("]", NextSession),
+        linux_super_binding!("shift-a", ToggleArchivedSessions),
+        linux_super_binding!("w", CloseCurrent),
+        linux_super_binding!("p", ComposerCompletionPrevious, Some("PiComposer > Input")),
+        linux_super_binding!("n", ComposerCompletionNext, Some("PiComposer > Input")),
+        linux_super_binding!("c", CopySelection, Some(TRANSCRIPT_SELECTION_KEY_CONTEXT)),
+        linux_super_binding!("c", CopySelection, Some("PiComposer > Input")),
+        linux_super_binding!("c", InputCopy, Some("Input")),
+        linux_super_binding!("v", Paste, Some("Input")),
+        linux_super_binding!("enter", SubmitPrompt),
+        linux_super_binding!(".", AbortRun),
+        linux_super_binding!("shift-i", ShowWorkGraph),
+        linux_super_binding!("?", ShowKeybindings),
+        linux_super_binding!("/", ShowKeybindings),
+        linux_super_binding!("p", SelectUp, Some("PiPicker > Input")),
+        linux_super_binding!("n", SelectDown, Some("PiPicker > Input")),
+        linux_super_binding!("q", QuitApplication),
+    ]
+}
+
 /// Returns application shortcuts plus overrides for dependency-owned defaults.
 pub(crate) fn bindings() -> Vec<KeyBinding> {
-    registry()
+    let mut bindings = registry()
         .into_iter()
         .map(|shortcut| shortcut.binding)
-        .chain([
-            KeyBinding::new("tab", Unbind("root::Tab".into()), Some("Root")),
-            KeyBinding::new("shift-tab", Unbind("root::TabPrev".into()), Some("Root")),
-        ])
-        .collect()
+        .collect::<Vec<_>>();
+    #[cfg(not(target_os = "macos"))]
+    bindings.extend(linux_super_bindings());
+    bindings.extend([
+        KeyBinding::new("tab", Unbind("root::Tab".into()), Some("Root")),
+        KeyBinding::new("shift-tab", Unbind("root::TabPrev".into()), Some("Root")),
+    ]);
+    bindings
 }
 
 /// Returns the user-facing shortcut registry used by keyboard help.
@@ -341,6 +392,8 @@ mod tests {
 
     #[cfg(not(target_os = "macos"))]
     use crate::app::{APP_INPUT_CONTEXT, ComposerCompletionNext, NATIVE_INPUT_CONTEXT};
+    #[cfg(not(target_os = "macos"))]
+    use gpui_component::input::Paste;
 
     #[test]
     fn root_focus_traversal_is_unbound() {
@@ -364,31 +417,8 @@ mod tests {
     #[cfg(not(target_os = "macos"))]
     #[test]
     fn non_macos_shortcuts_avoid_native_input_conflicts() {
-        let shortcut = registry()
-            .into_iter()
-            .find(|shortcut| shortcut.label == "New session")
-            .expect("new session shortcut");
-        assert_eq!(shortcut.keystroke, "ctrl-t");
-
-        let keymap = gpui::Keymap::new(vec![shortcut.binding]);
-        let keystroke = gpui::Keystroke::parse("ctrl-t").expect("shortcut keystroke");
-        let app_context = gpui::KeyContext::parse(APP_INPUT_CONTEXT).expect("app context");
-        let native_context =
-            gpui::KeyContext::parse(NATIVE_INPUT_CONTEXT).expect("native context");
-
-        assert!(
-            !keymap
-                .bindings_for_input(&[keystroke.clone()], &[app_context])
-                .0
-                .is_empty()
-        );
-        assert!(
-            keymap
-                .bindings_for_input(&[keystroke], &[native_context])
-                .0
-                .is_empty()
-        );
         let shortcuts = registry();
+        let bindings = bindings();
         assert!(
             shortcuts
                 .iter()
@@ -401,6 +431,46 @@ mod tests {
                     .all(|shortcut| shortcut.keystroke != removed)
             );
         }
+        for shortcut in shortcuts
+            .iter()
+            .filter(|shortcut| shortcut.keystroke.starts_with("ctrl-"))
+        {
+            let super_keystroke = shortcut.keystroke.replacen("ctrl-", "super-", 1);
+            assert!(bindings.iter().any(|binding| {
+                binding.keystrokes().len() == 1
+                    && binding.keystrokes()[0].unparse() == super_keystroke
+                    && binding.action().name() == shortcut.binding.action().name()
+            }));
+        }
+
+        let keymap = gpui::Keymap::new(bindings);
+        let app_context = gpui::KeyContext::parse(APP_INPUT_CONTEXT).expect("app context");
+        let native_context = gpui::KeyContext::parse(NATIVE_INPUT_CONTEXT).expect("native context");
+        for keystroke in ["ctrl-t", "super-t"] {
+            let keystroke = gpui::Keystroke::parse(keystroke).expect("shortcut keystroke");
+            assert!(
+                !keymap
+                    .bindings_for_input(&[keystroke.clone()], &[app_context.clone()])
+                    .0
+                    .is_empty()
+            );
+            assert!(
+                keymap
+                    .bindings_for_input(&[keystroke], &[native_context.clone()])
+                    .0
+                    .is_empty()
+            );
+        }
+        let input_context = gpui::KeyContext::parse("Input").expect("input context");
+        let (paste, _) = keymap.bindings_for_input(
+            &[gpui::Keystroke::parse("super-v").expect("paste keystroke")],
+            &[app_context, input_context],
+        );
+        assert!(
+            paste
+                .first()
+                .is_some_and(|binding| { binding.action().as_any().is::<Paste>() })
+        );
     }
 
     #[cfg(not(target_os = "macos"))]
