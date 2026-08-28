@@ -70,6 +70,7 @@ impl PiApp {
     ) -> impl IntoElement {
         let hover = entity.clone();
         div()
+            .id("floating-surface-switcher")
             .absolute()
             .top(THEME.space.sm)
             .left(THEME.space.sm)
