@@ -188,6 +188,7 @@ pub struct Button {
     base: gpui_base::Button,
     icon: Option<ButtonIcon>,
     label: Option<SharedString>,
+    accessibility_label: Option<SharedString>,
     children: Vec<AnyElement>,
     disabled: bool,
     pub(crate) selected: bool,
@@ -231,6 +232,7 @@ impl Button {
             base: gpui_base::Button::new(id),
             icon: None,
             label: None,
+            accessibility_label: None,
             children: Vec::new(),
             disabled: false,
             selected: false,
@@ -299,6 +301,12 @@ impl Button {
     /// Set the developer-assigned identifier exposed to accessibility clients.
     pub fn accessibility_id(mut self, id: impl Into<SharedString>) -> Self {
         self.base = self.base.accessibility_id(id);
+        self
+    }
+
+    /// Set the label exposed to accessibility clients.
+    pub fn accessibility_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.accessibility_label = Some(label.into());
         self
     }
 
@@ -594,7 +602,7 @@ impl RenderOnce for Button {
             })
             .refine_style(&instance_style);
 
-        let accessibility_label = self.label.clone();
+        let accessibility_label = self.accessibility_label.or_else(|| self.label.clone());
         let content = h_flex()
             .id("label")
             .size_full()
@@ -1402,6 +1410,7 @@ mod tests {
     fn test_button_builder(_cx: &mut gpui::TestAppContext) {
         let button = Button::new("complex-button")
             .label("Save Changes")
+            .accessibility_label("Save project changes")
             .primary()
             .outline()
             .large()
@@ -1417,6 +1426,10 @@ mod tests {
             .on_click(|_, _, _| {});
 
         assert_eq!(button.label, Some("Save Changes".into()));
+        assert_eq!(
+            button.accessibility_label,
+            Some("Save project changes".into())
+        );
         assert_eq!(button.variant, ButtonVariant::Primary);
         assert!(button.outline);
         assert_eq!(button.size, Size::Large);

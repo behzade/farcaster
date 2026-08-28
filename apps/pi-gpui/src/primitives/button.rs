@@ -63,7 +63,7 @@ pub(crate) fn dropdown_content_button(
 ) -> Button {
     let accessible_label = accessible_label.into();
     let button = Button::new(id)
-        .aria_label(accessible_label.clone())
+        .accessibility_label(accessible_label.clone())
         .tooltip(accessible_label)
         .child(content)
         .dropdown_caret(true)
