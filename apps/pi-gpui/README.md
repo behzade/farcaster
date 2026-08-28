@@ -18,11 +18,12 @@ between Git and Jujutsu and shows aggregate additions, deletions, and the active
 branch or change ID; a trailing `*` marks a dirty working copy. The file list
 shows five entries initially and reveals twenty more per expansion. Session-only
 additions and deletions appear in the composer before cost. The composer
-permission control is Sandboxed by default; Full access restarts that session's
-Pi process with `--no-sandbox`. A Jujutsu refresh may snapshot the working copy
-as part of normal `jj` behavior. Filesystem
-watching refreshes status when the selected project or repository metadata
-changes; unchanged refreshes do not invalidate the sidebar. Repository commands
+permission controls are Sandboxed by default. File and network changes apply to
+subsequent commands without restarting Pi or clearing the transcript;
+already-running sandboxed processes retain their launch policy. A Jujutsu
+refresh may snapshot the working copy as part of normal `jj` behavior.
+Filesystem watching refreshes status when the selected project or repository
+metadata changes; unchanged refreshes do not invalidate the sidebar. Repository commands
 remain disabled for explicitly untrusted projects. Set `PI_GUI_GIT` or
 `PI_GUI_JJ` to override either executable.
 

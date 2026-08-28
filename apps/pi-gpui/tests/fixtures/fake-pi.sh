@@ -64,7 +64,7 @@ while IFS= read -r line; do
       data='{"messages":[]}'
       ;;
     get_entries)
-      if [ "$case_name" = "history-control" ]; then
+      if [ "$case_name" = "history-control" ] || [ "$case_name" = "sandbox-mode" ]; then
         entries_loaded=1
         data='{"entries":[{"type":"message","id":"one","parentId":null,"message":{"role":"user","content":"preserved history"}}],"leafId":"one"}'
       else
@@ -97,6 +97,17 @@ while IFS= read -r line; do
       fi
       model_changed=1
       data='{"id":"new-model","name":"New Model","provider":"new-provider","reasoning":true}'
+      ;;
+    prompt)
+      if [ "$case_name" = "sandbox-mode" ]; then
+        [ "$entries_loaded" -eq 1 ] || exit 11
+        case "$line" in
+          *'gpui-permission-1'*'\"files\":\"full\"'*'\"network\":\"full\"'*) ;;
+          *) exit 12 ;;
+        esac
+        printf '%s\n' '{"type":"extension_ui_request","id":"sandbox-mode-result","method":"setStatus","statusKey":"\u001fpi-gpui-sandbox-mode\u001f","statusText":"{\"version\":1,\"requestId\":\"gpui-permission-1\",\"files\":\"full\",\"network\":\"full\",\"success\":true}"}'
+      fi
+      data='{}'
       ;;
     *)
       data='{}'

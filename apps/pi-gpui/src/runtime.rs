@@ -7,6 +7,7 @@ mod prompts;
 mod session_controls;
 mod session_identity;
 
+use permission_level::PermissionChangeState;
 pub(crate) use permission_level::{FileAccessMode, NetworkAccessMode, PermissionLevel};
 
 use std::{
@@ -1385,6 +1386,7 @@ struct RuntimeOwner {
     parked_snapshot: Option<RuntimeSnapshot>,
     deferred_prompt: Option<DeferredPrompt>,
     pending_session_controls: PendingSessionControls,
+    permission_changes: PermissionChangeState,
     startup_state_loaded: bool,
     startup_history_loaded: bool,
     state: Option<StateStore>,
@@ -1467,6 +1469,7 @@ fn run(
         parked_snapshot: None,
         deferred_prompt: None,
         pending_session_controls: PendingSessionControls::default(),
+        permission_changes: PermissionChangeState::default(),
         startup_state_loaded: false,
         startup_history_loaded: false,
         state,
@@ -1570,6 +1573,7 @@ impl RuntimeOwner {
         self.startup_history_loaded = false;
         self.pending_prompt_id = None;
         self.pending_prompt_item = None;
+        self.permission_changes.clear();
         self.transcript_changed_from = Some(0);
         let status = session.as_ref().map_or_else(
             || "Starting new session".into(),
@@ -1789,6 +1793,10 @@ impl RuntimeOwner {
                 SnapshotChange::None
             }
             ProcessItem::ExtensionUi(request) => {
+                if let Some(result) = request.sandbox_mode_result() {
+                    self.apply_sandbox_mode_result(result);
+                    return SnapshotChange::None;
+                }
                 if request.workgraph_rpc().is_some() {
                     let rpc = crate::state::state_path()
                         .ok()
@@ -2104,6 +2112,9 @@ impl RuntimeOwner {
     }
 
     fn apply_response(&mut self, response: crate::protocol::RpcResponse) {
+        if self.apply_permission_command_response(&response) {
+            return;
+        }
         let response_command = response.command.clone();
         let is_prompt_response =
             matches!(response.command.as_str(), "prompt" | "steer" | "follow_up")
@@ -2379,6 +2390,7 @@ impl RuntimeOwner {
         self.mark_outbox_failed(&details);
         self.pending_prompt_id = None;
         self.deferred_prompt = None;
+        self.permission_changes.clear();
         self.rollback_pending_prompt();
         if let Some(target) = self.pending_prompt_target.take() {
             self.emit_prompt_result(&target, false);
@@ -2729,6 +2741,7 @@ mod tests {
                 parked_snapshot: None,
                 deferred_prompt: None,
                 pending_session_controls: PendingSessionControls::default(),
+                permission_changes: PermissionChangeState::default(),
                 startup_state_loaded: false,
                 startup_history_loaded: false,
                 state: None,
@@ -2751,28 +2764,73 @@ mod tests {
     }
 
     #[test]
-    fn permission_level_restarts_for_each_changed_access_axis() {
-        let (mut owner, _events, _discovery) = owner_without_process(std::env::temp_dir());
-        owner.snapshot.selected_session = Some(PathBuf::from("/session.jsonl"));
+    fn permission_level_changes_live_without_restarting_or_clearing_history() -> Result<(), String>
+    {
+        let temp = tempdir().map_err(|error| error.to_string())?;
+        let script = temp.path().join("fake-pi.sh");
+        fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))
+            .map_err(|error| error.to_string())?;
+        let session = temp.path().join("session.jsonl");
+        let (mut owner, events, _discovery) = owner_without_process(temp.path().to_path_buf());
+        owner.process_command = ProcessCommand::test_script(&script, vec!["sandbox-mode".into()]);
+        owner.start_process(Some(session));
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            while let Some(item) = owner.process.as_mut().and_then(RpcProcess::try_next) {
+                owner.apply_process_item(item);
+            }
+            if owner.startup_state_loaded && owner.startup_history_loaded {
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(owner.startup_state_loaded && owner.startup_history_loaded);
+        assert_eq!(
+            owner.snapshot.conversation.items[0].text,
+            "preserved history"
+        );
+
         let generation = owner.process_generation;
+        let transcript = owner.snapshot.conversation.items.clone();
+        let _ = events.try_iter().count();
+        let target = PermissionLevel {
+            files: FileAccessMode::Full,
+            network: NetworkAccessMode::Full,
+        };
+        owner.apply_command(RuntimeCommand::SetPermissionLevel(target));
 
-        owner.apply_command(RuntimeCommand::SetPermissionLevel(
-            PermissionLevel::default(),
-        ));
         assert_eq!(owner.process_generation, generation);
+        assert!(owner.process.is_some());
+        assert_eq!(
+            owner.process_command.permission_level,
+            PermissionLevel::default()
+        );
+        assert_eq!(owner.snapshot.conversation.items, transcript);
 
-        let network_full = PermissionLevel::default().with_network(NetworkAccessMode::Full);
-        owner.apply_command(RuntimeCommand::SetPermissionLevel(network_full));
-        assert!(owner.process_generation > generation);
-        assert_eq!(owner.process_command.permission_level, network_full);
-        assert_eq!(owner.snapshot.permission_level, network_full);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            while let Some(item) = owner.process.as_mut().and_then(RpcProcess::try_next) {
+                owner.apply_process_item(item);
+            }
+            if owner.permission_changes.is_idle() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
 
-        let files_read_only = network_full.with_files(FileAccessMode::ReadOnly);
-        let network_generation = owner.process_generation;
-        owner.apply_command(RuntimeCommand::SetPermissionLevel(files_read_only));
-        assert!(owner.process_generation > network_generation);
-        assert_eq!(owner.process_command.permission_level, files_read_only);
-        assert_eq!(owner.snapshot.permission_level, files_read_only);
+        assert!(owner.permission_changes.is_idle());
+        assert_eq!(owner.process_generation, generation);
+        assert!(owner.process.is_some());
+        assert_eq!(owner.process_command.permission_level, target);
+        assert_eq!(owner.snapshot.permission_level, target);
+        assert_eq!(owner.snapshot.conversation.items, transcript);
+        assert!(
+            events
+                .try_iter()
+                .all(|event| !matches!(event, RuntimeEvent::SessionReset { .. }))
+        );
+        Ok(())
     }
 
     #[test]
@@ -4207,6 +4265,7 @@ mod tests {
             parked_snapshot: None,
             deferred_prompt: None,
             pending_session_controls: PendingSessionControls::default(),
+            permission_changes: PermissionChangeState::default(),
             startup_state_loaded: false,
             startup_history_loaded: false,
             state: None,
@@ -4391,6 +4450,7 @@ mod tests {
             parked_snapshot: None,
             deferred_prompt: None,
             pending_session_controls: PendingSessionControls::default(),
+            permission_changes: PermissionChangeState::default(),
             startup_state_loaded: false,
             startup_history_loaded: false,
             state: Some(StateStore::open_at(&temp.path().join("gui-state.sqlite3"))?),
@@ -4569,6 +4629,7 @@ mod tests {
             parked_snapshot: None,
             deferred_prompt: None,
             pending_session_controls: PendingSessionControls::default(),
+            permission_changes: PermissionChangeState::default(),
             startup_state_loaded: true,
             startup_history_loaded: true,
             state: None,

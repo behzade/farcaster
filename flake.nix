@@ -97,6 +97,7 @@
               libdrm
               libgbm
               libGL
+              libcxx
               libx11
               libxcb
               libxcomposite
