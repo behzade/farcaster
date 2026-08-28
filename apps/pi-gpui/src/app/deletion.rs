@@ -31,13 +31,14 @@ impl PiApp {
             self.notify_session_rail(cx);
             return;
         }
+        let family_paths = family
+            .into_iter()
+            .map(|session| session.path.clone())
+            .collect();
         self.cover_native_workspace_surface(cx);
         self.pending_delete = Some(PendingDelete {
             path,
-            family_paths: family
-                .into_iter()
-                .map(|session| session.path.clone())
-                .collect(),
+            family_paths,
             return_focus: window.focused(cx),
         });
         self.sheet_focus.focus(window, cx);
