@@ -283,6 +283,7 @@ impl ConversationState {
         self.items.extend(projected.into_iter().map(Arc::new));
     }
 
+    #[allow(dead_code)] // Used by the standalone transcript benchmark.
     pub(crate) fn reduce(&mut self, event: &Value) -> Option<usize> {
         self.reduce_with_projection(event, true)
     }
@@ -943,10 +944,11 @@ fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
             } else {
                 "Extension".into()
             },
-            message
-                .get("display")
-                .and_then(Value::as_bool)
-                .unwrap_or(true),
+            message.get("customType").and_then(Value::as_str) != Some("background-job-result")
+                && message
+                    .get("display")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true),
         ),
         "branchSummary" | "compactionSummary" => (TranscriptKind::Notice, "Summary".into(), true),
         _ => return Vec::new(),

@@ -483,6 +483,27 @@ fn subagent_results_keep_custom_context_but_use_dedicated_transcript_rows() {
 }
 
 #[test]
+fn background_job_results_wake_the_agent_without_becoming_transcript_rows() {
+    let mut state = ConversationState::default();
+    state.replace_history(&[
+        json!({
+            "role":"custom",
+            "customType":"background-job-result",
+            "content":"background output that remains in agent context",
+            "display":true
+        }),
+        json!({
+            "role":"assistant",
+            "content":[{"type":"text","text":"agent handled the completion"}]
+        }),
+    ]);
+
+    assert_eq!(state.items.len(), 1);
+    assert_eq!(state.items[0].kind, TranscriptKind::Assistant);
+    assert_eq!(state.items[0].text, "agent handled the completion");
+}
+
+#[test]
 fn transcript_uses_quiet_speaker_labels_and_readable_tool_names() {
     let mut state = ConversationState::default();
     state.replace_history(&[
