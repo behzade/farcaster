@@ -143,18 +143,20 @@ fn jj_init_runs_git_init_in_the_repository() {
     let temp = TestDirectory::new("jj-init-command");
     let repository = temp.path().join("repo");
     let executable = temp.path().join("jj");
+    let staged_executable = temp.path().join("jj.tmp");
     let log = temp.path().join("jj.log");
     fs::create_dir_all(repository.join(".git")).expect("create Git repository");
     fs::write(
-        &executable,
+        &staged_executable,
         "#!/bin/sh\nprintf '%s\\n' \"$PWD\" \"$@\" > \"$PI_TEST_LOG\"\n",
     )
     .expect("write fake JJ");
-    let mut permissions = fs::metadata(&executable)
+    let mut permissions = fs::metadata(&staged_executable)
         .expect("read fake JJ metadata")
         .permissions();
     permissions.set_mode(0o755);
-    fs::set_permissions(&executable, permissions).expect("make fake JJ executable");
+    fs::set_permissions(&staged_executable, permissions).expect("make fake JJ executable");
+    fs::rename(staged_executable, &executable).expect("install fake JJ");
     let options = RepositoryOptions {
         jj_executable: executable.into_os_string(),
         environment: vec![(
