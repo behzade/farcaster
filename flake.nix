@@ -98,6 +98,7 @@
               libgbm
               libGL
               libcxx
+              libxml2
               libx11
               libxcb
               libxcomposite

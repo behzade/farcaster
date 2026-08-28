@@ -28,6 +28,7 @@
   libgbm,
   libGL,
   libcxx,
+  libxml2,
   libx11,
   libxcb,
   libxcomposite,
@@ -58,6 +59,7 @@ let
     bzip2
     harfbuzz
     libGL
+    libxml2
     oniguruma
     vulkan-loader
     wayland
@@ -172,6 +174,7 @@ let
       libgbm
       libGL
       libcxx
+      libxml2
       libx11
       libxcb
       libxcomposite
