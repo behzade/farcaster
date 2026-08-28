@@ -119,7 +119,11 @@ pub(super) fn render(app: &PiApp, entity: WeakEntity<PiApp>) -> AnyElement {
         .child(separator())
         .child(effort_selector(effort, &efforts, entity.clone()))
         .child(separator())
-        .child(permission_selector(app.snapshot.permission_level, entity))
+        .child(permission_selector(
+            app.snapshot.permission_level,
+            !app.snapshot.permission_change_blocked,
+            entity,
+        ))
         .into_any_element()
 }
 
@@ -177,7 +181,11 @@ fn effort_label(level: &str) -> String {
     }
 }
 
-fn permission_selector(selected: PermissionLevel, entity: WeakEntity<PiApp>) -> AnyElement {
+fn permission_selector(
+    selected: PermissionLevel,
+    enabled: bool,
+    entity: WeakEntity<PiApp>,
+) -> AnyElement {
     let file_state_icon = file_access_icon(selected.files);
     let network_state_icon = network_access_icon(selected.network);
     let content = div()
@@ -192,7 +200,7 @@ fn permission_selector(selected: PermissionLevel, entity: WeakEntity<PiApp>) -> 
         selected.label(),
         content,
         ButtonTone::Quiet,
-        true,
+        enabled,
     )
     .flex_none()
     .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {

@@ -114,11 +114,13 @@ impl RuntimeOwner {
         if self.active_snapshot().conversation.running
             || self.active_snapshot().conversation.compacting
         {
-            self.fail_permission_change(
-                "Wait for the current response to finish before changing sandbox access".into(),
-            );
             return;
         }
+        let Some(process) = self.process.as_mut() else {
+            self.process_command.permission_level = level;
+            self.publish();
+            return;
+        };
 
         self.permission_changes.generation = self.permission_changes.generation.saturating_add(1);
         let request_id = format!("gpui-permission-{}", self.permission_changes.generation);
@@ -131,18 +133,10 @@ impl RuntimeOwner {
             "type": "prompt",
             "message": format!("/sandbox-mode {request}"),
         });
-        let rpc_id = match self
-            .process
-            .as_mut()
-            .map(|process| process.send_command(command))
-        {
-            Some(Ok(id)) => id,
-            Some(Err(error)) => {
+        let rpc_id = match process.send_command(command) {
+            Ok(id) => id,
+            Err(error) => {
                 self.fail(error);
-                return;
-            }
-            None => {
-                self.fail("Cannot change sandbox access: Pi is not connected".into());
                 return;
             }
         };
@@ -214,6 +208,8 @@ impl RuntimeOwner {
                     .clone()
                     .unwrap_or_else(|| "pi-nono did not accept the sandbox mode command".into()),
             );
+        } else {
+            self.publish();
         }
         true
     }

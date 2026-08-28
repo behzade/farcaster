@@ -391,6 +391,8 @@ fn composer_and_run_panel_track_their_rendered_snapshot_inputs() {
     composer_context.stats = serde_json::json!({
         "contextUsage": {"tokens": 10_000, "contextWindow": 200_000}
     });
+    let mut permission_change = previous.clone();
+    permission_change.permission_change_blocked = true;
     let mut run_panel = previous.clone();
     run_panel.selected_session = Some(PathBuf::from("/root.jsonl"));
 
@@ -400,6 +402,8 @@ fn composer_and_run_panel_track_their_rendered_snapshot_inputs() {
     assert!(!run_panel_snapshot_changed(&previous, &composer_usage));
     assert!(composer_snapshot_changed(&previous, &composer_context));
     assert!(!run_panel_snapshot_changed(&previous, &composer_context));
+    assert!(composer_snapshot_changed(&previous, &permission_change));
+    assert!(!run_panel_snapshot_changed(&previous, &permission_change));
     assert!(composer_snapshot_changed(&previous, &run_panel));
     assert!(run_panel_snapshot_changed(&previous, &run_panel));
 }

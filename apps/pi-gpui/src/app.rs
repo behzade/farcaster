@@ -2083,6 +2083,7 @@ fn composer_snapshot_changed(previous: &RuntimeSnapshot, next: &RuntimeSnapshot)
         || previous.models != next.models
         || previous.thinking_levels != next.thinking_levels
         || previous.permission_level != next.permission_level
+        || previous.permission_change_blocked != next.permission_change_blocked
 }
 
 fn run_panel_snapshot_changed(previous: &RuntimeSnapshot, next: &RuntimeSnapshot) -> bool {

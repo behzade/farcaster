@@ -195,6 +195,7 @@ pub(crate) struct RuntimeSnapshot {
     pub stderr: String,
     pub auto_retry: bool,
     pub permission_level: PermissionLevel,
+    pub permission_change_blocked: bool,
     pub history_preview: bool,
     pub pending_question: Option<ExtensionUiRequest>,
     pub transcript_changed_from: Option<usize>,
@@ -2437,6 +2438,9 @@ impl RuntimeOwner {
     fn publish(&mut self) {
         crate::performance::count_snapshot();
         self.snapshot.permission_level = self.process_command.permission_level;
+        self.snapshot.permission_change_blocked = !self.permission_changes.is_idle()
+            || self.active_snapshot().conversation.running
+            || self.active_snapshot().conversation.compacting;
         conversation_mut(self.active_snapshot_mut()).flush_live_projection();
         let active_snapshot = self.active_snapshot();
         let mut snapshot = self.snapshot.clone();
@@ -2764,6 +2768,65 @@ mod tests {
     }
 
     #[test]
+    fn permission_level_before_connection_configures_the_first_process() -> Result<(), String> {
+        let temp = tempdir().map_err(|error| error.to_string())?;
+        let script = temp.path().join("fake-pi.sh");
+        fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))
+            .map_err(|error| error.to_string())?;
+        let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
+        owner.process_command =
+            ProcessCommand::test_script(&script, vec!["preconnect-permission".into()]);
+        let target = PermissionLevel {
+            files: FileAccessMode::Full,
+            network: NetworkAccessMode::Full,
+        };
+
+        owner.apply_command(RuntimeCommand::SetPermissionLevel(target));
+
+        assert!(owner.process.is_none());
+        assert_eq!(owner.process_command.permission_level, target);
+        assert_eq!(owner.snapshot.permission_level, target);
+        assert!(!owner.snapshot.permission_change_blocked);
+        assert!(owner.snapshot.conversation.items.is_empty());
+
+        owner.start_process(None);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            while let Some(item) = owner.process.as_mut().and_then(RpcProcess::try_next) {
+                owner.apply_process_item(item);
+            }
+            if owner.startup_state_loaded && owner.startup_history_loaded {
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(owner.startup_state_loaded && owner.startup_history_loaded);
+        assert!(owner.process.is_some());
+        assert_eq!(owner.snapshot.permission_level, target);
+        Ok(())
+    }
+
+    #[test]
+    fn permission_change_during_a_response_is_silent_and_blocked() {
+        let (mut owner, _events, _discovery) = owner_without_process(std::env::temp_dir());
+        conversation_mut(owner.active_snapshot_mut()).running = true;
+        owner.publish();
+        let target = PermissionLevel {
+            files: FileAccessMode::Full,
+            network: NetworkAccessMode::Full,
+        };
+
+        owner.apply_command(RuntimeCommand::SetPermissionLevel(target));
+
+        assert_eq!(
+            owner.process_command.permission_level,
+            PermissionLevel::default()
+        );
+        assert!(owner.snapshot.permission_change_blocked);
+        assert!(owner.snapshot.conversation.items.is_empty());
+    }
+
+    #[test]
     fn permission_level_changes_live_without_restarting_or_clearing_history() -> Result<(), String>
     {
         let temp = tempdir().map_err(|error| error.to_string())?;
@@ -2820,6 +2883,7 @@ mod tests {
         }
 
         assert!(owner.permission_changes.is_idle());
+        assert!(!owner.snapshot.permission_change_blocked);
         assert_eq!(owner.process_generation, generation);
         assert!(owner.process.is_some());
         assert_eq!(owner.process_command.permission_level, target);

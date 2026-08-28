@@ -2,6 +2,13 @@
 set -eu
 case_name=$1
 
+if [ "$case_name" = "preconnect-permission" ]; then
+  case " $* " in
+    *" --sandbox-files full --sandbox-network full "*) ;;
+    *) exit 13 ;;
+  esac
+fi
+
 if [ "$case_name" = "project-directory" ]; then
   printf '%s' "$PWD" > "$PWD/process-project"
 fi
