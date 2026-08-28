@@ -37,8 +37,9 @@ use gpui_base::{Button as BaseButton, TextSelection};
 use gpui_component::kbd::Kbd;
 
 use super::{
-    AbortRun, AddProject, AppSurface, CloseCurrent, ComposerEscape, CurrentCloseTarget,
-    DismissSurface, FocusComposer, FocusSessionSearch, NewSession, NextSession, PiApp, PickerBack,
+    APP_INPUT_CONTEXT, AbortRun, AddProject, AppSurface, CloseCurrent, ComposerEscape,
+    CurrentCloseTarget, DismissSurface, FocusComposer, FocusSessionSearch, NATIVE_INPUT_CONTEXT,
+    NewSession, NextSession, PiApp, PickerBack,
     PickerScope, PreviousSession, ProjectPickerIntent, RemoveProject, ShowActionPicker, ShowEditor,
     ShowKeybindings, ShowTerminal, ShowWorkGraph, SubmitFollowUp, SubmitPrompt, SwitchSession0,
     SwitchSession1, SwitchSession2, SwitchSession3, SwitchSession4, SwitchSession5, SwitchSession6,
@@ -92,7 +93,7 @@ impl Render for PiApp {
         if self.pending_dialog_setup {
             if matches!(self.surface, AppSurface::Editor | AppSurface::Terminal) {
                 self.hide_native_workspace_surfaces(cx);
-                self.surface = AppSurface::Chat;
+                self.set_surface(AppSurface::Chat, cx);
                 self.dialog_return_focus = Some(self.composer_focus.clone());
             }
             self.pending_dialog_setup = false;
@@ -163,6 +164,10 @@ impl Render for PiApp {
         let viewport = window.viewport_size();
         let mode = layout_mode(viewport.width);
         let entity = cx.entity().downgrade();
+        let key_context = match self.surface {
+            AppSurface::Chat | AppSurface::Work => APP_INPUT_CONTEXT,
+            AppSurface::Editor | AppSurface::Terminal => NATIVE_INPUT_CONTEXT,
+        };
         let work_active = self.surface == AppSurface::Work;
         let has_conversation = !self.selected_draft_is_empty_and_unsubmitted();
         let editable_draft_project = (!has_conversation)
@@ -237,6 +242,7 @@ impl Render for PiApp {
             .size_full()
             .bg(THEME.colors.canvas)
             .font(ui_font())
+            .key_context(key_context)
             .text_color(THEME.colors.text)
             .text_size(THEME.type_scale.body)
             .on_action(cx.listener(|this, _: &CopySelection, _, cx| {
@@ -275,7 +281,7 @@ impl Render for PiApp {
                 this.search_focus.focus(window, cx);
             }))
             .on_action(cx.listener(|this, _: &FocusComposer, window, cx| {
-                if !this.workspace_switch_blocked() {
+                if !this.center_surface_switch_blocked() {
                     this.show_chat_surface(window, cx);
                 }
             }))
@@ -401,7 +407,7 @@ impl Render for PiApp {
                 |this, event: &gpui::ModifiersChangedEvent, window, cx| {
                     let visible = session_shortcuts_visible(
                         this.session_shortcuts_visible,
-                        event.modifiers.platform,
+                        cfg!(target_os = "macos") && event.modifiers.platform,
                         TextSelection::has_selection(window, cx),
                     );
                     if this.session_shortcuts_visible != visible {
@@ -451,7 +457,12 @@ impl Render for PiApp {
                         )
                     }),
             )
-            .child(self.render_surface_switcher(entity.clone(), !shows_left_inline(mode)))
+            .when(
+                !shows_left_inline(mode) && !self.sessions_sheet,
+                |root| {
+                    root.child(self.render_floating_surface_switcher(entity.clone()))
+                },
+            )
             .when_some(picker, |root, picker| root.child(picker))
             .when(work_active, |root| {
                 let close = entity.clone();

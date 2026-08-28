@@ -271,32 +271,41 @@ impl PiApp {
                             .flex()
                             .items_center()
                             .justify_between()
-                            .child(icon_button(
-                                "session-actions",
-                                AppIcon::List,
-                                "Actions",
-                                ButtonTone::Quiet,
-                                move |window, cx| {
-                                    let _ = actions_entity.update(cx, |this, cx| {
-                                        this.open_picker(PickerScope::Actions, window, cx);
-                                    });
-                                },
-                            ))
-                            .child(icon_button(
-                                "new-session",
-                                AppIcon::Plus,
-                                "New session",
-                                ButtonTone::Quiet,
-                                move |window, cx| {
-                                    let _ = new_entity.update(cx, |this, cx| {
-                                        this.open_picker(
-                                            PickerScope::Projects(ProjectPickerIntent::NewSession),
-                                            window,
-                                            cx,
-                                        );
-                                    });
-                                },
-                            )),
+                            .child(self.render_surface_switcher(entity.clone()))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(THEME.space.xs)
+                                    .child(icon_button(
+                                        "session-actions",
+                                        AppIcon::List,
+                                        "Actions",
+                                        ButtonTone::Quiet,
+                                        move |window, cx| {
+                                            let _ = actions_entity.update(cx, |this, cx| {
+                                                this.open_picker(PickerScope::Actions, window, cx);
+                                            });
+                                        },
+                                    ))
+                                    .child(icon_button(
+                                        "new-session",
+                                        AppIcon::Plus,
+                                        "New session",
+                                        ButtonTone::Quiet,
+                                        move |window, cx| {
+                                            let _ = new_entity.update(cx, |this, cx| {
+                                                this.open_picker(
+                                                    PickerScope::Projects(
+                                                        ProjectPickerIntent::NewSession,
+                                                    ),
+                                                    window,
+                                                    cx,
+                                                );
+                                            });
+                                        },
+                                    )),
+                            ),
                     )
                     .child(
                         div()

@@ -9,7 +9,7 @@ use super::{AppSurface, PiApp};
 
 impl PiApp {
     pub(super) fn show_terminal_surface(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.workspace_switch_blocked() {
+        if self.center_surface_switch_blocked() {
             return;
         }
         self.activate_terminal_for_project(self.workspace_project(), window, cx);
@@ -27,8 +27,7 @@ impl PiApp {
             self.clear_terminal_process();
             self.terminal_error =
                 Some("Trust this project before opening its terminal, then restart Pi.".to_owned());
-            self.surface = AppSurface::Terminal;
-            cx.notify();
+            self.set_surface(AppSurface::Terminal, cx);
             return;
         }
 

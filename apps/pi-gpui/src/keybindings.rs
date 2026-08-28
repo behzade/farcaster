@@ -1,16 +1,20 @@
 //! Single registry for application keybindings and keyboard-help metadata.
 
 use crate::app::{
-    AbortRun, AddProject, CloseCurrent, ComposerEscape, ComposerHistoryNext,
-    ComposerHistoryPrevious, DismissSurface, FocusComposer, NewSession, NextSession,
-    OVERLAY_KEY_CONTEXT, PICKER_KEY_CONTEXT, PickerBack, PreviousSession, QuitApplication,
-    ShowActionPicker, ShowEditor, ShowKeybindings, ShowTerminal, ShowWorkGraph, SubmitFollowUp,
+    AbortRun, AddProject, CloseCurrent, ComposerCompletionNext, ComposerCompletionPrevious,
+    ComposerEscape, ComposerHistoryNext, ComposerHistoryPrevious, DismissSurface, FocusComposer,
+    NewSession, NextSession, OVERLAY_KEY_CONTEXT, PICKER_KEY_CONTEXT, PickerBack, PreviousSession,
+    QuitApplication, ShowEditor, ShowKeybindings, ShowTerminal, ShowWorkGraph, SubmitFollowUp,
     SubmitPrompt, SwitchSession0, SwitchSession1, SwitchSession2, SwitchSession3, SwitchSession4,
     SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8, SwitchSession9,
     ToggleArchivedSessions, WorkCreateIssue, WorkDismiss, WorkFocusSearch, WorkNextIssue,
     WorkPreviousIssue,
 };
 use crate::app::{WORKGRAPH_KEY_CONTEXT, WORKGRAPH_NAV_KEY_CONTEXT};
+#[cfg(not(target_os = "macos"))]
+use crate::app::APP_SHORTCUT_CONTEXT;
+#[cfg(target_os = "macos")]
+use crate::app::ShowActionPicker;
 use crate::keyboard::CopySelection;
 use crate::transcript_list::TRANSCRIPT_SELECTION_KEY_CONTEXT;
 use gpui::{KeyBinding, Unbind};
@@ -20,6 +24,11 @@ use gpui_base::actions::{SelectDown, SelectUp};
 pub(crate) const PRIMARY_MODIFIER: &str = "cmd";
 #[cfg(not(target_os = "macos"))]
 pub(crate) const PRIMARY_MODIFIER: &str = "ctrl";
+
+#[cfg(target_os = "macos")]
+const PRIMARY_SHORTCUT_CONTEXT: Option<&str> = None;
+#[cfg(not(target_os = "macos"))]
+const PRIMARY_SHORTCUT_CONTEXT: Option<&str> = Some(APP_SHORTCUT_CONTEXT);
 
 pub(crate) const fn primary_key(macos: &'static str, non_macos: &'static str) -> &'static str {
     if cfg!(target_os = "macos") {
@@ -57,8 +66,53 @@ macro_rules! shortcut {
 
 macro_rules! primary_shortcut {
     ($section:literal, $label:literal, $key:literal, $action:expr) => {
-        shortcut!($section, $label, primary!($key), $action, None)
+        shortcut!(
+            $section,
+            $label,
+            primary!($key),
+            $action,
+            PRIMARY_SHORTCUT_CONTEXT
+        )
     };
+}
+
+#[cfg(target_os = "macos")]
+fn platform_shortcut_aliases() -> [Shortcut; 4] {
+    [
+        Shortcut {
+            section: "Workspace",
+            label: "Chat and composer",
+            keystroke: "cmd-l",
+            show_in_help: false,
+            binding: KeyBinding::new("cmd-l", FocusComposer, None),
+        },
+        Shortcut {
+            section: "Workspace",
+            label: "Open Neovim",
+            keystroke: "cmd-e",
+            show_in_help: false,
+            binding: KeyBinding::new("cmd-e", ShowEditor, None),
+        },
+        Shortcut {
+            section: "Workspace",
+            label: "Open terminal",
+            keystroke: "cmd-t",
+            show_in_help: false,
+            binding: KeyBinding::new("cmd-t", ShowTerminal, None),
+        },
+        Shortcut {
+            section: "Application",
+            label: "Open action picker",
+            keystroke: "cmd-k",
+            show_in_help: true,
+            binding: KeyBinding::new("cmd-k", ShowActionPicker, None),
+        },
+    ]
+}
+
+#[cfg(not(target_os = "macos"))]
+const fn platform_shortcut_aliases() -> [Shortcut; 0] {
+    []
 }
 
 /// Returns application shortcuts plus overrides for dependency-owned defaults.
@@ -75,7 +129,7 @@ pub(crate) fn bindings() -> Vec<KeyBinding> {
 
 /// Returns the user-facing shortcut registry used by keyboard help.
 pub(crate) fn registry() -> Vec<Shortcut> {
-    vec![
+    let mut shortcuts = vec![
         primary_shortcut!(
             "Sessions",
             "Open first unsubmitted draft",
@@ -91,9 +145,14 @@ pub(crate) fn registry() -> Vec<Shortcut> {
         primary_shortcut!("Sessions", "Open session 7", "7", SwitchSession7),
         primary_shortcut!("Sessions", "Open session 8", "8", SwitchSession8),
         primary_shortcut!("Sessions", "Open session 9", "9", SwitchSession9),
-        primary_shortcut!("Sessions", "New session", "n", NewSession),
+        shortcut!(
+            "Sessions",
+            "New session",
+            primary_key("cmd-n", "ctrl-t"),
+            NewSession,
+            PRIMARY_SHORTCUT_CONTEXT
+        ),
         primary_shortcut!("Sessions", "Add project", "shift-n", AddProject),
-        primary_shortcut!("Application", "Open action picker", "k", ShowActionPicker),
         primary_shortcut!("Sessions", "Previous session", "[", PreviousSession),
         primary_shortcut!("Sessions", "Next session", "]", NextSession),
         primary_shortcut!(
@@ -129,7 +188,7 @@ pub(crate) fn registry() -> Vec<Shortcut> {
             show_in_help: false,
             binding: KeyBinding::new(
                 "ctrl-p",
-                ComposerHistoryPrevious,
+                ComposerCompletionPrevious,
                 Some("PiComposer > Input"),
             ),
         },
@@ -138,11 +197,15 @@ pub(crate) fn registry() -> Vec<Shortcut> {
             label: "Next completion",
             keystroke: "ctrl-n",
             show_in_help: false,
-            binding: KeyBinding::new("ctrl-n", ComposerHistoryNext, Some("PiComposer > Input")),
+            binding: KeyBinding::new(
+                "ctrl-n",
+                ComposerCompletionNext,
+                Some("PiComposer > Input"),
+            ),
         },
-        primary_shortcut!("Workspace", "Chat and composer", "l", FocusComposer),
-        primary_shortcut!("Workspace", "Open Neovim", "e", ShowEditor),
-        primary_shortcut!("Workspace", "Open terminal", "t", ShowTerminal),
+        shortcut!("Workspace", "Chat and composer", "f1", FocusComposer, None),
+        shortcut!("Workspace", "Open Neovim", "f2", ShowEditor, None),
+        shortcut!("Workspace", "Open terminal", "f3", ShowTerminal, None),
         Shortcut {
             section: "Transcript",
             label: "Copy visual selection",
@@ -224,7 +287,11 @@ pub(crate) fn registry() -> Vec<Shortcut> {
             label: "Keyboard shortcuts",
             keystroke: primary!("/"),
             show_in_help: false,
-            binding: KeyBinding::new(primary!("/"), ShowKeybindings, None),
+            binding: KeyBinding::new(
+                primary!("/"),
+                ShowKeybindings,
+                PRIMARY_SHORTCUT_CONTEXT,
+            ),
         },
         shortcut!(
             "Application",
@@ -262,12 +329,18 @@ pub(crate) fn registry() -> Vec<Shortcut> {
             binding: KeyBinding::new("escape", DismissSurface, Some(PICKER_KEY_CONTEXT)),
         },
         primary_shortcut!("Application", "Quit", "q", QuitApplication),
-    ]
+    ];
+
+    shortcuts.extend(platform_shortcut_aliases());
+    shortcuts
 }
 
 #[cfg(test)]
 mod tests {
     use super::{bindings, primary_key, registry};
+
+    #[cfg(not(target_os = "macos"))]
+    use crate::app::{APP_INPUT_CONTEXT, ComposerCompletionNext, NATIVE_INPUT_CONTEXT};
 
     #[test]
     fn root_focus_traversal_is_unbound() {
@@ -290,29 +363,87 @@ mod tests {
 
     #[cfg(not(target_os = "macos"))]
     #[test]
-    fn non_macos_application_shortcuts_do_not_use_the_system_modifier() {
+    fn non_macos_shortcuts_avoid_native_input_conflicts() {
+        let shortcut = registry()
+            .into_iter()
+            .find(|shortcut| shortcut.label == "New session")
+            .expect("new session shortcut");
+        assert_eq!(shortcut.keystroke, "ctrl-t");
+
+        let keymap = gpui::Keymap::new(vec![shortcut.binding]);
+        let keystroke = gpui::Keystroke::parse("ctrl-t").expect("shortcut keystroke");
+        let app_context = gpui::KeyContext::parse(APP_INPUT_CONTEXT).expect("app context");
+        let native_context =
+            gpui::KeyContext::parse(NATIVE_INPUT_CONTEXT).expect("native context");
+
+        assert!(
+            !keymap
+                .bindings_for_input(&[keystroke.clone()], &[app_context])
+                .0
+                .is_empty()
+        );
+        assert!(
+            keymap
+                .bindings_for_input(&[keystroke], &[native_context])
+                .0
+                .is_empty()
+        );
         let shortcuts = registry();
         assert!(
             shortcuts
                 .iter()
                 .all(|shortcut| !shortcut.keystroke.starts_with("cmd-"))
         );
-        assert!(
-            shortcuts.iter().any(|shortcut| {
-                shortcut.label == "New session" && shortcut.keystroke == "ctrl-n"
-            })
+        for removed in ["ctrl-l", "ctrl-e", "ctrl-k"] {
+            assert!(
+                shortcuts
+                    .iter()
+                    .all(|shortcut| shortcut.keystroke != removed)
+            );
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn composer_ctrl_n_remains_completion_navigation() {
+        let keymap = gpui::Keymap::new(
+            registry()
+                .into_iter()
+                .map(|shortcut| shortcut.binding)
+                .collect(),
         );
+        let contexts = [
+            gpui::KeyContext::parse(APP_INPUT_CONTEXT).expect("app context"),
+            gpui::KeyContext::parse("PiComposer").expect("composer context"),
+            gpui::KeyContext::parse("Input").expect("input context"),
+        ];
+        let (bindings, _) = keymap.bindings_for_input(
+            &[gpui::Keystroke::parse("ctrl-n").expect("shortcut keystroke")],
+            &contexts,
+        );
+
+        assert!(bindings.first().is_some_and(|binding| {
+            binding.action().as_any().is::<ComposerCompletionNext>()
+        }));
     }
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn macos_application_shortcuts_keep_the_command_modifier() {
+    fn macos_application_shortcuts_keep_the_global_command_modifier() {
         let shortcuts = registry();
-        assert!(
-            shortcuts.iter().any(|shortcut| {
-                shortcut.label == "New session" && shortcut.keystroke == "cmd-n"
-            })
-        );
+        for (label, keystroke) in [
+            ("New session", "cmd-n"),
+            ("Chat and composer", "cmd-l"),
+            ("Open Neovim", "cmd-e"),
+            ("Open terminal", "cmd-t"),
+            ("Open action picker", "cmd-k"),
+        ] {
+            assert!(shortcuts.iter().any(|shortcut| {
+                shortcut.label == label
+                    && shortcut.keystroke == keystroke
+                    && shortcut.binding.predicate().is_none()
+            }));
+        }
     }
 
     #[test]
@@ -324,22 +455,6 @@ mod tests {
         assert!(shortcuts.iter().any(|shortcut| {
             shortcut.label == "Copy selection" && shortcut.keystroke == primary!("c")
         }));
-    }
-
-    #[test]
-    fn workspace_shortcuts_are_registered() {
-        let shortcuts = registry();
-        for (label, keystroke) in [
-            ("Chat and composer", primary!("l")),
-            ("Open Neovim", primary!("e")),
-            ("Open terminal", primary!("t")),
-        ] {
-            assert!(
-                shortcuts
-                    .iter()
-                    .any(|shortcut| { shortcut.label == label && shortcut.keystroke == keystroke })
-            );
-        }
     }
 
     #[test]
@@ -381,12 +496,6 @@ mod tests {
         }));
         assert!(shortcuts.iter().any(|shortcut| {
             shortcut.label == "Next picker item" && shortcut.keystroke == "ctrl-n"
-        }));
-        assert!(shortcuts.iter().any(|shortcut| {
-            shortcut.label == "Previous completion" && shortcut.keystroke == "ctrl-p"
-        }));
-        assert!(shortcuts.iter().any(|shortcut| {
-            shortcut.label == "Next completion" && shortcut.keystroke == "ctrl-n"
         }));
     }
 }

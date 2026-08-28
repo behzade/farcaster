@@ -47,6 +47,16 @@ const fn should_capture_return_focus(flags: SheetFlags) -> bool {
 }
 
 impl PiApp {
+    pub(super) fn set_surface(&mut self, surface: AppSurface, cx: &mut Context<Self>) -> bool {
+        let changed = self.surface != surface;
+        self.surface = surface;
+        if changed {
+            self.notify_session_rail_shell(cx);
+            cx.notify();
+        }
+        changed
+    }
+
     pub(super) fn hide_native_workspace_surfaces(&self, cx: &mut Context<Self>) {
         self.hide_editor(cx);
         self.hide_terminal(cx);
@@ -157,8 +167,7 @@ impl PiApp {
         if self.native_workspace_covered_by_overlay() {
             if self.surface != AppSurface::Chat {
                 self.hide_native_workspace_surfaces(cx);
-                self.surface = AppSurface::Chat;
-                cx.notify();
+                self.set_surface(AppSurface::Chat, cx);
             }
             return;
         }
@@ -171,7 +180,7 @@ impl PiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.surface = surface;
+        self.set_surface(surface, cx);
         self.pending_focus_after_render = None;
         if self.native_workspace_covered_by_overlay() {
             self.cover_native_workspace_surface(cx);
@@ -212,8 +221,12 @@ impl PiApp {
             || self.extension.provider_auth.is_some()
     }
 
+    pub(super) fn center_surface_switch_blocked(&self) -> bool {
+        self.native_workspace_covered_by_overlay()
+    }
+
     pub(super) fn workspace_switch_blocked(&self) -> bool {
-        self.native_workspace_covered_by_overlay() || self.surface == AppSurface::Work
+        self.center_surface_switch_blocked() || self.surface == AppSurface::Work
     }
 
     pub(super) fn respond_value(
@@ -360,9 +373,8 @@ impl PiApp {
         focus: FocusHandle,
         cx: &mut Context<Self>,
     ) -> bool {
-        let changed = self.surface != AppSurface::Chat;
         self.hide_native_workspace_surfaces(cx);
-        self.surface = AppSurface::Chat;
+        let changed = self.set_surface(AppSurface::Chat, cx);
         self.pending_focus_after_render = Some(focus);
         cx.notify();
         changed
@@ -382,8 +394,7 @@ impl PiApp {
         }
         if self.surface != AppSurface::Work {
             self.refresh_workgraph_board(cx);
-            self.surface = AppSurface::Work;
-            cx.notify();
+            self.set_surface(AppSurface::Work, cx);
         }
         self.workgraph_view
             .update(cx, |view, cx| view.prepare_open(window, cx));

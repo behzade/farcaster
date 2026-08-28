@@ -1,6 +1,6 @@
 use gpui::{
-    AnyElement, App, CursorStyle, ElementId, FontWeight, InteractiveElement as _, IntoElement,
-    KeyDownEvent, MouseButton, ParentElement as _, Role, SharedString,
+    AnyElement, App, Context, CursorStyle, ElementId, FontWeight, InteractiveElement as _,
+    IntoElement, KeyDownEvent, MouseButton, ParentElement as _, Role, SharedString,
     StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div, point,
     prelude::FluentBuilder as _, px,
 };
@@ -10,7 +10,8 @@ use gpui_component::{
 };
 
 use super::super::{
-    ComposerHistoryNext, ComposerHistoryPrevious, PiApp, file_mentions, slash_commands,
+    ComposerCompletionNext, ComposerCompletionPrevious, ComposerHistoryNext,
+    ComposerHistoryPrevious, PiApp, file_mentions, slash_commands,
 };
 use crate::{
     app::file_mentions::MentionQuery,
@@ -64,6 +65,8 @@ impl PiApp {
         let widgets_below = widget_region("below", &self.extension.below_widgets);
         let previous_history_entity = entity.clone();
         let next_history_entity = entity.clone();
+        let previous_completion_entity = entity.clone();
+        let next_completion_entity = entity.clone();
         let paste_entity = entity.clone();
         let composer_for_paste = self.composer.clone();
         let key_entity = entity.clone();
@@ -76,6 +79,11 @@ impl PiApp {
         let command_selection =
             suggestion_selection.min(command_suggestion_count.saturating_sub(1));
         let mention_suggestion_count = file_suggestions.len();
+        let suggestion_count = if mention_suggestion_count > 0 {
+            mention_suggestion_count
+        } else {
+            command_suggestion_count
+        };
         let controls_entity = entity.clone();
         let actions_entity = entity;
         div()
@@ -164,21 +172,10 @@ impl PiApp {
                             .on_action(move |_: &ComposerHistoryPrevious, window, cx| {
                                 let handled = previous_history_entity
                                     .update(cx, |this, cx| {
-                                        let suggestion_count = if mention_suggestion_count > 0 {
-                                            mention_suggestion_count
-                                        } else {
-                                            command_suggestion_count
-                                        };
-                                        if suggestion_count > 0 {
-                                            this.composer_suggestion_selection = this
-                                                .composer_suggestion_selection
-                                                .checked_sub(1)
-                                                .unwrap_or(suggestion_count - 1);
-                                            this.notify_composer(cx);
-                                            true
-                                        } else {
-                                            this.handle_composer_history_key("up", window, cx)
-                                        }
+                                        this.select_previous_composer_suggestion(
+                                            suggestion_count,
+                                            cx,
+                                        ) || this.handle_composer_history_key("up", window, cx)
                                     })
                                     .unwrap_or(false);
                                 if !handled {
@@ -189,25 +186,25 @@ impl PiApp {
                             .on_action(move |_: &ComposerHistoryNext, window, cx| {
                                 let handled = next_history_entity
                                     .update(cx, |this, cx| {
-                                        let suggestion_count = if mention_suggestion_count > 0 {
-                                            mention_suggestion_count
-                                        } else {
-                                            command_suggestion_count
-                                        };
-                                        if suggestion_count > 0 {
-                                            this.composer_suggestion_selection =
-                                                (this.composer_suggestion_selection + 1)
-                                                    % suggestion_count;
-                                            this.notify_composer(cx);
-                                            true
-                                        } else {
-                                            this.handle_composer_history_key("down", window, cx)
-                                        }
+                                        this.select_next_composer_suggestion(suggestion_count, cx)
+                                            || this.handle_composer_history_key("down", window, cx)
                                     })
                                     .unwrap_or(false);
                                 if !handled {
                                     window.dispatch_action(Box::new(MoveDown), cx);
                                 }
+                                cx.stop_propagation();
+                            })
+                            .on_action(move |_: &ComposerCompletionPrevious, _, cx| {
+                                let _ = previous_completion_entity.update(cx, |this, cx| {
+                                    this.select_previous_composer_suggestion(suggestion_count, cx);
+                                });
+                                cx.stop_propagation();
+                            })
+                            .on_action(move |_: &ComposerCompletionNext, _, cx| {
+                                let _ = next_completion_entity.update(cx, |this, cx| {
+                                    this.select_next_composer_suggestion(suggestion_count, cx);
+                                });
                                 cx.stop_propagation();
                             })
                             .capture_key_down(move |_: &KeyDownEvent, _, cx| {
@@ -235,6 +232,36 @@ impl PiApp {
                     .child(self.render_composer_actions(actions_entity, primary_action)),
             )
             .into_any_element()
+    }
+
+    fn select_previous_composer_suggestion(
+        &mut self,
+        suggestion_count: usize,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if suggestion_count == 0 {
+            return false;
+        }
+        self.composer_suggestion_selection = self
+            .composer_suggestion_selection
+            .checked_sub(1)
+            .unwrap_or(suggestion_count - 1);
+        self.notify_composer(cx);
+        true
+    }
+
+    fn select_next_composer_suggestion(
+        &mut self,
+        suggestion_count: usize,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if suggestion_count == 0 {
+            return false;
+        }
+        self.composer_suggestion_selection =
+            (self.composer_suggestion_selection + 1) % suggestion_count;
+        self.notify_composer(cx);
+        true
     }
 
     fn render_provider_auth(&self) -> AnyElement {

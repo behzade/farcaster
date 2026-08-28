@@ -34,8 +34,7 @@ impl PiApp {
             Err(error) => {
                 self.hide_editor(cx);
                 self.editor_error = Some(error);
-                self.surface = AppSurface::Editor;
-                cx.notify();
+                self.set_surface(AppSurface::Editor, cx);
                 return;
             }
         };
@@ -45,13 +44,13 @@ impl PiApp {
             match opened {
                 Ok(()) => {
                     self.editor_error = None;
-                    self.surface = AppSurface::Editor;
+                    self.set_surface(AppSurface::Editor, cx);
                     editor.update(cx, |editor, cx| editor.focus(window, cx));
                 }
                 Err(error) => {
                     editor.update(cx, |editor, cx| editor.set_visible(false, cx));
                     self.editor_error = Some(error);
-                    self.surface = AppSurface::Editor;
+                    self.set_surface(AppSurface::Editor, cx);
                 }
             }
             cx.notify();
@@ -62,12 +61,11 @@ impl PiApp {
             self.editor_return_focus = window.focused(cx);
         }
         self.spawn_editor(nvim_options(project, path, line), window, cx);
-        self.surface = AppSurface::Editor;
-        cx.notify();
+        self.set_surface(AppSurface::Editor, cx);
     }
 
     pub(super) fn show_editor_surface(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.workspace_switch_blocked() {
+        if self.center_surface_switch_blocked() {
             return;
         }
         self.activate_editor_for_project(self.workspace_project(), window, cx);
@@ -84,8 +82,7 @@ impl PiApp {
             self.editor = None;
             self.editor_error =
                 Some("Trust this project before opening Neovim, then restart Pi.".to_owned());
-            self.surface = AppSurface::Editor;
-            cx.notify();
+            self.set_surface(AppSurface::Editor, cx);
             return;
         }
 

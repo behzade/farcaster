@@ -1,4 +1,4 @@
-//! Hover-revealed controls for the center workspace surfaces.
+//! Visible controls for the center workspace surfaces and input-routing mode.
 
 use gpui::{
     Context, InteractiveElement as _, IntoElement, ParentElement as _,
@@ -13,50 +13,22 @@ use crate::{
     theme::THEME,
 };
 
-const SURFACE_GROUP: &str = "center-surface-switcher";
+const fn input_mode_label(surface: AppSurface) -> &'static str {
+    match surface {
+        AppSurface::Chat | AppSurface::Work => "NORMAL",
+        AppSurface::Editor | AppSurface::Terminal => "INSERT",
+    }
+}
 
 impl PiApp {
-    pub(super) fn render_surface_switcher(
-        &self,
-        entity: WeakEntity<Self>,
-        overlaps_native_surface: bool,
-    ) -> impl IntoElement {
-        let hover = entity.clone();
+    pub(super) fn render_surface_switcher(&self, entity: WeakEntity<Self>) -> impl IntoElement {
         div()
-            .id(SURFACE_GROUP)
-            .absolute()
-            .top(THEME.space.sm)
-            .left(THEME.space.sm)
-            .w(gpui::px(12.0))
-            .h(gpui::px(36.0))
             .flex()
             .items_center()
             .gap(THEME.space.xs)
-            .p(THEME.space.xs)
-            .rounded(THEME.radius)
-            .overflow_hidden()
-            .group(SURFACE_GROUP)
-            .hover(|switcher| {
-                switcher
-                    .w(gpui::px(108.0))
-                    .bg(THEME.colors.panel)
-                    .border(THEME.border)
-                    .border_color(THEME.colors.border)
-            })
-            .when(overlaps_native_surface, |switcher| {
-                switcher.on_hover(move |hovered, window, cx| {
-                    let _ = hover.update(cx, |app, cx| {
-                        if *hovered {
-                            app.hide_native_workspace_surfaces(cx);
-                        } else {
-                            app.restore_active_native_workspace_surface(window, cx);
-                        }
-                    });
-                })
-            })
             .child(surface_control(
                 "show-chat-surface",
-                "Chat (⌘L)",
+                "Chat (F1)",
                 AppIcon::ChatCircleDots,
                 self.surface == AppSurface::Chat,
                 entity.clone(),
@@ -64,7 +36,7 @@ impl PiApp {
             ))
             .child(surface_control(
                 "show-editor-surface",
-                "Neovim (⌘E)",
+                "Neovim (F2)",
                 AppIcon::Code,
                 self.surface == AppSurface::Editor,
                 entity.clone(),
@@ -72,12 +44,58 @@ impl PiApp {
             ))
             .child(surface_control(
                 "show-terminal-surface",
-                "Terminal (⌘T)",
+                "Terminal (F3)",
                 AppIcon::TerminalWindow,
                 self.surface == AppSurface::Terminal,
                 entity,
                 PiApp::show_terminal_surface,
             ))
+            .child(
+                div()
+                    .h(THEME.controls.icon_button)
+                    .px(THEME.space.xs)
+                    .flex()
+                    .items_center()
+                    .rounded(THEME.radius)
+                    .bg(THEME.colors.surface)
+                    .text_size(THEME.type_scale.caption)
+                    .text_color(THEME.colors.muted)
+                    .child(input_mode_label(self.surface)),
+            )
+    }
+
+    pub(super) fn render_floating_surface_switcher(
+        &self,
+        entity: WeakEntity<Self>,
+    ) -> impl IntoElement {
+        let hover = entity.clone();
+        div()
+            .absolute()
+            .top(THEME.space.sm)
+            .left(THEME.space.sm)
+            .h(gpui::px(36.0))
+            .flex()
+            .items_center()
+            .p(THEME.space.xs)
+            .rounded(THEME.radius)
+            .bg(THEME.colors.panel)
+            .border(THEME.border)
+            .border_color(THEME.colors.border)
+            .when(
+                matches!(self.surface, AppSurface::Editor | AppSurface::Terminal),
+                |switcher| {
+                    switcher.on_hover(move |hovered, window, cx| {
+                        let _ = hover.update(cx, |app, cx| {
+                            if *hovered {
+                                app.hide_native_workspace_surfaces(cx);
+                            } else {
+                                app.restore_active_native_workspace_surface(window, cx);
+                            }
+                        });
+                    })
+                },
+            )
+            .child(self.render_surface_switcher(entity))
     }
 }
 
@@ -92,9 +110,6 @@ fn surface_control(
     action: SurfaceAction,
 ) -> gpui::Stateful<gpui::Div> {
     icon_control(id, label)
-        .opacity(0.0)
-        .group_hover(SURFACE_GROUP, |control| control.opacity(1.0))
-        .focus(|control| control.opacity(1.0))
         .hover(|control| control.bg(THEME.colors.hover))
         .when(active, |control| {
             control

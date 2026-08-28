@@ -32,12 +32,19 @@ process per open editor surface. App modals temporarily composite its last
 frame in GPUI so the editor remains visible beneath the backdrop. Set
 `PI_GUI_NVIM` to override the `nvim` executable.
 
-Chat, Neovim, and a project terminal share the center workspace. Hover the
-window's top-left corner to reveal the three surface controls. `Cmd+L` returns
-to Chat and focuses the composer, `Cmd+E` opens Neovim, and `Cmd+T` opens the
-terminal. Neovim and terminal processes remain alive while switching surfaces;
-changing sessions returns to Chat. The terminal starts the account login shell
-in the selected project. Set `PI_GUI_SHELL` to override its executable.
+Chat, Neovim, and a project terminal share the center workspace. The session
+sidebar header keeps the three surface controls visible; narrow layouts show the
+same control over the center workspace. It reports `NORMAL` for app-owned
+surfaces and `INSERT` while input routes to Neovim or the terminal. `F1` opens
+Chat and focuses the composer, `F2` opens Neovim, and `F3` opens the terminal
+from every surface. macOS also keeps the `Cmd+L`, `Cmd+E`, and `Cmd+T` aliases.
+On non-macOS platforms, `Ctrl+T` creates a session in app-owned UI while
+contextual `Ctrl+N` and `Ctrl+P` navigate completions. App-level `Ctrl`
+shortcuts are inactive while Neovim or the terminal owns input, so their native
+control sequences pass through. Neovim and terminal processes remain alive
+while switching surfaces; changing sessions returns to Chat. The terminal
+starts the account login shell in the
+selected project. Set `PI_GUI_SHELL` to override its executable.
 
 ## Run
 

@@ -68,6 +68,10 @@ use crate::{
 
 const SYSTEM_NOTIFICATION_TAG: &str = "pi-agent";
 pub(crate) const COMPOSER_KEY_CONTEXT: &str = "PiComposer";
+#[cfg(not(target_os = "macos"))]
+pub(crate) const APP_SHORTCUT_CONTEXT: &str = "PiApp && input == app";
+pub(crate) const APP_INPUT_CONTEXT: &str = "PiApp input=app";
+pub(crate) const NATIVE_INPUT_CONTEXT: &str = "PiApp input=native";
 
 #[derive(Debug, Eq, PartialEq)]
 enum CurrentCloseTarget {
@@ -122,6 +126,8 @@ actions!(
         CloseCurrent,
         ComposerHistoryPrevious,
         ComposerHistoryNext,
+        ComposerCompletionPrevious,
+        ComposerCompletionNext,
         ShowKeybindings,
         ShowWorkGraph,
         WorkPreviousIssue,
@@ -1010,7 +1016,7 @@ impl PiApp {
                             .discard_and_switch(&current_target, next_target.clone());
                         self.hide_native_workspace_surfaces(cx);
                         if self.surface != AppSurface::Work {
-                            self.surface = AppSurface::Chat;
+                            self.set_surface(AppSurface::Chat, cx);
                         }
                         self.reset_session_ui(generation, false);
                         self.pending_composer_restore = Some((next_target, composer));
