@@ -10,6 +10,7 @@ use std::{
 use super::RepositoryError;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
+const SPAWN_RETRY_GRACE: Duration = Duration::from_secs(1);
 const TERMINATE_GRACE: Duration = Duration::from_millis(100);
 const PIPE_CLOSE_GRACE: Duration = Duration::from_secs(1);
 const STDERR_OUTPUT_LIMIT: usize = 256 * 1024;
@@ -81,7 +82,20 @@ impl CommandRunner {
             use std::os::unix::process::CommandExt as _;
             command.process_group(0);
         }
-        let mut child = command.spawn().map_err(|source| RepositoryError::Io {
+        let spawn_started = Instant::now();
+        let mut child = loop {
+            match command.spawn() {
+                Ok(child) => break Ok(child),
+                Err(source)
+                    if source.kind() == std::io::ErrorKind::ExecutableFileBusy
+                        && spawn_started.elapsed() < SPAWN_RETRY_GRACE =>
+                {
+                    thread::sleep(POLL_INTERVAL);
+                }
+                Err(source) => break Err(source),
+            }
+        }
+        .map_err(|source| RepositoryError::Io {
             context: format!("start {}", program.to_string_lossy()),
             source,
         })?;
@@ -243,6 +257,37 @@ mod tests {
         assert_eq!(output.stdout, b"1234");
         assert_eq!(output.stderr, b"abcd");
         assert!(output.stdout_truncated && output.stderr_truncated);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn retries_a_temporarily_busy_executable() {
+        use std::{fs, os::unix::fs::PermissionsExt as _};
+
+        let temp = tempfile::tempdir().expect("create executable directory");
+        let executable = temp.path().join("command");
+        fs::write(&executable, "#!/bin/sh\nexit 0\n").expect("write executable");
+        let mut permissions = fs::metadata(&executable)
+            .expect("read executable metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&executable, permissions).expect("make command executable");
+        let writer = fs::OpenOptions::new()
+            .write(true)
+            .open(&executable)
+            .expect("hold executable open for writing");
+        let release = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(50));
+            drop(writer);
+        });
+
+        let result = CommandRunner::new(Duration::from_secs(1), 1024, Vec::new()).run(
+            executable.as_os_str(),
+            &[],
+            temp.path(),
+        );
+        release.join().expect("release executable writer");
+        assert!(result.expect("retry busy executable").status.success());
     }
 
     #[cfg(unix)]
