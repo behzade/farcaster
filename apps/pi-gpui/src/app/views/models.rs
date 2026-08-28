@@ -7,7 +7,10 @@ use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
 
 use super::{super::PiApp, composer_footer::separator};
 use crate::{
-    primitives::{ButtonTone, dropdown_button},
+    assets::AppIcon,
+    primitives::{
+        AppIconSize, ButtonTone, app_icon, dropdown_button, dropdown_content_button,
+    },
     runtime::{FileAccessMode, NetworkAccessMode, PermissionLevel},
     theme::{MONO_FONT_FAMILY, THEME},
 };
@@ -175,23 +178,31 @@ fn effort_label(level: &str) -> String {
 }
 
 fn permission_selector(selected: PermissionLevel, entity: WeakEntity<PiApp>) -> AnyElement {
-    dropdown_button(
+    let (file_state_icon, file_state_color) = file_access_presentation(selected.files);
+    let (network_state_icon, network_state_color) = network_access_presentation(selected.network);
+    let content = div()
+        .flex()
+        .items_center()
+        .gap(THEME.space.sm)
+        .child(permission_icon_pair(
+            AppIcon::Folder,
+            file_state_icon,
+            file_state_color,
+        ))
+        .child(permission_icon_pair(
+            AppIcon::ArrowSquareOut,
+            network_state_icon,
+            network_state_color,
+        ));
+
+    dropdown_content_button(
         "select-permission",
         selected.label(),
+        content,
         ButtonTone::Quiet,
         true,
     )
     .flex_none()
-    .font_family(MONO_FONT_FAMILY)
-    .text_color(
-        if selected.files == FileAccessMode::Full || selected.network == NetworkAccessMode::Full {
-            THEME.colors.warning
-        } else if selected.files == FileAccessMode::ReadOnly {
-            THEME.colors.link
-        } else {
-            THEME.colors.success
-        },
-    )
     .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
         let mut menu = menu
             .max_h(THEME.layout.dialog_max_height)
@@ -224,4 +235,64 @@ fn permission_selector(selected: PermissionLevel, entity: WeakEntity<PiApp>) -> 
         menu
     })
     .into_any_element()
+}
+
+fn permission_icon_pair(
+    resource: AppIcon,
+    access: AppIcon,
+    access_color: gpui::Rgba,
+) -> AnyElement {
+    div()
+        .flex()
+        .items_center()
+        .gap(THEME.space.xs)
+        .child(
+            app_icon(resource, AppIconSize::Inline).text_color(THEME.colors.subtle),
+        )
+        .child(app_icon(access, AppIconSize::Inline).text_color(access_color))
+        .into_any_element()
+}
+
+fn file_access_presentation(mode: FileAccessMode) -> (AppIcon, gpui::Rgba) {
+    match mode {
+        FileAccessMode::ReadOnly => (AppIcon::Eye, THEME.colors.link),
+        FileAccessMode::Sandboxed => (AppIcon::Archive, THEME.colors.success),
+        FileAccessMode::Full => (AppIcon::ArrowsOut, THEME.colors.warning),
+    }
+}
+
+fn network_access_presentation(mode: NetworkAccessMode) -> (AppIcon, gpui::Rgba) {
+    match mode {
+        NetworkAccessMode::Sandboxed => (AppIcon::Archive, THEME.colors.success),
+        NetworkAccessMode::Full => (AppIcon::ArrowsOut, THEME.colors.warning),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn permission_modes_have_distinct_compact_icons() {
+        assert_eq!(
+            file_access_presentation(FileAccessMode::ReadOnly).0,
+            AppIcon::Eye
+        );
+        assert_eq!(
+            file_access_presentation(FileAccessMode::Sandboxed).0,
+            AppIcon::Archive
+        );
+        assert_eq!(
+            file_access_presentation(FileAccessMode::Full).0,
+            AppIcon::ArrowsOut
+        );
+        assert_eq!(
+            network_access_presentation(NetworkAccessMode::Sandboxed).0,
+            AppIcon::Archive
+        );
+        assert_eq!(
+            network_access_presentation(NetworkAccessMode::Full).0,
+            AppIcon::ArrowsOut
+        );
+    }
 }

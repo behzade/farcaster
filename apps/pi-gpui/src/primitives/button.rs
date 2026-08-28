@@ -54,6 +54,24 @@ pub(crate) fn dropdown_button(
     tone_button(button, tone)
 }
 
+pub(crate) fn dropdown_content_button(
+    id: impl Into<ElementId>,
+    accessible_label: impl Into<SharedString>,
+    content: impl IntoElement,
+    tone: ButtonTone,
+    enabled: bool,
+) -> Button {
+    let accessible_label = accessible_label.into();
+    let button = Button::new(id)
+        .aria_label(accessible_label.clone())
+        .tooltip(accessible_label)
+        .child(content)
+        .dropdown_caret(true)
+        .with_size(Size::Small)
+        .disabled(!enabled);
+    tone_button(button, tone)
+}
+
 pub(crate) fn icon_button(
     id: impl Into<ElementId>,
     icon: impl IconNamed,
