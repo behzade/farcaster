@@ -5,8 +5,8 @@ use super::{
     DiffPlanError, DiffPlanErrorKind, DiffPlanOptions, DiffPlanRow, DiffRenderPlan, FileChangeKind,
     FileDiffPlan,
     format::{
-        HunkHeader, PatchLine, collect_lines, file_sections, parse_git_paths, parse_header_path,
-        parse_hunk_header, too_many_lines, trim_line_end,
+        HunkHeader, PatchLine, collect_lines, file_sections, parse_git_metadata_path,
+        parse_git_paths, parse_header_path, parse_hunk_header, too_many_lines, trim_line_end,
     },
     plan_builder::{FilePlanner, RawCell},
 };
@@ -98,14 +98,20 @@ fn plan_file(
             index += 1;
             continue;
         }
-        if let Some(path) = text.strip_prefix("rename from ") {
-            planner.plan.old_path = Some(path.to_owned());
+        if let Some(path) = text
+            .strip_prefix("rename from ")
+            .and_then(parse_git_metadata_path)
+        {
+            planner.plan.old_path = Some(path);
             planner.plan.kind = FileChangeKind::Renamed;
             index += 1;
             continue;
         }
-        if let Some(path) = text.strip_prefix("rename to ") {
-            planner.plan.path = Some(path.to_owned());
+        if let Some(path) = text
+            .strip_prefix("rename to ")
+            .and_then(parse_git_metadata_path)
+        {
+            planner.plan.path = Some(path);
             planner.plan.kind = FileChangeKind::Renamed;
             index += 1;
             continue;

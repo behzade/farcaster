@@ -81,18 +81,24 @@ pub(super) fn parse_git_paths(line: &str) -> Option<(String, String)> {
 }
 
 pub(super) fn parse_header_path(value: &str, is_git: bool) -> Option<String> {
-    let path = value
-        .split(['\t', '\r', '\n'])
-        .next()?
-        .trim()
-        .trim_matches('"');
-    (!path.is_empty()).then(|| {
-        if path == "/dev/null" || !is_git {
-            path.to_owned()
-        } else {
-            strip_git_prefix(path)
-        }
-    })
+    let path = value.split(['\t', '\r', '\n']).next()?.trim();
+    if path.is_empty() {
+        return None;
+    }
+    if !is_git {
+        return Some(path.to_owned());
+    }
+    let path = parse_git_metadata_path(path)?;
+    if path == "/dev/null" {
+        Some(path)
+    } else {
+        Some(strip_git_prefix(&path))
+    }
+}
+
+pub(super) fn parse_git_metadata_path(value: &str) -> Option<String> {
+    let (path, rest) = parse_git_field(value)?;
+    rest.trim().is_empty().then_some(path)
 }
 
 pub(super) fn parse_hunk_header(line: &str) -> Option<HunkHeader> {
@@ -133,35 +139,26 @@ fn ranges_from_starts(starts: &[usize], end: usize) -> Vec<(usize, usize)> {
 }
 
 fn split_shellish_pair(value: &str) -> Option<(String, String)> {
-    let mut fields = Vec::with_capacity(2);
-    let mut current = String::new();
-    let mut quoted = false;
-    let mut escaped = false;
-    for character in value.chars() {
-        if escaped {
-            current.push(character);
-            escaped = false;
-        } else if character == '\\' && quoted {
-            current.push(character);
-            escaped = true;
-        } else if character == '"' {
-            quoted = !quoted;
-        } else if character.is_whitespace() && !quoted {
-            if !current.is_empty() {
-                fields.push(std::mem::take(&mut current));
-            }
-        } else {
-            current.push(character);
+    let (old, rest) = parse_git_field(value)?;
+    let (new, rest) = parse_git_field(rest)?;
+    rest.trim().is_empty().then_some((old, new))
+}
+
+fn parse_git_field(value: &str) -> Option<(String, &str)> {
+    let value = value.trim_start();
+    if value.starts_with('"') {
+        let (unquoted, consumed) = gix_quote::ansi_c::undo(value.as_bytes().into()).ok()?;
+        let rest = value.get(consumed..)?;
+        if !rest.is_empty() && !rest.starts_with(char::is_whitespace) {
+            return None;
         }
+        return Some((
+            String::from_utf8_lossy(unquoted.as_ref()).into_owned(),
+            rest,
+        ));
     }
-    if !current.is_empty() {
-        fields.push(current);
-    }
-    if quoted || fields.len() != 2 {
-        return None;
-    }
-    let mut fields = fields.into_iter();
-    Some((fields.next()?, fields.next()?))
+    let end = value.find(char::is_whitespace).unwrap_or(value.len());
+    (end > 0).then(|| (value[..end].to_owned(), &value[end..]))
 }
 
 fn strip_git_prefix(path: &str) -> String {

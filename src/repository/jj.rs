@@ -306,31 +306,12 @@ fn literal_fileset(path: &std::path::Path) -> Result<String, RepositoryError> {
     let path = path
         .to_str()
         .ok_or_else(|| RepositoryError::InvalidPath(path.to_path_buf()))?;
-    Ok(format!("root-file:{}", encode_json_string(path)))
+    Ok(format!("root-file:{}", encode_json_string(path)?))
 }
 
 #[cfg(test)]
-fn encode_json_string(value: &str) -> String {
-    let mut encoded = String::with_capacity(value.len().saturating_add(2));
-    encoded.push('"');
-    for character in value.chars() {
-        match character {
-            '"' => encoded.push_str("\\\""),
-            '\\' => encoded.push_str("\\\\"),
-            '\u{0008}' => encoded.push_str("\\b"),
-            '\u{000c}' => encoded.push_str("\\f"),
-            '\n' => encoded.push_str("\\n"),
-            '\r' => encoded.push_str("\\r"),
-            '\t' => encoded.push_str("\\t"),
-            character if character.is_control() => {
-                use std::fmt::Write as _;
-                let _write_result = write!(encoded, "\\u{:04x}", u32::from(character));
-            }
-            character => encoded.push(character),
-        }
-    }
-    encoded.push('"');
-    encoded
+fn encode_json_string(value: &str) -> Result<String, RepositoryError> {
+    serde_json::to_string(value).map_err(|error| invalid(format!("encode JSON string: {error}")))
 }
 
 fn decode_json_string_list(value: &str) -> Result<Vec<String>, RepositoryError> {
@@ -362,80 +343,11 @@ fn jj_kind(status: &str) -> ChangeKind {
 }
 
 fn parse_json_bool(value: &str) -> Result<bool, RepositoryError> {
-    match value {
-        "true" => Ok(true),
-        "false" => Ok(false),
-        _ => Err(invalid("invalid JSON boolean")),
-    }
+    serde_json::from_str(value).map_err(|error| invalid(format!("decode JSON boolean: {error}")))
 }
 
 fn decode_json_string(value: &str) -> Result<String, RepositoryError> {
-    let Some(inner) = value
-        .strip_prefix('"')
-        .and_then(|text| text.strip_suffix('"'))
-    else {
-        return Err(invalid("expected a JSON string"));
-    };
-    let mut characters = inner.chars();
-    let mut decoded = String::with_capacity(inner.len());
-    while let Some(character) = characters.next() {
-        if character != '\\' {
-            if character.is_control() {
-                return Err(invalid("unescaped control character in JSON string"));
-            }
-            decoded.push(character);
-            continue;
-        }
-        match characters
-            .next()
-            .ok_or_else(|| invalid("unterminated JSON escape"))?
-        {
-            '"' => decoded.push('"'),
-            '\\' => decoded.push('\\'),
-            '/' => decoded.push('/'),
-            'b' => decoded.push('\u{0008}'),
-            'f' => decoded.push('\u{000c}'),
-            'n' => decoded.push('\n'),
-            'r' => decoded.push('\r'),
-            't' => decoded.push('\t'),
-            'u' => decoded.push(decode_unicode_escape(&mut characters)?),
-            _ => return Err(invalid("unknown JSON escape")),
-        }
-    }
-    Ok(decoded)
-}
-
-fn decode_unicode_escape(
-    characters: &mut impl Iterator<Item = char>,
-) -> Result<char, RepositoryError> {
-    let first = decode_hex_quad(characters)?;
-    let scalar = if (0xd800..=0xdbff).contains(&first) {
-        if characters.next() != Some('\\') || characters.next() != Some('u') {
-            return Err(invalid("high surrogate has no low surrogate"));
-        }
-        let second = decode_hex_quad(characters)?;
-        if !(0xdc00..=0xdfff).contains(&second) {
-            return Err(invalid("invalid low surrogate"));
-        }
-        0x1_0000 + ((first - 0xd800) << 10) + (second - 0xdc00)
-    } else if (0xdc00..=0xdfff).contains(&first) {
-        return Err(invalid("unexpected low surrogate"));
-    } else {
-        first
-    };
-    char::from_u32(scalar).ok_or_else(|| invalid("invalid Unicode scalar"))
-}
-
-fn decode_hex_quad(characters: &mut impl Iterator<Item = char>) -> Result<u32, RepositoryError> {
-    let mut value = 0_u32;
-    for _ in 0..4 {
-        let digit = characters
-            .next()
-            .and_then(|character| character.to_digit(16))
-            .ok_or_else(|| invalid("invalid JSON Unicode escape"))?;
-        value = value * 16 + digit;
-    }
-    Ok(value)
+    serde_json::from_str(value).map_err(|error| invalid(format!("decode JSON string: {error}")))
 }
 
 fn invalid(detail: impl Into<String>) -> RepositoryError {

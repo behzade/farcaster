@@ -255,6 +255,20 @@ fn quoted_git_paths_with_spaces_are_preserved() {
 }
 
 #[test]
+fn git_c_quoted_paths_are_decoded() {
+    let patch = concat!(
+        "diff --git \"a/caf\\303\\251.txt\" \"b/tab\\tname.txt\"\n",
+        "similarity index 100%\n",
+        "rename from \"caf\\303\\251.txt\"\n",
+        "rename to \"tab\\tname.txt\"\n",
+    );
+    let plan = plan_patch(patch, options(DiffLayout::Split)).expect("valid patch");
+
+    assert_eq!(plan.files[0].old_path.as_deref(), Some("café.txt"));
+    assert_eq!(plan.files[0].path.as_deref(), Some("tab\tname.txt"));
+}
+
+#[test]
 fn empty_and_headerless_inputs_are_distinct_errors() {
     let empty = plan_patch("", options(DiffLayout::Split)).expect_err("empty patch");
     let headerless = plan_patch("@@ -1 +1 @@\n-old\n+new\n", options(DiffLayout::Split))
