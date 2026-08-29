@@ -48,7 +48,7 @@ impl PiApp {
         let command_suggestion_count = command_suggestions.len();
         let exact_command = slash_commands::is_exact(&composer_value, &self.snapshot.commands);
         let primary_action = composer_primary_action(
-            !composer_value.is_empty() || self.has_composer_images(),
+            !composer_value.is_empty() || self.has_composer_attachments(),
             self.can_submit(),
             exact_command,
             self.snapshot.conversation.running,
@@ -154,7 +154,10 @@ impl PiApp {
                             .py(THEME.space.sm)
                             .capture_action(move |_: &Paste, _, cx| {
                                 if paste_entity
-                                    .update(cx, |this, cx| this.paste_composer_image(cx))
+                                    .update(cx, |this, cx| {
+                                        this.paste_composer_image(cx)
+                                            || this.paste_composer_text(cx)
+                                    })
                                     .unwrap_or(false)
                                 {
                                     cx.stop_propagation();

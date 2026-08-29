@@ -39,12 +39,12 @@ use gpui_component::kbd::Kbd;
 use super::{
     APP_INPUT_CONTEXT, AbortRun, AddProject, AppSurface, CloseCurrent, ComposerEscape,
     CurrentCloseTarget, DismissSurface, FocusComposer, FocusSessionSearch, NATIVE_INPUT_CONTEXT,
-    NewSession, NextSession, PiApp, PickerBack,
-    PickerScope, PreviousSession, ProjectPickerIntent, RemoveProject, ShowActionPicker, ShowEditor,
-    ShowKeybindings, ShowTerminal, ShowWorkGraph, SubmitFollowUp, SubmitPrompt, SwitchSession0,
-    SwitchSession1, SwitchSession2, SwitchSession3, SwitchSession4, SwitchSession5, SwitchSession6,
-    SwitchSession7, SwitchSession8, SwitchSession9, ToggleArchivedSessions, WorkCreateIssue,
-    WorkDismiss, WorkFocusSearch, WorkNextIssue, WorkPreviousIssue, current_close_target,
+    NewSession, NextSession, PiApp, PickerBack, PickerScope, PreviousSession, ProjectPickerIntent,
+    RemoveProject, ShowActionPicker, ShowEditor, ShowKeybindings, ShowTerminal, ShowWorkGraph,
+    SubmitFollowUp, SubmitPrompt, SwitchSession0, SwitchSession1, SwitchSession2, SwitchSession3,
+    SwitchSession4, SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8, SwitchSession9,
+    ToggleArchivedSessions, WorkCreateIssue, WorkDismiss, WorkFocusSearch, WorkNextIssue,
+    WorkPreviousIssue, current_close_target,
 };
 pub(crate) const OVERLAY_KEY_CONTEXT: &str = "PiGpuiOverlay";
 
@@ -308,7 +308,7 @@ impl Render for PiApp {
             }))
             .on_action(cx.listener(|this, _: &SubmitPrompt, window, cx| {
                 let value = this.composer.read(cx).value().trim().to_owned();
-                if !value.is_empty() || this.has_composer_images() {
+                if !value.is_empty() || this.has_composer_attachments() {
                     this.submit(value, this.enter_mode(), window, cx);
                 }
             }))
@@ -459,12 +459,9 @@ impl Render for PiApp {
                         )
                     }),
             )
-            .when(
-                !shows_left_inline(mode) && !self.sessions_sheet,
-                |root| {
-                    root.child(self.render_floating_surface_switcher(entity.clone()))
-                },
-            )
+            .when(!shows_left_inline(mode) && !self.sessions_sheet, |root| {
+                root.child(self.render_floating_surface_switcher(entity.clone()))
+            })
             .when_some(picker, |root, picker| root.child(picker))
             .when(work_active, |root| {
                 let close = entity.clone();

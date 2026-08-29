@@ -8,7 +8,7 @@ use std::{
 
 use gpui::{ClipboardItem, Context, Window};
 
-use super::{ComposerImage, PiApp, slash_commands};
+use super::{ComposerImage, ComposerPaste, PiApp, composer_pastes, slash_commands};
 use crate::{
     app::slash_commands::{BuiltinInvocation, BuiltinSlashCommand},
     composer_sessions::{ComposerSnapshot, session_target},
@@ -23,6 +23,7 @@ use crate::{
 pub(super) struct PendingSubmission {
     pub(super) text: String,
     pub(super) images: Vec<ComposerImage>,
+    pub(super) pastes: Vec<ComposerPaste>,
     pub(super) result: Option<(bool, Option<std::path::PathBuf>)>,
 }
 
@@ -59,6 +60,12 @@ impl PiApp {
             .flatten()
             .map(|image| image.prompt.clone())
             .collect::<Vec<PromptImage>>();
+        let pastes = self
+            .composer_pastes
+            .get(&target)
+            .cloned()
+            .unwrap_or_default();
+        let message = composer_pastes::append_pasted_files(&value, &pastes);
         let inactive_session = inactive_session_for_target(
             &target,
             self.snapshot.selected_session.as_deref(),
@@ -67,7 +74,7 @@ impl PiApp {
         match self.runtime.send(RuntimeCommand::Prompt {
             target: target.clone(),
             mode,
-            message: value.clone(),
+            message: message.clone(),
             images,
             allow_while_running,
         }) {
@@ -79,12 +86,14 @@ impl PiApp {
                 self.notify_session_rail(cx);
                 self.composer_sessions.record_submission(&target, &value);
                 let pending_images = self.composer_images.remove(&target).unwrap_or_default();
+                let pending_pastes = self.composer_pastes.remove(&target).unwrap_or_default();
                 let image_count = pending_images.len();
                 self.pending_submissions.insert(
                     target.clone(),
                     PendingSubmission {
                         text: editor_text.clone(),
                         images: pending_images,
+                        pastes: pending_pastes,
                         result: None,
                     },
                 );
@@ -101,7 +110,7 @@ impl PiApp {
                 let index = snapshot.conversation.items.len();
                 let conversation = Arc::make_mut(&mut snapshot.conversation);
                 if show_in_transcript {
-                    conversation.push_local_user(value, image_count, invocation);
+                    conversation.push_local_user(message, image_count, invocation);
                 }
                 conversation.running = true;
                 snapshot.status = "Working".into();
@@ -310,7 +319,7 @@ impl PiApp {
 
     pub(crate) fn submit_follow_up(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let value = self.composer.read(cx).value().trim().to_owned();
-        if !value.is_empty() || self.has_composer_images() {
+        if !value.is_empty() || self.has_composer_attachments() {
             let mode = prompt_mode_for_follow_up(self.snapshot.conversation.running);
             self.submit(value, mode, window, cx);
         }
@@ -347,6 +356,11 @@ impl PiApp {
                     .entry(target.clone())
                     .or_insert_with(|| pending.images.clone());
             }
+            if !pending.pastes.is_empty() {
+                self.composer_pastes
+                    .entry(target.clone())
+                    .or_insert_with(|| pending.pastes.clone());
+            }
             if let Some(snapshot) = restored
                 && self.composer_sessions.current_target() == target
             {
@@ -354,7 +368,7 @@ impl PiApp {
             }
             if let Some(session_key) = rejected_attachment_target(
                 &pending.text,
-                !pending.images.is_empty(),
+                !pending.images.is_empty() || !pending.pastes.is_empty(),
                 &target,
                 self.composer_sessions.current_target(),
                 session.as_deref(),
@@ -362,6 +376,7 @@ impl PiApp {
                 self.composer_sessions.promote(&target, session_key.clone());
                 self.promote_center_surface(&target, &session_key);
                 self.promote_composer_images(&target, &session_key);
+                self.promote_composer_pastes(&target, &session_key);
             }
         }
     }
@@ -470,6 +485,7 @@ mod tests {
         PendingSubmission {
             text: "submitted".into(),
             images: Vec::new(),
+            pastes: Vec::new(),
             result: None,
         }
     }

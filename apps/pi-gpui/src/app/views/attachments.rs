@@ -14,7 +14,8 @@ use crate::theme::{MONO_FONT_FAMILY, THEME};
 
 pub(super) fn render(app: &PiApp, entity: WeakEntity<PiApp>) -> Option<AnyElement> {
     let images = app.current_composer_images();
-    if images.is_empty() {
+    let pastes = app.current_composer_pastes();
+    if images.is_empty() && pastes.is_empty() {
         return None;
     }
     Some(
@@ -67,6 +68,53 @@ pub(super) fn render(app: &PiApp, entity: WeakEntity<PiApp>) -> Option<AnyElemen
                             .on_click(move |_, _, cx| {
                                 let _ = remove.update(cx, |this, cx| {
                                     this.remove_composer_image(index, cx);
+                                });
+                            }),
+                    )
+            }))
+            .children(pastes.iter().enumerate().map(|(index, paste)| {
+                let open = entity.clone();
+                let remove = entity.clone();
+                let file_name = paste.file_name();
+                div()
+                    .id(("composer-paste", index))
+                    .h(px(36.0))
+                    .flex()
+                    .items_center()
+                    .gap(THEME.space.xs)
+                    .pl(THEME.space.xs)
+                    .pr(THEME.space.xs)
+                    .rounded(THEME.radius)
+                    .border(THEME.border)
+                    .border_color(THEME.colors.border)
+                    .bg(THEME.colors.surface)
+                    .font_family(MONO_FONT_FAMILY)
+                    .text_size(THEME.type_scale.caption)
+                    .child(
+                        Button::new(("open-composer-paste", index))
+                            .label(format!(
+                                "{file_name} · {} lines · {}",
+                                paste.line_count,
+                                format_bytes(paste.content.len())
+                            ))
+                            .tooltip("Open pasted text file")
+                            .with_size(Size::XSmall)
+                            .ghost()
+                            .on_click(move |_, window, cx| {
+                                let _ = open.update(cx, |this, cx| {
+                                    this.open_composer_paste(index, window, cx);
+                                });
+                            }),
+                    )
+                    .child(
+                        Button::new(("remove-composer-paste", index))
+                            .label("×")
+                            .tooltip("Remove pasted text file")
+                            .with_size(Size::XSmall)
+                            .ghost()
+                            .on_click(move |_, _, cx| {
+                                let _ = remove.update(cx, |this, cx| {
+                                    this.remove_composer_paste(index, cx);
                                 });
                             }),
                     )

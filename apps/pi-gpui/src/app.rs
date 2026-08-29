@@ -4,6 +4,7 @@ mod archive;
 mod changes;
 mod composer_completion;
 mod composer_images;
+mod composer_pastes;
 mod deletion;
 mod drafts;
 mod editor;
@@ -23,6 +24,7 @@ mod trust;
 mod views;
 mod workgraph;
 pub(crate) use composer_images::ComposerImage;
+pub(crate) use composer_pastes::ComposerPaste;
 pub(crate) use picker::{PICKER_KEY_CONTEXT, PickerScope, ProjectPickerIntent};
 use submissions::PendingSubmission;
 pub(crate) use views::OVERLAY_KEY_CONTEXT;
@@ -239,6 +241,7 @@ pub(crate) struct PiApp {
     composer_history_marker: Option<(String, usize, String)>,
     composer_escape_armed: Option<(String, Instant)>,
     composer_images: HashMap<String, Vec<ComposerImage>>,
+    composer_pastes: HashMap<String, Vec<ComposerPaste>>,
     search: Entity<InputState>,
     search_focus: FocusHandle,
     session_title_input: Entity<InputState>,
@@ -420,7 +423,7 @@ impl PiApp {
                         }
                     } else {
                         let value = value.trim().to_owned();
-                        if !value.is_empty() || this.has_composer_images() {
+                        if !value.is_empty() || this.has_composer_attachments() {
                             this.submit(value, this.enter_mode(), _window, cx);
                         }
                     }
@@ -622,6 +625,7 @@ impl PiApp {
             composer_history_marker: None,
             composer_escape_armed: None,
             composer_images: HashMap::new(),
+            composer_pastes: HashMap::new(),
             search,
             search_focus,
             session_title_input,
@@ -963,6 +967,7 @@ impl PiApp {
                         self.composer_sessions.remove(&target);
                         self.session_surfaces.remove(&target);
                         self.composer_images.remove(&target);
+                        self.composer_pastes.remove(&target);
                         self.pending_submissions.remove(&target);
                         self.run_statuses.remove(&target);
                         self.recent_completions.remove(&target);
@@ -973,6 +978,7 @@ impl PiApp {
                         self.composer_sessions.remove(&target);
                         self.session_surfaces.remove(&target);
                         self.composer_images.remove(&target);
+                        self.composer_pastes.remove(&target);
                         self.pending_submissions.remove(&target);
                         self.submitted_drafts.remove(id);
                         self.draft_session_ids.remove(id);
@@ -1059,6 +1065,7 @@ impl PiApp {
                         if let Some(images) = self.composer_images.remove(&source_target) {
                             self.composer_images.insert(target_target.clone(), images);
                         }
+                        self.promote_composer_pastes(&source_target, &target_target);
                         if let Some(status) = self.run_statuses.remove(&source_target) {
                             self.run_statuses.insert(target_target.clone(), status);
                         }
@@ -1397,6 +1404,37 @@ impl PiApp {
         cx.notify();
     }
 
+    fn fork_session(
+        &mut self,
+        path: PathBuf,
+        project: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.pending_project_trust_command.is_some() || self.workspace_switch_blocked() {
+            return;
+        }
+        self.run_panel_scroll.set_offset(point(px(0.0), px(0.0)));
+        self.selected_draft = None;
+        self.select_project(project.clone(), cx);
+        self.restore_center_surface(project.clone(), window, cx);
+        self.send_project_command(
+            &project,
+            RuntimeCommand::ForkSession {
+                path,
+                project: project.clone(),
+            },
+            window,
+            cx,
+        );
+        self.close_sessions_sheet_after_selection(window, cx);
+        self.notify_session_rail(cx);
+        self.notify_transcript(cx);
+        self.notify_composer(cx);
+        self.notify_run_panel(cx);
+        cx.notify();
+    }
+
     fn new_session(&mut self, project: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         if self.pending_project_trust_command.is_some() {
             return;
@@ -1631,6 +1669,7 @@ impl PiApp {
         let was_selected = self.selected_draft.as_deref() == Some(id);
         let target = draft_target(id);
         self.composer_images.remove(&target);
+        self.composer_pastes.remove(&target);
         self.session_surfaces.remove(&target);
         self.drafts.retain(|draft| draft.id != id);
         self.draft_session_ids.remove(id);

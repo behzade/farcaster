@@ -116,6 +116,7 @@ impl PiApp {
         let submission_pending = self.pending_submissions.contains_key(target);
         if !has_content && !submission_pending {
             self.composer_images.remove(target);
+            self.composer_pastes.remove(target);
         }
         !has_content
     }
@@ -231,6 +232,7 @@ impl PiApp {
             .promote(&draft_key, session_key.clone());
         self.promote_center_surface(&draft_key, &session_key);
         self.promote_composer_images(&draft_key, &session_key);
+        self.promote_composer_pastes(&draft_key, &session_key);
         if let Some(pending) = self.pending_submissions.remove(&draft_key) {
             self.pending_submissions
                 .insert(session_key.clone(), pending);
