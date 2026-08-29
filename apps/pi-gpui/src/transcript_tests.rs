@@ -41,6 +41,30 @@ fn tail_reserve_is_responsive_but_bounded() {
 }
 
 #[test]
+fn expanded_latest_tools_keep_space_above_the_composer() {
+    let mut items = PersistentVec::default();
+    items.push(item(TranscriptKind::Tool, "Read", ""));
+
+    assert!(latest_allows_tail_reserve(
+        TranscriptRow::Item {
+            index: 0,
+            revision: 0,
+        },
+        &items,
+        true,
+    ));
+    assert!(latest_allows_tail_reserve(
+        TranscriptRow::ReadGroup {
+            start: 0,
+            len: 1,
+            revision: 0,
+        },
+        &items,
+        true,
+    ));
+}
+
+#[test]
 fn invocation_badges_distinguish_skills_prompts_and_stacks() {
     assert_eq!(
         invocation_kind("$review", "<skill name=\"review\">body</skill>"),

@@ -906,13 +906,10 @@ fn latest_allows_tail_reserve(
             !expanded
                 || !matches!(
                     items[index].kind,
-                    TranscriptKind::Tool
-                        | TranscriptKind::Thinking
-                        | TranscriptKind::Error
-                        | TranscriptKind::AgentResult
+                    TranscriptKind::Thinking | TranscriptKind::Error | TranscriptKind::AgentResult
                 )
         }
-        TranscriptRow::ReadGroup { .. } => !expanded,
+        TranscriptRow::ReadGroup { .. } => true,
     }
 }
 
