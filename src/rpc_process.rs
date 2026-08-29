@@ -13,9 +13,9 @@ use std::{
 use serde_json::Value;
 
 use crate::{
-    backend::{BackendRequest, encode_pi_request},
+    backend::{BackendEvent, BackendRequest, encode_pi_request},
     framing::{JsonlFramer, encode_json_line},
-    protocol::{ExtensionUiResponse, RpcResponse, WireMessage, parse_frame},
+    protocol::{ExtensionUiResponse, WireMessage, parse_frame},
     runtime::PermissionLevel,
 };
 
@@ -80,15 +80,6 @@ fn pi_program(packaged_path: Option<std::ffi::OsString>) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("pi"))
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) enum ProcessItem {
-    Response(RpcResponse),
-    ExtensionUi(crate::protocol::ExtensionUiRequest),
-    Event(Value),
-    Stderr(String),
-    Failure(String),
-}
-
 #[derive(Clone)]
 struct ReaderSender {
     sender: mpsc::Sender<ReaderItem>,
@@ -148,7 +139,7 @@ pub(crate) struct RpcProcess {
     child: Arc<Mutex<Child>>,
     stdin: Arc<Mutex<ChildStdin>>,
     incoming: mpsc::Receiver<ReaderItem>,
-    queued: VecDeque<ProcessItem>,
+    queued: VecDeque<BackendEvent>,
     pending: HashMap<String, String>,
     next_id: u64,
     stderr: String,
@@ -271,7 +262,7 @@ impl RpcProcess {
             let deadline = Instant::now() + Duration::from_secs(15);
             while Instant::now() < deadline {
                 match rpc.try_next() {
-                    Some(ProcessItem::Response(response))
+                    Some(BackendEvent::Response(response))
                         if response.id.as_deref() == Some(&id) =>
                     {
                         return if response.success {
@@ -282,7 +273,7 @@ impl RpcProcess {
                                 .unwrap_or_else(|| "Pi rejected the session name".to_owned()))
                         };
                     }
-                    Some(ProcessItem::Failure(error)) => return Err(error),
+                    Some(BackendEvent::Failure(error)) => return Err(error),
                     Some(_) | None => thread::sleep(Duration::from_millis(10)),
                 }
             }
@@ -303,7 +294,7 @@ impl RpcProcess {
         self.write(&encoded)
     }
 
-    pub(crate) fn try_next(&mut self) -> Option<ProcessItem> {
+    pub(crate) fn try_next(&mut self) -> Option<BackendEvent> {
         if let Some(item) = self.queued.pop_front() {
             return Some(item);
         }
@@ -313,7 +304,7 @@ impl RpcProcess {
             Ok(item) => Some(self.route(item)),
             Err(mpsc::TryRecvError::Empty) => None,
             Err(mpsc::TryRecvError::Disconnected) => {
-                Some(ProcessItem::Failure("Pi reader threads stopped".into()))
+                Some(BackendEvent::Failure("Pi reader threads stopped".into()))
             }
         }
     }
@@ -386,7 +377,7 @@ impl RpcProcess {
             match self.incoming.recv_timeout(Duration::from_millis(50)) {
                 Ok(ReaderItem::StderrEof) => continue,
                 Ok(item) => match self.route(item) {
-                    ProcessItem::Response(response) if response.id.as_deref() == Some(&id) => {
+                    BackendEvent::Response(response) if response.id.as_deref() == Some(&id) => {
                         if response.command != "get_state" {
                             return Err(format!(
                                 "readiness response command was {}",
@@ -401,7 +392,7 @@ impl RpcProcess {
                         }
                         return Ok(());
                     }
-                    ProcessItem::Failure(error) => return Err(error),
+                    BackendEvent::Failure(error) => return Err(error),
                     other => self.queued.push_back(other),
                 },
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -428,41 +419,41 @@ impl RpcProcess {
             .map_err(|error| format!("write Pi stdin: {error}"))
     }
 
-    fn route(&mut self, item: ReaderItem) -> ProcessItem {
+    fn route(&mut self, item: ReaderItem) -> BackendEvent {
         match item {
             ReaderItem::Wire(Ok(WireMessage::Response(response))) => {
                 let Some(id) = response.id.as_deref() else {
-                    return ProcessItem::Failure(format!(
+                    return BackendEvent::Failure(format!(
                         "uncorrelated response for {}",
                         response.command
                     ));
                 };
                 let Some(expected_command) = self.pending.remove(id) else {
-                    return ProcessItem::Failure(format!("response used unknown request id {id}"));
+                    return BackendEvent::Failure(format!("response used unknown request id {id}"));
                 };
                 if response.command != expected_command {
-                    return ProcessItem::Failure(format!(
+                    return BackendEvent::Failure(format!(
                         "response {id} was for {}, expected {expected_command}",
                         response.command
                     ));
                 }
-                ProcessItem::Response(response)
+                BackendEvent::Response(response)
             }
             ReaderItem::Wire(Ok(WireMessage::ExtensionUi(request))) => {
-                ProcessItem::ExtensionUi(request)
+                BackendEvent::Interaction(request)
             }
-            ReaderItem::Wire(Ok(WireMessage::Event(event))) => ProcessItem::Event(event),
-            ReaderItem::Wire(Err(error)) => ProcessItem::Failure(error),
+            ReaderItem::Wire(Ok(WireMessage::Event(event))) => BackendEvent::Activity(event),
+            ReaderItem::Wire(Err(error)) => BackendEvent::Failure(error),
             ReaderItem::Stderr(chunk) => {
                 self.stderr.push_str(&chunk);
-                ProcessItem::Stderr(chunk)
+                BackendEvent::Stderr(chunk)
             }
             ReaderItem::Eof => self.finish_after_stdout_eof(),
-            ReaderItem::StderrEof => ProcessItem::Stderr(String::new()),
+            ReaderItem::StderrEof => BackendEvent::Stderr(String::new()),
         }
     }
 
-    fn finish_after_stdout_eof(&mut self) -> ProcessItem {
+    fn finish_after_stdout_eof(&mut self) -> BackendEvent {
         let deadline = Instant::now() + Duration::from_millis(500);
         while Instant::now() < deadline {
             match self.incoming.recv_timeout(Duration::from_millis(20)) {
@@ -470,10 +461,10 @@ impl RpcProcess {
                 Ok(ReaderItem::StderrEof) => break,
                 Ok(ReaderItem::Wire(wire)) => {
                     self.queued.push_back(match wire {
-                        Ok(WireMessage::Response(response)) => ProcessItem::Response(response),
-                        Ok(WireMessage::ExtensionUi(request)) => ProcessItem::ExtensionUi(request),
-                        Ok(WireMessage::Event(event)) => ProcessItem::Event(event),
-                        Err(error) => ProcessItem::Failure(error),
+                        Ok(WireMessage::Response(response)) => BackendEvent::Response(response),
+                        Ok(WireMessage::ExtensionUi(request)) => BackendEvent::Interaction(request),
+                        Ok(WireMessage::Event(event)) => BackendEvent::Activity(event),
+                        Err(error) => BackendEvent::Failure(error),
                     });
                 }
                 Ok(ReaderItem::Eof) => {}
@@ -483,12 +474,12 @@ impl RpcProcess {
         }
         let exit = self.exit_description();
         if self.pending.is_empty() {
-            ProcessItem::Failure(format!(
+            BackendEvent::Failure(format!(
                 "Pi closed stdout ({exit}). Stderr: {}",
                 self.stderr
             ))
         } else {
-            ProcessItem::Failure(format!(
+            BackendEvent::Failure(format!(
                 "Pi closed stdout with {} pending request(s), {exit}. Stderr: {}",
                 self.pending.len(),
                 self.stderr
@@ -664,7 +655,7 @@ mod tests {
         let (temp, command) = fake("normal")?;
         let mut rpc = RpcProcess::spawn(&command, temp.path(), None)?;
         assert!(
-            matches!(rpc.try_next(), Some(ProcessItem::Event(value)) if value["type"] == "agent_start")
+            matches!(rpc.try_next(), Some(BackendEvent::Activity(value)) if value["type"] == "agent_start")
         );
         let first = rpc.send_command(serde_json::json!({"type":"get_messages"}))?;
         let second = rpc.send_command(serde_json::json!({"type":"get_state"}))?;
@@ -675,7 +666,7 @@ mod tests {
         let mut responses = 0;
         let mut context_shape = false;
         while Instant::now() < deadline && responses < 3 {
-            if let Some(ProcessItem::Response(response)) = rpc.try_next() {
+            if let Some(BackendEvent::Response(response)) = rpc.try_next() {
                 responses += 1;
                 context_shape |= response.command == "get_session_stats"
                     && response
@@ -709,7 +700,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(2);
         let mut failure = String::new();
         while Instant::now() < deadline && failure.is_empty() {
-            if let Some(ProcessItem::Failure(error)) = rpc.try_next() {
+            if let Some(BackendEvent::Failure(error)) = rpc.try_next() {
                 failure = error;
             }
             thread::sleep(Duration::from_millis(5));
@@ -738,7 +729,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(2);
         let mut failure = String::new();
         while Instant::now() < deadline && failure.is_empty() {
-            if let Some(ProcessItem::Failure(error)) = rpc.try_next() {
+            if let Some(BackendEvent::Failure(error)) = rpc.try_next() {
                 failure = error;
             }
             thread::sleep(Duration::from_millis(5));
@@ -766,7 +757,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(2);
         let mut failure = String::new();
         while Instant::now() < deadline && failure.is_empty() {
-            if let Some(ProcessItem::Failure(error)) = rpc.try_next() {
+            if let Some(BackendEvent::Failure(error)) = rpc.try_next() {
                 failure = error;
             }
             thread::sleep(Duration::from_millis(5));

@@ -157,11 +157,7 @@ impl RuntimeOwner {
             message,
             images,
         };
-        match self
-            .process
-            .as_mut()
-            .map(|process| process.send_request(request))
-        {
+        match self.process.as_mut().map(|process| process.send(request)) {
             Some(Ok(id)) => {
                 self.pending_prompt_id = Some(id);
                 self.pending_outbox_id = outbox_id;

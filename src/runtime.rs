@@ -22,13 +22,13 @@ use serde_json::{Value, json};
 
 use crate::{
     agent_activity::AgentActivity,
-    backend::BackendRequest,
+    backend::{BackendEvent, BackendRequest, SessionTransport},
     conversation::{ConversationState, TranscriptItem, TranscriptKind},
     protocol::{
         ExtensionUiRequest, ExtensionUiResponse, Model, PromptImage, PromptMode, SessionState,
         SlashCommand,
     },
-    rpc_process::{ProcessCommand, ProcessItem, RpcProcess},
+    rpc_process::{ProcessCommand, RpcProcess},
     session_transfer::{self, TransferMember},
     session_watcher::{SessionWatchEvent, SessionWatcher},
     sessions::{
@@ -1369,7 +1369,7 @@ enum SnapshotChange {
 struct RuntimeOwner {
     project: PathBuf,
     process_command: ProcessCommand,
-    process: Option<RpcProcess>,
+    process: Option<Box<dyn SessionTransport>>,
     login_process_only: bool,
     snapshot: RuntimeSnapshot,
     owns_session_catalog: bool,
@@ -1524,7 +1524,7 @@ fn run(
         }
         owner.poll_deferred_session_refresh(Instant::now());
         let mut immediate_snapshot_change = false;
-        while let Some(item) = owner.process.as_mut().and_then(RpcProcess::try_next) {
+        while let Some(item) = owner.process.as_mut().and_then(|process| process.poll()) {
             match owner.apply_process_item(item) {
                 SnapshotChange::None => {}
                 SnapshotChange::Streaming => {
@@ -1560,7 +1560,7 @@ fn run(
         }
     }
     if let Some(mut process) = owner.process.take() {
-        let _ = process.terminate();
+        let _ = process.close();
     }
     let _ = owner.event_tx.send(RuntimeEvent::Stopped);
 }
@@ -1581,7 +1581,7 @@ impl RuntimeOwner {
             || (!self.pending_session_controls.is_empty() && self.snapshot.history_preview);
         let keep_preview = preserve_transcript && self.snapshot.history_preview;
         if let Some(mut old) = self.process.take() {
-            let _ = old.terminate();
+            let _ = old.close();
         }
         self.login_process_only = false;
         self.active_session = session.clone();
@@ -1639,7 +1639,7 @@ impl RuntimeOwner {
         };
         match process {
             Ok(process) => {
-                self.process = Some(process);
+                self.process = Some(Box::new(process));
                 let snapshot = self.active_snapshot_mut();
                 snapshot.connected = true;
                 snapshot.status = "Loading session".into();
@@ -1725,7 +1725,7 @@ impl RuntimeOwner {
             RuntimeCommand::SetPermissionLevel(level) => self.set_permission_level(level),
             RuntimeCommand::ExtensionResponse(response) => {
                 if let Some(process) = self.process.as_mut()
-                    && let Err(error) = process.send_extension_response(response)
+                    && let Err(error) = process.respond(response)
                 {
                     self.fail(error);
                 }
@@ -1782,7 +1782,7 @@ impl RuntimeOwner {
             thread::current(),
         ) {
             Ok(process) => {
-                self.process = Some(process);
+                self.process = Some(Box::new(process));
                 self.login_process_only = true;
                 true
             }
@@ -1796,7 +1796,7 @@ impl RuntimeOwner {
     fn finish_login_process(&mut self) {
         if self.login_process_only {
             if let Some(mut process) = self.process.take() {
-                let _ = process.terminate();
+                let _ = process.close();
             }
             self.login_process_only = false;
         }
@@ -1804,24 +1804,20 @@ impl RuntimeOwner {
 
     fn send(&mut self, request: BackendRequest) {
         let operation = request.operation();
-        match self
-            .process
-            .as_mut()
-            .map(|process| process.send_request(request))
-        {
+        match self.process.as_mut().map(|process| process.send(request)) {
             Some(Ok(_)) => {}
             Some(Err(error)) => self.fail(error),
             None => self.fail(format!("Cannot {operation}: Pi is not connected")),
         }
     }
 
-    fn apply_process_item(&mut self, item: ProcessItem) -> SnapshotChange {
+    fn apply_process_item(&mut self, item: BackendEvent) -> SnapshotChange {
         match item {
-            ProcessItem::Response(response) => {
+            BackendEvent::Response(response) => {
                 self.apply_response(response);
                 SnapshotChange::None
             }
-            ProcessItem::ExtensionUi(request) => {
+            BackendEvent::Interaction(request) => {
                 if let Some(result) = request.sandbox_mode_result() {
                     self.apply_sandbox_mode_result(result);
                     return SnapshotChange::None;
@@ -1848,7 +1844,7 @@ impl RuntimeOwner {
                         }
                     };
                     if let Some(process) = self.process.as_mut()
-                        && let Err(error) = process.send_extension_response(response)
+                        && let Err(error) = process.respond(response)
                     {
                         self.fail(error);
                     }
@@ -1861,7 +1857,7 @@ impl RuntimeOwner {
                 });
                 SnapshotChange::None
             }
-            ProcessItem::Event(event) => {
+            BackendEvent::Activity(event) => {
                 let event_type = event.get("type").and_then(Value::as_str);
                 let settled = event_type == Some("agent_settled");
                 let session_starting = event_type == Some("agent_start")
@@ -1923,7 +1919,7 @@ impl RuntimeOwner {
                     SnapshotChange::Immediate
                 }
             }
-            ProcessItem::Stderr(chunk) => {
+            BackendEvent::Stderr(chunk) => {
                 let previewing = self.parked_snapshot.is_some();
                 let snapshot = self.active_snapshot_mut();
                 snapshot.stderr.push_str(&chunk);
@@ -1936,7 +1932,7 @@ impl RuntimeOwner {
                     SnapshotChange::Streaming
                 }
             }
-            ProcessItem::Failure(error) => {
+            BackendEvent::Failure(error) => {
                 self.fail(error);
                 SnapshotChange::None
             }
@@ -2432,7 +2428,7 @@ impl RuntimeOwner {
         }
         self.pending_session_controls = PendingSessionControls::default();
         if let Some(mut process) = self.process.take() {
-            let _ = process.terminate();
+            let _ = process.close();
         }
         let previewing = self.parked_snapshot.is_some();
         let snapshot = self.active_snapshot_mut();
@@ -2790,7 +2786,7 @@ mod tests {
     fn drive_process_until(owner: &mut RuntimeOwner, ready: impl Fn(&RuntimeOwner) -> bool) {
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
-            while let Some(item) = owner.process.as_mut().and_then(RpcProcess::try_next) {
+            while let Some(item) = owner.process.as_mut().and_then(|process| process.poll()) {
                 owner.apply_process_item(item);
             }
             if ready(owner) {
@@ -3154,7 +3150,7 @@ mod tests {
         owner.snapshot.status = "Working".into();
         conversation_mut(&mut owner.snapshot).running = true;
 
-        let changed = owner.apply_process_item(ProcessItem::Event(json!({
+        let changed = owner.apply_process_item(BackendEvent::Activity(json!({
             "type": "turn_start"
         })));
 
@@ -3168,7 +3164,7 @@ mod tests {
         owner.owns_session_catalog = false;
         owner.active_session = Some(PathBuf::from("/sessions/new.jsonl"));
 
-        owner.apply_process_item(ProcessItem::Event(json!({"type":"agent_start"})));
+        owner.apply_process_item(BackendEvent::Activity(json!({"type":"agent_start"})));
 
         assert!(matches!(
             events.try_recv(),
@@ -3464,7 +3460,7 @@ mod tests {
         assert_eq!(owner.snapshot.selected_session, Some(session));
         assert!(owner.snapshot.connected);
         if let Some(mut process) = owner.process.take() {
-            process.terminate()?;
+            process.close()?;
         }
         Ok(())
     }
@@ -3481,7 +3477,7 @@ mod tests {
             None,
         )?;
         let (mut owner, events, _discovery) = owner_without_process(temp.path().to_path_buf());
-        owner.process = Some(process);
+        owner.process = Some(Box::new(process));
         owner.state = Some(StateStore::open_at(&temp.path().join("gui-state.sqlite3"))?);
 
         owner.send_prompt(
@@ -3572,7 +3568,7 @@ mod tests {
         assert!(owner.process.is_some());
         assert!(owner.snapshot.connected);
         if let Some(mut process) = owner.process.take() {
-            process.terminate()?;
+            process.close()?;
         }
         Ok(())
     }
@@ -4157,7 +4153,7 @@ mod tests {
         assert_eq!(owner.snapshot.conversation.items, transcript);
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline && owner.process.is_some() {
-            if let Some(item) = owner.process.as_mut().and_then(RpcProcess::try_next) {
+            if let Some(item) = owner.process.as_mut().and_then(|process| process.poll()) {
                 let _ = owner.apply_process_item(item);
             } else {
                 thread::sleep(Duration::from_millis(5));
@@ -4196,7 +4192,7 @@ mod tests {
 
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
-            while let Some(item) = owner.process.as_mut().and_then(RpcProcess::try_next) {
+            while let Some(item) = owner.process.as_mut().and_then(|process| process.poll()) {
                 owner.apply_process_item(item);
             }
             if owner.pending_session_controls.is_empty()
@@ -4469,7 +4465,7 @@ mod tests {
         let mut owner = RuntimeOwner {
             project: old_project.clone(),
             process_command,
-            process: Some(process),
+            process: Some(Box::new(process)),
             login_process_only: false,
             snapshot: RuntimeSnapshot {
                 connected: true,
@@ -4601,7 +4597,7 @@ mod tests {
 
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
-            while let Some(item) = owner.process.as_mut().and_then(RpcProcess::try_next) {
+            while let Some(item) = owner.process.as_mut().and_then(|process| process.poll()) {
                 owner.apply_process_item(item);
             }
             if owner.deferred_prompt.is_none() && owner.pending_prompt_id.is_none() {
@@ -4715,7 +4711,7 @@ mod tests {
         assert_eq!(visible.conversation.items[0].text, "history message");
 
         assert_eq!(
-            owner.apply_process_item(ProcessItem::Event(json!({
+            owner.apply_process_item(BackendEvent::Activity(json!({
                 "type": "message_start",
                 "message": {
                     "role": "assistant",
@@ -4739,7 +4735,7 @@ mod tests {
                 .all(|event| !matches!(event, RuntimeEvent::Snapshot { .. }))
         );
 
-        let changed = owner.apply_process_item(ProcessItem::Event(json!({
+        let changed = owner.apply_process_item(BackendEvent::Activity(json!({
             "type": "compaction_start",
             "reason": "test"
         })));

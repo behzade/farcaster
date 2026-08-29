@@ -2,7 +2,27 @@
 
 mod pi;
 
-use crate::protocol::{PromptImage, PromptMode};
+use serde_json::Value;
+
+use crate::protocol::{
+    ExtensionUiRequest, ExtensionUiResponse, PromptImage, PromptMode, RpcResponse,
+};
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum BackendEvent {
+    Response(RpcResponse),
+    Interaction(ExtensionUiRequest),
+    Activity(Value),
+    Stderr(String),
+    Failure(String),
+}
+
+pub(crate) trait SessionTransport {
+    fn send(&mut self, request: BackendRequest) -> Result<String, String>;
+    fn respond(&mut self, response: ExtensionUiResponse) -> Result<(), String>;
+    fn poll(&mut self) -> Option<BackendEvent>;
+    fn close(&mut self) -> Result<(), String>;
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum BackendRequest {

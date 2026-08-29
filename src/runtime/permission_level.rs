@@ -165,7 +165,7 @@ impl RuntimeOwner {
             "files": level.files.flag_value(),
             "network": level.network.flag_value(),
         });
-        let rpc_id = match process.send_request(BackendRequest::Prompt {
+        let rpc_id = match process.send(BackendRequest::Prompt {
             mode: PromptMode::Normal,
             message: format!("/sandbox-mode {request}"),
             images: Vec::new(),

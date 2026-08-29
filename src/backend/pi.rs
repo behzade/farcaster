@@ -2,8 +2,11 @@
 
 use serde_json::{Value, json};
 
-use super::BackendRequest;
-use crate::protocol::PromptMode;
+use super::{BackendEvent, BackendRequest, SessionTransport};
+use crate::{
+    protocol::{ExtensionUiResponse, PromptMode},
+    rpc_process::RpcProcess,
+};
 
 pub(super) fn encode_request(request: BackendRequest) -> Value {
     match request {
@@ -54,6 +57,24 @@ pub(super) fn encode_request(request: BackendRequest) -> Value {
         BackendRequest::SelectReasoning { level } => {
             json!({"type": "set_thinking_level", "level": level})
         }
+    }
+}
+
+impl SessionTransport for RpcProcess {
+    fn send(&mut self, request: BackendRequest) -> Result<String, String> {
+        self.send_request(request)
+    }
+
+    fn respond(&mut self, response: ExtensionUiResponse) -> Result<(), String> {
+        self.send_extension_response(response)
+    }
+
+    fn poll(&mut self) -> Option<BackendEvent> {
+        self.try_next()
+    }
+
+    fn close(&mut self) -> Result<(), String> {
+        self.terminate()
     }
 }
 

@@ -109,7 +109,7 @@ impl RuntimeOwner {
     ) {
         self.pending_session_controls = PendingSessionControls::default();
         if let Some(mut process) = self.process.take() {
-            let _ = process.terminate();
+            let _ = process.close();
         }
         self.active_session = None;
         self.parked_snapshot = None;
