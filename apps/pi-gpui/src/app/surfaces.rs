@@ -194,11 +194,7 @@ impl PiApp {
         self.post_render_focus = Some(PostRenderFocus::ActiveSurface(chat));
     }
 
-    pub(super) fn apply_post_render_focus(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(super) fn apply_post_render_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(request) = self.post_render_focus.take() else {
             return;
         };

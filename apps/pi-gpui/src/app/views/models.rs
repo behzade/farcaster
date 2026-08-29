@@ -8,9 +8,7 @@ use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
 use super::{super::PiApp, composer_footer::separator};
 use crate::{
     assets::AppIcon,
-    primitives::{
-        AppIconSize, ButtonTone, app_icon, dropdown_button, dropdown_content_button,
-    },
+    primitives::{AppIconSize, ButtonTone, app_icon, dropdown_button, dropdown_content_button},
     runtime::{FileAccessMode, NetworkAccessMode, PermissionLevel},
     theme::{MONO_FONT_FAMILY, THEME},
 };
@@ -263,7 +261,13 @@ mod tests {
         assert_eq!(file_access_icon(FileAccessMode::ReadOnly), AppIcon::Eye);
         assert_eq!(file_access_icon(FileAccessMode::Sandboxed), AppIcon::Shield);
         assert_eq!(file_access_icon(FileAccessMode::Full), AppIcon::ArrowsOut);
-        assert_eq!(network_access_icon(NetworkAccessMode::Sandboxed), AppIcon::Shield);
-        assert_eq!(network_access_icon(NetworkAccessMode::Full), AppIcon::ArrowsOut);
+        assert_eq!(
+            network_access_icon(NetworkAccessMode::Sandboxed),
+            AppIcon::Shield
+        );
+        assert_eq!(
+            network_access_icon(NetworkAccessMode::Full),
+            AppIcon::ArrowsOut
+        );
     }
 }

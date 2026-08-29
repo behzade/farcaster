@@ -1,5 +1,9 @@
 //! Single registry for application keybindings and keyboard-help metadata.
 
+#[cfg(not(target_os = "macos"))]
+use crate::app::APP_SHORTCUT_CONTEXT;
+#[cfg(target_os = "macos")]
+use crate::app::ShowActionPicker;
 use crate::app::{
     AbortRun, AddProject, CloseCurrent, ComposerCompletionNext, ComposerCompletionPrevious,
     ComposerEscape, ComposerHistoryNext, ComposerHistoryPrevious, DismissSurface, FocusComposer,
@@ -11,10 +15,6 @@ use crate::app::{
     WorkPreviousIssue,
 };
 use crate::app::{WORKGRAPH_KEY_CONTEXT, WORKGRAPH_NAV_KEY_CONTEXT};
-#[cfg(not(target_os = "macos"))]
-use crate::app::APP_SHORTCUT_CONTEXT;
-#[cfg(target_os = "macos")]
-use crate::app::ShowActionPicker;
 use crate::keyboard::CopySelection;
 use crate::transcript_list::TRANSCRIPT_SELECTION_KEY_CONTEXT;
 use gpui::{KeyBinding, Unbind};
@@ -248,11 +248,7 @@ pub(crate) fn registry() -> Vec<Shortcut> {
             label: "Next completion",
             keystroke: "ctrl-n",
             show_in_help: false,
-            binding: KeyBinding::new(
-                "ctrl-n",
-                ComposerCompletionNext,
-                Some("PiComposer > Input"),
-            ),
+            binding: KeyBinding::new("ctrl-n", ComposerCompletionNext, Some("PiComposer > Input")),
         },
         shortcut!("Workspace", "Chat and composer", "f1", FocusComposer, None),
         shortcut!("Workspace", "Open Neovim", "f2", ShowEditor, None),
@@ -338,11 +334,7 @@ pub(crate) fn registry() -> Vec<Shortcut> {
             label: "Keyboard shortcuts",
             keystroke: primary!("/"),
             show_in_help: false,
-            binding: KeyBinding::new(
-                primary!("/"),
-                ShowKeybindings,
-                PRIMARY_SHORTCUT_CONTEXT,
-            ),
+            binding: KeyBinding::new(primary!("/"), ShowKeybindings, PRIMARY_SHORTCUT_CONTEXT),
         },
         shortcut!(
             "Application",
@@ -492,9 +484,11 @@ mod tests {
             &contexts,
         );
 
-        assert!(bindings.first().is_some_and(|binding| {
-            binding.action().as_any().is::<ComposerCompletionNext>()
-        }));
+        assert!(
+            bindings.first().is_some_and(|binding| {
+                binding.action().as_any().is::<ComposerCompletionNext>()
+            })
+        );
     }
 
     #[cfg(target_os = "macos")]
