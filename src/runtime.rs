@@ -22,10 +22,11 @@ use serde_json::{Value, json};
 
 use crate::{
     agent_activity::AgentActivity,
+    backend::BackendRequest,
     conversation::{ConversationState, TranscriptItem, TranscriptKind},
     protocol::{
         ExtensionUiRequest, ExtensionUiResponse, Model, PromptImage, PromptMode, SessionState,
-        SlashCommand, command,
+        SlashCommand,
     },
     rpc_process::{ProcessCommand, ProcessItem, RpcProcess},
     session_transfer::{self, TransferMember},
@@ -1665,25 +1666,21 @@ impl RuntimeOwner {
                 allow_while_running,
             } => self.send_prompt(target, mode, message, images, allow_while_running),
             RuntimeCommand::DeliverQueued(prompt) => self.deliver_queued(prompt),
-            RuntimeCommand::Abort => self.send(command("abort")),
+            RuntimeCommand::Abort => self.send(BackendRequest::Abort),
             RuntimeCommand::Reload => self.reload(),
             RuntimeCommand::Compact {
                 custom_instructions,
-            } => self.send(optional_string_command(
-                "compact",
-                "customInstructions",
-                custom_instructions,
-            )),
-            RuntimeCommand::ExportHtml { output_path } => self.send(optional_string_command(
-                "export_html",
-                "outputPath",
-                output_path,
-            )),
+            } => self.send(BackendRequest::Compact {
+                instructions: custom_instructions,
+            }),
+            RuntimeCommand::ExportHtml { output_path } => {
+                self.send(BackendRequest::ExportHtml { output_path })
+            }
             RuntimeCommand::SetSessionName(name) => {
                 if let Some(state) = self.active_snapshot_mut().session.as_mut() {
                     state.session_name = Some(name.clone());
                 }
-                self.send(json!({"type": "set_session_name", "name": name}))
+                self.send(BackendRequest::Rename { name })
             }
             RuntimeCommand::RenameSession {
                 path,
@@ -1721,7 +1718,7 @@ impl RuntimeOwner {
             RuntimeCommand::SetModel { provider, model_id } => self.set_model(provider, model_id),
             RuntimeCommand::Login(provider) => {
                 if self.ensure_login_process() {
-                    self.send(optional_string_command("login", "provider", provider));
+                    self.send(BackendRequest::Login { provider });
                 }
             }
             RuntimeCommand::SetThinking(level) => self.set_thinking(level),
@@ -1805,20 +1802,16 @@ impl RuntimeOwner {
         }
     }
 
-    fn send(&mut self, command: Value) {
-        let command_name = command
-            .get("type")
-            .and_then(Value::as_str)
-            .unwrap_or("command")
-            .to_owned();
+    fn send(&mut self, request: BackendRequest) {
+        let operation = request.operation();
         match self
             .process
             .as_mut()
-            .map(|process| process.send_command(command))
+            .map(|process| process.send_request(request))
         {
             Some(Ok(_)) => {}
             Some(Err(error)) => self.fail(error),
-            None => self.fail(format!("Cannot send {command_name}: Pi is not connected")),
+            None => self.fail(format!("Cannot {operation}: Pi is not connected")),
         }
     }
 
@@ -1905,18 +1898,18 @@ impl RuntimeOwner {
                 }
                 let should_publish = (!previewing && snapshot_changed) || live_status_changed;
                 if session_starting {
-                    self.send(command("get_state"));
+                    self.send(BackendRequest::LoadState);
                 }
                 if event_type == Some("agent_start") {
                     self.refresh_sessions();
                 }
                 if event_type == Some("session_info_changed") {
-                    self.send(command("get_state"));
+                    self.send(BackendRequest::LoadState);
                     self.refresh_sessions();
                 }
                 if settled {
-                    self.send(command("get_state"));
-                    self.send(command("get_session_stats"));
+                    self.send(BackendRequest::LoadState);
+                    self.send(BackendRequest::LoadUsage);
                     self.refresh_sessions();
                 }
                 if !should_publish {
@@ -2324,11 +2317,11 @@ impl RuntimeOwner {
                 {
                     state.model = Some(model);
                 }
-                self.send(command("get_available_thinking_levels"));
-                self.send(command("get_state"));
+                self.send(BackendRequest::ListReasoningLevels);
+                self.send(BackendRequest::LoadState);
             }
             "set_thinking_level" => {
-                self.send(command("get_state"));
+                self.send(BackendRequest::LoadState);
             }
             "new_session"
                 if response.data.get("cancelled").and_then(Value::as_bool) != Some(true) =>
@@ -2350,15 +2343,15 @@ impl RuntimeOwner {
             }
             "prompt" | "steer" | "follow_up" => {
                 self.active_snapshot_mut().status = "Accepted".into();
-                self.send(command("get_state"));
+                self.send(BackendRequest::LoadState);
             }
             "abort" => self.active_snapshot_mut().status = "Stopping".into(),
             "compact" | "set_auto_compaction" | "set_auto_retry" | "abort_retry" => {
-                self.send(command("get_state"))
+                self.send(BackendRequest::LoadState)
             }
             "set_session_name" => {
                 self.active_snapshot_mut().status = "Session named".into();
-                self.send(command("get_state"));
+                self.send(BackendRequest::LoadState);
                 self.refresh_sessions();
             }
             "export_html" => {
@@ -2524,14 +2517,6 @@ fn reset_snapshot_for_live_session(snapshot: &mut RuntimeSnapshot, status: Strin
     };
 }
 
-fn optional_string_command(kind: &str, field: &str, value: Option<String>) -> Value {
-    let mut command = serde_json::Map::from_iter([("type".into(), Value::String(kind.into()))]);
-    if let Some(value) = value {
-        command.insert(field.into(), Value::String(value));
-    }
-    Value::Object(command)
-}
-
 fn failure_details(error: &str) -> String {
     let cleaned = error
         .chars()
@@ -2569,15 +2554,15 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
     truncated
 }
 
-fn startup_commands() -> [Value; 7] {
+fn startup_commands() -> [BackendRequest; 7] {
     [
-        json!({"type":"set_steering_mode","mode":"all"}),
-        command("get_state"),
-        command("get_entries"),
-        command("get_session_stats"),
-        command("get_available_models"),
-        command("get_available_thinking_levels"),
-        command("get_commands"),
+        BackendRequest::ConfigureSteering,
+        BackendRequest::LoadState,
+        BackendRequest::LoadHistory,
+        BackendRequest::LoadUsage,
+        BackendRequest::ListModels,
+        BackendRequest::ListReasoningLevels,
+        BackendRequest::ListCommands,
     ]
 }
 
@@ -3432,26 +3417,6 @@ mod tests {
     }
 
     #[test]
-    fn optional_builtin_rpc_arguments_are_omitted_when_absent() {
-        assert_eq!(
-            optional_string_command("compact", "customInstructions", None),
-            json!({"type":"compact"})
-        );
-        assert_eq!(
-            optional_string_command(
-                "compact",
-                "customInstructions",
-                Some("focus on code".into()),
-            ),
-            json!({"type":"compact","customInstructions":"focus on code"})
-        );
-        assert_eq!(
-            optional_string_command("export_html", "outputPath", Some("out.html".into())),
-            json!({"type":"export_html","outputPath":"out.html"})
-        );
-    }
-
-    #[test]
     fn streaming_accepts_queued_messages_and_exact_extension_commands() {
         assert!(!can_send_prompt(PromptMode::Normal, true, false));
         assert!(can_send_prompt(PromptMode::Steer, true, false));
@@ -4099,10 +4064,7 @@ mod tests {
 
     #[test]
     fn startup_delivers_all_composer_steers_at_one_turn_boundary() {
-        assert_eq!(
-            startup_commands()[0],
-            json!({"type":"set_steering_mode","mode":"all"})
-        );
+        assert_eq!(startup_commands()[0], BackendRequest::ConfigureSteering);
     }
 
     #[test]

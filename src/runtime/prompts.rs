@@ -3,7 +3,8 @@
 use std::sync::Arc;
 
 use crate::{
-    protocol::{PromptImage, PromptMode, prompt_command},
+    backend::BackendRequest,
+    protocol::{PromptImage, PromptMode},
     state::QueuedPrompt,
 };
 
@@ -151,11 +152,15 @@ impl RuntimeOwner {
             self.reject_prompt(&target, error);
             return;
         }
-        let command = prompt_command(mode, message, images);
+        let request = BackendRequest::Prompt {
+            mode,
+            message,
+            images,
+        };
         match self
             .process
             .as_mut()
-            .map(|process| process.send_command(command))
+            .map(|process| process.send_request(request))
         {
             Some(Ok(id)) => {
                 self.pending_prompt_id = Some(id);

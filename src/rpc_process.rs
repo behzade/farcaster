@@ -13,6 +13,7 @@ use std::{
 use serde_json::Value;
 
 use crate::{
+    backend::{BackendRequest, encode_pi_request},
     framing::{JsonlFramer, encode_json_line},
     protocol::{ExtensionUiResponse, RpcResponse, WireMessage, parse_frame},
     runtime::PermissionLevel,
@@ -230,7 +231,11 @@ impl RpcProcess {
         Ok(rpc)
     }
 
-    pub(crate) fn send_command(&mut self, mut command: Value) -> Result<String, String> {
+    pub(crate) fn send_request(&mut self, request: BackendRequest) -> Result<String, String> {
+        self.send_command(encode_pi_request(request))
+    }
+
+    fn send_command(&mut self, mut command: Value) -> Result<String, String> {
         let object = command
             .as_object_mut()
             .ok_or_else(|| "RPC command must be an object".to_owned())?;
@@ -260,10 +265,9 @@ impl RpcProcess {
     ) -> Result<(), String> {
         let mut rpc = Self::spawn(command, project, Some(session))?;
         let result = (|| {
-            let id = rpc.send_command(serde_json::json!({
-                "type": "set_session_name",
-                "name": name,
-            }))?;
+            let id = rpc.send_request(BackendRequest::Rename {
+                name: name.to_owned(),
+            })?;
             let deadline = Instant::now() + Duration::from_secs(15);
             while Instant::now() < deadline {
                 match rpc.try_next() {
@@ -376,7 +380,7 @@ impl RpcProcess {
     }
 
     fn readiness_handshake(&mut self, timeout: Duration) -> Result<(), String> {
-        let id = self.send_command(serde_json::json!({"type":"get_state"}))?;
+        let id = self.send_request(BackendRequest::LoadState)?;
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
             match self.incoming.recv_timeout(Duration::from_millis(50)) {

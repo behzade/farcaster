@@ -165,11 +165,11 @@ impl RuntimeOwner {
             "files": level.files.flag_value(),
             "network": level.network.flag_value(),
         });
-        let command = json!({
-            "type": "prompt",
-            "message": format!("/sandbox-mode {request}"),
-        });
-        let rpc_id = match process.send_command(command) {
+        let rpc_id = match process.send_request(BackendRequest::Prompt {
+            mode: PromptMode::Normal,
+            message: format!("/sandbox-mode {request}"),
+            images: Vec::new(),
+        }) {
             Ok(id) => id,
             Err(error) => {
                 self.fail(error);

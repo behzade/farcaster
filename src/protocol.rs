@@ -1,7 +1,9 @@
 //! Pi RPC wire DTOs. Unknown events and fields stay available as JSON values.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 
 pub(crate) const WORKGRAPH_RPC_TITLE: &str = "\u{1f}farcaster-workgraph\u{1f}";
 const LEGACY_WORKGRAPH_RPC_TITLE: &str = "\u{1f}pi-gpui-workgraph\u{1f}";
@@ -286,22 +288,6 @@ pub(crate) enum ExtensionUiResponse {
     Confirmed { id: String, confirmed: bool },
     #[serde(rename = "extension_ui_response")]
     Cancelled { id: String, cancelled: bool },
-}
-
-pub(crate) fn command(command_type: &str) -> Value {
-    json!({ "type": command_type })
-}
-
-pub(crate) fn prompt_command(mode: PromptMode, message: String, images: Vec<PromptImage>) -> Value {
-    let mut command = match mode {
-        PromptMode::Normal => json!({"type":"prompt", "message":message}),
-        PromptMode::Steer => json!({"type":"steer", "message":message}),
-        PromptMode::FollowUp => json!({"type":"follow_up", "message":message}),
-    };
-    if !images.is_empty() {
-        command["images"] = json!(images);
-    }
-    command
 }
 
 pub(crate) fn parse_frame(frame: &[u8]) -> Result<WireMessage, String> {
@@ -706,51 +692,6 @@ mod tests {
                 source: SlashCommandSource::Extension,
             }
         );
-    }
-
-    #[test]
-    fn composer_commands_match_the_rpc_contract() {
-        assert_eq!(
-            prompt_command(PromptMode::Normal, "n".into(), Vec::new()),
-            json!({"type":"prompt","message":"n"})
-        );
-        assert_eq!(
-            prompt_command(PromptMode::Steer, "s".into(), Vec::new()),
-            json!({"type":"steer","message":"s"})
-        );
-        assert_eq!(
-            prompt_command(PromptMode::FollowUp, "f".into(), Vec::new()),
-            json!({"type":"follow_up","message":"f"})
-        );
-        assert_eq!(
-            prompt_command(
-                PromptMode::Normal,
-                "image".into(),
-                vec![PromptImage::new("aGVsbG8=".into(), "image/png".into())],
-            ),
-            json!({
-                "type":"prompt",
-                "message":"image",
-                "images":[{"type":"image","data":"aGVsbG8=","mimeType":"image/png"}]
-            })
-        );
-        for kind in [
-            "abort",
-            "new_session",
-            "get_state",
-            "get_messages",
-            "get_entries",
-            "get_session_stats",
-            "get_available_models",
-            "get_available_thinking_levels",
-            "compact",
-            "set_auto_compaction",
-            "set_auto_retry",
-            "abort_retry",
-            "get_commands",
-        ] {
-            assert_eq!(command(kind), json!({"type":kind}));
-        }
     }
 
     #[test]

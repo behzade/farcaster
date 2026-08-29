@@ -47,16 +47,10 @@ impl SessionControl {
         }
     }
 
-    fn into_command(self) -> Value {
+    fn into_request(self) -> BackendRequest {
         match self {
-            Self::Model(provider, model_id) => json!({
-                "type": "set_model",
-                "provider": provider,
-                "modelId": model_id,
-            }),
-            Self::Thinking(level) => {
-                json!({"type": "set_thinking_level", "level": level})
-            }
+            Self::Model(provider, model_id) => BackendRequest::SelectModel { provider, model_id },
+            Self::Thinking(level) => BackendRequest::SelectReasoning { level },
         }
     }
 }
@@ -72,7 +66,7 @@ impl RuntimeOwner {
 
     fn send_session_control(&mut self, control: SessionControl) {
         if !self.snapshot.history_preview && self.process.is_some() {
-            self.send(control.into_command());
+            self.send(control.into_request());
             return;
         }
         let Some(session) = self.snapshot.selected_session.clone() else {
@@ -103,7 +97,7 @@ impl RuntimeOwner {
             if self.process.is_none() {
                 break;
             }
-            self.send(control.into_command());
+            self.send(control.into_request());
         }
     }
 
@@ -154,17 +148,22 @@ mod tests {
             "new-model".into(),
         ));
 
-        let commands = pending
+        let requests = pending
             .take()
             .into_iter()
-            .map(SessionControl::into_command)
+            .map(SessionControl::into_request)
             .collect::<Vec<_>>();
 
         assert_eq!(
-            commands,
+            requests,
             vec![
-                json!({"type":"set_model","provider":"new-provider","modelId":"new-model"}),
-                json!({"type":"set_thinking_level","level":"high"}),
+                BackendRequest::SelectModel {
+                    provider: "new-provider".into(),
+                    model_id: "new-model".into(),
+                },
+                BackendRequest::SelectReasoning {
+                    level: "high".into(),
+                },
             ]
         );
     }

@@ -2,6 +2,7 @@ mod agent_activity;
 mod app;
 mod app_paths;
 mod assets;
+mod backend;
 mod composer_sessions;
 #[cfg(test)]
 mod composer_sessions_test;
