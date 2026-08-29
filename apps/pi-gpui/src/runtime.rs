@@ -83,6 +83,10 @@ pub(crate) enum RuntimeCommand {
         id: String,
         project: PathBuf,
     },
+    ForkSession {
+        path: PathBuf,
+        project: PathBuf,
+    },
     ResumeDraft {
         id: String,
         project: PathBuf,
@@ -1172,6 +1176,9 @@ fn command_target(command: &RuntimeCommand) -> Option<(String, PathBuf)> {
         | RuntimeCommand::ResumeDraft { id, project } => {
             Some((format!("draft:{id}"), project.clone()))
         }
+        RuntimeCommand::ForkSession { path, project } => {
+            Some((format!("fork:{}", path.display()), project.clone()))
+        }
         RuntimeCommand::SelectSession { path, project }
         | RuntimeCommand::RestartSession { path, project } => {
             Some((format!("session:{}", path.display()), project.clone()))
@@ -1559,6 +1566,14 @@ fn run(
 
 impl RuntimeOwner {
     fn start_process(&mut self, session: Option<PathBuf>) {
+        self.start_process_from(session, None);
+    }
+
+    fn start_fork_process(&mut self, source: PathBuf) {
+        self.start_process_from(None, Some(source));
+    }
+
+    fn start_process_from(&mut self, session: Option<PathBuf>, fork: Option<PathBuf>) {
         self.invalidate_history_loads();
         self.process_generation = self.process_generation.saturating_add(1);
         let preserve_transcript = self.deferred_prompt.is_some()
@@ -1578,10 +1593,14 @@ impl RuntimeOwner {
             .permission_changes
             .take_requested_level(self.process_command.permission_level);
         self.transcript_changed_from = Some(0);
-        let status = session.as_ref().map_or_else(
-            || "Starting new session".into(),
-            |_| "Resuming session".into(),
-        );
+        let status = if fork.is_some() {
+            "Forking session".into()
+        } else {
+            session.as_ref().map_or_else(
+                || "Starting new session".into(),
+                |_| "Resuming session".into(),
+            )
+        };
         if keep_preview {
             let mut loading = RuntimeSnapshot {
                 auto_retry: self.snapshot.auto_retry,
@@ -1602,12 +1621,22 @@ impl RuntimeOwner {
             preserve_submission: preserve_transcript,
         });
         self.publish();
-        match RpcProcess::spawn_with_waker(
-            &self.process_command,
-            &self.project,
-            session.as_deref(),
-            thread::current(),
-        ) {
+        let process = if let Some(source) = fork.as_deref() {
+            RpcProcess::spawn_fork_with_waker(
+                &self.process_command,
+                &self.project,
+                source,
+                thread::current(),
+            )
+        } else {
+            RpcProcess::spawn_with_waker(
+                &self.process_command,
+                &self.project,
+                session.as_deref(),
+                thread::current(),
+            )
+        };
+        match process {
             Ok(process) => {
                 self.process = Some(process);
                 let snapshot = self.active_snapshot_mut();
@@ -1675,6 +1704,10 @@ impl RuntimeOwner {
             RuntimeCommand::NewSession { project, .. } => {
                 self.project = project;
                 self.start_process(None);
+            }
+            RuntimeCommand::ForkSession { path, project } => {
+                self.project = project;
+                self.start_fork_process(path);
             }
             RuntimeCommand::ResumeDraft { project, .. } => self.resume_draft(project),
             RuntimeCommand::SelectSession { path, project } => self.select_history(path, project),

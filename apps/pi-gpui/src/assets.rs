@@ -4,7 +4,7 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 43] = [
+const ICON_PATHS: [&str; 44] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrows-clockwise.svg",
     "icons/phosphor/arrows-out.svg",
@@ -26,6 +26,7 @@ const ICON_PATHS: [&str; 43] = [
     "icons/phosphor/eye-slash.svg",
     "icons/phosphor/folder.svg",
     "icons/phosphor/folder-plus.svg",
+    "icons/phosphor/git-fork.svg",
     "icons/phosphor/globe.svg",
     "icons/phosphor/hammer.svg",
     "icons/phosphor/hourglass.svg",
@@ -136,6 +137,9 @@ impl AssetSource for AppAssets {
             "icons/phosphor/globe.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/globe.svg"))
             }
+            "icons/phosphor/git-fork.svg" => {
+                Some(include_bytes!("../assets/phosphor-icons/git-fork.svg"))
+            }
             "icons/phosphor/git-branch.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/git-branch.svg"))
             }
@@ -219,6 +223,7 @@ pub(crate) enum AppIcon {
     Eye,
     Folder,
     FolderPlus,
+    GitFork,
     Globe,
     Hammer,
     Hourglass,
@@ -259,6 +264,7 @@ impl IconNamed for AppIcon {
             Self::Eye => "eye",
             Self::Folder => "folder",
             Self::FolderPlus => "folder-plus",
+            Self::GitFork => "git-fork",
             Self::Globe => "globe",
             Self::Hammer => "hammer",
             Self::Hourglass => "hourglass",
@@ -332,6 +338,7 @@ mod tests {
             AppIcon::Eye,
             AppIcon::Folder,
             AppIcon::FolderPlus,
+            AppIcon::GitFork,
             AppIcon::Globe,
             AppIcon::Hammer,
             AppIcon::Hourglass,

@@ -6,14 +6,16 @@ use std::{
 };
 
 use gpui::{
-    AnyElement, AppContext as _, Context, CursorStyle, Entity, FontWeight, InteractiveElement as _,
-    IntoElement, MouseButton, ParentElement as _, Pixels, Render, Rgba, Role,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div,
-    prelude::FluentBuilder as _, px,
+    AnyElement, AppContext as _, Context, CursorStyle, Div, Entity, FontWeight,
+    InteractiveElement as _, Interactivity, IntoElement, MouseButton, ParentElement as _, Pixels,
+    Render, RenderOnce, Rgba, Role, Stateful, StatefulInteractiveElement as _, StyleRefinement,
+    Styled as _, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
+    Selectable, StyledExt as _,
     input::{Escape, Input, InputState},
     kbd::Kbd,
+    menu::{DropdownMenu as _, PopupMenuItem},
     tooltip::Tooltip,
 };
 
@@ -29,6 +31,56 @@ use crate::{
     projects::DraftSession,
     theme::THEME,
 };
+
+#[derive(IntoElement)]
+struct SessionContextTrigger {
+    base: Stateful<Div>,
+    selected: bool,
+    style: StyleRefinement,
+}
+
+impl SessionContextTrigger {
+    fn new(id: impl Into<gpui::ElementId>, child: AnyElement) -> Self {
+        Self {
+            base: div().id(id).size_full().child(child),
+            selected: false,
+            style: StyleRefinement::default(),
+        }
+    }
+}
+
+impl Selectable for SessionContextTrigger {
+    fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
+    }
+
+    fn is_selected(&self) -> bool {
+        self.selected
+    }
+}
+
+impl gpui::Styled for SessionContextTrigger {
+    fn style(&mut self) -> &mut StyleRefinement {
+        &mut self.style
+    }
+}
+
+impl gpui::InteractiveElement for SessionContextTrigger {
+    fn interactivity(&mut self) -> &mut Interactivity {
+        self.base.interactivity()
+    }
+}
+
+impl gpui::StatefulInteractiveElement for SessionContextTrigger {}
+
+impl RenderOnce for SessionContextTrigger {
+    fn render(self, _: &mut Window, _: &mut gpui::App) -> impl IntoElement {
+        self.base.refine_style(&self.style)
+    }
+}
+
+impl gpui_component::menu::DropdownMenu for SessionContextTrigger {}
 
 #[derive(Clone)]
 pub(super) struct DraggedSession {
@@ -707,6 +759,15 @@ pub(super) fn session_row_with_height(
                         ),
                 ),
         );
+    let context_menu = session_context_menu(
+        &session.id,
+        session.path.clone(),
+        session.project.clone(),
+        target_kind,
+        entity,
+        row.into_any_element(),
+    );
+
     session_hover_panel(
         hover_id,
         hover_details,
@@ -714,9 +775,98 @@ pub(super) fn session_row_with_height(
             .h(row_height)
             .w_full()
             .px(THEME.space.sm)
-            .child(row)
+            .child(context_menu)
             .into_any_element(),
     )
+}
+
+fn session_context_menu(
+    id: &str,
+    path: PathBuf,
+    project: PathBuf,
+    kind: SessionRailKind,
+    entity: WeakEntity<PiApp>,
+    row: AnyElement,
+) -> AnyElement {
+    SessionContextTrigger::new(format!("session-context-trigger-{id}"), row)
+        .dropdown_menu_with_anchor(gpui::Anchor::TopLeft, move |menu, _, _| {
+            let fork_path = path.clone();
+            let fork_project = project.clone();
+            let fork_entity = entity.clone();
+            let mut menu = menu.min_w(px(190.0)).item(
+                PopupMenuItem::new("Fork session")
+                    .icon(AppIcon::GitFork)
+                    .on_click(move |_, window, cx| {
+                        let _ = fork_entity.update(cx, |this, cx| {
+                            this.fork_session(fork_path.clone(), fork_project.clone(), window, cx);
+                        });
+                    }),
+            );
+
+            match kind {
+                SessionRailKind::Project => {
+                    let review_path = path.clone();
+                    let review_entity = entity.clone();
+                    menu = menu.separator().item(
+                        PopupMenuItem::new("Move to review")
+                            .icon(AppIcon::Eye)
+                            .on_click(move |_, _, cx| {
+                                let _ = review_entity.update(cx, |this, cx| {
+                                    this.set_session_review(review_path.clone(), cx);
+                                });
+                            }),
+                    );
+                }
+                SessionRailKind::Archived => {
+                    let restore_path = path.clone();
+                    let restore_entity = entity.clone();
+                    menu = menu.separator().item(
+                        PopupMenuItem::new("Restore to review")
+                            .icon(AppIcon::ArrowCounterClockwise)
+                            .on_click(move |_, _, cx| {
+                                let _ = restore_entity.update(cx, |this, cx| {
+                                    this.set_session_review(restore_path.clone(), cx);
+                                });
+                            }),
+                    );
+                }
+                SessionRailKind::Review => {}
+            }
+
+            if kind != SessionRailKind::Archived {
+                let archive_path = path.clone();
+                let archive_entity = entity.clone();
+                menu = menu.item(
+                    PopupMenuItem::new("Archive")
+                        .icon(AppIcon::Archive)
+                        .on_click(move |_, window, cx| {
+                            let _ = archive_entity.update(cx, |this, cx| {
+                                this.request_session_archive(
+                                    archive_path.clone(),
+                                    true,
+                                    window,
+                                    cx,
+                                );
+                            });
+                        }),
+                );
+            } else {
+                let delete_path = path.clone();
+                let delete_entity = entity.clone();
+                menu = menu.separator().item(
+                    PopupMenuItem::new("Delete permanently")
+                        .icon(AppIcon::Trash)
+                        .on_click(move |_, window, cx| {
+                            let _ = delete_entity.update(cx, |this, cx| {
+                                this.request_session_delete(delete_path.clone(), window, cx);
+                            });
+                        }),
+                );
+            }
+            menu
+        })
+        .mouse_button(MouseButton::Right)
+        .into_any_element()
 }
 
 pub(super) fn session_accessible_label(title: &str, state: &str, age: &str) -> String {

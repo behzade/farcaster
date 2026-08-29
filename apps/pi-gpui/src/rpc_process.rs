@@ -117,6 +117,36 @@ enum ReaderItem {
     Eof,
 }
 
+enum SessionLaunch<'a> {
+    New,
+    Resume(&'a Path),
+    Fork(&'a Path),
+}
+
+fn rpc_command(
+    command: &ProcessCommand,
+    project: &Path,
+    launch: SessionLaunch<'_>,
+) -> Result<Command, String> {
+    let mut process = command.command(project)?;
+    process
+        .args(["--mode", "rpc"])
+        .env("PI_GPUI_NATIVE_NOTIFICATIONS", "1");
+    if let Some(extension) = companion_extension() {
+        process.arg("--extension").arg(extension);
+    }
+    match launch {
+        SessionLaunch::New => {}
+        SessionLaunch::Resume(session) => {
+            process.arg("--session").arg(session);
+        }
+        SessionLaunch::Fork(source) => {
+            process.arg("--fork").arg(source);
+        }
+    }
+    Ok(process)
+}
+
 pub(crate) struct RpcProcess {
     child: Arc<Mutex<Child>>,
     stdin: Arc<Mutex<ChildStdin>>,
@@ -133,7 +163,8 @@ impl RpcProcess {
         project: &Path,
         session: Option<&Path>,
     ) -> Result<Self, String> {
-        Self::spawn_inner(command, project, session, None)
+        let launch = session.map_or(SessionLaunch::New, SessionLaunch::Resume);
+        Self::spawn_inner(command, project, launch, None)
     }
 
     pub(crate) fn spawn_with_waker(
@@ -142,26 +173,26 @@ impl RpcProcess {
         session: Option<&Path>,
         wake: thread::Thread,
     ) -> Result<Self, String> {
-        Self::spawn_inner(command, project, session, Some(wake))
+        let launch = session.map_or(SessionLaunch::New, SessionLaunch::Resume);
+        Self::spawn_inner(command, project, launch, Some(wake))
+    }
+
+    pub(crate) fn spawn_fork_with_waker(
+        command: &ProcessCommand,
+        project: &Path,
+        source: &Path,
+        wake: thread::Thread,
+    ) -> Result<Self, String> {
+        Self::spawn_inner(command, project, SessionLaunch::Fork(source), Some(wake))
     }
 
     fn spawn_inner(
         command: &ProcessCommand,
         project: &Path,
-        session: Option<&Path>,
+        launch: SessionLaunch<'_>,
         wake: Option<thread::Thread>,
     ) -> Result<Self, String> {
-        let mut process = command.command(project)?;
-        process
-            .args(["--mode", "rpc"])
-            .env("PI_GPUI_NATIVE_NOTIFICATIONS", "1");
-        if let Some(extension) = companion_extension() {
-            process.arg("--extension").arg(extension);
-        }
-        if let Some(session) = session {
-            process.arg("--session").arg(session);
-        }
-        let mut child = process
+        let mut child = rpc_command(command, project, launch)?
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -574,6 +605,23 @@ mod tests {
             fs::canonicalize(temp.path())?,
         );
         rpc.terminate()?;
+        Ok(())
+    }
+
+    #[test]
+    fn fork_process_passes_the_source_session_to_pi() -> TestResult {
+        let source = Path::new("/sessions/source session.jsonl");
+        let process = rpc_command(
+            &ProcessCommand::default(),
+            Path::new("/project"),
+            SessionLaunch::Fork(source),
+        )?;
+        let arguments = process.get_args().collect::<Vec<_>>();
+        assert!(arguments.windows(2).any(|pair| pair == ["--mode", "rpc"]));
+        assert_eq!(
+            arguments.get(arguments.len().saturating_sub(2)..),
+            Some([std::ffi::OsStr::new("--fork"), source.as_os_str()].as_slice())
+        );
         Ok(())
     }
 

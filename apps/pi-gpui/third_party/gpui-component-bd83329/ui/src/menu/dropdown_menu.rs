@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use gpui::{
     Anchor, Context, DismissEvent, ElementId, Entity, Focusable, InteractiveElement, IntoElement,
-    RenderOnce, SharedString, StyleRefinement, Styled, Window,
+    MouseButton, RenderOnce, SharedString, StyleRefinement, Styled, Window,
 };
 
 use crate::{Selectable, button::Button, menu::PopupMenu, popover::Popover};
@@ -38,6 +38,7 @@ pub struct DropdownMenuPopover<T: Selectable + IntoElement + 'static> {
     style: StyleRefinement,
     anchor: Anchor,
     trigger: T,
+    mouse_button: MouseButton,
     builder: Rc<dyn Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu>,
 }
 
@@ -56,6 +57,7 @@ where
             style: StyleRefinement::default(),
             anchor: anchor.into(),
             trigger,
+            mouse_button: MouseButton::Left,
             builder: Rc::new(builder),
         }
     }
@@ -63,6 +65,12 @@ where
     /// Set the anchor corner for the dropdown menu popover.
     pub fn anchor(mut self, anchor: impl Into<Anchor>) -> Self {
         self.anchor = anchor.into();
+        self
+    }
+
+    /// Set the mouse button that opens the menu.
+    pub fn mouse_button(mut self, mouse_button: MouseButton) -> Self {
+        self.mouse_button = mouse_button;
         self
     }
 
@@ -90,6 +98,7 @@ where
         Popover::new(SharedString::from(format!("popover:{}", self.id)))
             .appearance(false)
             .overlay_closable(false)
+            .mouse_button(self.mouse_button)
             .trigger(self.trigger)
             .trigger_style(self.style)
             .anchor(self.anchor)
