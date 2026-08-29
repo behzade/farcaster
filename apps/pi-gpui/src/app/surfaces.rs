@@ -4,7 +4,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use gpui::{Context, FocusHandle, Image, Window};
 
-use super::{AppSurface, ImagePreview, PiApp};
+use super::{AppSurface, ImagePreview, PiApp, PostRenderFocus};
 use crate::{
     protocol::{ExtensionUiRequest, PromptMode},
     runtime::RuntimeCommand,
@@ -181,26 +181,55 @@ impl PiApp {
         cx: &mut Context<Self>,
     ) {
         self.set_surface(surface, cx);
-        self.pending_focus_after_render = None;
         if self.native_workspace_covered_by_overlay() {
             self.cover_native_workspace_surface(cx);
         } else {
             self.restore_active_native_workspace_surface(window, cx);
-            match surface {
-                AppSurface::Editor => {
-                    if let Some(editor) = self.editor.as_ref() {
-                        editor.update(cx, |editor, cx| editor.focus(window, cx));
-                    }
-                }
-                AppSurface::Terminal => {
-                    if let Some(terminal) = self.terminal.as_ref() {
-                        terminal.update(cx, |terminal, cx| terminal.focus(window, cx));
-                    }
-                }
-                AppSurface::Chat | AppSurface::Work => {}
-            }
+            self.request_active_surface_focus(None);
         }
         cx.notify();
+    }
+
+    fn request_active_surface_focus(&mut self, chat: Option<FocusHandle>) {
+        self.post_render_focus = Some(PostRenderFocus::ActiveSurface(chat));
+    }
+
+    pub(super) fn apply_post_render_focus(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(request) = self.post_render_focus.take() else {
+            return;
+        };
+        match request {
+            PostRenderFocus::ImagePreview => {
+                if self.image_preview.is_some() {
+                    self.image_preview_focus.focus(window, cx);
+                }
+            }
+            PostRenderFocus::ActiveSurface(chat) => {
+                if self.native_workspace_covered_by_overlay() {
+                    return;
+                }
+                match self.surface {
+                    AppSurface::Chat => chat
+                        .unwrap_or_else(|| self.composer_focus.clone())
+                        .focus(window, cx),
+                    AppSurface::Editor => {
+                        if let Some(editor) = self.editor.as_ref() {
+                            editor.update(cx, |editor, cx| editor.focus(window, cx));
+                        }
+                    }
+                    AppSurface::Terminal => {
+                        if let Some(terminal) = self.terminal.as_ref() {
+                            terminal.update(cx, |terminal, cx| terminal.focus(window, cx));
+                        }
+                    }
+                    AppSurface::Work => {}
+                }
+            }
+        }
     }
 
     pub(super) fn native_workspace_modal_active(&self) -> bool {
@@ -375,7 +404,7 @@ impl PiApp {
     ) -> bool {
         self.hide_native_workspace_surfaces(cx);
         let changed = self.set_surface(AppSurface::Chat, cx);
-        self.pending_focus_after_render = Some(focus);
+        self.request_active_surface_focus(Some(focus));
         cx.notify();
         changed
     }
@@ -518,7 +547,7 @@ impl PiApp {
             index,
             total,
         });
-        self.pending_focus_after_render = Some(self.image_preview_focus.clone());
+        self.post_render_focus = Some(PostRenderFocus::ImagePreview);
         cx.notify();
     }
 

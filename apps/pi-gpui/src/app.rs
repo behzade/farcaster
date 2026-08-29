@@ -153,6 +153,11 @@ pub(super) enum AppSurface {
     Work,
 }
 
+enum PostRenderFocus {
+    ActiveSurface(Option<FocusHandle>),
+    ImagePreview,
+}
+
 #[derive(Clone)]
 struct SessionTitleEdit {
     path: PathBuf,
@@ -269,7 +274,7 @@ pub(crate) struct PiApp {
     pending_editor_text: Option<(u64, String)>,
     pending_composer_restore: Option<(String, ComposerSnapshot)>,
     pending_submissions: HashMap<String, PendingSubmission>,
-    pending_focus_after_render: Option<FocusHandle>,
+    post_render_focus: Option<PostRenderFocus>,
     sessions_sheet: bool,
     review_sessions_expanded: bool,
     pending_archive: Option<archive::PendingArchive>,
@@ -652,7 +657,7 @@ impl PiApp {
             pending_editor_text: None,
             pending_composer_restore: None,
             pending_submissions: HashMap::new(),
-            pending_focus_after_render: None,
+            post_render_focus: None,
             sessions_sheet: false,
             review_sessions_expanded: false,
             pending_archive: None,
@@ -1242,7 +1247,9 @@ impl PiApp {
         self.pending_dialog_setup = false;
         self.pending_title = Some((generation, "Pi".into()));
         self.pending_editor_text = None;
-        self.pending_focus_after_render = Some(self.composer_focus.clone());
+        self.post_render_focus = Some(PostRenderFocus::ActiveSurface(Some(
+            self.composer_focus.clone(),
+        )));
         self.dialog_return_focus = None;
         self.sessions_sheet = false;
         self.run_sheet = false;

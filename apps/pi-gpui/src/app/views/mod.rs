@@ -77,8 +77,10 @@ impl Render for PiApp {
                 this.open_picker(scope, window, cx);
             });
         }
-        if let Some(focus) = self.pending_focus_after_render.take() {
-            cx.defer_in(window, move |_, window, cx| focus.focus(window, cx));
+        if self.post_render_focus.is_some() {
+            cx.defer_in(window, |this, window, cx| {
+                this.apply_post_render_focus(window, cx);
+            });
         }
         if self.pending_session_title_focus {
             self.pending_session_title_focus = false;
