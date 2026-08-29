@@ -101,7 +101,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			content,
 			display: true,
 			details: { runs: batch },
-		}, { triggerTurn: true, deliverAs: "steer" });
+		}, { triggerTurn: true, deliverAs: "followUp" });
 	};
 	const core = new SubagentCore(new PiSessionFactory(), (snapshot) => {
 		settled.push(snapshot);
