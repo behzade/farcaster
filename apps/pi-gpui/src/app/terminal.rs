@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use gpui::{Context, Window};
-use gpui_libghostty::{Terminal, TerminalOptions};
+use gpui_libghostty::{Terminal, TerminalConfiguration, TerminalOptions};
 
 use super::{AppSurface, PiApp};
 
@@ -40,10 +40,11 @@ impl PiApp {
             self.terminal_error = None;
         } else {
             self.clear_terminal_process();
-            let options = TerminalOptions::new(
+            let mut options = TerminalOptions::new(
                 crate::shell_environment::terminal_login_shell_command(),
                 project.clone(),
             );
+            options.configuration = TerminalConfiguration::Custom(crate::theme::terminal_theme());
             match Terminal::spawn(options, window, cx) {
                 Ok(terminal) => {
                     self.terminal = Some(terminal);

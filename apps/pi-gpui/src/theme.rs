@@ -5,6 +5,7 @@ use gpui_component::{
     highlighter::HighlightTheme,
     theme::{Theme as ComponentTheme, ThemeMode, ThemeTokens},
 };
+use gpui_libghostty::{TerminalColor, TerminalTheme};
 
 pub(crate) const UI_FONT_FAMILY: &str = ".SystemUIFont";
 pub(crate) const FARSI_FONT_FAMILY: &str = "Vazirmatn";
@@ -190,6 +191,37 @@ pub(crate) const THEME: Theme = Theme {
         status_row_height: px(24.0),
     },
 };
+
+pub(crate) fn terminal_theme() -> TerminalTheme {
+    let colors = THEME.colors;
+    TerminalTheme::new(
+        terminal_color(colors.canvas),
+        terminal_color(colors.text),
+        [
+            terminal_color(colors.panel),
+            TerminalColor::new(0xcc, 0x24, 0x1d),
+            TerminalColor::new(0x98, 0x97, 0x1a),
+            terminal_color(colors.code),
+            TerminalColor::new(0x45, 0x85, 0x88),
+            TerminalColor::new(0xb1, 0x62, 0x86),
+            terminal_color(colors.accent_active),
+            terminal_color(colors.muted),
+            terminal_color(colors.subtle),
+            terminal_color(colors.error),
+            terminal_color(colors.success),
+            terminal_color(colors.warning),
+            terminal_color(colors.link),
+            terminal_color(colors.skill),
+            terminal_color(colors.accent),
+            terminal_color(colors.text),
+        ],
+    )
+}
+
+fn terminal_color(color: Rgba) -> TerminalColor {
+    let channel = |value: f32| (value * 255.0).round() as u8;
+    TerminalColor::new(channel(color.r), channel(color.g), channel(color.b))
+}
 
 pub(crate) fn install_component_theme(cx: &mut App) {
     ComponentTheme::change(ThemeMode::Dark, None, cx);
