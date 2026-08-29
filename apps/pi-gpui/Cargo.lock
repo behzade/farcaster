@@ -1605,7 +1605,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2337,9 +2337,9 @@ dependencies = [
 
 [[package]]
 name = "gpui-libghostty"
-version = "0.1.11"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bae523f676c6ec644a281580333c11bb16fedefc89fb9fe5b55fbf8c8f114506"
+checksum = "dc528375ebde54384c90eee3ebc7bc7f9bc58aede8f148d078352a9085c4c1a9"
 dependencies = [
  "async-channel",
  "gpui",
@@ -2349,6 +2349,7 @@ dependencies = [
  "libloading",
  "raw-window-handle",
  "smallvec",
+ "tempfile",
  "wayland-backend",
  "wayland-client",
  "wayland-protocols",
@@ -2356,9 +2357,9 @@ dependencies = [
 
 [[package]]
 name = "gpui-neovim"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a93da9e8548c4ce1d5dcb9d13ba689c9312b81257f0d1b3491b42e01b7fef760"
+checksum = "5ba5fd5f0f6b69f615af9e8d030cbf55a28235d7f53fd8b878aa22e95c95994e"
 dependencies = [
  "gpui",
  "gpui-libghostty",
@@ -5197,7 +5198,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5210,7 +5211,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5998,7 +5999,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7034,7 +7035,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
