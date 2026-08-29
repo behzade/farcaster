@@ -7,6 +7,7 @@ use std::{
 };
 
 use serde_json::Value;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::sessions::{UsageSummary, normalize_lexical};
 
@@ -407,58 +408,9 @@ fn entry_timestamp(entry: &Value, message: &Value) -> Option<SystemTime> {
 }
 
 pub(crate) fn parse_iso_timestamp(value: &str) -> Option<SystemTime> {
-    let (date, time) = value.strip_suffix('Z')?.split_once('T')?;
-    let mut date = date.split('-');
-    let year = date.next()?.parse::<i64>().ok()?;
-    let month = date.next()?.parse::<i64>().ok()?;
-    let day = date.next()?.parse::<i64>().ok()?;
-    if date.next().is_some() || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-        return None;
-    }
-    let mut time = time.split(':');
-    let hour = time.next()?.parse::<u64>().ok()?;
-    let minute = time.next()?.parse::<u64>().ok()?;
-    let second_fraction = time.next()?;
-    if time.next().is_some() || hour > 23 || minute > 59 {
-        return None;
-    }
-    let (second, fraction) = second_fraction
-        .split_once('.')
-        .map_or((second_fraction, ""), |parts| parts);
-    let second = second.parse::<u64>().ok()?;
-    if second > 59 || !fraction.bytes().all(|byte| byte.is_ascii_digit()) {
-        return None;
-    }
-    let millis = fraction
-        .chars()
-        .take(3)
-        .collect::<String>()
-        .parse::<u64>()
-        .unwrap_or(0)
-        * match fraction.len().min(3) {
-            0 | 3 => 1,
-            1 => 100,
-            2 => 10,
-            _ => 1,
-        };
-    let adjusted_year = year - i64::from(month <= 2);
-    let era = if adjusted_year >= 0 {
-        adjusted_year
-    } else {
-        adjusted_year - 399
-    } / 400;
-    let year_of_era = adjusted_year - era * 400;
-    let shifted_month = month + if month > 2 { -3 } else { 9 };
-    let day_of_year = (153 * shifted_month + 2) / 5 + day - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    let days = era * 146_097 + day_of_era - 719_468;
-    let days = u64::try_from(days).ok()?;
-    let seconds = days
-        .checked_mul(86_400)?
-        .checked_add(hour.checked_mul(3_600)?)?
-        .checked_add(minute.checked_mul(60)?)?
-        .checked_add(second)?;
-    Some(SystemTime::UNIX_EPOCH + Duration::from_secs(seconds) + Duration::from_millis(millis))
+    OffsetDateTime::parse(value, &Rfc3339)
+        .ok()
+        .map(SystemTime::from)
 }
 
 fn role_label(title: &str) -> String {
@@ -494,12 +446,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_session_timestamps_without_a_runtime_dependency() {
+    fn parses_rfc3339_session_timestamps() {
         assert_eq!(
             parse_iso_timestamp("1970-01-01T00:00:01.250Z")
                 .and_then(|time| time.duration_since(SystemTime::UNIX_EPOCH).ok()),
             Some(Duration::from_millis(1_250))
         );
+        assert_eq!(
+            parse_iso_timestamp("1970-01-01T01:00:01.250+01:00")
+                .and_then(|time| time.duration_since(SystemTime::UNIX_EPOCH).ok()),
+            Some(Duration::from_millis(1_250))
+        );
+        assert_eq!(parse_iso_timestamp("2025-02-29T00:00:00Z"), None);
         assert_eq!(parse_iso_timestamp("not-a-timestamp"), None);
     }
 
