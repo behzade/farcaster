@@ -110,6 +110,7 @@ fn rpc_command(
     project: &Path,
     launch: SessionLaunch<'_>,
 ) -> Result<Command, String> {
+    crate::mcp_client_config::ensure_project_config(project)?;
     let mut process = command.command(project)?;
     process
         .args(["--mode", "rpc"])
@@ -594,10 +595,11 @@ mod tests {
 
     #[test]
     fn fork_process_passes_the_source_session_to_pi() -> TestResult {
+        let project = tempdir()?;
         let source = Path::new("/sessions/source session.jsonl");
         let process = rpc_command(
             &ProcessCommand::default(),
-            Path::new("/project"),
+            project.path(),
             SessionLaunch::Fork(source),
         )?;
         let arguments = process.get_args().collect::<Vec<_>>();

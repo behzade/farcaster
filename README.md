@@ -33,7 +33,9 @@ project or the current directory.
 
 Farcaster serves stateless Streamable HTTP MCP at
 `http://127.0.0.1:8765/mcp`. It exposes `workgraph_search`, `workgraph_patch`,
-and `workgraph_complete` and accepts MCP `2026-07-28` only.
+and `workgraph_complete` and accepts MCP `2026-07-28` only. Before launching an
+agent, Farcaster adds this endpoint to the project's `.mcp.json` while preserving
+other configured servers.
 
 Useful environment variables:
 
