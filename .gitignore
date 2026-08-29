@@ -1,6 +1,3 @@
-node_modules/
-.pnpm-store/
-.direnv/
-target/
-result
-result-*
+/target/
+**/target/
+.DS_Store

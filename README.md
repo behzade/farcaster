@@ -1,151 +1,58 @@
-# Pi
+# Farcaster
 
-This is the Pi setup I use for day-to-day coding. Nix pins the agent,
-extensions, prompts, skills, and theme so I get the same setup on macOS and
-Linux.
+Farcaster is a native GPUI desktop client for coding agents. The current
+implementation starts Pi through its public JSONL RPC mode. Additional agent
+backends are not implemented yet.
 
-Most of the work in this repo is around shell execution. Commands run in a
-native OS sandbox, durable project access is approved through one host tool,
-and a broken or unavailable backend fails closed.
+Farcaster is GPL-3.0-or-later. See [`NOTICE.md`](NOTICE.md) for source and asset
+attribution.
 
-This is a personal setup, not a turnkey Pi distribution. Machine-specific
-paths, network policy, MCP servers, and notification settings live in my
-separate `nix-config` repo.
+## Current features
 
-## What is included
+- Multiple live and historical sessions across projects
+- Streaming text, thinking, tool calls, retries, queues, and compaction
+- Model, thinking-level, and sandbox controls
+- Extension questions and permission prompts
+- Git and Jujutsu working-copy views
+- Embedded Neovim and project terminal surfaces
+- Durable drafts, session ordering, workgraphs, and application state
 
-- pi-nono's native sandbox with explicit project/session approval and
-  no automatic command retries.
-- Persistent child Pi sessions with forked or blank context, steering, waiting,
-  model selection, and cancellation.
-- A first-party Codex Web Search tool using the active Codex login and Codex's
-  direct search endpoint, with bounded cited output and no provider router.
-- Stateless MCP access through a pinned `mcp-cli`.
-- Server-side OpenAI compaction for long sessions.
-- Compact read, edit, and shell output with syntax-highlighted diffs.
-- First-party TypeScript host integrations use Effect v4 for async work, typed failures,
-  cancellation, and resource lifetimes; pure parsers, policies, and renderers stay synchronous.
-- Trusted project-scoped Effect v4 tools loaded from `.pi/project-tools` with full host
-  rights after project trust.
-- A shared `/tmp/pi-agent-feedback.md` path where every agent can append concrete
-  agent-environment friction without a dedicated model tool.
-- A Gruvbox dark-hard theme and small hooks for notifications, titles, user
-  input, and session state.
+Pi settings, context files, extensions, skills, authentication, and sandbox
+behavior load in the selected project directory. Farcaster does not modify Pi.
+The `pi` executable must be available on `PATH`.
 
-## Repository map
-
-- [pi-nono](https://github.com/behzade/pi-nono) supplies the complete
-  pinned sandbox, approval policy, and background-job security boundary. This
-  repository only installs and configures its packaged extension.
-- [`extensions/dense-tools`](extensions/dense-tools) renders compact tool output
-  and provides `pi-diff`, the same syntax-highlighted diff view as a terminal
-  command. It keeps a bounded output cache in the system temporary directory so
-  reopening the same diff at the same width skips syntax highlighting work.
-- [`extensions/openai-server-compaction`](extensions/openai-server-compaction)
-  owns the OpenAI compaction code. Codex compaction reuses Pi AI's cached
-  WebSocket response chain when the host exposes native output items.
-- [`extensions/project-tools`](extensions/project-tools) loads strict tool
-  manifests and Effect v4 handlers from trusted project `.pi/project-tools`
-  directories. These handlers run in Pi's host process, not the shell sandbox.
-- [`extensions/codex-web-search.ts`](extensions/codex-web-search.ts) exposes
-  one compact Codex Web Search tool; direct request shaping and response
-  validation live in `codex-web-search-core.ts`.
-- [`extensions/subagents`](extensions/subagents) owns persistent child Pi
-  sessions. Child completion automatically reprompts the parent; three
-  Effect-backed tools start, message, and control children.
-- The loose entrypoints under [`extensions`](extensions) are packaged together by
-  `pi-core-extensions`; notifications, title animation, and user input use the same
-  pinned Effect v4 runtime while Pi callbacks remain boundary adapters. Type `$`
-  at a token boundary to autocomplete prompts or skills; invocations such as
-  `$simplify $commit` compose in order.
-- [`nix`](nix) contains the pinned builds for Pi and every packaged extension.
-- [`apps/pi-terminal`](apps/pi-terminal) pins the upstream Pi 0.84.2 terminal
-  client and the small Pi AI output-item hook needed for cached OpenAI
-  compaction.
-- [`apps/pi-gpui`](apps/pi-gpui) is a native GPUI client for Pi's public RPC
-  mode. On Linux and macOS, the packaged desktop app starts the user's login
-  shell in the project directory and gives the captured project environment to
-  the RPC process. It is a distinct GPL-3.0-or-later module; the enclosing
-  repository's MIT license does not replace that module's license.
-- [`SYSTEM.md`](SYSTEM.md) is the base Pi system prompt. Nix fills its pinned
-  Pi package path during the build.
-- [`APPEND_SYSTEM.md`](APPEND_SYSTEM.md) is the terse working contract appended
-  to that prompt.
-- [`skills`](skills), [`themes`](themes), and [`tests`](tests) contain the local
-  skills, theme, and shared checks.
-
-`SYSTEM.md` is the active override, not a reference copy. Its single opt-in marker
-asks the pinned Pi patch to append active tool snippets and guidelines after
-`APPEND_SYSTEM.md`, project context, the skill catalog, and the working directory.
-This tail placement keeps the static prompt prefix stable when tools change; tool
-schemas remain separate. `/prompt-report` shows model-hidden size estimates and
-fingerprints, while `/prompt-report full` opens the exact prompt and pre-provider
-active definitions in a disposable viewer.
-
-## Develop and test
-
-The project shell already provides Cargo, Node.js, and the other development
-tools. Use them directly. Routine development and validation must not run Nix;
-run a Nix command only when the user asks for that exact check.
-
-Run the native Pi client without rebuilding the Home Manager configuration:
+## Run
 
 ```sh
-make run
-make run PROJECT=/path/to/project
+cargo run -- /path/to/project
 ```
 
-The root `.envrc` enters the default Rust/GPUI development shell and sets the
-shared Cargo target directory. Do not create another development shell, Cargo
-target directory, cache, or dependency folder.
+The project argument is optional. Farcaster otherwise opens the most recent
+project or the current directory.
 
-Crane's GPUI dependency artifact is build-only, so garbage collection can remove
-it even while the installed application remains rooted. Keep only its current
-version across garbage collection with:
+Useful environment variables:
+
+- `FARCASTER_PI_PATH`: Pi executable override
+- `FARCASTER_DATA_DIR`: application database, project registry, and logs
+- `FARCASTER_SHELL`: login shell override
+- `FARCASTER_GIT`, `FARCASTER_JJ`, `FARCASTER_NVIM`: executable overrides
+- `FARCASTER_PI_EXTENSION`: optional Pi extension loaded with the RPC process
+
+On macOS, application data defaults to
+`~/Library/Application Support/Farcaster`. Other platforms use
+`$XDG_DATA_HOME/farcaster` or `~/.local/share/farcaster`.
+
+## Check
 
 ```sh
-make root-gpui-deps
+cargo fmt --check
+cargo test
+cargo check
+cargo clippy --all-targets -- -D warnings
 ```
 
-This maintains the ignored `result-pi-gpui-deps` GC root. Re-run it after GPUI
-dependency changes; replacing the link leaves older artifacts collectible.
-
-Choose only the checks that cover the changed area. Start with an exact test or
-package check; do not run this whole list for every change. Nix packaging and
-lock-input changes are the exception: use `make check-flake` to build every
-flake check before publishing them. Update pi-nono with `make update-pi-nono`;
-it updates the input and immediately runs that gate.
+Run the transcript benchmark with:
 
 ```sh
-npm run check --prefix extensions/project-tools
-npm run check --prefix extensions/subagents
-make check-gpui
-node --test \
-  tests/governance.test.ts \
-  tests/codex-web-search.test.ts \
-  tests/session-agents-package.test.ts \
-  tests/prompt-contract.test.ts \
-  tests/prompt-inspector.test.ts \
-  tests/theme-and-rendering.test.ts \
-  tests/terminal-text.test.ts \
-  tests/user-invocations.test.ts
+cargo bench --bench transcript
 ```
-
-Sandbox implementation checks and security documentation live in the pinned
-[pi-nono](https://github.com/behzade/pi-nono) repository. This repository
-keeps only package-layout and Pi compatibility checks.
-
-My Home Manager configuration consumes the default flake package and deploys
-it at `~/.pi/agent`.
-
-## Sandbox
-
-[pi-nono](https://github.com/behzade/pi-nono) owns sandbox enforcement,
-policy, approvals, fixed native executables, and background jobs. This repository
-pins and installs the finished pi-nono package without rebuilding its internals.
-
-Machine-specific pi-nono policy remains in the separate `nix-config` repository.
-See pi-nono's README for configuration, supported rights, threat model, and
-platform status. The separately approved host-script mode in
-[`extensions/user-input.ts`](extensions/user-input.ts) uses Pi's local shell
-backend directly; pi-nono does not mediate that execution.

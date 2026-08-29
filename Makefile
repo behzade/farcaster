@@ -1,34 +1,15 @@
-PROJECT ?= $(CURDIR)
-CARGO_TARGET_DIR ?= $(CURDIR)/target
-PI_GPUI_DEPS_ROOT ?= $(CURDIR)/result-pi-gpui-deps
+PROJECT ?= .
 
-.PHONY: run debug release release-debug root-gpui-deps check-gpui check-flake update-pi-nono
+.PHONY: run test check
+
 run:
-	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo run --manifest-path apps/pi-gpui/Cargo.toml -- "$(PROJECT)"
+	cargo run -- "$(PROJECT)"
+
 test:
-	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo test --manifest-path apps/pi-gpui/Cargo.toml -- "$(PROJECT)"
+	cargo test
 
-debug:
-	DEBUG=true CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo run --manifest-path apps/pi-gpui/Cargo.toml -- "$(PROJECT)"
-
-release:
-	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo run --release --manifest-path apps/pi-gpui/Cargo.toml -- "$(PROJECT)"
-
-release-debug:
-	DEBUG=true CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo run --release --manifest-path apps/pi-gpui/Cargo.toml -- "$(PROJECT)"
-
-root-gpui-deps:
-	nix build .#pi-gpui-deps --out-link "$(PI_GPUI_DEPS_ROOT)"
-
-check-gpui:
-	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo fmt --manifest-path apps/pi-gpui/Cargo.toml --check
-	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo test --manifest-path apps/pi-gpui/Cargo.toml
-	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo check --manifest-path apps/pi-gpui/Cargo.toml
-	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo clippy --manifest-path apps/pi-gpui/Cargo.toml --all-targets -- -D warnings
-
-check-flake:
-	nix flake check
-
-update-pi-nono:
-	nix flake update piNono
-	$(MAKE) check-flake
+check:
+	cargo fmt --check
+	cargo test
+	cargo check
+	cargo clippy --all-targets -- -D warnings

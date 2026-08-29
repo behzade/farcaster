@@ -1,9 +1,0 @@
-{
-  "name": "pi-core-extensions",
-  "version": "1.0.0",
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "effect": "4.0.0-beta.107"
-  }
-}

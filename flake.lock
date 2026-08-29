@@ -1,20 +1,5 @@
 {
   "nodes": {
-    "crane": {
-      "locked": {
-        "lastModified": 1785782307,
-        "narHash": "sha256-MPaRdVkf6zZP5fCPxYCi8Dr4pZzgmXzg8T9nVEbp3Mw=",
-        "owner": "ipetkov",
-        "repo": "crane",
-        "rev": "2c71e194474d13de031d729b729c968ddbe3507f",
-        "type": "github"
-      },
-      "original": {
-        "owner": "ipetkov",
-        "repo": "crane",
-        "type": "github"
-      }
-    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1784856561,
@@ -31,45 +16,9 @@
         "type": "github"
       }
     },
-    "nixpkgs_2": {
-      "locked": {
-        "lastModified": 1787204541,
-        "narHash": "sha256-OURZPknrTjQrlNyxPdqzyqmU/81Wes1CUP/Ft1Rv/YI=",
-        "owner": "NixOS",
-        "repo": "nixpkgs",
-        "rev": "5880666fd9eb563038431edb35c2d0aa595884e6",
-        "type": "github"
-      },
-      "original": {
-        "owner": "NixOS",
-        "ref": "nixos-26.05",
-        "repo": "nixpkgs",
-        "type": "github"
-      }
-    },
-    "piNono": {
-      "inputs": {
-        "nixpkgs": "nixpkgs_2"
-      },
-      "locked": {
-        "lastModified": 1787998892,
-        "narHash": "sha256-9WWdTDCNaUlw6ojMadQKXh9vVC5l1wR8sHPgFn3sj14=",
-        "owner": "behzade",
-        "repo": "pi-nono",
-        "rev": "8810a646bfa67462147909763dc43987418bb0cd",
-        "type": "github"
-      },
-      "original": {
-        "owner": "behzade",
-        "repo": "pi-nono",
-        "type": "github"
-      }
-    },
     "root": {
       "inputs": {
-        "crane": "crane",
-        "nixpkgs": "nixpkgs",
-        "piNono": "piNono"
+        "nixpkgs": "nixpkgs"
       }
     }
   },
