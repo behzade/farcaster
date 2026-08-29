@@ -8,6 +8,7 @@ description = "Native desktop client for coding agents"
 
 [dependencies]
 async-channel = "2.5.0"
+axum = "0.8.8"
 base64 = "0.22.1"
 gpui = { path = "third_party/zed-gpui-cc053a4/crates/gpui", features = ["profiler"] }
 gpui-base = { path = "third_party/gpui-component-bd83329/base" }
@@ -16,11 +17,13 @@ gpui-libghostty = "0.2.0"
 gpui-neovim = "0.1.5"
 gpui_platform = { path = "third_party/zed-gpui-cc053a4/crates/gpui_platform", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
 notify = "7.0.0"
+rmcp = { version = "3.1.4", features = ["server", "transport-streamable-http-server"] }
 rusqlite = { version = "0.37.0", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sum_tree = { path = "third_party/zed-gpui-cc053a4/crates/sum_tree" }
 thiserror = "2.0.19"
+tokio = { version = "1.49.0", features = ["net", "rt-multi-thread"] }
 workgraph = { path = "workgraph" }
 zlog = { path = "third_party/zed-gpui-cc053a4/crates/zlog" }
 

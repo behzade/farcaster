@@ -13,6 +13,7 @@ mod keybindings;
 mod keyboard;
 mod launch;
 mod layout;
+mod mcp_server;
 mod performance;
 mod persistent_vec;
 mod primitives;
@@ -56,6 +57,10 @@ fn main() -> std::process::ExitCode {
     if let Err(error) = init_log_file() {
         zlog::error!("Failed to initialize application log file: {error}");
     }
+    let _mcp_server = match state::state_path().and_then(mcp_server::start) {
+        Ok(server) => server,
+        Err(error) => return fail(format!("start MCP server: {error}")),
+    };
 
     match launch::resolve_project(std::env::args_os().nth(1).map(Into::into)).and_then(launch::run)
     {

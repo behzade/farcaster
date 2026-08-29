@@ -16,6 +16,7 @@ attribution.
 - Git and Jujutsu working-copy views
 - Embedded Neovim and project terminal surfaces
 - Durable drafts, session ordering, workgraphs, and application state
+- Stateless MCP access to workgraph search, patch, and completion
 
 Pi settings, context files, extensions, skills, authentication, and sandbox
 behavior load in the selected project directory. Farcaster does not modify Pi.
@@ -29,6 +30,10 @@ cargo run -- /path/to/project
 
 The project argument is optional. Farcaster otherwise opens the most recent
 project or the current directory.
+
+Farcaster serves stateless Streamable HTTP MCP at
+`http://127.0.0.1:8765/mcp`. It exposes `workgraph_search`, `workgraph_patch`,
+and `workgraph_complete` and accepts MCP `2026-07-28` only.
 
 Useful environment variables:
 
