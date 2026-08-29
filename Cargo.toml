@@ -22,6 +22,7 @@ rusqlite = { version = "0.37.0", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sum_tree = { path = "third_party/zed-gpui-cc053a4/crates/sum_tree" }
+tempfile = "3.27.0"
 thiserror = "2.0.19"
 tokio = { version = "1.49.0", features = ["net", "rt-multi-thread"] }
 workgraph = { path = "workgraph" }
@@ -29,7 +30,6 @@ zlog = { path = "third_party/zed-gpui-cc053a4/crates/zlog" }
 
 [dev-dependencies]
 gpui = { path = "third_party/zed-gpui-cc053a4/crates/gpui", features = ["test-support"] }
-tempfile = "3.27.0"
 
 [[bench]]
 name = "diff_plan"

@@ -109,11 +109,13 @@ fn rpc_command(
     command: &ProcessCommand,
     project: &Path,
     launch: SessionLaunch<'_>,
+    mcp_config: &Path,
 ) -> Result<Command, String> {
-    crate::mcp_client_config::ensure_project_config(project)?;
     let mut process = command.command(project)?;
     process
         .args(["--mode", "rpc"])
+        .arg("--mcp-config")
+        .arg(mcp_config)
         .env("FARCASTER_NATIVE_NOTIFICATIONS", "1")
         // Compatibility with existing Pi notification extensions.
         .env("PI_GPUI_NATIVE_NOTIFICATIONS", "1");
@@ -130,6 +132,7 @@ fn rpc_command(
 }
 
 pub(crate) struct RpcProcess {
+    _mcp_config: crate::mcp_client_config::TransientMcpConfig,
     child: Arc<Mutex<Child>>,
     stdin: Arc<Mutex<ChildStdin>>,
     incoming: mpsc::Receiver<ReaderItem>,
@@ -174,7 +177,8 @@ impl RpcProcess {
         launch: SessionLaunch<'_>,
         wake: Option<thread::Thread>,
     ) -> Result<Self, String> {
-        let mut child = rpc_command(command, project, launch)?
+        let mcp_config = crate::mcp_client_config::TransientMcpConfig::create()?;
+        let mut child = rpc_command(command, project, launch, mcp_config.path())?
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -204,6 +208,7 @@ impl RpcProcess {
         spawn_stdout_reader(stdout, sender.clone());
         spawn_stderr_reader(stderr, sender);
         let mut rpc = Self {
+            _mcp_config: mcp_config,
             child,
             stdin: Arc::new(Mutex::new(stdin)),
             incoming,
@@ -589,6 +594,14 @@ mod tests {
             fs::canonicalize(process_project)?,
             fs::canonicalize(temp.path())?,
         );
+        let mcp_config = serde_json::from_slice::<serde_json::Value>(&fs::read(
+            temp.path().join("process-mcp-config"),
+        )?)?;
+        assert_eq!(
+            mcp_config["mcpServers"]["farcaster"]["url"],
+            "http://127.0.0.1:8765/mcp"
+        );
+        assert!(!temp.path().join(".mcp.json").exists());
         rpc.terminate()?;
         Ok(())
     }
@@ -601,9 +614,15 @@ mod tests {
             &ProcessCommand::default(),
             project.path(),
             SessionLaunch::Fork(source),
+            Path::new("/dev/fd/9"),
         )?;
         let arguments = process.get_args().collect::<Vec<_>>();
         assert!(arguments.windows(2).any(|pair| pair == ["--mode", "rpc"]));
+        assert!(
+            arguments
+                .windows(2)
+                .any(|pair| pair == ["--mcp-config", "/dev/fd/9"])
+        );
         assert_eq!(
             arguments.get(arguments.len().saturating_sub(2)..),
             Some([std::ffi::OsStr::new("--fork"), source.as_os_str()].as_slice())

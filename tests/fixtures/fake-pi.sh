@@ -11,6 +11,14 @@ fi
 
 if [ "$case_name" = "project-directory" ]; then
   printf '%s' "$PWD" > "$PWD/process-project"
+  previous=''
+  for argument in "$@"; do
+    if [ "$previous" = '--mcp-config' ]; then
+      cat "$argument" > "$PWD/process-mcp-config"
+      break
+    fi
+    previous=$argument
+  done
 fi
 
 if [ "$case_name" = "ignore-term" ]; then

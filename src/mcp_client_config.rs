@@ -1,138 +1,51 @@
-//! Project-local discovery configuration for agent MCP clients.
+//! Transient MCP configuration passed to agent backends at launch.
 
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    sync::Mutex,
-};
+use std::{io::Write as _, path::Path};
 
-const CONFIG_NAME: &str = ".mcp.json";
-const SERVER_NAME: &str = "farcaster";
 const SERVER_URL: &str = "http://127.0.0.1:8765/mcp";
-static CONFIG_WRITE: Mutex<()> = Mutex::new(());
 
-pub(crate) fn ensure_project_config(project: &Path) -> Result<(), String> {
-    let _guard = CONFIG_WRITE
-        .lock()
-        .map_err(|_| "Farcaster MCP configuration lock is unavailable".to_owned())?;
-    let path = project.join(CONFIG_NAME);
-    let (mut config, permissions) = match fs::read(&path) {
-        Ok(bytes) => {
-            let permissions = fs::metadata(&path)
-                .map_err(|error| format!("read {} metadata: {error}", path.display()))?
-                .permissions();
-            let config = serde_json::from_slice::<serde_json::Value>(&bytes)
-                .map_err(|error| format!("decode {}: {error}", path.display()))?;
-            (config, Some(permissions))
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (serde_json::json!({}), None),
-        Err(error) => return Err(format!("read {}: {error}", path.display())),
-    };
-
-    let root = config
-        .as_object_mut()
-        .ok_or_else(|| format!("{} must contain a JSON object", path.display()))?;
-    let servers = root
-        .entry("mcpServers")
-        .or_insert_with(|| serde_json::json!({}))
-        .as_object_mut()
-        .ok_or_else(|| format!("{}.mcpServers must contain a JSON object", path.display()))?;
-    let entry = serde_json::json!({ "url": SERVER_URL });
-    if servers.get(SERVER_NAME) == Some(&entry) {
-        return Ok(());
-    }
-    servers.insert(SERVER_NAME.into(), entry);
-    write_atomic(&path, &config, permissions)
+pub(crate) struct TransientMcpConfig {
+    file: tempfile::NamedTempFile,
 }
 
-fn write_atomic(
-    path: &Path,
-    config: &serde_json::Value,
-    permissions: Option<fs::Permissions>,
-) -> Result<(), String> {
-    let mut bytes = serde_json::to_vec_pretty(config)
-        .map_err(|error| format!("encode {}: {error}", path.display()))?;
-    bytes.push(b'\n');
-    let temporary = temporary_path(path);
-    fs::write(&temporary, bytes)
-        .map_err(|error| format!("write {}: {error}", temporary.display()))?;
-    if let Some(permissions) = permissions {
-        fs::set_permissions(&temporary, permissions)
-            .map_err(|error| format!("preserve {} permissions: {error}", path.display()))?;
+impl TransientMcpConfig {
+    pub(crate) fn create() -> Result<Self, String> {
+        let mut file = tempfile::NamedTempFile::new()
+            .map_err(|error| format!("create transient MCP configuration: {error}"))?;
+        let mut config = serde_json::to_vec(&serde_json::json!({
+            "mcpServers": {
+                "farcaster": { "url": SERVER_URL }
+            }
+        }))
+        .map_err(|error| format!("encode MCP configuration: {error}"))?;
+        config.push(b'\n');
+        file.write_all(&config)
+            .map_err(|error| format!("write transient MCP configuration: {error}"))?;
+        file.flush()
+            .map_err(|error| format!("flush transient MCP configuration: {error}"))?;
+        Ok(Self { file })
     }
-    fs::rename(&temporary, path).map_err(|error| {
-        let _remove = fs::remove_file(&temporary);
-        format!(
-            "replace {} with {}: {error}",
-            path.display(),
-            temporary.display()
-        )
-    })
-}
 
-fn temporary_path(path: &Path) -> PathBuf {
-    let mut temporary = path.as_os_str().to_owned();
-    temporary.push(format!(".{}.tmp", std::process::id()));
-    PathBuf::from(temporary)
+    pub(crate) fn path(&self) -> &Path {
+        self.file.path()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn read_config(path: &Path) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-        Ok(serde_json::from_slice(&fs::read(path)?)?)
-    }
-
     #[test]
-    fn creates_shared_project_config() -> Result<(), Box<dyn std::error::Error>> {
-        let project = tempfile::tempdir()?;
-        ensure_project_config(project.path())?;
-        assert_eq!(
-            read_config(&project.path().join(CONFIG_NAME))?["mcpServers"][SERVER_NAME]["url"],
-            SERVER_URL
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn preserves_other_servers_and_replaces_stale_farcaster_entry()
+    fn exposes_farcaster_through_a_reopenable_transient_file()
     -> Result<(), Box<dyn std::error::Error>> {
-        let project = tempfile::tempdir()?;
-        let path = project.path().join(CONFIG_NAME);
-        fs::write(
-            &path,
-            br#"{
-                "settings": { "keep": true },
-                "mcpServers": {
-                    "docs": { "url": "https://docs.example/mcp" },
-                    "farcaster": { "url": "http://127.0.0.1:1/old" }
-                }
-            }"#,
-        )?;
-
-        ensure_project_config(project.path())?;
-
-        let config = read_config(&path)?;
-        assert_eq!(config["settings"]["keep"], true);
-        assert_eq!(
-            config["mcpServers"]["docs"]["url"],
-            "https://docs.example/mcp"
-        );
-        assert_eq!(config["mcpServers"][SERVER_NAME]["url"], SERVER_URL);
-        Ok(())
-    }
-
-    #[test]
-    fn refuses_to_overwrite_invalid_existing_config() -> Result<(), Box<dyn std::error::Error>> {
-        let project = tempfile::tempdir()?;
-        let path = project.path().join(CONFIG_NAME);
-        fs::write(&path, b"not json")?;
-
-        let error = ensure_project_config(project.path()).expect_err("invalid config must fail");
-
-        assert!(error.contains("decode"));
-        assert_eq!(fs::read(&path)?, b"not json");
+        let config = TransientMcpConfig::create()?;
+        let path = config.path().to_owned();
+        for _ in 0..2 {
+            let value = serde_json::from_slice::<serde_json::Value>(&std::fs::read(&path)?)?;
+            assert_eq!(value["mcpServers"]["farcaster"]["url"], SERVER_URL);
+        }
+        drop(config);
+        assert!(!path.exists());
         Ok(())
     }
 }
