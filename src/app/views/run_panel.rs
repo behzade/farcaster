@@ -116,7 +116,7 @@ impl FarcasterApp {
             })
             .when(!self.background_jobs.is_empty(), |run| {
                 run.child(section_heading(format!(
-                    "Background jobs ({})",
+                    "Async jobs ({})",
                     self.background_jobs.len()
                 )))
                 .children(self.background_jobs.iter().map(background_job_row))
@@ -501,7 +501,6 @@ fn metric_row(label: &'static str, value: String) -> impl IntoElement {
 
 fn background_job_row(job: &BackgroundJob) -> AnyElement {
     div()
-        .id(format!("background-job-{}", job.name))
         .px(THEME.space.sm)
         .py(THEME.space.xs)
         .flex()
@@ -509,11 +508,8 @@ fn background_job_row(job: &BackgroundJob) -> AnyElement {
         .gap(THEME.space.sm)
         .child(
             div()
-                .size(THEME.controls.agent_marker)
+                .size(THEME.icons.inline)
                 .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
                 .text_color(background_job_color(job.state))
                 .child(app_icon(
                     background_job_icon(job.state),
@@ -522,19 +518,21 @@ fn background_job_row(job: &BackgroundJob) -> AnyElement {
         )
         .child(
             div()
-                .w_0()
                 .min_w_0()
                 .flex_1()
                 .flex()
-                .flex_col()
+                .items_center()
+                .gap(THEME.space.sm)
                 .child(
                     div()
+                        .flex_none()
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(THEME.colors.text)
                         .child(job.name.clone()),
                 )
                 .child(
                     div()
+                        .min_w_0()
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis()
