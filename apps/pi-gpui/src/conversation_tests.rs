@@ -194,6 +194,31 @@ fn authoritative_end_replaces_all_partial_blocks_without_duplicate() {
 }
 
 #[test]
+fn interrupted_empty_thinking_is_removed_from_live_and_history() {
+    let interrupted = json!({
+        "role":"assistant",
+        "content":[{"type":"thinking","thinking":""}],
+        "stopReason":"aborted"
+    });
+
+    let mut live = ConversationState::default();
+    live.reduce(&json!({"type":"message_start","message":{"role":"assistant","content":[]}}));
+    live.reduce(&json!({
+        "type":"message_update",
+        "assistantMessageEvent":{"type":"thinking_start","contentIndex":0}
+    }));
+    assert_eq!(live.items.len(), 1);
+    assert_eq!(live.items[0].kind, TranscriptKind::Thinking);
+    live.reduce(&json!({"type":"message_end","message":interrupted.clone()}));
+
+    let mut history = ConversationState::default();
+    history.replace_history(&[interrupted]);
+
+    assert!(live.items.is_empty());
+    assert!(history.items.is_empty());
+}
+
+#[test]
 fn cache_hit_rate_averages_assistant_prompt_usage_for_the_session() {
     let mut state = ConversationState::default();
     state.replace_history(&[

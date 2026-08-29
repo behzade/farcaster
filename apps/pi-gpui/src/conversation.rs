@@ -878,11 +878,13 @@ fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
                                 String::new(),
                                 block.get("text").and_then(Value::as_str)?.to_owned(),
                             ),
-                            Some("thinking") => (
-                                TranscriptKind::Thinking,
-                                String::new(),
-                                block.get("thinking").and_then(Value::as_str)?.to_owned(),
-                            ),
+                            Some("thinking") => {
+                                let thinking = block
+                                    .get("thinking")
+                                    .and_then(Value::as_str)
+                                    .filter(|thinking| !thinking.trim().is_empty())?;
+                                (TranscriptKind::Thinking, String::new(), thinking.to_owned())
+                            }
                             Some("toolCall") => (
                                 TranscriptKind::Tool,
                                 tool_name(block)
