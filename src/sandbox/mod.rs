@@ -1,0 +1,228 @@
+//! Whole-agent sandbox composition and nono CLI delivery.
+
+mod policy;
+
+use std::{
+    io::Write as _,
+    path::{Path, PathBuf},
+    process::Command,
+};
+
+pub(crate) use policy::{AccessPolicy, FilesystemAccess, NetworkAccess};
+
+#[derive(Clone, Debug)]
+pub(crate) enum NonoExecutable {
+    Fixed(PathBuf),
+    #[cfg(test)]
+    TestBypass,
+}
+
+pub(crate) struct PolicyPaths<'a> {
+    pub(crate) project: &'a Path,
+    pub(crate) home: &'a Path,
+    pub(crate) agent_state: &'a Path,
+    pub(crate) temporary: &'a Path,
+}
+
+pub(crate) struct PreparedCommand {
+    pub(crate) command: Command,
+    _profile: Option<tempfile::NamedTempFile>,
+}
+
+pub(crate) fn prepare_command(
+    nono: &NonoExecutable,
+    agent_program: &Path,
+    prefix_args: &[String],
+    paths: PolicyPaths<'_>,
+    access: AccessPolicy,
+) -> Result<PreparedCommand, String> {
+    if access.unrestricted() {
+        let mut command = Command::new(agent_program);
+        command.args(prefix_args);
+        return Ok(PreparedCommand {
+            command,
+            _profile: None,
+        });
+    }
+    let nono_program = match nono {
+        NonoExecutable::Fixed(program) => program.as_path(),
+        #[cfg(test)]
+        NonoExecutable::TestBypass => {
+            let mut command = Command::new(agent_program);
+            command.args(prefix_args);
+            return Ok(PreparedCommand {
+                command,
+                _profile: None,
+            });
+        }
+    };
+    if !nono_program.is_absolute() || !is_executable_file(nono_program) {
+        return Err(format!(
+            "FARCASTER_NONO_PATH must name a fixed executable: {}",
+            nono_program.display()
+        ));
+    }
+    let mut profile = tempfile::NamedTempFile::new()
+        .map_err(|error| format!("create Farcaster sandbox profile: {error}"))?;
+    profile
+        .write_all(&policy::compile(
+            paths.project,
+            paths.home,
+            paths.agent_state,
+            paths.temporary,
+            access,
+        )?)
+        .map_err(|error| format!("write Farcaster sandbox profile: {error}"))?;
+    profile
+        .flush()
+        .map_err(|error| format!("flush Farcaster sandbox profile: {error}"))?;
+    validate_profile(nono_program, profile.path())?;
+
+    let mut command = Command::new(nono_program);
+    command
+        .args(["--silent", "run", "--profile"])
+        .arg(profile.path())
+        .arg("--")
+        .arg(agent_program)
+        .args(prefix_args);
+    Ok(PreparedCommand {
+        command,
+        _profile: Some(profile),
+    })
+}
+
+fn validate_profile(nono_program: &Path, profile: &Path) -> Result<(), String> {
+    let output = Command::new(nono_program)
+        .args(["policy", "validate"])
+        .arg(profile)
+        .output()
+        .map_err(|error| format!("validate Farcaster sandbox profile: {error}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let detail = stderr.trim().chars().take(8_192).collect::<String>();
+    Err(format!(
+        "nono rejected the Farcaster sandbox profile ({}): {detail}",
+        output.status
+    ))
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    let Ok(metadata) = path.metadata() else {
+        return false;
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        metadata.is_file()
+    }
+}
+
+pub(crate) fn configured_nono_program(value: Option<std::ffi::OsString>) -> NonoExecutable {
+    NonoExecutable::Fixed(value.map(PathBuf::from).unwrap_or_default())
+}
+
+#[cfg(test)]
+pub(crate) const fn test_nono_bypass() -> NonoExecutable {
+    NonoExecutable::TestBypass
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wraps_restricted_agent_with_fixed_nono_and_profile() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let root = tempfile::tempdir()?;
+        let project = root.path().join("project");
+        let home = root.path().join("home");
+        let temporary = root.path().join("tmp");
+        std::fs::create_dir(&project)?;
+        std::fs::create_dir(&home)?;
+        let agent_state = home.join(".pi/agent");
+        std::fs::create_dir_all(&agent_state)?;
+        std::fs::create_dir(&temporary)?;
+        let nono = root.path().join("nono");
+        std::fs::write(&nono, b"#!/bin/sh\nexit 0\n")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&nono, std::fs::Permissions::from_mode(0o700))?;
+        }
+        let prepared = prepare_command(
+            &NonoExecutable::Fixed(nono.clone()),
+            Path::new("/agent/pi"),
+            &["prefix".into()],
+            PolicyPaths {
+                project: &project,
+                home: &home,
+                agent_state: &agent_state,
+                temporary: &temporary,
+            },
+            AccessPolicy {
+                filesystem: FilesystemAccess::Sandboxed,
+                network: NetworkAccess::Sandboxed,
+            },
+        )?;
+        assert_eq!(prepared.command.get_program(), nono.as_os_str());
+        let arguments = prepared.command.get_args().collect::<Vec<_>>();
+        assert_eq!(arguments[0], "--silent");
+        assert!(arguments.windows(2).any(|pair| pair == ["--", "/agent/pi"]));
+        let profile_index = arguments
+            .iter()
+            .position(|argument| *argument == "--profile")
+            .ok_or("profile argument")?;
+        let profile = std::fs::read(arguments[profile_index + 1])?;
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&profile)?["meta"]["name"],
+            "farcaster-agent"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unrestricted_or_test_launches_do_not_wrap_agent() -> Result<(), String> {
+        let direct = |nono: &NonoExecutable, access| {
+            prepare_command(
+                nono,
+                Path::new("/agent/pi"),
+                &[],
+                PolicyPaths {
+                    project: Path::new("/unused"),
+                    home: Path::new("/unused"),
+                    agent_state: Path::new("/unused"),
+                    temporary: Path::new("/unused"),
+                },
+                access,
+            )
+        };
+        let unrestricted = direct(
+            &NonoExecutable::Fixed(PathBuf::from("/missing/nono")),
+            AccessPolicy {
+                filesystem: FilesystemAccess::Full,
+                network: NetworkAccess::Full,
+            },
+        )?;
+        assert_eq!(unrestricted.command.get_program(), "/agent/pi");
+        let restricted = AccessPolicy {
+            filesystem: FilesystemAccess::Sandboxed,
+            network: NetworkAccess::Sandboxed,
+        };
+        let test_bypass = direct(&NonoExecutable::TestBypass, restricted)?;
+        assert_eq!(test_bypass.command.get_program(), "/agent/pi");
+        assert!(
+            direct(
+                &NonoExecutable::Fixed(PathBuf::from("/missing/nono")),
+                restricted,
+            )
+            .is_err()
+        );
+        Ok(())
+    }
+}

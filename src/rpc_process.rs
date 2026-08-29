@@ -24,6 +24,7 @@ pub(crate) struct ProcessCommand {
     pub program: PathBuf,
     pub prefix_args: Vec<String>,
     pub permission_level: PermissionLevel,
+    pub nono: crate::sandbox::NonoExecutable,
 }
 
 impl Default for ProcessCommand {
@@ -32,6 +33,7 @@ impl Default for ProcessCommand {
             program: pi_program(std::env::var_os("FARCASTER_PI_PATH")),
             prefix_args: Vec::new(),
             permission_level: PermissionLevel::default(),
+            nono: crate::sandbox::configured_nono_program(std::env::var_os("FARCASTER_NONO_PATH")),
         }
     }
 }
@@ -46,27 +48,63 @@ impl ProcessCommand {
             program: PathBuf::from("sh"),
             prefix_args,
             permission_level: PermissionLevel::default(),
+            nono: crate::sandbox::test_nono_bypass(),
         }
     }
 
-    pub(crate) fn command(&self, project: &Path) -> Result<Command, String> {
-        let mut process = Command::new(&self.program);
-        process.args(&self.prefix_args).current_dir(project);
-        let defaults = PermissionLevel::default();
-        if self.permission_level.files != defaults.files {
-            process.args(["--sandbox-files", self.permission_level.files.flag_value()]);
-        }
-        if self.permission_level.network != defaults.network {
-            process.args([
-                "--sandbox-network",
-                self.permission_level.network.flag_value(),
-            ]);
-        }
+    pub(crate) fn command(
+        &self,
+        project: &Path,
+    ) -> Result<crate::sandbox::PreparedCommand, String> {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
-        if let Some(environment) = crate::shell_environment::project_shell_environment(project)? {
-            process.env_clear().envs(environment);
+        let environment = crate::shell_environment::project_shell_environment(project)?;
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        let environment: Option<Vec<(std::ffi::OsString, std::ffi::OsString)>> = None;
+        let environment_path = |name: &str| {
+            environment
+                .as_ref()
+                .and_then(|values| values.iter().find(|(key, _)| key == name))
+                .map(|(_, value)| PathBuf::from(value))
+                .or_else(|| std::env::var_os(name).map(PathBuf::from))
+        };
+        let home = environment_path("HOME")
+            .ok_or_else(|| "HOME is required to compile the Farcaster sandbox policy".to_owned())?;
+        let agent_state =
+            environment_path("PI_CODING_AGENT_DIR").unwrap_or_else(|| home.join(".pi/agent"));
+        let temporary = environment_path("TMPDIR").unwrap_or_else(std::env::temp_dir);
+        let mut prepared = crate::sandbox::prepare_command(
+            &self.nono,
+            &self.program,
+            &self.prefix_args,
+            crate::sandbox::PolicyPaths {
+                project,
+                home: &home,
+                agent_state: &agent_state,
+                temporary: &temporary,
+            },
+            sandbox_access(self.permission_level),
+        )?;
+        prepared.command.current_dir(project);
+        if let Some(environment) = environment {
+            prepared.command.env_clear().envs(environment);
         }
-        Ok(process)
+        Ok(prepared)
+    }
+}
+
+fn sandbox_access(level: PermissionLevel) -> crate::sandbox::AccessPolicy {
+    let filesystem = match level.files {
+        crate::runtime::FileAccessMode::ReadOnly => crate::sandbox::FilesystemAccess::ReadOnly,
+        crate::runtime::FileAccessMode::Sandboxed => crate::sandbox::FilesystemAccess::Sandboxed,
+        crate::runtime::FileAccessMode::Full => crate::sandbox::FilesystemAccess::Full,
+    };
+    let network = match level.network {
+        crate::runtime::NetworkAccessMode::Sandboxed => crate::sandbox::NetworkAccess::Sandboxed,
+        crate::runtime::NetworkAccessMode::Full => crate::sandbox::NetworkAccess::Full,
+    };
+    crate::sandbox::AccessPolicy {
+        filesystem,
+        network,
     }
 }
 
@@ -110,10 +148,13 @@ fn rpc_command(
     project: &Path,
     launch: SessionLaunch<'_>,
     mcp_config: &Path,
-) -> Result<Command, String> {
-    let mut process = command.command(project)?;
-    process
+) -> Result<crate::sandbox::PreparedCommand, String> {
+    let mut prepared = command.command(project)?;
+    prepared
+        .command
         .args(["--mode", "rpc"])
+        // Pi and pi-nono run unrestricted inside Farcaster's outer sandbox.
+        .args(["--sandbox-files", "full", "--sandbox-network", "full"])
         .arg("--mcp-config")
         .arg(mcp_config)
         .env("FARCASTER_NATIVE_NOTIFICATIONS", "1")
@@ -122,17 +163,18 @@ fn rpc_command(
     match launch {
         SessionLaunch::New => {}
         SessionLaunch::Resume(session) => {
-            process.arg("--session").arg(session);
+            prepared.command.arg("--session").arg(session);
         }
         SessionLaunch::Fork(source) => {
-            process.arg("--fork").arg(source);
+            prepared.command.arg("--fork").arg(source);
         }
     }
-    Ok(process)
+    Ok(prepared)
 }
 
 pub(crate) struct RpcProcess {
     _mcp_config: crate::mcp_client_config::TransientMcpConfig,
+    _sandbox: crate::sandbox::PreparedCommand,
     child: Arc<Mutex<Child>>,
     stdin: Arc<Mutex<ChildStdin>>,
     incoming: mpsc::Receiver<ReaderItem>,
@@ -178,7 +220,9 @@ impl RpcProcess {
         wake: Option<thread::Thread>,
     ) -> Result<Self, String> {
         let mcp_config = crate::mcp_client_config::TransientMcpConfig::create()?;
-        let mut child = rpc_command(command, project, launch, mcp_config.path())?
+        let mut prepared = rpc_command(command, project, launch, mcp_config.path())?;
+        let mut child = prepared
+            .command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -209,6 +253,7 @@ impl RpcProcess {
         spawn_stderr_reader(stderr, sender);
         let mut rpc = Self {
             _mcp_config: mcp_config,
+            _sandbox: prepared,
             child,
             stdin: Arc::new(Mutex::new(stdin)),
             incoming,
@@ -611,12 +656,15 @@ mod tests {
         let project = tempdir()?;
         let source = Path::new("/sessions/source session.jsonl");
         let process = rpc_command(
-            &ProcessCommand::default(),
+            &ProcessCommand {
+                nono: crate::sandbox::test_nono_bypass(),
+                ..ProcessCommand::default()
+            },
             project.path(),
             SessionLaunch::Fork(source),
             Path::new("/dev/fd/9"),
         )?;
-        let arguments = process.get_args().collect::<Vec<_>>();
+        let arguments = process.command.get_args().collect::<Vec<_>>();
         assert!(arguments.windows(2).any(|pair| pair == ["--mode", "rpc"]));
         assert!(
             arguments
@@ -640,27 +688,34 @@ mod tests {
     }
 
     #[test]
-    fn process_command_passes_independent_sandbox_modes() -> TestResult {
-        let arguments = |command: ProcessCommand| -> TestResult<Vec<String>> {
-            Ok(command
-                .command(Path::new("/tmp"))?
-                .get_args()
-                .map(|argument| argument.to_string_lossy().into_owned())
-                .collect())
-        };
-        assert!(arguments(ProcessCommand::default())?.is_empty());
-
+    fn pi_runs_full_inside_the_outer_sandbox() -> TestResult {
+        let project = tempdir()?;
+        let nono = project.path().join("nono");
+        fs::write(&nono, b"#!/bin/sh\nexit 0\n")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(&nono, fs::Permissions::from_mode(0o700))?;
+        }
         let command = ProcessCommand {
             permission_level: PermissionLevel {
                 files: FileAccessMode::ReadOnly,
-                network: NetworkAccessMode::Full,
+                network: NetworkAccessMode::Sandboxed,
             },
+            nono: crate::sandbox::NonoExecutable::Fixed(nono.clone()),
             ..ProcessCommand::default()
         };
-        assert_eq!(
-            arguments(command)?.join(" "),
-            "--sandbox-files read-only --sandbox-network full"
-        );
+        let prepared = rpc_command(
+            &command,
+            project.path(),
+            SessionLaunch::New,
+            Path::new("/dev/fd/9"),
+        )?;
+        assert_eq!(prepared.command.get_program(), nono.as_os_str());
+        let arguments = prepared.command.get_args().collect::<Vec<_>>();
+        assert!(arguments.windows(4).any(|arguments| {
+            arguments == ["--sandbox-files", "full", "--sandbox-network", "full"]
+        }));
         Ok(())
     }
 

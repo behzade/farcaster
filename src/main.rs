@@ -25,6 +25,7 @@ mod protocol;
 mod repository;
 mod rpc_process;
 mod runtime;
+mod sandbox;
 mod session_changes;
 mod session_deletion;
 mod session_transfer;

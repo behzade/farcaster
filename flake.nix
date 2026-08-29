@@ -65,6 +65,7 @@
               clippy
               git
               neovim
+              nono
               pkg-config
               rust-analyzer
               rustc
@@ -72,7 +73,9 @@
               rustPlatform.bindgenHook
               zig_0_16
             ];
-            shellHook = pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+            shellHook = ''
+              export FARCASTER_NONO_PATH="${pkgs.nono}/bin/nono"
+            '' + pkgs.lib.optionalString pkgs.stdenv.isLinux ''
               export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath nativeRuntimeLibraries}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
               export NIX_LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath nativeRuntimeLibraries}''${NIX_LD_LIBRARY_PATH:+:$NIX_LD_LIBRARY_PATH}"
             '';

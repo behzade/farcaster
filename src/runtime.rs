@@ -2696,6 +2696,7 @@ mod tests {
                     program: PathBuf::from("/definitely/missing/farcaster-test-command"),
                     prefix_args: Vec::new(),
                     permission_level: PermissionLevel::default(),
+                    nono: crate::sandbox::test_nono_bypass(),
                 },
                 process: None,
                 login_process_only: false,
@@ -2819,8 +2820,7 @@ mod tests {
     }
 
     #[test]
-    fn permission_level_changes_live_without_restarting_or_clearing_history() -> Result<(), String>
-    {
+    fn permission_level_change_restarts_and_resumes_the_idle_session() -> Result<(), String> {
         let temp = tempdir().map_err(|error| error.to_string())?;
         let script = temp.path().join("fake-pi.sh");
         fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))
@@ -2857,16 +2857,15 @@ mod tests {
 
         conversation_mut(owner.active_snapshot_mut()).running = false;
         owner.apply_queued_permission_change();
-        let final_target = target.with_files(FileAccessMode::ReadOnly);
-        owner.apply_command(RuntimeCommand::SetPermissionLevel(final_target));
-        assert_eq!(owner.snapshot.permission_level, final_target);
-        drive_process_until(&mut owner, |owner| owner.permission_changes.is_idle());
+        drive_process_until(&mut owner, |owner| {
+            owner.startup_state_loaded && owner.startup_history_loaded
+        });
 
         assert!(owner.permission_changes.is_idle());
-        assert_eq!(owner.process_generation, generation);
+        assert_eq!(owner.process_generation, generation + 1);
         assert!(owner.process.is_some());
-        assert_eq!(owner.process_command.permission_level, final_target);
-        assert_eq!(owner.snapshot.permission_level, final_target);
+        assert_eq!(owner.process_command.permission_level, target);
+        assert_eq!(owner.snapshot.permission_level, target);
         assert_eq!(owner.snapshot.conversation.items, transcript);
         Ok(())
     }
@@ -4202,6 +4201,7 @@ mod tests {
             program: PathBuf::from("/definitely/missing/farcaster-test-command"),
             prefix_args: Vec::new(),
             permission_level: PermissionLevel::default(),
+            nono: crate::sandbox::test_nono_bypass(),
         };
         preview_history(&mut owner, session.clone(), "keep this history");
 
@@ -4233,6 +4233,7 @@ mod tests {
                 program: PathBuf::from("/definitely/missing/farcaster-test-command"),
                 prefix_args: Vec::new(),
                 permission_level: PermissionLevel::default(),
+                nono: crate::sandbox::test_nono_bypass(),
             },
             process: None,
             login_process_only: false,
@@ -4358,6 +4359,7 @@ mod tests {
             program: PathBuf::from("/definitely/missing/farcaster-test-command"),
             prefix_args: Vec::new(),
             permission_level: PermissionLevel::default(),
+            nono: crate::sandbox::test_nono_bypass(),
         };
         owner.state = Some(StateStore::open_at(&database)?);
 

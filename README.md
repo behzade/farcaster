@@ -11,7 +11,7 @@ attribution.
 
 - Multiple live and historical sessions across projects
 - Streaming text, thinking, tool calls, retries, queues, and compaction
-- Model, thinking-level, and sandbox controls
+- Model, thinking-level, and whole-agent sandbox controls
 - Extension questions and permission prompts
 - Git and Jujutsu working-copy views
 - Embedded Neovim and project terminal surfaces
@@ -40,6 +40,7 @@ project MCP file.
 Useful environment variables:
 
 - `FARCASTER_PI_PATH`: Pi executable override
+- `FARCASTER_NONO_PATH`: required fixed nono executable for restricted modes
 - `FARCASTER_DATA_DIR`: application database, project registry, and logs
 - `FARCASTER_SHELL`: login shell override
 - `FARCASTER_GIT`, `FARCASTER_JJ`, `FARCASTER_NVIM`: executable overrides

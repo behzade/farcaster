@@ -22,14 +22,6 @@ impl FileAccessMode {
             Self::Full => "Full",
         }
     }
-
-    pub(crate) fn flag_value(self) -> &'static str {
-        match self {
-            Self::ReadOnly => "read-only",
-            Self::Sandboxed => "sandboxed",
-            Self::Full => "full",
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -48,13 +40,6 @@ impl NetworkAccessMode {
         match self {
             Self::Sandboxed => "Sandboxed",
             Self::Full => "Full",
-        }
-    }
-
-    pub(crate) fn flag_value(self) -> &'static str {
-        match self {
-            Self::Sandboxed => "sandboxed",
-            Self::Full => "full",
         }
     }
 }
@@ -83,36 +68,19 @@ impl PermissionLevel {
     }
 }
 
-struct PendingPermissionChange {
-    request_id: String,
-    level: PermissionLevel,
-}
-
 #[derive(Default)]
 pub(super) struct PermissionChangeState {
-    pending: Option<PendingPermissionChange>,
     queued: Option<PermissionLevel>,
-    generation: u64,
-    command_id: Option<String>,
 }
 
 impl PermissionChangeState {
     #[cfg(test)]
     pub(super) fn is_idle(&self) -> bool {
-        !self.is_transitioning() && self.queued.is_none()
-    }
-
-    fn is_transitioning(&self) -> bool {
-        self.pending.is_some() || self.command_id.is_some()
+        self.queued.is_none()
     }
 
     fn queue(&mut self, requested: PermissionLevel, effective: PermissionLevel) {
-        let active_target = self
-            .pending
-            .as_ref()
-            .map(|pending| pending.level)
-            .unwrap_or(effective);
-        self.queued = (requested != active_target).then_some(requested);
+        self.queued = (requested != effective).then_some(requested);
     }
 
     fn take_queued(&mut self) -> Option<PermissionLevel> {
@@ -120,26 +88,18 @@ impl PermissionChangeState {
     }
 
     pub(super) fn requested_level(&self, effective: PermissionLevel) -> PermissionLevel {
-        self.queued
-            .or_else(|| self.pending.as_ref().map(|pending| pending.level))
-            .unwrap_or(effective)
+        self.queued.unwrap_or(effective)
     }
 
     pub(super) fn take_requested_level(&mut self, effective: PermissionLevel) -> PermissionLevel {
-        let requested = self.requested_level(effective);
-        self.pending = None;
-        self.queued = None;
-        self.command_id = None;
-        requested
+        self.queued.take().unwrap_or(effective)
     }
 }
 
 impl RuntimeOwner {
     fn permission_change_ready(&self) -> bool {
         let conversation = &self.active_snapshot().conversation;
-        !conversation.running
-            && !conversation.compacting
-            && !self.permission_changes.is_transitioning()
+        !conversation.running && !conversation.compacting
     }
 
     pub(super) fn set_permission_level(&mut self, level: PermissionLevel) {
@@ -152,34 +112,27 @@ impl RuntimeOwner {
         if self.process_command.permission_level == level {
             return;
         }
-        let Some(process) = self.process.as_mut() else {
-            self.process_command.permission_level = level;
+        let mut next_command = self.process_command.clone();
+        next_command.permission_level = level;
+        if self.process.is_none() {
+            self.process_command = next_command;
             self.publish();
             return;
+        }
+        if let Err(error) = next_command.command(&self.project) {
+            let snapshot = self.active_snapshot_mut();
+            snapshot.status = "Permissions unchanged".into();
+            conversation_mut(snapshot).push_local_error("Permissions unchanged", error);
+            self.publish();
+            return;
+        }
+        self.process_command = next_command;
+        let session = if self.snapshot.history_preview {
+            self.snapshot.selected_session.clone()
+        } else {
+            self.active_session.clone()
         };
-
-        self.permission_changes.generation = self.permission_changes.generation.saturating_add(1);
-        let request_id = format!("gpui-permission-{}", self.permission_changes.generation);
-        let request = json!({
-            "requestId": request_id,
-            "files": level.files.flag_value(),
-            "network": level.network.flag_value(),
-        });
-        let rpc_id = match process.send(BackendRequest::Prompt {
-            mode: PromptMode::Normal,
-            message: format!("/sandbox-mode {request}"),
-            images: Vec::new(),
-        }) {
-            Ok(id) => id,
-            Err(error) => {
-                self.fail(error);
-                return;
-            }
-        };
-        self.permission_changes.command_id = Some(rpc_id);
-        self.permission_changes.pending = Some(PendingPermissionChange { request_id, level });
-        self.active_snapshot_mut().status = "Changing sandbox access".into();
-        self.publish();
+        self.start_process(session);
     }
 
     pub(super) fn apply_queued_permission_change(&mut self) {
@@ -193,79 +146,14 @@ impl RuntimeOwner {
 
     pub(super) fn apply_sandbox_mode_result(
         &mut self,
-        result: Result<crate::protocol::SandboxModeResult, String>,
+        _result: Result<crate::protocol::SandboxModeResult, String>,
     ) {
-        let result = match result {
-            Ok(result) => result,
-            Err(error) => {
-                if self.permission_changes.pending.is_some() {
-                    self.fail_permission_change(error);
-                }
-                return;
-            }
-        };
-        let Some(pending) = self.permission_changes.pending.as_ref() else {
-            return;
-        };
-        if result.request_id != pending.request_id {
-            return;
-        }
-        if result.version != 1
-            || result.files != pending.level.files.flag_value()
-            || result.network != pending.level.network.flag_value()
-        {
-            self.fail_permission_change(
-                "Sandbox mode acknowledgement did not match the request".into(),
-            );
-            return;
-        }
-        if !result.success {
-            self.fail_permission_change(
-                result
-                    .error
-                    .unwrap_or_else(|| "pi-nono rejected the sandbox mode change".into()),
-            );
-            return;
-        }
-
-        let level = pending.level;
-        self.permission_changes.pending = None;
-        self.process_command.permission_level = level;
-        self.active_snapshot_mut().status = "Ready".into();
-        self.publish();
-        self.apply_queued_permission_change();
     }
 
     pub(super) fn apply_permission_command_response(
         &mut self,
-        response: &crate::protocol::RpcResponse,
+        _response: &crate::protocol::RpcResponse,
     ) -> bool {
-        let Some(id) = response.id.as_ref() else {
-            return false;
-        };
-        if self.permission_changes.command_id.as_deref() != Some(id) {
-            return false;
-        }
-        self.permission_changes.command_id = None;
-        if !response.success && self.permission_changes.pending.is_some() {
-            self.fail_permission_change(
-                response
-                    .error
-                    .clone()
-                    .unwrap_or_else(|| "pi-nono did not accept the sandbox mode command".into()),
-            );
-        } else {
-            self.apply_queued_permission_change();
-        }
-        true
-    }
-
-    fn fail_permission_change(&mut self, message: String) {
-        self.permission_changes.pending = None;
-        let snapshot = self.active_snapshot_mut();
-        snapshot.status = "Permissions unchanged".into();
-        conversation_mut(snapshot).push_local_error("Permissions unchanged", message);
-        self.publish();
-        self.apply_queued_permission_change();
+        false
     }
 }
