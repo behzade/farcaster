@@ -460,13 +460,6 @@ impl FarcasterApp {
         });
     }
 
-    pub(super) fn refresh_workgraph_data(&mut self, cx: &mut Context<Self>) {
-        self.refresh_workgraph_sidebar(cx);
-        if self.surface == AppSurface::Work {
-            self.refresh_workgraph_board(cx);
-        }
-    }
-
     pub(super) fn active_workgraph_session(&self) -> Option<(String, String)> {
         let selected = self.snapshot.selected_session.as_deref()?;
         self.all_sessions

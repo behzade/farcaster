@@ -705,7 +705,6 @@ impl FarcasterApp {
         let mut composer_dirty = false;
         let mut run_dirty = performance_changed;
         let mut workgraph_session_dirty = false;
-        let mut workgraph_data_dirty = false;
         while let Ok(event) = self.runtime.try_recv() {
             operation.increment_work();
             match &event {
@@ -784,9 +783,6 @@ impl FarcasterApp {
                     );
                     composer_dirty = true;
                     run_dirty = true;
-                }
-                RuntimeEvent::WorkGraphChanged { project, .. } => {
-                    workgraph_data_dirty |= project == &self.project;
                 }
                 RuntimeEvent::RefreshCatalog | RuntimeEvent::Stopped => run_dirty = true,
             }
@@ -1126,12 +1122,7 @@ impl FarcasterApp {
                     request,
                     system_notification_target,
                 } if generation == self.runtime_generation => {
-                    if let Some(jobs) = request.background_jobs() {
-                        if self.background_jobs != jobs {
-                            self.background_jobs = jobs;
-                            run_dirty = true;
-                        }
-                    } else if let Some((title, body)) = request.gpui_system_notification() {
+                    if let Some((title, body)) = request.gpui_system_notification() {
                         self.system_notification_target = system_notification_target;
                         cx.show_system_notification(SystemNotification {
                             tag: SYSTEM_NOTIFICATION_TAG.into(),
@@ -1173,9 +1164,6 @@ impl FarcasterApp {
                 RuntimeEvent::Stopped => {
                     Arc::make_mut(&mut self.snapshot).status = "Stopped".into()
                 }
-                RuntimeEvent::WorkGraphChanged { project, .. } => {
-                    workgraph_data_dirty |= project == self.project;
-                }
                 RuntimeEvent::Snapshot { .. }
                 | RuntimeEvent::RefreshCatalog
                 | RuntimeEvent::SessionReset { .. }
@@ -1187,9 +1175,7 @@ impl FarcasterApp {
                 | RuntimeEvent::SessionFilesModified { .. } => {}
             }
         }
-        if workgraph_data_dirty {
-            self.refresh_workgraph_data(cx);
-        } else if workgraph_session_dirty {
+        if workgraph_session_dirty {
             self.refresh_workgraph_sidebar(cx);
         }
         self.sync_notification_expiries(cx);

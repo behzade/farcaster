@@ -5,10 +5,6 @@ use serde_json::Value;
 #[cfg(test)]
 use serde_json::json;
 
-pub(crate) const WORKGRAPH_RPC_TITLE: &str = "\u{1f}farcaster-workgraph\u{1f}";
-const LEGACY_WORKGRAPH_RPC_TITLE: &str = "\u{1f}pi-gpui-workgraph\u{1f}";
-const BACKGROUND_JOBS_STATUS_KEY: &str = "\u{1f}farcaster-background-jobs\u{1f}";
-const LEGACY_BACKGROUND_JOBS_STATUS_KEY: &str = "\u{1f}pi-gpui-background-jobs\u{1f}";
 const SANDBOX_MODE_STATUS_KEY: &str = "\u{1f}farcaster-sandbox-mode\u{1f}";
 const LEGACY_SANDBOX_MODE_STATUS_KEY: &str = "\u{1f}pi-gpui-sandbox-mode\u{1f}";
 
@@ -201,38 +197,6 @@ impl ExtensionUiRequest {
             .strip_prefix("\u{1f}farcaster-notification\u{1f}")
             .or_else(|| message.strip_prefix("\u{1f}pi-gpui-notification\u{1f}"))?;
         payload.split_once('\u{1f}')
-    }
-
-    pub(crate) fn workgraph_rpc(&self) -> Option<(&str, &str)> {
-        let Self::Input {
-            id,
-            title,
-            placeholder: Some(payload),
-            ..
-        } = self
-        else {
-            return None;
-        };
-        matches!(
-            title.as_str(),
-            WORKGRAPH_RPC_TITLE | LEGACY_WORKGRAPH_RPC_TITLE
-        )
-        .then_some((id, payload))
-    }
-
-    pub(crate) fn background_jobs(&self) -> Option<Vec<BackgroundJob>> {
-        let Self::SetStatus { key, text, .. } = self else {
-            return None;
-        };
-        matches!(
-            key.as_str(),
-            BACKGROUND_JOBS_STATUS_KEY | LEGACY_BACKGROUND_JOBS_STATUS_KEY
-        )
-        .then(|| {
-            text.as_deref()
-                .and_then(|value| serde_json::from_str(value).ok())
-                .unwrap_or_default()
-        })
     }
 
     pub(crate) fn sandbox_mode_result(&self) -> Option<Result<SandboxModeResult, String>> {
@@ -452,60 +416,6 @@ mod tests {
             legacy.gpui_system_notification(),
             Some(("Pi finished", "Done"))
         );
-    }
-
-    #[test]
-    fn companion_workgraph_requests_use_the_private_rpc_marker() {
-        let request = ExtensionUiRequest::Input {
-            id: "request-1".into(),
-            title: WORKGRAPH_RPC_TITLE.into(),
-            placeholder: Some("{\"operation\":\"search\"}".into()),
-            timeout: None,
-        };
-        assert_eq!(
-            request.workgraph_rpc(),
-            Some(("request-1", "{\"operation\":\"search\"}"))
-        );
-        let ordinary = ExtensionUiRequest::Input {
-            id: "input-1".into(),
-            title: "Question".into(),
-            placeholder: Some("Answer".into()),
-            timeout: None,
-        };
-        assert_eq!(ordinary.workgraph_rpc(), None);
-        let legacy = ExtensionUiRequest::Input {
-            id: "request-2".into(),
-            title: LEGACY_WORKGRAPH_RPC_TITLE.into(),
-            placeholder: Some("{}".into()),
-            timeout: None,
-        };
-        assert_eq!(legacy.workgraph_rpc(), Some(("request-2", "{}")));
-    }
-
-    #[test]
-    fn companion_background_job_status_decodes_structured_snapshots() {
-        let request = ExtensionUiRequest::SetStatus {
-            id: "jobs".into(),
-            key: BACKGROUND_JOBS_STATUS_KEY.into(),
-            text: Some(
-                r#"[{"name":"pi-server","command":"npm run dev","state":"running"}]"#.into(),
-            ),
-        };
-        assert_eq!(
-            request.background_jobs(),
-            Some(vec![BackgroundJob {
-                name: "pi-server".into(),
-                command: "npm run dev".into(),
-                state: BackgroundJobState::Running,
-                exit_code: None,
-            }])
-        );
-        let malformed = ExtensionUiRequest::SetStatus {
-            id: "jobs".into(),
-            key: BACKGROUND_JOBS_STATUS_KEY.into(),
-            text: Some("not json".into()),
-        };
-        assert_eq!(malformed.background_jobs(), Some(Vec::new()));
     }
 
     #[test]

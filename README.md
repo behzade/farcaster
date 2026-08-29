@@ -36,7 +36,6 @@ Useful environment variables:
 - `FARCASTER_DATA_DIR`: application database, project registry, and logs
 - `FARCASTER_SHELL`: login shell override
 - `FARCASTER_GIT`, `FARCASTER_JJ`, `FARCASTER_NVIM`: executable overrides
-- `FARCASTER_PI_EXTENSION`: optional Pi extension loaded with the RPC process
 
 On macOS, application data defaults to
 `~/Library/Application Support/Farcaster`. Other platforms use

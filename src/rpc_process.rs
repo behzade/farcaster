@@ -70,10 +70,6 @@ impl ProcessCommand {
     }
 }
 
-fn companion_extension() -> Option<PathBuf> {
-    std::env::var_os("FARCASTER_PI_EXTENSION").map(PathBuf::from)
-}
-
 fn pi_program(packaged_path: Option<std::ffi::OsString>) -> PathBuf {
     packaged_path
         .map(PathBuf::from)
@@ -120,9 +116,6 @@ fn rpc_command(
         .env("FARCASTER_NATIVE_NOTIFICATIONS", "1")
         // Compatibility with existing Pi notification extensions.
         .env("PI_GPUI_NATIVE_NOTIFICATIONS", "1");
-    if let Some(extension) = companion_extension() {
-        process.arg("--extension").arg(extension);
-    }
     match launch {
         SessionLaunch::New => {}
         SessionLaunch::Resume(session) => {

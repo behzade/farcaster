@@ -40,7 +40,6 @@ mod transcript_attachments;
 mod transcript_list;
 mod transcript_markdown;
 mod user_invocations;
-mod workgraph_rpc;
 
 fn main() -> std::process::ExitCode {
     #[cfg(target_os = "linux")]
