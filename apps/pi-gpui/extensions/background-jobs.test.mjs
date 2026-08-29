@@ -24,61 +24,92 @@ function harness() {
   return { handlers, snapshots, ctx };
 }
 
-test("publishes background job starts, settlements, and removals", async () => {
-  const { handlers, snapshots, ctx } = harness();
-  await handlers.get("session_start")({}, ctx);
+async function startBash(handlers, ctx, toolCallId = "bash-call") {
   await handlers.get("tool_execution_start")({
-    toolCallId: "start",
-    toolName: "background_job",
-    args: { action: "start", name: "pi-server", command: "npm run dev" },
+    toolCallId,
+    toolName: "bash",
+    args: { command: "cargo check" },
   }, ctx);
+}
+
+async function finishDetachedBash(handlers, ctx, id = "pi-process", toolCallId = "bash-call") {
   await handlers.get("tool_execution_end")({
-    toolCallId: "start",
-    toolName: "background_job",
-    result: { content: [{ type: "text", text: "started pi-server" }] },
+    toolCallId,
+    toolName: "bash",
+    result: { details: { id, state: "running" } },
     isError: false,
   }, ctx);
+}
+
+test("publishes detached bash processes and their settlements", async () => {
+  const { handlers, snapshots, ctx } = harness();
+  await handlers.get("session_start")({}, ctx);
+  await startBash(handlers, ctx);
+  await finishDetachedBash(handlers, ctx);
+
+  assert.deepEqual(snapshots.at(-1), [{
+    name: "pi-process",
+    command: "cargo check",
+    state: "running",
+  }]);
+
   await handlers.get("message_end")({
     message: {
       role: "custom",
-      customType: "background-job-result",
-      details: { name: "pi-server", state: "completed", exitCode: 0 },
+      customType: "process-session-result",
+      details: { id: "pi-process", state: "exited", exitCode: 7 },
     },
   }, ctx);
 
   assert.deepEqual(snapshots.at(-1), [{
-    name: "pi-server",
-    command: "npm run dev",
+    name: "pi-process",
+    command: "cargo check",
+    state: "exited",
+    exitCode: 7,
+  }]);
+});
+
+test("applies completion delivered before the detached bash result", async () => {
+  const { handlers, snapshots, ctx } = harness();
+  await handlers.get("session_start")({}, ctx);
+  await startBash(handlers, ctx);
+  await handlers.get("message_end")({
+    message: {
+      role: "custom",
+      customType: "process-session-result",
+      details: { id: "pi-process", state: "completed", exitCode: 0 },
+    },
+  }, ctx);
+  await finishDetachedBash(handlers, ctx);
+
+  assert.deepEqual(snapshots.at(-1), [{
+    name: "pi-process",
+    command: "cargo check",
     state: "completed",
     exitCode: 0,
   }]);
-
-  await handlers.get("tool_execution_start")({
-    toolCallId: "stop",
-    toolName: "background_job",
-    args: { action: "stop", name: "pi-server" },
-  }, ctx);
-  await handlers.get("tool_execution_end")({
-    toolCallId: "stop",
-    toolName: "background_job",
-    result: { content: [{ type: "text", text: "stopped pi-server" }] },
-  }, ctx);
-  assert.deepEqual(snapshots.at(-1), []);
 });
 
-test("removes a job when start is rejected", async () => {
+test("does not publish short or failed bash calls", async () => {
   const { handlers, snapshots, ctx } = harness();
-  await handlers.get("tool_execution_start")({
-    toolCallId: "rejected",
-    toolName: "background_job",
-    args: { action: "start", name: "pi-test", command: "cargo test" },
-  }, ctx);
-  await handlers.get("tool_execution_end")({
-    toolCallId: "rejected",
-    toolName: "background_job",
-    result: { content: [{ type: "text", text: "job already exists" }] },
-    isError: true,
-  }, ctx);
+  await handlers.get("session_start")({}, ctx);
 
-  assert.deepEqual(snapshots.at(-1), []);
+  for (const [toolCallId, isError, details] of [
+    ["short", false, undefined],
+    ["failed", true, { id: "pi-failed", state: "running" }],
+  ]) {
+    await handlers.get("tool_execution_start")({
+      toolCallId,
+      toolName: "bash",
+      args: { command: "printf ok" },
+    }, ctx);
+    await handlers.get("tool_execution_end")({
+      toolCallId,
+      toolName: "bash",
+      result: { details },
+      isError,
+    }, ctx);
+  }
+
+  assert.deepEqual(snapshots, [[]]);
 });
