@@ -290,7 +290,7 @@ fn render_sidebar_row(row: PlanRow, app: WeakEntity<FarcasterApp>) -> impl IntoE
 
 #[cfg(test)]
 mod tests {
-    use workgraph::contract::SessionLink;
+    use workgraph::SessionLink;
 
     use super::*;
     use crate::app::workgraph::contract::PlanData;

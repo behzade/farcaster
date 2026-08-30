@@ -7,12 +7,8 @@ use std::{
 use rmcp::schemars;
 use serde::Deserialize;
 use workgraph::{
-    adapter::SqliteAdapter,
-    contract::{
-        EditAction, EditRequest, EditResult, Evidence, EvidenceKind, NodeDraft, Outcome,
-        SearchRequest, SearchResult,
-    },
-    core::WorkGraph,
+    EditAction, EditRequest, EditResult, Evidence, EvidenceKind, NodeDraft, Outcome, SearchRequest,
+    SearchResult, SqliteAdapter, WorkGraph,
 };
 
 static OPERATION_SEQUENCE: AtomicU64 = AtomicU64::new(1);

@@ -1,11 +1,8 @@
 use std::path::PathBuf;
 
 use workgraph::{
-    adapter::SqliteAdapter,
-    contract::{
-        CompletionRequirement, EditAction, EditRequest, EditResult, SearchRequest, SearchResult,
-    },
-    core::WorkGraph,
+    CompletionRequirement, EditAction, EditRequest, EditResult, SearchRequest, SearchResult,
+    SqliteAdapter, WorkGraph,
 };
 
 use super::contract::PlanData;

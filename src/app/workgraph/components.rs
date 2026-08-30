@@ -336,21 +336,21 @@ pub(super) fn detail_copy() -> Div {
 }
 
 pub(super) const fn requirement_label(
-    requirement: workgraph::contract::CompletionRequirement,
+    requirement: workgraph::CompletionRequirement,
 ) -> &'static str {
     match requirement {
-        workgraph::contract::CompletionRequirement::RevisionOrObservation => {
+        workgraph::CompletionRequirement::RevisionOrObservation => {
             "Revision or verified observation"
         }
-        workgraph::contract::CompletionRequirement::File => "File artifact",
-        workgraph::contract::CompletionRequirement::Observation => "Verified observation",
+        workgraph::CompletionRequirement::File => "File artifact",
+        workgraph::CompletionRequirement::Observation => "Verified observation",
     }
 }
 
-pub(super) const fn evidence_label(kind: workgraph::contract::EvidenceKind) -> &'static str {
+pub(super) const fn evidence_label(kind: workgraph::EvidenceKind) -> &'static str {
     match kind {
-        workgraph::contract::EvidenceKind::Revision => "Revision",
-        workgraph::contract::EvidenceKind::File => "File",
-        workgraph::contract::EvidenceKind::Observation => "Observation",
+        workgraph::EvidenceKind::Revision => "Revision",
+        workgraph::EvidenceKind::File => "File",
+        workgraph::EvidenceKind::Observation => "Observation",
     }
 }

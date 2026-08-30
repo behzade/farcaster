@@ -1,4 +1,4 @@
-use workgraph::contract::{Plan, PlanSnapshot, SessionLink};
+use workgraph::{Plan, PlanSnapshot, SessionLink};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(super) struct PlanData {
@@ -16,7 +16,7 @@ pub(super) enum PlanLoadState {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct PlanRow {
-    pub node: workgraph::contract::Node,
+    pub node: workgraph::Node,
     pub reached: bool,
     pub current: bool,
     pub detached: bool,

@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use workgraph::contract::{PlanSnapshot, WalkStep};
+use workgraph::{PlanSnapshot, WalkStep};
 
 use super::contract::PlanRow;
 
@@ -67,7 +67,7 @@ pub(super) fn adjacent_node_number(
     rows.get(next).map(|row| row.node.number)
 }
 
-fn node_matches(node: &workgraph::contract::Node, search: &str) -> bool {
+fn node_matches(node: &workgraph::Node, search: &str) -> bool {
     let search = search.trim().to_lowercase();
     if search.is_empty() {
         return true;
@@ -151,7 +151,7 @@ fn reachable_nodes(snapshot: &PlanSnapshot) -> HashSet<u64> {
 
 #[cfg(test)]
 mod tests {
-    use workgraph::contract::{
+    use workgraph::{
         CompletionRequirement, Edge, Evidence, EvidenceKind, Node, Outcome, Plan, PlanSnapshot,
         Walk, WalkStep,
     };
