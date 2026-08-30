@@ -1,10 +1,20 @@
 //! Repository file discovery and matching for composer `@` mentions.
 
-use std::path::Path;
+use std::{cell::RefCell, path::Path};
+
+use nucleo_matcher::{
+    Config, Matcher,
+    pattern::{Atom, AtomKind, CaseMatching, Normalization},
+};
 
 use crate::repository::{BackendPreference, RepositoryBackend};
 
 const MAX_RESULTS: usize = 8;
+
+thread_local! {
+    static FILE_MATCHER: RefCell<Matcher> =
+        RefCell::new(Matcher::new(Config::DEFAULT.match_paths()));
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct MentionQuery {
@@ -47,18 +57,22 @@ pub(super) fn matches(files: &[String], query: &str) -> Vec<String> {
         crate::performance::OperationKind::FileMentionMatch,
         files.len(),
     );
-    let query = query.to_lowercase();
-    let mut matches = files
-        .iter()
-        .filter_map(|path| fuzzy_score(&path.to_lowercase(), &query).map(|score| (score, path)))
-        .collect::<Vec<_>>();
-    matches.sort_by(|(left_score, left), (right_score, right)| {
+    let pattern = Atom::new(
+        query,
+        CaseMatching::Ignore,
+        Normalization::Smart,
+        AtomKind::Fuzzy,
+        false,
+    );
+    let mut matches =
+        FILE_MATCHER.with(|matcher| pattern.match_list(files, &mut matcher.borrow_mut()));
+    matches.sort_by(|(left, left_score), (right, right_score)| {
         right_score.cmp(left_score).then_with(|| left.cmp(right))
     });
     matches
         .into_iter()
         .take(MAX_RESULTS)
-        .map(|(_, path)| path.clone())
+        .map(|(path, _)| path.clone())
         .collect()
 }
 
@@ -68,34 +82,6 @@ pub(super) fn insert(value: &str, query: &MentionQuery, path: &str) -> (String, 
     text.replace_range(query.range.clone(), &replacement);
     let cursor = query.range.start + replacement.len();
     (text, cursor)
-}
-
-fn fuzzy_score(candidate: &str, query: &str) -> Option<usize> {
-    if query.is_empty() {
-        return Some(0);
-    }
-    let mut score: usize = 0;
-    let mut previous = None;
-    let mut candidate_chars = candidate.char_indices();
-    for needle in query.chars() {
-        let (index, _) = candidate_chars.find(|(_, character)| *character == needle)?;
-        score += 10;
-        if previous.is_some_and(|previous| index == previous + 1) {
-            score += 8;
-        }
-        if index == 0 || candidate.as_bytes().get(index.wrapping_sub(1)) == Some(&b'/') {
-            score += 5;
-        }
-        previous = Some(index);
-    }
-    if candidate
-        .rsplit('/')
-        .next()
-        .is_some_and(|name| name.contains(query))
-    {
-        score += 20;
-    }
-    Some(score.saturating_sub(candidate.len() / 20))
 }
 
 #[cfg(test)]
@@ -124,6 +110,18 @@ mod tests {
         ];
         assert_eq!(matches(&files, "main"), ["main.txt", "src/main.rs"]);
         assert_eq!(matches(&files, "srm"), ["src/main.rs", "docs/runtime.md"]);
+    }
+
+    #[test]
+    fn empty_matching_keeps_every_file_in_stable_order() {
+        let files = vec!["z.rs".into(), "a.rs".into()];
+        assert_eq!(matches(&files, ""), ["a.rs", "z.rs"]);
+    }
+
+    #[test]
+    fn unicode_matching_uses_character_boundaries() {
+        let files = vec!["src/café.rs".into(), "src/cafeteria.rs".into()];
+        assert_eq!(matches(&files, "café"), ["src/café.rs"]);
     }
 
     #[test]

@@ -4,6 +4,19 @@ use tempfile::tempdir;
 
 type TestResult = Result<(), Box<dyn Error>>;
 
+#[test]
+fn lexical_normalization_preserves_unresolved_relative_parents() {
+    assert_eq!(
+        normalize_lexical(Path::new("../../a")),
+        PathBuf::from("../../a")
+    );
+    assert_eq!(
+        normalize_lexical(Path::new("foo/../../bar")),
+        PathBuf::from("../bar")
+    );
+    assert_eq!(normalize_lexical(Path::new("")), PathBuf::new());
+}
+
 fn session(root: &Path, file: &str, cwd: &Path, name: Option<&str>, message: &str) -> TestResult {
     session_with_parent(root, file, cwd, name, message, None)
 }

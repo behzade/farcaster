@@ -5,11 +5,12 @@ use std::{
     collections::{BinaryHeap, HashMap, HashSet, VecDeque},
     fs::{self, File},
     io::{BufRead as _, BufReader, Read as _},
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
     time::SystemTime,
 };
 
+use path_clean::PathClean as _;
 use serde_json::Value;
 
 use crate::{
@@ -1207,17 +1208,11 @@ pub(crate) fn normalize_session_path(path: &Path) -> PathBuf {
 }
 
 pub(crate) fn normalize_lexical(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            other => normalized.push(other.as_os_str()),
-        }
+    if path.as_os_str().is_empty() {
+        PathBuf::new()
+    } else {
+        path.clean()
     }
-    normalized
 }
 
 #[cfg(test)]

@@ -1,6 +1,5 @@
 // Pierre uses jsdiff's word diff and then joins one-space gaps between adjacent
-// changed spans. This renderer-neutral rewrite uses a bounded token LCS and the
-// same visual joining rule, avoiding an additional runtime dependency.
+// changed spans. Keep that visual joining rule over a bounded library LCS.
 
 use std::ops::Range;
 
@@ -36,13 +35,7 @@ pub(super) fn changed_ranges(
         return (Vec::new(), Vec::new());
     }
 
-    let matches = lcs_matches(&old_tokens, &new_tokens);
-    let mut old_matched = vec![false; old_tokens.len()];
-    let mut new_matched = vec![false; new_tokens.len()];
-    for (old_index, new_index) in matches {
-        old_matched[old_index] = true;
-        new_matched[new_index] = true;
-    }
+    let (old_matched, new_matched) = matched_tokens(&old_tokens, &new_tokens);
     (
         ranges_for_unmatched(old, &old_tokens, &old_matched),
         ranges_for_unmatched(new, &new_tokens, &new_matched),
@@ -95,38 +88,19 @@ fn token_kind(character: char) -> TokenKind {
     }
 }
 
-fn lcs_matches(old: &[Token<'_>], new: &[Token<'_>]) -> Vec<(usize, usize)> {
-    let width = new.len().saturating_add(1);
-    let mut lengths = vec![0_u16; old.len().saturating_add(1).saturating_mul(width)];
-    for old_index in (0..old.len()).rev() {
-        for new_index in (0..new.len()).rev() {
-            let index = old_index * width + new_index;
-            lengths[index] = if old[old_index].value == new[new_index].value {
-                lengths[(old_index + 1) * width + new_index + 1].saturating_add(1)
-            } else {
-                lengths[(old_index + 1) * width + new_index]
-                    .max(lengths[old_index * width + new_index + 1])
-            };
+fn matched_tokens(old: &[Token<'_>], new: &[Token<'_>]) -> (Vec<bool>, Vec<bool>) {
+    let old_values = old.iter().map(|token| token.value).collect::<Vec<_>>();
+    let new_values = new.iter().map(|token| token.value).collect::<Vec<_>>();
+    let mut old_matched = vec![false; old.len()];
+    let mut new_matched = vec![false; new.len()];
+    for operation in similar::capture_diff_slices(similar::Algorithm::Lcs, &old_values, &new_values)
+    {
+        if operation.tag() == similar::DiffTag::Equal {
+            old_matched[operation.old_range()].fill(true);
+            new_matched[operation.new_range()].fill(true);
         }
     }
-
-    let mut matches = Vec::new();
-    let mut old_index = 0;
-    let mut new_index = 0;
-    while old_index < old.len() && new_index < new.len() {
-        if old[old_index].value == new[new_index].value {
-            matches.push((old_index, new_index));
-            old_index += 1;
-            new_index += 1;
-        } else if lengths[(old_index + 1) * width + new_index]
-            >= lengths[old_index * width + new_index + 1]
-        {
-            old_index += 1;
-        } else {
-            new_index += 1;
-        }
-    }
-    matches
+    (old_matched, new_matched)
 }
 
 fn ranges_for_unmatched(source: &str, tokens: &[Token<'_>], matched: &[bool]) -> Vec<Range<usize>> {

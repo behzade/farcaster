@@ -105,9 +105,7 @@ fn default_login_shell() -> PathBuf {
     #[cfg(target_os = "macos")]
     let shell = account_login_shell().or_else(|| std::env::var_os("SHELL").map(PathBuf::from));
     #[cfg(target_os = "linux")]
-    let shell = std::env::var_os("SHELL")
-        .map(PathBuf::from)
-        .or_else(account_login_shell);
+    let shell = account_login_shell().or_else(|| std::env::var_os("SHELL").map(PathBuf::from));
 
     shell.unwrap_or_else(|| {
         if cfg!(target_os = "macos") {
@@ -129,20 +127,11 @@ fn account_login_shell() -> Option<PathBuf> {
 
 #[cfg(target_os = "linux")]
 fn account_login_shell() -> Option<PathBuf> {
-    let user = std::env::var("USER").ok()?;
-    let passwd = std::fs::read("/etc/passwd").ok()?;
-    parse_passwd_login_shell(&passwd, &user)
-}
+    use uzers::{get_effective_uid, get_user_by_uid, os::unix::UserExt as _};
 
-#[cfg(any(target_os = "linux", test))]
-fn parse_passwd_login_shell(passwd: &[u8], user: &str) -> Option<PathBuf> {
-    passwd.split(|byte| *byte == b'\n').find_map(|record| {
-        let mut fields = record.split(|byte| *byte == b':');
-        if fields.next() != Some(user.as_bytes()) {
-            return None;
-        }
-        fields.nth(5).and_then(absolute_path)
-    })
+    let user = get_user_by_uid(get_effective_uid())?;
+    let shell = user.shell();
+    shell.is_absolute().then(|| shell.to_path_buf())
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -282,13 +271,6 @@ mod tests {
         assert_eq!(
             parse_account_login_shell(b"user:*:501:20::0:0:User:/Users/user:/opt/bin/fish\n"),
             Some(PathBuf::from("/opt/bin/fish"))
-        );
-        assert_eq!(
-            parse_passwd_login_shell(
-                b"other:x:1000:1000::/home/other:/bin/bash\nuser:x:1001:100::/home/user:/bin/fish\n",
-                "user",
-            ),
-            Some(PathBuf::from("/bin/fish"))
         );
         assert_eq!(parse_account_login_shell(b"malformed"), None);
     }

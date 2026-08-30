@@ -18,10 +18,13 @@ gpui-neovim = "0.1.5"
 gix-quote = "0.7.2"
 gpui_platform = { path = "third_party/zed-gpui-cc053a4/crates/gpui_platform", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
 notify = "7.0.0"
+nucleo-matcher = "0.3.1"
+path-clean = "1.0.1"
 rmcp = { version = "3.1.4", features = ["server", "transport-streamable-http-server"] }
 rusqlite = { version = "0.37.0", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+similar = { version = "3.1.1", default-features = false }
 sum_tree = { path = "third_party/zed-gpui-cc053a4/crates/sum_tree" }
 tempfile = "3.27.0"
 thiserror = "2.0.19"
@@ -29,6 +32,9 @@ time = { version = "0.3.54", features = ["parsing"] }
 tokio = { version = "1.49.0", features = ["net", "rt-multi-thread"] }
 workgraph = { path = "workgraph" }
 zlog = { path = "third_party/zed-gpui-cc053a4/crates/zlog" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+uzers = { version = "0.12.2", default-features = false }
 
 [dev-dependencies]
 gpui = { path = "third_party/zed-gpui-cc053a4/crates/gpui", features = ["test-support"] }

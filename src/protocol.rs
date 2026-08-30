@@ -122,70 +122,80 @@ pub(crate) enum WireMessage {
     Event(Value),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(tag = "method")]
 pub(crate) enum ExtensionUiRequest {
+    #[serde(rename = "select")]
     Select {
         id: String,
         title: String,
         options: Vec<String>,
         timeout: Option<u64>,
     },
+    #[serde(rename = "confirm")]
     Confirm {
         id: String,
         title: String,
         message: String,
         timeout: Option<u64>,
     },
+    #[serde(rename = "input")]
     Input {
         id: String,
         title: String,
         placeholder: Option<String>,
         timeout: Option<u64>,
     },
+    #[serde(rename = "secret")]
     Secret {
         id: String,
         title: String,
         placeholder: Option<String>,
         timeout: Option<u64>,
     },
+    #[serde(rename = "editor")]
     Editor {
         id: String,
         title: String,
         prefill: Option<String>,
     },
+    #[serde(rename = "notify")]
     Notify {
         id: String,
         message: String,
+        #[serde(default, rename = "notifyType")]
         tone: NotifyTone,
     },
+    #[serde(rename = "authUrl")]
     AuthUrl {
         id: String,
         url: String,
         message: String,
     },
+    #[serde(rename = "setStatus")]
     SetStatus {
         id: String,
+        #[serde(rename = "statusKey")]
         key: String,
+        #[serde(rename = "statusText")]
         text: Option<String>,
     },
+    #[serde(rename = "setWidget")]
     SetWidget {
         id: String,
+        #[serde(rename = "widgetKey")]
         key: String,
+        #[serde(rename = "widgetLines")]
         lines: Option<Vec<String>>,
+        #[serde(default, rename = "widgetPlacement")]
         placement: WidgetPlacement,
     },
-    SetTitle {
-        id: String,
-        title: String,
-    },
-    SetEditorText {
-        id: String,
-        text: String,
-    },
-    Unknown {
-        id: Option<String>,
-        method: String,
-    },
+    #[serde(rename = "setTitle")]
+    SetTitle { id: String, title: String },
+    #[serde(rename = "set_editor_text")]
+    SetEditorText { id: String, text: String },
+    #[serde(skip)]
+    Unknown { id: Option<String>, method: String },
 }
 
 impl ExtensionUiRequest {
@@ -228,19 +238,23 @@ impl ExtensionUiRequest {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
 pub(crate) enum NotifyTone {
-    #[default]
-    Info,
     Warning,
     Error,
+    #[default]
+    #[serde(other)]
+    Info,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub(crate) enum WidgetPlacement {
-    #[default]
-    AboveEditor,
     BelowEditor,
+    #[default]
+    #[serde(other)]
+    AboveEditor,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -254,6 +268,18 @@ pub(crate) enum ExtensionUiResponse {
     Cancelled { id: String, cancelled: bool },
 }
 
+#[derive(Deserialize)]
+struct ExtensionEnvelope {
+    method: String,
+    id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct InputEnvelope {
+    #[serde(default)]
+    secret: bool,
+}
+
 pub(crate) fn parse_frame(frame: &[u8]) -> Result<WireMessage, String> {
     let value: Value =
         serde_json::from_slice(frame).map_err(|error| format!("malformed JSON frame: {error}"))?;
@@ -264,132 +290,41 @@ pub(crate) fn parse_frame(frame: &[u8]) -> Result<WireMessage, String> {
         "response" => serde_json::from_value(value)
             .map(WireMessage::Response)
             .map_err(|error| format!("invalid response frame: {error}")),
-        "extension_ui_request" => Ok(WireMessage::ExtensionUi(parse_extension_request(&value))),
+        "extension_ui_request" => parse_extension_request(value).map(WireMessage::ExtensionUi),
         _ => Ok(WireMessage::Event(value)),
     }
 }
 
-fn string(value: &Value, field: &str) -> String {
-    value
-        .get(field)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned()
-}
-
-fn parse_extension_request(value: &Value) -> ExtensionUiRequest {
-    let id = string(value, "id");
-    let method = string(value, "method");
-    let timeout = value.get("timeout").and_then(Value::as_u64);
-    match method.as_str() {
-        "select" => ExtensionUiRequest::Select {
-            id,
-            title: string(value, "title"),
-            options: value
-                .get("options")
-                .and_then(Value::as_array)
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .map(str::to_owned)
-                        .collect()
-                })
-                .unwrap_or_default(),
-            timeout,
-        },
-        "confirm" => ExtensionUiRequest::Confirm {
-            id,
-            title: string(value, "title"),
-            message: string(value, "message"),
-            timeout,
-        },
-        "input" => {
-            let title = string(value, "title");
-            let placeholder = value
-                .get("placeholder")
-                .and_then(Value::as_str)
-                .map(str::to_owned);
-            if value.get("secret").and_then(Value::as_bool) == Some(true) {
-                ExtensionUiRequest::Secret {
-                    id,
-                    title,
-                    placeholder,
-                    timeout,
-                }
-            } else {
-                ExtensionUiRequest::Input {
-                    id,
-                    title,
-                    placeholder,
-                    timeout,
-                }
-            }
-        }
-        "editor" => ExtensionUiRequest::Editor {
-            id,
-            title: string(value, "title"),
-            prefill: value
-                .get("prefill")
-                .and_then(Value::as_str)
-                .map(str::to_owned),
-        },
-        "notify" => ExtensionUiRequest::Notify {
-            id,
-            message: string(value, "message"),
-            tone: match value.get("notifyType").and_then(Value::as_str) {
-                Some("warning") => NotifyTone::Warning,
-                Some("error") => NotifyTone::Error,
-                _ => NotifyTone::Info,
-            },
-        },
-        "authUrl" => ExtensionUiRequest::AuthUrl {
-            id,
-            url: string(value, "url"),
-            message: string(value, "message"),
-        },
-        "setStatus" => ExtensionUiRequest::SetStatus {
-            id,
-            key: string(value, "statusKey"),
-            text: value
-                .get("statusText")
-                .and_then(Value::as_str)
-                .map(str::to_owned),
-        },
-        "setWidget" => ExtensionUiRequest::SetWidget {
-            id,
-            key: string(value, "widgetKey"),
-            lines: value
-                .get("widgetLines")
-                .and_then(Value::as_array)
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .map(str::to_owned)
-                        .collect()
-                }),
-            placement: if value.get("widgetPlacement").and_then(Value::as_str)
-                == Some("belowEditor")
-            {
-                WidgetPlacement::BelowEditor
-            } else {
-                WidgetPlacement::AboveEditor
-            },
-        },
-        "setTitle" => ExtensionUiRequest::SetTitle {
-            id,
-            title: string(value, "title"),
-        },
-        "set_editor_text" => ExtensionUiRequest::SetEditorText {
-            id,
-            text: string(value, "text"),
-        },
-        _ => ExtensionUiRequest::Unknown {
-            id: (!id.is_empty()).then_some(id),
-            method,
-        },
+fn parse_extension_request(mut value: Value) -> Result<ExtensionUiRequest, String> {
+    let envelope = ExtensionEnvelope::deserialize(&value)
+        .map_err(|error| format!("invalid extension UI request: {error}"))?;
+    if !matches!(
+        envelope.method.as_str(),
+        "select"
+            | "confirm"
+            | "input"
+            | "editor"
+            | "notify"
+            | "authUrl"
+            | "setStatus"
+            | "setWidget"
+            | "setTitle"
+            | "set_editor_text"
+    ) {
+        return Ok(ExtensionUiRequest::Unknown {
+            id: envelope.id.filter(|id| !id.is_empty()),
+            method: envelope.method,
+        });
     }
+    if envelope.method == "input" {
+        let input = InputEnvelope::deserialize(&value)
+            .map_err(|error| format!("invalid input extension UI request: {error}"))?;
+        if input.secret {
+            value["method"] = Value::String("secret".into());
+        }
+    }
+    serde_json::from_value(value)
+        .map_err(|error| format!("invalid {} extension UI request: {error}", envelope.method))
 }
 
 #[cfg(test)]
@@ -548,6 +483,55 @@ mod tests {
                 Ok(WireMessage::ExtensionUi(expected))
             );
         }
+    }
+
+    #[test]
+    fn rejects_malformed_known_extension_requests() {
+        for frame in [
+            r#"{"type":"extension_ui_request","method":"confirm","title":"T","message":"M"}"#,
+            r#"{"type":"extension_ui_request","id":"1","method":"select","title":"T","options":["a",1]}"#,
+            r#"{"type":"extension_ui_request","id":"1","method":"input","title":"T","secret":"yes"}"#,
+        ] {
+            assert!(parse_frame(frame.as_bytes()).is_err(), "accepted {frame}");
+        }
+    }
+
+    #[test]
+    fn preserves_unknown_extension_methods() {
+        assert_eq!(
+            parse_frame(
+                br#"{"type":"extension_ui_request","id":"future","method":"openPanel","payload":1}"#
+            ),
+            Ok(WireMessage::ExtensionUi(ExtensionUiRequest::Unknown {
+                id: Some("future".into()),
+                method: "openPanel".into(),
+            }))
+        );
+    }
+
+    #[test]
+    fn unknown_extension_enum_values_use_protocol_defaults() {
+        assert_eq!(
+            parse_frame(
+                br#"{"type":"extension_ui_request","id":"1","method":"notify","message":"M","notifyType":"future"}"#
+            ),
+            Ok(WireMessage::ExtensionUi(ExtensionUiRequest::Notify {
+                id: "1".into(),
+                message: "M".into(),
+                tone: NotifyTone::Info,
+            }))
+        );
+        assert_eq!(
+            parse_frame(
+                br#"{"type":"extension_ui_request","id":"2","method":"setWidget","widgetKey":"k","widgetPlacement":"future"}"#
+            ),
+            Ok(WireMessage::ExtensionUi(ExtensionUiRequest::SetWidget {
+                id: "2".into(),
+                key: "k".into(),
+                lines: None,
+                placement: WidgetPlacement::AboveEditor,
+            }))
+        );
     }
 
     #[test]
