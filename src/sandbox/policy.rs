@@ -120,8 +120,7 @@ pub(crate) fn compile(
 
     let unrestricted_network = matches!(access.network, NetworkAccess::Full);
     let mut allowed_network_hosts = crate::network::allowed_network_hosts()
-        .iter()
-        .map(|host| (*host).to_owned())
+        .map(str::to_owned)
         .collect::<Vec<_>>();
     allowed_network_hosts.extend(network.proxy_hosts.iter().cloned());
     allowed_network_hosts.extend(grants.network_hosts);
