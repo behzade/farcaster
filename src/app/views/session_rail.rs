@@ -108,6 +108,7 @@ fn inactive_rail_style(expanded: bool, count: usize, leading_gap: bool) -> gpui:
         gpui::StyleRefinement::default()
             .w_full()
             .h(collapsed_inactive_rail_height(count, leading_gap))
+            .min_h(gpui::relative(0.36))
             .flex_none()
     }
 }
@@ -530,8 +531,6 @@ impl FarcasterApp {
                     .items_center()
                     .justify_between()
                     .px(THEME.space.md)
-                    .border_t(THEME.border)
-                    .border_color(THEME.colors.border)
                     .text_size(THEME.type_scale.caption)
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(THEME.colors.muted)

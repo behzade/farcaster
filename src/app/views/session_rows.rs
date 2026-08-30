@@ -430,6 +430,75 @@ pub(super) fn session_row_with_height(
     };
     let hover_details = session_hover_details(session, accessible_state, &age, subagents);
     let hover_id = format!("session-hover-{}", session.id);
+    let action_group = format!("session-actions-{}", session.id);
+    let archive_action = div()
+        .id(format!("archive-{}", session.id))
+        .role(Role::Button)
+        .aria_label(format!("{archive_label} session"))
+        .tab_index(0)
+        .absolute()
+        .top(px(4.0))
+        .right(if is_archived { px(28.0) } else { px(5.0) })
+        .size(px(21.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(THEME.radius)
+        .opacity(0.0)
+        .group_hover(action_group.clone(), |button| button.opacity(1.0))
+        .focus(|button| {
+            button
+                .opacity(1.0)
+                .border(THEME.border)
+                .border_color(THEME.colors.accent)
+        })
+        .text_color(if is_archived {
+            THEME.colors.success
+        } else {
+            THEME.colors.muted
+        })
+        .hover(|button| button.bg(THEME.colors.hover))
+        .tooltip(move |window, cx| {
+            Tooltip::new(format!("{archive_label} session")).build(window, cx)
+        })
+        .child(app_icon(archive_icon, AppIconSize::Control))
+        .on_click(move |_, window, cx| {
+            cx.stop_propagation();
+            let _ = archive_entity.update(cx, |this, cx| {
+                this.request_session_archive(archive_path.clone(), !is_archived, window, cx);
+            });
+        });
+    let delete_action = div()
+        .id(format!("delete-{}", session.id))
+        .role(Role::Button)
+        .aria_label("Delete session permanently")
+        .tab_index(0)
+        .absolute()
+        .top(px(4.0))
+        .right(px(5.0))
+        .size(px(21.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(THEME.radius)
+        .opacity(0.0)
+        .group_hover(action_group.clone(), |button| button.opacity(1.0))
+        .focus(|button| {
+            button
+                .opacity(1.0)
+                .border(THEME.border)
+                .border_color(THEME.colors.accent)
+        })
+        .text_color(THEME.colors.danger)
+        .hover(|button| button.bg(THEME.colors.hover))
+        .tooltip(move |window, cx| Tooltip::new("Delete session permanently").build(window, cx))
+        .child(app_icon(AppIcon::Trash, AppIconSize::Control))
+        .on_click(move |_, window, cx| {
+            cx.stop_propagation();
+            let _ = delete_entity.update(cx, |this, cx| {
+                this.request_session_delete(delete_path.clone(), window, cx);
+            });
+        });
     let row = div()
         .id(format!("session-{}", session.id))
         .role(Role::Button)
@@ -444,7 +513,7 @@ pub(super) fn session_row_with_height(
         .px(THEME.space.sm)
         .py(THEME.space.xs)
         .rounded(px(2.0))
-        .group(format!("session-actions-{}", session.id))
+        .group(action_group)
         .bg(if selected {
             THEME.colors.selection
         } else {
@@ -502,7 +571,6 @@ pub(super) fn session_row_with_height(
             div()
                 .w_full()
                 .min_w_0()
-                .pr(px(50.0))
                 .flex()
                 .items_stretch()
                 .gap(THEME.space.sm)
@@ -530,6 +598,7 @@ pub(super) fn session_row_with_height(
                                 .into_any_element()
                         } else {
                             div()
+                                .pr(if is_archived { px(50.0) } else { px(24.0) })
                                 .whitespace_nowrap()
                                 .text_ellipsis()
                                 .text_size(THEME.type_scale.body_small)
@@ -615,8 +684,10 @@ pub(super) fn session_row_with_height(
                                 )
                                 .child(
                                     div()
+                                        .w(px(30.0))
                                         .flex_none()
                                         .whitespace_nowrap()
+                                        .text_align(gpui::TextAlign::Right)
                                         .text_size(THEME.type_scale.caption)
                                         .text_color(THEME.colors.subtle)
                                         .child(age),
@@ -628,105 +699,12 @@ pub(super) fn session_row_with_height(
                                         ))
                                         .expect("fixed session shortcut must parse"),
                                     ))
-                                })
-                                .child(
-                                    div()
-                                        .id(format!("archive-{}", session.id))
-                                        .role(Role::Button)
-                                        .aria_label(format!("{archive_label} session"))
-                                        .tab_index(0)
-                                        .absolute()
-                                        .top(px(4.0))
-                                        .right(if is_archived { px(28.0) } else { px(5.0) })
-                                        .size(px(21.0))
-                                        .flex_none()
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .rounded(THEME.radius)
-                                        .opacity(0.0)
-                                        .group_hover(
-                                            format!("session-actions-{}", session.id),
-                                            |button| button.opacity(1.0),
-                                        )
-                                        .focus(|button| {
-                                            button
-                                                .opacity(1.0)
-                                                .border(THEME.border)
-                                                .border_color(THEME.colors.accent)
-                                        })
-                                        .text_color(if is_archived {
-                                            THEME.colors.success
-                                        } else {
-                                            THEME.colors.muted
-                                        })
-                                        .hover(|button| button.bg(THEME.colors.hover))
-                                        .tooltip(move |window, cx| {
-                                            Tooltip::new(format!("{archive_label} session"))
-                                                .build(window, cx)
-                                        })
-                                        .child(app_icon(archive_icon, AppIconSize::Control))
-                                        .on_click(move |_, window, cx| {
-                                            cx.stop_propagation();
-                                            let _ = archive_entity.update(cx, |this, cx| {
-                                                this.request_session_archive(
-                                                    archive_path.clone(),
-                                                    !is_archived,
-                                                    window,
-                                                    cx,
-                                                );
-                                            });
-                                        }),
-                                )
-                                .when(is_archived, |metadata| {
-                                    metadata.child(
-                                        div()
-                                            .id(format!("delete-{}", session.id))
-                                            .role(Role::Button)
-                                            .aria_label("Delete session permanently")
-                                            .tab_index(0)
-                                            .absolute()
-                                            .top(px(4.0))
-                                            .right(px(5.0))
-                                            .size(px(21.0))
-                                            .flex_none()
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .rounded(THEME.radius)
-                                            .opacity(0.0)
-                                            .group_hover(
-                                                format!("session-actions-{}", session.id),
-                                                |button| button.opacity(1.0),
-                                            )
-                                            .focus(|button| {
-                                                button
-                                                    .opacity(1.0)
-                                                    .border(THEME.border)
-                                                    .border_color(THEME.colors.accent)
-                                            })
-                                            .text_color(THEME.colors.danger)
-                                            .hover(|button| button.bg(THEME.colors.hover))
-                                            .tooltip(move |window, cx| {
-                                                Tooltip::new("Delete session permanently")
-                                                    .build(window, cx)
-                                            })
-                                            .child(app_icon(AppIcon::Trash, AppIconSize::Control))
-                                            .on_click(move |_, window, cx| {
-                                                cx.stop_propagation();
-                                                let _ = delete_entity.update(cx, |this, cx| {
-                                                    this.request_session_delete(
-                                                        delete_path.clone(),
-                                                        window,
-                                                        cx,
-                                                    );
-                                                });
-                                            }),
-                                    )
                                 }),
                         ),
                 ),
-        );
+        )
+        .child(archive_action)
+        .when(is_archived, |row| row.child(delete_action));
     let context_menu = session_context_menu(
         &session.id,
         session.path.clone(),

@@ -27,7 +27,6 @@ use crate::{
 
 const MARKDOWN_CHUNK_TARGET_BYTES: usize = 2 * 1024;
 const MARKDOWN_CHUNK_HARD_BYTES: usize = 8 * 1024;
-const TRANSCRIPT_CONTENT_MAX: Pixels = px(1030.0);
 const TRANSCRIPT_HORIZONTAL_PADDING: Pixels = px(18.0);
 pub(crate) const TRANSCRIPT_ROW_HEIGHT_HINT: Pixels = px(24.0);
 
@@ -840,19 +839,14 @@ pub(crate) fn render(
                         .when(selection_state.selection_contains(row.key()), |row| {
                             row.bg(THEME.colors.selection)
                         })
-                        .child(
-                            div()
-                                .w_full()
-                                .max_w(TRANSCRIPT_CONTENT_MAX)
-                                .child(render_row(
-                                    row,
-                                    &conversation.items,
-                                    expanded,
-                                    &markdown_cache,
-                                    row_entity.clone(),
-                                    cx,
-                                )),
-                        ),
+                        .child(div().w_full().child(render_row(
+                            row,
+                            &conversation.items,
+                            expanded,
+                            &markdown_cache,
+                            row_entity.clone(),
+                            cx,
+                        ))),
                 )
                 .into_any_element()
         },
