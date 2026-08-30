@@ -773,6 +773,7 @@ fn queued_message_group(
         )
         .children(messages.iter().map(|message| {
             div()
+                .line_clamp(1)
                 .border_t(THEME.border)
                 .border_color(THEME.colors.border)
                 .px(THEME.space.sm)

@@ -30,6 +30,21 @@ fn invocation_keeps_one_compact_user_item_through_finalization() {
 }
 
 #[test]
+fn pasted_file_contents_stay_out_of_the_transcript() {
+    let prompt = "check this\n\nPasted text files:\n- [pasted.txt](</tmp/pasted.txt>)\n\n--- BEGIN PASTED FILE pasted.txt ---\nsecret\n--- END PASTED FILE pasted.txt ---";
+    let display = "check this\n\nPasted text files:\n- [pasted.txt](</tmp/pasted.txt>)";
+    let mut state = ConversationState::default();
+
+    state.push_local_user(prompt.into(), 0, false);
+    assert_eq!(state.items[0].text, display);
+    state.start_message(Some(&json!({"role": "user", "content": prompt})));
+    state.end_message(Some(&json!({"role": "user", "content": prompt})));
+
+    assert_eq!(state.items.len(), 1);
+    assert_eq!(state.items[0].text, display);
+}
+
+#[test]
 fn optimistic_user_item_rolls_back_by_identity_only() {
     let mut state = ConversationState::default();
     state.push_local_user("same text".into(), 0, false);

@@ -1022,13 +1022,15 @@ fn message_text(message: &Value) -> String {
 }
 
 fn projected_user_message_text(message: &Value) -> String {
-    let Some(display) = message.get("piUserInvocation").and_then(Value::as_str) else {
-        return message_text(message);
-    };
-    display.to_owned()
+    let text = message
+        .get("piUserInvocation")
+        .and_then(Value::as_str)
+        .map_or_else(|| message_text(message), str::to_owned);
+    pasted_file_summary(&text).to_owned()
 }
 
 fn user_message_text(message: &str, image_count: usize) -> String {
+    let message = pasted_file_summary(message);
     if image_count == 0 {
         return message.to_owned();
     }
@@ -1042,6 +1044,12 @@ fn user_message_text(message: &str, image_count: usize) -> String {
     } else {
         format!("{message}\n\n{attachment}")
     }
+}
+
+fn pasted_file_summary(message: &str) -> &str {
+    message
+        .split_once("\n\n--- BEGIN PASTED FILE ")
+        .map_or(message, |(summary, _)| summary)
 }
 
 fn decode_prompt_images(images: &[PromptImage]) -> Arc<Vec<Arc<Image>>> {
