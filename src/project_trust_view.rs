@@ -19,6 +19,7 @@ pub(crate) struct ProjectTrustView {
     project: PathBuf,
     app: Option<Entity<FarcasterApp>>,
     notification_app: Rc<RefCell<Option<WeakEntity<FarcasterApp>>>>,
+    approval_ui: crate::sandbox::approval::ApprovalUi,
     focus: FocusHandle,
     error: Option<String>,
 }
@@ -28,6 +29,7 @@ impl ProjectTrustView {
         project: PathBuf,
         startup_trust: StartupTrust,
         notification_app: Rc<RefCell<Option<WeakEntity<FarcasterApp>>>>,
+        approval_ui: crate::sandbox::approval::ApprovalUi,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -36,6 +38,7 @@ impl ProjectTrustView {
             project,
             app: None,
             notification_app,
+            approval_ui,
             focus,
             error: None,
         };
@@ -68,7 +71,16 @@ impl ProjectTrustView {
         let repository_execution_allowed = repository_execution_allowed.unwrap_or_else(|| {
             project_trust::repository_execution_allowed(&project).unwrap_or(false)
         });
-        let app = cx.new(|cx| FarcasterApp::new(project, repository_execution_allowed, window, cx));
+        let approval_ui = self.approval_ui.clone();
+        let app = cx.new(|cx| {
+            FarcasterApp::new(
+                project,
+                repository_execution_allowed,
+                approval_ui,
+                window,
+                cx,
+            )
+        });
         *self.notification_app.borrow_mut() = Some(app.downgrade());
         self.app = Some(app);
         cx.notify();

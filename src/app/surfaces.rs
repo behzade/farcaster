@@ -278,6 +278,19 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if id.starts_with("farcaster-access-") {
+            if self.extension.respond_value(&id, value.clone()).is_some() {
+                match self.sandbox_approval_ui.respond(&id, &value) {
+                    Ok(true) => self.send(RuntimeCommand::ReloadSandboxGrants),
+                    Ok(false) => {}
+                    Err(error) => {
+                        zlog::error!("Sandbox approval failed: {error}");
+                    }
+                }
+                self.advance_or_restore_dialog(window, cx);
+            }
+            return;
+        }
         if self.respond_to_restored_dialog(&id, value.clone(), window, cx) {
             return;
         }
@@ -342,6 +355,10 @@ impl FarcasterApp {
             let _ = self.extension.cancel(&id);
             self.restored_dialog_id = None;
             self.dismissed_restored_dialog_id = Some(id);
+            self.advance_or_restore_dialog(window, cx);
+        } else if id.starts_with("farcaster-access-") {
+            let _ = self.extension.cancel(&id);
+            let _ = self.sandbox_approval_ui.cancel(&id);
             self.advance_or_restore_dialog(window, cx);
         } else if let Some(response) = self.extension.cancel(&id) {
             self.send(RuntimeCommand::ExtensionResponse(response));

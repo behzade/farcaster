@@ -1,5 +1,6 @@
 //! Whole-agent sandbox composition and nono CLI delivery.
 
+pub(crate) mod approval;
 mod policy;
 
 use std::{
@@ -16,6 +17,8 @@ pub(crate) enum NonoExecutable {
     #[cfg(test)]
     TestBypass,
 }
+
+pub(crate) use approval::GrantStore;
 
 pub(crate) struct PolicyPaths<'a> {
     pub(crate) project: &'a Path,
@@ -35,6 +38,7 @@ pub(crate) fn prepare_command(
     prefix_args: &[String],
     paths: PolicyPaths<'_>,
     access: AccessPolicy,
+    grants: Option<&GrantStore>,
 ) -> Result<PreparedCommand, String> {
     if access.unrestricted() {
         let mut command = Command::new(agent_program);
@@ -71,6 +75,7 @@ pub(crate) fn prepare_command(
             paths.agent_state,
             paths.temporary,
             access,
+            grants.map(GrantStore::resolve).unwrap_or_default(),
         )?)
         .map_err(|error| format!("write Farcaster sandbox profile: {error}"))?;
     profile
@@ -89,6 +94,27 @@ pub(crate) fn prepare_command(
         command,
         _profile: Some(profile),
     })
+}
+
+pub(crate) fn validate_policy_bytes(nono: &NonoExecutable, policy: &[u8]) -> Result<(), String> {
+    let nono_program = match nono {
+        NonoExecutable::Fixed(program) => program.as_path(),
+        #[cfg(test)]
+        NonoExecutable::TestBypass => return Ok(()),
+    };
+    if !nono_program.is_absolute() || !is_executable_file(nono_program) {
+        return Err(format!(
+            "FARCASTER_NONO_PATH must name a fixed executable: {}",
+            nono_program.display()
+        ));
+    }
+    let mut profile = tempfile::NamedTempFile::new()
+        .map_err(|error| format!("create Farcaster sandbox profile: {error}"))?;
+    profile
+        .write_all(policy)
+        .and_then(|()| profile.flush())
+        .map_err(|error| format!("write Farcaster sandbox profile: {error}"))?;
+    validate_profile(nono_program, profile.path())
 }
 
 fn validate_profile(nono_program: &Path, profile: &Path) -> Result<(), String> {
@@ -169,6 +195,7 @@ mod tests {
                 filesystem: FilesystemAccess::Sandboxed,
                 network: NetworkAccess::Sandboxed,
             },
+            None,
         )?;
         assert_eq!(prepared.command.get_program(), nono.as_os_str());
         let arguments = prepared.command.get_args().collect::<Vec<_>>();
@@ -200,6 +227,7 @@ mod tests {
                     temporary: Path::new("/unused"),
                 },
                 access,
+                None,
             )
         };
         let unrestricted = direct(

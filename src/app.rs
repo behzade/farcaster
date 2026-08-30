@@ -268,6 +268,7 @@ pub(crate) struct FarcasterApp {
     _performance_task: Option<Task<()>>,
     pending_session_switch: Option<(PathBuf, crate::performance::Timing)>,
     extension: ExtensionUiState,
+    sandbox_approval_ui: crate::sandbox::approval::ApprovalUi,
     parked_extension: Option<ExtensionUiState>,
     restored_dialog_id: Option<String>,
     dismissed_restored_dialog_id: Option<String>,
@@ -298,6 +299,7 @@ pub(crate) struct FarcasterApp {
     _window_activation_subscription: Subscription,
     _window_placement_subscription: Subscription,
     _event_task: Task<()>,
+    _sandbox_approval_task: Task<()>,
 }
 
 fn session_shortcuts_visible_for_window(current: bool, window_active: bool) -> bool {
@@ -308,6 +310,7 @@ impl FarcasterApp {
     pub(crate) fn new(
         project: PathBuf,
         repository_execution_allowed: bool,
+        sandbox_approval_ui: crate::sandbox::approval::ApprovalUi,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -359,7 +362,13 @@ impl FarcasterApp {
             project_registry_error = composer_error;
         }
         let submitted_drafts = drafts::submitted_draft_associations(&registry.drafts);
-        let runtime = RuntimeHandle::spawn(project.clone(), selected_draft.clone(), None);
+        sandbox_approval_ui.set_project_trusted(repository_execution_allowed);
+        let runtime = RuntimeHandle::spawn_with_grants(
+            project.clone(),
+            selected_draft.clone(),
+            None,
+            sandbox_approval_ui.grants(),
+        );
         let composer = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .auto_grow(3, 8)
@@ -464,6 +473,19 @@ impl FarcasterApp {
         let event_task = cx.spawn(async move |weak, cx| {
             while runtime_wake.recv().await.is_ok() {
                 if weak.update(cx, |this, cx| this.drain_runtime(cx)).is_err() {
+                    break;
+                }
+            }
+        });
+        let approval_receiver = sandbox_approval_ui.receiver();
+        let sandbox_approval_task = cx.spawn(async move |weak, cx| {
+            while let Ok(prompt) = approval_receiver.recv().await {
+                if weak
+                    .update(cx, |this, cx| {
+                        this.apply_sandbox_approval_prompt(prompt, cx)
+                    })
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -652,6 +674,7 @@ impl FarcasterApp {
             _performance_task: performance_task,
             pending_session_switch: None,
             extension: ExtensionUiState::default(),
+            sandbox_approval_ui,
             parked_extension: None,
             restored_dialog_id: None,
             dismissed_restored_dialog_id: None,
@@ -682,6 +705,7 @@ impl FarcasterApp {
             _window_activation_subscription: window_activation_subscription,
             _window_placement_subscription: window_placement_subscription,
             _event_task: event_task,
+            _sandbox_approval_task: sandbox_approval_task,
         };
         this.request_repository_refresh(cx);
         this
@@ -1230,6 +1254,7 @@ impl FarcasterApp {
 
     fn reset_session_ui(&mut self, generation: u64, preserve_submission: bool) {
         self.runtime_generation = generation;
+        self.sandbox_approval_ui.cancel_all();
         self.extension.reset();
         self.parked_extension = None;
         self.background_jobs.clear();
@@ -1282,6 +1307,23 @@ impl FarcasterApp {
         if let Some(id) = self.restored_dialog_id.take() {
             let _ = self.extension.cancel(&id);
         }
+    }
+
+    fn apply_sandbox_approval_prompt(
+        &mut self,
+        prompt: crate::sandbox::approval::ApprovalPrompt,
+        cx: &mut Context<Self>,
+    ) {
+        let effect = self.extension.apply(ExtensionUiRequest::Select {
+            id: prompt.id,
+            title: prompt.title,
+            options: prompt.options,
+            timeout: None,
+        });
+        if matches!(effect, ExtensionEffect::DialogOpened) {
+            self.pending_dialog_setup = true;
+        }
+        cx.notify();
     }
 
     fn apply_extension_request(

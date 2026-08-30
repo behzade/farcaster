@@ -16,11 +16,12 @@ attribution.
 - Git and Jujutsu working-copy views
 - Embedded Neovim and project terminal surfaces
 - Durable drafts, session ordering, workgraphs, and application state
-- Stateless MCP access to workgraph search, patch, and completion
+- Stateless MCP access to workgraphs and user-approved sandbox grants
 
-Pi settings, context files, extensions, skills, authentication, and sandbox
-behavior load in the selected project directory. Farcaster does not modify Pi.
-The `pi` executable must be available on `PATH`.
+Pi settings, context files, extensions, skills, and authentication load in the
+selected project directory. Farcaster owns the outer nono sandbox and runs Pi's
+inner sandbox unrestricted. Farcaster does not modify Pi. The `pi` executable
+must be available on `PATH`.
 
 ## Run
 
@@ -32,10 +33,13 @@ The project argument is optional. Farcaster otherwise opens the most recent
 project or the current directory.
 
 Farcaster serves stateless Streamable HTTP MCP at
-`http://127.0.0.1:8765/mcp`. It exposes `workgraph_search`, `workgraph_patch`,
-and `workgraph_complete` and accepts MCP `2026-07-28` only. Farcaster passes the
-endpoint to Pi as transient launch configuration; it does not create or modify a
-project MCP file.
+`http://127.0.0.1:8765/mcp`. It exposes `request_access`, `workgraph_search`,
+`workgraph_patch`, and `workgraph_complete`, and accepts MCP `2026-07-28` only.
+Approved session grants last until Farcaster exits; project grants are stored in
+Farcaster application data and bound to the workspace identity. Grants activate
+by restarting and resuming the agent after its current turn. Farcaster passes
+the endpoint to Pi as transient launch configuration; it does not create or
+modify a project MCP file.
 
 Useful environment variables:
 

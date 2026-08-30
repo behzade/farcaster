@@ -59,13 +59,43 @@ fn main() -> std::process::ExitCode {
     if let Err(error) = init_log_file() {
         zlog::error!("Failed to initialize application log file: {error}");
     }
-    let _mcp_server = match state::state_path().and_then(mcp_server::start) {
-        Ok(server) => server,
-        Err(error) => return fail(format!("start MCP server: {error}")),
+    let project = match launch::resolve_project(std::env::args_os().nth(1).map(Into::into)) {
+        Ok(project) => project,
+        Err(error) => return fail(error),
     };
+    let home = match std::env::var_os("HOME") {
+        Some(home) => std::path::PathBuf::from(home),
+        None => return fail("HOME is required to initialize sandbox approvals"),
+    };
+    let data_root = match app_paths::data_dir() {
+        Ok(path) => path,
+        Err(error) => return fail(error),
+    };
+    let agent_state = std::env::var_os("PI_CODING_AGENT_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| home.join(".pi/agent"));
+    let temporary = std::env::var_os("TMPDIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    let nono = sandbox::configured_nono_program(std::env::var_os("FARCASTER_NONO_PATH"));
+    let (approvals, approval_ui) = match sandbox::approval::channel(
+        &project,
+        &home,
+        &data_root,
+        &agent_state,
+        &temporary,
+        nono,
+    ) {
+        Ok(channel) => channel,
+        Err(error) => return fail(format!("initialize sandbox approvals: {error}")),
+    };
+    let _mcp_server =
+        match state::state_path().and_then(|database| mcp_server::start(database, approvals)) {
+            Ok(server) => server,
+            Err(error) => return fail(format!("start MCP server: {error}")),
+        };
 
-    match launch::resolve_project(std::env::args_os().nth(1).map(Into::into)).and_then(launch::run)
-    {
+    match launch::run(project, approval_ui) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => fail(error),
     }

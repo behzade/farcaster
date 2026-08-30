@@ -111,6 +111,7 @@ pub(crate) enum RuntimeCommand {
     Login(Option<String>),
     SetThinking(String),
     SetPermissionLevel(PermissionLevel),
+    ReloadSandboxGrants,
     ExtensionResponse(ExtensionUiResponse),
     DeliverQueued(crate::state::QueuedPrompt),
     SetSessionCategory {
@@ -225,17 +226,17 @@ impl UiEventSender {
 }
 
 impl RuntimeHandle {
-    pub(crate) fn spawn(
+    pub(crate) fn spawn_with_grants(
         project: PathBuf,
         draft_id: String,
         initial_session: Option<PathBuf>,
+        grants: crate::sandbox::GrantStore,
     ) -> Self {
-        Self::spawn_with(
-            project,
-            draft_id,
-            initial_session,
-            ProcessCommand::default(),
-        )
+        let command = ProcessCommand {
+            grants: Some(grants),
+            ..ProcessCommand::default()
+        };
+        Self::spawn_with(project, draft_id, initial_session, command)
     }
 
     pub(crate) fn spawn_with(
@@ -1016,6 +1017,12 @@ fn run_supervisor(
                         "Working",
                     );
                 }
+                if matches!(command, RuntimeCommand::ReloadSandboxGrants) {
+                    for actor in actors.values() {
+                        actor.send(command.clone());
+                    }
+                    continue;
+                }
                 if let RuntimeCommand::RenameSession { path, name, .. } = &command
                     && let Some((key, actor)) = actors.iter().find(|(key, _)| {
                         latest
@@ -1717,6 +1724,7 @@ impl RuntimeOwner {
             }
             RuntimeCommand::SetThinking(level) => self.set_thinking(level),
             RuntimeCommand::SetPermissionLevel(level) => self.set_permission_level(level),
+            RuntimeCommand::ReloadSandboxGrants => self.reload_sandbox_grants(),
             RuntimeCommand::ExtensionResponse(response) => {
                 if let Some(process) = self.process.as_mut()
                     && let Err(error) = process.respond(response)
@@ -2697,6 +2705,7 @@ mod tests {
                     prefix_args: Vec::new(),
                     permission_level: PermissionLevel::default(),
                     nono: crate::sandbox::test_nono_bypass(),
+                    grants: None,
                 },
                 process: None,
                 login_process_only: false,
@@ -2866,6 +2875,38 @@ mod tests {
         assert!(owner.process.is_some());
         assert_eq!(owner.process_command.permission_level, target);
         assert_eq!(owner.snapshot.permission_level, target);
+        assert_eq!(owner.snapshot.conversation.items, transcript);
+        Ok(())
+    }
+
+    #[test]
+    fn sandbox_grant_reload_waits_for_idle_then_restarts_and_resumes() -> Result<(), String> {
+        let temp = tempdir().map_err(|error| error.to_string())?;
+        let script = temp.path().join("fake-pi.sh");
+        fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))
+            .map_err(|error| error.to_string())?;
+        let session = temp.path().join("session.jsonl");
+        let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
+        owner.process_command = ProcessCommand::test_script(&script, vec!["sandbox-mode".into()]);
+        owner.start_process(Some(session));
+        drive_process_until(&mut owner, |owner| {
+            owner.startup_state_loaded && owner.startup_history_loaded
+        });
+        let generation = owner.process_generation;
+        let transcript = owner.snapshot.conversation.items.clone();
+
+        conversation_mut(owner.active_snapshot_mut()).running = true;
+        owner.apply_command(RuntimeCommand::ReloadSandboxGrants);
+        assert_eq!(owner.process_generation, generation);
+        assert!(!owner.permission_changes.is_idle());
+
+        conversation_mut(owner.active_snapshot_mut()).running = false;
+        owner.apply_queued_permission_change();
+        drive_process_until(&mut owner, |owner| {
+            owner.startup_state_loaded && owner.startup_history_loaded
+        });
+        assert!(owner.permission_changes.is_idle());
+        assert_eq!(owner.process_generation, generation + 1);
         assert_eq!(owner.snapshot.conversation.items, transcript);
         Ok(())
     }
@@ -4202,6 +4243,7 @@ mod tests {
             prefix_args: Vec::new(),
             permission_level: PermissionLevel::default(),
             nono: crate::sandbox::test_nono_bypass(),
+            grants: None,
         };
         preview_history(&mut owner, session.clone(), "keep this history");
 
@@ -4234,6 +4276,7 @@ mod tests {
                 prefix_args: Vec::new(),
                 permission_level: PermissionLevel::default(),
                 nono: crate::sandbox::test_nono_bypass(),
+                grants: None,
             },
             process: None,
             login_process_only: false,
@@ -4360,6 +4403,7 @@ mod tests {
             prefix_args: Vec::new(),
             permission_level: PermissionLevel::default(),
             nono: crate::sandbox::test_nono_bypass(),
+            grants: None,
         };
         owner.state = Some(StateStore::open_at(&database)?);
 

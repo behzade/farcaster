@@ -25,6 +25,7 @@ pub(crate) struct ProcessCommand {
     pub prefix_args: Vec<String>,
     pub permission_level: PermissionLevel,
     pub nono: crate::sandbox::NonoExecutable,
+    pub grants: Option<crate::sandbox::GrantStore>,
 }
 
 impl Default for ProcessCommand {
@@ -34,6 +35,7 @@ impl Default for ProcessCommand {
             prefix_args: Vec::new(),
             permission_level: PermissionLevel::default(),
             nono: crate::sandbox::configured_nono_program(std::env::var_os("FARCASTER_NONO_PATH")),
+            grants: None,
         }
     }
 }
@@ -49,6 +51,7 @@ impl ProcessCommand {
             prefix_args,
             permission_level: PermissionLevel::default(),
             nono: crate::sandbox::test_nono_bypass(),
+            grants: None,
         }
     }
 
@@ -72,6 +75,10 @@ impl ProcessCommand {
         let agent_state =
             environment_path("PI_CODING_AGENT_DIR").unwrap_or_else(|| home.join(".pi/agent"));
         let temporary = environment_path("TMPDIR").unwrap_or_else(std::env::temp_dir);
+        let access = sandbox_access(self.permission_level);
+        if let Some(grants) = &self.grants {
+            grants.set_access(access.filesystem, access.network);
+        }
         let mut prepared = crate::sandbox::prepare_command(
             &self.nono,
             &self.program,
@@ -82,7 +89,8 @@ impl ProcessCommand {
                 agent_state: &agent_state,
                 temporary: &temporary,
             },
-            sandbox_access(self.permission_level),
+            access,
+            self.grants.as_ref(),
         )?;
         prepared.command.current_dir(project);
         if let Some(environment) = environment {

@@ -36,7 +36,10 @@ pub(crate) struct McpServer {
     _thread: JoinHandle<()>,
 }
 
-pub(crate) fn start(database: PathBuf) -> Result<McpServer, String> {
+pub(crate) fn start(
+    database: PathBuf,
+    approvals: crate::sandbox::approval::ApprovalService,
+) -> Result<McpServer, String> {
     let listener = TcpListener::bind(BIND_ADDRESS)
         .map_err(|error| format!("bind http://{BIND_ADDRESS}{MCP_PATH}: {error}"))?;
     listener
@@ -45,7 +48,7 @@ pub(crate) fn start(database: PathBuf) -> Result<McpServer, String> {
     let thread = std::thread::Builder::new()
         .name("farcaster-mcp".into())
         .spawn(move || {
-            if let Err(error) = serve(listener, database) {
+            if let Err(error) = serve(listener, database, approvals) {
                 zlog::error!("MCP server stopped: {error}");
             }
         })
@@ -53,7 +56,11 @@ pub(crate) fn start(database: PathBuf) -> Result<McpServer, String> {
     Ok(McpServer { _thread: thread })
 }
 
-fn serve(listener: TcpListener, database: PathBuf) -> Result<(), String> {
+fn serve(
+    listener: TcpListener,
+    database: PathBuf,
+    approvals: crate::sandbox::approval::ApprovalService,
+) -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -63,7 +70,7 @@ fn serve(listener: TcpListener, database: PathBuf) -> Result<(), String> {
             .map_err(|error| format!("open MCP listener: {error}"))?;
         let config = server_config();
         let service = StreamableHttpService::new(
-            move || Ok(WorkGraphMcp::new(database.clone())),
+            move || Ok(WorkGraphMcp::new(database.clone(), approvals.clone())),
             LocalSessionManager::default().into(),
             config,
         );
@@ -84,11 +91,15 @@ fn server_config() -> StreamableHttpServerConfig {
 #[derive(Clone)]
 struct WorkGraphMcp {
     database: PathBuf,
+    approvals: crate::sandbox::approval::ApprovalService,
 }
 
 impl WorkGraphMcp {
-    fn new(database: PathBuf) -> Self {
-        Self { database }
+    fn new(database: PathBuf, approvals: crate::sandbox::approval::ApprovalService) -> Self {
+        Self {
+            database,
+            approvals,
+        }
     }
 }
 
@@ -146,6 +157,17 @@ struct CompleteParams {
 
 #[tool_router]
 impl WorkGraphMcp {
+    #[tool(
+        name = "request_access",
+        description = "Ask the user to grant exact filesystem or network rights to Farcaster's outer sandbox. The grant activates after the current agent turn ends; never retry in the same turn"
+    )]
+    async fn request_access(
+        &self,
+        Parameters(params): Parameters<crate::sandbox::approval::RequestAccessParams>,
+    ) -> Result<String, String> {
+        self.approvals.request_access(params).await
+    }
+
     #[tool(
         name = "workgraph_search",
         description = "Search Farcaster's durable work graph by node title or acceptance condition"
@@ -296,7 +318,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn exposes_only_workgraph_tools() {
+    fn exposes_only_farcaster_tools() {
         let tools = WorkGraphMcp::tool_router().list_all();
         let names = tools
             .iter()
@@ -304,13 +326,34 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             names,
-            ["workgraph_complete", "workgraph_patch", "workgraph_search"]
+            [
+                "request_access",
+                "workgraph_complete",
+                "workgraph_patch",
+                "workgraph_search"
+            ]
         );
     }
 
     #[test]
     fn accepts_only_modern_stateless_requests() {
-        let server = WorkGraphMcp::new(PathBuf::from("unused"));
+        let temp = tempfile::tempdir().expect("temp directory");
+        let project = temp.path().join("project");
+        let home = temp.path().join("home");
+        std::fs::create_dir(&project).expect("project directory");
+        std::fs::create_dir_all(home.join(".pi/agent")).expect("agent state");
+        let temporary = temp.path().join("tmp");
+        std::fs::create_dir(&temporary).expect("temporary directory");
+        let (approvals, _) = crate::sandbox::approval::channel(
+            &project,
+            &home,
+            temp.path(),
+            &home.join(".pi/agent"),
+            &temporary,
+            crate::sandbox::test_nono_bypass(),
+        )
+        .expect("approval channel");
+        let server = WorkGraphMcp::new(PathBuf::from("unused"), approvals);
         assert_eq!(
             server.supported_protocol_versions().as_ref(),
             [ProtocolVersion::V_2026_07_28]

@@ -59,7 +59,10 @@ pub(crate) fn resolve_project(path: Option<PathBuf>) -> Result<PathBuf, LaunchEr
     Ok(resolved)
 }
 
-pub(crate) fn run(project: PathBuf) -> Result<(), LaunchError> {
+pub(crate) fn run(
+    project: PathBuf,
+    approval_ui: crate::sandbox::approval::ApprovalUi,
+) -> Result<(), LaunchError> {
     const FONT_FAILURE: u8 = 1;
     const WINDOW_FAILURE: u8 = 2;
 
@@ -144,6 +147,7 @@ pub(crate) fn run(project: PathBuf) -> Result<(), LaunchError> {
                             project.clone(),
                             startup_trust,
                             notification_app.clone(),
+                            approval_ui.clone(),
                             window,
                             cx,
                         )

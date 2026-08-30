@@ -31,7 +31,7 @@ impl AccessPolicy {
 }
 
 #[derive(Debug, Serialize)]
-struct Profile<'a> {
+struct Profile {
     #[serde(rename = "$schema")]
     schema: &'static str,
     extends: &'static str,
@@ -39,7 +39,7 @@ struct Profile<'a> {
     allow_parent_of_protected: bool,
     meta: ProfileMeta,
     filesystem: FilesystemPolicy,
-    network: NetworkPolicy<'a>,
+    network: NetworkPolicy,
 }
 
 #[derive(Debug, Serialize)]
@@ -58,10 +58,10 @@ struct FilesystemPolicy {
 }
 
 #[derive(Debug, Serialize)]
-struct NetworkPolicy<'a> {
+struct NetworkPolicy {
     block: bool,
-    allow_domain: &'a [&'a str],
-    open_port: &'a [u16],
+    allow_domain: Vec<String>,
+    open_port: Vec<u16>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -112,12 +112,27 @@ const ALLOWED_NETWORK_HOSTS: &[&str] = &[
 ];
 const LOOPBACK_PORTS: &[u16] = &[8765];
 
+pub(super) fn base_network_host_allowed(host: &str) -> bool {
+    ALLOWED_NETWORK_HOSTS.iter().any(|allowed| {
+        *allowed == host
+            || allowed.strip_prefix("*.").is_some_and(|suffix| {
+                host.strip_suffix(suffix)
+                    .is_some_and(|prefix| prefix.ends_with('.'))
+            })
+    })
+}
+
+pub(super) fn base_loopback_port_allowed(port: u16) -> bool {
+    LOOPBACK_PORTS.contains(&port)
+}
+
 pub(crate) fn compile(
     project: &Path,
     home: &Path,
     agent_state: &Path,
     temporary: &Path,
     access: AccessPolicy,
+    grants: super::approval::ResolvedGrants,
 ) -> Result<Vec<u8>, String> {
     let project = canonical_directory(project, "project")?;
     let home = canonical_directory(home, "home")?;
@@ -146,6 +161,13 @@ pub(crate) fn compile(
     } else {
         readable.push(project);
     }
+    if !matches!(access.filesystem, FilesystemAccess::Full) {
+        readable.extend(grants.readable);
+        if !matches!(access.filesystem, FilesystemAccess::ReadOnly) {
+            writable.extend(grants.writable);
+            writable_files.extend(grants.writable_files);
+        }
+    }
     readable.sort();
     readable.dedup();
     writable.sort();
@@ -154,6 +176,17 @@ pub(crate) fn compile(
     writable_files.dedup();
 
     let unrestricted_network = matches!(access.network, NetworkAccess::Full);
+    let mut allowed_network_hosts = ALLOWED_NETWORK_HOSTS
+        .iter()
+        .map(|host| (*host).to_owned())
+        .collect::<Vec<_>>();
+    allowed_network_hosts.extend(grants.network_hosts);
+    allowed_network_hosts.sort();
+    allowed_network_hosts.dedup();
+    let mut loopback_ports = LOOPBACK_PORTS.to_vec();
+    loopback_ports.extend(grants.loopback_ports);
+    loopback_ports.sort_unstable();
+    loopback_ports.dedup();
     let profile = Profile {
         schema: "https://nono.sh/schemas/nono-profile.schema.json",
         extends: "default",
@@ -172,16 +205,16 @@ pub(crate) fn compile(
             bypass_protection: vec![agent_state],
         },
         network: NetworkPolicy {
-            block: !unrestricted_network && ALLOWED_NETWORK_HOSTS.is_empty(),
+            block: !unrestricted_network && allowed_network_hosts.is_empty(),
             allow_domain: if unrestricted_network {
-                &[]
+                Vec::new()
             } else {
-                ALLOWED_NETWORK_HOSTS
+                allowed_network_hosts
             },
             open_port: if unrestricted_network {
-                &[]
+                Vec::new()
             } else {
-                LOOPBACK_PORTS
+                loopback_ports
             },
         },
     };
@@ -272,6 +305,7 @@ mod tests {
             &home.join(".pi/agent"),
             &temporary,
             access,
+            crate::sandbox::approval::ResolvedGrants::default(),
         )?)?)
     }
 
@@ -307,8 +341,44 @@ mod tests {
                 .as_array()
                 .is_some_and(|paths| paths.iter().any(|path| path == "/"))
         );
-        assert_eq!(profile["network"]["allow_domain"][0], "127.0.0.1");
+        assert!(
+            profile["network"]["allow_domain"]
+                .as_array()
+                .is_some_and(|hosts| hosts.iter().any(|host| host == "127.0.0.1"))
+        );
         assert_eq!(profile["network"]["open_port"][0], 8765);
+        Ok(())
+    }
+
+    #[test]
+    fn exact_write_grants_use_nono_file_capabilities() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let project = root.path().join("project");
+        let home = root.path().join("home");
+        let temporary = root.path().join("tmp");
+        let granted_file = root.path().join("granted.txt");
+        std::fs::create_dir(&project)?;
+        std::fs::create_dir_all(home.join(".pi/agent"))?;
+        std::fs::create_dir(&temporary)?;
+        std::fs::write(&granted_file, "fixture")?;
+        let profile: serde_json::Value = serde_json::from_slice(&compile(
+            &project,
+            &home,
+            &home.join(".pi/agent"),
+            &temporary,
+            AccessPolicy {
+                filesystem: FilesystemAccess::Sandboxed,
+                network: NetworkAccess::Sandboxed,
+            },
+            crate::sandbox::approval::ResolvedGrants {
+                writable_files: vec![granted_file.clone()],
+                ..Default::default()
+            },
+        )?)?;
+        assert_eq!(
+            profile["filesystem"]["allow_file"],
+            serde_json::json!([granted_file])
+        );
         Ok(())
     }
 

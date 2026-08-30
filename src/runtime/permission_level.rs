@@ -71,12 +71,13 @@ impl PermissionLevel {
 #[derive(Default)]
 pub(super) struct PermissionChangeState {
     queued: Option<PermissionLevel>,
+    reload_sandbox: bool,
 }
 
 impl PermissionChangeState {
     #[cfg(test)]
     pub(super) fn is_idle(&self) -> bool {
-        self.queued.is_none()
+        self.queued.is_none() && !self.reload_sandbox
     }
 
     fn queue(&mut self, requested: PermissionLevel, effective: PermissionLevel) {
@@ -85,6 +86,14 @@ impl PermissionChangeState {
 
     fn take_queued(&mut self) -> Option<PermissionLevel> {
         self.queued.take()
+    }
+
+    fn queue_reload(&mut self) {
+        self.reload_sandbox = true;
+    }
+
+    fn take_reload(&mut self) -> bool {
+        std::mem::take(&mut self.reload_sandbox)
     }
 
     pub(super) fn requested_level(&self, effective: PermissionLevel) -> PermissionLevel {
@@ -135,12 +144,39 @@ impl RuntimeOwner {
         self.start_process(session);
     }
 
+    pub(super) fn reload_sandbox_grants(&mut self) {
+        if !self.permission_change_ready() {
+            self.permission_changes.queue_reload();
+            self.publish();
+            return;
+        }
+        if self.process.is_none() {
+            return;
+        }
+        if let Err(error) = self.process_command.command(&self.project) {
+            let snapshot = self.active_snapshot_mut();
+            snapshot.status = "Sandbox grants inactive".into();
+            conversation_mut(snapshot).push_local_error("Sandbox grants inactive", error);
+            self.publish();
+            return;
+        }
+        let session = if self.snapshot.history_preview {
+            self.snapshot.selected_session.clone()
+        } else {
+            self.active_session.clone()
+        };
+        self.start_process(session);
+    }
+
     pub(super) fn apply_queued_permission_change(&mut self) {
         if !self.permission_change_ready() {
             return;
         }
         if let Some(level) = self.permission_changes.take_queued() {
+            let _ = self.permission_changes.take_reload();
             self.set_permission_level(level);
+        } else if self.permission_changes.take_reload() {
+            self.reload_sandbox_grants();
         }
     }
 
