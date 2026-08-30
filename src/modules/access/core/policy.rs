@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use super::{AccessPolicy, FilesystemAccess, NetworkAccess};
+use super::{AccessPolicy, FilesystemAccess, NetworkAccess, NetworkConfiguration};
 
 #[derive(Debug, Serialize)]
 struct Profile {
@@ -51,7 +51,7 @@ pub(crate) fn compile(
     temporary: &Path,
     access: AccessPolicy,
     grants: super::approval::ResolvedGrants,
-    network: &crate::network::NetworkConfiguration,
+    network: &NetworkConfiguration,
 ) -> Result<Vec<u8>, String> {
     let project = canonical_directory(project, "project")?;
     let home = canonical_directory(home, "home")?;
@@ -96,14 +96,14 @@ pub(crate) fn compile(
     writable_files.dedup();
 
     let unrestricted_network = matches!(access.network, NetworkAccess::Full);
-    let mut allowed_network_hosts = crate::network::allowed_network_hosts()
+    let mut allowed_network_hosts = super::network::allowed_network_hosts()
         .map(str::to_owned)
         .collect::<Vec<_>>();
     allowed_network_hosts.extend(network.proxy_hosts.iter().cloned());
     allowed_network_hosts.extend(grants.network_hosts);
     allowed_network_hosts.sort();
     allowed_network_hosts.dedup();
-    let mut loopback_ports = crate::network::loopback_ports().to_vec();
+    let mut loopback_ports = super::network::loopback_ports().to_vec();
     loopback_ports.extend(network.proxy_loopback_ports.iter().copied());
     loopback_ports.extend(grants.loopback_ports);
     loopback_ports.sort_unstable();
@@ -256,7 +256,7 @@ mod tests {
             &temporary,
             access,
             crate::sandbox::approval::ResolvedGrants::default(),
-            &crate::network::NetworkConfiguration::default(),
+            &NetworkConfiguration::default(),
         )?)?)
     }
 
@@ -344,7 +344,7 @@ mod tests {
                 writable_files: vec![granted_file.clone()],
                 ..Default::default()
             },
-            &crate::network::NetworkConfiguration::default(),
+            &NetworkConfiguration::default(),
         )?)?;
         assert_eq!(
             profile["filesystem"]["allow_file"],
@@ -362,7 +362,7 @@ mod tests {
         std::fs::create_dir(&project)?;
         std::fs::create_dir_all(home.join(".pi/agent"))?;
         std::fs::create_dir(&temporary)?;
-        let network = crate::network::NetworkConfiguration {
+        let network = NetworkConfiguration {
             proxy_hosts: vec!["proxy.example".into()],
             proxy_loopback_ports: vec![8080],
             app_proxy: None,

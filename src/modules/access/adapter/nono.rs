@@ -7,7 +7,7 @@ use std::{
 };
 
 use super::super::core::policy;
-use super::super::{AccessPolicy, GrantStore};
+use super::super::{AccessPolicy, GrantStore, NetworkConfiguration};
 #[cfg(test)]
 use super::super::{FilesystemAccess, NetworkAccess};
 
@@ -44,7 +44,7 @@ pub(crate) fn prepare_command(
     paths: PolicyPaths<'_>,
     access: AccessPolicy,
     grants: Option<&GrantStore>,
-    network: &crate::network::NetworkConfiguration,
+    network: &NetworkConfiguration,
 ) -> Result<PreparedCommand, String> {
     if access.unrestricted() {
         let mut command = Command::new(agent_program);
@@ -284,7 +284,7 @@ mod tests {
                 network: NetworkAccess::Sandboxed,
             },
             None,
-            &crate::network::NetworkConfiguration::default(),
+            &NetworkConfiguration::default(),
         )?;
         assert_eq!(prepared.command.get_program(), nono.as_os_str());
         let arguments = prepared.command.get_args().collect::<Vec<_>>();
@@ -317,7 +317,7 @@ mod tests {
                 },
                 access,
                 None,
-                &crate::network::NetworkConfiguration::default(),
+                &NetworkConfiguration::default(),
             )
         };
         let unrestricted = direct(

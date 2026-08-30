@@ -23,3 +23,21 @@ impl AccessPolicy {
             && matches!(self.network, NetworkAccess::Full)
     }
 }
+
+#[derive(Clone, Default, Eq, PartialEq)]
+pub(crate) struct NetworkConfiguration {
+    pub(crate) proxy_hosts: Vec<String>,
+    pub(crate) proxy_loopback_ports: Vec<u16>,
+    pub(crate) app_proxy: Option<String>,
+}
+
+impl std::fmt::Debug for NetworkConfiguration {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NetworkConfiguration")
+            .field("proxy_hosts", &self.proxy_hosts)
+            .field("proxy_loopback_ports", &self.proxy_loopback_ports)
+            .field("app_proxy", &self.app_proxy.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
+}
