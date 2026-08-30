@@ -166,7 +166,7 @@ pub(super) fn draft_session_row(
         div()
             .h(THEME.layout.session_row_height)
             .w_full()
-            .px(THEME.space.sm)
+            .px(px(2.0))
             .child(
                 div()
                     .id(format!("session-{id}"))
@@ -180,14 +180,14 @@ pub(super) fn draft_session_row(
                     .items_center()
                     .gap(THEME.space.sm)
                     .px(THEME.space.sm)
-                    .rounded(THEME.radius)
+                    .rounded(px(2.0))
                     .group(action_group.clone())
                     .bg(if selected {
-                        THEME.colors.surface
+                        THEME.colors.selection
                     } else {
                         THEME.colors.panel
                     })
-                    .hover(|row| row.bg(THEME.colors.hover))
+                    .hover(|row| row.bg(THEME.colors.surface))
                     .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
                     .cursor(CursorStyle::PointingHand)
                     .on_drag(drag, move |drag, _, _, cx| {
@@ -242,7 +242,11 @@ pub(super) fn draft_session_row(
                                     .whitespace_nowrap()
                                     .text_ellipsis()
                                     .text_size(THEME.type_scale.body_small)
-                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .font_weight(if selected {
+                                        FontWeight::SEMIBOLD
+                                    } else {
+                                        FontWeight::NORMAL
+                                    })
                                     .text_color(THEME.colors.text)
                                     .child(title),
                             )
@@ -432,14 +436,14 @@ pub(super) fn session_row_with_height(
         .items_stretch()
         .px(THEME.space.sm)
         .py(THEME.space.xs)
-        .rounded(THEME.radius)
+        .rounded(px(2.0))
         .group(format!("session-actions-{}", session.id))
         .bg(if selected {
-            THEME.colors.surface
+            THEME.colors.selection
         } else {
             THEME.colors.panel
         })
-        .hover(|row| row.bg(THEME.colors.hover))
+        .hover(|row| row.bg(THEME.colors.surface))
         .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
         .cursor(CursorStyle::PointingHand)
         .when(draggable, move |row| {
@@ -521,7 +525,7 @@ pub(super) fn session_row_with_height(
                                 .whitespace_nowrap()
                                 .text_ellipsis()
                                 .text_size(THEME.type_scale.body_small)
-                                .font_weight(if selected || !is_archived {
+                                .font_weight(if selected {
                                     FontWeight::SEMIBOLD
                                 } else {
                                     FontWeight::NORMAL
@@ -724,7 +728,7 @@ pub(super) fn session_row_with_height(
         div()
             .h(row_height)
             .w_full()
-            .px(THEME.space.sm)
+            .px(px(2.0))
             .child(context_menu)
             .into_any_element(),
     )

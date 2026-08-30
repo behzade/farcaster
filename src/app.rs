@@ -45,8 +45,8 @@ use std::{
 
 use gpui::{
     AppContext as _, Context, Entity, FocusHandle, Focusable as _, Image, ListAlignment, ListState,
-    PathPromptOptions, RenderImage, ScrollHandle, Subscription, SystemNotification, Task, Window,
-    actions, point, px,
+    PathPromptOptions, Pixels, RenderImage, ScrollHandle, Subscription, SystemNotification, Task,
+    Window, actions, point, px,
 };
 use gpui_component::input::{InputEvent, InputState, TextareaState};
 use gpui_libghostty::Terminal;
@@ -204,6 +204,8 @@ pub(crate) struct FarcasterApp {
     picker_return_focus: Option<FocusHandle>,
     session_list: ListState,
     session_list_rows: RefCell<Vec<String>>,
+    session_rail_width: Pixels,
+    session_rail_resize_start: Option<(Pixels, Pixels)>,
     archived_session_list: ListState,
     archived_session_list_rows: RefCell<Vec<String>>,
     session_generation: u64,
@@ -608,6 +610,8 @@ impl FarcasterApp {
                 crate::theme::THEME.layout.transcript_overdraw,
             ),
             session_list_rows: RefCell::new(Vec::new()),
+            session_rail_width: crate::theme::THEME.layout.session_rail,
+            session_rail_resize_start: None,
             archived_session_list: ListState::new(
                 0,
                 ListAlignment::Top,

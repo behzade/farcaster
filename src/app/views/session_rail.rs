@@ -4,8 +4,8 @@ use std::{
 };
 
 use gpui::{
-    Anchor, Div, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Stateful,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, list,
+    Anchor, Div, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Pixels,
+    Stateful, StatefulInteractiveElement as _, Styled as _, WeakEntity, div, list,
     prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
@@ -39,6 +39,7 @@ use crate::{
 };
 
 const INACTIVE_PREVIEW_LIMIT: usize = 3;
+const ARCHIVED_LEADING_GAP: f32 = 34.0;
 
 fn session_section_drop_target(
     section: Stateful<Div>,
@@ -94,7 +95,7 @@ fn collapsed_inactive_rail_height(count: usize, leading_gap: bool) -> gpui::Pixe
     let rows = THEME.controls.utility_row
         + THEME.controls.archived_preview_row * count.min(INACTIVE_PREVIEW_LIMIT);
     if leading_gap {
-        rows + THEME.space.md
+        rows + px(ARCHIVED_LEADING_GAP)
     } else {
         rows
     }
@@ -250,64 +251,59 @@ impl FarcasterApp {
                     .flex()
                     .flex_col()
                     .gap(THEME.space.xs)
-                    .p(THEME.space.sm)
-                    .border_b(THEME.border)
-                    .border_color(THEME.colors.border)
+                    .px(px(10.0))
+                    .pb(px(10.0))
                     .child(
-                        div()
-                            .h(THEME.controls.utility_row)
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .child(self.render_surface_switcher(entity.clone()))
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(THEME.space.xs)
-                                    .child(icon_button(
-                                        "session-actions",
-                                        AppIcon::List,
-                                        "Actions",
-                                        ButtonTone::Quiet,
-                                        move |window, cx| {
-                                            let _ = actions_entity.update(cx, |this, cx| {
-                                                this.open_picker(PickerScope::Actions, window, cx);
-                                            });
-                                        },
-                                    ))
-                                    .child(icon_button(
-                                        "new-session",
-                                        AppIcon::Plus,
-                                        "New session",
-                                        ButtonTone::Quiet,
-                                        move |window, cx| {
-                                            let _ = new_entity.update(cx, |this, cx| {
-                                                this.open_picker(
-                                                    PickerScope::Projects(
-                                                        ProjectPickerIntent::NewSession,
-                                                    ),
-                                                    window,
-                                                    cx,
-                                                );
-                                            });
-                                        },
-                                    )),
-                            ),
+                        div().h(px(47.0)).flex().items_center().justify_end().child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(THEME.space.xs)
+                                .child(icon_button(
+                                    "session-actions",
+                                    AppIcon::List,
+                                    "Actions",
+                                    ButtonTone::Quiet,
+                                    move |window, cx| {
+                                        let _ = actions_entity.update(cx, |this, cx| {
+                                            this.open_picker(PickerScope::Actions, window, cx);
+                                        });
+                                    },
+                                ))
+                                .child(icon_button(
+                                    "new-session",
+                                    AppIcon::Plus,
+                                    "New session",
+                                    ButtonTone::Quiet,
+                                    move |window, cx| {
+                                        let _ = new_entity.update(cx, |this, cx| {
+                                            this.open_picker(
+                                                PickerScope::Projects(
+                                                    ProjectPickerIntent::NewSession,
+                                                ),
+                                                window,
+                                                cx,
+                                            );
+                                        });
+                                    },
+                                )),
+                        ),
                     )
                     .child(
                         div()
                             .id("session-search-surface")
-                            .h(THEME.controls.utility_row)
+                            .h(px(36.0))
                             .flex()
                             .items_center()
                             .gap(THEME.space.xs)
-                            .pl(THEME.space.sm)
-                            .rounded(THEME.radius)
+                            .pl(px(10.0))
+                            .rounded(px(5.0))
+                            .border(THEME.border)
+                            .border_color(THEME.colors.hover)
                             .bg(THEME.colors.surface)
                             .text_color(THEME.colors.muted)
                             .on_click(move |_, window, cx| search_focus.focus(window, cx))
-                            .child(app_icon(AppIcon::MagnifyingGlass, AppIconSize::Prominent))
+                            .child(app_icon(AppIcon::MagnifyingGlass, AppIconSize::Inline))
                             .child(
                                 Input::new(&self.search)
                                     .flex_1()
@@ -525,7 +521,7 @@ impl FarcasterApp {
             .min_h_0()
             .flex()
             .flex_col()
-            .when(!expanded, |section| section.pt(THEME.space.md))
+            .when(!expanded, |section| section.pt(px(ARCHIVED_LEADING_GAP)))
             .child(
                 div()
                     .h(THEME.controls.utility_row)
@@ -564,6 +560,13 @@ impl FarcasterApp {
             });
         session_section_drop_target(section, kind, drop_entity).into_any_element()
     }
+}
+
+fn clamped_session_rail_width(width: f32) -> Pixels {
+    px(width.clamp(
+        f32::from(THEME.layout.session_rail_min),
+        f32::from(THEME.layout.session_rail_max),
+    ))
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -748,6 +751,38 @@ impl FarcasterApp {
             ActiveSessionItem::Draft(_) => None,
         })
         .collect()
+    }
+
+    pub(super) fn begin_session_rail_resize(
+        &mut self,
+        pointer_x: Pixels,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.session_rail_resize_start = Some((pointer_x, self.session_rail_width));
+        cx.notify();
+    }
+
+    pub(super) fn update_session_rail_resize(
+        &mut self,
+        pointer_x: Pixels,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let Some((start_x, start_width)) = self.session_rail_resize_start else {
+            return;
+        };
+        let width = clamped_session_rail_width(
+            f32::from(start_width) + f32::from(pointer_x) - f32::from(start_x),
+        );
+        if width != self.session_rail_width {
+            self.session_rail_width = width;
+            cx.notify();
+        }
+    }
+
+    pub(super) fn finish_session_rail_resize(&mut self, cx: &mut gpui::Context<Self>) {
+        if self.session_rail_resize_start.take().is_some() {
+            cx.notify();
+        }
     }
 
     pub(super) fn begin_session_drag(&mut self, cx: &mut gpui::Context<Self>) {

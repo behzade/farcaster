@@ -125,7 +125,7 @@ pub(crate) const THEME: Theme = Theme {
     colors: Colors {
         canvas: rgb(0x191d1e),
         panel: rgb(0x1d1e1d),
-        surface: rgb(0x222421),
+        surface: rgb(0x252623),
         hover: rgb(0x30322e),
         selection: rgb(0x232522),
         border: rgb(0x474944),
@@ -166,7 +166,7 @@ pub(crate) const THEME: Theme = Theme {
     controls: ControlScale {
         icon_button: px(28.0),
         utility_row: px(44.0),
-        archived_preview_row: px(52.0),
+        archived_preview_row: px(49.0),
         agent_marker: px(20.0),
     },
     radius: px(4.0),
@@ -174,9 +174,9 @@ pub(crate) const THEME: Theme = Theme {
     layout: Layout {
         window_width: px(1240.0),
         window_height: px(820.0),
-        session_rail: px(272.0),
-        session_rail_min: px(248.0),
-        session_rail_max: px(304.0),
+        session_rail: px(286.0),
+        session_rail_min: px(220.0),
+        session_rail_max: px(430.0),
         run_panel: px(312.0),
         run_panel_min: px(288.0),
         run_panel_max: px(344.0),
@@ -185,7 +185,7 @@ pub(crate) const THEME: Theme = Theme {
         dialog_width: px(560.0),
         dialog_max_height: px(680.0),
         tool_max_height: px(220.0),
-        session_row_height: px(52.0),
+        session_row_height: px(49.0),
         status_row_height: px(24.0),
     },
 };
@@ -291,9 +291,9 @@ mod tests {
 
     #[test]
     fn sidebar_widths_match_the_design_bounds() {
-        assert_eq!(f32::from(THEME.layout.session_rail), 272.0);
-        assert_eq!(f32::from(THEME.layout.session_rail_min), 248.0);
-        assert_eq!(f32::from(THEME.layout.session_rail_max), 304.0);
+        assert_eq!(f32::from(THEME.layout.session_rail), 286.0);
+        assert_eq!(f32::from(THEME.layout.session_rail_min), 220.0);
+        assert_eq!(f32::from(THEME.layout.session_rail_max), 430.0);
         assert_eq!(f32::from(THEME.layout.run_panel), 312.0);
         assert_eq!(f32::from(THEME.layout.run_panel_min), 288.0);
         assert_eq!(f32::from(THEME.layout.run_panel_max), 344.0);

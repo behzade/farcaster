@@ -1,10 +1,10 @@
 use std::{path::PathBuf, time::SystemTime};
 
 use super::{
-    ActiveSessionItem, SessionRailItem, SessionRailKind, collapsed_inactive_rail_height,
-    first_unsubmitted_draft, minimal_row_splice, roots_waiting_for_descendants,
-    session_accessible_label, session_badge, status_visual, subagent_counts,
-    visible_session_shortcuts,
+    ARCHIVED_LEADING_GAP, ActiveSessionItem, SessionRailItem, SessionRailKind,
+    clamped_session_rail_width, collapsed_inactive_rail_height, first_unsubmitted_draft,
+    minimal_row_splice, roots_waiting_for_descendants, session_accessible_label, session_badge,
+    status_visual, subagent_counts, visible_session_shortcuts,
 };
 use crate::{
     app::views::session_hover::session_tooltip_lines,
@@ -123,7 +123,20 @@ fn collapsed_archived_rail_includes_a_leading_gap() {
     );
     assert_eq!(
         f32::from(archived) - f32::from(without_gap),
-        f32::from(THEME.space.md)
+        ARCHIVED_LEADING_GAP
+    );
+}
+
+#[test]
+fn session_rail_resize_stays_within_design_bounds() {
+    assert_eq!(
+        clamped_session_rail_width(100.0),
+        THEME.layout.session_rail_min
+    );
+    assert_eq!(clamped_session_rail_width(286.0), gpui::px(286.0));
+    assert_eq!(
+        clamped_session_rail_width(500.0),
+        THEME.layout.session_rail_max
     );
 }
 

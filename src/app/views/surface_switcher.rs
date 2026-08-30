@@ -4,14 +4,57 @@ use gpui::{
     prelude::FluentBuilder as _,
 };
 
-use super::super::{AppSurface, FarcasterApp};
+use super::{
+    super::{AppSurface, FarcasterApp},
+    session_rows::project_label,
+};
 use crate::{
     assets::AppIcon,
     primitives::{AppIconSize, app_icon, icon_control},
+    sessions::root_session_for_path,
     theme::THEME,
 };
 
 impl FarcasterApp {
+    pub(super) fn render_workspace_bar(&self, entity: WeakEntity<Self>) -> impl IntoElement {
+        let project = project_label(&self.workspace_project());
+        let title =
+            root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
+                .map(|session| session.title.as_str())
+                .or_else(|| {
+                    let selected = self.selected_draft.as_deref()?;
+                    self.drafts
+                        .iter()
+                        .find(|draft| draft.id == selected)
+                        .and_then(|draft| draft.title.as_deref())
+                });
+        let workspace =
+            title.map_or_else(|| project.clone(), |title| format!("{project} / {title}"));
+
+        div()
+            .h(gpui::px(38.0))
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(THEME.space.sm)
+            .px(gpui::px(12.0))
+            .border_b(THEME.border)
+            .border_color(THEME.colors.surface)
+            .bg(THEME.colors.canvas)
+            .child(
+                div()
+                    .min_w_0()
+                    .flex_1()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_size(THEME.type_scale.caption)
+                    .text_color(THEME.colors.muted)
+                    .child(workspace),
+            )
+            .child(self.render_surface_switcher(entity))
+    }
+
     pub(super) fn render_surface_switcher(&self, entity: WeakEntity<Self>) -> impl IntoElement {
         div()
             .flex()
@@ -41,41 +84,6 @@ impl FarcasterApp {
                 entity,
                 FarcasterApp::show_terminal_surface,
             ))
-    }
-
-    pub(super) fn render_floating_surface_switcher(
-        &self,
-        entity: WeakEntity<Self>,
-    ) -> impl IntoElement {
-        let hover = entity.clone();
-        div()
-            .id("floating-surface-switcher")
-            .absolute()
-            .top(THEME.space.sm)
-            .left(THEME.space.sm)
-            .h(gpui::px(36.0))
-            .flex()
-            .items_center()
-            .p(THEME.space.xs)
-            .rounded(THEME.radius)
-            .bg(THEME.colors.panel)
-            .border(THEME.border)
-            .border_color(THEME.colors.border)
-            .when(
-                matches!(self.surface, AppSurface::Editor | AppSurface::Terminal),
-                |switcher| {
-                    switcher.on_hover(move |hovered, window, cx| {
-                        let _ = hover.update(cx, |app, cx| {
-                            if *hovered {
-                                app.hide_native_workspace_surfaces(cx);
-                            } else {
-                                app.restore_active_native_workspace_surface(window, cx);
-                            }
-                        });
-                    })
-                },
-            )
-            .child(self.render_surface_switcher(entity))
     }
 }
 
