@@ -136,12 +136,7 @@ impl RuntimeOwner {
             return;
         }
         self.process_command = next_command;
-        let session = if self.snapshot.history_preview {
-            self.snapshot.selected_session.clone()
-        } else {
-            self.active_session.clone()
-        };
-        self.start_process(session);
+        self.restart_process_preserving_transcript();
     }
 
     pub(super) fn set_app_proxy(&mut self, proxy: Option<String>) {
@@ -166,12 +161,7 @@ impl RuntimeOwner {
             self.publish();
             return;
         }
-        let session = if self.snapshot.history_preview {
-            self.snapshot.selected_session.clone()
-        } else {
-            self.active_session.clone()
-        };
-        self.start_process(session);
+        self.restart_process_preserving_transcript();
     }
 
     pub(super) fn reload_sandbox_grants(&mut self) {
@@ -190,12 +180,7 @@ impl RuntimeOwner {
             self.publish();
             return;
         }
-        let session = if self.snapshot.history_preview {
-            self.snapshot.selected_session.clone()
-        } else {
-            self.active_session.clone()
-        };
-        self.start_process(session);
+        self.restart_process_preserving_transcript();
     }
 
     pub(super) fn apply_queued_permission_change(&mut self) {

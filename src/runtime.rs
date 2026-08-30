@@ -1578,19 +1578,36 @@ fn run(
 
 impl RuntimeOwner {
     fn start_process(&mut self, session: Option<PathBuf>) {
-        self.start_process_from(session, None);
+        self.start_process_from(session, None, false);
+    }
+
+    fn restart_process_preserving_transcript(&mut self) {
+        let session = if self.snapshot.history_preview {
+            self.snapshot.selected_session.clone()
+        } else {
+            self.active_session.clone()
+        };
+        self.start_process_from(session, None, true);
     }
 
     fn start_fork_process(&mut self, source: PathBuf) {
-        self.start_process_from(None, Some(source));
+        self.start_process_from(None, Some(source), false);
     }
 
-    fn start_process_from(&mut self, session: Option<PathBuf>, fork: Option<PathBuf>) {
+    fn start_process_from(
+        &mut self,
+        session: Option<PathBuf>,
+        fork: Option<PathBuf>,
+        preserve_transcript: bool,
+    ) {
         self.invalidate_history_loads();
         self.process_generation = self.process_generation.saturating_add(1);
-        let preserve_transcript = self.deferred_prompt.is_some()
+        let preserve_transcript = preserve_transcript
+            || self.deferred_prompt.is_some()
             || (!self.pending_session_controls.is_empty() && self.snapshot.history_preview);
         let keep_preview = preserve_transcript && self.snapshot.history_preview;
+        let preserved_conversation =
+            (preserve_transcript && !keep_preview).then(|| self.snapshot.conversation.clone());
         if let Some(mut old) = self.process.take() {
             let _ = old.close();
         }
@@ -1627,6 +1644,9 @@ impl RuntimeOwner {
                 session.clone(),
                 status,
             );
+            if let Some(conversation) = preserved_conversation {
+                self.snapshot.conversation = conversation;
+            }
         }
         let _ = self.event_tx.send(RuntimeEvent::SessionReset {
             generation: self.process_generation,
@@ -2893,6 +2913,7 @@ mod tests {
 
         conversation_mut(owner.active_snapshot_mut()).running = false;
         owner.apply_queued_permission_change();
+        assert_eq!(owner.snapshot.conversation.items, transcript);
         drive_process_until(&mut owner, |owner| {
             owner.startup_state_loaded && owner.startup_history_loaded
         });
