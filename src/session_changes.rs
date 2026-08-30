@@ -1,5 +1,3 @@
-//! Pure projection of successful file tools recorded by Pi sessions.
-
 use std::{collections::HashMap, path::PathBuf, time::SystemTime};
 
 use crate::agent_activity::{FileMutation, FileMutationKind};

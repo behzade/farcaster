@@ -1,5 +1,3 @@
-//! Read-only, bounded discovery of Pi v3 session metadata.
-
 use std::{
     cmp::Reverse,
     collections::{BinaryHeap, HashMap, HashSet, VecDeque},
@@ -64,9 +62,7 @@ pub(crate) struct SessionSummary {
     pub in_review: bool,
     pub archived: bool,
     pub is_running: bool,
-    /// Latest `(provider, modelId)` on the active branch, if the session has one.
     pub model: Option<(String, String)>,
-    /// Latest thinking (effort) level on the active branch, if set.
     pub thinking_level: Option<String>,
     search: String,
 }
@@ -236,7 +232,6 @@ pub(crate) fn root_session_for_path<'a>(
     SessionRootIndex::new(sessions).root_for_path(selected)
 }
 
-/// Whether `path` belongs to a descendant (subagent) session rather than a root.
 pub(crate) fn is_subagent_path(sessions: &[SessionSummary], path: &Path) -> bool {
     sessions
         .iter()
@@ -382,7 +377,6 @@ pub(crate) struct LoadedHistory {
     pub pending_question: Option<ExtensionUiRequest>,
 }
 
-/// Read the visible, active branch of a session without starting Pi.
 pub(crate) fn load_history(path: &Path) -> Result<LoadedHistory, String> {
     let mut timing =
         crate::performance::OperationTiming::new(crate::performance::OperationKind::HistoryLoad, 0);

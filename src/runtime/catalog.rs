@@ -1,8 +1,5 @@
-//! Session catalog loading, filtering, and transient activity publication.
-
 use super::*;
 
-/// Coalesces external transcript writes into active and dormant catalog transitions.
 #[derive(Default)]
 pub(super) struct ExternalActivityTracker {
     deadlines: HashMap<PathBuf, Instant>,

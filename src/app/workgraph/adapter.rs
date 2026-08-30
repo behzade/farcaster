@@ -1,5 +1,3 @@
-//! GPUI and SQLite adapters for the workgraph plan list.
-
 mod create;
 mod detail;
 

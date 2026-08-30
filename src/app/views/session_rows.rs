@@ -1,5 +1,3 @@
-//! Session-rail row presentation and row-local interaction.
-
 use std::{
     path::{Path, PathBuf},
     time::{Duration, SystemTime},

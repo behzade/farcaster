@@ -1,5 +1,3 @@
-//! Application quit policy.
-
 use gpui::{Context, PromptButton, PromptLevel, Window};
 
 use super::FarcasterApp;

@@ -1,5 +1,3 @@
-//! Project terminal lifecycle and shell selection.
-
 use std::path::PathBuf;
 
 use gpui::{Context, Window};

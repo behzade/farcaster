@@ -1,5 +1,3 @@
-//! Submitted-draft identity and draft-to-session reconciliation.
-
 use std::{collections::HashMap, path::PathBuf};
 
 use gpui::{Context, Window};
@@ -566,7 +564,6 @@ mod tests {
             establish_submission(&mut submitted, "draft:a", true, Some(path.clone()),),
             Some("a".into())
         );
-        // Selecting B has no submitted-draft state transition.
         let selected_draft = "b";
 
         assert_eq!(selected_draft, "b");

@@ -1,5 +1,3 @@
-//! User-message image attachment strip.
-
 use std::sync::Arc;
 
 use gpui::{

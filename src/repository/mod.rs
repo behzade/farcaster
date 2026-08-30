@@ -1,8 +1,3 @@
-//! Isolated, read-only Git and Jujutsu working-copy backend.
-//!
-//! Calls are synchronous by design. The UI should run `snapshot` and
-//! `load_diff` off-thread and move their cloneable results back to GPUI.
-
 mod git;
 mod jj;
 mod process;
@@ -77,9 +72,7 @@ pub(crate) enum RepositorySyncAction {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RepositoryLocation {
     pub(crate) kind: RepositoryKind,
-    /// Absolute, canonical path containing the selected repository marker.
     pub(crate) workspace_root: PathBuf,
-    /// Absolute, canonical project selected in Pi. Status is scoped here.
     pub(crate) project_root: PathBuf,
 }
 
@@ -94,7 +87,6 @@ pub(crate) struct GitIdentity {
     pub(crate) head_oid: Option<String>,
     pub(crate) branch: Option<String>,
     pub(crate) upstream: Option<String>,
-    /// Local branch closest to a detached HEAD; never used for push/pull.
     pub(crate) nearest_branch: Option<String>,
     pub(crate) ahead: u64,
     pub(crate) behind: u64,
@@ -107,9 +99,7 @@ pub(crate) struct JujutsuIdentity {
     pub(crate) change_id: String,
     pub(crate) description: String,
     pub(crate) bookmarks: Vec<String>,
-    /// Local bookmarks nearest `@`, including `@` itself when it is bookmarked.
     pub(crate) closest_bookmarks: Vec<String>,
-    /// Commits on `@` that are not in the closest ancestor bookmarks.
     pub(crate) ahead: u64,
     pub(crate) conflicted_paths: Vec<PathBuf>,
     pub(crate) conflicted: bool,
@@ -160,8 +150,6 @@ enum SnapshotToken {
     Jujutsu(Arc<str>),
 }
 
-/// Stable across refreshes and collision-free for non-UTF-8 paths. Display
-/// strings are intentionally not part of identity.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct DiffTargetKey {
     pub(crate) workspace_root: PathBuf,
@@ -244,9 +232,6 @@ pub(crate) struct RepositoryBackend {
 }
 
 impl RepositoryBackend {
-    /// `Auto` picks the deepest marker among available backends and prefers
-    /// `.jj` only on a tie. Forced modes never fall back while available; a
-    /// stale preference for an unavailable executable is treated as `Auto`.
     pub(crate) fn discover(
         project: &Path,
         preference: BackendPreference,

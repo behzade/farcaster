@@ -1,5 +1,3 @@
-//! Session rail rendering and interaction.
-
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
@@ -61,7 +59,6 @@ fn session_section_drop_target(
         })
 }
 
-/// Direct subagent (child session) count per parent session id.
 fn subagent_counts(sessions: &[SessionSummary]) -> HashMap<String, usize> {
     let mut counts: HashMap<String, usize> = HashMap::new();
     for session in sessions {

@@ -1,5 +1,3 @@
-//! Pure responsive shell policy.
-
 use gpui::Pixels;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

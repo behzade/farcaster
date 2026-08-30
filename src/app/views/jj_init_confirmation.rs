@@ -1,5 +1,3 @@
-//! Confirmation shown before colocating Jujutsu with a Git repository.
-
 use gpui::{AnyElement, IntoElement as _, ParentElement as _, Styled as _, WeakEntity, div};
 
 use super::super::FarcasterApp;

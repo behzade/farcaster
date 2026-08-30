@@ -1,9 +1,3 @@
-//! Transcript-owned virtual viewport with frame-coalesced scrolling.
-//!
-//! Durable state contains row measurements and logical scroll position. GPUI elements stay
-//! frame-local. Row splices, explicit remeasurement, and width changes are the cache-invalidation
-//! boundaries.
-
 use std::{cell::RefCell, collections::BTreeMap, ops::Range, rc::Rc};
 
 use gpui::{

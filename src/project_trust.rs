@@ -1,5 +1,3 @@
-//! Project trust discovery and durable decisions compatible with Pi's trust store.
-
 use std::{
     collections::BTreeMap,
     fs,

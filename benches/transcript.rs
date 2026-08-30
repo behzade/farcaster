@@ -1,8 +1,5 @@
 #![allow(dead_code, unused_imports)]
 
-//! Headless streaming benchmark for the production transcript reducer, row projection,
-//! list synchronization, and GPUI render/layout path.
-
 use std::{
     collections::HashMap,
     io::{self, Write as _},

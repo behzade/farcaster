@@ -17,7 +17,6 @@ impl RowHeight {
     }
 }
 
-/// Variable row heights with logarithmic prefix and offset lookup.
 #[derive(Default)]
 pub(super) struct HeightIndex {
     rows: Vec<RowHeight>,
@@ -122,7 +121,6 @@ impl HeightIndex {
         self.prefix(self.len())
     }
 
-    /// Return the row containing `offset`, or `len` when offset is at the end.
     pub(super) fn row_at(&self, offset: Pixels) -> usize {
         let target = f32::from(offset.max(px(0.0)));
         let mut index = 0;

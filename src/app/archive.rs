@@ -1,5 +1,3 @@
-//! Session archival policy and confirmation flow.
-
 use std::path::{Path, PathBuf};
 
 use gpui::{Context, FocusHandle, Window};

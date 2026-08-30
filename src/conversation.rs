@@ -1,5 +1,3 @@
-//! Pure transcript and live-run reducer.
-
 use std::{
     collections::{BTreeMap, HashMap},
     sync::Arc,

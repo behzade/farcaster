@@ -1,5 +1,3 @@
-//! Backend-neutral requests issued by the application runtime.
-
 mod pi;
 
 use serde_json::Value;

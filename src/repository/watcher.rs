@@ -1,5 +1,3 @@
-//! Filesystem event source for repository working-copy and metadata changes.
-
 use std::{
     fs,
     path::{Path, PathBuf},

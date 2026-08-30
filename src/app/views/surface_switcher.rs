@@ -1,5 +1,3 @@
-//! Visible controls for the center workspace surfaces.
-
 use gpui::{
     Context, InteractiveElement as _, IntoElement, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div,

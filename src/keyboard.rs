@@ -1,5 +1,3 @@
-//! Central routing for application keyboard commands.
-
 use gpui::{App, ClipboardItem, actions};
 
 actions!(farcaster, [CopySelection]);

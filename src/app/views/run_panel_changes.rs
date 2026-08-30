@@ -1,5 +1,3 @@
-//! Session totals, path matching, and the no-repository changed-file fallback.
-
 use std::path::Path;
 
 use gpui::{

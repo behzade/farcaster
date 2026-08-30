@@ -1,5 +1,3 @@
-//! One source of truth for the provider, model, and effort attached to a session or draft.
-
 use crate::protocol::Model;
 
 use super::RuntimeSnapshot;

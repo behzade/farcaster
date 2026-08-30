@@ -1,5 +1,3 @@
-//! Login-shell environment import for app and project processes.
-
 use std::io::Write as _;
 
 use std::{

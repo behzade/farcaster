@@ -1,5 +1,3 @@
-//! Permanent deletion of a root Pi session and its descendant session files.
-
 use std::{
     fs,
     path::{Path, PathBuf},

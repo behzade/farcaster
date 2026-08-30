@@ -1,5 +1,3 @@
-//! Small persistent registry for projects that can start a native Pi session.
-
 use std::{
     collections::HashSet,
     fs,

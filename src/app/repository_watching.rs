@@ -1,5 +1,3 @@
-//! App orchestration for repository filesystem watchers.
-
 use std::{path::PathBuf, time::Duration};
 
 use gpui::{AppContext as _, Context};

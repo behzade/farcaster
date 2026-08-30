@@ -1,5 +1,3 @@
-//! Region invalidation and runtime-send helpers.
-
 use std::sync::Arc;
 
 use gpui::{Context, Entity};

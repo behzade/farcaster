@@ -1,5 +1,3 @@
-//! Provider, model, effort, and permission selectors for the composer footer.
-
 use gpui::{
     Anchor, AnyElement, IntoElement as _, ParentElement as _, Styled as _, WeakEntity, div,
 };

@@ -1,5 +1,3 @@
-//! Inline session-title editing and persistence through Pi.
-
 use std::path::PathBuf;
 
 use gpui::{Context, Window};

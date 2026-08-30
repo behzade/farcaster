@@ -1,5 +1,3 @@
-//! Transactional relocation of a root Pi session and its descendant session files.
-
 use std::{
     collections::{HashMap, HashSet},
     fs::{self, File, OpenOptions},

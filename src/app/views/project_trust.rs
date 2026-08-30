@@ -1,5 +1,3 @@
-//! Project trust manager opened by `/trust`.
-
 use gpui::{
     AnyElement, IntoElement as _, ParentElement as _, Styled as _, WeakEntity, div,
     prelude::FluentBuilder as _, px,

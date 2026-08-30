@@ -1,5 +1,3 @@
-//! Enter-key completion policy for the prompt composer.
-
 use crate::{composer_sessions::ComposerSnapshot, protocol::SlashCommand, user_invocations};
 
 use super::{file_mentions, slash_commands};

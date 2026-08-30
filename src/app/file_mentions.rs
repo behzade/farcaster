@@ -1,5 +1,3 @@
-//! Repository file discovery and matching for composer `@` mentions.
-
 use std::{cell::RefCell, path::Path};
 
 use nucleo_matcher::{

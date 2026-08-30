@@ -1,5 +1,3 @@
-//! Structurally shared sequence storage for immutable runtime snapshots.
-
 use std::{
     fmt,
     ops::{Index, Range},

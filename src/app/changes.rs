@@ -1,5 +1,3 @@
-//! Application state for file changes retained in Pi session records.
-
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},

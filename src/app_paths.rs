@@ -1,5 +1,3 @@
-//! Farcaster-owned application storage paths.
-
 use std::path::PathBuf;
 
 pub(crate) fn data_dir() -> Result<PathBuf, String> {

@@ -1,5 +1,3 @@
-//! Pi command palette scopes and command dispatch.
-
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},

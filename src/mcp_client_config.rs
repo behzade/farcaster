@@ -1,5 +1,3 @@
-//! Transient MCP configuration passed to agent backends at launch.
-
 use std::{io::Write as _, path::Path};
 
 const SERVER_URL: &str = "http://127.0.0.1:8765/mcp";

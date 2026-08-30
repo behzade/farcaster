@@ -1,5 +1,3 @@
-//! Project-trust choices owned by the native application surface.
-
 use gpui::{Context, Window};
 
 use super::FarcasterApp;

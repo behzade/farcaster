@@ -1,5 +1,3 @@
-//! In-memory image attachments keyed to each session composer.
-
 use std::sync::Arc;
 
 use base64::Engine as _;

@@ -1,5 +1,3 @@
-//! Compact composer attachment chips.
-
 use gpui::{
     AnyElement, InteractiveElement as _, IntoElement as _, ObjectFit, ParentElement as _,
     Styled as _, StyledImage as _, WeakEntity, div, img, px,

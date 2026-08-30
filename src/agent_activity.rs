@@ -1,5 +1,3 @@
-//! Transient, read-only activity derived from Pi session JSONL.
-
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -23,7 +21,6 @@ pub(crate) enum AgentOutcome {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AgentLifecycle {
-    /// Reserved for agents paused on an external response.
     #[allow(dead_code)]
     NeedsInput,
     Working,

@@ -1,5 +1,3 @@
-//! Selected-node detail presentation for the Work surface.
-
 use gpui::{
     Context, Entity, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, div, prelude::FluentBuilder as _, px,

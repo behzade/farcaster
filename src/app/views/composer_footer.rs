@@ -1,5 +1,3 @@
-//! Composer footer layout, usage metrics, and primary actions.
-
 use gpui::{
     AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,

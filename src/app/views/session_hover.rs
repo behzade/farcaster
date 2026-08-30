@@ -1,5 +1,3 @@
-//! Hover panel for session-rail rows: detailed facts, anchored to the row's right edge.
-
 use std::time::Duration;
 
 use gpui::{

@@ -1,5 +1,3 @@
-//! Compact file-mutation actions for the transcript.
-
 use crate::{
     assets::AppIcon,
     conversation::ToolPresentation,

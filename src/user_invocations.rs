@@ -1,5 +1,3 @@
-//! Composer completion for extension-expanded user invocations.
-
 use crate::protocol::{SlashCommand, SlashCommandSource};
 
 #[derive(Clone, Debug, Eq, PartialEq)]

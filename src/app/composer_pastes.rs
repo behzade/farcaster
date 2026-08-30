@@ -1,5 +1,3 @@
-//! File-backed text pastes keyed to each session composer.
-
 use std::{
     fs::OpenOptions,
     io::Write as _,

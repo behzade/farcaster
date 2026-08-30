@@ -1,5 +1,3 @@
-//! Composer submission lifecycle, including image attachment ownership.
-
 use std::{
     path::Path,
     sync::Arc,

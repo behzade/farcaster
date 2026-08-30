@@ -1,5 +1,3 @@
-//! Durable prompt dispatch and deferred-session resume behavior.
-
 use std::sync::Arc;
 
 use crate::{

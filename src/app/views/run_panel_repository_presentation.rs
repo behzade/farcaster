@@ -1,5 +1,3 @@
-//! Pure labels, path projection, and color policy for the Working copy panel.
-
 use std::{
     hash::{Hash as _, Hasher as _},
     path::Path,

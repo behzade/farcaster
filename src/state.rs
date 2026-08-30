@@ -1,5 +1,3 @@
-//! Durable GUI state and a fast session index.
-
 use std::{
     collections::{BTreeMap, HashSet},
     path::{Path, PathBuf},

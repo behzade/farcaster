@@ -1,5 +1,3 @@
-//! Generic searchable picker rows and keyboard-driven list behavior.
-
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{

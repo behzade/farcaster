@@ -1,5 +1,3 @@
-//! Bounded markdown parse-state cache for virtualized transcript rows.
-
 use std::{cell::RefCell, collections::HashMap, hash::Hash, rc::Rc};
 
 use gpui::{AppContext as _, Entity};

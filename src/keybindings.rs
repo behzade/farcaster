@@ -1,5 +1,3 @@
-//! Single registry for application keybindings and keyboard-help metadata.
-
 #[cfg(not(target_os = "macos"))]
 use crate::app::APP_SHORTCUT_CONTEXT;
 #[cfg(target_os = "macos")]
@@ -171,7 +169,6 @@ fn linux_super_bindings() -> Vec<KeyBinding> {
     ]
 }
 
-/// Returns application shortcuts plus overrides for dependency-owned defaults.
 pub(crate) fn bindings() -> Vec<KeyBinding> {
     let mut bindings = registry()
         .into_iter()
@@ -186,7 +183,6 @@ pub(crate) fn bindings() -> Vec<KeyBinding> {
     bindings
 }
 
-/// Returns the user-facing shortcut registry used by keyboard help.
 pub(crate) fn registry() -> Vec<Shortcut> {
     let mut shortcuts = vec![
         primary_shortcut!(

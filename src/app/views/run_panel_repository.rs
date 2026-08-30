@@ -1,5 +1,3 @@
-//! Flat working-copy header and paged repository file list.
-
 use gpui::{
     AnyElement, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Role,
     StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,

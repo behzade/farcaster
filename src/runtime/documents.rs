@@ -1,5 +1,3 @@
-//! Authoritative in-memory session document lifecycle.
-
 use std::time::SystemTime;
 
 use super::*;

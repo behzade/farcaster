@@ -1,5 +1,3 @@
-//! Pure session-rail ordering and project-filter policy.
-
 use std::{
     collections::{HashMap, HashSet},
     path::Path,

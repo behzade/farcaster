@@ -1,5 +1,3 @@
-//! Pi request encoding at the backend boundary.
-
 use serde_json::{Value, json};
 
 use super::{BackendEvent, BackendRequest, SessionTransport};

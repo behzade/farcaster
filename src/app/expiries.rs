@@ -1,5 +1,3 @@
-//! Exact, cancellable ownership for ephemeral UI state.
-
 use std::{
     collections::{HashMap, HashSet},
     time::{Duration, Instant},

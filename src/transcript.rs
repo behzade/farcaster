@@ -1,5 +1,3 @@
-//! Selectable, compact transcript projection.
-
 use std::{
     borrow::Cow,
     hash::{Hash, Hasher},

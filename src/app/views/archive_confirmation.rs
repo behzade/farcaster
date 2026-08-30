@@ -1,5 +1,3 @@
-//! Confirmation shown before archiving a session family with active work.
-
 use gpui::{AnyElement, IntoElement as _, ParentElement as _, Styled as _, WeakEntity, div};
 
 use super::super::FarcasterApp;

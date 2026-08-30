@@ -1,5 +1,3 @@
-//! Session control commands that may need to resume a history-only document.
-
 use super::*;
 
 #[derive(Default)]

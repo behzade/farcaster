@@ -1,5 +1,3 @@
-//! UI-neutral state for the generic extension UI protocol.
-
 use std::{
     collections::{BTreeMap, VecDeque},
     time::{Duration, Instant},

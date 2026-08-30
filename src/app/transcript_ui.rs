@@ -1,5 +1,3 @@
-//! Transcript projection and long-session UI synchronization.
-
 use gpui::Context;
 
 use super::FarcasterApp;
@@ -33,7 +31,6 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         if expanded {
-            // Keep the disclosure header under the pointer while its detail grows below it.
             self.transcript_list.pause_following_tail();
         }
         self.transcript_disclosure_states.insert(key, expanded);

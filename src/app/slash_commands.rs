@@ -1,5 +1,3 @@
-//! Slash-command matching against Pi's built-in and RPC command catalogs.
-
 use crate::{
     protocol::{SlashCommand, SlashCommandSource},
     user_invocations::ComposerSuggestion,

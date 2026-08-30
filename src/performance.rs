@@ -1,5 +1,3 @@
-//! DEBUG-only summaries from GPUI's frame, task, and action profilers.
-
 use std::{
     cell::RefCell,
     sync::atomic::{AtomicBool, AtomicU64, Ordering},

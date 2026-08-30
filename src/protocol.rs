@@ -1,5 +1,3 @@
-//! Pi RPC wire DTOs. Unknown events and fields stay available as JSON values.
-
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 #[cfg(test)]

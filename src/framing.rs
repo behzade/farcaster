@@ -1,5 +1,3 @@
-//! Strict LF-only JSONL framing.
-
 #[derive(Debug, Default)]
 pub(crate) struct JsonlFramer {
     pending: Vec<u8>,

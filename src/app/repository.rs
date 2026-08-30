@@ -1,5 +1,3 @@
-//! App-owned repository refresh, backend choice, and stale-result policy.
-
 #[path = "repository_watching.rs"]
 mod watching;
 

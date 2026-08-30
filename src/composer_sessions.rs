@@ -1,5 +1,3 @@
-//! Composer text, selection, and prompt history keyed by session.
-
 use std::{
     collections::{HashMap, HashSet},
     ops::Range,

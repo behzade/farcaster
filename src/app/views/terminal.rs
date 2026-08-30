@@ -1,5 +1,3 @@
-//! Project terminal workspace rendering.
-
 use gpui::{AnyElement, IntoElement as _, ParentElement as _, Styled as _, div};
 
 use super::super::FarcasterApp;

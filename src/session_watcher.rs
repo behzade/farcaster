@@ -1,5 +1,3 @@
-//! Filesystem event source for Pi session catalog membership and activity.
-
 use std::{
     fs,
     path::{Path, PathBuf},

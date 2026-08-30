@@ -1,5 +1,3 @@
-//! Pure plan-list projection independent of GPUI and SQLite.
-
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use workgraph::contract::{PlanSnapshot, WalkStep};

@@ -1,5 +1,3 @@
-//! Reusable GPUI before/after reorder targets.
-
 use gpui::{
     App, Bounds, Div, DragMoveEvent, InteractiveElement as _, Pixels, Point, Rgba, Stateful,
     Styled as _, Window, prelude::FluentBuilder as _, px,

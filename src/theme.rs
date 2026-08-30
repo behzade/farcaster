@@ -1,5 +1,3 @@
-//! Gruvbox dark-hard visual tokens for the complete native surface.
-
 use gpui::{App, Font, FontFallbacks, Pixels, Rgba, px};
 use gpui_component::{
     highlighter::HighlightTheme,

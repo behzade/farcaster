@@ -1,5 +1,3 @@
-//! Composer-footer usage projection and compact formatting.
-
 use super::super::FarcasterApp;
 use crate::sessions::{UsageSummary, descendant_sessions, root_session_for_path};
 

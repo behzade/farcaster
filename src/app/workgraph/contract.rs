@@ -1,5 +1,3 @@
-//! UI-owned plan-list view contract.
-
 use workgraph::contract::{Plan, PlanSnapshot, SessionLink};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

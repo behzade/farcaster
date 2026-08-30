@@ -1,5 +1,3 @@
-//! Session deletion confirmation flow.
-
 use std::{collections::HashSet, path::PathBuf};
 
 use gpui::{Context, FocusHandle, Window};

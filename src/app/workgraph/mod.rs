@@ -1,5 +1,3 @@
-//! Native delivery adapter for the reusable workgraph module.
-
 pub(super) mod adapter;
 #[cfg(test)]
 mod adapter_tests;

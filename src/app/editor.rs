@@ -1,5 +1,3 @@
-//! In-app editor orchestration and path resolution.
-
 use std::path::{Path, PathBuf};
 
 use gpui::{AppContext as _, Context, Window};
