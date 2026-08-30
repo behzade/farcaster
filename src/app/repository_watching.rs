@@ -3,7 +3,7 @@ use std::{path::PathBuf, time::Duration};
 use gpui::{AppContext as _, Context};
 
 use super::{super::FarcasterApp, RepositoryLocation};
-use crate::repository::watcher::{RepositoryWatchEvent, RepositoryWatcher};
+use crate::repository::{RepositoryWatchEvent, RepositoryWatcher};
 
 const WATCH_DEBOUNCE: Duration = Duration::from_millis(150);
 

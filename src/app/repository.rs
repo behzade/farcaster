@@ -9,7 +9,7 @@ use super::FarcasterApp;
 use crate::{
     repository::{
         BackendPreference, DiffTargetKey, RepositoryBackend, RepositoryLocation,
-        RepositorySyncAction, WorkingCopySnapshot, watcher::RepositoryWatcher,
+        RepositorySyncAction, RepositoryWatcher, WorkingCopySnapshot,
     },
     state::StateStore,
 };

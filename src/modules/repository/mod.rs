@@ -3,7 +3,7 @@ mod contract;
 mod domain;
 mod sync;
 
-pub(crate) use adapter::watcher;
+pub(crate) use adapter::watcher::{RepositoryWatchEvent, RepositoryWatcher};
 pub(crate) use contract::{
     BackendPreference, ChangeKind, ChangeLayer, DiffResult, DiffTarget, DiffTargetKey, GitIdentity,
     JujutsuIdentity, RepositoryError, RepositoryKind, RepositoryLocation, RepositorySyncAction,
