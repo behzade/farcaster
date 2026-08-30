@@ -66,6 +66,26 @@ pub(crate) struct SessionDiscovery {
     pub exhaustive: bool,
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum SessionWatchEvent {
+    CatalogChanged,
+    Activity(Vec<PathBuf>),
+    Failed(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TransferMember {
+    pub path: PathBuf,
+    pub id: String,
+    pub parent_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SessionTransfer {
+    pub root: PathBuf,
+    pub paths: HashMap<PathBuf, PathBuf>,
+}
+
 #[derive(Debug)]
 pub(crate) struct LoadedHistory {
     pub messages: Vec<Value>,
