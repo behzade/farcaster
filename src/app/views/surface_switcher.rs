@@ -20,16 +20,14 @@ impl FarcasterApp {
         let project = project_label(&self.workspace_project());
         let title =
             root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
-                .map(|session| session.title.as_str())
+                .map(|session| session.title.clone())
                 .or_else(|| {
                     let selected = self.selected_draft.as_deref()?;
                     self.drafts
                         .iter()
                         .find(|draft| draft.id == selected)
-                        .and_then(|draft| draft.title.as_deref())
+                        .and_then(|draft| draft.title.clone())
                 });
-        let workspace =
-            title.map_or_else(|| project.clone(), |title| format!("{project} / {title}"));
 
         div()
             .h(gpui::px(38.0))
@@ -45,21 +43,40 @@ impl FarcasterApp {
                 div()
                     .min_w_0()
                     .flex_1()
+                    .flex()
+                    .items_center()
+                    .gap(THEME.space.sm)
                     .overflow_hidden()
                     .whitespace_nowrap()
-                    .text_ellipsis()
                     .text_size(THEME.type_scale.caption)
-                    .text_color(THEME.colors.muted)
-                    .child(workspace),
+                    .child(
+                        app_icon(AppIcon::Folder, AppIconSize::Inline)
+                            .text_color(THEME.colors.subtle),
+                    )
+                    .child(div().text_color(THEME.colors.muted).child(project))
+                    .when_some(title, |workspace, title| {
+                        workspace
+                            .child(div().text_color(THEME.colors.subtle).child("/"))
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .text_color(THEME.colors.text)
+                                    .child(title),
+                            )
+                    }),
             )
             .child(self.render_surface_switcher(entity))
     }
 
     pub(super) fn render_surface_switcher(&self, entity: WeakEntity<Self>) -> impl IntoElement {
         div()
+            .h_full()
             .flex()
             .items_center()
-            .gap(THEME.space.xs)
+            .gap(gpui::px(2.0))
             .child(surface_control(
                 "show-chat-surface",
                 "Chat (F1)",
@@ -98,10 +115,14 @@ fn surface_control(
     action: SurfaceAction,
 ) -> gpui::Stateful<gpui::Div> {
     icon_control(id, label)
-        .hover(|control| control.bg(THEME.colors.hover))
+        .w(gpui::px(34.0))
+        .h_full()
+        .rounded_none()
+        .hover(|control| control.bg(THEME.colors.surface))
         .when(active, |control| {
             control
-                .bg(THEME.colors.surface)
+                .border_b(gpui::px(2.0))
+                .border_color(THEME.colors.accent)
                 .text_color(THEME.colors.accent)
         })
         .child(app_icon(icon, AppIconSize::Control))
