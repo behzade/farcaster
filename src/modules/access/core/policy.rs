@@ -4,31 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum FilesystemAccess {
-    ReadOnly,
-    Sandboxed,
-    Full,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum NetworkAccess {
-    Sandboxed,
-    Full,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct AccessPolicy {
-    pub(crate) filesystem: FilesystemAccess,
-    pub(crate) network: NetworkAccess,
-}
-
-impl AccessPolicy {
-    pub(crate) const fn unrestricted(self) -> bool {
-        matches!(self.filesystem, FilesystemAccess::Full)
-            && matches!(self.network, NetworkAccess::Full)
-    }
-}
+use super::{AccessPolicy, FilesystemAccess, NetworkAccess};
 
 #[derive(Debug, Serialize)]
 struct Profile {
@@ -82,6 +58,7 @@ pub(crate) fn compile(
     let agent_state = canonical_directory(agent_state, "agent state")?;
     let temporary = canonical_directory(temporary, "temporary directory")?;
     let mut readable = user_runtime_libraries(&home);
+    readable.extend(user_configuration(&home));
     let mut writable = vec![temporary.clone(), agent_state.clone()];
     if let Ok(slash_tmp) = Path::new("/tmp").canonicalize()
         && slash_tmp.is_dir()
@@ -188,6 +165,13 @@ fn user_runtime_libraries(home: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
+fn user_configuration(home: &Path) -> Vec<PathBuf> {
+    [".gitconfig", ".config/git/config", ".config/git/ignore"]
+        .into_iter()
+        .filter_map(|relative| symlink_free_path(home, relative))
+        .collect()
+}
+
 fn development_storage(home: &Path) -> Vec<PathBuf> {
     const PATHS: &[&str] = &[
         ".cache",
@@ -224,12 +208,24 @@ fn development_storage(home: &Path) -> Vec<PathBuf> {
 }
 
 fn symlink_free_existing_path(home: &Path, relative: &str) -> Option<PathBuf> {
+    let path = symlink_free_path(home, relative)?;
+    path.symlink_metadata().ok()?;
+    Some(path)
+}
+
+fn symlink_free_path(home: &Path, relative: &str) -> Option<PathBuf> {
     let mut path = home.to_owned();
-    for component in relative.split('/') {
+    let mut components = relative.split('/');
+    while let Some(component) = components.next() {
         path.push(component);
-        let metadata = path.symlink_metadata().ok()?;
-        if metadata.file_type().is_symlink() {
-            return None;
+        match path.symlink_metadata() {
+            Ok(metadata) if metadata.file_type().is_symlink() => return None,
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                path.extend(components);
+                return Some(path);
+            }
+            Err(_) => return None,
         }
     }
     Some(path)
@@ -249,7 +245,9 @@ mod tests {
         std::fs::create_dir_all(&project)?;
         std::fs::create_dir_all(home.join(".pi/agent"))?;
         std::fs::create_dir_all(home.join(".cargo/registry"))?;
+        std::fs::create_dir_all(home.join(".config/git"))?;
         std::fs::create_dir_all(home.join(".local/lib"))?;
+        std::fs::write(home.join(".config/git/config"), "[credential]\n")?;
         std::fs::create_dir_all(&temporary)?;
         Ok(serde_json::from_slice(&compile(
             &project,
@@ -263,7 +261,7 @@ mod tests {
     }
 
     #[test]
-    fn sandboxed_policy_preserves_agent_state_and_development_storage()
+    fn sandboxed_policy_preserves_agent_state_git_configuration_and_development_storage()
     -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
         let profile = value(
@@ -289,13 +287,25 @@ mod tests {
             path.as_str()
                 .is_some_and(|path| path.ends_with("/.cargo/registry"))
         }));
-        assert!(
-            profile["filesystem"]["read"]
-                .as_array()
-                .is_some_and(|paths| paths.iter().any(|path| path
-                    .as_str()
-                    .is_some_and(|path| path.ends_with("/.local/lib"))))
-        );
+        let read = profile["filesystem"]["read"]
+            .as_array()
+            .ok_or("read must be an array")?;
+        assert!(read.iter().any(|path| {
+            path.as_str()
+                .is_some_and(|path| path.ends_with("/.local/lib"))
+        }));
+        assert!(read.iter().any(|path| {
+            path.as_str()
+                .is_some_and(|path| path.ends_with("/.gitconfig"))
+        }));
+        assert!(read.iter().any(|path| {
+            path.as_str()
+                .is_some_and(|path| path.ends_with("/.config/git/config"))
+        }));
+        assert!(read.iter().any(|path| {
+            path.as_str()
+                .is_some_and(|path| path.ends_with("/.config/git/ignore"))
+        }));
         assert!(
             !profile["filesystem"]["read"]
                 .as_array()

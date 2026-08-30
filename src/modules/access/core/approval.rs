@@ -107,7 +107,7 @@ struct Shared {
     project_policy_path: PathBuf,
     agent_state: PathBuf,
     temporary: PathBuf,
-    nono: super::NonoExecutable,
+    policy_validator: Arc<dyn super::PolicyValidator>,
     state: Mutex<GrantState>,
     filesystem_mode: AtomicU8,
     network_full: AtomicU8,
@@ -175,7 +175,7 @@ pub(crate) fn channel(
     data_root: &Path,
     agent_state: &Path,
     temporary: &Path,
-    nono: super::NonoExecutable,
+    policy_validator: impl super::PolicyValidator + 'static,
 ) -> Result<(ApprovalService, ApprovalUi), String> {
     let project = canonical_directory(project, "project")?;
     let home = canonical_directory(home, "home")?;
@@ -200,7 +200,7 @@ pub(crate) fn channel(
         project_policy_path,
         agent_state,
         temporary,
-        nono,
+        policy_validator: Arc::new(policy_validator),
         state: Mutex::new(GrantState {
             project_rights,
             project_source,
@@ -556,7 +556,7 @@ fn validate_rights(shared: &Shared, rights: &[AccessRight]) -> Result<(), String
         resolve_rights(shared, rights),
         &crate::network::NetworkConfiguration::default(),
     )?;
-    super::validate_policy_bytes(&shared.nono, &policy)
+    shared.policy_validator.validate(&policy)
 }
 
 fn normalize_right(

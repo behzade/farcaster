@@ -1,15 +1,15 @@
 //! Whole-agent sandbox composition and nono CLI delivery.
 
-pub(crate) mod approval;
-mod policy;
-
 use std::{
     io::Write as _,
     path::{Path, PathBuf},
     process::Command,
 };
 
-pub(crate) use policy::{AccessPolicy, FilesystemAccess, NetworkAccess};
+use super::super::core::policy;
+use super::super::{AccessPolicy, GrantStore};
+#[cfg(test)]
+use super::super::{FilesystemAccess, NetworkAccess};
 
 #[derive(Clone, Debug)]
 pub(crate) enum NonoExecutable {
@@ -19,7 +19,11 @@ pub(crate) enum NonoExecutable {
     TestBypass,
 }
 
-pub(crate) use approval::GrantStore;
+impl super::super::core::PolicyValidator for NonoExecutable {
+    fn validate(&self, policy: &[u8]) -> Result<(), String> {
+        validate_policy_bytes(self, policy)
+    }
+}
 
 pub(crate) struct PolicyPaths<'a> {
     pub(crate) project: &'a Path,
@@ -94,7 +98,7 @@ pub(crate) fn prepare_command(
     })
 }
 
-pub(crate) fn validate_policy_bytes(nono: &NonoExecutable, policy: &[u8]) -> Result<(), String> {
+fn validate_policy_bytes(nono: &NonoExecutable, policy: &[u8]) -> Result<(), String> {
     let nono_program = match nono {
         NonoExecutable::Fixed(program) => validate_nono_program(program)?,
         NonoExecutable::Unavailable => return Err(missing_nono_error()),
