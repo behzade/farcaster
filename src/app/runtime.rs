@@ -1710,15 +1710,17 @@ impl RuntimeOwner {
                 path,
                 project,
                 name,
-            } => match PiRpcProcess::rename_session(&self.process_command, &project, &path, &name) {
-                Ok(()) => self.load_sessions(self.session_query.clone()),
-                Err(message) => {
-                    let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
-                        generation: self.session_generation,
-                        message,
-                    });
+            } => {
+                match PiRpcProcess::rename_session(&self.process_command, &project, &path, &name) {
+                    Ok(()) => self.load_sessions(self.session_query.clone()),
+                    Err(message) => {
+                        let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
+                            generation: self.session_generation,
+                            message,
+                        });
+                    }
                 }
-            },
+            }
             RuntimeCommand::MoveSession { .. }
             | RuntimeCommand::StopSessionFamily { .. }
             | RuntimeCommand::DeleteSessionFamily { .. } => {}

@@ -9,11 +9,11 @@ use gpui_component::{input::Input, tooltip::Tooltip};
 
 use super::{super::FarcasterApp, composer_footer::separator};
 use crate::{
-    runtime::{FileAccessMode, NetworkAccessMode, PermissionLevel},
     assets::AppIcon,
     primitives::{
         AppIconSize, ButtonTone, activates_button, app_icon, dropdown_content_button, icon_button,
     },
+    runtime::{FileAccessMode, NetworkAccessMode, PermissionLevel},
     theme::{MONO_FONT_FAMILY, THEME},
 };
 
