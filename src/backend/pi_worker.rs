@@ -300,22 +300,6 @@ fn worker_input(request: ExtensionUiRequest) -> Result<Option<(WorkerInput, Inpu
             },
             InputKind::Value,
         ))),
-        ExtensionUiRequest::Secret {
-            id,
-            title,
-            placeholder,
-            ..
-        } => Ok(Some((
-            WorkerInput {
-                id,
-                prompt: placeholder.map_or(title.clone(), |placeholder| {
-                    format!("{title}\n{placeholder}")
-                }),
-                options: Vec::new(),
-                secret: true,
-            },
-            InputKind::Value,
-        ))),
         ExtensionUiRequest::Unknown { method, .. } => {
             Err(format!("unsupported Pi worker interaction: {method}"))
         }

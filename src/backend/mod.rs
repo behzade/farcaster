@@ -52,9 +52,6 @@ pub(crate) enum BackendRequest {
     ForkAt {
         entry_id: String,
     },
-    Login {
-        provider: Option<String>,
-    },
     SelectModel {
         provider: String,
         model_id: String,
@@ -88,7 +85,6 @@ impl BackendRequest {
             Self::ExportHtml { .. } => "export HTML",
             Self::Rename { .. } => "rename session",
             Self::ForkAt { .. } => "fork session",
-            Self::Login { .. } => "login",
             Self::SelectModel { .. } => "select model",
             Self::SelectReasoning { .. } => "select reasoning",
         }

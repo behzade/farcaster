@@ -133,7 +133,7 @@ const BUILTINS: &[BuiltinSpec] = &[
     builtin(
         BuiltinSlashCommand::Login,
         "login",
-        "Configure provider authentication",
+        "Authenticate through Pi in a terminal",
         true,
     ),
     builtin(

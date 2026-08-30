@@ -73,11 +73,6 @@ impl Render for FarcasterApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _timing = crate::performance::Timing::new("render.root");
         self.resolve_pending_submission(window, cx);
-        if let Some(scope) = self.pending_extension_picker.take() {
-            cx.defer_in(window, move |this, window, cx| {
-                this.open_picker(scope, window, cx);
-            });
-        }
         if self.post_render_focus.is_some() {
             cx.defer_in(window, |this, window, cx| {
                 this.apply_post_render_focus(window, cx);
@@ -110,26 +105,18 @@ impl Render for FarcasterApp {
                 }
                 _ => String::new(),
             };
-            let secret = matches!(dialog, Some(ExtensionUiRequest::Secret { .. }));
             let uses_textarea = matches!(
                 dialog,
                 Some(ExtensionUiRequest::Input { .. } | ExtensionUiRequest::Editor { .. })
             );
             let input = self.dialog_input.clone();
-            let secret_input = self.dialog_secret_input.clone();
-            let focus = if secret {
-                secret_input.read(cx).focus_handle(cx)
-            } else if uses_textarea {
+            let focus = if uses_textarea {
                 input.read(cx).focus_handle(cx)
             } else {
                 self.dialog_focus.clone()
             };
             cx.defer_in(window, move |_, window, cx| {
-                if secret {
-                    secret_input.update(cx, |state, cx| {
-                        state.set_value(String::new(), window, cx);
-                    });
-                } else if uses_textarea {
+                if uses_textarea {
                     input.update(cx, |state, cx| {
                         state.set_value(prefill, window, cx);
                     });

@@ -108,7 +108,6 @@ pub(crate) enum RuntimeCommand {
         provider: String,
         model_id: String,
     },
-    Login(Option<String>),
     SetThinking(String),
     SetPermissionLevel(PermissionLevel),
     SetAppProxy(Option<String>),
@@ -1380,7 +1379,6 @@ struct RuntimeOwner {
     project: PathBuf,
     process_command: ProcessCommand,
     process: Option<Box<dyn SessionTransport>>,
-    login_process_only: bool,
     snapshot: RuntimeSnapshot,
     owns_session_catalog: bool,
     session_generation: u64,
@@ -1458,7 +1456,6 @@ fn run(
         project: project.clone(),
         process_command,
         process: None,
-        login_process_only: false,
         snapshot: RuntimeSnapshot {
             status: "Done".into(),
             project,
@@ -1610,7 +1607,6 @@ impl RuntimeOwner {
         if let Some(mut old) = self.process.take() {
             let _ = old.close();
         }
-        self.login_process_only = false;
         self.active_session = session.clone();
         self.parked_snapshot = None;
         self.startup_state_loaded = false;
@@ -1746,11 +1742,6 @@ impl RuntimeOwner {
                 self.refresh_session_document(path, project)
             }
             RuntimeCommand::SetModel { provider, model_id } => self.set_model(provider, model_id),
-            RuntimeCommand::Login(provider) => {
-                if self.ensure_login_process() {
-                    self.send(BackendRequest::Login { provider });
-                }
-            }
             RuntimeCommand::SetThinking(level) => self.set_thinking(level),
             RuntimeCommand::SetPermissionLevel(level) => self.set_permission_level(level),
             RuntimeCommand::SetAppProxy(proxy) => self.set_app_proxy(proxy),
@@ -1797,37 +1788,6 @@ impl RuntimeOwner {
             self.active_session.clone()
         };
         self.start_process(session);
-    }
-
-    fn ensure_login_process(&mut self) -> bool {
-        if self.process.is_some() {
-            return true;
-        }
-        match RpcProcess::spawn_with_waker(
-            &self.process_command,
-            &self.project,
-            None,
-            thread::current(),
-        ) {
-            Ok(process) => {
-                self.process = Some(Box::new(process));
-                self.login_process_only = true;
-                true
-            }
-            Err(error) => {
-                self.fail_login(error);
-                false
-            }
-        }
-    }
-
-    fn finish_login_process(&mut self) {
-        if self.login_process_only {
-            if let Some(mut process) = self.process.take() {
-                let _ = process.close();
-            }
-            self.login_process_only = false;
-        }
     }
 
     fn send(&mut self, request: BackendRequest) {
@@ -2184,13 +2144,7 @@ impl RuntimeOwner {
                 self.fail_session_control_resume("Command not sent", "Command not sent", details);
                 return;
             }
-            let login_failed_while_previewing =
-                response.command == "login" && self.parked_snapshot.is_some();
-            let snapshot = if login_failed_while_previewing {
-                &mut self.snapshot
-            } else {
-                self.active_snapshot_mut()
-            };
+            let snapshot = self.active_snapshot_mut();
             conversation_mut(snapshot).push_local_error(
                 "Command failed",
                 format!(
@@ -2210,10 +2164,7 @@ impl RuntimeOwner {
                     self.snapshot = snapshot;
                 }
             }
-            if response.command == "login" {
-                self.finish_login_process();
-            }
-            if self.parked_snapshot.is_none() || login_failed_while_previewing {
+            if self.parked_snapshot.is_none() {
                 self.publish();
             }
             return;
@@ -2255,27 +2206,13 @@ impl RuntimeOwner {
                 conversation_mut(self.active_snapshot_mut()).replace_history(&messages);
                 self.startup_history_loaded = true;
             }
-            "get_available_models" | "login" => {
-                let cancelled = response.data.get("cancelled").and_then(Value::as_bool);
-                let models = response
+            "get_available_models" => {
+                self.active_snapshot_mut().models = response
                     .data
                     .get("models")
                     .cloned()
                     .and_then(|value| serde_json::from_value(value).ok())
                     .unwrap_or_default();
-                self.active_snapshot_mut().models.clone_from(&models);
-                if response.command == "login" {
-                    let status = if cancelled == Some(true) {
-                        "Ready"
-                    } else {
-                        "Provider added"
-                    };
-                    self.active_snapshot_mut().status = status.into();
-                    if self.parked_snapshot.is_some() {
-                        self.snapshot.models = models;
-                        self.snapshot.status = status.into();
-                    }
-                }
             }
             "get_available_thinking_levels" => {
                 self.active_snapshot_mut().thinking_levels = response
@@ -2366,10 +2303,7 @@ impl RuntimeOwner {
             self.maybe_send_deferred_prompt();
             self.maybe_send_pending_session_controls();
         }
-        if response_command == "login" {
-            self.finish_login_process();
-        }
-        if self.parked_snapshot.is_none() || response_command == "login" {
+        if self.parked_snapshot.is_none() {
             self.publish();
         }
     }
@@ -2380,31 +2314,7 @@ impl RuntimeOwner {
         }
     }
 
-    fn fail_login(&mut self, error: String) {
-        let details = failure_details(&error);
-        zlog::error!("Pi provider login failed: {details}");
-        self.finish_login_process();
-        let snapshot = if self.parked_snapshot.is_some() {
-            &mut self.snapshot
-        } else {
-            self.active_snapshot_mut()
-        };
-        snapshot.status = "Failed".into();
-        let conversation = conversation_mut(snapshot);
-        conversation.diagnostics.push(details.clone());
-        conversation.push_local_error_with_details(
-            "Couldn’t add provider",
-            failure_summary(&details),
-            details,
-        );
-        self.publish();
-    }
-
     fn fail(&mut self, error: String) {
-        if self.login_process_only {
-            self.fail_login(error);
-            return;
-        }
         let starting = !self.startup_state_loaded || !self.startup_history_loaded;
         let preserve_history = !self.pending_session_controls.is_empty()
             && self.snapshot.history_preview
@@ -2421,7 +2331,6 @@ impl RuntimeOwner {
         if let Some(target) = self.pending_prompt_target.take() {
             self.emit_prompt_result(&target, false);
         }
-        self.login_process_only = false;
         if preserve_history {
             self.fail_session_control_resume("Failed", "Couldn’t start Pi", details);
             return;
@@ -2735,7 +2644,6 @@ mod tests {
                     app_proxy: None,
                 },
                 process: None,
-                login_process_only: false,
                 snapshot: RuntimeSnapshot {
                     connected: true,
                     status: "Ready".into(),
@@ -4177,45 +4085,6 @@ mod tests {
     }
 
     #[test]
-    fn login_from_history_uses_a_temporary_process_without_clearing_transcript()
-    -> Result<(), String> {
-        let temp = tempdir().map_err(|error| error.to_string())?;
-        let script = temp.path().join("fake-pi.sh");
-        fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))
-            .map_err(|error| error.to_string())?;
-        let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
-        owner.process_command = ProcessCommand::test_script(&script, vec!["normal".into()]);
-        owner.snapshot.history_preview = true;
-        owner.snapshot.selected_session = Some(temp.path().join("history.jsonl"));
-        conversation_mut(&mut owner.snapshot).replace_history(&[json!({
-            "role": "user",
-            "content": "keep this transcript",
-            "timestamp": 1
-        })]);
-        owner.parked_snapshot = Some(RuntimeSnapshot::default());
-        let transcript = owner.snapshot.conversation.items.clone();
-
-        owner.apply_command(RuntimeCommand::Login(None));
-
-        assert!(owner.login_process_only);
-        assert!(owner.process.is_some());
-        assert_eq!(owner.snapshot.conversation.items, transcript);
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while Instant::now() < deadline && owner.process.is_some() {
-            if let Some(item) = owner.process.as_mut().and_then(|process| process.poll()) {
-                let _ = owner.apply_process_item(item);
-            } else {
-                thread::sleep(Duration::from_millis(5));
-            }
-        }
-        assert!(owner.process.is_none());
-        assert!(!owner.login_process_only);
-        assert_eq!(owner.snapshot.conversation.items, transcript);
-        assert_eq!(owner.snapshot.status, "Provider added");
-        Ok(())
-    }
-
-    #[test]
     fn model_change_from_history_reconnects_without_hiding_history() -> Result<(), String> {
         let temp = tempdir().map_err(|error| error.to_string())?;
         let script = temp.path().join("fake-pi.sh");
@@ -4324,7 +4193,6 @@ mod tests {
                 app_proxy: None,
             },
             process: None,
-            login_process_only: false,
             snapshot: RuntimeSnapshot {
                 connected: true,
                 status: "old".into(),
@@ -4524,7 +4392,6 @@ mod tests {
             project: old_project.clone(),
             process_command,
             process: Some(Box::new(process)),
-            login_process_only: false,
             snapshot: RuntimeSnapshot {
                 connected: true,
                 status: "Working".into(),
@@ -4703,7 +4570,6 @@ mod tests {
             project: temp.path().to_path_buf(),
             process_command: ProcessCommand::default(),
             process: None,
-            login_process_only: false,
             snapshot: RuntimeSnapshot {
                 connected: true,
                 status: "Working".into(),

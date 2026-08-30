@@ -245,9 +245,7 @@ impl FarcasterApp {
     }
 
     fn native_workspace_covered_by_overlay(&self) -> bool {
-        self.native_workspace_modal_active()
-            || self.extension.dialog.is_some()
-            || self.extension.provider_auth.is_some()
+        self.native_workspace_modal_active() || self.extension.dialog.is_some()
     }
 
     pub(super) fn center_surface_switch_blocked(&self) -> bool {
@@ -264,14 +262,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let value = if matches!(
-            self.extension.dialog.as_ref(),
-            Some(ExtensionUiRequest::Secret { .. })
-        ) {
-            self.dialog_secret_input.read(cx).value().to_string()
-        } else {
-            self.dialog_input.read(cx).value().to_string()
-        };
+        let value = self.dialog_input.read(cx).value().to_string();
         self.respond_dialog_value(id, value, window, cx);
     }
 
@@ -380,9 +371,6 @@ impl FarcasterApp {
             cx.notify();
         } else {
             self.dialog_input.update(cx, |input, cx| {
-                input.set_value(String::new(), window, cx);
-            });
-            self.dialog_secret_input.update(cx, |input, cx| {
                 input.set_value(String::new(), window, cx);
             });
             self.restore_dialog_focus(window, cx);

@@ -25,6 +25,20 @@ must be available on `PATH`. Packaged builds use the pinned `nono` CLI sidecar
 next to the Farcaster executable. Development builds otherwise resolve `nono`
 from `PATH`.
 
+## Provider authentication
+
+Pi does not expose provider login through its public RPC interface, so Farcaster
+cannot start `/login`. Authenticate directly in a terminal before using the
+provider in Farcaster:
+
+```sh
+pi
+# Then run /login in Pi.
+```
+
+Restart Farcaster after login so its Pi process reloads the credentials and
+available models.
+
 ## Run
 
 ```sh

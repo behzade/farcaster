@@ -144,13 +144,6 @@ pub(crate) enum ExtensionUiRequest {
         placeholder: Option<String>,
         timeout: Option<u64>,
     },
-    #[serde(rename = "secret")]
-    Secret {
-        id: String,
-        title: String,
-        placeholder: Option<String>,
-        timeout: Option<u64>,
-    },
     #[serde(rename = "editor")]
     Editor {
         id: String,
@@ -163,12 +156,6 @@ pub(crate) enum ExtensionUiRequest {
         message: String,
         #[serde(default, rename = "notifyType")]
         tone: NotifyTone,
-    },
-    #[serde(rename = "authUrl")]
-    AuthUrl {
-        id: String,
-        url: String,
-        message: String,
     },
     #[serde(rename = "setStatus")]
     SetStatus {
@@ -229,7 +216,6 @@ impl ExtensionUiRequest {
             Self::Select { id, .. }
             | Self::Confirm { id, .. }
             | Self::Input { id, .. }
-            | Self::Secret { id, .. }
             | Self::Editor { id, .. } => Some(id),
             _ => None,
         }
@@ -272,12 +258,6 @@ struct ExtensionEnvelope {
     id: Option<String>,
 }
 
-#[derive(Deserialize)]
-struct InputEnvelope {
-    #[serde(default)]
-    secret: bool,
-}
-
 pub(crate) fn parse_frame(frame: &[u8]) -> Result<WireMessage, String> {
     let value: Value =
         serde_json::from_slice(frame).map_err(|error| format!("malformed JSON frame: {error}"))?;
@@ -293,7 +273,7 @@ pub(crate) fn parse_frame(frame: &[u8]) -> Result<WireMessage, String> {
     }
 }
 
-fn parse_extension_request(mut value: Value) -> Result<ExtensionUiRequest, String> {
+fn parse_extension_request(value: Value) -> Result<ExtensionUiRequest, String> {
     let envelope = ExtensionEnvelope::deserialize(&value)
         .map_err(|error| format!("invalid extension UI request: {error}"))?;
     if !matches!(
@@ -303,7 +283,6 @@ fn parse_extension_request(mut value: Value) -> Result<ExtensionUiRequest, Strin
             | "input"
             | "editor"
             | "notify"
-            | "authUrl"
             | "setStatus"
             | "setWidget"
             | "setTitle"
@@ -313,13 +292,6 @@ fn parse_extension_request(mut value: Value) -> Result<ExtensionUiRequest, Strin
             id: envelope.id.filter(|id| !id.is_empty()),
             method: envelope.method,
         });
-    }
-    if envelope.method == "input" {
-        let input = InputEnvelope::deserialize(&value)
-            .map_err(|error| format!("invalid input extension UI request: {error}"))?;
-        if input.secret {
-            value["method"] = Value::String("secret".into());
-        }
     }
     serde_json::from_value(value)
         .map_err(|error| format!("invalid {} extension UI request: {error}", envelope.method))
@@ -411,15 +383,6 @@ mod tests {
                 },
             ),
             (
-                r#"{"type":"extension_ui_request","id":"3s","method":"input","title":"Key","placeholder":"sk-...","secret":true}"#,
-                ExtensionUiRequest::Secret {
-                    id: "3s".into(),
-                    title: "Key".into(),
-                    placeholder: Some("sk-...".into()),
-                    timeout: None,
-                },
-            ),
-            (
                 r#"{"type":"extension_ui_request","id":"4","method":"editor","title":"T","prefill":"P"}"#,
                 ExtensionUiRequest::Editor {
                     id: "4".into(),
@@ -433,14 +396,6 @@ mod tests {
                     id: "5".into(),
                     message: "M".into(),
                     tone: NotifyTone::Error,
-                },
-            ),
-            (
-                r#"{"type":"extension_ui_request","id":"5a","method":"authUrl","url":"https://example.com/login","message":"Continue in your browser"}"#,
-                ExtensionUiRequest::AuthUrl {
-                    id: "5a".into(),
-                    url: "https://example.com/login".into(),
-                    message: "Continue in your browser".into(),
                 },
             ),
             (
@@ -488,7 +443,6 @@ mod tests {
         for frame in [
             r#"{"type":"extension_ui_request","method":"confirm","title":"T","message":"M"}"#,
             r#"{"type":"extension_ui_request","id":"1","method":"select","title":"T","options":["a",1]}"#,
-            r#"{"type":"extension_ui_request","id":"1","method":"input","title":"T","secret":"yes"}"#,
         ] {
             assert!(parse_frame(frame.as_bytes()).is_err(), "accepted {frame}");
         }

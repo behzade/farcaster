@@ -20,18 +20,10 @@ pub(crate) struct Notification {
     pub expires_at: Instant,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ProviderAuthPrompt {
-    pub url: String,
-    pub message: String,
-    status_key: Option<String>,
-}
-
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ExtensionUiState {
     pub dialog: Option<ExtensionUiRequest>,
     queued_dialogs: VecDeque<ExtensionUiRequest>,
-    pub provider_auth: Option<ProviderAuthPrompt>,
     pub notifications: VecDeque<Notification>,
     pub statuses: BTreeMap<String, String>,
     pub above_widgets: BTreeMap<String, Vec<String>>,
@@ -44,7 +36,6 @@ pub(crate) enum ExtensionEffect {
     DialogOpened,
     SetTitle(String),
     SetEditorText(String),
-    OpenUrl(String),
     PersistError(String),
     Diagnostic(String),
 }
@@ -55,7 +46,6 @@ impl ExtensionUiState {
             request @ (ExtensionUiRequest::Select { .. }
             | ExtensionUiRequest::Confirm { .. }
             | ExtensionUiRequest::Input { .. }
-            | ExtensionUiRequest::Secret { .. }
             | ExtensionUiRequest::Editor { .. }) => {
                 if self.dialog.is_none() {
                     self.dialog = Some(request);
@@ -76,34 +66,12 @@ impl ExtensionUiState {
                     ExtensionEffect::None
                 }
             }
-            ExtensionUiRequest::AuthUrl { url, message, .. } => {
-                self.provider_auth = Some(ProviderAuthPrompt {
-                    url: url.clone(),
-                    message,
-                    status_key: None,
-                });
-                ExtensionEffect::OpenUrl(url)
-            }
             ExtensionUiRequest::SetStatus { key, text, .. } => {
                 if let Some(text) = text {
-                    if let Some(auth) = self.provider_auth.as_mut()
-                        && auth.status_key.is_none()
-                        && auth.message == text
-                    {
-                        auth.status_key = Some(key.clone());
-                    }
                     self.statuses.insert(key, text);
                     trim_map(&mut self.statuses, MAX_STATUSES);
                 } else {
                     self.statuses.remove(&key);
-                    if self
-                        .provider_auth
-                        .as_ref()
-                        .and_then(|auth| auth.status_key.as_ref())
-                        == Some(&key)
-                    {
-                        self.provider_auth = None;
-                    }
                 }
                 ExtensionEffect::None
             }
@@ -318,47 +286,6 @@ mod tests {
         assert!(state.respond_value("first", "late".into()).is_none());
         assert!(state.cancel("second").is_some());
         assert!(state.dialog.is_none());
-    }
-
-    #[test]
-    fn provider_auth_stays_visible_until_its_status_is_cleared() {
-        let mut state = ExtensionUiState::default();
-        let url = "https://x.ai/device";
-        let message = "Enter code ABCD in your browser.";
-
-        assert_eq!(
-            state.apply(ExtensionUiRequest::AuthUrl {
-                id: "auth".into(),
-                url: url.into(),
-                message: message.into(),
-            }),
-            ExtensionEffect::OpenUrl(url.into())
-        );
-        assert_eq!(
-            state
-                .provider_auth
-                .as_ref()
-                .map(|auth| auth.message.as_str()),
-            Some(message)
-        );
-        state.apply(ExtensionUiRequest::SetStatus {
-            id: "status".into(),
-            key: "provider-login".into(),
-            text: Some(message.into()),
-        });
-        state.apply(ExtensionUiRequest::SetStatus {
-            id: "unrelated".into(),
-            key: "other".into(),
-            text: None,
-        });
-        assert!(state.provider_auth.is_some());
-
-        state.apply(ExtensionUiRequest::SetStatus {
-            id: "done".into(),
-            key: "provider-login".into(),
-            text: None,
-        });
-        assert!(state.provider_auth.is_none());
     }
 
     #[test]

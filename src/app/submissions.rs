@@ -231,9 +231,11 @@ impl FarcasterApp {
             BuiltinSlashCommand::Reload => self.send(RuntimeCommand::Reload),
             BuiltinSlashCommand::Settings => self.open_settings(window, cx),
             BuiltinSlashCommand::Trust => self.open_project_trust(window, cx),
-            BuiltinSlashCommand::Login => self.send(RuntimeCommand::Login(
-                invocation.arguments.map(str::to_owned),
-            )),
+            BuiltinSlashCommand::Login => self.push_builtin_error(
+                "Provider login unavailable",
+                "Pi does not expose provider login through its public RPC interface. Run `pi` in a terminal and use `/login`, then restart Farcaster.",
+                cx,
+            ),
             BuiltinSlashCommand::Quit => cx.quit(),
             BuiltinSlashCommand::ScopedModels
             | BuiltinSlashCommand::Import
