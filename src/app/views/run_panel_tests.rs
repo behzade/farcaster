@@ -1,6 +1,13 @@
 use super::*;
 
 #[test]
+fn run_panel_resize_stays_within_design_bounds() {
+    assert_eq!(clamped_run_panel_width(100.0), THEME.layout.run_panel_min);
+    assert_eq!(clamped_run_panel_width(332.0), gpui::px(332.0));
+    assert_eq!(clamped_run_panel_width(500.0), THEME.layout.run_panel_max);
+}
+
+#[test]
 fn duration_and_lifecycle_labels_are_truthful() {
     assert_eq!(format_duration(Some(Duration::from_secs(65))), "1m 5s");
     assert_eq!(

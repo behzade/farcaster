@@ -250,6 +250,7 @@ impl Render for FarcasterApp {
         let workgraph_focus = self.workgraph_view.read(cx).focus_handle();
         let picker = self.render_picker(entity.clone(), cx);
         let session_rail_width = self.session_rail_width;
+        let run_panel_width = self.run_panel_width;
         div()
             .relative()
             .size_full()
@@ -428,14 +429,21 @@ impl Render for FarcasterApp {
             ))
             .on_mouse_move(cx.listener(|this, event: &gpui::MouseMoveEvent, _, cx| {
                 this.update_session_rail_resize(event.position.x, cx);
+                this.update_run_panel_resize(event.position.x, cx);
             }))
             .on_mouse_up(
                 gpui::MouseButton::Left,
-                cx.listener(|this, _, _, cx| this.finish_session_rail_resize(cx)),
+                cx.listener(|this, _, _, cx| {
+                    this.finish_session_rail_resize(cx);
+                    this.finish_run_panel_resize(cx);
+                }),
             )
             .on_mouse_up_out(
                 gpui::MouseButton::Left,
-                cx.listener(|this, _, _, cx| this.finish_session_rail_resize(cx)),
+                cx.listener(|this, _, _, cx| {
+                    this.finish_session_rail_resize(cx);
+                    this.finish_run_panel_resize(cx);
+                }),
             )
             .child(
                 div()
@@ -495,9 +503,11 @@ impl Render for FarcasterApp {
                     })
                     .child(main)
                     .when(shows_right_inline(mode), |shell| {
+                        let resize = entity.clone();
                         shell.child(
                             div()
-                                .w(THEME.layout.run_panel)
+                                .relative()
+                                .w(run_panel_width)
                                 .min_w(THEME.layout.run_panel_min)
                                 .max_w(THEME.layout.run_panel_max)
                                 .flex_none()
@@ -510,7 +520,41 @@ impl Render for FarcasterApp {
                                         .clone()
                                         .cached(gpui::StyleRefinement::default().size_full())
                                         .into_any_element()
-                                }),
+                                })
+                                .child(
+                                    div()
+                                        .id("run-panel-resize")
+                                        .absolute()
+                                        .top_0()
+                                        .bottom_0()
+                                        .left(gpui::px(-4.0))
+                                        .w(gpui::px(7.0))
+                                        .cursor_col_resize()
+                                        .group("run-panel-resize")
+                                        .on_mouse_down(
+                                            gpui::MouseButton::Left,
+                                            move |event, _, cx| {
+                                                cx.stop_propagation();
+                                                let _ = resize.update(cx, |this, cx| {
+                                                    this.begin_run_panel_resize(
+                                                        event.position.x,
+                                                        cx,
+                                                    );
+                                                });
+                                            },
+                                        )
+                                        .child(
+                                            div()
+                                                .ml(gpui::px(3.0))
+                                                .w(THEME.border)
+                                                .h_full()
+                                                .opacity(0.0)
+                                                .bg(THEME.colors.muted)
+                                                .group_hover("run-panel-resize", |line| {
+                                                    line.opacity(1.0)
+                                                }),
+                                        ),
+                                ),
                         )
                     }),
             )

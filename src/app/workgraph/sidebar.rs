@@ -146,13 +146,14 @@ impl Render for WorkGraphSidebarView {
                         },
                     )),
             );
-        div().when(
-            sidebar_visible(&self.state, self.session_id.is_some()),
-            |sidebar| {
+        let visible = sidebar_visible(&self.state, self.session_id.is_some());
+        div()
+            .when(!visible, |sidebar| sidebar.hidden())
+            .when(visible, |sidebar| {
                 sidebar
                     .flex()
                     .flex_col()
-                    .gap(THEME.space.xs)
+                    .gap(px(11.0))
                     .child(header)
                     .child(match &self.state {
                         PlanLoadState::Loading => feedback(
@@ -197,8 +198,7 @@ impl Render for WorkGraphSidebarView {
                             )
                             .into_any_element(),
                     })
-            },
-        )
+            })
     }
 }
 
@@ -219,12 +219,12 @@ fn render_sidebar_row(row: PlanRow, app: WeakEntity<FarcasterApp>) -> impl IntoE
         .aria_label(format!("Open plan node {}", row.node.title))
         .tab_index(0)
         .cursor_pointer()
-        .px(THEME.space.xs)
-        .py(THEME.space.xs)
+        .px(px(2.0))
+        .py(px(3.0))
         .flex()
         .items_start()
-        .gap(THEME.space.xs)
-        .hover(|row| row.bg(THEME.colors.hover))
+        .gap(px(7.0))
+        .hover(|row| row.bg(THEME.colors.surface))
         .on_click(move |_, window, cx| {
             let _ = app.update(cx, |app, cx| {
                 app.open_workgraph_node(number, window, cx);
@@ -232,7 +232,7 @@ fn render_sidebar_row(row: PlanRow, app: WeakEntity<FarcasterApp>) -> impl IntoE
         })
         .child(
             div()
-                .w(px(20.0))
+                .w(px(16.0))
                 .h(px(20.0))
                 .flex_none()
                 .flex()

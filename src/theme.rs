@@ -33,6 +33,7 @@ pub(crate) struct Theme {
 pub(crate) struct Colors {
     pub canvas: Rgba,
     pub panel: Rgba,
+    pub inspector: Rgba,
     pub surface: Rgba,
     pub hover: Rgba,
     pub selection: Rgba,
@@ -125,6 +126,7 @@ pub(crate) const THEME: Theme = Theme {
     colors: Colors {
         canvas: rgb(0x191d1e),
         panel: rgb(0x1d1e1d),
+        inspector: rgb(0x1b1d1c),
         surface: rgb(0x252623),
         hover: rgb(0x30322e),
         selection: rgb(0x232522),
@@ -167,7 +169,7 @@ pub(crate) const THEME: Theme = Theme {
         icon_button: px(28.0),
         utility_row: px(44.0),
         archived_preview_row: px(49.0),
-        agent_marker: px(20.0),
+        agent_marker: px(18.0),
     },
     radius: px(4.0),
     border: px(1.0),
@@ -177,9 +179,9 @@ pub(crate) const THEME: Theme = Theme {
         session_rail: px(286.0),
         session_rail_min: px(220.0),
         session_rail_max: px(430.0),
-        run_panel: px(312.0),
-        run_panel_min: px(288.0),
-        run_panel_max: px(344.0),
+        run_panel: px(332.0),
+        run_panel_min: px(220.0),
+        run_panel_max: px(430.0),
         transcript_overdraw: px(160.0),
         composer_min: px(248.0),
         dialog_width: px(560.0),
@@ -294,9 +296,9 @@ mod tests {
         assert_eq!(f32::from(THEME.layout.session_rail), 286.0);
         assert_eq!(f32::from(THEME.layout.session_rail_min), 220.0);
         assert_eq!(f32::from(THEME.layout.session_rail_max), 430.0);
-        assert_eq!(f32::from(THEME.layout.run_panel), 312.0);
-        assert_eq!(f32::from(THEME.layout.run_panel_min), 288.0);
-        assert_eq!(f32::from(THEME.layout.run_panel_max), 344.0);
+        assert_eq!(f32::from(THEME.layout.run_panel), 332.0);
+        assert_eq!(f32::from(THEME.layout.run_panel_min), 220.0);
+        assert_eq!(f32::from(THEME.layout.run_panel_max), 430.0);
     }
 
     #[test]

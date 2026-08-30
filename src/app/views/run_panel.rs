@@ -6,7 +6,7 @@ mod run_panel_repository;
 mod run_panel_repository_presentation;
 
 use gpui::{
-    AnyElement, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Role,
+    AnyElement, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Role,
     StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
 };
 
@@ -83,8 +83,11 @@ impl FarcasterApp {
             .min_h_0()
             .flex()
             .flex_col()
-            .p(THEME.space.sm)
-            .gap(THEME.space.sm)
+            .pt(px(17.0))
+            .pr(px(15.0))
+            .pb(px(14.0))
+            .pl(px(18.0))
+            .gap(px(26.0))
             .overflow_y_scroll()
             .track_scroll(&self.run_panel_scroll)
             .child(self.workgraph_sidebar_view.clone())
@@ -92,99 +95,114 @@ impl FarcasterApp {
                 run.child(render_performance(&monitor.summary))
             })
             .when(main.is_some() || !active.is_empty(), |run| {
-                run.child(section_heading("Agents"))
-                    .children(main.and_then(|(activity, session)| {
-                        self.agent_card(
-                            activity,
-                            0,
-                            matches!(
-                                agent_section(
-                                    activity.lifecycle,
-                                    activity.limited,
-                                    session.is_running
+                run.child(
+                    inspector_section()
+                        .child(section_heading("Agents"))
+                        .children(main.and_then(|(activity, session)| {
+                            self.agent_card(
+                                activity,
+                                0,
+                                matches!(
+                                    agent_section(
+                                        activity.lifecycle,
+                                        activity.limited,
+                                        session.is_running
+                                    ),
+                                    AgentSection::Active
                                 ),
-                                AgentSection::Active
-                            ),
-                            false,
-                            Some("Main"),
-                            entity.clone(),
-                        )
-                    }))
-                    .children(active.iter().filter_map(|(activity, depth, _)| {
-                        self.agent_card(activity, *depth, true, false, None, entity.clone())
-                    }))
+                                false,
+                                Some("Main"),
+                                entity.clone(),
+                            )
+                        }))
+                        .children(active.iter().filter_map(|(activity, depth, _)| {
+                            self.agent_card(activity, *depth, true, false, None, entity.clone())
+                        })),
+                )
             })
             .when(!self.background_jobs.is_empty(), |run| {
-                run.child(section_heading(format!(
-                    "Async jobs ({})",
-                    self.background_jobs.len()
-                )))
-                .children(self.background_jobs.iter().map(background_job_row))
+                run.child(
+                    inspector_section()
+                        .child(section_heading(format!(
+                            "Background jobs ({})",
+                            self.background_jobs.len()
+                        )))
+                        .children(self.background_jobs.iter().map(background_job_row)),
+                )
             })
-            .child(self.render_repository(entity.clone()))
+            .child(inspector_section().child(self.render_repository(entity.clone())))
             .when(!completed.is_empty(), |run| {
                 run.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .child(section_heading(format!(
-                            "Completed agents ({})",
-                            completed.len()
-                        )))
-                        .child(completed_control),
-                )
-                .when(self.completed_agents_expanded, |run| {
-                    run.children(
-                        completed
-                            .iter()
-                            .take(MAX_VISIBLE_COMPLETED_AGENTS)
-                            .filter_map(|(activity, depth, _)| {
-                                self.agent_card(
-                                    activity,
-                                    *depth,
-                                    false,
-                                    false,
-                                    None,
-                                    entity.clone(),
+                    inspector_section()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .child(section_heading(format!(
+                                    "Completed agents ({})",
+                                    completed.len()
+                                )))
+                                .child(completed_control),
+                        )
+                        .when(self.completed_agents_expanded, |section| {
+                            section
+                                .children(
+                                    completed
+                                        .iter()
+                                        .take(MAX_VISIBLE_COMPLETED_AGENTS)
+                                        .filter_map(|(activity, depth, _)| {
+                                            self.agent_card(
+                                                activity,
+                                                *depth,
+                                                false,
+                                                false,
+                                                None,
+                                                entity.clone(),
+                                            )
+                                        }),
                                 )
-                            }),
-                    )
-                    .when(
-                        completed.len() > MAX_VISIBLE_COMPLETED_AGENTS,
-                        |run| {
-                            run.child(
-                                div()
-                                    .text_size(THEME.type_scale.caption)
-                                    .text_color(THEME.colors.subtle)
-                                    .child(format!(
-                                        "Showing the {} most recent completed agents",
-                                        MAX_VISIBLE_COMPLETED_AGENTS
-                                    )),
-                            )
-                        },
-                    )
-                })
+                                .when(completed.len() > MAX_VISIBLE_COMPLETED_AGENTS, |section| {
+                                    section.child(
+                                        div()
+                                            .text_size(THEME.type_scale.caption)
+                                            .text_color(THEME.colors.subtle)
+                                            .child(format!(
+                                                "Showing the {} most recent completed agents",
+                                                MAX_VISIBLE_COMPLETED_AGENTS
+                                            )),
+                                    )
+                                })
+                        }),
+                )
             })
             .when(!limited.is_empty(), |run| {
                 run.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .child(section_heading(format!(
-                            "Limited agents ({})",
-                            limited.len()
-                        )))
-                        .child(limited_control),
+                    inspector_section()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .child(section_heading(format!(
+                                    "Limited agents ({})",
+                                    limited.len()
+                                )))
+                                .child(limited_control),
+                        )
+                        .when(self.limited_agents_expanded, |section| {
+                            section.children(limited.iter().filter_map(|(activity, depth, _)| {
+                                self.agent_card(activity, *depth, false, true, None, entity.clone())
+                            }))
+                        }),
                 )
-                .when(self.limited_agents_expanded, |run| {
-                    run.children(limited.iter().filter_map(|(activity, depth, _)| {
-                        self.agent_card(activity, *depth, false, true, None, entity.clone())
-                    }))
-                })
             });
-        panel().size_full().rounded_none().border_0().child(body)
+        panel()
+            .size_full()
+            .rounded_none()
+            .border_0()
+            .bg(THEME.colors.inspector)
+            .child(body)
     }
 
     fn agent_card(
@@ -221,13 +239,13 @@ impl FarcasterApp {
                 .aria_label(format!("Show {role} transcript: {state}"))
                 .tab_index(0)
                 .ml(px(depth.saturating_sub(1) as f32 * 8.0))
-                .px(THEME.space.sm)
-                .py(THEME.space.xs)
+                .px(px(2.0))
+                .py(px(3.0))
                 .flex()
                 .items_stretch()
                 .gap(THEME.space.sm)
-                .hover(|card| card.bg(THEME.colors.hover))
-                .focus(|card| card.bg(THEME.colors.hover))
+                .hover(|card| card.bg(THEME.colors.surface))
+                .focus(|card| card.bg(THEME.colors.surface))
                 .cursor_pointer()
                 .on_click(move |_, window, cx| {
                     let _ = entity.update(cx, |this, cx| {
@@ -288,6 +306,51 @@ impl FarcasterApp {
                 )
                 .into_any_element(),
         )
+    }
+}
+
+fn inspector_section() -> gpui::Div {
+    div().flex().flex_col().gap(px(7.0))
+}
+
+fn clamped_run_panel_width(width: f32) -> Pixels {
+    px(width.clamp(
+        f32::from(THEME.layout.run_panel_min),
+        f32::from(THEME.layout.run_panel_max),
+    ))
+}
+
+impl FarcasterApp {
+    pub(super) fn begin_run_panel_resize(
+        &mut self,
+        pointer_x: Pixels,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.run_panel_resize_start = Some((pointer_x, self.run_panel_width));
+        cx.notify();
+    }
+
+    pub(super) fn update_run_panel_resize(
+        &mut self,
+        pointer_x: Pixels,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let Some((start_x, start_width)) = self.run_panel_resize_start else {
+            return;
+        };
+        let width = clamped_run_panel_width(
+            f32::from(start_width) + f32::from(start_x) - f32::from(pointer_x),
+        );
+        if width != self.run_panel_width {
+            self.run_panel_width = width;
+            cx.notify();
+        }
+    }
+
+    pub(super) fn finish_run_panel_resize(&mut self, cx: &mut gpui::Context<Self>) {
+        if self.run_panel_resize_start.take().is_some() {
+            cx.notify();
+        }
     }
 }
 
@@ -501,11 +564,11 @@ fn metric_row(label: &'static str, value: String) -> impl IntoElement {
 
 fn background_job_row(job: &BackgroundJob) -> AnyElement {
     div()
-        .px(THEME.space.sm)
-        .py(THEME.space.xs)
+        .px(px(2.0))
+        .py(px(3.0))
         .flex()
-        .items_center()
-        .gap(THEME.space.sm)
+        .items_start()
+        .gap(px(7.0))
         .child(
             div()
                 .size(THEME.icons.inline)
@@ -521,12 +584,15 @@ fn background_job_row(job: &BackgroundJob) -> AnyElement {
                 .min_w_0()
                 .flex_1()
                 .flex()
-                .items_center()
-                .gap(THEME.space.sm)
+                .flex_col()
+                .gap(px(2.0))
                 .child(
                     div()
-                        .flex_none()
-                        .font_weight(FontWeight::MEDIUM)
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_size(THEME.type_scale.caption)
                         .text_color(THEME.colors.text)
                         .child(job.name.clone()),
                 )
