@@ -1,14 +1,11 @@
 use std::rc::Rc;
 
 use gpui::{
-    Anchor, AnyElement, App, CursorStyle, ElementId, Focusable as _, InteractiveElement as _,
+    AnyElement, App, CursorStyle, ElementId, Focusable as _, InteractiveElement as _,
     IntoElement as _, ParentElement as _, Role, StatefulInteractiveElement as _, Styled as _,
     WeakEntity, div, prelude::FluentBuilder as _, px,
 };
-use gpui_component::{
-    input::Input,
-    menu::{DropdownMenu as _, PopupMenuItem},
-};
+use gpui_component::{input::Input, tooltip::Tooltip};
 
 use super::{super::FarcasterApp, composer_footer::separator};
 use crate::{
@@ -346,70 +343,105 @@ fn effort_label(level: &str) -> String {
 }
 
 fn permission_selector(selected: PermissionLevel, entity: WeakEntity<FarcasterApp>) -> AnyElement {
-    let content = div()
+    let next_files = next_file_access(selected.files);
+    let file_entity = entity.clone();
+    let next_network = next_network_access(selected.network);
+    let file_label = cycle_label("Files", selected.files.label(), next_files.label());
+    let network_label = cycle_label("Network", selected.network.label(), next_network.label());
+
+    div()
+        .id("sandbox-access")
+        .flex_none()
         .flex()
         .items_center()
         .gap(px(7.0))
-        .child(permission_indicator(
+        .child(permission_cycle_button(
+            "cycle-file-access",
             AppIcon::Folder,
             file_access_color(selected.files),
+            file_label,
+            move |cx| {
+                let _ = file_entity.update(cx, |this, cx| {
+                    this.set_permission_level(selected.with_files(next_files), cx);
+                });
+            },
         ))
         .child(div().text_color(THEME.colors.subtle).child("/"))
-        .child(permission_indicator(
+        .child(permission_cycle_button(
+            "cycle-network-access",
             AppIcon::Globe,
             network_access_color(selected.network),
-        ));
-
-    dropdown_content_button(
-        "select-permission",
-        selected.label(),
-        content,
-        ButtonTone::Quiet,
-        true,
-    )
-    .flex_none()
-    .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
-        let mut menu = menu
-            .max_h(THEME.layout.dialog_max_height)
-            .label("Sandbox access");
-        for files in FileAccessMode::all() {
-            let entity = entity.clone();
-            menu = menu.item(
-                PopupMenuItem::new(format!("Files · {}", files.label())).on_click(
-                    move |_, _, cx| {
-                        let _ = entity.update(cx, |this, cx| {
-                            this.set_permission_level(selected.with_files(files), cx);
-                        });
-                    },
-                ),
-            );
-        }
-        menu = menu.separator();
-        for network in NetworkAccessMode::all() {
-            let entity = entity.clone();
-            menu = menu.item(
-                PopupMenuItem::new(format!("Network · {}", network.label())).on_click(
-                    move |_, _, cx| {
-                        let _ = entity.update(cx, |this, cx| {
-                            this.set_permission_level(selected.with_network(network), cx);
-                        });
-                    },
-                ),
-            );
-        }
-        menu
-    })
-    .into_any_element()
+            network_label,
+            move |cx| {
+                let _ = entity.update(cx, |this, cx| {
+                    this.set_permission_level(selected.with_network(next_network), cx);
+                });
+            },
+        ))
+        .into_any_element()
 }
 
-fn permission_indicator(resource: AppIcon, color: gpui::Rgba) -> AnyElement {
+fn permission_cycle_button(
+    id: impl Into<ElementId>,
+    resource: AppIcon,
+    color: gpui::Rgba,
+    label: String,
+    on_press: impl Fn(&mut App) + 'static,
+) -> AnyElement {
+    let on_press = Rc::new(on_press);
+    let click = Rc::clone(&on_press);
+    let tooltip = label.clone();
     div()
+        .id(id)
+        .role(Role::Button)
+        .aria_label(label)
+        .tab_index(0)
         .flex()
         .items_center()
         .gap(px(5.0))
-        .child(app_icon(resource, AppIconSize::Inline).text_color(THEME.colors.muted))
+        .px(px(1.0))
+        .py(px(2.0))
+        .rounded(px(3.0))
+        .cursor(CursorStyle::PointingHand)
+        .text_color(THEME.colors.muted)
+        .hover(|button| {
+            button
+                .bg(THEME.colors.surface)
+                .text_color(THEME.colors.text)
+        })
+        .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+        .on_click(move |_, _, cx| {
+            cx.stop_propagation();
+            click(cx);
+        })
+        .on_key_down(move |event, _, cx| {
+            if activates_button(event) {
+                cx.stop_propagation();
+                on_press(cx);
+            }
+        })
+        .child(app_icon(resource, AppIconSize::Inline))
         .child(div().size(px(7.0)).rounded_full().bg(color))
         .into_any_element()
+}
+
+fn cycle_label(capability: &str, current: &str, next: &str) -> String {
+    format!("{capability}: {current}. Click to change to {next}")
+}
+
+fn next_file_access(mode: FileAccessMode) -> FileAccessMode {
+    match mode {
+        FileAccessMode::ReadOnly => FileAccessMode::Sandboxed,
+        FileAccessMode::Sandboxed => FileAccessMode::Full,
+        FileAccessMode::Full => FileAccessMode::ReadOnly,
+    }
+}
+
+fn next_network_access(mode: NetworkAccessMode) -> NetworkAccessMode {
+    match mode {
+        NetworkAccessMode::Sandboxed => NetworkAccessMode::Full,
+        NetworkAccessMode::Full => NetworkAccessMode::Sandboxed,
+    }
 }
 
 fn file_access_color(mode: FileAccessMode) -> gpui::Rgba {
@@ -436,6 +468,30 @@ mod tests {
         assert!(model_matches_query("GPT-5 Codex", "gpt-5-codex", "codex"));
         assert!(model_matches_query("GPT-5 Codex", "gpt-5-codex", "gpt-5"));
         assert!(!model_matches_query("GPT-5 Codex", "gpt-5-codex", "claude"));
+    }
+
+    #[test]
+    fn permission_controls_cycle_independently_and_wrap() {
+        assert_eq!(
+            next_file_access(FileAccessMode::ReadOnly),
+            FileAccessMode::Sandboxed
+        );
+        assert_eq!(
+            next_file_access(FileAccessMode::Sandboxed),
+            FileAccessMode::Full
+        );
+        assert_eq!(
+            next_file_access(FileAccessMode::Full),
+            FileAccessMode::ReadOnly
+        );
+        assert_eq!(
+            next_network_access(NetworkAccessMode::Sandboxed),
+            NetworkAccessMode::Full
+        );
+        assert_eq!(
+            next_network_access(NetworkAccessMode::Full),
+            NetworkAccessMode::Sandboxed
+        );
     }
 
     #[test]

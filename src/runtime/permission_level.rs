@@ -11,10 +11,6 @@ pub(crate) enum FileAccessMode {
 }
 
 impl FileAccessMode {
-    pub(crate) fn all() -> [Self; 3] {
-        [Self::ReadOnly, Self::Sandboxed, Self::Full]
-    }
-
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::ReadOnly => "Read-only",
@@ -32,10 +28,6 @@ pub(crate) enum NetworkAccessMode {
 }
 
 impl NetworkAccessMode {
-    pub(crate) fn all() -> [Self; 2] {
-        [Self::Sandboxed, Self::Full]
-    }
-
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Sandboxed => "Sandboxed",
@@ -51,14 +43,6 @@ pub(crate) struct PermissionLevel {
 }
 
 impl PermissionLevel {
-    pub(crate) fn label(self) -> String {
-        format!(
-            "Files: {} · Network: {}",
-            self.files.label(),
-            self.network.label()
-        )
-    }
-
     pub(crate) fn with_files(self, files: FileAccessMode) -> Self {
         Self { files, ..self }
     }
