@@ -5,7 +5,7 @@ use gpui_component::{
 };
 use gpui_libghostty::{TerminalColor, TerminalTheme};
 
-pub(crate) const UI_FONT_FAMILY: &str = ".SystemUIFont";
+pub(crate) const UI_FONT_FAMILY: &str = "Lilex";
 pub(crate) const FARSI_FONT_FAMILY: &str = "Vazirmatn";
 pub(crate) const MONO_FONT_FAMILY: &str = "Lilex";
 
@@ -123,26 +123,26 @@ const fn rgba(hex: u32) -> Rgba {
 
 pub(crate) const THEME: Theme = Theme {
     colors: Colors {
-        canvas: rgb(0x1d2021),
-        panel: rgb(0x282828),
-        surface: rgb(0x3c3836),
-        hover: rgb(0x504945),
-        selection: rgba(0x8ec07c33),
-        border: rgb(0x665c54),
-        text: rgb(0xd5c4a1),
-        muted: rgb(0xa89984),
-        subtle: rgb(0x928374),
-        accent: rgb(0x8ec07c),
-        accent_hover: rgb(0xb8bb26),
-        accent_active: rgb(0x689d6a),
-        link: rgb(0x83a598),
-        code: rgb(0xd79921),
-        skill: rgb(0xd3869b),
-        skill_surface: rgba(0xd3869b24),
-        warning: rgb(0xfabd2f),
-        error: rgb(0xfb4934),
-        danger: rgb(0xfb4934),
-        success: rgb(0xb8bb26),
+        canvas: rgb(0x191d1e),
+        panel: rgb(0x1d1e1d),
+        surface: rgb(0x222421),
+        hover: rgb(0x30322e),
+        selection: rgb(0x232522),
+        border: rgb(0x474944),
+        text: rgb(0xd7d0ba),
+        muted: rgb(0x8f8b7b),
+        subtle: rgb(0x6f6c61),
+        accent: rgb(0xb7cf16),
+        accent_hover: rgb(0xc5db32),
+        accent_active: rgb(0xa8c810),
+        link: rgb(0xc1cf78),
+        code: rgb(0xe1a91a),
+        skill: rgb(0xc58aa5),
+        skill_surface: rgba(0xc58aa524),
+        warning: rgb(0xe1a91a),
+        error: rgb(0xef4932),
+        danger: rgb(0xef4932),
+        success: rgb(0xa8c810),
         backdrop: rgba(0x000000b3),
     },
     space: Space {
@@ -151,12 +151,12 @@ pub(crate) const THEME: Theme = Theme {
         md: px(16.0),
     },
     type_scale: TypeScale {
-        caption: px(12.0),
-        body_small: px(13.0),
-        body: px(14.0),
+        caption: px(11.0),
+        body_small: px(12.0),
+        body: px(13.0),
         display: px(18.0),
-        line_body: px(20.0),
-        line_composer: px(22.0),
+        line_body: px(19.0),
+        line_composer: px(20.0),
     },
     icons: IconScale {
         inline: px(16.0),
@@ -169,7 +169,7 @@ pub(crate) const THEME: Theme = Theme {
         archived_preview_row: px(52.0),
         agent_marker: px(20.0),
     },
-    radius: px(6.0),
+    radius: px(4.0),
     border: px(1.0),
     layout: Layout {
         window_width: px(1240.0),
