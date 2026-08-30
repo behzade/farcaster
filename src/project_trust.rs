@@ -262,9 +262,6 @@ struct TrustEnvironment {
 }
 
 fn trust_environment(project: &Path) -> Result<TrustEnvironment, String> {
-    // Trust must be decided before executing project-controlled shell hooks.
-    // Farcaster imports the user's login environment before opening its window;
-    // project-specific shell capture belongs to the background RPC startup path.
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .and_then(|path| canonical(&path).ok());

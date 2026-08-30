@@ -10,26 +10,17 @@ patterns were adapted from the local Issues project at:
 - Commit: `2df4b944983889305e4e196408b400d06f571bfd`
 - Upstream license: GPL-3.0-or-later
 
-Those portions were modified for a coding-agent client: Issues product state,
-database, source-control, issue, and review behavior were removed; the visual
-system was changed to a Gruvbox dark-hard palette; and the application model
-was replaced with project-scoped agent sessions and transcripts.
-
-The current Pi backend consumes Pi's public RPC subprocess interface. No Pi
-source or extension code is included or modified by Farcaster.
-
 Lilex font binaries were copied from Zed commit
-`ce6f3af5f7ae2bbdb002c8ce5cc38e96179de811`, which uses Lilex for its
-`.ZedMono` alias. Lilex is copyright Mikhael Khrustik and contributors, based
-on IBM Plex Mono, and is distributed under the SIL Open Font License 1.1. The
-font license is included at `assets/lilex/OFL.txt`; the font files remain under
-that license. Upstream: <https://github.com/mishamyrt/Lilex>.
+`ce6f3af5f7ae2bbdb002c8ce5cc38e96179de811`. Lilex is copyright Mikhael
+Khrustik and contributors, based on IBM Plex Mono, and is distributed under
+the SIL Open Font License 1.1. Its license is included at
+`assets/lilex/OFL.txt`. Upstream: <https://github.com/mishamyrt/Lilex>.
 
 Vazirmatn Regular, Medium, SemiBold, and Bold v33.003 are bundled as the
 Persian/Arabic UI font.
 Vazirmatn is copyright the Vazirmatn Project Authors and is distributed under
 the SIL Open Font License 1.1. Its license is included at
-`assets/vazirmatn/OFL.txt`; the font files remain under that license. Upstream:
+`assets/vazirmatn/OFL.txt`. Upstream:
 <https://github.com/rastikerdar/vazirmatn>.
 
 The application-specific `gpui-base` and `gpui-component` source subset is
@@ -46,7 +37,7 @@ provenance are included in that directory as `LICENSE-APACHE`, `LICENSE-GPL`,
 and `README.md`.
 
 The `gpui-neovim` and `gpui-libghostty` dependencies use crates.io releases
-`0.1.1` and `0.1.4`, respectively, from
+`0.1.5` and `0.2.0`, respectively, from
 <https://github.com/behzade/gpui-libghostty>. They and the pinned Ghostty source
 are distributed under MIT, with exact licenses and provenance retained in that
 repository.

@@ -23,9 +23,6 @@ impl Drop for RepositoryWatcher {
         let Some(watcher) = self.watcher.take() else {
             return;
         };
-        // notify may synchronously stop and join its platform watcher thread.
-        // Repository state is replaced from GPUI callbacks, so never perform
-        // that shutdown on the UI thread.
         let _ = std::thread::Builder::new()
             .name("repository-watcher-drop".into())
             .spawn(move || drop(watcher));
@@ -91,9 +88,6 @@ fn repository_event(result: notify::Result<Event>) -> Option<RepositoryWatchEven
 fn jujutsu_working_copy_event(result: notify::Result<Event>) -> Option<RepositoryWatchEvent> {
     match result {
         Ok(event) if matches!(event.kind, EventKind::Access(_)) => None,
-        // Colocated JJ reads can write lock and snapshot state below `.jj`
-        // and `.git`. Watching those writes feeds repository refresh back
-        // into itself. Coarse, pathless events cannot be distinguished safely.
         Ok(event)
             if event.paths.is_empty()
                 || event.paths.iter().all(|path| {

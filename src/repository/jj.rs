@@ -28,8 +28,6 @@ const STATUS_TEMPLATE: &str = concat!(
 pub(super) fn snapshot(
     backend: &RepositoryBackend,
 ) -> Result<WorkingCopySnapshot, RepositoryError> {
-    // This first read snapshots the working copy. The other reads are pinned to
-    // the resulting operation, so Jujutsu identity and status cannot be torn.
     let operation_id = current_operation(backend)?;
     let identity_output = run_at_operation(
         backend,

@@ -24,8 +24,6 @@ impl JsonlFramer {
         frames
     }
 
-    /// Pi emits a final unterminated record at EOF, matching its reference reader.
-    /// A trailing CR is payload unless it is immediately followed by LF.
     pub(crate) fn finish(&mut self) -> Option<Vec<u8>> {
         (!self.pending.is_empty()).then(|| std::mem::take(&mut self.pending))
     }

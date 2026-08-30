@@ -411,8 +411,6 @@ pub(crate) fn load_history(path: &Path) -> Result<LoadedHistory, String> {
     })
 }
 
-/// Match Pi's restoration order: assistant messages and explicit changes each
-/// replace the current model as the active branch is walked.
 fn session_settings(branch: &[&Value]) -> (Option<(String, String)>, String) {
     let mut model = None;
     let mut thinking_level = "off".to_owned();

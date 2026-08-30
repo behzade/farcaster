@@ -388,8 +388,6 @@ impl Element for TranscriptList {
         let overdraw = crate::theme::THEME.layout.transcript_overdraw;
         let mut frame_rows = BTreeMap::new();
 
-        // Measurements can move the visible range, so keep going until every visible row has a
-        // frame-local element. Valid overdraw measurements stay cached until invalidated.
         let (scroll_y, following_tail, visible_range) = loop {
             let needed = {
                 let state = self.state.0.borrow();
@@ -476,7 +474,6 @@ impl Element for TranscriptList {
         let current_view = window.current_view();
         let hitbox_id = prepaint.hitbox.id;
         let state = self.state.clone();
-        // Register the parent first so nested scrollable rows get the first bubble-phase chance.
         window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, _cx| {
             if phase != DispatchPhase::Bubble || !hitbox_id.should_handle_scroll(window) {
                 return;
