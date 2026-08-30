@@ -15,6 +15,7 @@ mod launch;
 mod layout;
 mod mcp_client_config;
 mod mcp_server;
+mod network;
 mod performance;
 mod persistent_vec;
 mod primitives;

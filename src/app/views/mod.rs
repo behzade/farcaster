@@ -17,6 +17,7 @@ mod session_groups;
 mod session_hover;
 mod session_rail;
 mod session_rows;
+mod settings;
 mod shell;
 mod surface_switcher;
 mod terminal;
@@ -534,6 +535,9 @@ impl Render for FarcasterApp {
             })
             .when(self.project_trust_sheet, |root| {
                 root.child(project_trust::render(self, entity.clone()))
+            })
+            .when(self.settings_sheet, |root| {
+                root.child(settings::render(self, entity.clone()))
             })
             .when(self.keybindings_help, |root| {
                 let close = entity.clone();

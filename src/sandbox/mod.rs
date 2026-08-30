@@ -14,6 +14,7 @@ pub(crate) use policy::{AccessPolicy, FilesystemAccess, NetworkAccess};
 #[derive(Clone, Debug)]
 pub(crate) enum NonoExecutable {
     Fixed(PathBuf),
+    Unavailable,
     #[cfg(test)]
     TestBypass,
 }
@@ -39,6 +40,7 @@ pub(crate) fn prepare_command(
     paths: PolicyPaths<'_>,
     access: AccessPolicy,
     grants: Option<&GrantStore>,
+    network: &crate::network::NetworkConfiguration,
 ) -> Result<PreparedCommand, String> {
     if access.unrestricted() {
         let mut command = Command::new(agent_program);
@@ -49,7 +51,8 @@ pub(crate) fn prepare_command(
         });
     }
     let nono_program = match nono {
-        NonoExecutable::Fixed(program) => program.as_path(),
+        NonoExecutable::Fixed(program) => validate_nono_program(program)?,
+        NonoExecutable::Unavailable => return Err(missing_nono_error()),
         #[cfg(test)]
         NonoExecutable::TestBypass => {
             let mut command = Command::new(agent_program);
@@ -60,12 +63,6 @@ pub(crate) fn prepare_command(
             });
         }
     };
-    if !nono_program.is_absolute() || !is_executable_file(nono_program) {
-        return Err(format!(
-            "FARCASTER_NONO_PATH must name a fixed executable: {}",
-            nono_program.display()
-        ));
-    }
     let mut profile = tempfile::NamedTempFile::new()
         .map_err(|error| format!("create Farcaster sandbox profile: {error}"))?;
     profile
@@ -76,6 +73,7 @@ pub(crate) fn prepare_command(
             paths.temporary,
             access,
             grants.map(GrantStore::resolve).unwrap_or_default(),
+            network,
         )?)
         .map_err(|error| format!("write Farcaster sandbox profile: {error}"))?;
     profile
@@ -98,16 +96,11 @@ pub(crate) fn prepare_command(
 
 pub(crate) fn validate_policy_bytes(nono: &NonoExecutable, policy: &[u8]) -> Result<(), String> {
     let nono_program = match nono {
-        NonoExecutable::Fixed(program) => program.as_path(),
+        NonoExecutable::Fixed(program) => validate_nono_program(program)?,
+        NonoExecutable::Unavailable => return Err(missing_nono_error()),
         #[cfg(test)]
         NonoExecutable::TestBypass => return Ok(()),
     };
-    if !nono_program.is_absolute() || !is_executable_file(nono_program) {
-        return Err(format!(
-            "FARCASTER_NONO_PATH must name a fixed executable: {}",
-            nono_program.display()
-        ));
-    }
     let mut profile = tempfile::NamedTempFile::new()
         .map_err(|error| format!("create Farcaster sandbox profile: {error}"))?;
     profile
@@ -134,6 +127,21 @@ fn validate_profile(nono_program: &Path, profile: &Path) -> Result<(), String> {
     ))
 }
 
+fn validate_nono_program(program: &Path) -> Result<&Path, String> {
+    if program.is_absolute() && is_executable_file(program) {
+        Ok(program)
+    } else {
+        Err(format!(
+            "FARCASTER_NONO_PATH must name a fixed executable: {}",
+            program.display()
+        ))
+    }
+}
+
+fn missing_nono_error() -> String {
+    "nono executable not found; bundle it next to Farcaster or set FARCASTER_NONO_PATH".to_owned()
+}
+
 fn is_executable_file(path: &Path) -> bool {
     let Ok(metadata) = path.metadata() else {
         return false;
@@ -150,7 +158,38 @@ fn is_executable_file(path: &Path) -> bool {
 }
 
 pub(crate) fn configured_nono_program(value: Option<std::ffi::OsString>) -> NonoExecutable {
-    NonoExecutable::Fixed(value.map(PathBuf::from).unwrap_or_default())
+    resolve_nono_program(
+        value,
+        std::env::current_exe().ok().as_deref(),
+        std::env::var_os("PATH"),
+    )
+}
+
+fn resolve_nono_program(
+    value: Option<std::ffi::OsString>,
+    current_executable: Option<&Path>,
+    search_path: Option<std::ffi::OsString>,
+) -> NonoExecutable {
+    if let Some(program) = value.filter(|value| !value.is_empty()) {
+        return NonoExecutable::Fixed(PathBuf::from(program));
+    }
+    let sibling = current_executable
+        .and_then(Path::parent)
+        .map(|directory| directory.join("nono"));
+    if let Some(program) = sibling.filter(|program| is_executable_file(program)) {
+        return NonoExecutable::Fixed(program);
+    }
+    if let Some(search_path) = search_path {
+        for directory in std::env::split_paths(&search_path) {
+            let candidate = directory.join("nono");
+            if is_executable_file(&candidate)
+                && let Ok(program) = candidate.canonicalize()
+            {
+                return NonoExecutable::Fixed(program);
+            }
+        }
+    }
+    NonoExecutable::Unavailable
 }
 
 #[cfg(test)]
@@ -161,6 +200,51 @@ pub(crate) const fn test_nono_bypass() -> NonoExecutable {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolves_bundled_nono_before_path() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let bundled = root.path().join("nono");
+        std::fs::write(&bundled, b"#!/bin/sh\nexit 0\n")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&bundled, std::fs::Permissions::from_mode(0o700))?;
+        }
+        let executable = root.path().join("farcaster");
+        let resolved = resolve_nono_program(
+            None,
+            Some(&executable),
+            Some(std::env::join_paths([Path::new("/missing")])?),
+        );
+        let NonoExecutable::Fixed(program) = resolved else {
+            return Err("bundled nono was not resolved".into());
+        };
+        assert_eq!(program, bundled);
+        Ok(())
+    }
+
+    #[test]
+    fn resolves_path_nono_to_a_fixed_path() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let nono = root.path().join("nono");
+        std::fs::write(&nono, b"#!/bin/sh\nexit 0\n")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&nono, std::fs::Permissions::from_mode(0o700))?;
+        }
+        let resolved = resolve_nono_program(
+            None,
+            Some(Path::new("/missing/farcaster")),
+            Some(std::env::join_paths([root.path()])?),
+        );
+        let NonoExecutable::Fixed(program) = resolved else {
+            return Err("PATH nono was not resolved".into());
+        };
+        assert_eq!(program, nono.canonicalize()?);
+        Ok(())
+    }
 
     #[test]
     fn wraps_restricted_agent_with_fixed_nono_and_profile() -> Result<(), Box<dyn std::error::Error>>
@@ -196,6 +280,7 @@ mod tests {
                 network: NetworkAccess::Sandboxed,
             },
             None,
+            &crate::network::NetworkConfiguration::default(),
         )?;
         assert_eq!(prepared.command.get_program(), nono.as_os_str());
         let arguments = prepared.command.get_args().collect::<Vec<_>>();
@@ -228,6 +313,7 @@ mod tests {
                 },
                 access,
                 None,
+                &crate::network::NetworkConfiguration::default(),
             )
         };
         let unrestricted = direct(

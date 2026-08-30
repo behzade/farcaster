@@ -554,6 +554,7 @@ fn validate_rights(shared: &Shared, rights: &[AccessRight]) -> Result<(), String
         &shared.temporary,
         access,
         resolve_rights(shared, rights),
+        &crate::network::NetworkConfiguration::default(),
     )?;
     super::validate_policy_bytes(&shared.nono, &policy)
 }
@@ -714,11 +715,11 @@ fn right_is_active(shared: &Shared, right: &AccessRight, effective: &[AccessRigh
         }
         AccessRight::NetworkHost { host } => {
             shared.network_full.load(Ordering::Acquire) == 1
-                || super::policy::base_network_host_allowed(host)
+                || crate::network::base_network_host_allowed(host)
         }
         AccessRight::NetworkEndpoint { port, .. } => {
             shared.network_full.load(Ordering::Acquire) == 1
-                || super::policy::base_loopback_port_allowed(*port)
+                || crate::network::base_loopback_port_allowed(*port)
         }
     }
 }

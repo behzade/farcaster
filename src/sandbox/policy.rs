@@ -68,64 +68,6 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
-const ALLOWED_NETWORK_HOSTS: &[&str] = &[
-    "127.0.0.1",
-    "::1",
-    "localhost",
-    "*.amazonaws.com",
-    "*.openai.azure.com",
-    "api.anthropic.com",
-    "api.cohere.ai",
-    "api.cohere.com",
-    "api.deepseek.com",
-    "api.fireworks.ai",
-    "api.github.com",
-    "api.groq.com",
-    "api.mistral.ai",
-    "api.openai.com",
-    "api.openrouter.ai",
-    "api.perplexity.ai",
-    "api.together.xyz",
-    "api.x.ai",
-    "cache.nixos.org",
-    "codeload.github.com",
-    "crates.io",
-    "files.pythonhosted.org",
-    "generativelanguage.googleapis.com",
-    "aiplatform.googleapis.com",
-    "ghcr.io",
-    "github.com",
-    "index.crates.io",
-    "nodejs.org",
-    "oauth2.googleapis.com",
-    "objects.githubusercontent.com",
-    "openrouter.ai",
-    "pkg-containers.githubusercontent.com",
-    "proxy.golang.org",
-    "pypi.org",
-    "registry.npmjs.org",
-    "release-assets.githubusercontent.com",
-    "repo.maven.apache.org",
-    "static.crates.io",
-    "static.rust-lang.org",
-    "storage.googleapis.com",
-];
-const LOOPBACK_PORTS: &[u16] = &[8765];
-
-pub(super) fn base_network_host_allowed(host: &str) -> bool {
-    ALLOWED_NETWORK_HOSTS.iter().any(|allowed| {
-        *allowed == host
-            || allowed.strip_prefix("*.").is_some_and(|suffix| {
-                host.strip_suffix(suffix)
-                    .is_some_and(|prefix| prefix.ends_with('.'))
-            })
-    })
-}
-
-pub(super) fn base_loopback_port_allowed(port: u16) -> bool {
-    LOOPBACK_PORTS.contains(&port)
-}
-
 pub(crate) fn compile(
     project: &Path,
     home: &Path,
@@ -133,12 +75,13 @@ pub(crate) fn compile(
     temporary: &Path,
     access: AccessPolicy,
     grants: super::approval::ResolvedGrants,
+    network: &crate::network::NetworkConfiguration,
 ) -> Result<Vec<u8>, String> {
     let project = canonical_directory(project, "project")?;
     let home = canonical_directory(home, "home")?;
     let agent_state = canonical_directory(agent_state, "agent state")?;
     let temporary = canonical_directory(temporary, "temporary directory")?;
-    let mut readable = Vec::new();
+    let mut readable = user_runtime_libraries(&home);
     let mut writable = vec![temporary.clone(), agent_state.clone()];
     if let Ok(slash_tmp) = Path::new("/tmp").canonicalize()
         && slash_tmp.is_dir()
@@ -176,14 +119,16 @@ pub(crate) fn compile(
     writable_files.dedup();
 
     let unrestricted_network = matches!(access.network, NetworkAccess::Full);
-    let mut allowed_network_hosts = ALLOWED_NETWORK_HOSTS
+    let mut allowed_network_hosts = crate::network::allowed_network_hosts()
         .iter()
         .map(|host| (*host).to_owned())
         .collect::<Vec<_>>();
+    allowed_network_hosts.extend(network.proxy_hosts.iter().cloned());
     allowed_network_hosts.extend(grants.network_hosts);
     allowed_network_hosts.sort();
     allowed_network_hosts.dedup();
-    let mut loopback_ports = LOOPBACK_PORTS.to_vec();
+    let mut loopback_ports = crate::network::loopback_ports().to_vec();
+    loopback_ports.extend(network.proxy_loopback_ports.iter().copied());
     loopback_ports.extend(grants.loopback_ports);
     loopback_ports.sort_unstable();
     loopback_ports.dedup();
@@ -235,6 +180,13 @@ fn canonical_directory(path: &Path, label: &str) -> Result<PathBuf, String> {
         ));
     }
     Ok(path)
+}
+
+fn user_runtime_libraries(home: &Path) -> Vec<PathBuf> {
+    [".local/lib"]
+        .into_iter()
+        .filter_map(|relative| symlink_free_existing_path(home, relative))
+        .collect()
 }
 
 fn development_storage(home: &Path) -> Vec<PathBuf> {
@@ -298,6 +250,7 @@ mod tests {
         std::fs::create_dir_all(&project)?;
         std::fs::create_dir_all(home.join(".pi/agent"))?;
         std::fs::create_dir_all(home.join(".cargo/registry"))?;
+        std::fs::create_dir_all(home.join(".local/lib"))?;
         std::fs::create_dir_all(&temporary)?;
         Ok(serde_json::from_slice(&compile(
             &project,
@@ -306,6 +259,7 @@ mod tests {
             &temporary,
             access,
             crate::sandbox::approval::ResolvedGrants::default(),
+            &crate::network::NetworkConfiguration::default(),
         )?)?)
     }
 
@@ -336,6 +290,13 @@ mod tests {
             path.as_str()
                 .is_some_and(|path| path.ends_with("/.cargo/registry"))
         }));
+        assert!(
+            profile["filesystem"]["read"]
+                .as_array()
+                .is_some_and(|paths| paths.iter().any(|path| path
+                    .as_str()
+                    .is_some_and(|path| path.ends_with("/.local/lib"))))
+        );
         assert!(
             !profile["filesystem"]["read"]
                 .as_array()
@@ -374,10 +335,50 @@ mod tests {
                 writable_files: vec![granted_file.clone()],
                 ..Default::default()
             },
+            &crate::network::NetworkConfiguration::default(),
         )?)?;
         assert_eq!(
             profile["filesystem"]["allow_file"],
             serde_json::json!([granted_file])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn sandboxed_policy_includes_proxy_destinations() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let project = root.path().join("project");
+        let home = root.path().join("home");
+        let temporary = root.path().join("tmp");
+        std::fs::create_dir(&project)?;
+        std::fs::create_dir_all(home.join(".pi/agent"))?;
+        std::fs::create_dir(&temporary)?;
+        let network = crate::network::NetworkConfiguration {
+            proxy_hosts: vec!["proxy.example".into()],
+            proxy_loopback_ports: vec![8080],
+            app_proxy: None,
+        };
+        let profile: serde_json::Value = serde_json::from_slice(&compile(
+            &project,
+            &home,
+            &home.join(".pi/agent"),
+            &temporary,
+            AccessPolicy {
+                filesystem: FilesystemAccess::Sandboxed,
+                network: NetworkAccess::Sandboxed,
+            },
+            crate::sandbox::approval::ResolvedGrants::default(),
+            &network,
+        )?)?;
+        assert!(
+            profile["network"]["allow_domain"]
+                .as_array()
+                .is_some_and(|hosts| hosts.iter().any(|host| host == "proxy.example"))
+        );
+        assert!(
+            profile["network"]["open_port"]
+                .as_array()
+                .is_some_and(|ports| ports.iter().any(|port| port == 8080))
         );
         Ok(())
     }

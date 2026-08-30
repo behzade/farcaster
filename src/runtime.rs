@@ -47,7 +47,7 @@ const STREAM_PUBLISH_INTERVAL: Duration = Duration::from_millis(16);
 const MAX_FAILURE_DETAILS_CHARS: usize = 12_000;
 const MAX_FAILURE_SUMMARY_CHARS: usize = 240;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) enum RuntimeCommand {
     Prompt {
         target: String,
@@ -111,6 +111,7 @@ pub(crate) enum RuntimeCommand {
     Login(Option<String>),
     SetThinking(String),
     SetPermissionLevel(PermissionLevel),
+    SetAppProxy(Option<String>),
     ReloadSandboxGrants,
     ExtensionResponse(ExtensionUiResponse),
     DeliverQueued(crate::state::QueuedPrompt),
@@ -231,9 +232,11 @@ impl RuntimeHandle {
         draft_id: String,
         initial_session: Option<PathBuf>,
         grants: crate::sandbox::GrantStore,
+        app_proxy: Option<String>,
     ) -> Self {
         let command = ProcessCommand {
             grants: Some(grants),
+            app_proxy,
             ..ProcessCommand::default()
         };
         Self::spawn_with(project, draft_id, initial_session, command)
@@ -419,7 +422,7 @@ fn run_supervisor(
     project: PathBuf,
     draft_id: String,
     initial_session: Option<PathBuf>,
-    process_command: ProcessCommand,
+    mut process_command: ProcessCommand,
     command_rx: mpsc::Receiver<RuntimeCommand>,
     event_tx: UiEventSender,
 ) {
@@ -1016,6 +1019,13 @@ fn run_supervisor(
                         session,
                         "Working",
                     );
+                }
+                if let RuntimeCommand::SetAppProxy(proxy) = &command {
+                    process_command.app_proxy = proxy.clone();
+                    for actor in actors.values() {
+                        actor.send(command.clone());
+                    }
+                    continue;
                 }
                 if matches!(command, RuntimeCommand::ReloadSandboxGrants) {
                     for actor in actors.values() {
@@ -1724,6 +1734,7 @@ impl RuntimeOwner {
             }
             RuntimeCommand::SetThinking(level) => self.set_thinking(level),
             RuntimeCommand::SetPermissionLevel(level) => self.set_permission_level(level),
+            RuntimeCommand::SetAppProxy(proxy) => self.set_app_proxy(proxy),
             RuntimeCommand::ReloadSandboxGrants => self.reload_sandbox_grants(),
             RuntimeCommand::ExtensionResponse(response) => {
                 if let Some(process) = self.process.as_mut()
@@ -2706,6 +2717,7 @@ mod tests {
                     permission_level: PermissionLevel::default(),
                     nono: crate::sandbox::test_nono_bypass(),
                     grants: None,
+                    app_proxy: None,
                 },
                 process: None,
                 login_process_only: false,
@@ -2800,6 +2812,21 @@ mod tests {
         assert!(owner.startup_state_loaded && owner.startup_history_loaded);
         assert_eq!(owner.snapshot.permission_level, target);
         Ok(())
+    }
+
+    #[test]
+    fn app_proxy_change_waits_for_a_running_turn() {
+        let (mut owner, _events, _discovery) = owner_without_process(std::env::temp_dir());
+        conversation_mut(owner.active_snapshot_mut()).running = true;
+        let proxy = Some("http://proxy.example:8080".to_owned());
+
+        owner.apply_command(RuntimeCommand::SetAppProxy(proxy.clone()));
+        assert_eq!(owner.process_command.app_proxy, proxy);
+        assert!(!owner.permission_changes.is_idle());
+
+        conversation_mut(owner.active_snapshot_mut()).running = false;
+        owner.apply_queued_permission_change();
+        assert!(owner.permission_changes.is_idle());
     }
 
     #[test]
@@ -4244,6 +4271,7 @@ mod tests {
             permission_level: PermissionLevel::default(),
             nono: crate::sandbox::test_nono_bypass(),
             grants: None,
+            app_proxy: None,
         };
         preview_history(&mut owner, session.clone(), "keep this history");
 
@@ -4277,6 +4305,7 @@ mod tests {
                 permission_level: PermissionLevel::default(),
                 nono: crate::sandbox::test_nono_bypass(),
                 grants: None,
+                app_proxy: None,
             },
             process: None,
             login_process_only: false,
@@ -4404,6 +4433,7 @@ mod tests {
             permission_level: PermissionLevel::default(),
             nono: crate::sandbox::test_nono_bypass(),
             grants: None,
+            app_proxy: None,
         };
         owner.state = Some(StateStore::open_at(&database)?);
 

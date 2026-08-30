@@ -229,13 +229,13 @@ impl FarcasterApp {
             }),
             BuiltinSlashCommand::Resume => self.open_sessions_sheet(window, cx),
             BuiltinSlashCommand::Reload => self.send(RuntimeCommand::Reload),
+            BuiltinSlashCommand::Settings => self.open_settings(window, cx),
             BuiltinSlashCommand::Trust => self.open_project_trust(window, cx),
             BuiltinSlashCommand::Login => self.send(RuntimeCommand::Login(
                 invocation.arguments.map(str::to_owned),
             )),
             BuiltinSlashCommand::Quit => cx.quit(),
-            BuiltinSlashCommand::Settings
-            | BuiltinSlashCommand::ScopedModels
+            BuiltinSlashCommand::ScopedModels
             | BuiltinSlashCommand::Import
             | BuiltinSlashCommand::Share
             | BuiltinSlashCommand::Changelog

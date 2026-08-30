@@ -16,6 +16,7 @@ enum AppSheet {
     Sessions,
     Run,
     Keybindings,
+    Settings,
     ProjectTrust,
 }
 
@@ -24,6 +25,7 @@ struct SheetFlags {
     sessions: bool,
     run: bool,
     keybindings: bool,
+    settings: bool,
     project_trust: bool,
 }
 
@@ -32,13 +34,14 @@ const fn sheet_flags(active: Option<AppSheet>) -> SheetFlags {
         sessions: matches!(active, Some(AppSheet::Sessions)),
         run: matches!(active, Some(AppSheet::Run)),
         keybindings: matches!(active, Some(AppSheet::Keybindings)),
+        settings: matches!(active, Some(AppSheet::Settings)),
         project_trust: matches!(active, Some(AppSheet::ProjectTrust)),
     }
 }
 
 impl SheetFlags {
     const fn any(self) -> bool {
-        self.sessions || self.run || self.keybindings || self.project_trust
+        self.sessions || self.run || self.keybindings || self.settings || self.project_trust
     }
 }
 
@@ -233,6 +236,7 @@ impl FarcasterApp {
             || self.sessions_sheet
             || self.run_sheet
             || self.keybindings_help
+            || self.settings_sheet
             || self.project_trust_sheet
             || self.pending_archive.is_some()
             || self.pending_delete.is_some()
@@ -500,6 +504,49 @@ impl FarcasterApp {
         self.open_sheet(AppSheet::Keybindings, window, cx);
     }
 
+    pub(super) fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match crate::state::StateStore::open().and_then(|store| store.load_network_proxy()) {
+            Ok(proxy) => {
+                self.network_proxy_input.update(cx, |input, cx| {
+                    input.set_value(proxy.unwrap_or_default(), window, cx);
+                });
+                self.network_proxy_error = None;
+            }
+            Err(error) => self.network_proxy_error = Some(error),
+        }
+        self.open_sheet(AppSheet::Settings, window, cx);
+    }
+
+    pub(super) fn clear_network_proxy(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.persist_network_proxy(None, window, cx);
+    }
+
+    pub(super) fn save_network_proxy(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let value = self.network_proxy_input.read(cx).value().trim().to_owned();
+        self.persist_network_proxy((!value.is_empty()).then_some(value), window, cx);
+    }
+
+    fn persist_network_proxy(
+        &mut self,
+        proxy: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match crate::state::StateStore::open()
+            .and_then(|store| store.save_network_proxy(proxy.as_deref()))
+        {
+            Ok(()) => {
+                self.network_proxy_error = None;
+                self.send(RuntimeCommand::SetAppProxy(proxy));
+                self.close_sheet(window, cx);
+            }
+            Err(error) => {
+                self.network_proxy_error = Some(error);
+                cx.notify();
+            }
+        }
+    }
+
     pub(super) fn open_project_trust(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.project_trust_error = None;
         self.project_trust_project = Some(self.project.clone());
@@ -525,6 +572,7 @@ impl FarcasterApp {
             sessions: self.sessions_sheet,
             run: self.run_sheet,
             keybindings: self.keybindings_help,
+            settings: self.settings_sheet,
             project_trust: self.project_trust_sheet,
         }
     }
@@ -533,6 +581,7 @@ impl FarcasterApp {
         self.sessions_sheet = flags.sessions;
         self.run_sheet = flags.run;
         self.keybindings_help = flags.keybindings;
+        self.settings_sheet = flags.settings;
         self.project_trust_sheet = flags.project_trust;
     }
 
@@ -592,7 +641,11 @@ impl FarcasterApp {
             self.cancel_dialog(window, cx);
         } else if self.project_trust_sheet {
             self.dismiss_project_trust(window, cx);
-        } else if self.sessions_sheet || self.run_sheet || self.keybindings_help {
+        } else if self.sessions_sheet
+            || self.run_sheet
+            || self.keybindings_help
+            || self.settings_sheet
+        {
             self.close_sheet(window, cx);
         }
     }
@@ -614,6 +667,7 @@ mod tests {
             AppSheet::Sessions,
             AppSheet::Run,
             AppSheet::Keybindings,
+            AppSheet::Settings,
             AppSheet::ProjectTrust,
         ] {
             let flags = sheet_flags(Some(sheet));
@@ -622,6 +676,7 @@ mod tests {
                     flags.sessions,
                     flags.run,
                     flags.keybindings,
+                    flags.settings,
                     flags.project_trust,
                 ]
                 .into_iter()

@@ -19,13 +19,14 @@ use crate::{
     runtime::PermissionLevel,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct ProcessCommand {
     pub program: PathBuf,
     pub prefix_args: Vec<String>,
     pub permission_level: PermissionLevel,
     pub nono: crate::sandbox::NonoExecutable,
     pub grants: Option<crate::sandbox::GrantStore>,
+    pub app_proxy: Option<String>,
 }
 
 impl Default for ProcessCommand {
@@ -36,6 +37,7 @@ impl Default for ProcessCommand {
             permission_level: PermissionLevel::default(),
             nono: crate::sandbox::configured_nono_program(std::env::var_os("FARCASTER_NONO_PATH")),
             grants: None,
+            app_proxy: None,
         }
     }
 }
@@ -52,6 +54,7 @@ impl ProcessCommand {
             permission_level: PermissionLevel::default(),
             nono: crate::sandbox::test_nono_bypass(),
             grants: None,
+            app_proxy: None,
         }
     }
 
@@ -60,16 +63,17 @@ impl ProcessCommand {
         project: &Path,
     ) -> Result<crate::sandbox::PreparedCommand, String> {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
-        let environment = crate::shell_environment::project_shell_environment(project)?;
+        let mut environment = crate::shell_environment::project_shell_environment(project)?;
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-        let environment: Option<Vec<(std::ffi::OsString, std::ffi::OsString)>> = None;
-        let environment_path = |name: &str| {
+        let mut environment: Option<Vec<(std::ffi::OsString, std::ffi::OsString)>> = None;
+        let environment_value = |name: &str| {
             environment
                 .as_ref()
                 .and_then(|values| values.iter().find(|(key, _)| key == name))
-                .map(|(_, value)| PathBuf::from(value))
-                .or_else(|| std::env::var_os(name).map(PathBuf::from))
+                .map(|(_, value)| value.clone())
+                .or_else(|| std::env::var_os(name))
         };
+        let environment_path = |name: &str| environment_value(name).map(PathBuf::from);
         let home = environment_path("HOME")
             .ok_or_else(|| "HOME is required to compile the Farcaster sandbox policy".to_owned())?;
         let agent_state =
@@ -79,9 +83,19 @@ impl ProcessCommand {
         if let Some(grants) = &self.grants {
             grants.set_access(access.filesystem, access.network);
         }
+        let program =
+            resolve_agent_program(&self.program, project, environment_value("PATH").as_deref())?;
+        let network = crate::network::configuration(
+            environment.as_deref(),
+            self.app_proxy.as_deref(),
+            matches!(access.network, crate::sandbox::NetworkAccess::Sandboxed),
+        )?;
+        if let Some(environment) = environment.as_mut() {
+            crate::network::append_app_proxy_environment(environment, &network);
+        }
         let mut prepared = crate::sandbox::prepare_command(
             &self.nono,
-            &self.program,
+            &program,
             &self.prefix_args,
             crate::sandbox::PolicyPaths {
                 project,
@@ -91,6 +105,7 @@ impl ProcessCommand {
             },
             access,
             self.grants.as_ref(),
+            &network,
         )?;
         prepared.command.current_dir(project);
         if let Some(environment) = environment {
@@ -120,6 +135,57 @@ fn pi_program(packaged_path: Option<std::ffi::OsString>) -> PathBuf {
     packaged_path
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("pi"))
+}
+
+fn resolve_agent_program(
+    program: &Path,
+    working_directory: &Path,
+    search_path: Option<&std::ffi::OsStr>,
+) -> Result<PathBuf, String> {
+    let candidate = if program.is_absolute() {
+        Some(program.to_owned())
+    } else if program
+        .parent()
+        .is_some_and(|parent| !parent.as_os_str().is_empty())
+    {
+        Some(working_directory.join(program))
+    } else {
+        search_path.and_then(|search_path| {
+            std::env::split_paths(search_path)
+                .map(|directory| directory.join(program))
+                .find(|candidate| is_executable_file(candidate))
+        })
+    };
+    let candidate = candidate.ok_or_else(|| {
+        format!(
+            "agent executable was not found in the captured PATH: {}",
+            program.display()
+        )
+    })?;
+    if !is_executable_file(&candidate) {
+        return Err(format!(
+            "agent executable is not an executable file: {}",
+            candidate.display()
+        ));
+    }
+    candidate
+        .canonicalize()
+        .map_err(|error| format!("resolve agent executable {}: {error}", candidate.display()))
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    let Ok(metadata) = path.metadata() else {
+        return false;
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        metadata.is_file()
+    }
 }
 
 #[derive(Clone)]
@@ -695,6 +761,25 @@ mod tests {
         assert_eq!(pi_program(None), PathBuf::from("pi"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn resolves_agent_symlink_to_a_fixed_executable() -> TestResult {
+        use std::os::unix::fs::{PermissionsExt as _, symlink};
+
+        let root = tempdir()?;
+        let executable = root.path().join("agent");
+        let bin = root.path().join("bin");
+        fs::create_dir(&bin)?;
+        fs::write(&executable, b"#!/usr/bin/env node\n")?;
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))?;
+        symlink(&executable, bin.join("agent"))?;
+
+        let search_path = std::env::join_paths([&bin])?;
+        let resolved = resolve_agent_program(Path::new("agent"), root.path(), Some(&search_path))?;
+        assert_eq!(resolved, executable.canonicalize()?);
+        Ok(())
+    }
+
     #[test]
     fn pi_runs_full_inside_the_outer_sandbox() -> TestResult {
         let project = tempdir()?;
@@ -705,7 +790,15 @@ mod tests {
             use std::os::unix::fs::PermissionsExt as _;
             fs::set_permissions(&nono, fs::Permissions::from_mode(0o700))?;
         }
+        let pi = project.path().join("pi");
+        fs::write(&pi, b"#!/bin/sh\nexit 0\n")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(&pi, fs::Permissions::from_mode(0o700))?;
+        }
         let command = ProcessCommand {
+            program: pi,
             permission_level: PermissionLevel {
                 files: FileAccessMode::ReadOnly,
                 network: NetworkAccessMode::Sandboxed,

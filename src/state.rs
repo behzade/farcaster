@@ -18,6 +18,8 @@ use crate::{
 const SCHEMA_VERSION: i64 = 7;
 const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 const REPOSITORY_BACKEND_PREFERENCES_KEY: &str = "repository_backend_preferences";
+const NETWORK_PROXY_KEY: &str = "network_proxy";
+const LEGACY_PI_GPUI_IMPORT_KEY: &str = "legacy_pi_gpui_state_imported";
 const REPOSITORY_BACKENDS: [&str; 3] = ["auto", "git", "jj"];
 
 pub(crate) struct StateStore {
@@ -62,7 +64,15 @@ pub(crate) struct ComposerRecord {
 
 impl StateStore {
     pub(crate) fn open() -> Result<Self, String> {
-        Self::open_at(&state_path()?)
+        let path = state_path()?;
+        let mut store = Self::open_at(&path)?;
+        if let Some(legacy) = legacy_pi_gpui_state_path()
+            && legacy != path
+            && legacy.is_file()
+        {
+            store.import_legacy_pi_gpui_state(&legacy)?;
+        }
+        Ok(store)
     }
 
     pub(crate) fn open_at(path: &Path) -> Result<Self, String> {
@@ -252,6 +262,120 @@ impl StateStore {
         Ok(Self { connection })
     }
 
+    pub(crate) fn import_legacy_pi_gpui_state(&mut self, path: &Path) -> Result<(), String> {
+        let imported = self
+            .connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM meta WHERE key=?1)",
+                [LEGACY_PI_GPUI_IMPORT_KEY],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(|error| format!("check legacy pi-gpui state import: {error}"))?;
+        if imported {
+            return Ok(());
+        }
+
+        let uri = format!("file:{}?mode=ro&immutable=1", path.to_string_lossy());
+        self.connection
+            .execute("ATTACH DATABASE ?1 AS legacy_pi_gpui", [uri])
+            .map_err(|error| format!("attach legacy pi-gpui state {}: {error}", path.display()))?;
+        let result = (|| {
+            let version = self
+                .connection
+                .query_row(
+                    "SELECT CAST(value AS INTEGER) FROM legacy_pi_gpui.meta
+                      WHERE key='schema_version'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(|error| format!("read legacy pi-gpui schema version: {error}"))?;
+            if version != SCHEMA_VERSION {
+                return Err(format!(
+                    "legacy pi-gpui state schema {version} is not supported by this build"
+                ));
+            }
+
+            let transaction = self
+                .connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(|error| format!("start legacy pi-gpui state import: {error}"))?;
+            transaction
+                .execute_batch(
+                    "INSERT OR IGNORE INTO projects(path, added_ms)
+                       SELECT path, added_ms FROM legacy_pi_gpui.projects;
+                     INSERT OR IGNORE INTO sessions(
+                       path, id, project, title, first_user_message, timestamp,
+                       parent_session, modified_ms, file_size, message_count,
+                       input_tokens, output_tokens, cache_read_tokens,
+                       cache_write_tokens, total_tokens, cost_micros, search_text,
+                       settled_ms, is_running, in_review
+                     ) SELECT
+                       path, id, project, title, first_user_message, timestamp,
+                       parent_session, modified_ms, file_size, message_count,
+                       input_tokens, output_tokens, cache_read_tokens,
+                       cache_write_tokens, total_tokens, cost_micros, search_text,
+                       settled_ms, 0, in_review
+                     FROM legacy_pi_gpui.sessions;
+                     UPDATE sessions
+                        SET settled_ms=(
+                          SELECT settled_ms FROM legacy_pi_gpui.sessions legacy
+                           WHERE legacy.path=sessions.path
+                        )
+                      WHERE settled_ms IS NULL
+                        AND EXISTS(
+                          SELECT 1 FROM legacy_pi_gpui.sessions legacy
+                           WHERE legacy.path=sessions.path AND legacy.settled_ms IS NOT NULL
+                        );
+                     UPDATE sessions
+                        SET in_review=1
+                      WHERE in_review=0
+                        AND EXISTS(
+                          SELECT 1 FROM legacy_pi_gpui.sessions legacy
+                           WHERE legacy.path=sessions.path AND legacy.in_review!=0
+                        );
+                     INSERT INTO composer_sessions(
+                       target, text, cursor, selection_start, selection_end,
+                       history_json, updated_ms
+                     ) SELECT
+                       target, text, cursor, selection_start, selection_end,
+                       history_json, updated_ms
+                     FROM legacy_pi_gpui.composer_sessions WHERE true
+                     ON CONFLICT(target) DO UPDATE SET
+                       text=excluded.text,
+                       cursor=excluded.cursor,
+                       selection_start=excluded.selection_start,
+                       selection_end=excluded.selection_end,
+                       history_json=excluded.history_json,
+                       updated_ms=excluded.updated_ms
+                     WHERE excluded.updated_ms > composer_sessions.updated_ms;
+                     INSERT OR IGNORE INTO meta(key, value)
+                       SELECT key, value FROM legacy_pi_gpui.meta
+                        WHERE key IN ('excluded_projects', 'repository_backend_preferences');
+                     UPDATE meta
+                        SET value=(
+                          SELECT value FROM legacy_pi_gpui.meta
+                           WHERE key='excluded_projects'
+                        )
+                      WHERE key='excluded_projects' AND value='[]'
+                        AND EXISTS(
+                          SELECT 1 FROM legacy_pi_gpui.meta
+                           WHERE key='excluded_projects'
+                        );
+                     INSERT INTO meta(key, value) VALUES('legacy_pi_gpui_state_imported', '1');",
+                )
+                .map_err(|error| format!("import legacy pi-gpui state: {error}"))?;
+            transaction
+                .commit()
+                .map_err(|error| format!("commit legacy pi-gpui state import: {error}"))
+        })();
+        let detached = self
+            .connection
+            .execute("DETACH DATABASE legacy_pi_gpui", [])
+            .map(|_| ())
+            .map_err(|error| format!("detach legacy pi-gpui state: {error}"));
+        result.and(detached)
+    }
+
     pub(crate) fn load_window_placement(&self) -> Result<Option<WindowPlacement>, String> {
         let stored = self
             .connection
@@ -313,6 +437,36 @@ impl StateStore {
             )
             .map(|_| ())
             .map_err(|error| format!("save application session order: {error}"))
+    }
+
+    pub(crate) fn load_network_proxy(&self) -> Result<Option<String>, String> {
+        self.connection
+            .query_row(
+                "SELECT value FROM meta WHERE key=?1",
+                [NETWORK_PROXY_KEY],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| format!("load network proxy: {error}"))
+    }
+
+    pub(crate) fn save_network_proxy(&self, proxy: Option<&str>) -> Result<(), String> {
+        if let Some(proxy) = proxy {
+            crate::network::validate_app_proxy(proxy)?;
+            self.connection
+                .execute(
+                    "INSERT INTO meta(key, value) VALUES(?1, ?2)
+                     ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    params![NETWORK_PROXY_KEY, proxy],
+                )
+                .map(|_| ())
+                .map_err(|error| format!("save network proxy: {error}"))
+        } else {
+            self.connection
+                .execute("DELETE FROM meta WHERE key=?1", [NETWORK_PROXY_KEY])
+                .map(|_| ())
+                .map_err(|error| format!("clear network proxy: {error}"))
+        }
     }
 
     pub(crate) fn load_repository_backend_preferences(
@@ -973,6 +1127,18 @@ impl StateStore {
 
 pub(crate) fn state_path() -> Result<PathBuf, String> {
     crate::app_paths::data_dir().map(|root| root.join("state.sqlite3"))
+}
+
+fn legacy_pi_gpui_state_path() -> Option<PathBuf> {
+    let root = std::env::var_os("PI_CODING_AGENT_DIR")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".pi/agent")))?;
+    let root = if root.is_absolute() {
+        root
+    } else {
+        std::env::current_dir().ok()?.join(root)
+    };
+    Some(root.join("gui-state.sqlite3"))
 }
 
 fn validate_repository_backend_preferences(

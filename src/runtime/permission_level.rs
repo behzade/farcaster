@@ -144,6 +144,36 @@ impl RuntimeOwner {
         self.start_process(session);
     }
 
+    pub(super) fn set_app_proxy(&mut self, proxy: Option<String>) {
+        if self.process_command.app_proxy == proxy {
+            return;
+        }
+        let previous = std::mem::replace(&mut self.process_command.app_proxy, proxy);
+        if !self.permission_change_ready() {
+            self.permission_changes.queue_reload();
+            self.publish();
+            return;
+        }
+        if self.process.is_none() {
+            self.publish();
+            return;
+        }
+        if let Err(error) = self.process_command.command(&self.project) {
+            self.process_command.app_proxy = previous;
+            let snapshot = self.active_snapshot_mut();
+            snapshot.status = "Proxy unchanged".into();
+            conversation_mut(snapshot).push_local_error("Proxy unchanged", error);
+            self.publish();
+            return;
+        }
+        let session = if self.snapshot.history_preview {
+            self.snapshot.selected_session.clone()
+        } else {
+            self.active_session.clone()
+        };
+        self.start_process(session);
+    }
+
     pub(super) fn reload_sandbox_grants(&mut self) {
         if !self.permission_change_ready() {
             self.permission_changes.queue_reload();

@@ -245,6 +245,8 @@ pub(crate) struct FarcasterApp {
     search: Entity<InputState>,
     search_focus: FocusHandle,
     session_title_input: Entity<InputState>,
+    network_proxy_input: Entity<InputState>,
+    network_proxy_error: Option<String>,
     editing_session_title: Option<SessionTitleEdit>,
     pending_session_title_focus: bool,
     dialog_input: Entity<TextareaState>,
@@ -286,6 +288,7 @@ pub(crate) struct FarcasterApp {
     archived_sessions_expanded: bool,
     run_sheet: bool,
     keybindings_help: bool,
+    settings_sheet: bool,
     project_trust_sheet: bool,
     project_trust_error: Option<String>,
     project_trust_project: Option<PathBuf>,
@@ -363,11 +366,15 @@ impl FarcasterApp {
         }
         let submitted_drafts = drafts::submitted_draft_associations(&registry.drafts);
         sandbox_approval_ui.set_project_trusted(repository_execution_allowed);
+        let saved_proxy = crate::state::StateStore::open()
+            .and_then(|store| store.load_network_proxy())
+            .unwrap_or(None);
         let runtime = RuntimeHandle::spawn_with_grants(
             project.clone(),
             selected_draft.clone(),
             None,
             sandbox_approval_ui.grants(),
+            saved_proxy.clone(),
         );
         let composer = cx.new(|cx| {
             TextareaState::new(window, cx)
@@ -383,6 +390,11 @@ impl FarcasterApp {
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search sessions"));
         let search_focus = search.read(cx).focus_handle(cx);
         let session_title_input = cx.new(|cx| InputState::new(window, cx));
+        let network_proxy_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("http://127.0.0.1:8080")
+                .default_value(saved_proxy.unwrap_or_default())
+        });
         let dialog_input = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .auto_grow(2, 12)
@@ -651,6 +663,8 @@ impl FarcasterApp {
             search,
             search_focus,
             session_title_input,
+            network_proxy_input,
+            network_proxy_error: None,
             editing_session_title: None,
             pending_session_title_focus: false,
             dialog_input,
@@ -692,6 +706,7 @@ impl FarcasterApp {
             archived_sessions_expanded: false,
             run_sheet: false,
             keybindings_help: false,
+            settings_sheet: false,
             project_trust_sheet: false,
             project_trust_error: None,
             project_trust_project: None,

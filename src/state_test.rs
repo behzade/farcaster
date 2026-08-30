@@ -37,6 +37,31 @@ fn window_placement_survives_reopen() -> Result<(), Box<dyn std::error::Error>> 
 }
 
 #[test]
+fn network_proxy_round_trips_and_clears() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let database = temp.path().join("gui.sqlite3");
+    let store = StateStore::open_at(&database)?;
+    assert_eq!(store.load_network_proxy()?, None);
+
+    store.save_network_proxy(Some("http://proxy.example:8080"))?;
+    assert_eq!(
+        StateStore::open_at(&database)?
+            .load_network_proxy()?
+            .as_deref(),
+        Some("http://proxy.example:8080")
+    );
+
+    store.save_network_proxy(None)?;
+    assert_eq!(store.load_network_proxy()?, None);
+    assert!(
+        store
+            .save_network_proxy(Some("socks5://proxy.example"))
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
 fn repository_backend_preferences_default_to_empty() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;
@@ -108,6 +133,58 @@ fn repository_backend_preferences_reject_unknown_and_malformed_values()
         return Err("malformed repository backend preferences were accepted".into());
     };
     assert!(error.contains("decode repository backend preferences"));
+    Ok(())
+}
+
+#[test]
+fn legacy_pi_gpui_state_import_restores_archives_once() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let project = temp.path().join("project");
+    let session_path = temp.path().join("session.jsonl");
+    fs::create_dir(&project)?;
+    fs::write(&session_path, "{}")?;
+    let project = project.canonicalize()?;
+    let session_path = session_path.canonicalize()?;
+    let session = SessionSummary::from_cached(
+        "session-one".into(),
+        session_path.clone(),
+        project,
+        "title".into(),
+        "hello".into(),
+        "2026-08-15T00:00:00Z".into(),
+        None,
+        SystemTime::now(),
+        1,
+        UsageSummary::default(),
+        false,
+        false,
+        "title hello".into(),
+    );
+    let legacy_path = temp.path().join("gui-state.sqlite3");
+    let destination_path = temp.path().join("state.sqlite3");
+    {
+        let mut legacy = StateStore::open_at(&legacy_path)?;
+        legacy.replace_sessions(std::slice::from_ref(&session))?;
+        legacy.set_session_category(&session_path, false, true)?;
+        legacy.save_composer_session(&ComposerRecord {
+            target: format!("session:{}", session_path.display()),
+            text: "legacy draft".into(),
+            ..ComposerRecord::default()
+        })?;
+    }
+    let mut destination = StateStore::open_at(&destination_path)?;
+    destination.replace_sessions(std::slice::from_ref(&session))?;
+
+    destination.import_legacy_pi_gpui_state(&legacy_path)?;
+
+    assert!(destination.cached_sessions("")?[0].archived);
+    assert_eq!(
+        destination.load_composer_sessions()?[0].text,
+        "legacy draft"
+    );
+    destination.set_session_category(&session_path, false, false)?;
+    destination.import_legacy_pi_gpui_state(&legacy_path)?;
+    assert!(!destination.cached_sessions("")?[0].archived);
     Ok(())
 }
 
