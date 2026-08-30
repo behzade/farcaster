@@ -119,20 +119,20 @@ fn render_usage(usage: &ComposerUsage, session_totals: &SessionChangeTotals) -> 
             THEME.colors.success,
         ));
     }
-    if usage.aggregate.output > 0 {
-        row = row.child(separator()).child(simple_metric(
-            Some(AppIcon::ArrowUp),
-            "Output tokens",
-            format_tokens(usage.aggregate.output),
-            THEME.colors.text,
-        ));
-    }
     if usage.aggregate.input > 0 {
         row = row.child(separator()).child(simple_metric(
             Some(AppIcon::ArrowDown),
             "Input tokens",
             format_tokens(usage.aggregate.input),
             THEME.colors.muted,
+        ));
+    }
+    if usage.aggregate.output > 0 {
+        row = row.child(separator()).child(simple_metric(
+            Some(AppIcon::ArrowUp),
+            "Output tokens",
+            format_tokens(usage.aggregate.output),
+            THEME.colors.text,
         ));
     }
     if usage.aggregate.cost_micros > 0 {
