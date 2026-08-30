@@ -26,23 +26,23 @@ const ROUTING_ENVIRONMENT: [&str; 8] = [
 ];
 
 #[derive(Debug)]
-pub(super) struct CommandOutput {
-    pub(super) status: ExitStatus,
-    pub(super) stdout: Vec<u8>,
-    pub(super) stderr: Vec<u8>,
-    pub(super) stdout_truncated: bool,
-    pub(super) stderr_truncated: bool,
+pub(in crate::repository) struct CommandOutput {
+    pub(in crate::repository) status: ExitStatus,
+    pub(in crate::repository) stdout: Vec<u8>,
+    pub(in crate::repository) stderr: Vec<u8>,
+    pub(in crate::repository) stdout_truncated: bool,
+    pub(in crate::repository) stderr_truncated: bool,
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct CommandRunner {
+pub(in crate::repository) struct CommandRunner {
     timeout: Duration,
     output_limit: usize,
     environment: Vec<(OsString, OsString)>,
 }
 
 impl CommandRunner {
-    pub(super) fn new(
+    pub(in crate::repository) fn new(
         timeout: Duration,
         output_limit: usize,
         environment: Vec<(OsString, OsString)>,
@@ -54,7 +54,7 @@ impl CommandRunner {
         }
     }
 
-    pub(super) fn run(
+    pub(in crate::repository) fn run(
         &self,
         program: &OsStr,
         arguments: &[OsString],

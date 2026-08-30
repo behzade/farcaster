@@ -25,7 +25,7 @@ const STATUS_TEMPLATE: &str = concat!(
     "json(target.conflict()) ++ \"\\n\""
 );
 
-pub(super) fn snapshot(
+pub(in crate::repository) fn snapshot(
     backend: &RepositoryBackend,
 ) -> Result<WorkingCopySnapshot, RepositoryError> {
     let operation_id = current_operation(backend)?;
@@ -77,7 +77,7 @@ pub(super) fn snapshot(
     })
 }
 
-pub(super) fn list_project_files(
+pub(in crate::repository) fn list_project_files(
     backend: &RepositoryBackend,
 ) -> Result<Vec<String>, RepositoryError> {
     let operation = current_operation(backend)?;
@@ -105,7 +105,7 @@ pub(super) fn list_project_files(
 }
 
 #[cfg(test)]
-pub(super) fn load_diff(
+pub(in crate::repository) fn load_diff(
     backend: &RepositoryBackend,
     target: DiffTarget,
 ) -> Result<DiffResult, RepositoryError> {
