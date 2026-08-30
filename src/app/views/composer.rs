@@ -5,7 +5,7 @@ use gpui::{
     prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
-    input::{Input, MoveDown, MoveUp, Paste, Textarea},
+    input::{MoveDown, MoveUp, Paste, Textarea},
     text::TextView,
 };
 
@@ -13,6 +13,7 @@ use super::super::{
     ComposerCompletionNext, ComposerCompletionPrevious, ComposerHistoryNext,
     ComposerHistoryPrevious, FarcasterApp, file_mentions, slash_commands,
 };
+use super::models;
 use crate::{
     app::file_mentions::MentionQuery,
     composer_sessions::ComposerSnapshot,
@@ -27,9 +28,6 @@ impl FarcasterApp {
     pub(super) fn render_composer(&self, entity: WeakEntity<Self>, cx: &App) -> AnyElement {
         if self.extension.dialog.is_some() {
             return self.render_composer_request(entity);
-        }
-        if self.extension.provider_auth.is_some() {
-            return self.render_provider_auth();
         }
         let floating = self.selected_draft_is_empty_and_unsubmitted();
         let composer = self.composer.read(cx);
@@ -85,14 +83,24 @@ impl FarcasterApp {
             command_suggestion_count
         };
         let controls_entity = entity.clone();
+        let runtime_picker = models::render_runtime_picker(self, entity.clone(), cx);
+        let dismiss_runtime_picker = entity.clone();
         let actions_entity = entity;
         div()
+            .relative()
             .w_full()
             .flex_none()
             .min_h(THEME.layout.composer_min)
             .flex()
             .flex_col()
-            .overflow_hidden()
+            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                let _ = dismiss_runtime_picker.update(cx, |this, cx| {
+                    if this.runtime_picker_open {
+                        this.runtime_picker_open = false;
+                        this.notify_composer(cx);
+                    }
+                });
+            })
             .when(floating, |composer| {
                 composer
                     .rounded(THEME.radius)
@@ -236,6 +244,7 @@ impl FarcasterApp {
                     .bg(THEME.colors.panel)
                     .child(self.render_composer_controls(controls_entity, !floating)),
             )
+            .when_some(runtime_picker, |composer, picker| composer.child(picker))
             .into_any_element()
     }
 
@@ -269,51 +278,6 @@ impl FarcasterApp {
         true
     }
 
-    fn render_provider_auth(&self) -> AnyElement {
-        let Some(auth) = self.extension.provider_auth.as_ref() else {
-            return div().into_any_element();
-        };
-        let url = auth.url.clone();
-        div()
-            .id("provider-auth-request")
-            .role(Role::Group)
-            .aria_label("Complete provider sign-in")
-            .flex_none()
-            .min_h(THEME.layout.composer_min)
-            .border_t(THEME.border)
-            .border_color(THEME.colors.accent)
-            .bg(THEME.colors.panel)
-            .p(THEME.space.md)
-            .flex()
-            .flex_col()
-            .gap(THEME.space.md)
-            .child(
-                div()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child("Complete provider sign-in"),
-            )
-            .child(selectable_dialog_text(
-                "provider-auth-instructions",
-                auth.message.clone(),
-            ))
-            .child(
-                div()
-                    .text_size(THEME.type_scale.caption)
-                    .text_color(THEME.colors.subtle)
-                    .child(
-                        "Waiting for browser authorization. This panel closes automatically when sign-in finishes.",
-                    ),
-            )
-            .child(div().flex().justify_end().child(button(
-                "provider-auth-open-browser",
-                "Open browser",
-                ButtonTone::Accent,
-                true,
-                move |_, cx| cx.open_url(&url),
-            )))
-            .into_any_element()
-    }
-
     fn render_composer_request(&self, entity: WeakEntity<Self>) -> AnyElement {
         let Some(dialog) = self.extension.dialog.as_ref() else {
             return div().into_any_element();
@@ -326,7 +290,6 @@ impl FarcasterApp {
         let key_focus = self.dialog_focus.clone();
         let keyboard_dialog = dialog.clone();
         let technical_editor = matches!(dialog, ExtensionUiRequest::Editor { .. });
-        let secret_input = matches!(dialog, ExtensionUiRequest::Secret { .. });
         let (title, body) = match dialog {
             ExtensionUiRequest::Select { title, options, .. } => {
                 let choices = options
@@ -443,9 +406,6 @@ impl FarcasterApp {
             ExtensionUiRequest::Input {
                 title, placeholder, ..
             }
-            | ExtensionUiRequest::Secret {
-                title, placeholder, ..
-            }
             | ExtensionUiRequest::Editor {
                 title,
                 prefill: placeholder,
@@ -471,15 +431,11 @@ impl FarcasterApp {
                                 .when(technical_editor, |input| {
                                     input.font_family(MONO_FONT_FAMILY)
                                 })
-                                .child(if secret_input {
-                                    Input::new(&self.dialog_secret_input)
-                                        .w_full()
-                                        .into_any_element()
-                                } else {
+                                .child(
                                     Textarea::new(&self.dialog_input)
                                         .w_full()
-                                        .into_any_element()
-                                }),
+                                        .into_any_element(),
+                                ),
                         )
                         .child(div().flex().justify_end().child(button(
                             "dialog-submit",

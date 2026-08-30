@@ -1,12 +1,21 @@
+use std::rc::Rc;
+
 use gpui::{
-    Anchor, AnyElement, IntoElement as _, ParentElement as _, Styled as _, WeakEntity, div, px,
+    Anchor, AnyElement, App, CursorStyle, ElementId, Focusable as _, InteractiveElement as _,
+    IntoElement as _, ParentElement as _, Role, StatefulInteractiveElement as _, Styled as _,
+    WeakEntity, div, prelude::FluentBuilder as _, px,
 };
-use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
+use gpui_component::{
+    input::Input,
+    menu::{DropdownMenu as _, PopupMenuItem},
+};
 
 use super::{super::FarcasterApp, composer_footer::separator};
 use crate::{
     assets::AppIcon,
-    primitives::{AppIconSize, ButtonTone, app_icon, dropdown_content_button},
+    primitives::{
+        AppIconSize, ButtonTone, activates_button, app_icon, dropdown_content_button, icon_button,
+    },
     runtime::{FileAccessMode, NetworkAccessMode, PermissionLevel},
     theme::{MONO_FONT_FAMILY, THEME},
 };
@@ -24,30 +33,10 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
                 .map(|model| model.provider.clone())
         })
         .unwrap_or_else(|| "Provider".into());
-    let mut providers = app
-        .snapshot
-        .models
-        .iter()
-        .map(|model| model.provider.clone())
-        .collect::<Vec<_>>();
-    providers.sort();
-    providers.dedup();
-    let provider_label = if providers.is_empty() {
-        "Provider".into()
-    } else {
-        selected_provider.clone()
-    };
+    let provider_label = selected_provider;
     let model_label = selected_model
         .map(|model| model.name.clone())
         .unwrap_or_else(|| "Model".into());
-    let provider_models = app
-        .snapshot
-        .models
-        .iter()
-        .filter(|model| model.provider == selected_provider)
-        .cloned()
-        .collect::<Vec<_>>();
-    let efforts = app.snapshot.thinking_levels.clone();
     let effort = identity.effort.unwrap_or("off");
     let runtime_content = div()
         .flex()
@@ -63,10 +52,7 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
                 .text_color(effort_color(effort))
                 .child(effort_label(effort)),
         );
-    let provider_entity = entity.clone();
-    let add_provider_entity = entity.clone();
-    let model_entity = entity.clone();
-    let effort_entity = entity.clone();
+    let runtime_entity = entity.clone();
     let runtime = dropdown_content_button(
         "select-runtime",
         "Runtime",
@@ -75,56 +61,19 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
         true,
     )
     .flex_none()
-    .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
-        let mut menu = menu.max_h(THEME.layout.dialog_max_height).label("Runtime");
-        for provider in &providers {
-            let target = provider.clone();
-            let entity = provider_entity.clone();
-            menu = menu.item(
-                PopupMenuItem::new(format!("Provider · {provider}")).on_click(move |_, _, cx| {
-                    let _ = entity.update(cx, |this, cx| {
-                        this.select_provider(&target, cx);
-                    });
-                }),
-            );
-        }
-        menu = menu.item(PopupMenuItem::new("Provider · Add…").on_click({
-            let entity = add_provider_entity.clone();
-            move |_, _, cx| {
-                let _ = entity.update(cx, |this, _| this.add_provider());
+    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+    .on_click(move |_, window, cx| {
+        cx.stop_propagation();
+        let _ = runtime_entity.update(cx, |this, cx| {
+            this.runtime_picker_open = !this.runtime_picker_open;
+            if this.runtime_picker_open {
+                this.runtime_model_search
+                    .read(cx)
+                    .focus_handle(cx)
+                    .focus(window, cx);
             }
-        }));
-        if !provider_models.is_empty() {
-            menu = menu.separator();
-        }
-        for model in &provider_models {
-            let target = model.clone();
-            let entity = model_entity.clone();
-            menu = menu.item(
-                PopupMenuItem::new(format!("Model · {}", model.name)).on_click(move |_, _, cx| {
-                    let _ = entity.update(cx, |this, cx| {
-                        this.select_model(&target, cx);
-                    });
-                }),
-            );
-        }
-        if !efforts.is_empty() {
-            menu = menu.separator();
-        }
-        for effort in &efforts {
-            let target = effort.clone();
-            let entity = effort_entity.clone();
-            menu = menu.item(
-                PopupMenuItem::new(format!("Effort · {}", effort_label(effort))).on_click(
-                    move |_, _, cx| {
-                        let _ = entity.update(cx, |this, cx| {
-                            this.set_thinking_level(target.clone(), cx);
-                        });
-                    },
-                ),
-            );
-        }
-        menu
+            this.notify_composer(cx);
+        });
     });
 
     div()
@@ -134,6 +83,237 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
         .child(runtime)
         .child(separator())
         .child(permission_selector(app.snapshot.permission_level, entity))
+        .into_any_element()
+}
+
+pub(super) fn render_runtime_picker(
+    app: &FarcasterApp,
+    entity: WeakEntity<FarcasterApp>,
+    cx: &App,
+) -> Option<AnyElement> {
+    if !app.runtime_picker_open {
+        return None;
+    }
+    let identity = app.snapshot.session_identity();
+    let selected_provider = identity.provider.unwrap_or_default();
+    let selected_model = identity.model.map(|model| model.id.as_str());
+    let selected_effort = identity.effort.unwrap_or("off");
+    let query = app
+        .runtime_model_search
+        .read(cx)
+        .value()
+        .trim()
+        .to_ascii_lowercase();
+    let mut providers = app
+        .snapshot
+        .models
+        .iter()
+        .map(|model| model.provider.clone())
+        .collect::<Vec<_>>();
+    providers.sort();
+    providers.dedup();
+    let models = app
+        .snapshot
+        .models
+        .iter()
+        .filter(|model| model.provider == selected_provider)
+        .filter(|model| model_matches_query(&model.name, &model.id, &query))
+        .cloned()
+        .collect::<Vec<_>>();
+    let close = entity.clone();
+
+    Some(
+        div()
+            .id("runtime-picker")
+            .absolute()
+            .left(px(8.0))
+            .bottom(px(43.0))
+            .w(px(520.0))
+            .max_w(gpui::relative(0.95))
+            .p(px(10.0))
+            .rounded(px(5.0))
+            .border(THEME.border)
+            .border_color(THEME.colors.border)
+            .bg(THEME.colors.surface)
+            .shadow_lg()
+            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(
+                div()
+                    .h(px(28.0))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_size(THEME.type_scale.caption)
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(THEME.colors.text)
+                            .child("Runtime"),
+                    )
+                    .child(icon_button(
+                        "close-runtime-picker",
+                        AppIcon::X,
+                        "Close runtime picker",
+                        ButtonTone::Quiet,
+                        move |_, cx| {
+                            let _ = close.update(cx, |this, cx| {
+                                this.runtime_picker_open = false;
+                                this.notify_composer(cx);
+                            });
+                        },
+                    )),
+            )
+            .child(
+                div()
+                    .min_h(px(188.0))
+                    .flex()
+                    .border(THEME.border)
+                    .border_color(THEME.colors.hover)
+                    .bg(THEME.colors.panel)
+                    .child(
+                        div()
+                            .w(px(138.0))
+                            .flex_none()
+                            .p(px(6.0))
+                            .border_r(THEME.border)
+                            .border_color(THEME.colors.hover)
+                            .child(picker_label("Provider"))
+                            .children(providers.into_iter().enumerate().map(
+                                |(index, provider)| {
+                                    let selected = provider == selected_provider;
+                                    let target = provider.clone();
+                                    let entity = entity.clone();
+                                    runtime_option(
+                                        ("runtime-provider", index),
+                                        provider,
+                                        selected,
+                                        move |cx| {
+                                            let _ = entity.update(cx, |this, cx| {
+                                                this.select_provider(&target, cx);
+                                            });
+                                        },
+                                    )
+                                },
+                            )),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .p(px(6.0))
+                            .child(picker_label("Model"))
+                            .child(
+                                div()
+                                    .h(px(28.0))
+                                    .mb(px(5.0))
+                                    .px(px(8.0))
+                                    .rounded(px(3.0))
+                                    .border(THEME.border)
+                                    .border_color(THEME.colors.hover)
+                                    .child(
+                                        Input::new(&app.runtime_model_search)
+                                            .w_full()
+                                            .appearance(false),
+                                    ),
+                            )
+                            .children(models.into_iter().enumerate().map(|(index, model)| {
+                                let selected = selected_model == Some(model.id.as_str());
+                                let label = model.name.clone();
+                                let entity = entity.clone();
+                                runtime_option(
+                                    ("runtime-model", index),
+                                    label,
+                                    selected,
+                                    move |cx| {
+                                        let _ = entity.update(cx, |this, cx| {
+                                            this.select_model(&model, cx);
+                                        });
+                                    },
+                                )
+                            })),
+                    ),
+            )
+            .child(
+                div()
+                    .pt(px(9.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .child(picker_label("Effort"))
+                    .children(app.snapshot.thinking_levels.iter().enumerate().map(
+                        |(index, effort)| {
+                            let target = effort.clone();
+                            let selected = effort == selected_effort;
+                            let entity = entity.clone();
+                            runtime_option(
+                                ("runtime-effort", index),
+                                effort_label(effort),
+                                selected,
+                                move |cx| {
+                                    let _ = entity.update(cx, |this, cx| {
+                                        this.set_thinking_level(target.clone(), cx);
+                                    });
+                                },
+                            )
+                        },
+                    )),
+            )
+            .into_any_element(),
+    )
+}
+
+fn model_matches_query(name: &str, id: &str, query: &str) -> bool {
+    query.is_empty()
+        || name.to_ascii_lowercase().contains(query)
+        || id.to_ascii_lowercase().contains(query)
+}
+
+fn picker_label(label: &'static str) -> AnyElement {
+    div()
+        .px(px(6.0))
+        .py(px(3.0))
+        .text_size(px(9.0))
+        .text_color(THEME.colors.subtle)
+        .child(label)
+        .into_any_element()
+}
+
+fn runtime_option(
+    id: impl Into<ElementId>,
+    label: String,
+    selected: bool,
+    on_press: impl Fn(&mut App) + 'static,
+) -> AnyElement {
+    let on_press = Rc::new(on_press);
+    let click = Rc::clone(&on_press);
+    div()
+        .id(id)
+        .role(Role::Button)
+        .aria_label(label.clone())
+        .aria_selected(selected)
+        .tab_index(0)
+        .min_h(px(28.0))
+        .px(px(7.0))
+        .rounded(px(3.0))
+        .flex()
+        .items_center()
+        .cursor(CursorStyle::PointingHand)
+        .text_size(THEME.type_scale.caption)
+        .text_color(if selected {
+            THEME.colors.text
+        } else {
+            THEME.colors.muted
+        })
+        .when(selected, |option| option.bg(THEME.colors.selection))
+        .hover(|option| option.bg(THEME.colors.hover))
+        .on_click(move |_, _, cx| click(cx))
+        .on_key_down(move |event, _, cx| {
+            if activates_button(event) {
+                cx.stop_propagation();
+                on_press(cx);
+            }
+        })
+        .child(label)
         .into_any_element()
 }
 
@@ -250,6 +430,13 @@ fn network_access_color(mode: NetworkAccessMode) -> gpui::Rgba {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runtime_model_search_matches_names_and_ids() {
+        assert!(model_matches_query("GPT-5 Codex", "gpt-5-codex", "codex"));
+        assert!(model_matches_query("GPT-5 Codex", "gpt-5-codex", "gpt-5"));
+        assert!(!model_matches_query("GPT-5 Codex", "gpt-5-codex", "claude"));
+    }
 
     #[test]
     fn permission_modes_have_distinct_compact_colors() {

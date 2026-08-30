@@ -200,7 +200,6 @@ pub(crate) struct FarcasterApp {
     sessions_error: Option<String>,
     session_project_filter: Option<PathBuf>,
     picker: Option<picker::PickerState>,
-    pending_extension_picker: Option<PickerScope>,
     picker_return_focus: Option<FocusHandle>,
     session_list: ListState,
     session_list_rows: RefCell<Vec<String>>,
@@ -215,6 +214,8 @@ pub(crate) struct FarcasterApp {
     composer_project_files_project: Option<PathBuf>,
     composer_project_files_loading: Option<PathBuf>,
     composer_suggestion_selection: usize,
+    runtime_picker_open: bool,
+    runtime_model_search: Entity<InputState>,
     session_rail_view: Entity<SessionRailView>,
     archived_session_rail_view: Entity<InactiveSessionRailView>,
     transcript_view: Entity<TranscriptView>,
@@ -251,7 +252,6 @@ pub(crate) struct FarcasterApp {
     editing_session_title: Option<SessionTitleEdit>,
     pending_session_title_focus: bool,
     dialog_input: Entity<TextareaState>,
-    dialog_secret_input: Entity<InputState>,
     composer_focus: FocusHandle,
     dialog_focus: FocusHandle,
     dialog_return_focus: Option<FocusHandle>,
@@ -298,6 +298,7 @@ pub(crate) struct FarcasterApp {
     session_shortcuts_visible: bool,
     _composer_subscription: Subscription,
     _search_subscription: Subscription,
+    _runtime_model_search_subscription: Subscription,
     _session_title_subscription: Subscription,
     _window_activation_subscription: Subscription,
     _window_placement_subscription: Subscription,
@@ -389,6 +390,8 @@ impl FarcasterApp {
         });
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search sessions"));
         let search_focus = search.read(cx).focus_handle(cx);
+        let runtime_model_search =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Filter models…"));
         let session_title_input = cx.new(|cx| InputState::new(window, cx));
         let network_proxy_input = cx.new(|cx| {
             InputState::new(window, cx)
@@ -400,7 +403,6 @@ impl FarcasterApp {
                 .auto_grow(2, 12)
                 .submit_on_enter(false)
         });
-        let dialog_secret_input = cx.new(|cx| InputState::new(window, cx).masked(true));
         let composer_focus = composer.read(cx).focus_handle(cx);
         let dialog_focus = cx.focus_handle();
         let composer_subscription = cx.subscribe_in(
@@ -459,6 +461,15 @@ impl FarcasterApp {
                     this.send(RuntimeCommand::LoadSessions(query));
                 }
             });
+        let runtime_model_search_subscription = cx.subscribe_in(
+            &runtime_model_search,
+            window,
+            |this, _, event: &InputEvent, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.notify_composer(cx);
+                }
+            },
+        );
         let session_title_subscription = cx.subscribe_in(
             &session_title_input,
             window,
@@ -604,7 +615,6 @@ impl FarcasterApp {
             sessions_error: project_registry_error,
             session_project_filter: None,
             picker: None,
-            pending_extension_picker: None,
             picker_return_focus: None,
             session_list: ListState::new(
                 0,
@@ -627,6 +637,8 @@ impl FarcasterApp {
             composer_project_files_project: None,
             composer_project_files_loading: None,
             composer_suggestion_selection: 0,
+            runtime_picker_open: false,
+            runtime_model_search,
             session_rail_view,
             archived_session_rail_view,
             transcript_view,
@@ -663,7 +675,6 @@ impl FarcasterApp {
             editing_session_title: None,
             pending_session_title_focus: false,
             dialog_input,
-            dialog_secret_input,
             composer_focus,
             dialog_focus,
             dialog_return_focus: None,
@@ -710,6 +721,7 @@ impl FarcasterApp {
             session_shortcuts_visible: false,
             _composer_subscription: composer_subscription,
             _search_subscription: search_subscription,
+            _runtime_model_search_subscription: runtime_model_search_subscription,
             _session_title_subscription: session_title_subscription,
             _window_activation_subscription: window_activation_subscription,
             _window_placement_subscription: window_placement_subscription,
@@ -1243,7 +1255,6 @@ impl FarcasterApp {
         self.extension.reset();
         self.parked_extension = None;
         self.background_jobs.clear();
-        self.pending_extension_picker = None;
         self.restored_dialog_id = None;
         self.dismissed_restored_dialog_id = None;
         self.notification_expiries.clear();
@@ -1317,19 +1328,11 @@ impl FarcasterApp {
         generation: u64,
         cx: &mut Context<Self>,
     ) {
-        if let Some(scope) = picker::provider_login_scope(&request) {
-            self.pending_extension_picker = Some(scope);
-            return;
-        }
         match self.extension.apply(request) {
             ExtensionEffect::DialogOpened => self.pending_dialog_setup = true,
             ExtensionEffect::SetTitle(title) => self.pending_title = Some((generation, title)),
             ExtensionEffect::SetEditorText(text) => {
                 self.pending_editor_text = Some((generation, text))
-            }
-            ExtensionEffect::OpenUrl(url) => {
-                self.enter_chat_surface(self.composer_focus.clone(), cx);
-                cx.open_url(&url);
             }
             ExtensionEffect::PersistError(_) | ExtensionEffect::None => {}
             ExtensionEffect::Diagnostic(message) => {
@@ -1861,10 +1864,6 @@ impl FarcasterApp {
             model_id: model.id.clone(),
         });
         cx.notify();
-    }
-
-    fn add_provider(&mut self) {
-        self.send(RuntimeCommand::Login(None));
     }
 
     fn set_thinking_level(&mut self, level: String, cx: &mut Context<Self>) {
