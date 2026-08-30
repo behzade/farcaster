@@ -68,14 +68,6 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
         decode_empty(response)
     }
 
-    pub(crate) fn event_request() -> OpenCodeHttpRequest {
-        OpenCodeHttpRequest {
-            method: OpenCodeHttpMethod::Get,
-            path: "/api/event".into(),
-            body: None,
-        }
-    }
-
     pub(crate) fn into_transport(self) -> T {
         self.transport
     }

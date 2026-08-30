@@ -3,6 +3,8 @@ mod client;
 mod client_tests;
 mod contract;
 mod event;
+mod server;
+mod transport;
 
 use crate::agents::{
     AgentBackendDescriptor, AgentBackendId, AgentCapabilities, CapabilitySupport,

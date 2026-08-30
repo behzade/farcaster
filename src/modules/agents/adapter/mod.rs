@@ -11,3 +11,11 @@ pub(crate) use pi::{
 };
 #[cfg(test)]
 pub(crate) use pi::{PiWireMessage, parse_frame};
+
+pub(super) fn known_backend_descriptors() -> [crate::agents::AgentBackendDescriptor; 3] {
+    [
+        pi::descriptor(),
+        codex::descriptor(),
+        opencode::descriptor(),
+    ]
+}

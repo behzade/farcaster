@@ -106,10 +106,6 @@ fn native_vertical_slice_preserves_session_and_prompt_features() -> Result<(), S
     );
     assert_eq!(body(&transport.requests[3]), json!({"continue": false}));
     assert_eq!(transport.requests[4].method, OpenCodeHttpMethod::Delete);
-    assert_eq!(
-        OpenCodeClient::<FakeTransport>::event_request().path,
-        "/api/event"
-    );
     Ok(())
 }
 
