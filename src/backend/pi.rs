@@ -46,6 +46,9 @@ pub(super) fn encode_request(request: BackendRequest) -> Value {
         BackendRequest::Rename { name } => {
             json!({"type": "set_session_name", "name": name})
         }
+        BackendRequest::ForkAt { entry_id } => {
+            json!({"type": "fork", "entryId": entry_id})
+        }
         BackendRequest::Login { provider } => optional_string("login", "provider", provider),
         BackendRequest::SelectModel { provider, model_id } => json!({
             "type": "set_model",

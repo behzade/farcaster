@@ -16,7 +16,7 @@ attribution.
 - Git and Jujutsu working-copy views
 - Embedded Neovim and project terminal surfaces
 - Durable drafts, session ordering, workgraphs, and application state
-- Stateless MCP access to workgraphs and user-approved sandbox grants
+- Stateless MCP access to workers, workgraphs, and sandbox grants
 
 Pi settings, context files, extensions, skills, and authentication load in the
 selected project directory. Farcaster owns the outer nono sandbox and runs Pi's
@@ -49,8 +49,9 @@ bundle. Signing is ad hoc by default; set
 does not require `PATH` or `FARCASTER_NONO_PATH` to locate `nono`.
 
 Farcaster serves stateless Streamable HTTP MCP at
-`http://127.0.0.1:8765/mcp`. It exposes `request_access`, `workgraph_search`,
-`workgraph_patch`, and `workgraph_complete`, and accepts MCP `2026-07-28` only.
+`http://127.0.0.1:8765/mcp`. It exposes `worker_backends`, `worker_start`,
+`worker_send`, `worker_respond`, `worker_list`, `worker_status`, `worker_stop`,
+`request_access`, and the `workgraph_*` tools. It accepts MCP `2026-07-28` only.
 Approved session grants last until Farcaster exits; project grants are stored in
 Farcaster application data and bound to the workspace identity. Grants activate
 by restarting and resuming the agent after its current turn. Farcaster passes

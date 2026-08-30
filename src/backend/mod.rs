@@ -1,4 +1,12 @@
 mod pi;
+mod pi_worker;
+mod worker;
+
+pub(crate) use pi_worker::PiWorkerFactory;
+pub(crate) use worker::{
+    WorkerContext, WorkerEvent, WorkerInput, WorkerInputResponse, WorkerLaunch, WorkerSendMode,
+    WorkerSession, WorkerSessionFactory,
+};
 
 use serde_json::Value;
 
@@ -46,6 +54,9 @@ pub(crate) enum BackendRequest {
     Rename {
         name: String,
     },
+    ForkAt {
+        entry_id: String,
+    },
     Login {
         provider: Option<String>,
     },
@@ -81,6 +92,7 @@ impl BackendRequest {
             Self::Compact { .. } => "compact",
             Self::ExportHtml { .. } => "export HTML",
             Self::Rename { .. } => "rename session",
+            Self::ForkAt { .. } => "fork session",
             Self::Login { .. } => "login",
             Self::SelectModel { .. } => "select model",
             Self::SelectReasoning { .. } => "select reasoning",

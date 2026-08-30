@@ -1,36 +1,22 @@
 //! Stateless MCP delivery adapter for Farcaster-owned capabilities.
 
-use std::{
-    borrow::Cow,
-    net::TcpListener,
-    path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
-    thread::JoinHandle,
-    time::{SystemTime, UNIX_EPOCH},
-};
+mod workers;
+mod workgraph;
+
+use std::{borrow::Cow, net::TcpListener, path::PathBuf, thread::JoinHandle};
 
 use rmcp::{
     ServerHandler,
-    handler::server::wrapper::Parameters,
+    handler::server::wrapper::{Json, Parameters},
     model::ProtocolVersion,
-    schemars, tool, tool_handler, tool_router,
+    tool, tool_handler, tool_router,
     transport::streamable_http_server::{
         StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
     },
 };
-use serde::Deserialize;
-use workgraph::{
-    adapter::SqliteAdapter,
-    contract::{
-        EditAction, EditRequest, EditResult, Evidence, EvidenceKind, NodeDraft, Outcome,
-        SearchRequest, SearchResult,
-    },
-    core::WorkGraph,
-};
 
 const BIND_ADDRESS: &str = "127.0.0.1:8765";
 const MCP_PATH: &str = "/mcp";
-static OPERATION_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) struct McpServer {
     _thread: JoinHandle<()>,
@@ -39,6 +25,7 @@ pub(crate) struct McpServer {
 pub(crate) fn start(
     database: PathBuf,
     approvals: crate::sandbox::approval::ApprovalService,
+    worker_pool: crate::workers::WorkerPool,
 ) -> Result<McpServer, String> {
     let listener = TcpListener::bind(BIND_ADDRESS)
         .map_err(|error| format!("bind http://{BIND_ADDRESS}{MCP_PATH}: {error}"))?;
@@ -48,7 +35,7 @@ pub(crate) fn start(
     let thread = std::thread::Builder::new()
         .name("farcaster-mcp".into())
         .spawn(move || {
-            if let Err(error) = serve(listener, database, approvals) {
+            if let Err(error) = serve(listener, database, approvals, worker_pool) {
                 zlog::error!("MCP server stopped: {error}");
             }
         })
@@ -60,6 +47,7 @@ fn serve(
     listener: TcpListener,
     database: PathBuf,
     approvals: crate::sandbox::approval::ApprovalService,
+    worker_pool: crate::workers::WorkerPool,
 ) -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -70,7 +58,13 @@ fn serve(
             .map_err(|error| format!("open MCP listener: {error}"))?;
         let config = server_config();
         let service = StreamableHttpService::new(
-            move || Ok(WorkGraphMcp::new(database.clone(), approvals.clone())),
+            move || {
+                Ok(FarcasterMcp::new(
+                    database.clone(),
+                    approvals.clone(),
+                    worker_pool.clone(),
+                ))
+            },
             LocalSessionManager::default().into(),
             config,
         );
@@ -89,74 +83,28 @@ fn server_config() -> StreamableHttpServerConfig {
 }
 
 #[derive(Clone)]
-struct WorkGraphMcp {
+struct FarcasterMcp {
     database: PathBuf,
     approvals: crate::sandbox::approval::ApprovalService,
+    workers: crate::workers::WorkerPool,
 }
 
-impl WorkGraphMcp {
-    fn new(database: PathBuf, approvals: crate::sandbox::approval::ApprovalService) -> Self {
+impl FarcasterMcp {
+    fn new(
+        database: PathBuf,
+        approvals: crate::sandbox::approval::ApprovalService,
+        workers: crate::workers::WorkerPool,
+    ) -> Self {
         Self {
             database,
             approvals,
+            workers,
         }
     }
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
-struct SearchParams {
-    /// Absolute project directory.
-    project: String,
-    /// Text matched case-insensitively against node titles and acceptance conditions.
-    #[serde(default)]
-    query: String,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
-struct PatchNode {
-    /// Concise task title.
-    title: String,
-    /// Observable condition that proves the task is complete.
-    acceptance: String,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
-struct PatchParams {
-    /// Absolute project directory.
-    project: String,
-    /// Backend session identifier that owns this walk.
-    session_id: String,
-    /// Backend session path or stable session locator.
-    session_path: String,
-    /// Ordered task chain to insert.
-    nodes: Vec<PatchNode>,
-    /// Existing node before the inserted chain.
-    #[serde(default)]
-    after: Option<u64>,
-    /// Existing node after the inserted chain.
-    #[serde(default)]
-    before: Option<u64>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
-struct CompleteParams {
-    /// Absolute project directory.
-    project: String,
-    /// Backend session identifier attached to the active walk.
-    session_id: String,
-    /// Evidence that the active task's acceptance condition was met.
-    evidence: String,
-    /// Successor node when the active node branches.
-    #[serde(default)]
-    next: Option<u64>,
-}
-
 #[tool_router]
-impl WorkGraphMcp {
+impl FarcasterMcp {
     #[tool(
         name = "request_access",
         description = "Ask the user to grant exact filesystem or network rights to Farcaster's outer sandbox. The grant activates after the current agent turn ends; never retry in the same turn"
@@ -169,12 +117,107 @@ impl WorkGraphMcp {
     }
 
     #[tool(
+        name = "worker_backends",
+        description = "List worker backends available from this Farcaster instance"
+    )]
+    async fn worker_backends(
+        &self,
+        Parameters(_params): Parameters<workers::ListParams>,
+    ) -> Json<serde_json::Value> {
+        Json(workers::backends(&self.workers))
+    }
+
+    #[tool(
+        name = "worker_start",
+        description = "Start an independent worker in Farcaster's bounded backend-neutral pool"
+    )]
+    async fn worker_start(
+        &self,
+        Parameters(params): Parameters<workers::StartParams>,
+    ) -> Result<Json<serde_json::Value>, String> {
+        let pool = self.workers.clone();
+        let value = tokio::task::spawn_blocking(move || workers::start(&pool, params))
+            .await
+            .map_err(|error| format!("worker start task failed: {error}"))??;
+        Ok(Json(value))
+    }
+
+    #[tool(
+        name = "worker_send",
+        description = "Prompt or steer an existing Farcaster worker"
+    )]
+    async fn worker_send(
+        &self,
+        Parameters(params): Parameters<workers::SendParams>,
+    ) -> Result<Json<serde_json::Value>, String> {
+        let pool = self.workers.clone();
+        let value = tokio::task::spawn_blocking(move || workers::send(&pool, params))
+            .await
+            .map_err(|error| format!("worker send task failed: {error}"))??;
+        Ok(Json(value))
+    }
+
+    #[tool(
+        name = "worker_respond",
+        description = "Answer or cancel an interactive request from a Farcaster worker"
+    )]
+    async fn worker_respond(
+        &self,
+        Parameters(params): Parameters<workers::RespondParams>,
+    ) -> Result<Json<serde_json::Value>, String> {
+        let pool = self.workers.clone();
+        let value = tokio::task::spawn_blocking(move || workers::respond(&pool, params))
+            .await
+            .map_err(|error| format!("worker response task failed: {error}"))??;
+        Ok(Json(value))
+    }
+
+    #[tool(name = "worker_list", description = "List Farcaster workers")]
+    async fn worker_list(
+        &self,
+        Parameters(_params): Parameters<workers::ListParams>,
+    ) -> Result<Json<serde_json::Value>, String> {
+        let pool = self.workers.clone();
+        let value = tokio::task::spawn_blocking(move || workers::list(&pool))
+            .await
+            .map_err(|error| format!("worker list task failed: {error}"))??;
+        Ok(Json(value))
+    }
+
+    #[tool(name = "worker_status", description = "Inspect one Farcaster worker")]
+    async fn worker_status(
+        &self,
+        Parameters(params): Parameters<workers::WorkerParams>,
+    ) -> Result<Json<serde_json::Value>, String> {
+        let pool = self.workers.clone();
+        let value = tokio::task::spawn_blocking(move || workers::status(&pool, params))
+            .await
+            .map_err(|error| format!("worker status task failed: {error}"))??;
+        Ok(Json(value))
+    }
+
+    #[tool(name = "worker_stop", description = "Stop one Farcaster worker")]
+    async fn worker_stop(
+        &self,
+        Parameters(params): Parameters<workers::WorkerParams>,
+    ) -> Result<Json<serde_json::Value>, String> {
+        let pool = self.workers.clone();
+        let value = tokio::task::spawn_blocking(move || workers::stop(&pool, params))
+            .await
+            .map_err(|error| format!("worker stop task failed: {error}"))??;
+        Ok(Json(value))
+    }
+
+    #[tool(
         name = "workgraph_search",
         description = "Search Farcaster's durable work graph by node title or acceptance condition"
     )]
-    async fn search(&self, Parameters(params): Parameters<SearchParams>) -> Result<String, String> {
+    async fn search(
+        &self,
+        Parameters(params): Parameters<workgraph::SearchParams>,
+    ) -> Result<String, String> {
         let database = self.database.clone();
-        tokio::task::spawn_blocking(move || search_workgraph(&database, params))
+        tokio::task::spawn_blocking(move || workgraph::search(&database, params))
             .await
             .map_err(|error| format!("work graph search task failed: {error}"))?
     }
@@ -183,9 +226,12 @@ impl WorkGraphMcp {
         name = "workgraph_patch",
         description = "Create or extend an ordered task chain in Farcaster's durable work graph"
     )]
-    async fn patch(&self, Parameters(params): Parameters<PatchParams>) -> Result<String, String> {
+    async fn patch(
+        &self,
+        Parameters(params): Parameters<workgraph::PatchParams>,
+    ) -> Result<String, String> {
         let database = self.database.clone();
-        tokio::task::spawn_blocking(move || patch_workgraph(&database, params))
+        tokio::task::spawn_blocking(move || workgraph::patch(&database, params))
             .await
             .map_err(|error| format!("work graph patch task failed: {error}"))?
     }
@@ -196,130 +242,44 @@ impl WorkGraphMcp {
     )]
     async fn complete(
         &self,
-        Parameters(params): Parameters<CompleteParams>,
+        Parameters(params): Parameters<workgraph::CompleteParams>,
     ) -> Result<String, String> {
         let database = self.database.clone();
-        tokio::task::spawn_blocking(move || complete_workgraph(&database, params))
+        tokio::task::spawn_blocking(move || workgraph::complete(&database, params))
             .await
             .map_err(|error| format!("work graph completion task failed: {error}"))?
     }
 }
 
 #[tool_handler(name = "farcaster", version = "0.1.0")]
-impl ServerHandler for WorkGraphMcp {
+impl ServerHandler for FarcasterMcp {
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
         Cow::Borrowed(&[ProtocolVersion::V_2026_07_28])
     }
 }
 
-fn search_workgraph(database: &Path, params: SearchParams) -> Result<String, String> {
-    let project = canonical_project(&params.project)?;
-    let adapter = SqliteAdapter::open(database).map_err(|error| error.to_string())?;
-    let mut graph = WorkGraph::new(adapter);
-    let SearchResult::Project(project_graph) = graph
-        .search(&SearchRequest::Project { project })
-        .map_err(|error| error.to_string())?
-    else {
-        return Err("work graph returned an unexpected search result".into());
-    };
-    let query = params.query.trim().to_lowercase();
-    let nodes = project_graph
-        .nodes
-        .into_iter()
-        .filter(|node| {
-            query.is_empty()
-                || node.title.to_lowercase().contains(&query)
-                || node.acceptance.to_lowercase().contains(&query)
-        })
-        .collect::<Vec<_>>();
-    serde_json::to_string_pretty(&nodes)
-        .map_err(|error| format!("encode work graph search: {error}"))
-}
-
-fn patch_workgraph(database: &Path, params: PatchParams) -> Result<String, String> {
-    let project = canonical_project(&params.project)?;
-    let adapter = SqliteAdapter::open(database).map_err(|error| error.to_string())?;
-    let mut graph = WorkGraph::new(adapter);
-    let result = graph
-        .edit(&EditRequest {
-            project,
-            idempotency_key: operation_id("mcp-patch")?,
-            action: EditAction::Patch {
-                nodes: params
-                    .nodes
-                    .into_iter()
-                    .map(|node| NodeDraft {
-                        title: node.title,
-                        acceptance: node.acceptance,
-                    })
-                    .collect(),
-                after: params.after,
-                before: params.before,
-                session_id: params.session_id,
-                session_path: params.session_path,
-            },
-        })
-        .map_err(|error| error.to_string())?;
-    let EditResult::Plan(snapshot) = result else {
-        return Err("work graph returned an unexpected patch result".into());
-    };
-    serde_json::to_string_pretty(&snapshot)
-        .map_err(|error| format!("encode work graph patch: {error}"))
-}
-
-fn complete_workgraph(database: &Path, params: CompleteParams) -> Result<String, String> {
-    let project = canonical_project(&params.project)?;
-    let adapter = SqliteAdapter::open(database).map_err(|error| error.to_string())?;
-    let mut graph = WorkGraph::new(adapter);
-    let result = graph
-        .edit(&EditRequest {
-            project,
-            idempotency_key: operation_id("mcp-complete")?,
-            action: EditAction::Complete {
-                session_id: params.session_id,
-                next: params.next,
-                outcome: Outcome {
-                    note: params.evidence.clone(),
-                    evidence: Evidence {
-                        kind: EvidenceKind::Observation,
-                        reference: params.evidence,
-                    },
-                },
-            },
-        })
-        .map_err(|error| error.to_string())?;
-    let EditResult::Plan(snapshot) = result else {
-        return Err("work graph returned an unexpected completion result".into());
-    };
-    serde_json::to_string_pretty(&snapshot)
-        .map_err(|error| format!("encode work graph completion: {error}"))
-}
-
-fn canonical_project(project: &str) -> Result<String, String> {
-    Path::new(project)
-        .canonicalize()
-        .map_err(|error| format!("resolve work graph project: {error}"))?
-        .into_os_string()
-        .into_string()
-        .map_err(|_| "work graph project path is not valid UTF-8".to_owned())
-}
-
-fn operation_id(prefix: &str) -> Result<String, String> {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| "system clock is unavailable".to_owned())?
-        .as_nanos();
-    let sequence = OPERATION_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    Ok(format!("{prefix}-{nanos}-{sequence}"))
-}
-
 #[cfg(test)]
 mod tests {
+    use std::{collections::BTreeMap, sync::Arc};
+
     use super::*;
+
+    fn worker_pool(project: &std::path::Path) -> crate::workers::WorkerPool {
+        let factory: Arc<dyn crate::backend::WorkerSessionFactory> = Arc::new(
+            crate::backend::PiWorkerFactory::new(crate::rpc_process::ProcessCommand::default()),
+        );
+        crate::workers::WorkerPool::new(
+            BTreeMap::from([("pi".into(), factory)]),
+            "pi".into(),
+            project.to_owned(),
+            4,
+        )
+        .expect("worker pool")
+    }
 
     #[test]
     fn exposes_only_farcaster_tools() {
-        let tools = WorkGraphMcp::tool_router().list_all();
+        let tools = FarcasterMcp::tool_router().list_all();
         let names = tools
             .iter()
             .map(|tool| tool.name.as_ref())
@@ -328,10 +288,23 @@ mod tests {
             names,
             [
                 "request_access",
+                "worker_backends",
+                "worker_list",
+                "worker_respond",
+                "worker_send",
+                "worker_start",
+                "worker_status",
+                "worker_stop",
                 "workgraph_complete",
                 "workgraph_patch",
                 "workgraph_search"
             ]
+        );
+        assert!(
+            tools
+                .iter()
+                .filter(|tool| tool.name.starts_with("worker_"))
+                .all(|tool| tool.output_schema.is_some())
         );
     }
 
@@ -353,7 +326,7 @@ mod tests {
             crate::sandbox::test_nono_bypass(),
         )
         .expect("approval channel");
-        let server = WorkGraphMcp::new(PathBuf::from("unused"), approvals);
+        let server = FarcasterMcp::new(PathBuf::from("unused"), approvals, worker_pool(&project));
         assert_eq!(
             server.supported_protocol_versions().as_ref(),
             [ProtocolVersion::V_2026_07_28]
@@ -372,18 +345,18 @@ mod tests {
         let database = temp.path().join("state.sqlite3");
         let project = project.to_string_lossy().into_owned();
 
-        let patched = patch_workgraph(
+        let patched = workgraph::patch(
             &database,
-            PatchParams {
+            workgraph::PatchParams {
                 project: project.clone(),
                 session_id: "session-1".into(),
                 session_path: "backend://session-1".into(),
                 nodes: vec![
-                    PatchNode {
+                    workgraph::PatchNode {
                         title: "Add MCP server".into(),
                         acceptance: "Server answers modern MCP requests".into(),
                     },
-                    PatchNode {
+                    workgraph::PatchNode {
                         title: "Verify client".into(),
                         acceptance: "Client can call every exposed tool".into(),
                     },
@@ -394,9 +367,9 @@ mod tests {
         )?;
         assert!(patched.contains("Add MCP server"));
 
-        let found = search_workgraph(
+        let found = workgraph::search(
             &database,
-            SearchParams {
+            workgraph::SearchParams {
                 project: project.clone(),
                 query: "modern mcp".into(),
             },
@@ -404,9 +377,9 @@ mod tests {
         assert!(found.contains("Add MCP server"));
         assert!(!found.contains("Verify client"));
 
-        let completed = complete_workgraph(
+        let completed = workgraph::complete(
             &database,
-            CompleteParams {
+            workgraph::CompleteParams {
                 project,
                 session_id: "session-1".into(),
                 evidence: "MCP contract test passed".into(),

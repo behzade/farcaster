@@ -44,6 +44,7 @@ mod transcript_attachments;
 mod transcript_list;
 mod transcript_markdown;
 mod user_invocations;
+mod workers;
 
 fn main() -> std::process::ExitCode {
     #[cfg(target_os = "linux")]
@@ -90,11 +91,27 @@ fn main() -> std::process::ExitCode {
         Ok(channel) => channel,
         Err(error) => return fail(format!("initialize sandbox approvals: {error}")),
     };
-    let _mcp_server =
-        match state::state_path().and_then(|database| mcp_server::start(database, approvals)) {
-            Ok(server) => server,
-            Err(error) => return fail(format!("start MCP server: {error}")),
-        };
+    let worker_command = rpc_process::ProcessCommand {
+        grants: Some(approval_ui.grants()),
+        ..rpc_process::ProcessCommand::default()
+    };
+    let worker_factory: std::sync::Arc<dyn backend::WorkerSessionFactory> =
+        std::sync::Arc::new(backend::PiWorkerFactory::new(worker_command));
+    let worker_pool = match workers::WorkerPool::new(
+        std::collections::BTreeMap::from([("pi".into(), worker_factory)]),
+        "pi".into(),
+        project.clone(),
+        8,
+    ) {
+        Ok(pool) => pool,
+        Err(error) => return fail(format!("initialize worker pool: {error}")),
+    };
+    let _mcp_server = match state::state_path()
+        .and_then(|database| mcp_server::start(database, approvals, worker_pool))
+    {
+        Ok(server) => server,
+        Err(error) => return fail(format!("start MCP server: {error}")),
+    };
 
     match launch::run(project, approval_ui) {
         Ok(()) => std::process::ExitCode::SUCCESS,

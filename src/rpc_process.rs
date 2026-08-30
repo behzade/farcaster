@@ -15,7 +15,7 @@ use serde_json::Value;
 use crate::{
     backend::{BackendEvent, BackendRequest, encode_pi_request},
     framing::{JsonlFramer, encode_json_line},
-    protocol::{ExtensionUiResponse, WireMessage, parse_frame},
+    protocol::{ExtensionUiResponse, RpcResponse, WireMessage, parse_frame},
     runtime::PermissionLevel,
 };
 
@@ -278,6 +278,14 @@ impl RpcProcess {
         Self::spawn_inner(command, project, launch, Some(wake))
     }
 
+    pub(crate) fn spawn_fork(
+        command: &ProcessCommand,
+        project: &Path,
+        source: &Path,
+    ) -> Result<Self, String> {
+        Self::spawn_inner(command, project, SessionLaunch::Fork(source), None)
+    }
+
     pub(crate) fn spawn_fork_with_waker(
         command: &ProcessCommand,
         project: &Path,
@@ -364,6 +372,40 @@ impl RpcProcess {
             return Err(error);
         }
         Ok(id)
+    }
+
+    pub(crate) fn request_and_wait(
+        &mut self,
+        request: BackendRequest,
+    ) -> Result<RpcResponse, String> {
+        let operation = request.operation();
+        let id = self.send_request(request)?;
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while Instant::now() < deadline {
+            match self.incoming.recv_timeout(Duration::from_millis(50)) {
+                Ok(ReaderItem::StderrEof) => {}
+                Ok(item) => match self.route(item) {
+                    BackendEvent::Response(response) if response.id.as_deref() == Some(&id) => {
+                        return if response.success {
+                            Ok(response)
+                        } else {
+                            Err(response
+                                .error
+                                .unwrap_or_else(|| format!("Pi could not {operation}")))
+                        };
+                    }
+                    BackendEvent::Failure(error) => return Err(error),
+                    other => self.queued.push_back(other),
+                },
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(format!(
+                        "Pi readers stopped while attempting to {operation}"
+                    ));
+                }
+            }
+        }
+        Err(format!("Pi did not {operation} within 15 seconds"))
     }
 
     pub(crate) fn rename_session(
@@ -817,6 +859,18 @@ mod tests {
         assert!(arguments.windows(4).any(|arguments| {
             arguments == ["--sandbox-files", "full", "--sandbox-network", "full"]
         }));
+        Ok(())
+    }
+
+    #[test]
+    fn request_and_wait_confirms_configuration_before_returning() -> TestResult {
+        let (temp, command) = fake("normal")?;
+        let mut rpc = RpcProcess::spawn(&command, temp.path(), None)?;
+        let response = rpc.request_and_wait(BackendRequest::SelectReasoning {
+            level: "medium".into(),
+        })?;
+        assert_eq!(response.command, "set_thinking_level");
+        rpc.terminate()?;
         Ok(())
     }
 
