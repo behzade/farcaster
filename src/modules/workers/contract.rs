@@ -21,6 +21,22 @@ pub(crate) enum WorkerMessageMode {
     Steer,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WorkerInput {
+    pub(crate) id: String,
+    pub(crate) prompt: String,
+    pub(crate) options: Vec<String>,
+    pub(crate) secret: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct WorkerInputResponse {
+    pub(crate) id: String,
+    pub(crate) value: Option<String>,
+    pub(crate) cancel: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct StartWorker {
     pub(crate) project: PathBuf,
@@ -59,5 +75,5 @@ pub(crate) struct WorkerSnapshot {
     pub(crate) status: WorkerStatus,
     pub(crate) output: Option<String>,
     pub(crate) error: Option<String>,
-    pub(crate) pending_input: Option<crate::backend::WorkerInput>,
+    pub(crate) pending_input: Option<WorkerInput>,
 }

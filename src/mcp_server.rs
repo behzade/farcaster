@@ -265,7 +265,7 @@ mod tests {
     use super::*;
 
     fn worker_pool(project: &std::path::Path) -> crate::workers::WorkerPool {
-        let factory: Arc<dyn crate::backend::WorkerSessionFactory> = Arc::new(
+        let factory: Arc<dyn crate::workers::WorkerSessionFactory> = Arc::new(
             crate::backend::PiWorkerFactory::new(crate::rpc_process::ProcessCommand::default()),
         );
         crate::workers::WorkerPool::new(

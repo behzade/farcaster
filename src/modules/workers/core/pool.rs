@@ -6,12 +6,12 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use crate::backend::{
-    WorkerContext as BackendContext, WorkerLaunch, WorkerSendMode, WorkerSessionFactory,
+use super::super::{
+    StartWorker, WorkerContext, WorkerInputResponse, WorkerMessageMode, WorkerSnapshot,
+    WorkerStatus,
 };
-
+use super::port::{WorkerLaunch, WorkerSendMode, WorkerSessionFactory};
 use super::run::{self, RunCommand};
-use super::{StartWorker, WorkerContext, WorkerMessageMode, WorkerSnapshot, WorkerStatus};
 
 const STOP_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_TERMINAL_HISTORY: usize = 64;
@@ -85,12 +85,12 @@ impl WorkerPool {
             ));
         }
         let context = match request.context {
-            WorkerContext::Fresh => BackendContext::Fresh,
+            WorkerContext::Fresh => WorkerContext::Fresh,
             WorkerContext::Session { session_locator } => {
                 if session_locator.trim().is_empty() {
                     return Err("worker source session locator must not be empty".into());
                 }
-                BackendContext::Session(session_locator)
+                WorkerContext::Session { session_locator }
             }
         };
         let factory = self
@@ -253,7 +253,7 @@ impl WorkerPool {
             .ok_or_else(|| format!("worker {id} is not awaiting input"))?;
         record
             .commands
-            .send(RunCommand::Respond(crate::backend::WorkerInputResponse {
+            .send(RunCommand::Respond(WorkerInputResponse {
                 id: input.id.clone(),
                 value,
                 cancel,

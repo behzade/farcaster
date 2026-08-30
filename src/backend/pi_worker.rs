@@ -6,13 +6,14 @@ use std::{
 
 use serde_json::Value;
 
-use super::{
-    BackendEvent, BackendRequest, WorkerContext, WorkerEvent, WorkerInput, WorkerInputResponse,
-    WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory,
-};
+use super::{BackendEvent, BackendRequest};
 use crate::{
     protocol::{ExtensionUiRequest, ExtensionUiResponse, PromptMode, SessionState},
     rpc_process::{ProcessCommand, RpcProcess},
+    workers::{
+        WorkerContext, WorkerEvent, WorkerInput, WorkerInputResponse, WorkerLaunch, WorkerSendMode,
+        WorkerSession, WorkerSessionFactory,
+    },
 };
 
 #[derive(Clone)]
@@ -33,8 +34,8 @@ impl WorkerSessionFactory for PiWorkerFactory {
         }
         let mut process = match &launch.context {
             WorkerContext::Fresh => RpcProcess::spawn(&self.command, &launch.project, None)?,
-            WorkerContext::Session(source) => {
-                let source = std::path::Path::new(source)
+            WorkerContext::Session { session_locator } => {
+                let source = std::path::Path::new(session_locator)
                     .canonicalize()
                     .map_err(|error| format!("resolve Pi worker source session: {error}"))?;
                 if !source.is_file() {

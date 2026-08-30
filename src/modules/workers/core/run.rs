@@ -4,9 +4,8 @@ use std::{
     time::Duration,
 };
 
-use crate::backend::{WorkerEvent, WorkerInputResponse, WorkerSendMode, WorkerSession};
-
-use super::{WorkerSnapshot, WorkerStatus};
+use super::super::{WorkerInputResponse, WorkerSnapshot, WorkerStatus};
+use super::port::{WorkerEvent, WorkerSendMode, WorkerSession};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 

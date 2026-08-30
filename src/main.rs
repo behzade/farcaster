@@ -95,7 +95,7 @@ fn main() -> std::process::ExitCode {
         grants: Some(approval_ui.grants()),
         ..rpc_process::ProcessCommand::default()
     };
-    let worker_factory: std::sync::Arc<dyn backend::WorkerSessionFactory> =
+    let worker_factory: std::sync::Arc<dyn workers::WorkerSessionFactory> =
         std::sync::Arc::new(backend::PiWorkerFactory::new(worker_command));
     let worker_pool = match workers::WorkerPool::new(
         std::collections::BTreeMap::from([("pi".into(), worker_factory)]),

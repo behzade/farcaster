@@ -1,12 +1,6 @@
 use std::path::PathBuf;
 
-use serde::Serialize;
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum WorkerContext {
-    Fresh,
-    Session(String),
-}
+use super::super::{WorkerContext, WorkerInput, WorkerInputResponse};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum WorkerSendMode {
@@ -22,22 +16,6 @@ pub(crate) struct WorkerLaunch {
     pub(crate) provider: Option<String>,
     pub(crate) model: Option<String>,
     pub(crate) effort: Option<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct WorkerInput {
-    pub(crate) id: String,
-    pub(crate) prompt: String,
-    pub(crate) options: Vec<String>,
-    pub(crate) secret: bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct WorkerInputResponse {
-    pub(crate) id: String,
-    pub(crate) value: Option<String>,
-    pub(crate) cancel: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -4,10 +4,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::backend::{
-    WorkerEvent, WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory,
+use super::super::{
+    StartWorker, WorkerContext, WorkerInput, WorkerInputResponse, WorkerMessageMode,
+    WorkerSnapshot, WorkerStatus,
 };
-
 use super::*;
 
 #[derive(Default)]
@@ -53,7 +53,7 @@ impl WorkerSession for FakeSession {
         Ok(())
     }
 
-    fn respond(&mut self, _response: crate::backend::WorkerInputResponse) -> Result<(), String> {
+    fn respond(&mut self, _response: WorkerInputResponse) -> Result<(), String> {
         Ok(())
     }
 
@@ -170,7 +170,7 @@ fn workers_settle_and_can_be_prompted_again() -> Result<(), String> {
     );
     handle
         .events
-        .send(WorkerEvent::NeedsInput(crate::backend::WorkerInput {
+        .send(WorkerEvent::NeedsInput(WorkerInput {
             id: "question-1".into(),
             prompt: "Choose".into(),
             options: vec!["A".into(), "B".into()],
