@@ -15,13 +15,13 @@ mod launch;
 mod layout;
 mod mcp_client_config;
 mod mcp_server;
+mod modules;
 mod network;
 mod performance;
 mod persistent_vec;
 mod primitives;
 mod project_trust;
 mod project_trust_view;
-mod projects;
 mod protocol;
 mod repository;
 mod rpc_process;
@@ -31,7 +31,6 @@ mod session_changes;
 mod session_deletion;
 mod session_transfer;
 mod session_watcher;
-mod sessions;
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 mod shell_environment;
 mod state;
@@ -45,6 +44,8 @@ mod transcript_list;
 mod transcript_markdown;
 mod user_invocations;
 mod workers;
+
+pub(crate) use modules::{projects, sessions};
 
 fn main() -> std::process::ExitCode {
     #[cfg(target_os = "linux")]
