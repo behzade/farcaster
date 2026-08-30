@@ -13,20 +13,14 @@ mod launch;
 mod layout;
 mod mcp_server;
 mod modules;
-mod network;
 mod performance;
 mod persistent_vec;
 mod primitives;
 mod project_trust;
 mod project_trust_view;
 mod protocol;
-mod repository;
 mod runtime;
-mod sandbox;
 mod session_changes;
-mod session_deletion;
-mod session_transfer;
-mod session_watcher;
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 mod shell_environment;
 mod state;
@@ -41,7 +35,12 @@ mod transcript_markdown;
 mod user_invocations;
 mod workers;
 
-pub(crate) use modules::{agents, projects, sessions};
+pub(crate) use modules::access as sandbox;
+pub(crate) use modules::access::network;
+pub(crate) use modules::sessions as session_deletion;
+pub(crate) use modules::sessions as session_transfer;
+pub(crate) use modules::sessions as session_watcher;
+pub(crate) use modules::{access, agents, projects, repository, sessions};
 
 fn main() -> std::process::ExitCode {
     #[cfg(target_os = "linux")]
@@ -76,8 +75,8 @@ fn main() -> std::process::ExitCode {
     let temporary = std::env::var_os("TMPDIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(std::env::temp_dir);
-    let nono = sandbox::configured_nono_program(std::env::var_os("FARCASTER_NONO_PATH"));
-    let (approvals, approval_ui) = match sandbox::approval::channel(
+    let nono = access::configured_nono_program(std::env::var_os("FARCASTER_NONO_PATH"));
+    let (approvals, approval_ui) = match access::approval::channel(
         &project,
         &home,
         &data_root,
