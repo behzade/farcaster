@@ -9,9 +9,7 @@ mod conversation;
 mod extension_ui;
 mod keybindings;
 mod keyboard;
-mod launch;
 mod layout;
-mod mcp_server;
 mod modules;
 mod performance;
 mod persistent_vec;
@@ -19,7 +17,6 @@ mod primitives;
 mod project_trust;
 mod project_trust_view;
 mod protocol;
-mod runtime;
 mod session_changes;
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 mod shell_environment;
@@ -35,6 +32,7 @@ mod transcript_markdown;
 mod user_invocations;
 mod workers;
 
+pub(crate) use app::runtime;
 pub(crate) use modules::access as sandbox;
 pub(crate) use modules::access::network;
 pub(crate) use modules::sessions as session_deletion;
@@ -57,7 +55,7 @@ fn main() -> std::process::ExitCode {
     if let Err(error) = init_log_file() {
         zlog::error!("Failed to initialize application log file: {error}");
     }
-    let project = match launch::resolve_project(std::env::args_os().nth(1).map(Into::into)) {
+    let project = match app::launch::resolve_project(std::env::args_os().nth(1).map(Into::into)) {
         Ok(project) => project,
         Err(error) => return fail(error),
     };
@@ -105,14 +103,14 @@ fn main() -> std::process::ExitCode {
         Err(error) => return fail(format!("initialize worker pool: {error}")),
     };
     let (workgraph_updates, workgraph_update_receiver) = async_channel::bounded(1);
-    let _mcp_server = match state::state_path()
-        .and_then(|database| mcp_server::start(database, approvals, worker_pool, workgraph_updates))
-    {
+    let _mcp_server = match state::state_path().and_then(|database| {
+        app::mcp_server::start(database, approvals, worker_pool, workgraph_updates)
+    }) {
         Ok(server) => server,
         Err(error) => return fail(format!("start MCP server: {error}")),
     };
 
-    match launch::run(project, approval_ui, workgraph_update_receiver) {
+    match app::launch::run(project, approval_ui, workgraph_update_receiver) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => fail(error),
     }

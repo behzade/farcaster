@@ -10,10 +10,13 @@ mod drafts;
 mod editor;
 mod expiries;
 mod file_mentions;
+pub(crate) mod launch;
+pub(crate) mod mcp_server;
 mod picker;
 mod quit;
 mod region_state;
 mod repository;
+pub(crate) mod runtime;
 mod session_titles;
 mod slash_commands;
 mod submissions;
@@ -493,7 +496,7 @@ impl FarcasterApp {
                     this.notify_session_rail(cx);
                 }
             });
-        let window_placement_subscription = crate::launch::observe_window_placement(window, cx);
+        let window_placement_subscription = launch::observe_window_placement(window, cx);
         let runtime_wake = runtime.wake_receiver();
         let event_task = cx.spawn(async move |weak, cx| {
             while runtime_wake.recv().await.is_ok() {

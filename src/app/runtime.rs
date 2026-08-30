@@ -2584,7 +2584,7 @@ mod tests {
     fn dropping_runtime_waits_for_owned_pi_processes_to_handle_exit() -> Result<(), String> {
         let temp = tempdir().map_err(|error| error.to_string())?;
         let script = temp.path().join("fake-pi.sh");
-        fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))
+        fs::write(&script, include_str!("../../tests/fixtures/fake-pi.sh"))
             .map_err(|error| error.to_string())?;
         let marker = temp.path().join("terminated");
         let runtime = RuntimeHandle::spawn_with(
@@ -2710,7 +2710,7 @@ mod tests {
     fn permission_level_before_connection_configures_the_first_process() -> Result<(), String> {
         let temp = tempdir().map_err(|error| error.to_string())?;
         let script = temp.path().join("fake-pi.sh");
-        fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))
+        fs::write(&script, include_str!("../../tests/fixtures/fake-pi.sh"))
             .map_err(|error| error.to_string())?;
         let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
         owner.process_command =
@@ -2781,7 +2781,7 @@ mod tests {
     fn permission_level_change_restarts_and_resumes_the_idle_session() -> Result<(), String> {
         let temp = tempdir().map_err(|error| error.to_string())?;
         let script = temp.path().join("fake-pi.sh");
-        fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))
+        fs::write(&script, include_str!("../../tests/fixtures/fake-pi.sh"))
             .map_err(|error| error.to_string())?;
         let session = temp.path().join("session.jsonl");
         let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
@@ -2833,7 +2833,7 @@ mod tests {
     fn sandbox_grant_reload_waits_for_idle_then_restarts_and_resumes() -> Result<(), String> {
         let temp = tempdir().map_err(|error| error.to_string())?;
         let script = temp.path().join("fake-pi.sh");
-        fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))
+        fs::write(&script, include_str!("../../tests/fixtures/fake-pi.sh"))
             .map_err(|error| error.to_string())?;
         let session = temp.path().join("session.jsonl");
         let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
@@ -3401,7 +3401,7 @@ mod tests {
     fn reload_restarts_the_idle_session_process() -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempdir()?;
         let script = temp.path().join("fake-pi.sh");
-        fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))?;
+        fs::write(&script, include_str!("../../tests/fixtures/fake-pi.sh"))?;
         let session = temp.path().join("session.jsonl");
         let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
         owner.process_command = PiProcessCommand::test_script(&script, vec!["quiet".into()]);
@@ -3426,7 +3426,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempdir()?;
         let script = temp.path().join("fake-pi.sh");
-        fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))?;
+        fs::write(&script, include_str!("../../tests/fixtures/fake-pi.sh"))?;
         let process = PiRpcProcess::spawn(
             &PiProcessCommand::test_script(&script, vec!["quiet".into()]),
             temp.path(),
@@ -3507,7 +3507,7 @@ mod tests {
         let old_project = tempdir()?;
         let new_project = tempdir()?;
         let script = old_project.path().join("fake-pi.sh");
-        fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))?;
+        fs::write(&script, include_str!("../../tests/fixtures/fake-pi.sh"))?;
         let (mut owner, _events, _discovery) =
             owner_without_process(old_project.path().to_path_buf());
         owner.process_command = PiProcessCommand::test_script(&script, vec!["quiet".into()]);
@@ -4087,7 +4087,7 @@ mod tests {
     fn model_change_from_history_reconnects_without_hiding_history() -> Result<(), String> {
         let temp = tempdir().map_err(|error| error.to_string())?;
         let script = temp.path().join("fake-pi.sh");
-        fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))
+        fs::write(&script, include_str!("../../tests/fixtures/fake-pi.sh"))
             .map_err(|error| error.to_string())?;
         let session = temp.path().join("history.jsonl");
         let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
@@ -4375,7 +4375,7 @@ mod tests {
     fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Result<(), String> {
         let temp = tempdir().map_err(|error| error.to_string())?;
         let script = temp.path().join("fake-pi.sh");
-        fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))
+        fs::write(&script, include_str!("../../tests/fixtures/fake-pi.sh"))
             .map_err(|error| error.to_string())?;
         let process_command = PiProcessCommand::test_script(&script, vec!["quiet".into()]);
         let process = PiRpcProcess::spawn(&process_command, temp.path(), None)?;
