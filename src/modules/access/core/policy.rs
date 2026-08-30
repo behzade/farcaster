@@ -28,6 +28,7 @@ struct ProfileMeta {
 #[derive(Debug, Serialize)]
 struct FilesystemPolicy {
     read: Vec<PathBuf>,
+    read_file: Vec<PathBuf>,
     allow: Vec<PathBuf>,
     allow_file: Vec<PathBuf>,
     bypass_protection: Vec<PathBuf>,
@@ -58,7 +59,7 @@ pub(crate) fn compile(
     let agent_state = canonical_directory(agent_state, "agent state")?;
     let temporary = canonical_directory(temporary, "temporary directory")?;
     let mut readable = user_runtime_libraries(&home);
-    readable.extend(user_configuration(&home));
+    let mut readable_files = user_configuration(&home);
     let mut writable = vec![temporary.clone(), agent_state.clone()];
     if let Ok(slash_tmp) = Path::new("/tmp").canonicalize()
         && slash_tmp.is_dir()
@@ -83,6 +84,7 @@ pub(crate) fn compile(
     }
     if !matches!(access.filesystem, FilesystemAccess::Full) {
         readable.extend(grants.readable);
+        readable_files.extend(grants.readable_files);
         if !matches!(access.filesystem, FilesystemAccess::ReadOnly) {
             writable.extend(grants.writable);
             writable_files.extend(grants.writable_files);
@@ -90,10 +92,21 @@ pub(crate) fn compile(
     }
     readable.sort();
     readable.dedup();
+    readable_files.sort();
+    readable_files.dedup();
     writable.sort();
     writable.dedup();
     writable_files.sort();
     writable_files.dedup();
+    let mut protection_bypasses = readable
+        .iter()
+        .chain(&readable_files)
+        .chain(&writable)
+        .chain(&writable_files)
+        .cloned()
+        .collect::<Vec<_>>();
+    protection_bypasses.sort();
+    protection_bypasses.dedup();
 
     let unrestricted_network = matches!(access.network, NetworkAccess::Full);
     let mut allowed_network_hosts = super::network::allowed_network_hosts()
@@ -119,11 +132,12 @@ pub(crate) fn compile(
         },
         filesystem: FilesystemPolicy {
             read: readable,
+            read_file: readable_files,
             allow: writable,
             allow_file: writable_files,
-            // The agent host must read and update its own settings, auth, and sessions.
-            // Delegated tools share this outer boundary by design.
-            bypass_protection: vec![agent_state],
+            // Nono's default protection remains authoritative unless an active capability
+            // explicitly names the protected path, matching pi-nono's profile adapter.
+            bypass_protection: protection_bypasses,
         },
         network: NetworkPolicy {
             block: !unrestricted_network && allowed_network_hosts.is_empty(),
@@ -294,15 +308,18 @@ mod tests {
             path.as_str()
                 .is_some_and(|path| path.ends_with("/.local/lib"))
         }));
-        assert!(read.iter().any(|path| {
+        let read_file = profile["filesystem"]["read_file"]
+            .as_array()
+            .ok_or("read_file must be an array")?;
+        assert!(read_file.iter().any(|path| {
             path.as_str()
                 .is_some_and(|path| path.ends_with("/.gitconfig"))
         }));
-        assert!(read.iter().any(|path| {
+        assert!(read_file.iter().any(|path| {
             path.as_str()
                 .is_some_and(|path| path.ends_with("/.config/git/config"))
         }));
-        assert!(read.iter().any(|path| {
+        assert!(read_file.iter().any(|path| {
             path.as_str()
                 .is_some_and(|path| path.ends_with("/.config/git/ignore"))
         }));
@@ -321,16 +338,21 @@ mod tests {
     }
 
     #[test]
-    fn exact_write_grants_use_nono_file_capabilities() -> Result<(), Box<dyn std::error::Error>> {
+    fn exact_grants_use_nono_scopes_and_bypass_default_protection()
+    -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
         let project = root.path().join("project");
         let home = root.path().join("home");
         let temporary = root.path().join("tmp");
-        let granted_file = root.path().join("granted.txt");
+        let readable = root.path().join("readable");
+        let readable_file = root.path().join("input.txt");
+        let writable_file = root.path().join("output.txt");
         std::fs::create_dir(&project)?;
         std::fs::create_dir_all(home.join(".pi/agent"))?;
         std::fs::create_dir(&temporary)?;
-        std::fs::write(&granted_file, "fixture")?;
+        std::fs::create_dir(&readable)?;
+        std::fs::write(&readable_file, "input")?;
+        std::fs::write(&writable_file, "output")?;
         let profile: serde_json::Value = serde_json::from_slice(&compile(
             &project,
             &home,
@@ -341,15 +363,32 @@ mod tests {
                 network: NetworkAccess::Sandboxed,
             },
             crate::sandbox::approval::ResolvedGrants {
-                writable_files: vec![granted_file.clone()],
+                readable: vec![readable.clone()],
+                readable_files: vec![readable_file.clone()],
+                writable_files: vec![writable_file.clone()],
                 ..Default::default()
             },
             &NetworkConfiguration::default(),
         )?)?;
+        assert!(
+            profile["filesystem"]["read"]
+                .as_array()
+                .is_some_and(|paths| paths.contains(&serde_json::json!(readable)))
+        );
+        assert_eq!(
+            profile["filesystem"]["read_file"],
+            serde_json::json!([readable_file])
+        );
         assert_eq!(
             profile["filesystem"]["allow_file"],
-            serde_json::json!([granted_file])
+            serde_json::json!([writable_file])
         );
+        let bypasses = profile["filesystem"]["bypass_protection"]
+            .as_array()
+            .ok_or("bypass_protection must be an array")?;
+        assert!(bypasses.contains(&serde_json::json!(readable)));
+        assert!(bypasses.contains(&serde_json::json!(readable_file)));
+        assert!(bypasses.contains(&serde_json::json!(writable_file)));
         Ok(())
     }
 

@@ -95,6 +95,7 @@ impl std::fmt::Debug for GrantStore {
 #[derive(Default)]
 pub(crate) struct ResolvedGrants {
     pub(crate) readable: Vec<PathBuf>,
+    pub(crate) readable_files: Vec<PathBuf>,
     pub(crate) writable: Vec<PathBuf>,
     pub(crate) writable_files: Vec<PathBuf>,
     pub(crate) network_hosts: Vec<String>,
@@ -505,7 +506,10 @@ fn resolve_rights(shared: &Shared, rights: &[AccessRight]) -> ResolvedGrants {
                     continue;
                 };
                 match access {
-                    FilesystemRightAccess::Read => grants.readable.push(path),
+                    FilesystemRightAccess::Read => match scope {
+                        FilesystemScope::File => grants.readable_files.push(path),
+                        FilesystemScope::Tree => grants.readable.push(path),
+                    },
                     FilesystemRightAccess::Write => match scope {
                         FilesystemScope::File => grants.writable_files.push(path),
                         FilesystemScope::Tree => grants.writable.push(path),
@@ -518,6 +522,8 @@ fn resolve_rights(shared: &Shared, rights: &[AccessRight]) -> ResolvedGrants {
     }
     grants.readable.sort();
     grants.readable.dedup();
+    grants.readable_files.sort();
+    grants.readable_files.dedup();
     grants.writable.sort();
     grants.writable.dedup();
     grants.writable_files.sort();

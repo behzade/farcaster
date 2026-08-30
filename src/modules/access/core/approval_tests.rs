@@ -48,7 +48,9 @@ async fn session_approval_activates_exact_external_right() -> Result<(), String>
     let (root, service, ui, _project, _home) = setup()?;
     ui.set_project_trusted(true);
     let external = root.path().join("external");
+    let input = root.path().join("input.txt");
     fs::create_dir(&external).map_err(|error| error.to_string())?;
+    fs::write(&input, "fixture").map_err(|error| error.to_string())?;
     let request = tokio::spawn({
         let service = service.clone();
         let path = external
@@ -56,14 +58,26 @@ async fn session_approval_activates_exact_external_right() -> Result<(), String>
             .expect("canonical external path")
             .display()
             .to_string();
+        let input = input
+            .canonicalize()
+            .expect("canonical input path")
+            .display()
+            .to_string();
         async move {
             service
                 .request_access(RequestAccessParams {
-                    rights: vec![AccessRight::Filesystem {
-                        access: FilesystemRightAccess::Write,
-                        path,
-                        scope: FilesystemScope::Tree,
-                    }],
+                    rights: vec![
+                        AccessRight::Filesystem {
+                            access: FilesystemRightAccess::Write,
+                            path,
+                            scope: FilesystemScope::Tree,
+                        },
+                        AccessRight::Filesystem {
+                            access: FilesystemRightAccess::Read,
+                            path: input,
+                            scope: FilesystemScope::File,
+                        },
+                    ],
                     reason: "update the sibling checkout".into(),
                 })
                 .await
@@ -82,9 +96,14 @@ async fn session_approval_activates_exact_external_right() -> Result<(), String>
         .map_err(|_| "approval response timed out".to_owned())?
         .map_err(|error| error.to_string())??;
     assert!(result.contains("activate after this agent turn ends"));
+    let grants = ui.grants().resolve();
     assert_eq!(
-        ui.grants().resolve().writable,
+        grants.writable,
         [external.canonicalize().map_err(|error| error.to_string())?]
+    );
+    assert_eq!(
+        grants.readable_files,
+        [input.canonicalize().map_err(|error| error.to_string())?]
     );
     Ok(())
 }
