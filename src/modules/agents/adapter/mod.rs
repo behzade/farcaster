@@ -1,3 +1,5 @@
+#[allow(dead_code)]
+mod codex;
 mod pi;
 
 pub(super) use pi::encode_request as encode_pi_request;
