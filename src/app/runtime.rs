@@ -7,8 +7,8 @@ mod prompts;
 mod session_controls;
 mod session_identity;
 
+pub(crate) use crate::agents::{FileAccessMode, NetworkAccessMode, PermissionLevel};
 use permission_level::PermissionChangeState;
-pub(crate) use permission_level::{FileAccessMode, NetworkAccessMode, PermissionLevel};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -28,12 +28,11 @@ use crate::{
         ExtensionUiRequest, ExtensionUiResponse, Model, PromptImage, PromptMode, SessionState,
         SlashCommand,
     },
-    session_transfer::{self, TransferMember},
-    session_watcher::{SessionWatchEvent, SessionWatcher},
     sessions::{
-        LoadedHistory, RUNNING_ACTIVITY_TIMEOUT, SessionDiscovery, SessionSummary,
-        archived_root_family_for_path, configured_session_root, discover, load_history,
-        project_display_history, session_family_for_path,
+        self, LoadedHistory, RUNNING_ACTIVITY_TIMEOUT, SessionDiscovery, SessionSummary,
+        SessionWatchEvent, SessionWatcher, TransferMember, archived_root_family_for_path,
+        configured_session_root, discover, load_history, project_display_history,
+        session_family_for_path,
     },
     state::StateStore,
 };
@@ -228,7 +227,7 @@ impl RuntimeHandle {
         project: PathBuf,
         draft_id: String,
         initial_session: Option<PathBuf>,
-        grants: crate::sandbox::GrantStore,
+        grants: crate::access::GrantStore,
         app_proxy: Option<String>,
     ) -> Self {
         let command = PiProcessCommand {
@@ -814,7 +813,7 @@ fn run_supervisor(
                             selected = catalog_key.clone();
                             generation = generation.saturating_add(1);
                         }
-                        let leftovers = crate::session_deletion::delete_family(&paths)?;
+                        let leftovers = sessions::delete_family(&paths)?;
                         let state_warning = state.delete_session_state(&paths).err();
                         Ok((family_paths, leftovers, state_warning))
                     })();
@@ -944,12 +943,12 @@ fn run_supervisor(
                             })
                             .collect::<Vec<_>>();
                         let session_root = configured_session_root()?;
-                        let destination = session_transfer::destination_directory(
+                        let destination = sessions::destination_directory(
                             &session_root,
                             target_project,
                             &root.path,
                         );
-                        let moved = session_transfer::move_family(
+                        let moved = sessions::move_family(
                             &members,
                             &root.id,
                             target_project,
@@ -2638,7 +2637,7 @@ mod tests {
                     program: PathBuf::from("/definitely/missing/farcaster-test-command"),
                     prefix_args: Vec::new(),
                     permission_level: PermissionLevel::default(),
-                    nono: crate::sandbox::test_nono_bypass(),
+                    nono: crate::access::test_nono_bypass(),
                     grants: None,
                     app_proxy: None,
                 },
@@ -4153,7 +4152,7 @@ mod tests {
             program: PathBuf::from("/definitely/missing/farcaster-test-command"),
             prefix_args: Vec::new(),
             permission_level: PermissionLevel::default(),
-            nono: crate::sandbox::test_nono_bypass(),
+            nono: crate::access::test_nono_bypass(),
             grants: None,
             app_proxy: None,
         };
@@ -4187,7 +4186,7 @@ mod tests {
                 program: PathBuf::from("/definitely/missing/farcaster-test-command"),
                 prefix_args: Vec::new(),
                 permission_level: PermissionLevel::default(),
-                nono: crate::sandbox::test_nono_bypass(),
+                nono: crate::access::test_nono_bypass(),
                 grants: None,
                 app_proxy: None,
             },
@@ -4314,7 +4313,7 @@ mod tests {
             program: PathBuf::from("/definitely/missing/farcaster-test-command"),
             prefix_args: Vec::new(),
             permission_level: PermissionLevel::default(),
-            nono: crate::sandbox::test_nono_bypass(),
+            nono: crate::access::test_nono_bypass(),
             grants: None,
             app_proxy: None,
         };

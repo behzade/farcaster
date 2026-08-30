@@ -1,56 +1,6 @@
-//! Independent filesystem and network access modes for the Pi child process.
+//! Runtime policy for applying agent filesystem and network access changes.
 
 use super::*;
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) enum FileAccessMode {
-    ReadOnly,
-    #[default]
-    Sandboxed,
-    Full,
-}
-
-impl FileAccessMode {
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::ReadOnly => "Read-only",
-            Self::Sandboxed => "Sandboxed",
-            Self::Full => "Full",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) enum NetworkAccessMode {
-    #[default]
-    Sandboxed,
-    Full,
-}
-
-impl NetworkAccessMode {
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::Sandboxed => "Sandboxed",
-            Self::Full => "Full",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct PermissionLevel {
-    pub(crate) files: FileAccessMode,
-    pub(crate) network: NetworkAccessMode,
-}
-
-impl PermissionLevel {
-    pub(crate) fn with_files(self, files: FileAccessMode) -> Self {
-        Self { files, ..self }
-    }
-
-    pub(crate) fn with_network(self, network: NetworkAccessMode) -> Self {
-        Self { network, ..self }
-    }
-}
 
 #[derive(Default)]
 pub(super) struct PermissionChangeState {

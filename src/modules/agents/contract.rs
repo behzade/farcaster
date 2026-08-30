@@ -100,6 +100,37 @@ pub(crate) struct AgentBackendDescriptor {
     pub capabilities: AgentCapabilities,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum FileAccessMode {
+    ReadOnly,
+    #[default]
+    Sandboxed,
+    Full,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum NetworkAccessMode {
+    #[default]
+    Sandboxed,
+    Full,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct PermissionLevel {
+    pub(crate) files: FileAccessMode,
+    pub(crate) network: NetworkAccessMode,
+}
+
+impl PermissionLevel {
+    pub(crate) fn with_files(self, files: FileAccessMode) -> Self {
+        Self { files, ..self }
+    }
+
+    pub(crate) fn with_network(self, network: NetworkAccessMode) -> Self {
+        Self { network, ..self }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

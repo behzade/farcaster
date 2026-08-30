@@ -9,11 +9,11 @@ use gpui_component::{input::Input, tooltip::Tooltip};
 
 use super::{super::FarcasterApp, composer_footer::separator};
 use crate::{
+    runtime::{FileAccessMode, NetworkAccessMode, PermissionLevel},
     assets::AppIcon,
     primitives::{
         AppIconSize, ButtonTone, activates_button, app_icon, dropdown_content_button, icon_button,
     },
-    runtime::{FileAccessMode, NetworkAccessMode, PermissionLevel},
     theme::{MONO_FONT_FAMILY, THEME},
 };
 
@@ -346,8 +346,16 @@ fn permission_selector(selected: PermissionLevel, entity: WeakEntity<FarcasterAp
     let next_files = next_file_access(selected.files);
     let file_entity = entity.clone();
     let next_network = next_network_access(selected.network);
-    let file_label = cycle_label("Files", selected.files.label(), next_files.label());
-    let network_label = cycle_label("Network", selected.network.label(), next_network.label());
+    let file_label = cycle_label(
+        "Files",
+        file_access_label(selected.files),
+        file_access_label(next_files),
+    );
+    let network_label = cycle_label(
+        "Network",
+        network_access_label(selected.network),
+        network_access_label(next_network),
+    );
 
     div()
         .id("sandbox-access")
@@ -441,6 +449,21 @@ fn next_network_access(mode: NetworkAccessMode) -> NetworkAccessMode {
     match mode {
         NetworkAccessMode::Sandboxed => NetworkAccessMode::Full,
         NetworkAccessMode::Full => NetworkAccessMode::Sandboxed,
+    }
+}
+
+const fn file_access_label(mode: FileAccessMode) -> &'static str {
+    match mode {
+        FileAccessMode::ReadOnly => "Read-only",
+        FileAccessMode::Sandboxed => "Sandboxed",
+        FileAccessMode::Full => "Full",
+    }
+}
+
+const fn network_access_label(mode: NetworkAccessMode) -> &'static str {
+    match mode {
+        NetworkAccessMode::Sandboxed => "Sandboxed",
+        NetworkAccessMode::Full => "Full",
     }
 }
 
