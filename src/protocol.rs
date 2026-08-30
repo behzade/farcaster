@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 #[cfg(test)]
 use serde_json::json;
 
@@ -35,16 +34,6 @@ pub(crate) struct SandboxModeResult {
     pub network: String,
     pub success: bool,
     #[serde(default)]
-    pub error: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq)]
-pub(crate) struct RpcResponse {
-    pub id: Option<String>,
-    pub command: String,
-    pub success: bool,
-    #[serde(default)]
-    pub data: Value,
     pub error: Option<String>,
 }
 
@@ -111,13 +100,6 @@ impl PromptImage {
     pub(crate) fn new(data: String, mime_type: String) -> Self {
         Self { data, mime_type }
     }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) enum WireMessage {
-    Response(RpcResponse),
-    ExtensionUi(ExtensionUiRequest),
-    Event(Value),
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -252,54 +234,10 @@ pub(crate) enum ExtensionUiResponse {
     Cancelled { id: String, cancelled: bool },
 }
 
-#[derive(Deserialize)]
-struct ExtensionEnvelope {
-    method: String,
-    id: Option<String>,
-}
-
-pub(crate) fn parse_frame(frame: &[u8]) -> Result<WireMessage, String> {
-    let value: Value =
-        serde_json::from_slice(frame).map_err(|error| format!("malformed JSON frame: {error}"))?;
-    let Some(kind) = value.get("type").and_then(Value::as_str) else {
-        return Err("JSON frame has no string type".to_owned());
-    };
-    match kind {
-        "response" => serde_json::from_value(value)
-            .map(WireMessage::Response)
-            .map_err(|error| format!("invalid response frame: {error}")),
-        "extension_ui_request" => parse_extension_request(value).map(WireMessage::ExtensionUi),
-        _ => Ok(WireMessage::Event(value)),
-    }
-}
-
-fn parse_extension_request(value: Value) -> Result<ExtensionUiRequest, String> {
-    let envelope = ExtensionEnvelope::deserialize(&value)
-        .map_err(|error| format!("invalid extension UI request: {error}"))?;
-    if !matches!(
-        envelope.method.as_str(),
-        "select"
-            | "confirm"
-            | "input"
-            | "editor"
-            | "notify"
-            | "setStatus"
-            | "setWidget"
-            | "setTitle"
-            | "set_editor_text"
-    ) {
-        return Ok(ExtensionUiRequest::Unknown {
-            id: envelope.id.filter(|id| !id.is_empty()),
-            method: envelope.method,
-        });
-    }
-    serde_json::from_value(value)
-        .map_err(|error| format!("invalid {} extension UI request: {error}", envelope.method))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agents::{PiWireMessage as WireMessage, parse_frame};
 
     #[test]
     fn gpui_notification_transport_separates_title_and_body() {

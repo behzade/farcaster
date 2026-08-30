@@ -187,7 +187,7 @@ impl RuntimeOwner {
 
     pub(super) fn apply_permission_command_response(
         &mut self,
-        _response: &crate::protocol::RpcResponse,
+        _response: &crate::agents::PiResponse,
     ) -> bool {
         false
     }

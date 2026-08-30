@@ -266,7 +266,7 @@ mod tests {
 
     fn worker_pool(project: &std::path::Path) -> crate::workers::WorkerPool {
         let factory: Arc<dyn crate::workers::WorkerSessionFactory> = Arc::new(
-            crate::backend::PiWorkerFactory::new(crate::rpc_process::ProcessCommand::default()),
+            crate::agents::PiWorkerFactory::new(crate::agents::PiProcessCommand::default()),
         );
         crate::workers::WorkerPool::new(
             BTreeMap::from([("pi".into(), factory)]),

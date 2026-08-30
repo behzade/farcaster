@@ -1,32 +1,19 @@
-mod pi;
-mod pi_worker;
-
-pub(crate) use pi_worker::PiWorkerFactory;
-
 use serde_json::Value;
 
-use crate::protocol::{
-    ExtensionUiRequest, ExtensionUiResponse, PromptImage, PromptMode, RpcResponse,
-};
+use super::wire::PiResponse;
+use crate::protocol::{ExtensionUiRequest, ExtensionUiResponse, PromptImage, PromptMode};
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum BackendEvent {
-    Response(RpcResponse),
+pub(crate) enum PiEvent {
+    Response(PiResponse),
     Interaction(ExtensionUiRequest),
     Activity(Value),
     Stderr(String),
     Failure(String),
 }
 
-pub(crate) trait SessionTransport {
-    fn send(&mut self, request: BackendRequest) -> Result<String, String>;
-    fn respond(&mut self, response: ExtensionUiResponse) -> Result<(), String>;
-    fn poll(&mut self) -> Option<BackendEvent>;
-    fn close(&mut self) -> Result<(), String>;
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum BackendRequest {
+pub(crate) enum PiRequest {
     ConfigureSteering,
     LoadState,
     LoadHistory,
@@ -61,11 +48,7 @@ pub(crate) enum BackendRequest {
     },
 }
 
-pub(crate) fn encode_pi_request(request: BackendRequest) -> serde_json::Value {
-    pi::encode_request(request)
-}
-
-impl BackendRequest {
+impl PiRequest {
     pub(crate) const fn operation(&self) -> &'static str {
         match self {
             Self::ConfigureSteering => "configure steering",
@@ -89,4 +72,11 @@ impl BackendRequest {
             Self::SelectReasoning { .. } => "select reasoning",
         }
     }
+}
+
+pub(crate) trait PiSessionTransport {
+    fn send(&mut self, request: PiRequest) -> Result<String, String>;
+    fn respond(&mut self, response: ExtensionUiResponse) -> Result<(), String>;
+    fn poll(&mut self) -> Option<PiEvent>;
+    fn close(&mut self) -> Result<(), String>;
 }

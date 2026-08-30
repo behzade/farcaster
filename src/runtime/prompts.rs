@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    backend::BackendRequest,
+    agents::PiRequest,
     protocol::{PromptImage, PromptMode},
     state::QueuedPrompt,
 };
@@ -150,7 +150,7 @@ impl RuntimeOwner {
             self.reject_prompt(&target, error);
             return;
         }
-        let request = BackendRequest::Prompt {
+        let request = PiRequest::Prompt {
             mode,
             message,
             images,

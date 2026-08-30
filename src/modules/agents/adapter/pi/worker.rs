@@ -6,10 +6,10 @@ use std::{
 
 use serde_json::Value;
 
-use super::{BackendEvent, BackendRequest};
+use super::process::{PiProcessCommand, PiRpcProcess};
 use crate::{
+    agents::{PiEvent, PiRequest},
     protocol::{ExtensionUiRequest, ExtensionUiResponse, PromptMode, SessionState},
-    rpc_process::{ProcessCommand, RpcProcess},
     workers::{
         WorkerContext, WorkerEvent, WorkerInput, WorkerInputResponse, WorkerLaunch, WorkerSendMode,
         WorkerSession, WorkerSessionFactory,
@@ -18,11 +18,11 @@ use crate::{
 
 #[derive(Clone)]
 pub(crate) struct PiWorkerFactory {
-    command: ProcessCommand,
+    command: PiProcessCommand,
 }
 
 impl PiWorkerFactory {
-    pub(crate) fn new(command: ProcessCommand) -> Self {
+    pub(crate) fn new(command: PiProcessCommand) -> Self {
         Self { command }
     }
 }
@@ -33,7 +33,7 @@ impl WorkerSessionFactory for PiWorkerFactory {
             return Err("Pi worker provider and model must be supplied together".into());
         }
         let mut process = match &launch.context {
-            WorkerContext::Fresh => RpcProcess::spawn(&self.command, &launch.project, None)?,
+            WorkerContext::Fresh => PiRpcProcess::spawn(&self.command, &launch.project, None)?,
             WorkerContext::Session { session_locator } => {
                 let source = std::path::Path::new(session_locator)
                     .canonicalize()
@@ -46,20 +46,20 @@ impl WorkerSessionFactory for PiWorkerFactory {
                 }
                 if let Some(entry_id) = parent_before_worker_call(&source)? {
                     let mut process =
-                        RpcProcess::spawn(&self.command, &launch.project, Some(&source))?;
-                    process.request_and_wait(BackendRequest::ForkAt { entry_id })?;
+                        PiRpcProcess::spawn(&self.command, &launch.project, Some(&source))?;
+                    process.request_and_wait(PiRequest::ForkAt { entry_id })?;
                     process
                 } else {
-                    RpcProcess::spawn_fork(&self.command, &launch.project, &source)?
+                    PiRpcProcess::spawn_fork(&self.command, &launch.project, &source)?
                 }
             }
         };
-        process.request_and_wait(BackendRequest::ConfigureSteering)?;
+        process.request_and_wait(PiRequest::ConfigureSteering)?;
         if let (Some(provider), Some(model_id)) = (launch.provider, launch.model) {
-            process.request_and_wait(BackendRequest::SelectModel { provider, model_id })?;
+            process.request_and_wait(PiRequest::SelectModel { provider, model_id })?;
         }
         if let Some(level) = launch.effort {
-            process.request_and_wait(BackendRequest::SelectReasoning { level })?;
+            process.request_and_wait(PiRequest::SelectReasoning { level })?;
         }
         Ok(Box::new(PiWorkerSession {
             process,
@@ -73,7 +73,7 @@ impl WorkerSessionFactory for PiWorkerFactory {
 }
 
 struct PiWorkerSession {
-    process: RpcProcess,
+    process: PiRpcProcess,
     latest_output: String,
     state_request: Option<String>,
     has_session_locator: bool,
@@ -94,7 +94,7 @@ impl WorkerSession for PiWorkerSession {
             WorkerSendMode::Queue => PromptMode::FollowUp,
             WorkerSendMode::Steer => PromptMode::Steer,
         };
-        self.process.send_request(BackendRequest::Prompt {
+        self.process.send_request(PiRequest::Prompt {
             mode,
             message,
             images: Vec::new(),
@@ -134,14 +134,14 @@ impl WorkerSession for PiWorkerSession {
     }
 
     fn abort(&mut self) -> Result<(), String> {
-        self.process.send_request(BackendRequest::Abort)?;
+        self.process.send_request(PiRequest::Abort)?;
         Ok(())
     }
 
     fn poll(&mut self) -> Option<WorkerEvent> {
         loop {
             match self.process.try_next()? {
-                BackendEvent::Activity(event) => match event["type"].as_str() {
+                PiEvent::Activity(event) => match event["type"].as_str() {
                     Some("agent_start") => {
                         self.settled = false;
                         self.latest_output.clear();
@@ -166,7 +166,7 @@ impl WorkerSession for PiWorkerSession {
                     }
                     _ => {}
                 },
-                BackendEvent::Interaction(request) => match worker_input(request) {
+                PiEvent::Interaction(request) => match worker_input(request) {
                     Ok(Some((input, kind))) => {
                         self.pending_inputs.insert(input.id.clone(), kind);
                         return Some(WorkerEvent::NeedsInput(input));
@@ -174,14 +174,14 @@ impl WorkerSession for PiWorkerSession {
                     Ok(None) => {}
                     Err(error) => return Some(WorkerEvent::Failed(error)),
                 },
-                BackendEvent::Response(response) if !response.success => {
+                PiEvent::Response(response) if !response.success => {
                     return Some(WorkerEvent::Failed(
                         response
                             .error
                             .unwrap_or_else(|| format!("Pi rejected {}", response.command)),
                     ));
                 }
-                BackendEvent::Response(response)
+                PiEvent::Response(response)
                     if response.id.as_ref() == self.state_request.as_ref() =>
                 {
                     self.state_request = None;
@@ -203,8 +203,8 @@ impl WorkerSession for PiWorkerSession {
                         ));
                     }
                 }
-                BackendEvent::Failure(error) => return Some(WorkerEvent::Failed(error)),
-                BackendEvent::Response(_) | BackendEvent::Stderr(_) => {}
+                PiEvent::Failure(error) => return Some(WorkerEvent::Failed(error)),
+                PiEvent::Response(_) | PiEvent::Stderr(_) => {}
             }
         }
     }
@@ -217,7 +217,7 @@ impl WorkerSession for PiWorkerSession {
 impl PiWorkerSession {
     fn request_session_state(&mut self) -> Result<(), String> {
         if !self.has_session_locator && self.state_request.is_none() {
-            self.state_request = Some(self.process.send_request(BackendRequest::LoadState)?);
+            self.state_request = Some(self.process.send_request(PiRequest::LoadState)?);
         }
         Ok(())
     }

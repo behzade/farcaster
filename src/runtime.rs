@@ -22,13 +22,12 @@ use serde_json::{Value, json};
 
 use crate::{
     agent_activity::AgentActivity,
-    backend::{BackendEvent, BackendRequest, SessionTransport},
+    agents::{PiEvent, PiProcessCommand, PiRequest, PiRpcProcess, PiSessionTransport},
     conversation::{ConversationState, TranscriptItem, TranscriptKind},
     protocol::{
         ExtensionUiRequest, ExtensionUiResponse, Model, PromptImage, PromptMode, SessionState,
         SlashCommand,
     },
-    rpc_process::{ProcessCommand, RpcProcess},
     session_transfer::{self, TransferMember},
     session_watcher::{SessionWatchEvent, SessionWatcher},
     sessions::{
@@ -232,10 +231,10 @@ impl RuntimeHandle {
         grants: crate::sandbox::GrantStore,
         app_proxy: Option<String>,
     ) -> Self {
-        let command = ProcessCommand {
+        let command = PiProcessCommand {
             grants: Some(grants),
             app_proxy,
-            ..ProcessCommand::default()
+            ..PiProcessCommand::default()
         };
         Self::spawn_with(project, draft_id, initial_session, command)
     }
@@ -244,7 +243,7 @@ impl RuntimeHandle {
         project: PathBuf,
         draft_id: String,
         initial_session: Option<PathBuf>,
-        process_command: ProcessCommand,
+        process_command: PiProcessCommand,
     ) -> Self {
         let (commands, command_rx) = mpsc::channel();
         let (events_tx, events) = mpsc::channel();
@@ -329,7 +328,7 @@ struct SessionRuntimeHandle {
 impl SessionRuntimeHandle {
     fn spawn(
         project: PathBuf,
-        process_command: ProcessCommand,
+        process_command: PiProcessCommand,
         load_catalog: bool,
         supervisor: thread::Thread,
     ) -> Self {
@@ -420,7 +419,7 @@ fn run_supervisor(
     project: PathBuf,
     draft_id: String,
     initial_session: Option<PathBuf>,
-    mut process_command: ProcessCommand,
+    mut process_command: PiProcessCommand,
     command_rx: mpsc::Receiver<RuntimeCommand>,
     event_tx: UiEventSender,
 ) {
@@ -1377,8 +1376,8 @@ enum SnapshotChange {
 
 struct RuntimeOwner {
     project: PathBuf,
-    process_command: ProcessCommand,
-    process: Option<Box<dyn SessionTransport>>,
+    process_command: PiProcessCommand,
+    process: Option<Box<dyn PiSessionTransport>>,
     snapshot: RuntimeSnapshot,
     owns_session_catalog: bool,
     session_generation: u64,
@@ -1430,7 +1429,7 @@ struct HistoryResult {
 
 fn run(
     project: PathBuf,
-    process_command: ProcessCommand,
+    process_command: PiProcessCommand,
     command_rx: mpsc::Receiver<RuntimeCommand>,
     event_tx: SessionEventSender,
     load_catalog: bool,
@@ -1649,14 +1648,14 @@ impl RuntimeOwner {
         });
         self.publish();
         let process = if let Some(source) = fork.as_deref() {
-            RpcProcess::spawn_fork_with_waker(
+            PiRpcProcess::spawn_fork_with_waker(
                 &self.process_command,
                 &self.project,
                 source,
                 thread::current(),
             )
         } else {
-            RpcProcess::spawn_with_waker(
+            PiRpcProcess::spawn_with_waker(
                 &self.process_command,
                 &self.project,
                 session.as_deref(),
@@ -1692,27 +1691,27 @@ impl RuntimeOwner {
                 allow_while_running,
             } => self.send_prompt(target, mode, message, images, allow_while_running),
             RuntimeCommand::DeliverQueued(prompt) => self.deliver_queued(prompt),
-            RuntimeCommand::Abort => self.send(BackendRequest::Abort),
+            RuntimeCommand::Abort => self.send(PiRequest::Abort),
             RuntimeCommand::Reload => self.reload(),
             RuntimeCommand::Compact {
                 custom_instructions,
-            } => self.send(BackendRequest::Compact {
+            } => self.send(PiRequest::Compact {
                 instructions: custom_instructions,
             }),
             RuntimeCommand::ExportHtml { output_path } => {
-                self.send(BackendRequest::ExportHtml { output_path })
+                self.send(PiRequest::ExportHtml { output_path })
             }
             RuntimeCommand::SetSessionName(name) => {
                 if let Some(state) = self.active_snapshot_mut().session.as_mut() {
                     state.session_name = Some(name.clone());
                 }
-                self.send(BackendRequest::Rename { name })
+                self.send(PiRequest::Rename { name })
             }
             RuntimeCommand::RenameSession {
                 path,
                 project,
                 name,
-            } => match RpcProcess::rename_session(&self.process_command, &project, &path, &name) {
+            } => match PiRpcProcess::rename_session(&self.process_command, &project, &path, &name) {
                 Ok(()) => self.load_sessions(self.session_query.clone()),
                 Err(message) => {
                     let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
@@ -1790,7 +1789,7 @@ impl RuntimeOwner {
         self.start_process(session);
     }
 
-    fn send(&mut self, request: BackendRequest) {
+    fn send(&mut self, request: PiRequest) {
         let operation = request.operation();
         match self.process.as_mut().map(|process| process.send(request)) {
             Some(Ok(_)) => {}
@@ -1799,13 +1798,13 @@ impl RuntimeOwner {
         }
     }
 
-    fn apply_process_item(&mut self, item: BackendEvent) -> SnapshotChange {
+    fn apply_process_item(&mut self, item: PiEvent) -> SnapshotChange {
         match item {
-            BackendEvent::Response(response) => {
+            PiEvent::Response(response) => {
                 self.apply_response(response);
                 SnapshotChange::None
             }
-            BackendEvent::Interaction(request) => {
+            PiEvent::Interaction(request) => {
                 if let Some(result) = request.sandbox_mode_result() {
                     self.apply_sandbox_mode_result(result);
                     return SnapshotChange::None;
@@ -1817,7 +1816,7 @@ impl RuntimeOwner {
                 });
                 SnapshotChange::None
             }
-            BackendEvent::Activity(event) => {
+            PiEvent::Activity(event) => {
                 let event_type = event.get("type").and_then(Value::as_str);
                 let settled = event_type == Some("agent_settled");
                 let session_starting = event_type == Some("agent_start")
@@ -1854,18 +1853,18 @@ impl RuntimeOwner {
                 }
                 let should_publish = (!previewing && snapshot_changed) || live_status_changed;
                 if session_starting {
-                    self.send(BackendRequest::LoadState);
+                    self.send(PiRequest::LoadState);
                 }
                 if event_type == Some("agent_start") {
                     self.refresh_sessions();
                 }
                 if event_type == Some("session_info_changed") {
-                    self.send(BackendRequest::LoadState);
+                    self.send(PiRequest::LoadState);
                     self.refresh_sessions();
                 }
                 if settled {
-                    self.send(BackendRequest::LoadState);
-                    self.send(BackendRequest::LoadUsage);
+                    self.send(PiRequest::LoadState);
+                    self.send(PiRequest::LoadUsage);
                     self.refresh_sessions();
                 }
                 if !should_publish {
@@ -1879,7 +1878,7 @@ impl RuntimeOwner {
                     SnapshotChange::Immediate
                 }
             }
-            BackendEvent::Stderr(chunk) => {
+            PiEvent::Stderr(chunk) => {
                 let previewing = self.parked_snapshot.is_some();
                 let snapshot = self.active_snapshot_mut();
                 snapshot.stderr.push_str(&chunk);
@@ -1892,7 +1891,7 @@ impl RuntimeOwner {
                     SnapshotChange::Streaming
                 }
             }
-            BackendEvent::Failure(error) => {
+            PiEvent::Failure(error) => {
                 self.fail(error);
                 SnapshotChange::None
             }
@@ -2095,7 +2094,7 @@ impl RuntimeOwner {
         }
     }
 
-    fn apply_response(&mut self, response: crate::protocol::RpcResponse) {
+    fn apply_response(&mut self, response: crate::agents::PiResponse) {
         if self.apply_permission_command_response(&response) {
             return;
         }
@@ -2250,11 +2249,11 @@ impl RuntimeOwner {
                 {
                     state.model = Some(model);
                 }
-                self.send(BackendRequest::ListReasoningLevels);
-                self.send(BackendRequest::LoadState);
+                self.send(PiRequest::ListReasoningLevels);
+                self.send(PiRequest::LoadState);
             }
             "set_thinking_level" => {
-                self.send(BackendRequest::LoadState);
+                self.send(PiRequest::LoadState);
             }
             "new_session"
                 if response.data.get("cancelled").and_then(Value::as_bool) != Some(true) =>
@@ -2276,15 +2275,15 @@ impl RuntimeOwner {
             }
             "prompt" | "steer" | "follow_up" => {
                 self.active_snapshot_mut().status = "Accepted".into();
-                self.send(BackendRequest::LoadState);
+                self.send(PiRequest::LoadState);
             }
             "abort" => self.active_snapshot_mut().status = "Stopping".into(),
             "compact" | "set_auto_compaction" | "set_auto_retry" | "abort_retry" => {
-                self.send(BackendRequest::LoadState)
+                self.send(PiRequest::LoadState)
             }
             "set_session_name" => {
                 self.active_snapshot_mut().status = "Session named".into();
-                self.send(BackendRequest::LoadState);
+                self.send(PiRequest::LoadState);
                 self.refresh_sessions();
             }
             "export_html" => {
@@ -2459,15 +2458,15 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
     truncated
 }
 
-fn startup_commands() -> [BackendRequest; 7] {
+fn startup_commands() -> [PiRequest; 7] {
     [
-        BackendRequest::ConfigureSteering,
-        BackendRequest::LoadState,
-        BackendRequest::LoadHistory,
-        BackendRequest::LoadUsage,
-        BackendRequest::ListModels,
-        BackendRequest::ListReasoningLevels,
-        BackendRequest::ListCommands,
+        PiRequest::ConfigureSteering,
+        PiRequest::LoadState,
+        PiRequest::LoadHistory,
+        PiRequest::LoadUsage,
+        PiRequest::ListModels,
+        PiRequest::ListReasoningLevels,
+        PiRequest::ListCommands,
     ]
 }
 
@@ -2592,12 +2591,12 @@ mod tests {
             temp.path().to_path_buf(),
             "shutdown-test".into(),
             None,
-            ProcessCommand::test_script(
+            PiProcessCommand::test_script(
                 &script,
                 vec!["term-marker".into(), marker.to_string_lossy().into_owned()],
             ),
         );
-        // RpcProcess permits up to 15 seconds for its readiness handshake. The
+        // PiRpcProcess permits up to 15 seconds for its readiness handshake. The
         // full test suite can also delay this supervisor under build-machine load.
         let deadline = Instant::now() + Duration::from_secs(20);
         let mut connected = false;
@@ -2635,7 +2634,7 @@ mod tests {
         (
             RuntimeOwner {
                 project: project.clone(),
-                process_command: ProcessCommand {
+                process_command: PiProcessCommand {
                     program: PathBuf::from("/definitely/missing/farcaster-test-command"),
                     prefix_args: Vec::new(),
                     permission_level: PermissionLevel::default(),
@@ -2715,7 +2714,7 @@ mod tests {
             .map_err(|error| error.to_string())?;
         let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
         owner.process_command =
-            ProcessCommand::test_script(&script, vec!["preconnect-permission".into()]);
+            PiProcessCommand::test_script(&script, vec!["preconnect-permission".into()]);
         let target = PermissionLevel {
             files: FileAccessMode::Full,
             network: NetworkAccessMode::Full,
@@ -2786,7 +2785,7 @@ mod tests {
             .map_err(|error| error.to_string())?;
         let session = temp.path().join("session.jsonl");
         let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
-        owner.process_command = ProcessCommand::test_script(&script, vec!["sandbox-mode".into()]);
+        owner.process_command = PiProcessCommand::test_script(&script, vec!["sandbox-mode".into()]);
         owner.start_process(Some(session));
         drive_process_until(&mut owner, |owner| {
             owner.startup_state_loaded && owner.startup_history_loaded
@@ -2838,7 +2837,7 @@ mod tests {
             .map_err(|error| error.to_string())?;
         let session = temp.path().join("session.jsonl");
         let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
-        owner.process_command = ProcessCommand::test_script(&script, vec!["sandbox-mode".into()]);
+        owner.process_command = PiProcessCommand::test_script(&script, vec!["sandbox-mode".into()]);
         owner.start_process(Some(session));
         drive_process_until(&mut owner, |owner| {
             owner.startup_state_loaded && owner.startup_history_loaded
@@ -3107,7 +3106,7 @@ mod tests {
         owner.snapshot.status = "Working".into();
         conversation_mut(&mut owner.snapshot).running = true;
 
-        let changed = owner.apply_process_item(BackendEvent::Activity(json!({
+        let changed = owner.apply_process_item(PiEvent::Activity(json!({
             "type": "turn_start"
         })));
 
@@ -3121,7 +3120,7 @@ mod tests {
         owner.owns_session_catalog = false;
         owner.active_session = Some(PathBuf::from("/sessions/new.jsonl"));
 
-        owner.apply_process_item(BackendEvent::Activity(json!({"type":"agent_start"})));
+        owner.apply_process_item(PiEvent::Activity(json!({"type":"agent_start"})));
 
         assert!(matches!(
             events.try_recv(),
@@ -3204,7 +3203,7 @@ mod tests {
             &mut touches,
             &mut revisions,
             &mut paths,
-            &ProcessCommand::default(),
+            &PiProcessCommand::default(),
             &thread::current(),
         );
 
@@ -3245,7 +3244,7 @@ mod tests {
             &mut touches,
             &mut revisions,
             &mut paths,
-            &ProcessCommand::default(),
+            &PiProcessCommand::default(),
             &thread::current(),
         );
 
@@ -3405,7 +3404,7 @@ mod tests {
         fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))?;
         let session = temp.path().join("session.jsonl");
         let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
-        owner.process_command = ProcessCommand::test_script(&script, vec!["quiet".into()]);
+        owner.process_command = PiProcessCommand::test_script(&script, vec!["quiet".into()]);
         owner.active_session = Some(session.clone());
         owner.snapshot.selected_session = Some(session.clone());
         let generation = owner.process_generation;
@@ -3428,8 +3427,8 @@ mod tests {
         let temp = tempdir()?;
         let script = temp.path().join("fake-pi.sh");
         fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))?;
-        let process = RpcProcess::spawn(
-            &ProcessCommand::test_script(&script, vec!["quiet".into()]),
+        let process = PiRpcProcess::spawn(
+            &PiProcessCommand::test_script(&script, vec!["quiet".into()]),
             temp.path(),
             None,
         )?;
@@ -3511,7 +3510,7 @@ mod tests {
         fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))?;
         let (mut owner, _events, _discovery) =
             owner_without_process(old_project.path().to_path_buf());
-        owner.process_command = ProcessCommand::test_script(&script, vec!["quiet".into()]);
+        owner.process_command = PiProcessCommand::test_script(&script, vec!["quiet".into()]);
 
         owner.apply_command(RuntimeCommand::NewSession {
             id: "draft-new".into(),
@@ -3771,7 +3770,7 @@ mod tests {
         let session = project.join("new-session.jsonl");
         let (mut owner, _events, _discovery) = owner_without_process(project);
 
-        owner.apply_response(crate::protocol::RpcResponse {
+        owner.apply_response(crate::agents::PiResponse {
             id: Some("state".into()),
             command: "get_state".into(),
             success: true,
@@ -3804,7 +3803,7 @@ mod tests {
         symlink(&session, &link)?;
         let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
 
-        owner.apply_response(crate::protocol::RpcResponse {
+        owner.apply_response(crate::agents::PiResponse {
             id: Some("state".into()),
             command: "get_state".into(),
             success: true,
@@ -4017,7 +4016,7 @@ mod tests {
 
     #[test]
     fn startup_delivers_all_composer_steers_at_one_turn_boundary() {
-        assert_eq!(startup_commands()[0], BackendRequest::ConfigureSteering);
+        assert_eq!(startup_commands()[0], PiRequest::ConfigureSteering);
     }
 
     #[test]
@@ -4093,7 +4092,7 @@ mod tests {
         let session = temp.path().join("history.jsonl");
         let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
         owner.process_command =
-            ProcessCommand::test_script(&script, vec!["history-control".into()]);
+            PiProcessCommand::test_script(&script, vec!["history-control".into()]);
         preview_history(&mut owner, session.clone(), "preserved history");
 
         owner.apply_command(RuntimeCommand::SetModel {
@@ -4150,7 +4149,7 @@ mod tests {
         let project = std::env::temp_dir();
         let session = project.join("history.jsonl");
         let (mut owner, _events, _discovery) = owner_without_process(project);
-        owner.process_command = ProcessCommand {
+        owner.process_command = PiProcessCommand {
             program: PathBuf::from("/definitely/missing/farcaster-test-command"),
             prefix_args: Vec::new(),
             permission_level: PermissionLevel::default(),
@@ -4184,7 +4183,7 @@ mod tests {
         let (history_tx, _history_rx) = mpsc::channel();
         let mut owner = RuntimeOwner {
             project: std::env::temp_dir(),
-            process_command: ProcessCommand {
+            process_command: PiProcessCommand {
                 program: PathBuf::from("/definitely/missing/farcaster-test-command"),
                 prefix_args: Vec::new(),
                 permission_level: PermissionLevel::default(),
@@ -4311,7 +4310,7 @@ mod tests {
         let temp = tempdir()?;
         let database = temp.path().join("gui-state.sqlite3");
         let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
-        owner.process_command = ProcessCommand {
+        owner.process_command = PiProcessCommand {
             program: PathBuf::from("/definitely/missing/farcaster-test-command"),
             prefix_args: Vec::new(),
             permission_level: PermissionLevel::default(),
@@ -4378,8 +4377,8 @@ mod tests {
         let script = temp.path().join("fake-pi.sh");
         fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))
             .map_err(|error| error.to_string())?;
-        let process_command = ProcessCommand::test_script(&script, vec!["quiet".into()]);
-        let process = RpcProcess::spawn(&process_command, temp.path(), None)?;
+        let process_command = PiProcessCommand::test_script(&script, vec!["quiet".into()]);
+        let process = PiRpcProcess::spawn(&process_command, temp.path(), None)?;
         let (event_tx, event_rx) = test_event_channel();
         let (discovery_tx, _discovery_rx) = mpsc::channel();
         let (history_tx, _history_rx) = mpsc::channel();
@@ -4568,7 +4567,7 @@ mod tests {
         let (history_tx, history_rx) = mpsc::channel();
         let mut owner = RuntimeOwner {
             project: temp.path().to_path_buf(),
-            process_command: ProcessCommand::default(),
+            process_command: PiProcessCommand::default(),
             process: None,
             snapshot: RuntimeSnapshot {
                 connected: true,
@@ -4635,7 +4634,7 @@ mod tests {
         assert_eq!(visible.conversation.items[0].text, "history message");
 
         assert_eq!(
-            owner.apply_process_item(BackendEvent::Activity(json!({
+            owner.apply_process_item(PiEvent::Activity(json!({
                 "type": "message_start",
                 "message": {
                     "role": "assistant",
@@ -4659,7 +4658,7 @@ mod tests {
                 .all(|event| !matches!(event, RuntimeEvent::Snapshot { .. }))
         );
 
-        let changed = owner.apply_process_item(BackendEvent::Activity(json!({
+        let changed = owner.apply_process_item(PiEvent::Activity(json!({
             "type": "compaction_start",
             "reason": "test"
         })));

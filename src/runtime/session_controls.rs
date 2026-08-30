@@ -45,10 +45,10 @@ impl SessionControl {
         }
     }
 
-    fn into_request(self) -> BackendRequest {
+    fn into_request(self) -> PiRequest {
         match self {
-            Self::Model(provider, model_id) => BackendRequest::SelectModel { provider, model_id },
-            Self::Thinking(level) => BackendRequest::SelectReasoning { level },
+            Self::Model(provider, model_id) => PiRequest::SelectModel { provider, model_id },
+            Self::Thinking(level) => PiRequest::SelectReasoning { level },
         }
     }
 }
@@ -155,11 +155,11 @@ mod tests {
         assert_eq!(
             requests,
             vec![
-                BackendRequest::SelectModel {
+                PiRequest::SelectModel {
                     provider: "new-provider".into(),
                     model_id: "new-model".into(),
                 },
-                BackendRequest::SelectReasoning {
+                PiRequest::SelectReasoning {
                     level: "high".into(),
                 },
             ]

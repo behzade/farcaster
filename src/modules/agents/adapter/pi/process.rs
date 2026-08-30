@@ -12,15 +12,19 @@ use std::{
 
 use serde_json::Value;
 
-use crate::{
-    backend::{BackendEvent, BackendRequest, encode_pi_request},
+use super::{
     framing::{JsonlFramer, encode_json_line},
-    protocol::{ExtensionUiResponse, RpcResponse, WireMessage, parse_frame},
+    mcp_config::TransientMcpConfig,
+    wire::{PiResponse, PiWireMessage, parse_frame},
+};
+use crate::{
+    agents::{PiEvent, PiRequest, encode_pi_request},
+    protocol::ExtensionUiResponse,
     runtime::PermissionLevel,
 };
 
 #[derive(Clone)]
-pub(crate) struct ProcessCommand {
+pub(crate) struct PiProcessCommand {
     pub program: PathBuf,
     pub prefix_args: Vec<String>,
     pub permission_level: PermissionLevel,
@@ -29,7 +33,7 @@ pub(crate) struct ProcessCommand {
     pub app_proxy: Option<String>,
 }
 
-impl Default for ProcessCommand {
+impl Default for PiProcessCommand {
     fn default() -> Self {
         Self {
             program: pi_program(std::env::var_os("FARCASTER_PI_PATH")),
@@ -42,7 +46,7 @@ impl Default for ProcessCommand {
     }
 }
 
-impl ProcessCommand {
+impl PiProcessCommand {
     #[cfg(test)]
     pub(crate) fn test_script(script: &Path, mut arguments: Vec<String>) -> Self {
         let mut prefix_args = Vec::with_capacity(arguments.len() + 1);
@@ -205,7 +209,7 @@ impl ReaderSender {
 }
 
 enum ReaderItem {
-    Wire(Result<WireMessage, String>),
+    Wire(Result<PiWireMessage, String>),
     Stderr(String),
     StderrEof,
     Eof,
@@ -218,7 +222,7 @@ enum SessionLaunch<'a> {
 }
 
 fn rpc_command(
-    command: &ProcessCommand,
+    command: &PiProcessCommand,
     project: &Path,
     launch: SessionLaunch<'_>,
     mcp_config: &Path,
@@ -246,21 +250,21 @@ fn rpc_command(
     Ok(prepared)
 }
 
-pub(crate) struct RpcProcess {
-    _mcp_config: crate::mcp_client_config::TransientMcpConfig,
+pub(crate) struct PiRpcProcess {
+    _mcp_config: TransientMcpConfig,
     _sandbox: crate::sandbox::PreparedCommand,
     child: Arc<Mutex<Child>>,
     stdin: Arc<Mutex<ChildStdin>>,
     incoming: mpsc::Receiver<ReaderItem>,
-    queued: VecDeque<BackendEvent>,
+    queued: VecDeque<PiEvent>,
     pending: HashMap<String, String>,
     next_id: u64,
     stderr: String,
 }
 
-impl RpcProcess {
+impl PiRpcProcess {
     pub(crate) fn spawn(
-        command: &ProcessCommand,
+        command: &PiProcessCommand,
         project: &Path,
         session: Option<&Path>,
     ) -> Result<Self, String> {
@@ -269,7 +273,7 @@ impl RpcProcess {
     }
 
     pub(crate) fn spawn_with_waker(
-        command: &ProcessCommand,
+        command: &PiProcessCommand,
         project: &Path,
         session: Option<&Path>,
         wake: thread::Thread,
@@ -279,7 +283,7 @@ impl RpcProcess {
     }
 
     pub(crate) fn spawn_fork(
-        command: &ProcessCommand,
+        command: &PiProcessCommand,
         project: &Path,
         source: &Path,
     ) -> Result<Self, String> {
@@ -287,7 +291,7 @@ impl RpcProcess {
     }
 
     pub(crate) fn spawn_fork_with_waker(
-        command: &ProcessCommand,
+        command: &PiProcessCommand,
         project: &Path,
         source: &Path,
         wake: thread::Thread,
@@ -296,12 +300,12 @@ impl RpcProcess {
     }
 
     fn spawn_inner(
-        command: &ProcessCommand,
+        command: &PiProcessCommand,
         project: &Path,
         launch: SessionLaunch<'_>,
         wake: Option<thread::Thread>,
     ) -> Result<Self, String> {
-        let mcp_config = crate::mcp_client_config::TransientMcpConfig::create()?;
+        let mcp_config = TransientMcpConfig::create()?;
         let mut prepared = rpc_command(command, project, launch, mcp_config.path())?;
         let mut child = prepared
             .command
@@ -348,7 +352,7 @@ impl RpcProcess {
         Ok(rpc)
     }
 
-    pub(crate) fn send_request(&mut self, request: BackendRequest) -> Result<String, String> {
+    pub(crate) fn send_request(&mut self, request: PiRequest) -> Result<String, String> {
         self.send_command(encode_pi_request(request))
     }
 
@@ -374,10 +378,7 @@ impl RpcProcess {
         Ok(id)
     }
 
-    pub(crate) fn request_and_wait(
-        &mut self,
-        request: BackendRequest,
-    ) -> Result<RpcResponse, String> {
+    pub(crate) fn request_and_wait(&mut self, request: PiRequest) -> Result<PiResponse, String> {
         let operation = request.operation();
         let id = self.send_request(request)?;
         let deadline = Instant::now() + Duration::from_secs(15);
@@ -385,7 +386,7 @@ impl RpcProcess {
             match self.incoming.recv_timeout(Duration::from_millis(50)) {
                 Ok(ReaderItem::StderrEof) => {}
                 Ok(item) => match self.route(item) {
-                    BackendEvent::Response(response) if response.id.as_deref() == Some(&id) => {
+                    PiEvent::Response(response) if response.id.as_deref() == Some(&id) => {
                         return if response.success {
                             Ok(response)
                         } else {
@@ -394,7 +395,7 @@ impl RpcProcess {
                                 .unwrap_or_else(|| format!("Pi could not {operation}")))
                         };
                     }
-                    BackendEvent::Failure(error) => return Err(error),
+                    PiEvent::Failure(error) => return Err(error),
                     other => self.queued.push_back(other),
                 },
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -409,22 +410,20 @@ impl RpcProcess {
     }
 
     pub(crate) fn rename_session(
-        command: &ProcessCommand,
+        command: &PiProcessCommand,
         project: &Path,
         session: &Path,
         name: &str,
     ) -> Result<(), String> {
         let mut rpc = Self::spawn(command, project, Some(session))?;
         let result = (|| {
-            let id = rpc.send_request(BackendRequest::Rename {
+            let id = rpc.send_request(PiRequest::Rename {
                 name: name.to_owned(),
             })?;
             let deadline = Instant::now() + Duration::from_secs(15);
             while Instant::now() < deadline {
                 match rpc.try_next() {
-                    Some(BackendEvent::Response(response))
-                        if response.id.as_deref() == Some(&id) =>
-                    {
+                    Some(PiEvent::Response(response)) if response.id.as_deref() == Some(&id) => {
                         return if response.success {
                             Ok(())
                         } else {
@@ -433,7 +432,7 @@ impl RpcProcess {
                                 .unwrap_or_else(|| "Pi rejected the session name".to_owned()))
                         };
                     }
-                    Some(BackendEvent::Failure(error)) => return Err(error),
+                    Some(PiEvent::Failure(error)) => return Err(error),
                     Some(_) | None => thread::sleep(Duration::from_millis(10)),
                 }
             }
@@ -454,7 +453,7 @@ impl RpcProcess {
         self.write(&encoded)
     }
 
-    pub(crate) fn try_next(&mut self) -> Option<BackendEvent> {
+    pub(crate) fn try_next(&mut self) -> Option<PiEvent> {
         if let Some(item) = self.queued.pop_front() {
             return Some(item);
         }
@@ -464,7 +463,7 @@ impl RpcProcess {
             Ok(item) => Some(self.route(item)),
             Err(mpsc::TryRecvError::Empty) => None,
             Err(mpsc::TryRecvError::Disconnected) => {
-                Some(BackendEvent::Failure("Pi reader threads stopped".into()))
+                Some(PiEvent::Failure("Pi reader threads stopped".into()))
             }
         }
     }
@@ -531,13 +530,13 @@ impl RpcProcess {
     }
 
     fn readiness_handshake(&mut self, timeout: Duration) -> Result<(), String> {
-        let id = self.send_request(BackendRequest::LoadState)?;
+        let id = self.send_request(PiRequest::LoadState)?;
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
             match self.incoming.recv_timeout(Duration::from_millis(50)) {
                 Ok(ReaderItem::StderrEof) => continue,
                 Ok(item) => match self.route(item) {
-                    BackendEvent::Response(response) if response.id.as_deref() == Some(&id) => {
+                    PiEvent::Response(response) if response.id.as_deref() == Some(&id) => {
                         if response.command != "get_state" {
                             return Err(format!(
                                 "readiness response command was {}",
@@ -552,7 +551,7 @@ impl RpcProcess {
                         }
                         return Ok(());
                     }
-                    BackendEvent::Failure(error) => return Err(error),
+                    PiEvent::Failure(error) => return Err(error),
                     other => self.queued.push_back(other),
                 },
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -579,41 +578,41 @@ impl RpcProcess {
             .map_err(|error| format!("write Pi stdin: {error}"))
     }
 
-    fn route(&mut self, item: ReaderItem) -> BackendEvent {
+    fn route(&mut self, item: ReaderItem) -> PiEvent {
         match item {
-            ReaderItem::Wire(Ok(WireMessage::Response(response))) => {
+            ReaderItem::Wire(Ok(PiWireMessage::Response(response))) => {
                 let Some(id) = response.id.as_deref() else {
-                    return BackendEvent::Failure(format!(
+                    return PiEvent::Failure(format!(
                         "uncorrelated response for {}",
                         response.command
                     ));
                 };
                 let Some(expected_command) = self.pending.remove(id) else {
-                    return BackendEvent::Failure(format!("response used unknown request id {id}"));
+                    return PiEvent::Failure(format!("response used unknown request id {id}"));
                 };
                 if response.command != expected_command {
-                    return BackendEvent::Failure(format!(
+                    return PiEvent::Failure(format!(
                         "response {id} was for {}, expected {expected_command}",
                         response.command
                     ));
                 }
-                BackendEvent::Response(response)
+                PiEvent::Response(response)
             }
-            ReaderItem::Wire(Ok(WireMessage::ExtensionUi(request))) => {
-                BackendEvent::Interaction(request)
+            ReaderItem::Wire(Ok(PiWireMessage::ExtensionUi(request))) => {
+                PiEvent::Interaction(request)
             }
-            ReaderItem::Wire(Ok(WireMessage::Event(event))) => BackendEvent::Activity(event),
-            ReaderItem::Wire(Err(error)) => BackendEvent::Failure(error),
+            ReaderItem::Wire(Ok(PiWireMessage::Event(event))) => PiEvent::Activity(event),
+            ReaderItem::Wire(Err(error)) => PiEvent::Failure(error),
             ReaderItem::Stderr(chunk) => {
                 self.stderr.push_str(&chunk);
-                BackendEvent::Stderr(chunk)
+                PiEvent::Stderr(chunk)
             }
             ReaderItem::Eof => self.finish_after_stdout_eof(),
-            ReaderItem::StderrEof => BackendEvent::Stderr(String::new()),
+            ReaderItem::StderrEof => PiEvent::Stderr(String::new()),
         }
     }
 
-    fn finish_after_stdout_eof(&mut self) -> BackendEvent {
+    fn finish_after_stdout_eof(&mut self) -> PiEvent {
         let deadline = Instant::now() + Duration::from_millis(500);
         while Instant::now() < deadline {
             match self.incoming.recv_timeout(Duration::from_millis(20)) {
@@ -621,10 +620,10 @@ impl RpcProcess {
                 Ok(ReaderItem::StderrEof) => break,
                 Ok(ReaderItem::Wire(wire)) => {
                     self.queued.push_back(match wire {
-                        Ok(WireMessage::Response(response)) => BackendEvent::Response(response),
-                        Ok(WireMessage::ExtensionUi(request)) => BackendEvent::Interaction(request),
-                        Ok(WireMessage::Event(event)) => BackendEvent::Activity(event),
-                        Err(error) => BackendEvent::Failure(error),
+                        Ok(PiWireMessage::Response(response)) => PiEvent::Response(response),
+                        Ok(PiWireMessage::ExtensionUi(request)) => PiEvent::Interaction(request),
+                        Ok(PiWireMessage::Event(event)) => PiEvent::Activity(event),
+                        Err(error) => PiEvent::Failure(error),
                     });
                 }
                 Ok(ReaderItem::Eof) => {}
@@ -634,12 +633,12 @@ impl RpcProcess {
         }
         let exit = self.exit_description();
         if self.pending.is_empty() {
-            BackendEvent::Failure(format!(
+            PiEvent::Failure(format!(
                 "Pi closed stdout ({exit}). Stderr: {}",
                 self.stderr
             ))
         } else {
-            BackendEvent::Failure(format!(
+            PiEvent::Failure(format!(
                 "Pi closed stdout with {} pending request(s), {exit}. Stderr: {}",
                 self.pending.len(),
                 self.stderr
@@ -666,7 +665,7 @@ impl RpcProcess {
     }
 }
 
-impl Drop for RpcProcess {
+impl Drop for PiRpcProcess {
     fn drop(&mut self) {
         let _ = self.terminate();
     }
@@ -730,282 +729,5 @@ fn spawn_stderr_reader(mut stderr: impl std::io::Read + Send + 'static, sender: 
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::runtime::{FileAccessMode, NetworkAccessMode};
-    use std::{error::Error, fs};
-    use tempfile::tempdir;
-
-    type TestResult<T = ()> = Result<T, Box<dyn Error>>;
-
-    fn fake(case: &str) -> TestResult<(tempfile::TempDir, ProcessCommand)> {
-        let temp = tempdir()?;
-        let script = temp.path().join("fake.sh");
-        fs::write(&script, include_str!("../tests/fixtures/fake-pi.sh"))?;
-        let command = ProcessCommand::test_script(&script, vec![case.into()]);
-        Ok((temp, command))
-    }
-
-    #[test]
-    fn process_starts_directly_in_the_project_directory() -> TestResult {
-        let (temp, command) = fake("project-directory")?;
-        let mut rpc = RpcProcess::spawn(&command, temp.path(), None)?;
-        let process_project = fs::read_to_string(temp.path().join("process-project"))?;
-        assert_eq!(
-            fs::canonicalize(process_project)?,
-            fs::canonicalize(temp.path())?,
-        );
-        let mcp_config = serde_json::from_slice::<serde_json::Value>(&fs::read(
-            temp.path().join("process-mcp-config"),
-        )?)?;
-        assert_eq!(
-            mcp_config["mcpServers"]["farcaster"]["url"],
-            "http://127.0.0.1:8765/mcp"
-        );
-        assert!(!temp.path().join(".mcp.json").exists());
-        rpc.terminate()?;
-        Ok(())
-    }
-
-    #[test]
-    fn fork_process_passes_the_source_session_to_pi() -> TestResult {
-        let project = tempdir()?;
-        let source = Path::new("/sessions/source session.jsonl");
-        let process = rpc_command(
-            &ProcessCommand {
-                nono: crate::sandbox::test_nono_bypass(),
-                ..ProcessCommand::default()
-            },
-            project.path(),
-            SessionLaunch::Fork(source),
-            Path::new("/dev/fd/9"),
-        )?;
-        let arguments = process.command.get_args().collect::<Vec<_>>();
-        assert!(arguments.windows(2).any(|pair| pair == ["--mode", "rpc"]));
-        assert!(
-            arguments
-                .windows(2)
-                .any(|pair| pair == ["--mcp-config", "/dev/fd/9"])
-        );
-        assert_eq!(
-            arguments.get(arguments.len().saturating_sub(2)..),
-            Some([std::ffi::OsStr::new("--fork"), source.as_os_str()].as_slice())
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn packaged_pi_path_wins_over_the_project_environment() {
-        assert_eq!(
-            pi_program(Some("/nix/store/pi/bin/pi".into())),
-            PathBuf::from("/nix/store/pi/bin/pi")
-        );
-        assert_eq!(pi_program(None), PathBuf::from("pi"));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn resolves_agent_symlink_to_a_fixed_executable() -> TestResult {
-        use std::os::unix::fs::{PermissionsExt as _, symlink};
-
-        let root = tempdir()?;
-        let executable = root.path().join("agent");
-        let bin = root.path().join("bin");
-        fs::create_dir(&bin)?;
-        fs::write(&executable, b"#!/usr/bin/env node\n")?;
-        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))?;
-        symlink(&executable, bin.join("agent"))?;
-
-        let search_path = std::env::join_paths([&bin])?;
-        let resolved = resolve_agent_program(Path::new("agent"), root.path(), Some(&search_path))?;
-        assert_eq!(resolved, executable.canonicalize()?);
-        Ok(())
-    }
-
-    #[test]
-    fn pi_runs_full_inside_the_outer_sandbox() -> TestResult {
-        let project = tempdir()?;
-        let nono = project.path().join("nono");
-        fs::write(&nono, b"#!/bin/sh\nexit 0\n")?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            fs::set_permissions(&nono, fs::Permissions::from_mode(0o700))?;
-        }
-        let pi = project.path().join("pi");
-        fs::write(&pi, b"#!/bin/sh\nexit 0\n")?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            fs::set_permissions(&pi, fs::Permissions::from_mode(0o700))?;
-        }
-        let command = ProcessCommand {
-            program: pi,
-            permission_level: PermissionLevel {
-                files: FileAccessMode::ReadOnly,
-                network: NetworkAccessMode::Sandboxed,
-            },
-            nono: crate::sandbox::NonoExecutable::Fixed(nono.clone()),
-            ..ProcessCommand::default()
-        };
-        let prepared = rpc_command(
-            &command,
-            project.path(),
-            SessionLaunch::New,
-            Path::new("/dev/fd/9"),
-        )?;
-        assert_eq!(prepared.command.get_program(), nono.as_os_str());
-        let arguments = prepared.command.get_args().collect::<Vec<_>>();
-        assert!(arguments.windows(4).any(|arguments| {
-            arguments == ["--sandbox-files", "full", "--sandbox-network", "full"]
-        }));
-        Ok(())
-    }
-
-    #[test]
-    fn request_and_wait_confirms_configuration_before_returning() -> TestResult {
-        let (temp, command) = fake("normal")?;
-        let mut rpc = RpcProcess::spawn(&command, temp.path(), None)?;
-        let response = rpc.request_and_wait(BackendRequest::SelectReasoning {
-            level: "medium".into(),
-        })?;
-        assert_eq!(response.command, "set_thinking_level");
-        rpc.terminate()?;
-        Ok(())
-    }
-
-    #[test]
-    fn handshake_routes_async_event_and_correlates_unique_ids() -> TestResult {
-        let (temp, command) = fake("normal")?;
-        let mut rpc = RpcProcess::spawn(&command, temp.path(), None)?;
-        assert!(
-            matches!(rpc.try_next(), Some(BackendEvent::Activity(value)) if value["type"] == "agent_start")
-        );
-        let first = rpc.send_command(serde_json::json!({"type":"get_messages"}))?;
-        let second = rpc.send_command(serde_json::json!({"type":"get_state"}))?;
-        let stats = rpc.send_command(serde_json::json!({"type":"get_session_stats"}))?;
-        assert_ne!(first, second);
-        assert_ne!(second, stats);
-        let deadline = Instant::now() + Duration::from_secs(2);
-        let mut responses = 0;
-        let mut context_shape = false;
-        while Instant::now() < deadline && responses < 3 {
-            if let Some(BackendEvent::Response(response)) = rpc.try_next() {
-                responses += 1;
-                context_shape |= response.command == "get_session_stats"
-                    && response
-                        .data
-                        .pointer("/contextUsage/tokens")
-                        .and_then(serde_json::Value::as_u64)
-                        == Some(4096)
-                    && response
-                        .data
-                        .pointer("/contextUsage/contextWindow")
-                        .and_then(serde_json::Value::as_u64)
-                        == Some(8192)
-                    && response
-                        .data
-                        .pointer("/contextUsage/percent")
-                        .and_then(serde_json::Value::as_u64)
-                        == Some(50);
-            }
-            thread::sleep(Duration::from_millis(5));
-        }
-        assert_eq!(responses, 3);
-        assert!(context_shape);
-        Ok(())
-    }
-
-    #[test]
-    fn eof_with_pending_request_is_failure_and_stderr_is_visible() -> TestResult {
-        let (temp, command) = fake("eof")?;
-        let mut rpc = RpcProcess::spawn(&command, temp.path(), None)?;
-        rpc.send_command(serde_json::json!({"type":"get_messages"}))?;
-        let deadline = Instant::now() + Duration::from_secs(2);
-        let mut failure = String::new();
-        while Instant::now() < deadline && failure.is_empty() {
-            if let Some(BackendEvent::Failure(error)) = rpc.try_next() {
-                failure = error;
-            }
-            thread::sleep(Duration::from_millis(5));
-        }
-        assert!(failure.contains("pending request"));
-        assert!(failure.contains("exit code 7"));
-        assert!(failure.contains("fake stderr before exit"));
-        Ok(())
-    }
-
-    #[test]
-    fn failed_readiness_is_reported() -> TestResult {
-        let (temp, command) = fake("bad-handshake")?;
-        let error = RpcProcess::spawn(&command, temp.path(), None)
-            .err()
-            .unwrap_or_default();
-        assert!(error.contains("readiness"), "{error}");
-        Ok(())
-    }
-
-    #[test]
-    fn stdout_eof_waits_for_delayed_final_stderr() -> TestResult {
-        let (temp, command) = fake("delayed-stderr")?;
-        let mut rpc = RpcProcess::spawn(&command, temp.path(), None)?;
-        rpc.send_command(serde_json::json!({"type":"get_messages"}))?;
-        let deadline = Instant::now() + Duration::from_secs(2);
-        let mut failure = String::new();
-        while Instant::now() < deadline && failure.is_empty() {
-            if let Some(BackendEvent::Failure(error)) = rpc.try_next() {
-                failure = error;
-            }
-            thread::sleep(Duration::from_millis(5));
-        }
-        assert!(failure.contains("delayed final stderr"), "{failure}");
-        assert!(failure.contains("exit code 8"), "{failure}");
-        Ok(())
-    }
-
-    #[test]
-    fn readiness_rejects_a_command_mismatch_for_the_right_id() -> TestResult {
-        let (temp, command) = fake("mismatch-handshake")?;
-        let error = RpcProcess::spawn(&command, temp.path(), None)
-            .err()
-            .unwrap_or_default();
-        assert!(error.contains("expected get_state"));
-        Ok(())
-    }
-
-    #[test]
-    fn ordinary_response_rejects_a_command_mismatch_for_the_right_id() -> TestResult {
-        let (temp, command) = fake("mismatch-response")?;
-        let mut rpc = RpcProcess::spawn(&command, temp.path(), None)?;
-        rpc.send_command(serde_json::json!({"type":"get_messages"}))?;
-        let deadline = Instant::now() + Duration::from_secs(2);
-        let mut failure = String::new();
-        while Instant::now() < deadline && failure.is_empty() {
-            if let Some(BackendEvent::Failure(error)) = rpc.try_next() {
-                failure = error;
-            }
-            thread::sleep(Duration::from_millis(5));
-        }
-        assert!(failure.contains("expected get_messages"));
-        Ok(())
-    }
-
-    #[test]
-    fn terminate_reaps_graceful_and_term_ignoring_children() -> TestResult {
-        for case_name in ["normal", "ignore-term"] {
-            let (temp, command) = fake(case_name)?;
-            let mut rpc = RpcProcess::spawn(&command, temp.path(), None)?;
-            let started = Instant::now();
-            rpc.terminate()?;
-            assert!(started.elapsed() < Duration::from_secs(3));
-            assert!(
-                rpc.child
-                    .lock()
-                    .map_err(|_| "poisoned")?
-                    .try_wait()?
-                    .is_some()
-            );
-        }
-        Ok(())
-    }
-}
+#[path = "process_tests.rs"]
+mod tests;

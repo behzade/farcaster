@@ -2,18 +2,15 @@ mod agent_activity;
 mod app;
 mod app_paths;
 mod assets;
-mod backend;
 mod composer_sessions;
 #[cfg(test)]
 mod composer_sessions_test;
 mod conversation;
 mod extension_ui;
-mod framing;
 mod keybindings;
 mod keyboard;
 mod launch;
 mod layout;
-mod mcp_client_config;
 mod mcp_server;
 mod modules;
 mod network;
@@ -24,7 +21,6 @@ mod project_trust;
 mod project_trust_view;
 mod protocol;
 mod repository;
-mod rpc_process;
 mod runtime;
 mod sandbox;
 mod session_changes;
@@ -45,7 +41,7 @@ mod transcript_markdown;
 mod user_invocations;
 mod workers;
 
-pub(crate) use modules::{projects, sessions};
+pub(crate) use modules::{agents, projects, sessions};
 
 fn main() -> std::process::ExitCode {
     #[cfg(target_os = "linux")]
@@ -92,15 +88,17 @@ fn main() -> std::process::ExitCode {
         Ok(channel) => channel,
         Err(error) => return fail(format!("initialize sandbox approvals: {error}")),
     };
-    let worker_command = rpc_process::ProcessCommand {
+    let worker_command = agents::PiProcessCommand {
         grants: Some(approval_ui.grants()),
-        ..rpc_process::ProcessCommand::default()
+        ..agents::PiProcessCommand::default()
     };
     let worker_factory: std::sync::Arc<dyn workers::WorkerSessionFactory> =
-        std::sync::Arc::new(backend::PiWorkerFactory::new(worker_command));
+        std::sync::Arc::new(agents::PiWorkerFactory::new(worker_command));
+    let pi = agents::pi_descriptor();
+    let backend_id = pi.id.as_str().to_owned();
     let worker_pool = match workers::WorkerPool::new(
-        std::collections::BTreeMap::from([("pi".into(), worker_factory)]),
-        "pi".into(),
+        std::collections::BTreeMap::from([(backend_id.clone(), worker_factory)]),
+        backend_id,
         project.clone(),
         8,
     ) {
