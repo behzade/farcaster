@@ -25,6 +25,7 @@ mod terminal;
 mod transcript_ui;
 mod trust;
 mod views;
+pub(crate) mod workers;
 mod workgraph;
 pub(crate) use composer_images::ComposerImage;
 pub(crate) use composer_pastes::ComposerPaste;

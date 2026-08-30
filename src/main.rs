@@ -30,9 +30,9 @@ mod transcript_attachments;
 mod transcript_list;
 mod transcript_markdown;
 mod user_invocations;
-mod workers;
 
 pub(crate) use app::runtime;
+pub(crate) use app::workers;
 pub(crate) use modules::{access, agents, projects, repository, sessions};
 
 fn main() -> std::process::ExitCode {
