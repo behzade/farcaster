@@ -12,7 +12,6 @@ use crate::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::app) enum SessionRailKind {
     Project,
-    Review,
     Archived,
 }
 
@@ -41,7 +40,6 @@ impl ActiveSessionItem {
 #[derive(Clone, Debug, Default)]
 pub(super) struct SessionRailLists {
     pub(super) active: Vec<ActiveSessionItem>,
-    pub(super) review: Vec<SessionRailItem>,
     pub(super) archived: Vec<SessionRailItem>,
 }
 
@@ -84,7 +82,6 @@ pub(super) fn session_rail_lists(
         .cloned()
         .map(ActiveSessionItem::Draft)
         .collect::<Vec<_>>();
-    let mut review = Vec::new();
     let mut archived = Vec::new();
 
     for session in root_sessions(sessions)
@@ -95,15 +92,12 @@ pub(super) fn session_rail_lists(
             session: session.clone(),
             kind: if session.archived {
                 SessionRailKind::Archived
-            } else if session.in_review {
-                SessionRailKind::Review
             } else {
                 SessionRailKind::Project
             },
         };
         match item.kind {
             SessionRailKind::Project => active.push(ActiveSessionItem::Session(item)),
-            SessionRailKind::Review => review.push(item),
             SessionRailKind::Archived => archived.push(item),
         }
     }
@@ -119,7 +113,6 @@ pub(super) fn session_rail_lists(
         id > 0 && id == right.app_session_id()
     });
     apply_manual_order(&mut active, manual_order, ActiveSessionItem::app_session_id);
-    sort_sessions(&mut review, manual_order);
     archived.sort_by(|left, right| {
         right
             .session
@@ -127,21 +120,7 @@ pub(super) fn session_rail_lists(
             .cmp(&left.session.app_session_id)
     });
 
-    SessionRailLists {
-        active,
-        review,
-        archived,
-    }
-}
-
-fn sort_sessions(items: &mut [SessionRailItem], order: &[i64]) {
-    items.sort_by(|left, right| {
-        right
-            .session
-            .app_session_id
-            .cmp(&left.session.app_session_id)
-    });
-    apply_manual_order(items, order, |item| item.session.app_session_id);
+    SessionRailLists { active, archived }
 }
 
 fn apply_manual_order<T>(items: &mut [T], order: &[i64], app_session_id: impl Fn(&T) -> i64) {
@@ -332,30 +311,6 @@ mod tests {
         let lists = session_rail_lists(&sessions, &[], None, &[]);
 
         assert_eq!(lists.active.len(), 2);
-    }
-
-    #[test]
-    fn review_is_a_separate_bucket_with_active_manual_order() {
-        let project = PathBuf::from("/project");
-        let mut first = session("first", 1, &project, false);
-        first.in_review = true;
-        let mut second = session("second", 2, &project, false);
-        second.in_review = true;
-        let active = session("active", 3, &project, false);
-
-        let lists = session_rail_lists(&[first, second, active], &[], None, &[1, 2, 3]);
-
-        assert_eq!(lists.active.len(), 1);
-        assert_eq!(lists.review.len(), 2);
-        assert_eq!(
-            lists
-                .review
-                .iter()
-                .map(|item| item.session.app_session_id)
-                .collect::<Vec<_>>(),
-            [1, 2]
-        );
-        assert!(lists.archived.is_empty());
     }
 
     fn session(id: &str, app_session_id: i64, project: &Path, archived: bool) -> SessionSummary {

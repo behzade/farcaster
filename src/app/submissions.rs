@@ -397,7 +397,7 @@ fn inactive_session_for_target(
         .then(|| {
             sessions
                 .iter()
-                .find(|session| session.path == selected && (session.in_review || session.archived))
+                .find(|session| session.path == selected && session.archived)
                 .map(|session| session.path.clone())
         })
         .flatten()
@@ -489,20 +489,15 @@ mod tests {
     }
 
     #[test]
-    fn review_and_archived_sessions_activate_when_their_message_is_sent() {
+    fn archived_sessions_activate_when_their_message_is_sent() {
         let path = Path::new("/sessions/inactive.jsonl");
         let archived = [session("/sessions/inactive.jsonl", true)];
         assert_eq!(
             inactive_session_for_target(&session_target(path), Some(path), &archived),
             Some(path.to_path_buf())
         );
-        let review = [session("/sessions/inactive.jsonl", false).with_review(true)];
         assert_eq!(
-            inactive_session_for_target(&session_target(path), Some(path), &review),
-            Some(path.to_path_buf())
-        );
-        assert_eq!(
-            inactive_session_for_target("session:/sessions/other.jsonl", Some(path), &review),
+            inactive_session_for_target("session:/sessions/other.jsonl", Some(path), &archived,),
             None
         );
         let active = [session("/sessions/inactive.jsonl", false)];

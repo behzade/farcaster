@@ -115,9 +115,8 @@ pub(crate) enum RuntimeCommand {
     ReloadSandboxGrants,
     ExtensionResponse(ExtensionUiResponse),
     DeliverQueued(crate::state::QueuedPrompt),
-    SetSessionCategory {
+    SetSessionArchived {
         path: PathBuf,
-        in_review: bool,
         archived: bool,
     },
     LoadSessions(String),
@@ -1123,7 +1122,7 @@ fn run_supervisor(
                         &command,
                         RuntimeCommand::LoadSessions(_)
                             | RuntimeCommand::RefreshSessions
-                            | RuntimeCommand::SetSessionCategory { .. }
+                            | RuntimeCommand::SetSessionArchived { .. }
                             | RuntimeCommand::RenameSession { .. }
                             | RuntimeCommand::MoveSession { .. }
                     ) {
@@ -1763,13 +1762,9 @@ impl RuntimeOwner {
                     self.fail(error);
                 }
             }
-            RuntimeCommand::SetSessionCategory {
-                path,
-                in_review,
-                archived,
-            } => {
+            RuntimeCommand::SetSessionArchived { path, archived } => {
                 if let Some(state) = &self.state
-                    && let Err(error) = state.set_session_category(&path, in_review, archived)
+                    && let Err(error) = state.set_session_archived(&path, archived)
                 {
                     let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
                         generation: self.session_generation,

@@ -67,12 +67,10 @@ fn active_sessions_always_have_a_meaningful_state() {
 }
 
 #[test]
-fn review_and_archived_sessions_suppress_done_but_keep_active_states() {
-    let review = item("review", 3, "/project", SessionRailKind::Review, false);
+fn archived_sessions_suppress_done_but_keep_active_states() {
     let archived = item("archived", 2, "/project", SessionRailKind::Archived, false);
     let running = item("running", 1, "/project", SessionRailKind::Archived, true);
 
-    assert_eq!(session_badge(&review, Some("Done"), None, "", false), None);
     assert_eq!(
         session_badge(&archived, Some("Done"), None, "", false),
         None
@@ -115,16 +113,16 @@ fn minimal_row_reconciliation_preserves_equal_prefix_and_suffix() {
 }
 
 #[test]
-fn collapsed_archived_rail_leaves_space_after_review() {
-    let review = collapsed_inactive_rail_height(2, false);
+fn collapsed_archived_rail_includes_a_leading_gap() {
+    let without_gap = collapsed_inactive_rail_height(2, false);
     let archived = collapsed_inactive_rail_height(2, true);
     assert_eq!(
-        f32::from(review),
+        f32::from(without_gap),
         f32::from(THEME.controls.utility_row)
             + f32::from(THEME.controls.archived_preview_row) * 2.0
     );
     assert_eq!(
-        f32::from(archived) - f32::from(review),
+        f32::from(archived) - f32::from(without_gap),
         f32::from(THEME.space.md)
     );
 }
@@ -185,8 +183,7 @@ fn item(
             is_running,
             String::new(),
         )
-        .with_app_session_id(app_session_id)
-        .with_review(kind == SessionRailKind::Review),
+        .with_app_session_id(app_session_id),
         kind,
     }
 }

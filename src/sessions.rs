@@ -59,7 +59,6 @@ pub(crate) struct SessionSummary {
     pub modified: SystemTime,
     pub message_count: usize,
     pub usage: UsageSummary,
-    pub in_review: bool,
     pub archived: bool,
     pub is_running: bool,
     pub model: Option<(String, String)>,
@@ -100,7 +99,6 @@ impl SessionSummary {
             modified,
             message_count,
             usage,
-            in_review: false,
             archived,
             is_running,
             model: None,
@@ -111,11 +109,6 @@ impl SessionSummary {
 
     pub(crate) fn with_app_session_id(mut self, app_session_id: i64) -> Self {
         self.app_session_id = app_session_id;
-        self
-    }
-
-    pub(crate) fn with_review(mut self, in_review: bool) -> Self {
-        self.in_review = in_review;
         self
     }
 
@@ -981,7 +974,6 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
             modified,
             message_count,
             usage,
-            in_review: false,
             archived: false,
             is_running,
             model,

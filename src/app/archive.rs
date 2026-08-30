@@ -23,11 +23,7 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         if !archive || !session_family_has_active_work(&self.all_sessions, &path) {
-            if archive {
-                self.set_session_archived(path, cx);
-            } else {
-                self.set_session_review(path, cx);
-            }
+            self.set_session_archived(path, archive, cx);
             return;
         }
 
@@ -49,7 +45,7 @@ impl FarcasterApp {
             return;
         };
         self.send(RuntimeCommand::StopSessionFamily { path: path.clone() });
-        self.set_session_archived(path, cx);
+        self.set_session_archived(path, true, cx);
     }
 
     pub(super) fn close_archive_confirmation(

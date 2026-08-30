@@ -204,8 +204,6 @@ pub(crate) struct FarcasterApp {
     picker_return_focus: Option<FocusHandle>,
     session_list: ListState,
     session_list_rows: RefCell<Vec<String>>,
-    review_session_list: ListState,
-    review_session_list_rows: RefCell<Vec<String>>,
     archived_session_list: ListState,
     archived_session_list_rows: RefCell<Vec<String>>,
     session_generation: u64,
@@ -216,7 +214,6 @@ pub(crate) struct FarcasterApp {
     composer_project_files_loading: Option<PathBuf>,
     composer_suggestion_selection: usize,
     session_rail_view: Entity<SessionRailView>,
-    review_session_rail_view: Entity<InactiveSessionRailView>,
     archived_session_rail_view: Entity<InactiveSessionRailView>,
     transcript_view: Entity<TranscriptView>,
     composer_view: Entity<ComposerView>,
@@ -282,7 +279,6 @@ pub(crate) struct FarcasterApp {
     pending_submissions: HashMap<String, PendingSubmission>,
     post_render_focus: Option<PostRenderFocus>,
     sessions_sheet: bool,
-    review_sessions_expanded: bool,
     pending_archive: Option<archive::PendingArchive>,
     pending_delete: Option<deletion::PendingDelete>,
     archived_sessions_expanded: bool,
@@ -532,8 +528,6 @@ impl FarcasterApp {
             });
         let app = cx.entity().downgrade();
         let session_rail_view = cx.new(|_| SessionRailView::new(app.clone()));
-        let review_session_rail_view =
-            cx.new(|_| InactiveSessionRailView::new(app.clone(), SessionRailKind::Review));
         let archived_session_rail_view =
             cx.new(|_| InactiveSessionRailView::new(app.clone(), SessionRailKind::Archived));
         let transcript_view = cx.new(|_| TranscriptView::new(app.clone()));
@@ -614,12 +608,6 @@ impl FarcasterApp {
                 crate::theme::THEME.layout.transcript_overdraw,
             ),
             session_list_rows: RefCell::new(Vec::new()),
-            review_session_list: ListState::new(
-                0,
-                ListAlignment::Top,
-                crate::theme::THEME.layout.transcript_overdraw,
-            ),
-            review_session_list_rows: RefCell::new(Vec::new()),
             archived_session_list: ListState::new(
                 0,
                 ListAlignment::Top,
@@ -634,7 +622,6 @@ impl FarcasterApp {
             composer_project_files_loading: None,
             composer_suggestion_selection: 0,
             session_rail_view,
-            review_session_rail_view,
             archived_session_rail_view,
             transcript_view,
             composer_view,
@@ -700,7 +687,6 @@ impl FarcasterApp {
             pending_submissions: HashMap::new(),
             post_render_focus: None,
             sessions_sheet: false,
-            review_sessions_expanded: false,
             pending_archive: None,
             pending_delete: None,
             archived_sessions_expanded: false,
@@ -738,7 +724,6 @@ impl FarcasterApp {
             .as_mut()
             .is_some_and(crate::performance::PerformanceMonitor::sample_if_due);
         let mut rail_dirty = false;
-        let mut review_rail_dirty = false;
         let mut archived_rail_dirty = false;
         let mut transcript_dirty = false;
         let mut composer_dirty = false;
@@ -750,18 +735,8 @@ impl FarcasterApp {
                 RuntimeEvent::Snapshot { snapshot, .. } => {
                     let roots = SessionRootIndex::new(&self.sessions);
                     rail_dirty |= session_rail_snapshot_changed(&roots, &self.snapshot, snapshot);
-                    review_rail_dirty |= inactive_session_rail_snapshot_changed(
-                        SessionRailKind::Review,
-                        &roots,
-                        &self.snapshot,
-                        snapshot,
-                    );
-                    archived_rail_dirty |= inactive_session_rail_snapshot_changed(
-                        SessionRailKind::Archived,
-                        &roots,
-                        &self.snapshot,
-                        snapshot,
-                    );
+                    archived_rail_dirty |=
+                        inactive_session_rail_snapshot_changed(&roots, &self.snapshot, snapshot);
                     composer_dirty |= composer_snapshot_changed(&self.snapshot, snapshot);
                     root_dirty |= self.snapshot.pending_question != snapshot.pending_question;
                     run_dirty |= run_panel_snapshot_changed(&self.snapshot, snapshot);
@@ -774,7 +749,6 @@ impl FarcasterApp {
                 RuntimeEvent::SessionMoved { .. } | RuntimeEvent::SessionDeleted { .. } => {
                     root_dirty = true;
                     rail_dirty = true;
-                    review_rail_dirty = true;
                     archived_rail_dirty = true;
                     transcript_dirty = true;
                     composer_dirty = true;
@@ -910,15 +884,7 @@ impl FarcasterApp {
                         &sessions,
                         &all_sessions,
                     );
-                    let review_catalog_changed = inactive_session_catalog_changed(
-                        SessionRailKind::Review,
-                        &self.sessions,
-                        &self.all_sessions,
-                        &sessions,
-                        &all_sessions,
-                    );
                     let archived_catalog_changed = inactive_session_catalog_changed(
-                        SessionRailKind::Archived,
                         &self.sessions,
                         &self.all_sessions,
                         &sessions,
@@ -966,7 +932,6 @@ impl FarcasterApp {
                             .or_insert_with(|| cx.focus_handle());
                     }
                     rail_dirty |= catalog_changed;
-                    review_rail_dirty |= review_catalog_changed;
                     archived_rail_dirty |= archived_catalog_changed;
                     composer_dirty |= composer_usage_changed;
                     run_dirty |= run_catalog_changed || visible_activities_changed;
@@ -1221,9 +1186,6 @@ impl FarcasterApp {
         self.sync_recent_completion_expiries(cx);
         if rail_dirty {
             self.notify_session_rail_shell(cx);
-        }
-        if review_rail_dirty {
-            self.notify_review_session_rail(cx);
         }
         if archived_rail_dirty {
             self.notify_archived_session_rail(cx);
@@ -1797,43 +1759,21 @@ impl FarcasterApp {
     }
 
     fn set_session_active(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        self.set_session_category(path, false, false, cx);
+        self.set_session_archived(path, false, cx);
     }
 
-    fn set_session_review(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        self.set_session_category(path, true, false, cx);
-    }
-
-    fn set_session_archived(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        self.set_session_category(path, false, true, cx);
-    }
-
-    fn set_session_category(
-        &mut self,
-        path: PathBuf,
-        in_review: bool,
-        archived: bool,
-        cx: &mut Context<Self>,
-    ) {
+    fn set_session_archived(&mut self, path: PathBuf, archived: bool, cx: &mut Context<Self>) {
         if let Some(session) = self
             .sessions
             .iter_mut()
             .find(|session| session.path == path)
         {
-            session.in_review = in_review;
             session.archived = archived;
-        }
-        if !self.sessions.iter().any(|session| session.in_review) {
-            self.review_sessions_expanded = false;
         }
         if !self.sessions.iter().any(|session| session.archived) {
             self.archived_sessions_expanded = false;
         }
-        self.send(RuntimeCommand::SetSessionCategory {
-            path,
-            in_review,
-            archived,
-        });
+        self.send(RuntimeCommand::SetSessionArchived { path, archived });
         self.notify_session_rail(cx);
         self.notify_run_panel(cx);
     }
@@ -1957,17 +1897,7 @@ fn session_catalog_changed(
     current != next || current_all != next_all || current_error.is_some()
 }
 
-fn session_has_rail_kind(session: &SessionSummary, kind: SessionRailKind) -> bool {
-    session.parent_session.is_none()
-        && match kind {
-            SessionRailKind::Project => !session.in_review && !session.archived,
-            SessionRailKind::Review => session.in_review && !session.archived,
-            SessionRailKind::Archived => session.archived,
-        }
-}
-
 fn inactive_session_catalog_changed(
-    kind: SessionRailKind,
     current: &[SessionSummary],
     current_all: &[SessionSummary],
     next: &[SessionSummary],
@@ -1976,7 +1906,7 @@ fn inactive_session_catalog_changed(
     let rows = |sessions: &[SessionSummary]| {
         sessions
             .iter()
-            .filter(|session| session_has_rail_kind(session, kind))
+            .filter(|session| session.parent_session.is_none() && session.archived)
             .map(|session| {
                 (
                     session.id.clone(),
@@ -1994,10 +1924,6 @@ fn inactive_session_catalog_changed(
     if current_rows != rows(next) {
         return true;
     }
-    if kind != SessionRailKind::Archived {
-        return false;
-    }
-
     let ids = current_rows
         .iter()
         .map(|(id, ..)| id.as_str())
@@ -2037,7 +1963,7 @@ fn session_event_affects_active_rail(
         });
     session
         .and_then(|session| root_session_for_path(sessions, Some(&session.path)))
-        .is_some_and(|root| !root.in_review && !root.archived)
+        .is_some_and(|root| !root.archived)
 }
 
 fn run_panel_sessions_changed(
@@ -2136,7 +2062,6 @@ fn session_rail_snapshot_changed(
 }
 
 fn inactive_session_rail_snapshot_changed(
-    kind: SessionRailKind,
     roots: &SessionRootIndex<'_>,
     previous: &RuntimeSnapshot,
     next: &RuntimeSnapshot,
@@ -2144,16 +2069,12 @@ fn inactive_session_rail_snapshot_changed(
     let root_id = |path| {
         roots
             .root_for_path(path)
-            .filter(|session| session_has_rail_kind(session, kind))
+            .filter(|session| session.archived)
             .map(|session| session.id.as_str())
     };
     if root_id(previous.selected_session.as_deref()) != root_id(next.selected_session.as_deref()) {
         return true;
     }
-    if kind != SessionRailKind::Archived {
-        return false;
-    }
-
     let previous_live = root_id(previous.live_session.as_deref());
     let next_live = root_id(next.live_session.as_deref());
     previous_live != next_live || (previous.live_status != next.live_status && next_live.is_some())

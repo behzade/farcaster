@@ -302,9 +302,6 @@ impl Render for FarcasterApp {
             }))
             .on_action(cx.listener(|this, _: &ToggleArchivedSessions, _, cx| {
                 this.archived_sessions_expanded = !this.archived_sessions_expanded;
-                if this.archived_sessions_expanded {
-                    this.review_sessions_expanded = false;
-                }
                 this.notify_session_rail(cx);
             }))
             .on_action(cx.listener(|this, _: &SubmitPrompt, window, cx| {

@@ -153,7 +153,6 @@ fn switching_between_active_sessions_does_not_invalidate_archived_sessions() {
     };
 
     assert!(!inactive_session_rail_snapshot_changed(
-        SessionRailKind::Archived,
         &SessionRootIndex::new(&sessions),
         &previous,
         &next,
@@ -164,38 +163,7 @@ fn switching_between_active_sessions_does_not_invalidate_archived_sessions() {
         session_summary("second", None, true),
     ];
     assert!(inactive_session_rail_snapshot_changed(
-        SessionRailKind::Archived,
         &SessionRootIndex::new(&archived_sessions),
-        &previous,
-        &next,
-    ));
-}
-
-#[test]
-fn switching_review_selection_invalidates_only_review_sessions() {
-    let sessions = vec![
-        session_summary("first", None, false).with_review(true),
-        session_summary("second", None, false).with_review(true),
-    ];
-    let previous = RuntimeSnapshot {
-        selected_session: Some(PathBuf::from("/first.jsonl")),
-        ..RuntimeSnapshot::default()
-    };
-    let next = RuntimeSnapshot {
-        selected_session: Some(PathBuf::from("/second.jsonl")),
-        ..RuntimeSnapshot::default()
-    };
-
-    let roots = SessionRootIndex::new(&sessions);
-    assert!(inactive_session_rail_snapshot_changed(
-        SessionRailKind::Review,
-        &roots,
-        &previous,
-        &next,
-    ));
-    assert!(!inactive_session_rail_snapshot_changed(
-        SessionRailKind::Archived,
-        &roots,
         &previous,
         &next,
     ));
@@ -208,7 +176,6 @@ fn active_session_discovery_does_not_invalidate_archived_sessions() {
     let with_active = vec![session_summary("active", None, false), archived.clone()];
 
     assert!(!inactive_session_catalog_changed(
-        SessionRailKind::Archived,
         &current,
         &current,
         &with_active,
@@ -217,7 +184,6 @@ fn active_session_discovery_does_not_invalidate_archived_sessions() {
     let mut renamed = archived;
     renamed.title = "Renamed".into();
     assert!(inactive_session_catalog_changed(
-        SessionRailKind::Archived,
         &current,
         &current,
         &[renamed],
@@ -229,7 +195,7 @@ fn active_session_discovery_does_not_invalidate_archived_sessions() {
 fn status_events_invalidate_only_visible_active_rows() {
     let sessions = vec![
         session_summary("active", None, false),
-        session_summary("review", None, false).with_review(true),
+        session_summary("archived", None, true),
     ];
     let drafts = [projects::DraftSession::with_id(
         "draft".into(),
@@ -247,7 +213,7 @@ fn status_events_invalidate_only_visible_active_rows() {
         "session:/new.jsonl",
         Some(Path::new("/new.jsonl")),
     ));
-    assert!(!affects("session:/review.jsonl", None));
+    assert!(!affects("session:/archived.jsonl", None));
 }
 
 #[test]

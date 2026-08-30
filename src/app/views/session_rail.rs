@@ -138,7 +138,6 @@ impl FarcasterApp {
         );
         let counts = subagent_counts(&self.all_sessions);
         let active_entry_count = lists.active.len();
-        let review_entry_count = lists.review.len();
         let archived_entry_count = lists.archived.len();
         let active_rows = lists.active;
         let session_shortcuts = visible_session_shortcuts(&active_rows);
@@ -224,16 +223,8 @@ impl FarcasterApp {
         )
         .size_full();
 
-        let review_expanded =
-            !session_drag_active && self.review_sessions_expanded && review_entry_count > 0;
         let archived_expanded =
             !session_drag_active && self.archived_sessions_expanded && archived_entry_count > 0;
-        let review_session_rail_style =
-            inactive_rail_style(review_expanded, review_entry_count, false);
-        let review_session_rail = self
-            .review_session_rail_view
-            .clone()
-            .cached(review_session_rail_style);
         let archived_session_rail_style =
             inactive_rail_style(archived_expanded, archived_entry_count, true);
         let archived_session_rail = self
@@ -388,7 +379,7 @@ impl FarcasterApp {
                         let _ = cancel_drop_out_entity
                             .update(cx, |this, cx| this.clear_session_drop_target(cx));
                     })
-                    .when(!review_expanded && !archived_expanded, |lists| {
+                    .when(!archived_expanded, |lists| {
                         lists.child(session_section_drop_target(
                             div()
                                 .id("active-session-drop-area")
@@ -400,16 +391,12 @@ impl FarcasterApp {
                             active_drop_entity,
                         ))
                     })
-                    .when(review_entry_count > 0 && !archived_expanded, |lists| {
-                        lists.child(review_session_rail)
-                    })
-                    .when(archived_entry_count > 0 && !review_expanded, |lists| {
+                    .when(archived_entry_count > 0, |lists| {
                         lists.child(archived_session_rail)
                     }),
             )
             .when(
                 active_entry_count == 0
-                    && review_entry_count == 0
                     && archived_entry_count == 0
                     && self.sessions_error.is_none(),
                 |rail| {
@@ -445,30 +432,15 @@ impl FarcasterApp {
             self.session_project_filter.as_deref(),
             &self.session_order,
         );
-        let (rows, list_state, list_rows, expanded, section_id, toggle_id, title, title_color) =
-            match kind {
-                SessionRailKind::Review => (
-                    lists.review,
-                    self.review_session_list.clone(),
-                    &self.review_session_list_rows,
-                    self.review_sessions_expanded,
-                    "review-sessions",
-                    "toggle-review-sessions",
-                    "Review",
-                    THEME.colors.text,
-                ),
-                SessionRailKind::Archived => (
-                    lists.archived,
-                    self.archived_session_list.clone(),
-                    &self.archived_session_list_rows,
-                    self.archived_sessions_expanded,
-                    "archived-sessions",
-                    "toggle-archived-sessions",
-                    "Archived",
-                    THEME.colors.muted,
-                ),
-                SessionRailKind::Project => unreachable!("active sessions use the main rail"),
-            };
+        let (rows, list_state, list_rows, expanded) = match kind {
+            SessionRailKind::Archived => (
+                lists.archived,
+                self.archived_session_list.clone(),
+                &self.archived_session_list_rows,
+                self.archived_sessions_expanded,
+            ),
+            SessionRailKind::Project => unreachable!("active sessions use the main rail"),
+        };
         let count = rows.len();
         let expanded = expanded && count > 0;
         let counts = subagent_counts(&self.all_sessions);
@@ -548,14 +520,12 @@ impl FarcasterApp {
         let drop_entity = entity.clone();
         let toggle_entity = entity;
         let section = div()
-            .id(section_id)
+            .id("archived-sessions")
             .size_full()
             .min_h_0()
             .flex()
             .flex_col()
-            .when(kind == SessionRailKind::Archived && !expanded, |section| {
-                section.pt(THEME.space.md)
-            })
+            .when(!expanded, |section| section.pt(THEME.space.md))
             .child(
                 div()
                     .h(THEME.controls.utility_row)
@@ -568,31 +538,15 @@ impl FarcasterApp {
                     .border_color(THEME.colors.border)
                     .text_size(THEME.type_scale.caption)
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(title_color)
-                    .child(format!("{title} · {count}"))
+                    .text_color(THEME.colors.muted)
+                    .child(format!("Archived · {count}"))
                     .child(disclosure_button(
-                        toggle_id,
+                        "toggle-archived-sessions",
                         expanded,
-                        format!("{title} sessions"),
+                        "Archived sessions",
                         move |_, cx| {
                             let _ = toggle_entity.update(cx, |this, cx| {
-                                match kind {
-                                    SessionRailKind::Review => {
-                                        this.review_sessions_expanded =
-                                            !this.review_sessions_expanded;
-                                        if this.review_sessions_expanded {
-                                            this.archived_sessions_expanded = false;
-                                        }
-                                    }
-                                    SessionRailKind::Archived => {
-                                        this.archived_sessions_expanded =
-                                            !this.archived_sessions_expanded;
-                                        if this.archived_sessions_expanded {
-                                            this.review_sessions_expanded = false;
-                                        }
-                                    }
-                                    SessionRailKind::Project => {}
-                                }
+                                this.archived_sessions_expanded = !this.archived_sessions_expanded;
                                 this.notify_session_rail(cx);
                             });
                         },
@@ -880,7 +834,6 @@ impl FarcasterApp {
         };
         match target_kind {
             SessionRailKind::Project => self.set_session_active(path, cx),
-            SessionRailKind::Review => self.set_session_review(path, cx),
             SessionRailKind::Archived => {
                 self.notify_session_rail(cx);
                 self.request_session_archive(path, true, window, cx);
@@ -895,7 +848,6 @@ impl FarcasterApp {
     ) {
         if self.session_project_filter != project {
             self.session_project_filter = project;
-            self.review_sessions_expanded = false;
             self.archived_sessions_expanded = false;
             self.notify_session_rail(cx);
         }

@@ -324,7 +324,7 @@ pub(super) fn session_badge(
         .or_else(|| item.session.is_running.then(|| "Working".into()))
         .or_else(|| (item.kind == SessionRailKind::Project).then(|| "Done".into()));
     match (item.kind, status.as_deref()) {
-        (SessionRailKind::Review | SessionRailKind::Archived, Some("Done")) | (_, None) => None,
+        (SessionRailKind::Archived, Some("Done")) | (_, None) => None,
         _ => status,
     }
 }
@@ -387,8 +387,6 @@ pub(super) fn session_row_with_height(
     let move_path = session.path.clone();
     let move_project = session.project.clone();
     let move_entity = entity.clone();
-    let review_path = session.path.clone();
-    let review_entity = entity.clone();
     let archive_path = session.path.clone();
     let archive_entity = entity.clone();
     let delete_path = session.path.clone();
@@ -406,22 +404,15 @@ pub(super) fn session_row_with_height(
     let drag_entity = entity.clone();
     let age = relative_age(session.modified);
     let target_kind = item.kind;
-    let is_review = target_kind == SessionRailKind::Review;
     let is_archived = target_kind == SessionRailKind::Archived;
     let status_text = status.unwrap_or_default();
     let accessible_state = if is_archived {
         "Archived"
-    } else if is_review {
-        "Review"
     } else {
         status_text.as_str()
     };
     let accessible_label = session_accessible_label(&session.title, accessible_state, &age);
-    let archive_label = if is_archived {
-        "Restore to review"
-    } else {
-        "Archive"
-    };
+    let archive_label = if is_archived { "Restore" } else { "Archive" };
     let archive_icon = if is_archived {
         AppIcon::ArrowCounterClockwise
     } else {
@@ -626,47 +617,6 @@ pub(super) fn session_row_with_height(
                                         .expect("fixed session shortcut must parse"),
                                     ))
                                 })
-                                .when(item.kind == SessionRailKind::Project, |metadata| {
-                                    metadata.child(
-                                        div()
-                                            .id(format!("review-{}", session.id))
-                                            .role(Role::Button)
-                                            .aria_label("Move session to review")
-                                            .tab_index(0)
-                                            .size(THEME.controls.icon_button)
-                                            .flex_none()
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .rounded(THEME.radius)
-                                            .opacity(0.0)
-                                            .group_hover(
-                                                format!("session-actions-{}", session.id),
-                                                |button| button.opacity(1.0),
-                                            )
-                                            .focus(|button| {
-                                                button
-                                                    .opacity(1.0)
-                                                    .border(THEME.border)
-                                                    .border_color(THEME.colors.accent)
-                                            })
-                                            .text_color(THEME.colors.muted)
-                                            .hover(|button| button.bg(THEME.colors.hover))
-                                            .tooltip(move |window, cx| {
-                                                Tooltip::new("Move to review").build(window, cx)
-                                            })
-                                            .child(app_icon(AppIcon::Eye, AppIconSize::Control))
-                                            .on_click(move |_, _, cx| {
-                                                cx.stop_propagation();
-                                                let _ = review_entity.update(cx, |this, cx| {
-                                                    this.set_session_review(
-                                                        review_path.clone(),
-                                                        cx,
-                                                    );
-                                                });
-                                            }),
-                                    )
-                                })
                                 .child(
                                     div()
                                         .id(format!("archive-{}", session.id))
@@ -803,40 +753,10 @@ fn session_context_menu(
                     }),
             );
 
-            match kind {
-                SessionRailKind::Project => {
-                    let review_path = path.clone();
-                    let review_entity = entity.clone();
-                    menu = menu.separator().item(
-                        PopupMenuItem::new("Move to review")
-                            .icon(AppIcon::Eye)
-                            .on_click(move |_, _, cx| {
-                                let _ = review_entity.update(cx, |this, cx| {
-                                    this.set_session_review(review_path.clone(), cx);
-                                });
-                            }),
-                    );
-                }
-                SessionRailKind::Archived => {
-                    let restore_path = path.clone();
-                    let restore_entity = entity.clone();
-                    menu = menu.separator().item(
-                        PopupMenuItem::new("Restore to review")
-                            .icon(AppIcon::ArrowCounterClockwise)
-                            .on_click(move |_, _, cx| {
-                                let _ = restore_entity.update(cx, |this, cx| {
-                                    this.set_session_review(restore_path.clone(), cx);
-                                });
-                            }),
-                    );
-                }
-                SessionRailKind::Review => {}
-            }
-
-            if kind != SessionRailKind::Archived {
+            if kind == SessionRailKind::Project {
                 let archive_path = path.clone();
                 let archive_entity = entity.clone();
-                menu = menu.item(
+                menu = menu.separator().item(
                     PopupMenuItem::new("Archive")
                         .icon(AppIcon::Archive)
                         .on_click(move |_, window, cx| {
@@ -851,6 +771,22 @@ fn session_context_menu(
                         }),
                 );
             } else {
+                let restore_path = path.clone();
+                let restore_entity = entity.clone();
+                menu = menu.separator().item(
+                    PopupMenuItem::new("Restore")
+                        .icon(AppIcon::ArrowCounterClockwise)
+                        .on_click(move |_, window, cx| {
+                            let _ = restore_entity.update(cx, |this, cx| {
+                                this.request_session_archive(
+                                    restore_path.clone(),
+                                    false,
+                                    window,
+                                    cx,
+                                );
+                            });
+                        }),
+                );
                 let delete_path = path.clone();
                 let delete_entity = entity.clone();
                 menu = menu.separator().item(

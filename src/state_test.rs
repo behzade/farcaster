@@ -165,7 +165,7 @@ fn legacy_pi_gpui_state_import_restores_archives_once() -> Result<(), Box<dyn st
     {
         let mut legacy = StateStore::open_at(&legacy_path)?;
         legacy.replace_sessions(std::slice::from_ref(&session))?;
-        legacy.set_session_category(&session_path, false, true)?;
+        legacy.set_session_archived(&session_path, true)?;
         legacy.save_composer_session(&ComposerRecord {
             target: format!("session:{}", session_path.display()),
             text: "legacy draft".into(),
@@ -182,7 +182,7 @@ fn legacy_pi_gpui_state_import_restores_archives_once() -> Result<(), Box<dyn st
         destination.load_composer_sessions()?[0].text,
         "legacy draft"
     );
-    destination.set_session_category(&session_path, false, false)?;
+    destination.set_session_archived(&session_path, false)?;
     destination.import_legacy_pi_gpui_state(&legacy_path)?;
     assert!(!destination.cached_sessions("")?[0].archived);
     Ok(())
@@ -248,7 +248,7 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
             true,
             "literal_100% hello".into(),
         )])?;
-        store.set_session_category(&catalog_session_path.canonicalize()?, true, false)?;
+        store.set_session_archived(&catalog_session_path.canonicalize()?, false)?;
     }
     let mut store = StateStore::open_at(&database)?;
     let registry = store.load_registry()?;
@@ -284,14 +284,11 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
         }]
     );
     assert_eq!(store.cached_sessions("literal_100%")?.len(), 1);
-    assert!(store.cached_sessions("")?[0].in_review);
     assert!(!store.cached_sessions("")?[0].archived);
     assert!(store.cached_sessions("")?[0].is_running);
-    store.set_session_category(&catalog_session_path.canonicalize()?, false, true)?;
-    assert!(!store.cached_sessions("")?[0].in_review);
+    store.set_session_archived(&catalog_session_path.canonicalize()?, true)?;
     assert!(store.cached_sessions("")?[0].archived);
-    store.set_session_category(&catalog_session_path.canonicalize()?, false, false)?;
-    assert!(!store.cached_sessions("")?[0].in_review);
+    store.set_session_archived(&catalog_session_path.canonicalize()?, false)?;
     assert!(!store.cached_sessions("")?[0].archived);
     store.begin_prompt(queued[0].id)?;
     store.complete_prompt(
@@ -523,7 +520,7 @@ fn schema_v4_migrates_to_v7_with_provisional_title_default()
 }
 
 #[test]
-fn schema_v5_migrates_existing_sessions_and_drafts_to_incremental_ids_and_review_default()
+fn schema_v5_migrates_existing_sessions_and_drafts_to_incremental_ids()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
