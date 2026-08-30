@@ -271,7 +271,7 @@ pub(crate) struct FarcasterApp {
     _performance_task: Option<Task<()>>,
     pending_session_switch: Option<(PathBuf, crate::performance::Timing)>,
     extension: ExtensionUiState,
-    sandbox_approval_ui: crate::sandbox::approval::ApprovalUi,
+    sandbox_approval_ui: crate::access::approval::ApprovalUi,
     parked_extension: Option<ExtensionUiState>,
     restored_dialog_id: Option<String>,
     dismissed_restored_dialog_id: Option<String>,
@@ -315,7 +315,7 @@ impl FarcasterApp {
     pub(crate) fn new(
         project: PathBuf,
         repository_execution_allowed: bool,
-        sandbox_approval_ui: crate::sandbox::approval::ApprovalUi,
+        sandbox_approval_ui: crate::access::approval::ApprovalUi,
         workgraph_updates: async_channel::Receiver<()>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1320,7 +1320,7 @@ impl FarcasterApp {
 
     fn apply_sandbox_approval_prompt(
         &mut self,
-        prompt: crate::sandbox::approval::ApprovalPrompt,
+        prompt: crate::access::approval::ApprovalPrompt,
         cx: &mut Context<Self>,
     ) {
         let effect = self.extension.apply(ExtensionUiRequest::Select {

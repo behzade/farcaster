@@ -24,7 +24,7 @@ pub(crate) struct McpServer {
 
 pub(crate) fn start(
     database: PathBuf,
-    approvals: crate::sandbox::approval::ApprovalService,
+    approvals: crate::access::approval::ApprovalService,
     worker_pool: crate::workers::WorkerPool,
     workgraph_updates: async_channel::Sender<()>,
 ) -> Result<McpServer, String> {
@@ -53,7 +53,7 @@ pub(crate) fn start(
 fn serve(
     listener: TcpListener,
     database: PathBuf,
-    approvals: crate::sandbox::approval::ApprovalService,
+    approvals: crate::access::approval::ApprovalService,
     worker_pool: crate::workers::WorkerPool,
     workgraph_updates: async_channel::Sender<()>,
 ) -> Result<(), String> {
@@ -94,7 +94,7 @@ fn server_config() -> StreamableHttpServerConfig {
 #[derive(Clone)]
 struct FarcasterMcp {
     database: PathBuf,
-    approvals: crate::sandbox::approval::ApprovalService,
+    approvals: crate::access::approval::ApprovalService,
     workers: crate::workers::WorkerPool,
     workgraph_updates: async_channel::Sender<()>,
 }
@@ -102,7 +102,7 @@ struct FarcasterMcp {
 impl FarcasterMcp {
     fn new(
         database: PathBuf,
-        approvals: crate::sandbox::approval::ApprovalService,
+        approvals: crate::access::approval::ApprovalService,
         workers: crate::workers::WorkerPool,
         workgraph_updates: async_channel::Sender<()>,
     ) -> Self {
@@ -123,7 +123,7 @@ impl FarcasterMcp {
     )]
     async fn request_access(
         &self,
-        Parameters(params): Parameters<crate::sandbox::approval::RequestAccessParams>,
+        Parameters(params): Parameters<crate::access::approval::RequestAccessParams>,
     ) -> Result<String, String> {
         self.approvals.request_access(params).await
     }
@@ -337,13 +337,13 @@ mod tests {
         std::fs::create_dir_all(home.join(".pi/agent")).expect("agent state");
         let temporary = temp.path().join("tmp");
         std::fs::create_dir(&temporary).expect("temporary directory");
-        let (approvals, _) = crate::sandbox::approval::channel(
+        let (approvals, _) = crate::access::approval::channel(
             &project,
             &home,
             temp.path(),
             &home.join(".pi/agent"),
             &temporary,
-            crate::sandbox::test_nono_bypass(),
+            crate::access::test_nono_bypass(),
         )
         .expect("approval channel");
         let (workgraph_updates, _) = async_channel::bounded(1);

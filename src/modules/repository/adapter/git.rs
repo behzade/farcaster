@@ -6,7 +6,7 @@ use super::super::{
     command_failed, diff_result, require_complete_stdout,
 };
 
-pub(in crate::repository) fn snapshot(
+pub(in crate::modules::repository) fn snapshot(
     backend: &RepositoryBackend,
 ) -> Result<WorkingCopySnapshot, RepositoryError> {
     let output = status_output(backend)?;
@@ -33,7 +33,7 @@ pub(in crate::repository) fn snapshot(
     })
 }
 
-pub(in crate::repository) fn list_project_files(
+pub(in crate::modules::repository) fn list_project_files(
     backend: &RepositoryBackend,
 ) -> Result<Vec<String>, RepositoryError> {
     let mut arguments = [
@@ -64,7 +64,7 @@ pub(in crate::repository) fn list_project_files(
     Ok(files)
 }
 
-pub(in crate::repository) fn load_diff(
+pub(in crate::modules::repository) fn load_diff(
     backend: &RepositoryBackend,
     target: DiffTarget,
 ) -> Result<DiffResult, RepositoryError> {

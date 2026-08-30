@@ -10,11 +10,11 @@ fn setup() -> Result<
     ),
     String,
 > {
-    setup_with_nono(crate::sandbox::test_nono_bypass())
+    setup_with_nono(crate::access::test_nono_bypass())
 }
 
 fn setup_with_nono(
-    nono: crate::sandbox::NonoExecutable,
+    nono: crate::access::NonoExecutable,
 ) -> Result<
     (
         tempfile::TempDir,
@@ -162,7 +162,7 @@ async fn project_approval_is_bound_and_persisted_outside_the_workspace() -> Resu
         root.path(),
         &home.join(".pi/agent"),
         &root.path().join("tmp"),
-        crate::sandbox::test_nono_bypass(),
+        crate::access::test_nono_bypass(),
     )?;
     assert_eq!(reloaded.grants().resolve().network_hosts, [host.to_owned()]);
     Ok(())
@@ -207,7 +207,7 @@ async fn rejected_nono_profile_is_not_activated_or_persisted() -> Result<(), Str
     fs::set_permissions(&nono, fs::Permissions::from_mode(0o700))
         .map_err(|error| error.to_string())?;
     let (root, service, ui, project, _home) =
-        setup_with_nono(crate::sandbox::NonoExecutable::Fixed(nono))?;
+        setup_with_nono(crate::access::NonoExecutable::Fixed(nono))?;
     ui.set_project_trusted(true);
     let request = tokio::spawn(async move {
         service
