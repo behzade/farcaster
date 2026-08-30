@@ -1,6 +1,7 @@
 use gpui::{
-    AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
+    AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _, PathBuilder,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, canvas, div, point,
+    prelude::FluentBuilder as _, px,
 };
 
 use super::{
@@ -181,13 +182,14 @@ fn context_metric(usage: &ComposerUsage) -> AnyElement {
         (None, Some(total)) => format!("—/{}", format_tokens(total)),
         (None, None) => "—/—".into(),
     };
+    let percent = usage.context_percent.unwrap_or(0.0).clamp(0.0, 100.0);
     let color = context_color(usage.context_percent);
     div()
         .flex_none()
         .flex()
         .items_center()
         .gap(THEME.space.sm)
-        .child(context_meter(color))
+        .child(context_meter(percent, color))
         .child(
             div()
                 .flex_none()
@@ -198,14 +200,46 @@ fn context_metric(usage: &ComposerUsage) -> AnyElement {
         .into_any_element()
 }
 
-fn context_meter(color: gpui::Rgba) -> AnyElement {
+fn context_meter(percent: f64, color: gpui::Rgba) -> AnyElement {
     div()
         .size(px(14.0))
         .flex_none()
         .rounded_full()
-        .border(px(2.0))
-        .border_color(color)
-        .bg(THEME.colors.canvas)
+        .overflow_hidden()
+        .border(THEME.border)
+        .border_color(THEME.colors.border)
+        .bg(THEME.colors.border)
+        .child(
+            canvas(
+                |bounds, _, _| bounds,
+                move |bounds, _, window, _| {
+                    if percent <= 0.0 {
+                        return;
+                    }
+                    let radius = f32::from(bounds.size.width.min(bounds.size.height)) / 2.0;
+                    let center_x = f32::from(bounds.origin.x) + radius;
+                    let center_y = f32::from(bounds.origin.y) + radius;
+                    let fraction = (percent / 100.0) as f32;
+                    let steps = (fraction * 32.0).ceil().max(1.0) as usize;
+                    let mut points = Vec::with_capacity(steps + 2);
+                    points.push(point(px(center_x), px(center_y)));
+                    for step in 0..=steps {
+                        let progress = fraction * step as f32 / steps as f32;
+                        let angle = -std::f32::consts::FRAC_PI_2 + std::f32::consts::TAU * progress;
+                        points.push(point(
+                            px(center_x + radius * angle.cos()),
+                            px(center_y + radius * angle.sin()),
+                        ));
+                    }
+                    let mut builder = PathBuilder::fill();
+                    builder.add_polygon(&points, true);
+                    if let Ok(path) = builder.build() {
+                        window.paint_path(path, color);
+                    }
+                },
+            )
+            .size_full(),
+        )
         .into_any_element()
 }
 

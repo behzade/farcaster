@@ -4,7 +4,7 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 44] = [
+const ICON_PATHS: [&str; 47] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrows-clockwise.svg",
     "icons/phosphor/arrows-out.svg",
@@ -49,6 +49,9 @@ const ICON_PATHS: [&str; 44] = [
     "icons/phosphor/warning-circle.svg",
     "icons/phosphor/x.svg",
     "icons/phosphor/x-circle.svg",
+    "icons/workbench/ghostty.svg",
+    "icons/workbench/neovim.svg",
+    "icons/workbench/pi.svg",
 ];
 
 pub(crate) struct AppAssets;
@@ -191,6 +194,13 @@ impl AssetSource for AppAssets {
             "icons/phosphor/x-circle.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/x-circle.svg"))
             }
+            "icons/workbench/ghostty.svg" => {
+                Some(include_bytes!("../assets/workbench-icons/ghostty.svg"))
+            }
+            "icons/workbench/neovim.svg" => {
+                Some(include_bytes!("../assets/workbench-icons/neovim.svg"))
+            }
+            "icons/workbench/pi.svg" => Some(include_bytes!("../assets/workbench-icons/pi.svg")),
             _ => None,
         };
         Ok(bytes.map(Cow::Borrowed))
@@ -223,6 +233,7 @@ pub(crate) enum AppIcon {
     Eye,
     Folder,
     FolderPlus,
+    Ghostty,
     GitFork,
     Globe,
     Hammer,
@@ -231,12 +242,13 @@ pub(crate) enum AppIcon {
     List,
     MagnifyingGlass,
     Microscope,
+    Neovim,
+    Pi,
     Plus,
     Question,
     SignIn,
     SpinnerGap,
     Stop,
-    TerminalWindow,
     Trash,
     UserFocus,
     WarningCircle,
@@ -263,6 +275,7 @@ impl IconNamed for AppIcon {
             Self::Eye => "eye",
             Self::Folder => "folder",
             Self::FolderPlus => "folder-plus",
+            Self::Ghostty => return "icons/workbench/ghostty.svg".into(),
             Self::GitFork => "git-fork",
             Self::Globe => "globe",
             Self::Hammer => "hammer",
@@ -271,12 +284,13 @@ impl IconNamed for AppIcon {
             Self::List => "list",
             Self::MagnifyingGlass => "magnifying-glass",
             Self::Microscope => "microscope",
+            Self::Neovim => return "icons/workbench/neovim.svg".into(),
+            Self::Pi => return "icons/workbench/pi.svg".into(),
             Self::Plus => "plus",
             Self::Question => "question",
             Self::SignIn => "sign-in",
             Self::SpinnerGap => "spinner-gap",
             Self::Stop => "stop",
-            Self::TerminalWindow => "terminal-window",
             Self::Trash => "trash",
             Self::UserFocus => "user-focus",
             Self::WarningCircle => "warning-circle",
@@ -311,7 +325,7 @@ mod tests {
     }
 
     #[test]
-    fn asset_source_serves_only_themeable_phosphor_icons() {
+    fn asset_source_serves_only_themeable_icons() {
         assert!(
             AppAssets
                 .load("icons/search.svg")
@@ -336,6 +350,7 @@ mod tests {
             AppIcon::Eye,
             AppIcon::Folder,
             AppIcon::FolderPlus,
+            AppIcon::Ghostty,
             AppIcon::GitFork,
             AppIcon::Globe,
             AppIcon::Hammer,
@@ -344,12 +359,13 @@ mod tests {
             AppIcon::List,
             AppIcon::MagnifyingGlass,
             AppIcon::Microscope,
+            AppIcon::Neovim,
+            AppIcon::Pi,
             AppIcon::Plus,
             AppIcon::Question,
             AppIcon::SignIn,
             AppIcon::SpinnerGap,
             AppIcon::Stop,
-            AppIcon::TerminalWindow,
             AppIcon::Trash,
             AppIcon::UserFocus,
             AppIcon::WarningCircle,

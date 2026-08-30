@@ -80,7 +80,7 @@ impl FarcasterApp {
             .child(surface_control(
                 "show-chat-surface",
                 "Chat (F1)",
-                AppIcon::ChatCircleDots,
+                AppIcon::Pi,
                 self.surface == AppSurface::Chat,
                 entity.clone(),
                 FarcasterApp::show_chat_surface,
@@ -88,7 +88,7 @@ impl FarcasterApp {
             .child(surface_control(
                 "show-editor-surface",
                 "Neovim (F2)",
-                AppIcon::Code,
+                AppIcon::Neovim,
                 self.surface == AppSurface::Editor,
                 entity.clone(),
                 FarcasterApp::show_editor_surface,
@@ -96,7 +96,7 @@ impl FarcasterApp {
             .child(surface_control(
                 "show-terminal-surface",
                 "Terminal (F3)",
-                AppIcon::TerminalWindow,
+                AppIcon::Ghostty,
                 self.surface == AppSurface::Terminal,
                 entity,
                 FarcasterApp::show_terminal_surface,

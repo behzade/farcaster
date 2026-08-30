@@ -28,6 +28,7 @@ use crate::{
 const MARKDOWN_CHUNK_TARGET_BYTES: usize = 2 * 1024;
 const MARKDOWN_CHUNK_HARD_BYTES: usize = 8 * 1024;
 const TRANSCRIPT_CONTENT_MAX: Pixels = px(1030.0);
+const TRANSCRIPT_HORIZONTAL_PADDING: Pixels = px(18.0);
 pub(crate) const TRANSCRIPT_ROW_HEIGHT_HINT: Pixels = px(24.0);
 
 pub(crate) fn tail_reserve(viewport_height: Pixels) -> Pixels {
@@ -1062,7 +1063,7 @@ fn render_invocation(
     div()
         .id(("invocation-row", key))
         .w_full()
-        .px(THEME.space.md)
+        .px(TRANSCRIPT_HORIZONTAL_PADDING)
         .py(THEME.space.sm)
         .flex()
         .flex_col()
@@ -1239,7 +1240,7 @@ fn render_message(
     div()
         .id(("transcript-row", key))
         .w_full()
-        .px(THEME.space.md)
+        .px(TRANSCRIPT_HORIZONTAL_PADDING)
         .py(THEME.space.sm)
         .when(user, |row| {
             row.mt(THEME.space.sm)
@@ -1283,7 +1284,7 @@ fn render_message_chunk(
     div()
         .id(format!("transcript-row-{key}-{block}"))
         .w_full()
-        .px(THEME.space.md)
+        .px(TRANSCRIPT_HORIZONTAL_PADDING)
         .when(user, |row| row.bg(THEME.colors.selection))
         .when(first, |row| row.pt(THEME.space.sm))
         .when(first && user, |row| {
@@ -1327,7 +1328,7 @@ fn render_agent_result(
     div()
         .id(("agent-result-row", key))
         .w_full()
-        .px(THEME.space.md)
+        .px(TRANSCRIPT_HORIZONTAL_PADDING)
         .py(px(2.0))
         .flex()
         .flex_col()
@@ -1379,7 +1380,7 @@ fn render_error(
     div()
         .id(("error-row", key))
         .w_full()
-        .px(THEME.space.md)
+        .px(TRANSCRIPT_HORIZONTAL_PADDING)
         .py(THEME.space.sm)
         .flex()
         .flex_col()
@@ -1438,7 +1439,7 @@ fn message_role_label(kind: TranscriptKind) -> Option<&'static str> {
 
 fn message_role(label: &'static str, user: bool) -> impl gpui::IntoElement {
     div()
-        .mb(THEME.space.xs)
+        .mb(px(7.0))
         .text_size(THEME.type_scale.caption)
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(if user {
@@ -1490,7 +1491,7 @@ fn render_thinking(
     div()
         .id(("thinking-row", key))
         .w_full()
-        .px(THEME.space.md)
+        .px(TRANSCRIPT_HORIZONTAL_PADDING)
         .py(px(2.0))
         .flex()
         .flex_col()
@@ -1557,7 +1558,7 @@ fn render_read_group(
     div()
         .id(("read-group", key))
         .w_full()
-        .px(THEME.space.md)
+        .px(TRANSCRIPT_HORIZONTAL_PADDING)
         .py(px(2.0))
         .flex()
         .flex_col()
@@ -1656,7 +1657,7 @@ fn render_tool(
     div()
         .id(("tool-row", key))
         .w_full()
-        .px(THEME.space.md)
+        .px(TRANSCRIPT_HORIZONTAL_PADDING)
         .py(px(2.0))
         .flex()
         .flex_col()
