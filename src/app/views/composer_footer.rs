@@ -1,6 +1,6 @@
 use gpui::{
     AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
 };
 
 use super::{
@@ -15,8 +15,6 @@ use crate::{
     runtime::RuntimeCommand,
     theme::{MONO_FONT_FAMILY, THEME},
 };
-
-const CONTEXT_SEGMENTS: usize = 14;
 
 impl FarcasterApp {
     pub(super) fn render_composer_controls(
@@ -57,7 +55,9 @@ impl FarcasterApp {
         let send_entity = entity.clone();
         let abort_entity = entity;
         div()
-            .flex_none()
+            .absolute()
+            .right(px(12.0))
+            .bottom(px(10.0))
             .flex()
             .items_center()
             .child(
@@ -108,7 +108,7 @@ fn render_usage(usage: &ComposerUsage, session_totals: &SessionChangeTotals) -> 
         .flex()
         .items_center()
         .font_family(MONO_FONT_FAMILY)
-        .text_size(THEME.type_scale.body_small)
+        .text_size(THEME.type_scale.caption)
         .child(context_metric(usage));
     if let Some(rate) = usage.cache_hit_rate {
         row = row.child(separator()).child(labeled_metric(
@@ -118,26 +118,21 @@ fn render_usage(usage: &ComposerUsage, session_totals: &SessionChangeTotals) -> 
             THEME.colors.success,
         ));
     }
-    if usage.aggregate.input > 0 {
-        row = row.child(separator()).child(simple_metric(
-            Some(AppIcon::ArrowUp),
-            "Input tokens",
-            format_tokens(usage.aggregate.input),
-            THEME.colors.text,
-        ));
-    }
     if usage.aggregate.output > 0 {
         row = row.child(separator()).child(simple_metric(
-            Some(AppIcon::ArrowDown),
+            Some(AppIcon::ArrowUp),
             "Output tokens",
             format_tokens(usage.aggregate.output),
             THEME.colors.text,
         ));
     }
-    if session_totals.additions.is_some() || session_totals.deletions.is_some() {
-        row = row
-            .child(separator())
-            .child(session_change_metric(session_totals));
+    if usage.aggregate.input > 0 {
+        row = row.child(separator()).child(simple_metric(
+            Some(AppIcon::ArrowDown),
+            "Input tokens",
+            format_tokens(usage.aggregate.input),
+            THEME.colors.muted,
+        ));
     }
     if usage.aggregate.cost_micros > 0 {
         row = row.child(separator()).child(simple_metric(
@@ -146,6 +141,11 @@ fn render_usage(usage: &ComposerUsage, session_totals: &SessionChangeTotals) -> 
             format_cost(usage.aggregate.cost_micros),
             THEME.colors.text,
         ));
+    }
+    if session_totals.additions.is_some() || session_totals.deletions.is_some() {
+        row = row
+            .child(separator())
+            .child(session_change_metric(session_totals));
     }
     row.into_any_element()
 }
@@ -176,16 +176,10 @@ fn session_change_metric(totals: &SessionChangeTotals) -> AnyElement {
 
 fn context_metric(usage: &ComposerUsage) -> AnyElement {
     let value = match (usage.context_used, usage.context_total) {
-        (Some(used), Some(total)) => format!("{} / {}", format_tokens(used), format_tokens(total)),
-        (Some(used), None) => format!("{} / —", format_tokens(used)),
-        (None, Some(total)) => format!("— / {}", format_tokens(total)),
-        (None, None) => "— / —".into(),
-    };
-    let percent = usage.context_percent.unwrap_or(0.0).clamp(0.0, 100.0);
-    let filled = if percent <= 0.0 {
-        0
-    } else {
-        ((percent / 100.0 * CONTEXT_SEGMENTS as f64).round() as usize).clamp(1, CONTEXT_SEGMENTS)
+        (Some(used), Some(total)) => format!("{}/{}", format_tokens(used), format_tokens(total)),
+        (Some(used), None) => format!("{}/—", format_tokens(used)),
+        (None, Some(total)) => format!("—/{}", format_tokens(total)),
+        (None, None) => "—/—".into(),
     };
     let color = context_color(usage.context_percent);
     div()
@@ -193,6 +187,7 @@ fn context_metric(usage: &ComposerUsage) -> AnyElement {
         .flex()
         .items_center()
         .gap(THEME.space.sm)
+        .child(context_meter(color))
         .child(
             div()
                 .flex_none()
@@ -200,26 +195,17 @@ fn context_metric(usage: &ComposerUsage) -> AnyElement {
                 .text_color(THEME.colors.text)
                 .child(value),
         )
-        .child(context_meter(filled, color))
         .into_any_element()
 }
 
-fn context_meter(filled: usize, color: gpui::Rgba) -> AnyElement {
+fn context_meter(color: gpui::Rgba) -> AnyElement {
     div()
+        .size(px(14.0))
         .flex_none()
-        .flex()
-        .items_center()
-        .gap(THEME.border)
-        .children((0..CONTEXT_SEGMENTS).map(|index| {
-            div()
-                .w(THEME.space.sm)
-                .h(THEME.type_scale.caption)
-                .bg(if index < filled {
-                    color
-                } else {
-                    THEME.colors.border
-                })
-        }))
+        .rounded_full()
+        .border(px(2.0))
+        .border_color(color)
+        .bg(THEME.colors.canvas)
         .into_any_element()
 }
 
@@ -275,11 +261,11 @@ fn simple_metric(
 pub(super) fn separator() -> AnyElement {
     div()
         .flex_none()
-        .px(THEME.space.sm)
+        .px(px(6.0))
         .text_align(gpui::TextAlign::Center)
         .font_family(MONO_FONT_FAMILY)
         .text_color(THEME.colors.subtle)
-        .child("•")
+        .child("/")
         .into_any_element()
 }
 

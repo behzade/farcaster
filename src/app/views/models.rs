@@ -1,12 +1,12 @@
 use gpui::{
-    Anchor, AnyElement, IntoElement as _, ParentElement as _, Styled as _, WeakEntity, div,
+    Anchor, AnyElement, IntoElement as _, ParentElement as _, Styled as _, WeakEntity, div, px,
 };
 use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
 
 use super::{super::FarcasterApp, composer_footer::separator};
 use crate::{
     assets::AppIcon,
-    primitives::{AppIconSize, ButtonTone, app_icon, dropdown_button, dropdown_content_button},
+    primitives::{AppIconSize, ButtonTone, app_icon, dropdown_content_button},
     runtime::{FileAccessMode, NetworkAccessMode, PermissionLevel},
     theme::{MONO_FONT_FAMILY, THEME},
 };
@@ -48,58 +48,80 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
         .cloned()
         .collect::<Vec<_>>();
     let efforts = app.snapshot.thinking_levels.clone();
-    let effort = identity.effort;
+    let effort = identity.effort.unwrap_or("off");
+    let runtime_content = div()
+        .flex()
+        .items_center()
+        .font_family(MONO_FONT_FAMILY)
+        .text_size(THEME.type_scale.caption)
+        .child(div().text_color(THEME.colors.muted).child(provider_label))
+        .child(runtime_slash())
+        .child(div().text_color(THEME.colors.text).child(model_label))
+        .child(runtime_slash())
+        .child(
+            div()
+                .text_color(effort_color(effort))
+                .child(effort_label(effort)),
+        );
     let provider_entity = entity.clone();
     let add_provider_entity = entity.clone();
     let model_entity = entity.clone();
-
-    let provider = dropdown_button("select-provider", provider_label, ButtonTone::Quiet, true)
-        .flex_none()
-        .font_family(MONO_FONT_FAMILY)
-        .text_color(THEME.colors.text)
-        .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
-            let mut menu = menu.max_h(THEME.layout.dialog_max_height).label("Provider");
-            for provider in &providers {
-                let target = provider.clone();
-                let entity = provider_entity.clone();
-                menu = menu.item(
-                    PopupMenuItem::new(provider.clone()).on_click(move |_, _, cx| {
-                        let _ = entity.update(cx, |this, cx| {
-                            this.select_provider(&target, cx);
-                        });
-                    }),
-                );
-            }
-            if !providers.is_empty() {
-                menu = menu.separator();
-            }
-            let add_provider_entity = add_provider_entity.clone();
-            menu.item(
-                PopupMenuItem::new("+ Add provider…").on_click(move |_, _, cx| {
-                    let _ = add_provider_entity.update(cx, |this, _| this.add_provider());
-                }),
-            )
-        });
-    let model = dropdown_button(
-        "select-model",
-        model_label,
+    let effort_entity = entity.clone();
+    let runtime = dropdown_content_button(
+        "select-runtime",
+        "Runtime",
+        runtime_content,
         ButtonTone::Quiet,
-        !provider_models.is_empty(),
+        true,
     )
     .flex_none()
-    .font_family(MONO_FONT_FAMILY)
-    .text_color(THEME.colors.text)
     .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
-        let mut menu = menu.max_h(THEME.layout.dialog_max_height).label("Model");
+        let mut menu = menu.max_h(THEME.layout.dialog_max_height).label("Runtime");
+        for provider in &providers {
+            let target = provider.clone();
+            let entity = provider_entity.clone();
+            menu = menu.item(
+                PopupMenuItem::new(format!("Provider · {provider}")).on_click(move |_, _, cx| {
+                    let _ = entity.update(cx, |this, cx| {
+                        this.select_provider(&target, cx);
+                    });
+                }),
+            );
+        }
+        menu = menu.item(PopupMenuItem::new("Provider · Add…").on_click({
+            let entity = add_provider_entity.clone();
+            move |_, _, cx| {
+                let _ = entity.update(cx, |this, _| this.add_provider());
+            }
+        }));
+        if !provider_models.is_empty() {
+            menu = menu.separator();
+        }
         for model in &provider_models {
             let target = model.clone();
             let entity = model_entity.clone();
             menu = menu.item(
-                PopupMenuItem::new(model.name.clone()).on_click(move |_, _, cx| {
+                PopupMenuItem::new(format!("Model · {}", model.name)).on_click(move |_, _, cx| {
                     let _ = entity.update(cx, |this, cx| {
                         this.select_model(&target, cx);
                     });
                 }),
+            );
+        }
+        if !efforts.is_empty() {
+            menu = menu.separator();
+        }
+        for effort in &efforts {
+            let target = effort.clone();
+            let entity = effort_entity.clone();
+            menu = menu.item(
+                PopupMenuItem::new(format!("Effort · {}", effort_label(effort))).on_click(
+                    move |_, _, cx| {
+                        let _ = entity.update(cx, |this, cx| {
+                            this.set_thinking_level(target.clone(), cx);
+                        });
+                    },
+                ),
             );
         }
         menu
@@ -109,48 +131,18 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
         .flex_none()
         .flex()
         .items_center()
-        .child(provider)
-        .child(separator())
-        .child(model)
-        .child(separator())
-        .child(effort_selector(effort, &efforts, entity.clone()))
+        .child(runtime)
         .child(separator())
         .child(permission_selector(app.snapshot.permission_level, entity))
         .into_any_element()
 }
 
-fn effort_selector(
-    selected: Option<&str>,
-    efforts: &[String],
-    entity: WeakEntity<FarcasterApp>,
-) -> AnyElement {
-    let label = selected.map_or_else(|| "Effort".into(), effort_label);
-    let efforts = efforts.to_vec();
-    dropdown_button(
-        "select-effort",
-        label,
-        ButtonTone::Quiet,
-        !efforts.is_empty(),
-    )
-    .flex_none()
-    .font_family(MONO_FONT_FAMILY)
-    .text_color(effort_color(selected.unwrap_or("off")))
-    .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
-        let mut menu = menu.max_h(THEME.layout.dialog_max_height).label("Effort");
-        for effort in &efforts {
-            let target = effort.clone();
-            let entity = entity.clone();
-            menu = menu.item(
-                PopupMenuItem::new(effort_label(effort)).on_click(move |_, _, cx| {
-                    let _ = entity.update(cx, |this, cx| {
-                        this.set_thinking_level(target.clone(), cx);
-                    });
-                }),
-            );
-        }
-        menu
-    })
-    .into_any_element()
+fn runtime_slash() -> AnyElement {
+    div()
+        .px(px(6.0))
+        .text_color(THEME.colors.subtle)
+        .child("/")
+        .into_any_element()
 }
 
 fn effort_color(level: &str) -> gpui::Rgba {
@@ -174,14 +166,19 @@ fn effort_label(level: &str) -> String {
 }
 
 fn permission_selector(selected: PermissionLevel, entity: WeakEntity<FarcasterApp>) -> AnyElement {
-    let file_state_icon = file_access_icon(selected.files);
-    let network_state_icon = network_access_icon(selected.network);
     let content = div()
         .flex()
         .items_center()
-        .gap(THEME.space.sm)
-        .child(permission_icon_pair(AppIcon::Folder, file_state_icon))
-        .child(permission_icon_pair(AppIcon::Globe, network_state_icon));
+        .gap(px(7.0))
+        .child(permission_indicator(
+            AppIcon::Folder,
+            file_access_color(selected.files),
+        ))
+        .child(div().text_color(THEME.colors.subtle).child("/"))
+        .child(permission_indicator(
+            AppIcon::Globe,
+            network_access_color(selected.network),
+        ));
 
     dropdown_content_button(
         "select-permission",
@@ -225,28 +222,28 @@ fn permission_selector(selected: PermissionLevel, entity: WeakEntity<FarcasterAp
     .into_any_element()
 }
 
-fn permission_icon_pair(resource: AppIcon, access: AppIcon) -> AnyElement {
+fn permission_indicator(resource: AppIcon, color: gpui::Rgba) -> AnyElement {
     div()
         .flex()
         .items_center()
-        .gap(THEME.space.xs)
-        .child(app_icon(resource, AppIconSize::Inline).text_color(THEME.colors.subtle))
-        .child(app_icon(access, AppIconSize::Inline).text_color(THEME.colors.text))
+        .gap(px(5.0))
+        .child(app_icon(resource, AppIconSize::Inline).text_color(THEME.colors.muted))
+        .child(div().size(px(7.0)).rounded_full().bg(color))
         .into_any_element()
 }
 
-fn file_access_icon(mode: FileAccessMode) -> AppIcon {
+fn file_access_color(mode: FileAccessMode) -> gpui::Rgba {
     match mode {
-        FileAccessMode::ReadOnly => AppIcon::Eye,
-        FileAccessMode::Sandboxed => AppIcon::Shield,
-        FileAccessMode::Full => AppIcon::ArrowsOut,
+        FileAccessMode::ReadOnly => THEME.colors.link,
+        FileAccessMode::Sandboxed => THEME.colors.warning,
+        FileAccessMode::Full => THEME.colors.error,
     }
 }
 
-fn network_access_icon(mode: NetworkAccessMode) -> AppIcon {
+fn network_access_color(mode: NetworkAccessMode) -> gpui::Rgba {
     match mode {
-        NetworkAccessMode::Sandboxed => AppIcon::Shield,
-        NetworkAccessMode::Full => AppIcon::ArrowsOut,
+        NetworkAccessMode::Sandboxed => THEME.colors.warning,
+        NetworkAccessMode::Full => THEME.colors.error,
     }
 }
 
@@ -255,17 +252,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn permission_modes_have_distinct_compact_icons() {
-        assert_eq!(file_access_icon(FileAccessMode::ReadOnly), AppIcon::Eye);
-        assert_eq!(file_access_icon(FileAccessMode::Sandboxed), AppIcon::Shield);
-        assert_eq!(file_access_icon(FileAccessMode::Full), AppIcon::ArrowsOut);
-        assert_eq!(
-            network_access_icon(NetworkAccessMode::Sandboxed),
-            AppIcon::Shield
+    fn permission_modes_have_distinct_compact_colors() {
+        assert_ne!(
+            file_access_color(FileAccessMode::ReadOnly),
+            file_access_color(FileAccessMode::Sandboxed)
         );
-        assert_eq!(
-            network_access_icon(NetworkAccessMode::Full),
-            AppIcon::ArrowsOut
+        assert_ne!(
+            file_access_color(FileAccessMode::Sandboxed),
+            file_access_color(FileAccessMode::Full)
+        );
+        assert_ne!(
+            network_access_color(NetworkAccessMode::Sandboxed),
+            network_access_color(NetworkAccessMode::Full)
         );
     }
 }

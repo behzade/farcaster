@@ -104,9 +104,10 @@ impl FarcasterApp {
                     .border_t(THEME.border)
                     .border_color(THEME.colors.border)
             })
-            .bg(THEME.colors.panel)
+            .bg(THEME.colors.composer)
             .child(
                 div()
+                    .relative()
                     .flex_1()
                     .min_h_0()
                     .flex()
@@ -145,12 +146,14 @@ impl FarcasterApp {
                         div()
                             .id("composer-input")
                             .key_context(super::super::COMPOSER_KEY_CONTEXT)
+                            .relative()
                             .flex_1()
                             .min_h(px(112.0))
                             .font_family(MONO_FONT_FAMILY)
                             .text_size(THEME.type_scale.body)
                             .line_height(THEME.type_scale.line_composer)
-                            .px(THEME.space.sm)
+                            .pl(THEME.space.sm)
+                            .pr(px(48.0))
                             .py(THEME.space.sm)
                             .capture_action(move |_: &Paste, _, cx| {
                                 if paste_entity
@@ -216,23 +219,22 @@ impl FarcasterApp {
                             .on_mouse_up(MouseButton::Left, move |_, _, cx| {
                                 capture_after_input(cursor_entity.clone(), cx);
                             })
-                            .child(Textarea::new(&self.composer).w_full().appearance(false)),
+                            .child(Textarea::new(&self.composer).w_full().appearance(false))
+                            .child(self.render_composer_actions(actions_entity, primary_action)),
                     )
                     .when_some(widgets_below, |composer, widgets| composer.child(widgets)),
             )
             .child(
                 div()
-                    .min_h(THEME.controls.utility_row)
+                    .h(px(36.0))
                     .flex_none()
                     .flex()
                     .items_center()
-                    .justify_between()
-                    .px(THEME.space.md)
-                    .py(THEME.space.sm)
+                    .px(px(12.0))
                     .border_t(THEME.border)
-                    .border_color(THEME.colors.border)
-                    .child(self.render_composer_controls(controls_entity, !floating))
-                    .child(self.render_composer_actions(actions_entity, primary_action)),
+                    .border_color(THEME.colors.surface)
+                    .bg(THEME.colors.panel)
+                    .child(self.render_composer_controls(controls_entity, !floating)),
             )
             .into_any_element()
     }
