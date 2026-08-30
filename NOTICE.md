@@ -45,3 +45,8 @@ repository.
 Application icons copied from Phosphor Icons are distributed under MIT. The
 exact upstream license is included at
 `THIRD_PARTY_LICENSES/PHOSPHOR-ICONS-MIT.txt`.
+
+Packaged applications include the nono v0.61.1 CLI from
+<https://github.com/nolabs-ai/nono> as an unmodified sidecar. nono is
+distributed under Apache-2.0; its exact upstream license is included at
+`THIRD_PARTY_LICENSES/NONO-APACHE-2.0.txt`.

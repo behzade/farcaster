@@ -21,7 +21,9 @@ attribution.
 Pi settings, context files, extensions, skills, and authentication load in the
 selected project directory. Farcaster owns the outer nono sandbox and runs Pi's
 inner sandbox unrestricted. Farcaster does not modify Pi. The `pi` executable
-must be available on `PATH`.
+must be available on `PATH`. Packaged builds use the pinned `nono` CLI sidecar
+next to the Farcaster executable. Development builds otherwise resolve `nono`
+from `PATH`.
 
 ## Run
 
@@ -31,6 +33,20 @@ cargo run -- /path/to/project
 
 The project argument is optional. Farcaster otherwise opens the most recent
 project or the current directory.
+
+## macOS bundle
+
+```sh
+make bundle-macos
+open target/release/Farcaster.app
+```
+
+The bundle script downloads the architecture-specific upstream `nono` v0.61.1
+release when its verified archive is not already in `target/release`, verifies
+its pinned SHA-256 digest, places it in `Contents/MacOS`, and signs the complete
+bundle. Signing is ad hoc by default; set
+`CODESIGN_IDENTITY` to use a Developer ID identity. The packaged application
+does not require `PATH` or `FARCASTER_NONO_PATH` to locate `nono`.
 
 Farcaster serves stateless Streamable HTTP MCP at
 `http://127.0.0.1:8765/mcp`. It exposes `request_access`, `workgraph_search`,
@@ -44,7 +60,7 @@ modify a project MCP file.
 Useful environment variables:
 
 - `FARCASTER_PI_PATH`: Pi executable override
-- `FARCASTER_NONO_PATH`: required fixed nono executable for restricted modes
+- `FARCASTER_NONO_PATH`: fixed nono executable override
 - `FARCASTER_DATA_DIR`: application database, project registry, and logs
 - `FARCASTER_SHELL`: login shell override
 - `FARCASTER_GIT`, `FARCASTER_JJ`, `FARCASTER_NVIM`: executable overrides

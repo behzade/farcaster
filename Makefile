@@ -1,7 +1,7 @@
 PROJECT ?= $(CURDIR)
 CARGO_TARGET_DIR ?= $(CURDIR)/target
 
-.PHONY: run test debug release release-debug check check-flake
+.PHONY: run test debug release release-debug bundle-macos check check-flake
 
 run:
 	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo run -- "$(PROJECT)"
@@ -17,6 +17,9 @@ release:
 
 release-debug:
 	DEBUG=true CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo run --release -- "$(PROJECT)"
+
+bundle-macos:
+	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" ./scripts/bundle-macos.sh
 
 check:
 	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo fmt --check
