@@ -1,20 +1,24 @@
 use std::{io::Write as _, path::Path};
 
 const SERVER_URL: &str = "http://127.0.0.1:8765/mcp";
+const CALLER_HEADER: &str = "farcaster-caller";
 
 pub(crate) struct TransientMcpConfig {
     file: tempfile::NamedTempFile,
 }
 
 impl TransientMcpConfig {
-    pub(crate) fn create() -> Result<Self, String> {
+    pub(crate) fn create(caller_token: &str) -> Result<Self, String> {
         let mut file = tempfile::NamedTempFile::new()
             .map_err(|error| format!("create transient MCP configuration: {error}"))?;
         let mut config = serde_json::to_vec(&serde_json::json!({
             "mcpServers": {
                 "farcaster": {
                     "url": SERVER_URL,
-                    "protocolVersion": "2026-07-28"
+                    "protocolVersion": "2026-07-28",
+                    "headers": {
+                        (CALLER_HEADER): caller_token
+                    }
                 }
             }
         }))
@@ -39,11 +43,15 @@ mod tests {
     #[test]
     fn exposes_farcaster_through_a_reopenable_transient_file()
     -> Result<(), Box<dyn std::error::Error>> {
-        let config = TransientMcpConfig::create()?;
+        let config = TransientMcpConfig::create("caller-1")?;
         let path = config.path().to_owned();
         for _ in 0..2 {
             let value = serde_json::from_slice::<serde_json::Value>(&std::fs::read(&path)?)?;
             assert_eq!(value["mcpServers"]["farcaster"]["url"], SERVER_URL);
+            assert_eq!(
+                value["mcpServers"]["farcaster"]["headers"][CALLER_HEADER],
+                "caller-1"
+            );
             assert_eq!(
                 value["mcpServers"]["farcaster"]["protocolVersion"],
                 "2026-07-28"

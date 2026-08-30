@@ -15,9 +15,15 @@ pub(super) struct StartParams {
     /// Agent backend. Currently `pi`.
     #[serde(default)]
     pub(super) backend: Option<String>,
-    /// Existing backend session to use as context.
+    /// Parent backend session. Normally supplied automatically by Farcaster.
+    #[serde(default)]
+    pub(super) parent_session: Option<String>,
+    /// Existing backend session to use as context. Omit to fork the parent.
     #[serde(default)]
     pub(super) source_session: Option<String>,
+    /// Start with inherited or blank context. Defaults to `fork`.
+    #[serde(default)]
+    pub(super) context: StartContext,
     /// Model provider; must be paired with `model`.
     #[serde(default)]
     pub(super) provider: Option<String>,
@@ -27,6 +33,14 @@ pub(super) struct StartParams {
     /// Backend reasoning or effort level.
     #[serde(default)]
     pub(super) effort: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum StartContext {
+    Fresh,
+    #[default]
+    Fork,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -78,12 +92,23 @@ pub(super) fn backends(pool: &WorkerPool) -> serde_json::Value {
     })
 }
 
-pub(super) fn start(pool: &WorkerPool, params: StartParams) -> Result<serde_json::Value, String> {
-    let context = params
-        .source_session
-        .map_or(WorkerContext::Fresh, |session| WorkerContext::Session {
-            session_locator: session,
-        });
+pub(super) fn start(
+    pool: &WorkerPool,
+    params: StartParams,
+    caller_parent: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let source_session = params.source_session;
+    let parent_session = params
+        .parent_session
+        .or(caller_parent)
+        .or_else(|| source_session.clone())
+        .ok_or_else(|| "worker start requires a parent session".to_owned())?;
+    let context = match params.context {
+        StartContext::Fresh => WorkerContext::Fresh,
+        StartContext::Fork => WorkerContext::Session {
+            session_locator: source_session.unwrap_or_else(|| parent_session.clone()),
+        },
+    };
     encode(
         &pool.start(StartWorker {
             project: PathBuf::from(params.project),
@@ -91,6 +116,7 @@ pub(super) fn start(pool: &WorkerPool, params: StartParams) -> Result<serde_json
             backend: params
                 .backend
                 .unwrap_or_else(|| pool.default_backend().to_owned()),
+            parent_session,
             context,
             provider: params.provider,
             model: params.model,

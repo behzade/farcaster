@@ -89,6 +89,7 @@ fn request(project: &std::path::Path) -> StartWorker {
         project: project.to_owned(),
         prompt: "work".into(),
         backend: "pi".into(),
+        parent_session: "backend://parent".into(),
         context: WorkerContext::Fresh,
         provider: None,
         model: None,

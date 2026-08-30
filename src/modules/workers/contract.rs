@@ -42,6 +42,7 @@ pub(crate) struct StartWorker {
     pub(crate) project: PathBuf,
     pub(crate) prompt: String,
     pub(crate) backend: String,
+    pub(crate) parent_session: String,
     pub(crate) context: WorkerContext,
     pub(crate) provider: Option<String>,
     pub(crate) model: Option<String>,

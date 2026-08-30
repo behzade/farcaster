@@ -33,11 +33,6 @@ mod user_invocations;
 mod workers;
 
 pub(crate) use app::runtime;
-pub(crate) use modules::access as sandbox;
-pub(crate) use modules::access::network;
-pub(crate) use modules::sessions as session_deletion;
-pub(crate) use modules::sessions as session_transfer;
-pub(crate) use modules::sessions as session_watcher;
 pub(crate) use modules::{access, agents, projects, repository, sessions};
 
 fn main() -> std::process::ExitCode {

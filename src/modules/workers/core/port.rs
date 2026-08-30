@@ -12,6 +12,7 @@ pub(crate) enum WorkerSendMode {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct WorkerLaunch {
     pub(crate) project: PathBuf,
+    pub(crate) parent_session: String,
     pub(crate) context: WorkerContext,
     pub(crate) provider: Option<String>,
     pub(crate) model: Option<String>,

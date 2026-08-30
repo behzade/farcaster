@@ -18,9 +18,11 @@ use super::{
     wire::{PiResponse, PiWireMessage, parse_frame},
 };
 use crate::{
-    agents::{PiEvent, PiRequest, encode_pi_request},
+    access,
+    agents::{
+        FileAccessMode, NetworkAccessMode, PermissionLevel, PiEvent, PiRequest, encode_pi_request,
+    },
     protocol::ExtensionUiResponse,
-    runtime::PermissionLevel,
 };
 
 #[derive(Clone)]
@@ -28,8 +30,8 @@ pub(crate) struct PiProcessCommand {
     pub program: PathBuf,
     pub prefix_args: Vec<String>,
     pub permission_level: PermissionLevel,
-    pub nono: crate::sandbox::NonoExecutable,
-    pub grants: Option<crate::sandbox::GrantStore>,
+    pub nono: access::NonoExecutable,
+    pub grants: Option<access::GrantStore>,
     pub app_proxy: Option<String>,
 }
 
@@ -39,7 +41,7 @@ impl Default for PiProcessCommand {
             program: pi_program(std::env::var_os("FARCASTER_PI_PATH")),
             prefix_args: Vec::new(),
             permission_level: PermissionLevel::default(),
-            nono: crate::sandbox::configured_nono_program(std::env::var_os("FARCASTER_NONO_PATH")),
+            nono: access::configured_nono_program(std::env::var_os("FARCASTER_NONO_PATH")),
             grants: None,
             app_proxy: None,
         }
@@ -56,16 +58,13 @@ impl PiProcessCommand {
             program: PathBuf::from("sh"),
             prefix_args,
             permission_level: PermissionLevel::default(),
-            nono: crate::sandbox::test_nono_bypass(),
+            nono: access::test_nono_bypass(),
             grants: None,
             app_proxy: None,
         }
     }
 
-    pub(crate) fn command(
-        &self,
-        project: &Path,
-    ) -> Result<crate::sandbox::PreparedCommand, String> {
+    pub(crate) fn command(&self, project: &Path) -> Result<access::PreparedCommand, String> {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         let mut environment = crate::shell_environment::project_shell_environment(project)?;
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -89,19 +88,19 @@ impl PiProcessCommand {
         }
         let program =
             resolve_agent_program(&self.program, project, environment_value("PATH").as_deref())?;
-        let network = crate::network::configuration(
+        let network = access::network_configuration(
             environment.as_deref(),
             self.app_proxy.as_deref(),
-            matches!(access.network, crate::sandbox::NetworkAccess::Sandboxed),
+            matches!(access.network, access::NetworkAccess::Sandboxed),
         )?;
         if let Some(environment) = environment.as_mut() {
-            crate::network::append_app_proxy_environment(environment, &network);
+            access::append_app_proxy_environment(environment, &network);
         }
-        let mut prepared = crate::sandbox::prepare_command(
+        let mut prepared = access::prepare_command(
             &self.nono,
             &program,
             &self.prefix_args,
-            crate::sandbox::PolicyPaths {
+            access::PolicyPaths {
                 project,
                 home: &home,
                 agent_state: &agent_state,
@@ -119,17 +118,17 @@ impl PiProcessCommand {
     }
 }
 
-fn sandbox_access(level: PermissionLevel) -> crate::sandbox::AccessPolicy {
+fn sandbox_access(level: PermissionLevel) -> access::AccessPolicy {
     let filesystem = match level.files {
-        crate::runtime::FileAccessMode::ReadOnly => crate::sandbox::FilesystemAccess::ReadOnly,
-        crate::runtime::FileAccessMode::Sandboxed => crate::sandbox::FilesystemAccess::Sandboxed,
-        crate::runtime::FileAccessMode::Full => crate::sandbox::FilesystemAccess::Full,
+        FileAccessMode::ReadOnly => access::FilesystemAccess::ReadOnly,
+        FileAccessMode::Sandboxed => access::FilesystemAccess::Sandboxed,
+        FileAccessMode::Full => access::FilesystemAccess::Full,
     };
     let network = match level.network {
-        crate::runtime::NetworkAccessMode::Sandboxed => crate::sandbox::NetworkAccess::Sandboxed,
-        crate::runtime::NetworkAccessMode::Full => crate::sandbox::NetworkAccess::Full,
+        NetworkAccessMode::Sandboxed => access::NetworkAccess::Sandboxed,
+        NetworkAccessMode::Full => access::NetworkAccess::Full,
     };
-    crate::sandbox::AccessPolicy {
+    access::AccessPolicy {
         filesystem,
         network,
     }
@@ -226,15 +225,15 @@ fn rpc_command(
     project: &Path,
     launch: SessionLaunch<'_>,
     mcp_config: &Path,
-) -> Result<crate::sandbox::PreparedCommand, String> {
+) -> Result<access::PreparedCommand, String> {
     let mut prepared = command.command(project)?;
     prepared
         .command
         .args(["--mode", "rpc"])
-        // Pi and pi-nono run unrestricted inside Farcaster's outer sandbox.
-        .args(["--sandbox-files", "full", "--sandbox-network", "full"])
         .arg("--mcp-config")
         .arg(mcp_config)
+        // Farcaster owns the complete outer sandbox and access-request boundary.
+        .env("PI_NONO_DISABLED", "1")
         .env("FARCASTER_NATIVE_NOTIFICATIONS", "1")
         // Compatibility with existing Pi notification extensions.
         .env("PI_GPUI_NATIVE_NOTIFICATIONS", "1");
@@ -251,8 +250,9 @@ fn rpc_command(
 }
 
 pub(crate) struct PiRpcProcess {
+    caller_identity: crate::workers::CallerIdentity,
     _mcp_config: TransientMcpConfig,
-    _sandbox: crate::sandbox::PreparedCommand,
+    _sandbox: access::PreparedCommand,
     child: Arc<Mutex<Child>>,
     stdin: Arc<Mutex<ChildStdin>>,
     incoming: mpsc::Receiver<ReaderItem>,
@@ -305,7 +305,8 @@ impl PiRpcProcess {
         launch: SessionLaunch<'_>,
         wake: Option<thread::Thread>,
     ) -> Result<Self, String> {
-        let mcp_config = TransientMcpConfig::create()?;
+        let caller_identity = crate::workers::CallerRegistry::shared().issue();
+        let mcp_config = TransientMcpConfig::create(caller_identity.token())?;
         let mut prepared = rpc_command(command, project, launch, mcp_config.path())?;
         let mut child = prepared
             .command
@@ -338,6 +339,7 @@ impl PiRpcProcess {
         spawn_stdout_reader(stdout, sender.clone());
         spawn_stderr_reader(stderr, sender);
         let mut rpc = Self {
+            caller_identity,
             _mcp_config: mcp_config,
             _sandbox: prepared,
             child,
@@ -595,6 +597,12 @@ impl PiRpcProcess {
                         "response {id} was for {}, expected {expected_command}",
                         response.command
                     ));
+                }
+                if response.success
+                    && response.command == "get_state"
+                    && let Some(session) = response.data["sessionFile"].as_str()
+                {
+                    self.caller_identity.bind(session);
                 }
                 PiEvent::Response(response)
             }

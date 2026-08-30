@@ -442,7 +442,7 @@ impl StateStore {
 
     pub(crate) fn save_network_proxy(&self, proxy: Option<&str>) -> Result<(), String> {
         if let Some(proxy) = proxy {
-            crate::access::network::validate_app_proxy(proxy)?;
+            crate::access::validate_app_proxy(proxy)?;
             self.connection
                 .execute(
                     "INSERT INTO meta(key, value) VALUES(?1, ?2)

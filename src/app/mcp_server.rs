@@ -7,7 +7,10 @@ use std::{borrow::Cow, net::TcpListener, path::PathBuf, thread::JoinHandle};
 
 use rmcp::{
     ServerHandler,
-    handler::server::wrapper::{Json, Parameters},
+    handler::server::{
+        tool::Extension,
+        wrapper::{Json, Parameters},
+    },
     model::ProtocolVersion,
     tool, tool_handler, tool_router,
     transport::streamable_http_server::{
@@ -17,6 +20,7 @@ use rmcp::{
 
 const BIND_ADDRESS: &str = "127.0.0.1:8765";
 const MCP_PATH: &str = "/mcp";
+const CALLER_HEADER: &str = "farcaster-caller";
 
 pub(crate) struct McpServer {
     _thread: JoinHandle<()>,
@@ -141,16 +145,28 @@ impl FarcasterMcp {
 
     #[tool(
         name = "worker_start",
-        description = "Start an independent worker in Farcaster's bounded backend-neutral pool"
+        description = "Start a child worker attached to the calling session in Farcaster's bounded backend-neutral pool"
     )]
     async fn worker_start(
         &self,
         Parameters(params): Parameters<workers::StartParams>,
+        Extension(parts): Extension<axum::http::request::Parts>,
     ) -> Result<Json<serde_json::Value>, String> {
+        let caller_token = parts
+            .headers
+            .get(CALLER_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
         let pool = self.workers.clone();
-        let value = tokio::task::spawn_blocking(move || workers::start(&pool, params))
-            .await
-            .map_err(|error| format!("worker start task failed: {error}"))??;
+        let value = tokio::task::spawn_blocking(move || {
+            let caller_parent = caller_token
+                .as_deref()
+                .map(|token| crate::workers::CallerRegistry::shared().resolve(token))
+                .transpose()?;
+            workers::start(&pool, params, caller_parent)
+        })
+        .await
+        .map_err(|error| format!("worker start task failed: {error}"))??;
         Ok(Json(value))
     }
 

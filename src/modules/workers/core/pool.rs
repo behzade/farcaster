@@ -129,6 +129,7 @@ impl WorkerPool {
         let prepared = (|| {
             let mut session = factory.create(WorkerLaunch {
                 project: project.clone(),
+                parent_session: request.parent_session,
                 context,
                 provider: request.provider,
                 model: request.model,
@@ -378,6 +379,9 @@ fn snapshot(record: &WorkerRecord) -> Result<WorkerSnapshot, String> {
 fn validate_start(request: &StartWorker) -> Result<(), String> {
     if request.prompt.trim().is_empty() {
         return Err("worker prompt must not be empty".into());
+    }
+    if request.parent_session.trim().is_empty() {
+        return Err("worker parent session must not be empty".into());
     }
     Ok(())
 }

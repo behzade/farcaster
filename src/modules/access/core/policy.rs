@@ -273,7 +273,7 @@ mod tests {
             &home.join(".pi/agent"),
             &temporary,
             access,
-            crate::sandbox::approval::ResolvedGrants::default(),
+            crate::access::approval::ResolvedGrants::default(),
             &NetworkConfiguration::default(),
         )?)?)
     }
@@ -374,7 +374,7 @@ mod tests {
                 filesystem: FilesystemAccess::Sandboxed,
                 network: NetworkAccess::Sandboxed,
             },
-            crate::sandbox::approval::ResolvedGrants {
+            crate::access::approval::ResolvedGrants {
                 readable: vec![readable.clone()],
                 readable_files: vec![readable_file.clone()],
                 writable_files: vec![writable_file.clone()],
@@ -428,7 +428,7 @@ mod tests {
                 filesystem: FilesystemAccess::Sandboxed,
                 network: NetworkAccess::Sandboxed,
             },
-            crate::sandbox::approval::ResolvedGrants::default(),
+            crate::access::approval::ResolvedGrants::default(),
             &network,
         )?)?;
         assert!(

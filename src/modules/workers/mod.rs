@@ -6,5 +6,6 @@ pub(crate) use contract::{
     WorkerSnapshot, WorkerStatus,
 };
 pub(crate) use core::{
-    WorkerEvent, WorkerLaunch, WorkerPool, WorkerSendMode, WorkerSession, WorkerSessionFactory,
+    CallerIdentity, CallerRegistry, WorkerEvent, WorkerLaunch, WorkerPool, WorkerSendMode,
+    WorkerSession, WorkerSessionFactory,
 };

@@ -1,5 +1,5 @@
 use super::*;
-use crate::runtime::{FileAccessMode, NetworkAccessMode};
+use crate::agents::{FileAccessMode, NetworkAccessMode};
 use std::{error::Error, fs};
 use tempfile::tempdir;
 
@@ -43,7 +43,7 @@ fn fork_process_passes_the_source_session_to_pi() -> TestResult {
     let source = Path::new("/sessions/source session.jsonl");
     let process = rpc_command(
         &PiProcessCommand {
-            nono: crate::sandbox::test_nono_bypass(),
+            nono: crate::access::test_nono_bypass(),
             ..PiProcessCommand::default()
         },
         project.path(),
@@ -93,7 +93,7 @@ fn resolves_agent_symlink_to_a_fixed_executable() -> TestResult {
 }
 
 #[test]
-fn pi_runs_full_inside_the_outer_sandbox() -> TestResult {
+fn pi_disables_its_inner_sandbox_inside_farcaster() -> TestResult {
     let project = tempdir()?;
     let nono = project.path().join("nono");
     fs::write(&nono, b"#!/bin/sh\nexit 0\n")?;
@@ -115,7 +115,7 @@ fn pi_runs_full_inside_the_outer_sandbox() -> TestResult {
             files: FileAccessMode::ReadOnly,
             network: NetworkAccessMode::Sandboxed,
         },
-        nono: crate::sandbox::NonoExecutable::Fixed(nono.clone()),
+        nono: crate::access::NonoExecutable::Fixed(nono.clone()),
         ..PiProcessCommand::default()
     };
     let prepared = rpc_command(
@@ -126,8 +126,14 @@ fn pi_runs_full_inside_the_outer_sandbox() -> TestResult {
     )?;
     assert_eq!(prepared.command.get_program(), nono.as_os_str());
     let arguments = prepared.command.get_args().collect::<Vec<_>>();
-    assert!(arguments.windows(4).any(|arguments| {
-        arguments == ["--sandbox-files", "full", "--sandbox-network", "full"]
+    assert!(!arguments.iter().any(|argument| {
+        matches!(
+            argument.to_str(),
+            Some("--sandbox-files" | "--sandbox-network")
+        )
+    }));
+    assert!(prepared.command.get_envs().any(|(name, value)| {
+        name == "PI_NONO_DISABLED" && value == Some(std::ffi::OsStr::new("1"))
     }));
     Ok(())
 }
