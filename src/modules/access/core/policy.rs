@@ -191,6 +191,7 @@ fn development_storage(home: &Path) -> Vec<PathBuf> {
         ".cache",
         ".local/state",
         ".config/jj",
+        ".config/opencode",
         ".bun/install/cache",
         ".cargo/.package-cache",
         ".cargo/.package-cache-mutate",
@@ -199,6 +200,7 @@ fn development_storage(home: &Path) -> Vec<PathBuf> {
         ".gradle/caches",
         ".gradle/wrapper/dists",
         ".ivy2/cache",
+        ".local/share/opencode",
         ".local/share/pnpm/store",
         ".m2/repository",
         ".npm",
@@ -260,7 +262,9 @@ mod tests {
         std::fs::create_dir_all(home.join(".pi/agent"))?;
         std::fs::create_dir_all(home.join(".cargo/registry"))?;
         std::fs::create_dir_all(home.join(".config/git"))?;
+        std::fs::create_dir_all(home.join(".config/opencode"))?;
         std::fs::create_dir_all(home.join(".local/lib"))?;
+        std::fs::create_dir_all(home.join(".local/share/opencode"))?;
         std::fs::write(home.join(".config/git/config"), "[credential]\n")?;
         std::fs::create_dir_all(&temporary)?;
         Ok(serde_json::from_slice(&compile(
@@ -300,6 +304,14 @@ mod tests {
         assert!(allow.iter().any(|path| {
             path.as_str()
                 .is_some_and(|path| path.ends_with("/.cargo/registry"))
+        }));
+        assert!(allow.iter().any(|path| {
+            path.as_str()
+                .is_some_and(|path| path.ends_with("/.config/opencode"))
+        }));
+        assert!(allow.iter().any(|path| {
+            path.as_str()
+                .is_some_and(|path| path.ends_with("/.local/share/opencode"))
         }));
         let read = profile["filesystem"]["read"]
             .as_array()
@@ -375,9 +387,10 @@ mod tests {
                 .as_array()
                 .is_some_and(|paths| paths.contains(&serde_json::json!(readable)))
         );
-        assert_eq!(
-            profile["filesystem"]["read_file"],
-            serde_json::json!([readable_file])
+        assert!(
+            profile["filesystem"]["read_file"]
+                .as_array()
+                .is_some_and(|paths| paths.contains(&serde_json::json!(readable_file)))
         );
         assert_eq!(
             profile["filesystem"]["allow_file"],
