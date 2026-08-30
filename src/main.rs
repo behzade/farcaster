@@ -105,14 +105,15 @@ fn main() -> std::process::ExitCode {
         Ok(pool) => pool,
         Err(error) => return fail(format!("initialize worker pool: {error}")),
     };
+    let (workgraph_updates, workgraph_update_receiver) = async_channel::bounded(1);
     let _mcp_server = match state::state_path()
-        .and_then(|database| mcp_server::start(database, approvals, worker_pool))
+        .and_then(|database| mcp_server::start(database, approvals, worker_pool, workgraph_updates))
     {
         Ok(server) => server,
         Err(error) => return fail(format!("start MCP server: {error}")),
     };
 
-    match launch::run(project, approval_ui) {
+    match launch::run(project, approval_ui, workgraph_update_receiver) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => fail(error),
     }

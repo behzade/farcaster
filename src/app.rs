@@ -304,6 +304,7 @@ pub(crate) struct FarcasterApp {
     _window_placement_subscription: Subscription,
     _event_task: Task<()>,
     _sandbox_approval_task: Task<()>,
+    _workgraph_update_task: Task<()>,
 }
 
 fn session_shortcuts_visible_for_window(current: bool, window_active: bool) -> bool {
@@ -315,6 +316,7 @@ impl FarcasterApp {
         project: PathBuf,
         repository_execution_allowed: bool,
         sandbox_approval_ui: crate::sandbox::approval::ApprovalUi,
+        workgraph_updates: async_channel::Receiver<()>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -507,6 +509,16 @@ impl FarcasterApp {
                     .update(cx, |this, cx| {
                         this.apply_sandbox_approval_prompt(prompt, cx)
                     })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        let workgraph_update_task = cx.spawn(async move |weak, cx| {
+            while workgraph_updates.recv().await.is_ok() {
+                if weak
+                    .update(cx, |this, cx| this.refresh_workgraph_sidebar(cx))
                     .is_err()
                 {
                     break;
@@ -727,6 +739,7 @@ impl FarcasterApp {
             _window_placement_subscription: window_placement_subscription,
             _event_task: event_task,
             _sandbox_approval_task: sandbox_approval_task,
+            _workgraph_update_task: workgraph_update_task,
         };
         this.request_repository_refresh(cx);
         this

@@ -12,7 +12,10 @@ impl TransientMcpConfig {
             .map_err(|error| format!("create transient MCP configuration: {error}"))?;
         let mut config = serde_json::to_vec(&serde_json::json!({
             "mcpServers": {
-                "farcaster": { "url": SERVER_URL }
+                "farcaster": {
+                    "url": SERVER_URL,
+                    "protocolVersion": "2026-07-28"
+                }
             }
         }))
         .map_err(|error| format!("encode MCP configuration: {error}"))?;
@@ -41,6 +44,10 @@ mod tests {
         for _ in 0..2 {
             let value = serde_json::from_slice::<serde_json::Value>(&std::fs::read(&path)?)?;
             assert_eq!(value["mcpServers"]["farcaster"]["url"], SERVER_URL);
+            assert_eq!(
+                value["mcpServers"]["farcaster"]["protocolVersion"],
+                "2026-07-28"
+            );
         }
         drop(config);
         assert!(!path.exists());

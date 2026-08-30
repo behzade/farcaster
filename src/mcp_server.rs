@@ -26,6 +26,7 @@ pub(crate) fn start(
     database: PathBuf,
     approvals: crate::sandbox::approval::ApprovalService,
     worker_pool: crate::workers::WorkerPool,
+    workgraph_updates: async_channel::Sender<()>,
 ) -> Result<McpServer, String> {
     let listener = TcpListener::bind(BIND_ADDRESS)
         .map_err(|error| format!("bind http://{BIND_ADDRESS}{MCP_PATH}: {error}"))?;
@@ -35,7 +36,13 @@ pub(crate) fn start(
     let thread = std::thread::Builder::new()
         .name("farcaster-mcp".into())
         .spawn(move || {
-            if let Err(error) = serve(listener, database, approvals, worker_pool) {
+            if let Err(error) = serve(
+                listener,
+                database,
+                approvals,
+                worker_pool,
+                workgraph_updates,
+            ) {
                 zlog::error!("MCP server stopped: {error}");
             }
         })
@@ -48,6 +55,7 @@ fn serve(
     database: PathBuf,
     approvals: crate::sandbox::approval::ApprovalService,
     worker_pool: crate::workers::WorkerPool,
+    workgraph_updates: async_channel::Sender<()>,
 ) -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -63,6 +71,7 @@ fn serve(
                     database.clone(),
                     approvals.clone(),
                     worker_pool.clone(),
+                    workgraph_updates.clone(),
                 ))
             },
             LocalSessionManager::default().into(),
@@ -87,6 +96,7 @@ struct FarcasterMcp {
     database: PathBuf,
     approvals: crate::sandbox::approval::ApprovalService,
     workers: crate::workers::WorkerPool,
+    workgraph_updates: async_channel::Sender<()>,
 }
 
 impl FarcasterMcp {
@@ -94,11 +104,13 @@ impl FarcasterMcp {
         database: PathBuf,
         approvals: crate::sandbox::approval::ApprovalService,
         workers: crate::workers::WorkerPool,
+        workgraph_updates: async_channel::Sender<()>,
     ) -> Self {
         Self {
             database,
             approvals,
             workers,
+            workgraph_updates,
         }
     }
 }
@@ -231,9 +243,11 @@ impl FarcasterMcp {
         Parameters(params): Parameters<workgraph::PatchParams>,
     ) -> Result<String, String> {
         let database = self.database.clone();
-        tokio::task::spawn_blocking(move || workgraph::patch(&database, params))
+        let result = tokio::task::spawn_blocking(move || workgraph::patch(&database, params))
             .await
-            .map_err(|error| format!("work graph patch task failed: {error}"))?
+            .map_err(|error| format!("work graph patch task failed: {error}"))??;
+        notify_workgraph_changed(&self.workgraph_updates);
+        Ok(result)
     }
 
     #[tool(
@@ -245,10 +259,16 @@ impl FarcasterMcp {
         Parameters(params): Parameters<workgraph::CompleteParams>,
     ) -> Result<String, String> {
         let database = self.database.clone();
-        tokio::task::spawn_blocking(move || workgraph::complete(&database, params))
+        let result = tokio::task::spawn_blocking(move || workgraph::complete(&database, params))
             .await
-            .map_err(|error| format!("work graph completion task failed: {error}"))?
+            .map_err(|error| format!("work graph completion task failed: {error}"))??;
+        notify_workgraph_changed(&self.workgraph_updates);
+        Ok(result)
     }
+}
+
+fn notify_workgraph_changed(updates: &async_channel::Sender<()>) {
+    let _ = updates.try_send(());
 }
 
 #[tool_handler(name = "farcaster", version = "0.1.0")]
@@ -326,7 +346,13 @@ mod tests {
             crate::sandbox::test_nono_bypass(),
         )
         .expect("approval channel");
-        let server = FarcasterMcp::new(PathBuf::from("unused"), approvals, worker_pool(&project));
+        let (workgraph_updates, _) = async_channel::bounded(1);
+        let server = FarcasterMcp::new(
+            PathBuf::from("unused"),
+            approvals,
+            worker_pool(&project),
+            workgraph_updates,
+        );
         assert_eq!(
             server.supported_protocol_versions().as_ref(),
             [ProtocolVersion::V_2026_07_28]
