@@ -6,7 +6,7 @@ use std::{
 use async_channel::Receiver;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 
-use super::{RepositoryKind, RepositoryLocation};
+use super::super::{RepositoryKind, RepositoryLocation};
 
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum RepositoryWatchEvent {

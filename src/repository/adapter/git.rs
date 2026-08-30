@@ -1,6 +1,6 @@
 use std::{ffi::OsString, path::PathBuf, sync::Arc, time::SystemTime};
 
-use super::{
+use super::super::{
     ChangeKind, ChangeLayer, DiffResult, DiffTarget, GitIdentity, RepositoryBackend,
     RepositoryError, RepositoryKind, SnapshotIdentity, SnapshotToken, WorkingCopySnapshot, change,
     command_failed, diff_result, require_complete_stdout,

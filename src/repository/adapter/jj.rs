@@ -1,11 +1,11 @@
 use std::{ffi::OsString, path::PathBuf, sync::Arc, time::SystemTime};
 
-use super::{
+use super::super::{
     ChangeKind, ChangeLayer, JujutsuIdentity, RepositoryBackend, RepositoryError, RepositoryKind,
     SnapshotIdentity, SnapshotToken, WorkingCopySnapshot, change, require_complete_stdout,
 };
 #[cfg(test)]
-use super::{DiffResult, DiffTarget, diff_result};
+use super::super::{DiffResult, DiffTarget, diff_result};
 
 const OPERATION_TEMPLATE: &str = "id ++ \"\\n\"";
 const IDENTITY_TEMPLATE: &str = concat!(

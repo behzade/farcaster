@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use super::RepositoryError;
+use super::super::RepositoryError;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 const SPAWN_RETRY_GRACE: Duration = Duration::from_secs(1);

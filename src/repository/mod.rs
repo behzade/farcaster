@@ -1,8 +1,7 @@
-mod git;
-mod jj;
-mod process;
+mod adapter;
 mod sync;
-pub(crate) mod watcher;
+
+pub(crate) use adapter::watcher;
 
 use std::{
     ffi::OsString,
@@ -13,7 +12,10 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use process::{CommandOutput, CommandRunner};
+use adapter::{
+    git, jj,
+    process::{CommandOutput, CommandRunner},
+};
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(8);
 const DEFAULT_SYNC_TIMEOUT: Duration = Duration::from_secs(120);
