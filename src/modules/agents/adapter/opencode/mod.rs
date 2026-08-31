@@ -1,3 +1,4 @@
+mod catalog;
 mod client;
 #[cfg(test)]
 mod client_tests;
@@ -8,6 +9,7 @@ mod transport;
 mod worker;
 
 pub(crate) use worker::OpenCodeWorkerFactory;
+pub(super) use catalog::{discover, load_history};
 pub(super) use worker::spawn_main;
 
 use super::super::contract::{

@@ -246,8 +246,47 @@ fn interaction(input: WorkerInput) -> ExtensionUiRequest {
     }
 }
 
-fn external_session_path(harness: &str, locator: &str) -> Result<PathBuf, String> {
+pub(in crate::modules::agents::adapter) fn external_session_path(
+    harness: &str,
+    locator: &str,
+) -> Result<PathBuf, String> {
     let encoded = url::form_urlencoded::byte_serialize(locator.as_bytes()).collect::<String>();
     crate::app_paths::data_dir()
         .map(|root| root.join("session-locators").join(harness).join(encoded))
+}
+
+pub(in crate::modules::agents::adapter) fn external_session_locator(
+    harness: &str,
+    path: &std::path::Path,
+) -> Option<String> {
+    (path.parent()?.file_name()?.to_str()? == harness)
+        .then(|| percent_decode(path.file_name()?.to_str()?))
+        .flatten()
+}
+
+fn percent_decode(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let high = hex(bytes.get(index + 1).copied()?)?;
+            let low = hex(bytes.get(index + 2).copied()?)?;
+            decoded.push((high << 4) | low);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).ok()
+}
+
+const fn hex(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }

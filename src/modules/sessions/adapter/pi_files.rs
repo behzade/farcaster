@@ -82,9 +82,13 @@ impl SessionSummary {
         search: String,
     ) -> Self {
         let is_running = recently_running(is_running, modified, SystemTime::now());
-        let parent_session = parent_session
-            .as_deref()
-            .and_then(|parent| resolve_parent_session(&path, parent));
+        let parent_session = if harness == "pi" {
+            parent_session
+                .as_deref()
+                .and_then(|parent| resolve_parent_session(&path, parent))
+        } else {
+            parent_session
+        };
         Self {
             id,
             app_session_id: 0,

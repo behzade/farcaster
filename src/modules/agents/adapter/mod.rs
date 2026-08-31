@@ -113,6 +113,45 @@ pub(crate) fn rename_session(
     pi::PiRpcProcess::rename_session(config, project, session, name)
 }
 
+pub(crate) fn discover_external_sessions(
+    query: &str,
+) -> (Vec<crate::sessions::SessionSummary>, bool) {
+    let statuses = backend_statuses();
+    let mut sessions = Vec::new();
+    let mut exhaustive = true;
+    if statuses
+        .iter()
+        .any(|backend| backend.id == "codex-cli" && backend.available)
+    {
+        match codex::discover(query) {
+            Ok(mut discovered) => sessions.append(&mut discovered),
+            Err(_) => exhaustive = false,
+        }
+    }
+    if statuses
+        .iter()
+        .any(|backend| backend.id == "opencode2" && backend.available)
+    {
+        match opencode::discover(query) {
+            Ok(mut discovered) => sessions.append(&mut discovered),
+            Err(_) => exhaustive = false,
+        }
+    }
+    (sessions, exhaustive)
+}
+
+pub(crate) fn load_external_history(
+    path: &std::path::Path,
+) -> Option<Result<crate::sessions::LoadedHistory, String>> {
+    if main_session::external_session_locator("codex-cli", path).is_some() {
+        return Some(codex::load_history(path));
+    }
+    if main_session::external_session_locator("opencode2", path).is_some() {
+        return Some(opencode::load_history(path));
+    }
+    None
+}
+
 pub(crate) fn backend_statuses() -> Vec<super::contract::AgentBackendStatus> {
     let pi_program = crate::agents::AgentLaunchConfig::default().program;
     let codex_program = std::env::var_os("FARCASTER_CODEX_PATH")

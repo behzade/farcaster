@@ -107,6 +107,26 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
         decode_empty(response)
     }
 
+    pub(crate) fn list_sessions(&mut self, query: &str) -> Result<Value, String> {
+        let encoded = url::form_urlencoded::byte_serialize(query.as_bytes()).collect::<String>();
+        self.json(
+            OpenCodeHttpMethod::Get,
+            format!("/api/session?limit=100&order=desc&search={encoded}"),
+            None,
+        )
+    }
+
+    pub(crate) fn session_messages(&mut self, session_id: &str) -> Result<Value, String> {
+        self.json(
+            OpenCodeHttpMethod::Get,
+            format!(
+                "/api/session/{}/message?limit=500&order=asc",
+                path_segment(session_id)
+            ),
+            None,
+        )
+    }
+
     pub(crate) fn delete_session(&mut self, session_id: &str) -> Result<(), String> {
         let response = self.execute(
             OpenCodeHttpMethod::Delete,
