@@ -1,6 +1,7 @@
 use super::{
     QueuedMessageKind, choice_copy, composer_primary_action, default_dialog_selection, dialog_copy,
     dialog_number_selection, numbered_dialog_choice, plain_text_html, queued_message_groups,
+    queued_message_preview,
 };
 use crate::{app::views::transcript::conversation::QueueState, protocol::ExtensionUiRequest};
 
@@ -42,6 +43,14 @@ fn queued_messages_are_grouped_by_delivery_behavior() {
     );
     assert_eq!(groups[0].0.label(), "Steer next");
     assert_eq!(groups[1].0.label(), "Follow-ups");
+}
+
+#[test]
+fn queued_message_preview_hides_multiline_payloads() {
+    assert_eq!(
+        queued_message_preview("inspect this\n\nPasted text files:\n- file.txt"),
+        "inspect this…"
+    );
 }
 
 #[test]

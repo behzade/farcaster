@@ -704,6 +704,13 @@ pub(super) fn queued_message_groups(queue: &QueueState) -> Vec<(QueuedMessageKin
     .collect()
 }
 
+fn queued_message_preview(message: &str) -> String {
+    match message.split_once(['\r', '\n']) {
+        Some((first, _)) => format!("{}…", first.trim_end()),
+        None => message.to_owned(),
+    }
+}
+
 fn queued_message_group(
     kind: QueuedMessageKind,
     messages: &[String],
@@ -740,7 +747,7 @@ fn queued_message_group(
                 .py(THEME.space.xs)
                 .text_size(THEME.type_scale.body)
                 .text_color(THEME.colors.text)
-                .child(message.clone())
+                .child(queued_message_preview(message))
         }))
         .into_any_element()
 }
