@@ -2201,5 +2201,4 @@ fn starts_recent_completion(previous: Option<&str>, next: &str, force: bool) -> 
 }
 
 #[cfg(test)]
-#[path = "app_tests.rs"]
 mod tests;
