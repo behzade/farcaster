@@ -38,7 +38,9 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
         let mut sandbox = self.command.command(&launch.project)?;
         let caller_identity =
             crate::modules::agents::core::CallerRegistry::shared().issue(&launch.project);
-        configure_farcaster_mcp(&mut sandbox.command, caller_identity.token())?;
+        if farcaster_mcp::enabled() {
+            configure_farcaster_mcp(&mut sandbox.command, caller_identity.token())?;
+        }
         let password = worker_password()?;
         let mut child = sandbox
             .command
@@ -111,7 +113,9 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
     let mut sandbox = command.command(&launch.project)?;
     let caller_identity =
         crate::modules::agents::core::CallerRegistry::shared().issue(&launch.project);
-    configure_farcaster_mcp(&mut sandbox.command, caller_identity.token())?;
+    if farcaster_mcp::enabled() {
+        configure_farcaster_mcp(&mut sandbox.command, caller_identity.token())?;
+    }
     let password = worker_password()?;
     let mut child = sandbox
         .command

@@ -45,7 +45,10 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             .command_with_tls_ca_environment(&launch.project, CODEX_CA_ENVIRONMENT)?;
         let caller_identity =
             crate::modules::agents::core::CallerRegistry::shared().issue(&launch.project);
-        configure_farcaster_mcp(&mut sandbox.command, caller_identity.token());
+        configure_codex_app_server(&mut sandbox.command);
+        if farcaster_mcp::enabled() {
+            configure_farcaster_mcp(&mut sandbox.command, caller_identity.token());
+        }
         let mut child = sandbox
             .command
             .stdin(Stdio::piped())
@@ -126,7 +129,10 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         command.command_with_tls_ca_environment(&launch.project, CODEX_CA_ENVIRONMENT)?;
     let caller_identity =
         crate::modules::agents::core::CallerRegistry::shared().issue(&launch.project);
-    configure_farcaster_mcp(&mut sandbox.command, caller_identity.token());
+    configure_codex_app_server(&mut sandbox.command);
+    if farcaster_mcp::enabled() {
+        configure_farcaster_mcp(&mut sandbox.command, caller_identity.token());
+    }
     let mut child = sandbox
         .command
         .stdin(Stdio::piped())
@@ -772,18 +778,16 @@ impl Drop for CodexWorkerSession {
     }
 }
 
+fn configure_codex_app_server(command: &mut std::process::Command) {
+    command.args(["app-server", "--stdio", "--enable", "mcp_2026_07_28"]);
+}
+
 fn configure_farcaster_mcp(command: &mut std::process::Command, caller_token: &str) {
     let url = serde_json::to_string(farcaster_mcp::URL).expect("static MCP URL encodes");
     let header =
         serde_json::to_string(farcaster_mcp::CALLER_HEADER).expect("static MCP header encodes");
     let token = serde_json::to_string(caller_token).expect("caller token encodes");
     command
-        .args([
-            "app-server",
-            "--stdio",
-            "--enable",
-            "mcp_2026_07_28",
-        ])
         .arg("-c")
         .arg(format!("mcp_servers.farcaster.url={url}"))
         .arg("-c")
@@ -893,6 +897,7 @@ mod tests {
     #[test]
     fn native_startup_configures_required_farcaster_mcp() {
         let mut command = std::process::Command::new("codex");
+        configure_codex_app_server(&mut command);
         configure_farcaster_mcp(&mut command, "caller-1");
         let arguments = command
             .get_args()

@@ -152,7 +152,7 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
         self.json(
             OpenCodeHttpMethod::Get,
             format!(
-                "/api/session/{}/message?limit=500&order=asc",
+                "/api/session/{}/message?limit=200&order=asc",
                 path_segment(session_id)
             ),
             None,
@@ -245,8 +245,8 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
 
     pub(crate) fn rename_session(&mut self, session_id: &str, title: &str) -> Result<(), String> {
         let response = self.execute(
-            OpenCodeHttpMethod::Patch,
-            format!("/api/session/{}", path_segment(session_id)),
+            OpenCodeHttpMethod::Post,
+            format!("/api/session/{}/rename", path_segment(session_id)),
             Some(json!({"title": title})),
         )?;
         ensure_success(&response)

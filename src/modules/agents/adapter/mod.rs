@@ -3,6 +3,8 @@ mod child_stderr;
 mod codex;
 mod farcaster_mcp;
 mod main_session;
+#[cfg(test)]
+mod live_tests;
 #[allow(dead_code)]
 mod opencode;
 mod pi;

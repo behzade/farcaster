@@ -1,4 +1,7 @@
-use std::{collections::VecDeque, path::PathBuf};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    path::PathBuf,
+};
 
 use serde_json::{Value, json};
 
@@ -24,7 +27,7 @@ pub(super) struct WorkerSessionTransport {
     pending: VecDeque<SessionEvent>,
     next_id: u64,
     running: bool,
-    assistant_message_activity: bool,
+    assistant_message: AssistantMessage,
     model: Option<(String, String)>,
     effort: String,
     metadata: MainSessionMetadata,
@@ -68,7 +71,7 @@ impl WorkerSessionTransport {
             pending: VecDeque::new(),
             next_id: 0,
             running: false,
-            assistant_message_activity: false,
+            assistant_message: AssistantMessage::default(),
             model,
             effort: metadata
                 .efforts
@@ -117,43 +120,58 @@ impl WorkerSessionTransport {
         })
     }
 
-    fn worker_event(&mut self, event: WorkerEvent) -> SessionEvent {
+    fn enqueue_worker_event(&mut self, event: WorkerEvent) {
         match event {
             WorkerEvent::Started => {
                 self.running = true;
-                self.assistant_message_activity = false;
-                SessionEvent::Activity(json!({"type": "agent_start"}))
+                self.assistant_message.clear();
+                self.pending
+                    .push_back(SessionEvent::Activity(json!({"type": "agent_start"})));
             }
             WorkerEvent::Settled { output } => {
                 self.running = false;
-                if !self.assistant_message_activity {
+                if !self.assistant_message.started {
+                    self.assistant_message.started = true;
                     self.pending.push_back(SessionEvent::Activity(json!({
                         "type": "message_start",
                         "message": {"role": "assistant", "content": []}
                     })));
+                }
+                if self.assistant_message.text().is_none() && !output.is_empty() {
+                    let content_index = self.assistant_message.push_text(output.clone());
                     self.pending.push_back(SessionEvent::Activity(json!({
                         "type": "message_update",
                         "assistantMessageEvent": {
                             "type": "text_delta",
-                            "contentIndex": 0,
+                            "contentIndex": content_index,
                             "delta": output,
                         }
                     })));
-                    self.pending.push_back(SessionEvent::Activity(json!({
-                        "type": "message_end",
-                        "message": {"role": "assistant"}
-                    })));
+                } else {
+                    self.assistant_message.replace_text(&output);
                 }
-                self.assistant_message_activity = false;
-                SessionEvent::Activity(json!({"type": "agent_settled"}))
+                self.pending.push_back(SessionEvent::Activity(json!({
+                    "type": "message_end",
+                    "message": {
+                        "role": "assistant",
+                        "content": self.assistant_message.content(),
+                    }
+                })));
+                self.pending
+                    .push_back(SessionEvent::Activity(json!({"type": "agent_settled"})));
+                self.assistant_message.clear();
             }
             WorkerEvent::SessionChanged { locator } => {
                 self.locator = locator;
-                SessionEvent::Activity(json!({"type": "session_info_changed"}))
+                self.pending.push_back(SessionEvent::Activity(
+                    json!({"type": "session_info_changed"}),
+                ));
             }
-            WorkerEvent::NeedsInput(input) => SessionEvent::Interaction(interaction(input)),
+            WorkerEvent::NeedsInput(input) => {
+                self.pending
+                    .push_back(SessionEvent::Interaction(interaction(input)));
+            }
             WorkerEvent::Activity(activity) => {
-                self.assistant_message_activity |= is_assistant_message_activity(&activity);
                 if let Some(tokens) = activity
                     .pointer("/usage/totalTokens")
                     .and_then(Value::as_u64)
@@ -167,9 +185,11 @@ impl WorkerSessionTransport {
                 {
                     self.context_window = window;
                 }
-                SessionEvent::Activity(activity)
+                if !self.assistant_message.observe(&activity) {
+                    self.pending.push_back(SessionEvent::Activity(activity));
+                }
             }
-            WorkerEvent::Failed(error) => SessionEvent::Failure(error),
+            WorkerEvent::Failed(error) => self.pending.push_back(SessionEvent::Failure(error)),
         }
     }
 }
@@ -179,7 +199,9 @@ impl SessionTransport for WorkerSessionTransport {
         self.next_id = self.next_id.saturating_add(1);
         let id = format!("{}-{}", self.harness, self.next_id);
         match command {
-            SessionCommand::ConfigureSteering => self.response(id.clone(), "set_steering_mode", json!({})),
+            SessionCommand::ConfigureSteering => {
+                self.response(id.clone(), "set_steering_mode", json!({}))
+            }
             SessionCommand::LoadState => {
                 self.response(id.clone(), "get_state", self.state());
             }
@@ -233,8 +255,7 @@ impl SessionTransport for WorkerSessionTransport {
                     PromptMode::Steer => WorkerSendMode::Steer,
                     PromptMode::FollowUp => WorkerSendMode::Queue,
                 };
-                self.worker
-                    .send_with_images(message, worker_mode, images)?;
+                self.worker.send_with_images(message, worker_mode, images)?;
                 let command = match mode {
                     PromptMode::Normal => "prompt",
                     PromptMode::Steer => "steer",
@@ -305,9 +326,12 @@ impl SessionTransport for WorkerSessionTransport {
     }
 
     fn poll(&mut self) -> Option<SessionEvent> {
-        self.pending
-            .pop_front()
-            .or_else(|| self.worker.poll().map(|event| self.worker_event(event)))
+        if let Some(event) = self.pending.pop_front() {
+            return Some(event);
+        }
+        let event = self.worker.poll()?;
+        self.enqueue_worker_event(event);
+        self.pending.pop_front()
     }
 
     fn close(&mut self) -> Result<(), String> {
@@ -315,11 +339,131 @@ impl SessionTransport for WorkerSessionTransport {
     }
 }
 
-fn is_assistant_message_activity(activity: &Value) -> bool {
-    matches!(
-        activity.get("type").and_then(Value::as_str),
-        Some("message_start" | "message_update" | "message_end")
-    )
+#[derive(Default)]
+struct AssistantMessage {
+    started: bool,
+    content: BTreeMap<usize, Value>,
+}
+
+impl AssistantMessage {
+    fn clear(&mut self) {
+        self.started = false;
+        self.content.clear();
+    }
+
+    fn observe(&mut self, activity: &Value) -> bool {
+        match activity.get("type").and_then(Value::as_str) {
+            Some("message_start") => {
+                self.clear();
+                self.started = true;
+                false
+            }
+            Some("message_update") => {
+                self.started = true;
+                self.apply_delta(activity.get("assistantMessageEvent"));
+                false
+            }
+            Some("message_end") => true,
+            _ => false,
+        }
+    }
+
+    fn apply_delta(&mut self, delta: Option<&Value>) {
+        let Some(delta) = delta else { return };
+        let Some(index) = delta.get("contentIndex").and_then(Value::as_u64) else {
+            return;
+        };
+        let index = index as usize;
+        match delta.get("type").and_then(Value::as_str) {
+            Some("text_start") => {
+                self.content
+                    .insert(index, json!({"type": "text", "text": ""}));
+            }
+            Some("text_delta") => append_content_text(
+                self.content
+                    .entry(index)
+                    .or_insert_with(|| json!({"type": "text", "text": ""})),
+                "text",
+                delta
+                    .get("delta")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            ),
+            Some("text_end") => {
+                self.content.insert(
+                    index,
+                    json!({
+                        "type": "text",
+                        "text": delta.get("content").and_then(Value::as_str).unwrap_or_default(),
+                    }),
+                );
+            }
+            Some("thinking_start") => {
+                self.content
+                    .insert(index, json!({"type": "thinking", "thinking": ""}));
+            }
+            Some("thinking_delta") => append_content_text(
+                self.content
+                    .entry(index)
+                    .or_insert_with(|| json!({"type": "thinking", "thinking": ""})),
+                "thinking",
+                delta
+                    .get("delta")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            ),
+            Some("thinking_end") => {
+                self.content.insert(index, json!({
+                    "type": "thinking",
+                    "thinking": delta.get("content").and_then(Value::as_str).unwrap_or_default(),
+                }));
+            }
+            _ => {}
+        }
+    }
+
+    fn text(&self) -> Option<&str> {
+        self.content.values().rev().find_map(|part| {
+            (part.get("type").and_then(Value::as_str) == Some("text"))
+                .then(|| part.get("text").and_then(Value::as_str))
+                .flatten()
+        })
+    }
+
+    fn push_text(&mut self, text: String) -> usize {
+        let index = self
+            .content
+            .last_key_value()
+            .map_or(0, |(index, _)| index + 1);
+        self.content
+            .insert(index, json!({"type": "text", "text": text}));
+        index
+    }
+
+    fn replace_text(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if let Some((_, part)) = self
+            .content
+            .iter_mut()
+            .rev()
+            .find(|(_, part)| part.get("type").and_then(Value::as_str) == Some("text"))
+        {
+            part["text"] = Value::String(text.to_owned());
+        }
+    }
+
+    fn content(&self) -> Vec<Value> {
+        self.content.values().cloned().collect()
+    }
+}
+
+fn append_content_text(part: &mut Value, field: &str, delta: &str) {
+    match part.get_mut(field) {
+        Some(Value::String(text)) => text.push_str(delta),
+        _ => part[field] = Value::String(delta.to_owned()),
+    }
 }
 
 fn interaction(input: WorkerInput) -> ExtensionUiRequest {
@@ -397,8 +541,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn usage_activity_does_not_hide_fallback_assistant_output() {
-        assert!(!is_assistant_message_activity(&json!({"type": "turn_end"})));
-        assert!(is_assistant_message_activity(&json!({"type": "message_update"})));
+    fn completion_is_an_authoritative_message_before_settling() {
+        let mut message = AssistantMessage::default();
+        assert!(!message.observe(&json!({
+            "type": "message_update",
+            "assistantMessageEvent": {
+                "type": "thinking_delta",
+                "contentIndex": 0,
+                "delta": "plan",
+            }
+        })));
+        assert!(!message.observe(&json!({
+            "type": "message_update",
+            "assistantMessageEvent": {
+                "type": "text_delta",
+                "contentIndex": 1,
+                "delta": "partial",
+            }
+        })));
+        message.replace_text("final");
+        assert_eq!(
+            message.content(),
+            vec![
+                json!({"type": "thinking", "thinking": "plan"}),
+                json!({"type": "text", "text": "final"}),
+            ]
+        );
+        assert!(message.observe(&json!({
+            "type": "message_end",
+            "message": {"role": "assistant"}
+        })));
     }
 }
