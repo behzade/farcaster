@@ -425,6 +425,15 @@ impl Render for FarcasterApp {
                     }
                 },
             ))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    if this.runtime_picker_open {
+                        this.runtime_picker_open = false;
+                        this.notify_composer(cx);
+                    }
+                }),
+            )
             .on_mouse_move(cx.listener(|this, event: &gpui::MouseMoveEvent, _, cx| {
                 this.update_session_rail_resize(event.position.x, cx);
                 this.update_run_panel_resize(event.position.x, cx);

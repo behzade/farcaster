@@ -84,7 +84,6 @@ impl FarcasterApp {
         };
         let controls_entity = entity.clone();
         let runtime_picker = models::render_runtime_picker(self, entity.clone(), cx);
-        let dismiss_runtime_picker = entity.clone();
         let actions_entity = entity;
         div()
             .relative()
@@ -93,14 +92,6 @@ impl FarcasterApp {
             .min_h(THEME.layout.composer_min)
             .flex()
             .flex_col()
-            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                let _ = dismiss_runtime_picker.update(cx, |this, cx| {
-                    if this.runtime_picker_open {
-                        this.runtime_picker_open = false;
-                        this.notify_composer(cx);
-                    }
-                });
-            })
             .when(floating, |composer| {
                 composer
                     .rounded(THEME.radius)

@@ -131,7 +131,8 @@ pub(super) fn render_runtime_picker(
             .rounded(px(5.0))
             .border(THEME.border)
             .border_color(THEME.colors.border)
-            .bg(THEME.colors.surface)
+            .bg(THEME.colors.surface.alpha(1.0))
+            .occlude()
             .shadow_lg()
             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
