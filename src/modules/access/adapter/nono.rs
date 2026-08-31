@@ -201,6 +201,7 @@ mod tests {
         temporary: &Path,
         program: &Path,
         arguments: &[String],
+        access: AccessPolicy,
     ) -> Result<std::process::Output, Box<dyn std::error::Error>> {
         let nono = configured_sandbox_runtime(std::env::var_os("FARCASTER_NONO_PATH"));
         let agent_state = home.join(".pi/agent");
@@ -214,10 +215,7 @@ mod tests {
                 agent_state: &agent_state,
                 temporary,
             },
-            AccessPolicy {
-                filesystem: FilesystemAccess::Sandboxed,
-                network: NetworkAccess::Full,
-            },
+            access,
             None,
             &NetworkConfiguration::default(),
         )?;
@@ -355,12 +353,17 @@ mod tests {
         symlink(&secret, &protected_link)?;
 
         let cat = path_executable("cat")?;
+        let access = AccessPolicy {
+            filesystem: FilesystemAccess::Sandboxed,
+            network: NetworkAccess::Full,
+        };
         let configured = run_real_nono(
             &home,
             &home,
             &temporary,
             &cat,
             &[configured_link.to_string_lossy().into_owned()],
+            access,
         )?;
         assert!(
             configured.status.success(),
@@ -375,9 +378,41 @@ mod tests {
             &temporary,
             &cat,
             &[protected_link.to_string_lossy().into_owned()],
+            access,
         )?;
         assert!(!protected.status.success());
         assert!(!String::from_utf8_lossy(&protected.stdout).contains(marker.trim()));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn real_nono_runs_with_full_filesystem_and_sandboxed_network()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let home = root.path().join("home");
+        let project = root.path().join("project");
+        let temporary = root.path().join("tmp");
+        std::fs::create_dir_all(home.join(".pi/agent"))?;
+        std::fs::create_dir(&project)?;
+        std::fs::create_dir(&temporary)?;
+        let true_program = path_executable("true")?;
+        let output = run_real_nono(
+            &project,
+            &home,
+            &temporary,
+            &true_program,
+            &[],
+            AccessPolicy {
+                filesystem: FilesystemAccess::Full,
+                network: NetworkAccess::Sandboxed,
+            },
+        )?;
+        assert!(
+            output.status.success(),
+            "real nono rejected full filesystem policy: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         Ok(())
     }
 

@@ -93,9 +93,14 @@ pub(crate) fn compile(
             }
         }
     } else if matches!(access.filesystem, FilesystemAccess::Full) {
-        writable = vec![PathBuf::from("/")];
-        writable_files.clear();
-        protection_bypasses = vec![PathBuf::from("/")];
+        // nono rejects root-level write grants. Treat full filesystem access as
+        // unrestricted user storage, plus the workspace when it lives outside HOME.
+        writable.push(home.clone());
+        protection_bypasses.push(home.clone());
+        if !project.starts_with(&home) {
+            writable.push(project.clone());
+            protection_bypasses.push(project.clone());
+        }
     } else {
         readable.push(project.clone());
     }
@@ -463,6 +468,36 @@ mod tests {
             profile["network"]["tls_intercept"]["ca_env_vars"],
             serde_json::json!(["CODEX_CA_CERTIFICATE"])
         );
+        Ok(())
+    }
+
+    #[test]
+    fn full_filesystem_policy_writes_home_and_external_workspace_without_granting_root()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let profile = value(
+            root.path(),
+            AccessPolicy {
+                filesystem: FilesystemAccess::Full,
+                network: NetworkAccess::Sandboxed,
+            },
+        )?;
+        let home = root.path().join("home").canonicalize()?;
+        let project = root.path().join("project").canonicalize()?;
+        let temporary = root.path().join("tmp").canonicalize()?;
+        let allow = profile["filesystem"]["allow"]
+            .as_array()
+            .ok_or("allow must be an array")?;
+        assert!(allow.contains(&serde_json::json!(home)));
+        assert!(allow.contains(&serde_json::json!(project)));
+        assert!(allow.contains(&serde_json::json!(temporary)));
+        assert!(!allow.contains(&serde_json::json!(Path::new("/"))));
+        let bypasses = profile["filesystem"]["bypass_protection"]
+            .as_array()
+            .ok_or("bypass_protection must be an array")?;
+        assert!(bypasses.contains(&serde_json::json!(home)));
+        assert!(bypasses.contains(&serde_json::json!(project)));
+        assert!(!bypasses.contains(&serde_json::json!(Path::new("/"))));
         Ok(())
     }
 
