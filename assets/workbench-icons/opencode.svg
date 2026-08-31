@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 300" fill="currentColor">
+  <title>OpenCode</title>
+  <path opacity="0.22" d="M180 240H60V120H180Z"/>
+  <path fill-rule="evenodd" d="M0 0H240V300H0ZM60 60V240H180V60Z"/>
+</svg>

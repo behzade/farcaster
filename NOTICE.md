@@ -46,6 +46,16 @@ Application icons copied from Phosphor Icons are distributed under MIT. The
 exact upstream license is included at
 `THIRD_PARTY_LICENSES/PHOSPHOR-ICONS-MIT.txt`.
 
+The Pi application icon is adapted from Pi's official website assets, and the
+OpenCode application icon is adapted from OpenCode's official brand assets.
+Both are distributed under MIT. Their exact upstream licenses are included at
+`THIRD_PARTY_LICENSES/PI-WEBSITE-MIT.txt` and
+`THIRD_PARTY_LICENSES/OPENCODE-MIT.txt`.
+
+The Codex application icon is adapted from Lobe Icons and distributed under
+MIT. Its upstream source is <https://github.com/lobehub/lobe-icons>, and the
+exact license is included at `THIRD_PARTY_LICENSES/LOBE-ICONS-MIT.txt`.
+
 Packaged applications include the nono v0.61.1 CLI from
 <https://github.com/nolabs-ai/nono> as an unmodified sidecar. nono is
 distributed under Apache-2.0; its exact upstream license is included at

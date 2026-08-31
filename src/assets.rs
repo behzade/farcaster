@@ -4,7 +4,7 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 47] = [
+const ICON_PATHS: [&str; 49] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrows-clockwise.svg",
     "icons/phosphor/arrows-out.svg",
@@ -49,8 +49,10 @@ const ICON_PATHS: [&str; 47] = [
     "icons/phosphor/warning-circle.svg",
     "icons/phosphor/x.svg",
     "icons/phosphor/x-circle.svg",
+    "icons/workbench/codex.svg",
     "icons/workbench/ghostty.svg",
     "icons/workbench/neovim.svg",
+    "icons/workbench/opencode.svg",
     "icons/workbench/pi.svg",
 ];
 
@@ -194,11 +196,17 @@ impl AssetSource for AppAssets {
             "icons/phosphor/x-circle.svg" => {
                 Some(include_bytes!("../assets/phosphor-icons/x-circle.svg"))
             }
+            "icons/workbench/codex.svg" => {
+                Some(include_bytes!("../assets/workbench-icons/codex.svg"))
+            }
             "icons/workbench/ghostty.svg" => {
                 Some(include_bytes!("../assets/workbench-icons/ghostty.svg"))
             }
             "icons/workbench/neovim.svg" => {
                 Some(include_bytes!("../assets/workbench-icons/neovim.svg"))
+            }
+            "icons/workbench/opencode.svg" => {
+                Some(include_bytes!("../assets/workbench-icons/opencode.svg"))
             }
             "icons/workbench/pi.svg" => Some(include_bytes!("../assets/workbench-icons/pi.svg")),
             _ => None,
@@ -230,6 +238,7 @@ pub(crate) enum AppIcon {
     ChatCircleDots,
     CheckCircle,
     Code,
+    Codex,
     Eye,
     Folder,
     FolderPlus,
@@ -243,6 +252,7 @@ pub(crate) enum AppIcon {
     MagnifyingGlass,
     Microscope,
     Neovim,
+    OpenCode,
     Pi,
     Plus,
     Question,
@@ -272,6 +282,7 @@ impl IconNamed for AppIcon {
             Self::ChatCircleDots => "chat-circle-dots",
             Self::CheckCircle => "check-circle",
             Self::Code => "code",
+            Self::Codex => return "icons/workbench/codex.svg".into(),
             Self::Eye => "eye",
             Self::Folder => "folder",
             Self::FolderPlus => "folder-plus",
@@ -285,6 +296,7 @@ impl IconNamed for AppIcon {
             Self::MagnifyingGlass => "magnifying-glass",
             Self::Microscope => "microscope",
             Self::Neovim => return "icons/workbench/neovim.svg".into(),
+            Self::OpenCode => return "icons/workbench/opencode.svg".into(),
             Self::Pi => return "icons/workbench/pi.svg".into(),
             Self::Plus => "plus",
             Self::Question => "question",
@@ -347,6 +359,7 @@ mod tests {
             AppIcon::ChatCircleDots,
             AppIcon::CheckCircle,
             AppIcon::Code,
+            AppIcon::Codex,
             AppIcon::Eye,
             AppIcon::Folder,
             AppIcon::FolderPlus,
@@ -360,6 +373,7 @@ mod tests {
             AppIcon::MagnifyingGlass,
             AppIcon::Microscope,
             AppIcon::Neovim,
+            AppIcon::OpenCode,
             AppIcon::Pi,
             AppIcon::Plus,
             AppIcon::Question,
