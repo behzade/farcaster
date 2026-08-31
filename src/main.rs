@@ -29,7 +29,6 @@ mod transcript_markdown;
 mod user_invocations;
 
 pub(crate) use app::runtime;
-pub(crate) use app::workers;
 pub(crate) use modules::agents::extensions as protocol;
 pub(crate) use modules::sessions::activity as agent_activity;
 pub(crate) use modules::{access, agents, projects, repository, sessions};
@@ -84,7 +83,7 @@ fn main() -> std::process::ExitCode {
         ..agents::AgentLaunchConfig::default()
     };
     let (factories, default_backend) = agents::worker_factories(worker_command);
-    let worker_pool = match workers::WorkerPool::new(factories, default_backend, project.clone(), 8)
+    let worker_pool = match agents::WorkerPool::new(factories, default_backend, project.clone(), 8)
     {
         Ok(pool) => pool,
         Err(error) => return fail(format!("initialize worker pool: {error}")),

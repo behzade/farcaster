@@ -6,12 +6,14 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use super::super::{
+use super::{
+    run::{self, RunCommand},
+    worker::{WorkerLaunch, WorkerSendMode, WorkerSessionFactory},
+};
+use crate::modules::agents::contract::{
     StartWorker, WorkerContext, WorkerInputResponse, WorkerMessageMode, WorkerSnapshot,
     WorkerStatus,
 };
-use super::run::{self, RunCommand};
-use crate::agents::{WorkerLaunch, WorkerSendMode, WorkerSessionFactory};
 
 const STOP_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_TERMINAL_HISTORY: usize = 64;

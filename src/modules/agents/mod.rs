@@ -9,9 +9,10 @@ pub(crate) use adapter::{
 pub(crate) use contract::extensions;
 pub(crate) use contract::{
     AgentLaunchConfig, FileAccessMode, NetworkAccessMode, PermissionLevel, SessionCommand,
-    SessionEvent, SessionLaunch, SessionResponse, SessionStart, SessionTransport, WorkerContext,
-    WorkerInput, WorkerInputResponse,
+    SessionEvent, SessionLaunch, SessionResponse, SessionStart, SessionTransport, StartWorker,
+    WorkerContext, WorkerInput, WorkerInputResponse, WorkerMessageMode,
 };
 pub(crate) use core::{
-    CallerRegistry, WorkerEvent, WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory,
+    CallerRegistry, WorkerEvent, WorkerLaunch, WorkerPool, WorkerSendMode, WorkerSession,
+    WorkerSessionFactory,
 };

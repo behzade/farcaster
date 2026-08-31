@@ -3,6 +3,9 @@ use std::{fmt, path::PathBuf, thread};
 use serde::{Deserialize, Serialize};
 
 pub(crate) mod extensions;
+mod workers;
+
+pub(crate) use workers::{StartWorker, WorkerMessageMode, WorkerSnapshot, WorkerStatus};
 
 use crate::access::{GrantStore, SandboxRuntime};
 use extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptImage, PromptMode};

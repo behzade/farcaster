@@ -4,13 +4,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-use super::super::{
-    StartWorker, WorkerContext, WorkerInputResponse, WorkerMessageMode, WorkerSnapshot,
-    WorkerStatus,
-};
 use super::*;
 use crate::agents::{
     WorkerEvent, WorkerInput, WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory,
+};
+use crate::modules::agents::contract::{
+    StartWorker, WorkerContext, WorkerInputResponse, WorkerMessageMode, WorkerSnapshot,
+    WorkerStatus,
 };
 
 #[derive(Default)]

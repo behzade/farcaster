@@ -29,7 +29,7 @@ pub(crate) struct McpServer {
 pub(crate) fn start(
     database: PathBuf,
     approvals: crate::access::approval::ApprovalService,
-    worker_pool: crate::workers::WorkerPool,
+    worker_pool: crate::agents::WorkerPool,
     workgraph_updates: async_channel::Sender<()>,
 ) -> Result<McpServer, String> {
     let listener = TcpListener::bind(BIND_ADDRESS)
@@ -58,7 +58,7 @@ fn serve(
     listener: TcpListener,
     database: PathBuf,
     approvals: crate::access::approval::ApprovalService,
-    worker_pool: crate::workers::WorkerPool,
+    worker_pool: crate::agents::WorkerPool,
     workgraph_updates: async_channel::Sender<()>,
 ) -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -99,7 +99,7 @@ fn server_config() -> StreamableHttpServerConfig {
 struct FarcasterMcp {
     database: PathBuf,
     approvals: crate::access::approval::ApprovalService,
-    workers: crate::workers::WorkerPool,
+    workers: crate::agents::WorkerPool,
     workgraph_updates: async_channel::Sender<()>,
 }
 
@@ -107,7 +107,7 @@ impl FarcasterMcp {
     fn new(
         database: PathBuf,
         approvals: crate::access::approval::ApprovalService,
-        workers: crate::workers::WorkerPool,
+        workers: crate::agents::WorkerPool,
         workgraph_updates: async_channel::Sender<()>,
     ) -> Self {
         Self {
@@ -138,7 +138,7 @@ impl FarcasterMcp {
         let caller_session = tokio::task::spawn_blocking(move || {
             caller_token
                 .as_deref()
-                .map(|token| crate::workers::CallerRegistry::shared().resolve(token))
+                .map(|token| crate::agents::CallerRegistry::shared().resolve(token))
                 .transpose()
         })
         .await
@@ -177,7 +177,7 @@ impl FarcasterMcp {
         let value = tokio::task::spawn_blocking(move || {
             let caller_parent = caller_token
                 .as_deref()
-                .map(|token| crate::workers::CallerRegistry::shared().resolve(token))
+                .map(|token| crate::agents::CallerRegistry::shared().resolve(token))
                 .transpose()?;
             workers::start(&pool, params, caller_parent)
         })
@@ -319,10 +319,10 @@ mod tests {
 
     use super::*;
 
-    fn worker_pool(project: &std::path::Path) -> crate::workers::WorkerPool {
+    fn worker_pool(project: &std::path::Path) -> crate::agents::WorkerPool {
         let (factories, default_backend) =
             crate::agents::worker_factories(crate::agents::AgentLaunchConfig::default());
-        crate::workers::WorkerPool::new(factories, default_backend, project.to_owned(), 4)
+        crate::agents::WorkerPool::new(factories, default_backend, project.to_owned(), 4)
             .expect("worker pool")
     }
 

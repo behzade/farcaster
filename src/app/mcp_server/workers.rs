@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use rmcp::schemars;
 use serde::Deserialize;
 
-use crate::workers::{StartWorker, WorkerContext, WorkerMessageMode, WorkerPool};
+use crate::agents::{StartWorker, WorkerContext, WorkerMessageMode, WorkerPool};
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
