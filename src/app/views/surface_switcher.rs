@@ -18,16 +18,20 @@ use crate::{
 impl FarcasterApp {
     pub(super) fn render_workspace_bar(&self, entity: WeakEntity<Self>) -> impl IntoElement {
         let project = project_label(&self.workspace_project());
-        let title =
-            root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
-                .map(|session| session.title.clone())
-                .or_else(|| {
-                    let selected = self.selected_draft.as_deref()?;
-                    self.drafts
-                        .iter()
-                        .find(|draft| draft.id == selected)
-                        .and_then(|draft| draft.title.clone())
-                });
+        let selected_path = self.snapshot.selected_session.as_deref();
+        let session = root_session_for_path(&self.sessions, selected_path);
+        let harness_icon = selected_path
+            .and_then(|path| self.sessions.iter().find(|session| session.path == path))
+            .or(session)
+            .map(|session| AppIcon::for_harness(&session.harness))
+            .unwrap_or(AppIcon::Pi);
+        let title = session.map(|session| session.title.clone()).or_else(|| {
+            let selected = self.selected_draft.as_deref()?;
+            self.drafts
+                .iter()
+                .find(|draft| draft.id == selected)
+                .and_then(|draft| draft.title.clone())
+        });
 
         div()
             .h(gpui::px(38.0))
@@ -68,10 +72,14 @@ impl FarcasterApp {
                             )
                     }),
             )
-            .child(self.render_surface_switcher(entity))
+            .child(self.render_surface_switcher(entity, harness_icon))
     }
 
-    pub(super) fn render_surface_switcher(&self, entity: WeakEntity<Self>) -> impl IntoElement {
+    pub(super) fn render_surface_switcher(
+        &self,
+        entity: WeakEntity<Self>,
+        harness_icon: AppIcon,
+    ) -> impl IntoElement {
         div()
             .h_full()
             .flex()
@@ -80,7 +88,7 @@ impl FarcasterApp {
             .child(surface_control(
                 "show-chat-surface",
                 "Chat (F1)",
-                AppIcon::Pi,
+                harness_icon,
                 self.surface == AppSurface::Chat,
                 entity.clone(),
                 FarcasterApp::show_chat_surface,

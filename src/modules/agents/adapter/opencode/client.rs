@@ -16,11 +16,42 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
         Self { transport }
     }
 
-    pub(crate) fn create_session(&mut self, directory: &str) -> Result<OpenCodeSession, String> {
+    pub(crate) fn create_session(
+        &mut self,
+        directory: &str,
+        parent_id: Option<&str>,
+        model: Option<(&str, &str, Option<&str>)>,
+    ) -> Result<OpenCodeSession, String> {
         self.json(
             OpenCodeHttpMethod::Post,
             "/api/session".into(),
-            Some(json!({"location": {"directory": directory}})),
+            Some(json!({
+                "location": {"directory": directory},
+                "parentID": parent_id,
+                "model": model.map(|(provider_id, model_id, variant)| json!({
+                    "providerID": provider_id,
+                    "modelID": model_id,
+                    "variant": variant,
+                })),
+            })),
+        )
+    }
+
+    pub(crate) fn fork_session(
+        &mut self,
+        session_id: &str,
+        model: Option<(&str, &str, Option<&str>)>,
+    ) -> Result<OpenCodeSession, String> {
+        self.json(
+            OpenCodeHttpMethod::Post,
+            format!("/api/session/{}/fork", path_segment(session_id)),
+            Some(json!({
+                "model": model.map(|(provider_id, model_id, variant)| json!({
+                    "providerID": provider_id,
+                    "modelID": model_id,
+                    "variant": variant,
+                })),
+            })),
         )
     }
 
@@ -47,6 +78,23 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
                 "delivery": delivery,
                 "resume": true,
             })),
+        )
+    }
+
+    pub(crate) fn wait_session(&mut self, session_id: &str) -> Result<(), String> {
+        let response = self.execute(
+            OpenCodeHttpMethod::Post,
+            format!("/api/session/{}/wait", path_segment(session_id)),
+            None,
+        )?;
+        decode_empty(response)
+    }
+
+    pub(crate) fn context(&mut self, session_id: &str) -> Result<Vec<Value>, String> {
+        self.json(
+            OpenCodeHttpMethod::Get,
+            format!("/api/session/{}/context", path_segment(session_id)),
+            None,
         )
     }
 

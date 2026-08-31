@@ -29,9 +29,45 @@ const MAX_LINES_PER_FILE: usize = 10_000;
 const MAX_SEARCH_BYTES: usize = 64 * 1024;
 const MAX_HEADER_BYTES: usize = 64 * 1024;
 impl SessionSummary {
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_cached(
         id: String,
+        path: PathBuf,
+        project: PathBuf,
+        title: String,
+        first_user_message: String,
+        timestamp: String,
+        parent_session: Option<String>,
+        modified: SystemTime,
+        message_count: usize,
+        usage: UsageSummary,
+        archived: bool,
+        is_running: bool,
+        search: String,
+    ) -> Self {
+        Self::from_cached_for_harness(
+            id,
+            "pi".into(),
+            path,
+            project,
+            title,
+            first_user_message,
+            timestamp,
+            parent_session,
+            modified,
+            message_count,
+            usage,
+            archived,
+            is_running,
+            search,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_cached_for_harness(
+        id: String,
+        harness: String,
         path: PathBuf,
         project: PathBuf,
         title: String,
@@ -52,6 +88,7 @@ impl SessionSummary {
         Self {
             id,
             app_session_id: 0,
+            harness,
             path,
             project,
             title,
@@ -728,6 +765,7 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
         SessionSummary {
             id,
             app_session_id: 0,
+            harness: "pi".into(),
             path: session_path,
             project,
             title,

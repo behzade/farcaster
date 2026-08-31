@@ -69,8 +69,8 @@ Farcaster serves stateless Streamable HTTP MCP at
 Approved session grants last until Farcaster exits; project grants are stored in
 Farcaster application data and bound to the workspace identity. Grants activate
 by restarting and resuming the agent after its current turn. Farcaster passes
-the endpoint to Pi as transient launch configuration; it does not create or
-modify a project MCP file.
+the endpoint to each launched agent through its native transient configuration;
+it does not create or modify a project MCP file.
 
 Useful environment variables:
 

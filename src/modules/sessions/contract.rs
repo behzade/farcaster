@@ -32,6 +32,7 @@ impl UsageSummary {
 pub(crate) struct SessionSummary {
     pub id: String,
     pub app_session_id: i64,
+    pub harness: String,
     pub path: PathBuf,
     pub project: PathBuf,
     pub title: String,

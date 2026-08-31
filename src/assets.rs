@@ -266,6 +266,17 @@ pub(crate) enum AppIcon {
     XCircle,
 }
 
+impl AppIcon {
+    pub(crate) fn for_harness(harness: &str) -> Self {
+        match harness {
+            "pi" => Self::Pi,
+            "codex-cli" => Self::Codex,
+            "opencode2" => Self::OpenCode,
+            _ => Self::Code,
+        }
+    }
+}
+
 impl IconNamed for AppIcon {
     fn path(self) -> SharedString {
         let name = match self {
@@ -334,6 +345,14 @@ mod tests {
         ] {
             assert!(matches!(&bytes[..4], b"\0\x01\0\0" | b"OTTO"));
         }
+    }
+
+    #[test]
+    fn harnesses_use_their_brand_icons() {
+        assert_eq!(AppIcon::for_harness("pi"), AppIcon::Pi);
+        assert_eq!(AppIcon::for_harness("codex-cli"), AppIcon::Codex);
+        assert_eq!(AppIcon::for_harness("opencode2"), AppIcon::OpenCode);
+        assert_eq!(AppIcon::for_harness("unknown"), AppIcon::Code);
     }
 
     #[test]

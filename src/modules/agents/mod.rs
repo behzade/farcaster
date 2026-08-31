@@ -2,8 +2,8 @@ mod adapter;
 mod contract;
 
 pub(crate) use adapter::{
-    PiEvent, PiProcessCommand, PiRequest, PiResponse, PiRpcProcess, PiSessionTransport,
-    PiWorkerFactory, pi_descriptor,
+    AgentProcessCommand, CodexWorkerFactory, OpenCodeWorkerFactory, PiEvent, PiProcessCommand,
+    PiRequest, PiResponse, PiRpcProcess, PiSessionTransport, PiWorkerFactory,
 };
 #[cfg(test)]
 pub(crate) use adapter::{PiWireMessage, parse_frame};
@@ -17,7 +17,6 @@ pub(crate) fn encode_pi_request(request: PiRequest) -> serde_json::Value {
     adapter::encode_pi_request(request)
 }
 
-#[allow(dead_code)] // Native Codex and OpenCode runtimes are not composed yet.
 pub(crate) fn known_backend_descriptors() -> [AgentBackendDescriptor; 3] {
     adapter::known_backend_descriptors()
 }

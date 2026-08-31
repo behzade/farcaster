@@ -287,7 +287,11 @@ fn notify_workgraph_changed(updates: &async_channel::Sender<()>) {
     let _ = updates.try_send(());
 }
 
-#[tool_handler(name = "farcaster", version = "0.1.0")]
+#[tool_handler(
+    name = "farcaster",
+    version = "0.1.0",
+    instructions = "Farcaster provides sandbox access requests, bounded child workers, and durable work graphs; use request_access, worker_*, and workgraph_* when relevant."
+)]
 impl ServerHandler for FarcasterMcp {
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
         Cow::Borrowed(&[ProtocolVersion::V_2026_07_28])
@@ -373,6 +377,10 @@ mod tests {
             server.supported_protocol_versions().as_ref(),
             [ProtocolVersion::V_2026_07_28]
         );
+        let instructions = server.get_info().instructions.expect("server instructions");
+        assert!(instructions.contains("request_access"));
+        assert!(instructions.contains("worker_*"));
+        assert!(instructions.contains("workgraph_*"));
         let config = server_config();
         assert!(!config.legacy_session_mode);
         assert!(config.stateless_protocol_metadata_required);

@@ -80,20 +80,13 @@ fn main() -> std::process::ExitCode {
         Ok(channel) => channel,
         Err(error) => return fail(format!("initialize sandbox approvals: {error}")),
     };
-    let worker_command = agents::PiProcessCommand {
+    let worker_command = agents::AgentProcessCommand {
         grants: Some(approval_ui.grants()),
-        ..agents::PiProcessCommand::default()
+        ..agents::AgentProcessCommand::default()
     };
-    let worker_factory: std::sync::Arc<dyn workers::WorkerSessionFactory> =
-        std::sync::Arc::new(agents::PiWorkerFactory::new(worker_command));
-    let pi = agents::pi_descriptor();
-    let backend_id = pi.id.as_str().to_owned();
-    let worker_pool = match workers::WorkerPool::new(
-        std::collections::BTreeMap::from([(backend_id.clone(), worker_factory)]),
-        backend_id,
-        project.clone(),
-        8,
-    ) {
+    let (factories, default_backend) = worker_factories(worker_command);
+    let worker_pool = match workers::WorkerPool::new(factories, default_backend, project.clone(), 8)
+    {
         Ok(pool) => pool,
         Err(error) => return fail(format!("initialize worker pool: {error}")),
     };
@@ -109,6 +102,39 @@ fn main() -> std::process::ExitCode {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => fail(error),
     }
+}
+
+fn worker_factories(
+    command: agents::AgentProcessCommand,
+) -> (
+    std::collections::BTreeMap<String, std::sync::Arc<dyn workers::WorkerSessionFactory>>,
+    String,
+) {
+    let mut codex_command = command.clone();
+    codex_command.program = std::env::var_os("FARCASTER_CODEX_PATH")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| "codex".into());
+    let mut opencode_command = command.clone();
+    opencode_command.program = std::env::var_os("FARCASTER_OPENCODE_PATH")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| "opencode2".into());
+    let [pi, codex, opencode] = agents::known_backend_descriptors();
+    let default_backend = pi.id.as_str().to_owned();
+    let factories = std::collections::BTreeMap::from([
+        (
+            pi.id.as_str().to_owned(),
+            std::sync::Arc::new(agents::PiWorkerFactory::new(command)) as _,
+        ),
+        (
+            codex.id.as_str().to_owned(),
+            std::sync::Arc::new(agents::CodexWorkerFactory::new(codex_command)) as _,
+        ),
+        (
+            opencode.id.as_str().to_owned(),
+            std::sync::Arc::new(agents::OpenCodeWorkerFactory::new(opencode_command)) as _,
+        ),
+    ]);
+    (factories, default_backend)
 }
 
 #[cfg(target_os = "linux")]

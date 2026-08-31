@@ -52,6 +52,17 @@ fn native_vertical_slice_preserves_streaming_events() -> Result<(), String> {
         }),
         json!({
             "id": 4,
+            "result": {
+                "thread": {
+                    "id": "thread-1",
+                    "sessionId": "session-1",
+                    "parentThreadId": null,
+                    "cwd": "/project"
+                }
+            }
+        }),
+        json!({
+            "id": 5,
             "result": {"turn": {"id": "turn-1", "status": "inProgress"}}
         }),
         json!({
@@ -61,7 +72,7 @@ fn native_vertical_slice_preserves_streaming_events() -> Result<(), String> {
                 "turn": {"id": "turn-1", "status": "completed"}
             }
         }),
-        json!({"id": 5, "result": {}}),
+        json!({"id": 6, "result": {}}),
     ]
     .into_iter()
     .map(|message| serde_json::to_string(&message).map(|line| format!("{line}\n")))
@@ -77,8 +88,14 @@ fn native_vertical_slice_preserves_streaming_events() -> Result<(), String> {
         version: "0.1.0".into(),
     })?;
     assert_eq!(initialized.platform_family, "unix");
-    let thread = connection.start_thread("/project", None)?;
+    let thread = connection.start_thread("/project", None, None)?;
     assert_eq!(thread.id, "thread-1");
+    assert_eq!(
+        connection
+            .fork_thread("thread-1", "/project", None, None)?
+            .id,
+        "thread-1"
+    );
     assert_eq!(connection.resume_thread("thread-1")?.id, "thread-1");
     let turn = connection.start_turn(
         "thread-1",
@@ -121,11 +138,12 @@ fn native_vertical_slice_preserves_streaming_events() -> Result<(), String> {
     assert_eq!(sent[0]["method"], "initialize");
     assert_eq!(sent[1], json!({"method":"initialized"}));
     assert_eq!(sent[2]["method"], "thread/start");
-    assert_eq!(sent[3]["method"], "thread/resume");
-    assert_eq!(sent[4]["method"], "turn/start");
-    assert_eq!(sent[4]["params"]["input"][0]["text_elements"], json!([]));
-    assert_eq!(sent[4]["params"]["input"][1]["type"], "image");
-    assert_eq!(sent[5]["method"], "turn/interrupt");
+    assert_eq!(sent[3]["method"], "thread/fork");
+    assert_eq!(sent[4]["method"], "thread/resume");
+    assert_eq!(sent[5]["method"], "turn/start");
+    assert_eq!(sent[5]["params"]["input"][0]["text_elements"], json!([]));
+    assert_eq!(sent[5]["params"]["input"][1]["type"], "image");
+    assert_eq!(sent[6]["method"], "turn/interrupt");
     Ok(())
 }
 

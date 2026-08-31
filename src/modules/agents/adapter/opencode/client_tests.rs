@@ -68,7 +68,7 @@ fn native_vertical_slice_preserves_session_and_prompt_features() -> Result<(), S
     ]);
     let mut client = OpenCodeClient::new(transport);
 
-    let created = client.create_session("/project")?;
+    let created = client.create_session("/project", Some("parent-1"), None)?;
     assert_eq!(created.parent_id.as_deref(), Some("parent-1"));
     assert_eq!(client.get_session("session/1")?.id, "session/1");
     let admission = client.prompt(
@@ -89,7 +89,7 @@ fn native_vertical_slice_preserves_session_and_prompt_features() -> Result<(), S
     assert_eq!(transport.requests[0].path, "/api/session");
     assert_eq!(
         body(&transport.requests[0]),
-        json!({"location": {"directory": "/project"}})
+        json!({"location": {"directory": "/project"}, "parentID": "parent-1", "model": null})
     );
     assert_eq!(transport.requests[1].path, "/api/session/session%2F1");
     assert_eq!(

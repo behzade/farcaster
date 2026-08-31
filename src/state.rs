@@ -15,7 +15,7 @@ use crate::{
     sessions::{SessionSummary, UsageSummary},
 };
 
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 const REPOSITORY_BACKEND_PREFERENCES_KEY: &str = "repository_backend_preferences";
 const NETWORK_PROXY_KEY: &str = "network_proxy";
@@ -200,7 +200,7 @@ impl StateStore {
                      UPDATE meta SET value='5' WHERE key='schema_version';",
                 )
                 .map_err(|error| format!("migrate GUI state schema to 5: {error}"))?,
-            5 | 6 | SCHEMA_VERSION => {}
+            5 | 6 | 7 | SCHEMA_VERSION => {}
             _ => {
                 return Err(format!(
                     "GUI state schema {schema_version} is not supported by this build"
@@ -252,6 +252,15 @@ impl StateStore {
             migration
                 .execute_batch("UPDATE meta SET value='7' WHERE key='schema_version';")
                 .map_err(|error| format!("migrate GUI state schema to 7: {error}"))?;
+            schema_version = 7;
+        }
+        if schema_version == 7 {
+            migration
+                .execute_batch(
+                    "ALTER TABLE sessions ADD COLUMN harness TEXT NOT NULL DEFAULT 'pi';
+                     UPDATE meta SET value='8' WHERE key='schema_version';",
+                )
+                .map_err(|error| format!("migrate GUI state schema to 8: {error}"))?;
         }
         migration
             .commit()
@@ -671,7 +680,7 @@ impl StateStore {
                         parent_session, modified_ms, message_count, input_tokens,
                         output_tokens, cache_read_tokens, cache_write_tokens,
                         total_tokens, cost_micros, search_text, settled_ms IS NOT NULL,
-                        is_running, app_session_id
+                        is_running, app_session_id, harness
                    FROM sessions
                   ORDER BY modified_ms DESC, timestamp DESC",
             )
@@ -711,10 +720,10 @@ impl StateStore {
                        parent_session, modified_ms, file_size, message_count,
                        input_tokens, output_tokens, cache_read_tokens,
                        cache_write_tokens, total_tokens, cost_micros, search_text,
-                       is_running, app_session_id
+                       is_running, app_session_id, harness
                      ) VALUES(
                        ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
-                       ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19
+                       ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20
                      ) ON CONFLICT(path) DO UPDATE SET
                        id=excluded.id, project=excluded.project, title=excluded.title,
                        first_user_message=excluded.first_user_message,
@@ -726,7 +735,7 @@ impl StateStore {
                        cache_write_tokens=excluded.cache_write_tokens,
                        total_tokens=excluded.total_tokens, cost_micros=excluded.cost_micros,
                        search_text=excluded.search_text, is_running=excluded.is_running,
-                       app_session_id=excluded.app_session_id",
+                       app_session_id=excluded.app_session_id, harness=excluded.harness",
                 )
                 .map_err(|error| format!("prepare session index update: {error}"))?;
             for session in sessions {
@@ -758,6 +767,7 @@ impl StateStore {
                         session.search_text(),
                         session.is_running,
                         app_session_id,
+                        session.harness,
                     ])
                     .map_err(|error| {
                         format!("index session {}: {error}", session.path.display())
@@ -1269,8 +1279,9 @@ fn associate_app_session(
 }
 
 fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary> {
-    Ok(SessionSummary::from_cached(
+    Ok(SessionSummary::from_cached_for_harness(
         row.get(0)?,
+        row.get(19)?,
         PathBuf::from(row.get::<_, String>(1)?),
         PathBuf::from(row.get::<_, String>(2)?),
         row.get(3)?,

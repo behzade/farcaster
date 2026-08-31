@@ -1,16 +1,21 @@
 #[allow(dead_code)]
 mod codex;
+mod farcaster_mcp;
 #[allow(dead_code)]
 mod opencode;
 mod pi;
+mod process_command;
 
+pub(crate) use codex::CodexWorkerFactory;
+pub(crate) use opencode::OpenCodeWorkerFactory;
 pub(super) use pi::encode_request as encode_pi_request;
 pub(crate) use pi::{
     PiEvent, PiProcessCommand, PiRequest, PiResponse, PiRpcProcess, PiSessionTransport,
-    PiWorkerFactory, descriptor as pi_descriptor,
+    PiWorkerFactory,
 };
 #[cfg(test)]
 pub(crate) use pi::{PiWireMessage, parse_frame};
+pub(crate) use process_command::AgentProcessCommand;
 
 pub(super) fn known_backend_descriptors() -> [crate::agents::AgentBackendDescriptor; 3] {
     [

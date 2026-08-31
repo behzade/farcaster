@@ -80,7 +80,7 @@ pub(crate) fn compile(
         writable = vec![PathBuf::from("/")];
         writable_files.clear();
     } else {
-        readable.push(project);
+        readable.push(project.clone());
     }
     if !matches!(access.filesystem, FilesystemAccess::Full) {
         readable.extend(grants.readable);
@@ -103,6 +103,7 @@ pub(crate) fn compile(
         .chain(&readable_files)
         .chain(&writable)
         .chain(&writable_files)
+        .filter(|path| *path != &project)
         .cloned()
         .collect::<Vec<_>>();
     protection_bypasses.sort();
@@ -124,7 +125,7 @@ pub(crate) fn compile(
     let profile = Profile {
         schema: "https://nono.sh/schemas/nono-profile.schema.json",
         extends: "default",
-        allow_parent_of_protected: matches!(access.filesystem, FilesystemAccess::Full),
+        allow_parent_of_protected: true,
         meta: ProfileMeta {
             name: "farcaster-agent",
             version: "1",
@@ -135,8 +136,8 @@ pub(crate) fn compile(
             read_file: readable_files,
             allow: writable,
             allow_file: writable_files,
-            // Nono's default protection remains authoritative unless an active capability
-            // explicitly names the protected path, matching pi-nono's profile adapter.
+            // Recursive workspace access must not disable protections for descendants.
+            // Exact support paths and user-approved grants retain their explicit bypasses.
             bypass_protection: protection_bypasses,
         },
         network: NetworkPolicy {
@@ -182,13 +183,14 @@ fn user_runtime_libraries(home: &Path) -> Vec<PathBuf> {
 fn user_configuration(home: &Path) -> Vec<PathBuf> {
     [".gitconfig", ".config/git/config", ".config/git/ignore"]
         .into_iter()
-        .filter_map(|relative| symlink_free_path(home, relative))
+        .map(|relative| home.join(relative))
         .collect()
 }
 
 fn development_storage(home: &Path) -> Vec<PathBuf> {
     const PATHS: &[&str] = &[
         ".cache",
+        ".codex",
         ".local/state",
         ".config/jj",
         ".config/opencode",
@@ -261,6 +263,7 @@ mod tests {
         std::fs::create_dir_all(&project)?;
         std::fs::create_dir_all(home.join(".pi/agent"))?;
         std::fs::create_dir_all(home.join(".cargo/registry"))?;
+        std::fs::create_dir_all(home.join(".codex"))?;
         std::fs::create_dir_all(home.join(".config/git"))?;
         std::fs::create_dir_all(home.join(".config/opencode"))?;
         std::fs::create_dir_all(home.join(".local/lib"))?;
@@ -305,6 +308,11 @@ mod tests {
             path.as_str()
                 .is_some_and(|path| path.ends_with("/.cargo/registry"))
         }));
+        assert!(
+            allow
+                .iter()
+                .any(|path| path.as_str().is_some_and(|path| path.ends_with("/.codex")))
+        );
         assert!(allow.iter().any(|path| {
             path.as_str()
                 .is_some_and(|path| path.ends_with("/.config/opencode"))
@@ -346,6 +354,84 @@ mod tests {
                 .is_some_and(|hosts| hosts.iter().any(|host| host == "127.0.0.1"))
         );
         assert_eq!(profile["network"]["open_port"][0], 8765);
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_allows_protected_descendants_without_bypassing_them()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let workspace = root.path().join("workspace");
+        let home = root.path().join("home");
+        let temporary = root.path().join("tmp");
+        std::fs::create_dir(&workspace)?;
+        std::fs::create_dir_all(home.join(".pi/agent"))?;
+        std::fs::create_dir(&temporary)?;
+        let workspace = workspace.canonicalize()?;
+        let profile: serde_json::Value = serde_json::from_slice(&compile(
+            &workspace,
+            &home,
+            &home.join(".pi/agent"),
+            &temporary,
+            AccessPolicy {
+                filesystem: FilesystemAccess::Sandboxed,
+                network: NetworkAccess::Sandboxed,
+            },
+            crate::access::approval::ResolvedGrants::default(),
+            &NetworkConfiguration::default(),
+        )?)?;
+
+        assert_eq!(profile["allow_parent_of_protected"], true);
+        assert!(
+            profile["filesystem"]["allow"]
+                .as_array()
+                .is_some_and(|paths| paths.contains(&serde_json::json!(workspace)))
+        );
+        assert!(
+            !profile["filesystem"]["bypass_protection"]
+                .as_array()
+                .is_some_and(|paths| paths.contains(&serde_json::json!(workspace)))
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_git_config_remains_an_exact_file_grant() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir()?;
+        let project = root.path().join("project");
+        let home = root.path().join("home");
+        let temporary = root.path().join("tmp");
+        let target = root.path().join("git-config");
+        std::fs::create_dir(&project)?;
+        std::fs::create_dir_all(home.join(".pi/agent"))?;
+        std::fs::create_dir_all(home.join(".config/git"))?;
+        std::fs::create_dir(&temporary)?;
+        std::fs::write(&target, "[user]\n")?;
+        let config = home.join(".config/git/config");
+        symlink(&target, &config)?;
+        let granted_config = home.canonicalize()?.join(".config/git/config");
+
+        let profile: serde_json::Value = serde_json::from_slice(&compile(
+            &project,
+            &home,
+            &home.join(".pi/agent"),
+            &temporary,
+            AccessPolicy {
+                filesystem: FilesystemAccess::Sandboxed,
+                network: NetworkAccess::Sandboxed,
+            },
+            crate::access::approval::ResolvedGrants::default(),
+            &NetworkConfiguration::default(),
+        )?)?;
+        assert!(
+            profile["filesystem"]["read_file"]
+                .as_array()
+                .is_some_and(|paths| paths.contains(&serde_json::json!(granted_config)))
+        );
         Ok(())
     }
 

@@ -110,9 +110,33 @@ impl<R: BufRead, W: Write> CodexConnection<R, W> {
     pub(crate) fn start_thread(
         &mut self,
         cwd: &str,
+        provider: Option<&str>,
         model: Option<&str>,
     ) -> Result<CodexThread, String> {
-        let id = self.send_request("thread/start", json!({"cwd": cwd, "model": model}))?;
+        let id = self.send_request(
+            "thread/start",
+            json!({"cwd": cwd, "modelProvider": provider, "model": model}),
+        )?;
+        self.wait_response::<ThreadResponse>(&id)
+            .map(|response| response.thread)
+    }
+
+    pub(crate) fn fork_thread(
+        &mut self,
+        thread_id: &str,
+        cwd: &str,
+        provider: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<CodexThread, String> {
+        let id = self.send_request(
+            "thread/fork",
+            json!({
+                "threadId": thread_id,
+                "cwd": cwd,
+                "modelProvider": provider,
+                "model": model,
+            }),
+        )?;
         self.wait_response::<ThreadResponse>(&id)
             .map(|response| response.thread)
     }
@@ -141,12 +165,17 @@ impl<R: BufRead, W: Write> CodexConnection<R, W> {
         self.wait_response::<Value>(&id).map(|_| ())
     }
 
+    pub(crate) fn into_parts(self) -> (R, W, VecDeque<CodexInbound>, i64) {
+        (self.reader, self.writer, self.queued, self.next_id)
+    }
+
+    #[cfg(test)]
     pub(crate) fn into_writer(self) -> W {
         self.writer
     }
 }
 
-fn read_message(reader: &mut impl BufRead) -> Result<CodexInbound, String> {
+pub(super) fn read_message(reader: &mut impl BufRead) -> Result<CodexInbound, String> {
     let mut frame = Vec::new();
     let read = reader
         .read_until(b'\n', &mut frame)

@@ -12,7 +12,7 @@ pub(super) struct StartParams {
     pub(super) project: String,
     /// Task for the worker.
     pub(super) prompt: String,
-    /// Agent backend. Currently `pi`.
+    /// Agent backend. Use `worker_backends` to list available backends.
     #[serde(default)]
     pub(super) backend: Option<String>,
     /// Parent backend session. Normally supplied automatically by Farcaster.
@@ -21,7 +21,7 @@ pub(super) struct StartParams {
     /// Existing backend session to use as context. Omit to fork the parent.
     #[serde(default)]
     pub(super) source_session: Option<String>,
-    /// Start with inherited or blank context. Defaults to `fork`.
+    /// Start with automatic, inherited, or blank context. Automatic forks only on the default backend.
     #[serde(default)]
     pub(super) context: StartContext,
     /// Model provider; must be paired with `model`.
@@ -38,8 +38,9 @@ pub(super) struct StartParams {
 #[derive(Clone, Copy, Debug, Default, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum StartContext {
-    Fresh,
     #[default]
+    Auto,
+    Fresh,
     Fork,
 }
 
@@ -97,6 +98,9 @@ pub(super) fn start(
     params: StartParams,
     caller_parent: Option<String>,
 ) -> Result<serde_json::Value, String> {
+    let backend = params
+        .backend
+        .unwrap_or_else(|| pool.default_backend().to_owned());
     let source_session = params.source_session;
     let parent_session = params
         .parent_session
@@ -104,25 +108,22 @@ pub(super) fn start(
         .or_else(|| source_session.clone())
         .ok_or_else(|| "worker start requires a parent session".to_owned())?;
     let context = match params.context {
-        StartContext::Fresh => WorkerContext::Fresh,
-        StartContext::Fork => WorkerContext::Session {
+        StartContext::Auto if backend != pool.default_backend() => WorkerContext::Fresh,
+        StartContext::Auto | StartContext::Fork => WorkerContext::Session {
             session_locator: source_session.unwrap_or_else(|| parent_session.clone()),
         },
+        StartContext::Fresh => WorkerContext::Fresh,
     };
-    encode(
-        &pool.start(StartWorker {
-            project: PathBuf::from(params.project),
-            prompt: params.prompt,
-            backend: params
-                .backend
-                .unwrap_or_else(|| pool.default_backend().to_owned()),
-            parent_session,
-            context,
-            provider: params.provider,
-            model: params.model,
-            effort: params.effort,
-        })?,
-    )
+    encode(&pool.start(StartWorker {
+        project: PathBuf::from(params.project),
+        prompt: params.prompt,
+        backend,
+        parent_session,
+        context,
+        provider: params.provider,
+        model: params.model,
+        effort: params.effort,
+    })?)
 }
 
 pub(super) fn send(pool: &WorkerPool, params: SendParams) -> Result<serde_json::Value, String> {

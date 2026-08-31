@@ -5,6 +5,9 @@ mod contract;
 mod event;
 mod server;
 mod transport;
+mod worker;
+
+pub(crate) use worker::OpenCodeWorkerFactory;
 
 use crate::agents::{
     AgentBackendDescriptor, AgentBackendId, AgentCapabilities, CapabilitySupport,

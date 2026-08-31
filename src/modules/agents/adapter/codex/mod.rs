@@ -3,6 +3,9 @@ mod connection;
 mod connection_tests;
 mod contract;
 mod wire;
+mod worker;
+
+pub(crate) use worker::CodexWorkerFactory;
 
 use crate::agents::{
     AgentBackendDescriptor, AgentBackendId, AgentCapabilities, CapabilitySupport,

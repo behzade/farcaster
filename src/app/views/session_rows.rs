@@ -636,7 +636,7 @@ pub(super) fn session_row_with_height(
                                                 .role(Role::Button)
                                                 .aria_label("Move session to another project")
                                                 .tab_index(0)
-                                                .flex_none()
+                                                .min_w_0()
                                                 .rounded(THEME.radius)
                                                 .cursor(CursorStyle::PointingHand)
                                                 .hover(|icon| icon.text_color(THEME.colors.accent))
@@ -664,19 +664,19 @@ pub(super) fn session_row_with_height(
                                                         );
                                                     });
                                                 })
-                                                .child(app_icon(
-                                                    AppIcon::Folder,
-                                                    AppIconSize::Inline,
-                                                )),
+                                                .child(
+                                                    div()
+                                                        .min_w_0()
+                                                        .overflow_hidden()
+                                                        .whitespace_nowrap()
+                                                        .text_ellipsis()
+                                                        .child(project_label(&session.project)),
+                                                ),
                                         )
-                                        .child(
-                                            div()
-                                                .min_w_0()
-                                                .overflow_hidden()
-                                                .whitespace_nowrap()
-                                                .text_ellipsis()
-                                                .child(project_label(&session.project)),
-                                        ),
+                                        .child(app_icon(
+                                            AppIcon::for_harness(&session.harness),
+                                            AppIconSize::Inline,
+                                        )),
                                 )
                                 .when_some(
                                     status_icon(target_app_session_id, &status_text),
@@ -856,7 +856,6 @@ fn project_badge(project: &Path) -> AnyElement {
         .text_size(THEME.type_scale.caption)
         .text_color(THEME.colors.subtle)
         .tooltip(move |window, cx| Tooltip::new(path.clone()).build(window, cx))
-        .child(app_icon(AppIcon::Folder, AppIconSize::Inline))
         .child(
             div()
                 .min_w_0()
@@ -865,6 +864,7 @@ fn project_badge(project: &Path) -> AnyElement {
                 .text_ellipsis()
                 .child(project_label(project)),
         )
+        .child(app_icon(AppIcon::Pi, AppIconSize::Inline))
         .into_any_element()
 }
 

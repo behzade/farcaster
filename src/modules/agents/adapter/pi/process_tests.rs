@@ -1,5 +1,5 @@
 use super::*;
-use crate::agents::{FileAccessMode, NetworkAccessMode};
+use crate::agents::{FileAccessMode, NetworkAccessMode, PermissionLevel};
 use std::{error::Error, fs};
 use tempfile::tempdir;
 
@@ -57,6 +57,12 @@ fn fork_process_passes_the_source_session_to_pi() -> TestResult {
             .windows(2)
             .any(|pair| pair == ["--mcp-config", "/dev/fd/9"])
     );
+    assert!(arguments.windows(2).any(|pair| {
+        pair == [
+            std::ffi::OsStr::new("--append-system-prompt"),
+            std::ffi::OsStr::new(crate::modules::agents::adapter::farcaster_mcp::INSTRUCTIONS),
+        ]
+    }));
     assert_eq!(
         arguments.get(arguments.len().saturating_sub(2)..),
         Some([std::ffi::OsStr::new("--fork"), source.as_os_str()].as_slice())
