@@ -161,7 +161,7 @@ impl PiRpcProcess {
         launch: SessionLaunch<'_>,
         wake: Option<thread::Thread>,
     ) -> Result<Self, String> {
-        let caller_identity = crate::modules::agents::core::CallerRegistry::shared().issue();
+        let caller_identity = crate::modules::agents::core::CallerRegistry::shared().issue(project);
         let mcp_config = TransientMcpConfig::create(caller_identity.token())?;
         let mut prepared = rpc_command(command, project, launch, mcp_config.path())?;
         let mut child = prepared

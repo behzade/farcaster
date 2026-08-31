@@ -235,3 +235,22 @@ fn running_workers_are_steered_and_capacity_is_bounded() -> Result<(), String> {
     assert_eq!(pool.stop(&started.id)?.status, WorkerStatus::Stopped);
     Ok(())
 }
+
+#[test]
+fn projects_from_later_calling_sessions_can_be_allowed() -> Result<(), String> {
+    let startup_project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let later_project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let factory = Arc::new(FakeFactory::default());
+    let pool = pool(factory, startup_project.path(), 1)?;
+
+    assert!(pool.start(request(later_project.path())).is_err());
+    pool.allow_project(later_project.path())?;
+    assert_eq!(
+        pool.start(request(later_project.path()))?.project,
+        later_project
+            .path()
+            .canonicalize()
+            .map_err(|error| error.to_string())?
+    );
+    Ok(())
+}

@@ -138,7 +138,11 @@ impl FarcasterMcp {
         let caller_session = tokio::task::spawn_blocking(move || {
             caller_token
                 .as_deref()
-                .map(|token| crate::agents::CallerRegistry::shared().resolve(token))
+                .map(|token| {
+                    crate::agents::CallerRegistry::shared()
+                        .resolve(token)
+                        .map(|context| context.session)
+                })
                 .transpose()
         })
         .await
@@ -175,11 +179,11 @@ impl FarcasterMcp {
             .map(str::to_owned);
         let pool = self.workers.clone();
         let value = tokio::task::spawn_blocking(move || {
-            let caller_parent = caller_token
+            let caller = caller_token
                 .as_deref()
                 .map(|token| crate::agents::CallerRegistry::shared().resolve(token))
                 .transpose()?;
-            workers::start(&pool, params, caller_parent)
+            workers::start(&pool, params, caller)
         })
         .await
         .map_err(|error| format!("worker start task failed: {error}"))??;

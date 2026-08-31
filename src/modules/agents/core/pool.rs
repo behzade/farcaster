@@ -26,7 +26,7 @@ pub(crate) struct WorkerPool {
 struct PoolInner {
     factories: BTreeMap<String, Arc<dyn WorkerSessionFactory>>,
     default_backend: String,
-    allowed_projects: BTreeSet<std::path::PathBuf>,
+    allowed_projects: Mutex<BTreeSet<std::path::PathBuf>>,
     maximum: usize,
     state: Mutex<PoolState>,
 }
@@ -62,7 +62,7 @@ impl WorkerPool {
             inner: Arc::new(PoolInner {
                 factories,
                 default_backend,
-                allowed_projects: BTreeSet::from([allowed_project]),
+                allowed_projects: Mutex::new(BTreeSet::from([allowed_project])),
                 maximum,
                 state: Mutex::new(PoolState::default()),
             }),
@@ -77,10 +77,26 @@ impl WorkerPool {
         self.inner.factories.keys().cloned().collect()
     }
 
+    pub(crate) fn allow_project(&self, project: &Path) -> Result<(), String> {
+        let project = canonical_directory(project)?;
+        self.inner
+            .allowed_projects
+            .lock()
+            .map_err(|_| "worker project registry is unavailable".to_owned())?
+            .insert(project);
+        Ok(())
+    }
+
     pub(crate) fn start(&self, request: StartWorker) -> Result<WorkerSnapshot, String> {
         validate_start(&request)?;
         let project = canonical_directory(&request.project)?;
-        if !self.inner.allowed_projects.contains(&project) {
+        if !self
+            .inner
+            .allowed_projects
+            .lock()
+            .map_err(|_| "worker project registry is unavailable".to_owned())?
+            .contains(&project)
+        {
             return Err(format!(
                 "worker project is outside this Farcaster instance: {}",
                 project.display()

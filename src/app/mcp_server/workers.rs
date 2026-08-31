@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use rmcp::schemars;
 use serde::Deserialize;
 
-use crate::agents::{StartWorker, WorkerContext, WorkerMessageMode, WorkerPool};
+use crate::agents::{CallerContext, StartWorker, WorkerContext, WorkerMessageMode, WorkerPool};
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -96,8 +96,23 @@ pub(super) fn backends(pool: &WorkerPool) -> serde_json::Value {
 pub(super) fn start(
     pool: &WorkerPool,
     params: StartParams,
-    caller_parent: Option<String>,
+    caller: Option<CallerContext>,
 ) -> Result<serde_json::Value, String> {
+    let project = PathBuf::from(&params.project);
+    let caller_parent = if let Some(caller) = caller {
+        let requested = canonical_directory(&project)?;
+        let caller_project = canonical_directory(&caller.project)?;
+        if requested != caller_project {
+            return Err(format!(
+                "worker project does not match its calling session: {}",
+                requested.display()
+            ));
+        }
+        pool.allow_project(&caller_project)?;
+        Some(caller.session)
+    } else {
+        None
+    };
     let backend = params
         .backend
         .unwrap_or_else(|| pool.default_backend().to_owned());
@@ -115,7 +130,7 @@ pub(super) fn start(
         StartContext::Fresh => WorkerContext::Fresh,
     };
     encode(&pool.start(StartWorker {
-        project: PathBuf::from(params.project),
+        project,
         prompt: params.prompt,
         backend,
         parent_session,
@@ -152,6 +167,18 @@ pub(super) fn status(pool: &WorkerPool, params: WorkerParams) -> Result<serde_js
 
 pub(super) fn stop(pool: &WorkerPool, params: WorkerParams) -> Result<serde_json::Value, String> {
     encode(&pool.stop(&params.id)?)
+}
+
+fn canonical_directory(path: &std::path::Path) -> Result<PathBuf, String> {
+    let canonical = std::fs::canonicalize(path)
+        .map_err(|error| format!("resolve worker project {}: {error}", path.display()))?;
+    if !canonical.is_dir() {
+        return Err(format!(
+            "worker project is not a directory: {}",
+            canonical.display()
+        ));
+    }
+    Ok(canonical)
 }
 
 fn encode(value: &impl serde::Serialize) -> Result<serde_json::Value, String> {
