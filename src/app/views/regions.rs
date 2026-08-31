@@ -3,12 +3,11 @@ use gpui::{
     WeakEntity, div,
 };
 
-use super::{FarcasterApp, session_groups::SessionRailKind};
+use super::{FarcasterApp, session_groups::SessionRailKind, transcript};
 use crate::{
     app::views::workgraph::WorkGraphBoardView,
     primitives::{ButtonTone, button},
     theme::THEME,
-    transcript,
 };
 
 pub(crate) struct SessionRailView {
@@ -22,7 +21,7 @@ pub(crate) struct InactiveSessionRailView {
 
 pub(crate) struct TranscriptView {
     app: WeakEntity<FarcasterApp>,
-    markdown_cache: crate::transcript_markdown::TranscriptMarkdownCache,
+    markdown_cache: crate::app::views::transcript::markdown::TranscriptMarkdownCache,
 }
 
 pub(crate) struct ComposerView {
@@ -55,7 +54,8 @@ impl TranscriptView {
     pub(crate) fn new(app: WeakEntity<FarcasterApp>) -> Self {
         Self {
             app,
-            markdown_cache: crate::transcript_markdown::TranscriptMarkdownCache::default(),
+            markdown_cache:
+                crate::app::views::transcript::markdown::TranscriptMarkdownCache::default(),
         }
     }
 }

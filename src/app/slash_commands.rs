@@ -204,11 +204,32 @@ pub(super) fn exact<'a>(input: &str, commands: &'a [SlashCommand]) -> Option<&'a
     commands.iter().find(|command| command.name == command_name)
 }
 
-pub(super) fn is_exact(input: &str, commands: &[SlashCommand]) -> bool {
-    builtin_invocation(input).is_some() || exact(input, commands).is_some()
+pub(super) fn is_exact_for_harness(input: &str, commands: &[SlashCommand], harness: &str) -> bool {
+    builtin_invocation(input)
+        .is_some_and(|invocation| available_for_harness(invocation.command, harness))
+        || exact(input, commands).is_some()
 }
 
+pub(super) fn suggestions_for_harness(
+    input: &str,
+    commands: &[SlashCommand],
+    harness: &str,
+) -> Vec<ComposerSuggestion> {
+    suggestions_matching(input, commands, |command| {
+        available_for_harness(command, harness)
+    })
+}
+
+#[cfg(test)]
 pub(super) fn suggestions(input: &str, commands: &[SlashCommand]) -> Vec<ComposerSuggestion> {
+    suggestions_matching(input, commands, |_| true)
+}
+
+fn suggestions_matching(
+    input: &str,
+    commands: &[SlashCommand],
+    available: impl Fn(BuiltinSlashCommand) -> bool,
+) -> Vec<ComposerSuggestion> {
     let Some(query) = input.strip_prefix('/') else {
         return Vec::new();
     };
@@ -218,6 +239,7 @@ pub(super) fn suggestions(input: &str, commands: &[SlashCommand]) -> Vec<Compose
     let mut matches = Vec::new();
     for command in BUILTINS
         .iter()
+        .filter(|command| available(command.command))
         .filter(|command| command.name.starts_with(query))
     {
         matches.push(ComposerSuggestion {
@@ -239,6 +261,19 @@ pub(super) fn suggestions(input: &str, commands: &[SlashCommand]) -> Vec<Compose
         }
     }
     matches
+}
+
+pub(super) fn available_for_harness(command: BuiltinSlashCommand, harness: &str) -> bool {
+    harness == "pi"
+        || !matches!(
+            command,
+            BuiltinSlashCommand::Export
+                | BuiltinSlashCommand::Import
+                | BuiltinSlashCommand::Share
+                | BuiltinSlashCommand::Login
+                | BuiltinSlashCommand::Logout
+                | BuiltinSlashCommand::Reload
+        )
 }
 
 pub(super) fn submits_after_completion(name: &str) -> bool {
@@ -292,6 +327,19 @@ mod tests {
         assert_eq!(exact("/extension-reload\nnow", &commands), None);
         assert!(is_immediate_extension("/extension-reload", &commands));
         assert!(!is_immediate_extension("/review-loop", &commands));
+    }
+
+    #[test]
+    fn external_harnesses_hide_pi_only_commands() {
+        let suggestions = suggestions_for_harness("/", &[], "codex-cli");
+        let names = suggestions
+            .iter()
+            .map(|suggestion| suggestion.name.as_str())
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"model"));
+        assert!(names.contains(&"compact"));
+        assert!(!names.contains(&"export"));
+        assert!(!names.contains(&"reload"));
     }
 
     #[test]

@@ -85,6 +85,7 @@ fn run(
                         current.pending_input = Some(input);
                     });
                 }
+                WorkerEvent::Activity(_) => {}
                 WorkerEvent::Failed(error) => {
                     close_failed(&mut *session, &snapshot, error);
                     return;

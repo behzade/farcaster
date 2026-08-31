@@ -16,8 +16,8 @@ use super::super::{
 use super::models;
 use crate::{
     app::file_mentions::MentionQuery,
+    app::views::transcript::conversation::{self, QueueState},
     composer_sessions::ComposerSnapshot,
-    conversation::{self, QueueState},
     primitives::{ButtonTone, button},
     protocol::ExtensionUiRequest,
     theme::{MONO_FONT_FAMILY, THEME},
@@ -34,17 +34,24 @@ impl FarcasterApp {
         let composer_text = composer.value().to_string();
         let composer_cursor = composer.cursor().min(composer_text.len());
         let composer_value = composer_text.trim().to_owned();
-        let command_suggestions =
-            slash_commands::suggestions(composer_text.trim_start(), &self.snapshot.commands)
-                .into_iter()
-                .chain(user_invocations::suggestions(
-                    &composer_text[..composer_cursor],
-                    &self.snapshot.commands,
-                ))
-                .take(8)
-                .collect::<Vec<_>>();
+        let command_suggestions = slash_commands::suggestions_for_harness(
+            composer_text.trim_start(),
+            &self.snapshot.commands,
+            self.active_harness(),
+        )
+        .into_iter()
+        .chain(user_invocations::suggestions(
+            &composer_text[..composer_cursor],
+            &self.snapshot.commands,
+        ))
+        .take(8)
+        .collect::<Vec<_>>();
         let command_suggestion_count = command_suggestions.len();
-        let exact_command = slash_commands::is_exact(&composer_value, &self.snapshot.commands);
+        let exact_command = slash_commands::is_exact_for_harness(
+            &composer_value,
+            &self.snapshot.commands,
+            self.active_harness(),
+        );
         let primary_action = composer_primary_action(
             !composer_value.is_empty() || self.has_composer_attachments(),
             self.can_submit(),

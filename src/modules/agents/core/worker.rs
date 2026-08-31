@@ -25,11 +25,24 @@ pub(crate) enum WorkerEvent {
     Settled { output: String },
     SessionChanged { locator: String },
     NeedsInput(WorkerInput),
+    Activity(serde_json::Value),
     Failed(String),
 }
 
 pub(crate) trait WorkerSession: Send {
     fn send(&mut self, message: String, mode: WorkerSendMode) -> Result<(), String>;
+    fn send_with_images(
+        &mut self,
+        message: String,
+        mode: WorkerSendMode,
+        images: Vec<crate::protocol::PromptImage>,
+    ) -> Result<(), String> {
+        if images.is_empty() {
+            self.send(message, mode)
+        } else {
+            Err("worker backend does not support image input".into())
+        }
+    }
     fn respond(&mut self, response: WorkerInputResponse) -> Result<(), String>;
     fn abort(&mut self) -> Result<(), String>;
     fn compact(&mut self) -> Result<(), String> {
@@ -37,6 +50,12 @@ pub(crate) trait WorkerSession: Send {
     }
     fn rename(&mut self, _name: &str) -> Result<(), String> {
         Err("worker backend does not support session naming".into())
+    }
+    fn select_model(&mut self, _provider: &str, _model: &str) -> Result<(), String> {
+        Err("worker backend does not support model selection".into())
+    }
+    fn select_effort(&mut self, _effort: &str) -> Result<(), String> {
+        Err("worker backend does not support effort selection".into())
     }
     fn poll(&mut self) -> Option<WorkerEvent>;
     fn close(&mut self) -> Result<(), String>;

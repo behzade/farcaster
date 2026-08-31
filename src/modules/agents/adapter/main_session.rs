@@ -8,6 +8,13 @@ use crate::agents::{
     extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptMode},
 };
 
+#[derive(Default)]
+pub(super) struct MainSessionMetadata {
+    pub models: Vec<Value>,
+    pub efforts: Vec<String>,
+    pub commands: Vec<Value>,
+}
+
 pub(super) struct WorkerSessionTransport {
     harness: String,
     locator: String,
@@ -16,8 +23,10 @@ pub(super) struct WorkerSessionTransport {
     pending: VecDeque<SessionEvent>,
     next_id: u64,
     running: bool,
+    rich_activity: bool,
     model: Option<(String, String)>,
     effort: String,
+    metadata: MainSessionMetadata,
 }
 
 impl WorkerSessionTransport {
@@ -25,6 +34,7 @@ impl WorkerSessionTransport {
         harness: &str,
         locator: String,
         worker: Box<dyn WorkerSession>,
+        metadata: MainSessionMetadata,
     ) -> Result<Self, String> {
         let path = external_session_path(harness, &locator)?;
         Ok(Self {
@@ -35,8 +45,14 @@ impl WorkerSessionTransport {
             pending: VecDeque::new(),
             next_id: 0,
             running: false,
+            rich_activity: false,
             model: None,
-            effort: "off".into(),
+            effort: metadata
+                .efforts
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "off".into()),
+            metadata,
         })
     }
 
@@ -83,22 +99,25 @@ impl WorkerSessionTransport {
             }
             WorkerEvent::Settled { output } => {
                 self.running = false;
-                self.pending.push_back(SessionEvent::Activity(json!({
-                    "type": "message_start",
-                    "message": {"role": "assistant", "content": []}
-                })));
-                self.pending.push_back(SessionEvent::Activity(json!({
-                    "type": "message_update",
-                    "assistantMessageEvent": {
-                        "type": "text_delta",
-                        "contentIndex": 0,
-                        "delta": output,
-                    }
-                })));
-                self.pending.push_back(SessionEvent::Activity(json!({
-                    "type": "message_end",
-                    "message": {"role": "assistant"}
-                })));
+                if !self.rich_activity {
+                    self.pending.push_back(SessionEvent::Activity(json!({
+                        "type": "message_start",
+                        "message": {"role": "assistant", "content": []}
+                    })));
+                    self.pending.push_back(SessionEvent::Activity(json!({
+                        "type": "message_update",
+                        "assistantMessageEvent": {
+                            "type": "text_delta",
+                            "contentIndex": 0,
+                            "delta": output,
+                        }
+                    })));
+                    self.pending.push_back(SessionEvent::Activity(json!({
+                        "type": "message_end",
+                        "message": {"role": "assistant"}
+                    })));
+                }
+                self.rich_activity = false;
                 SessionEvent::Activity(json!({"type": "agent_settled"}))
             }
             WorkerEvent::SessionChanged { locator } => {
@@ -106,6 +125,10 @@ impl WorkerSessionTransport {
                 SessionEvent::Activity(json!({"type": "session_info_changed"}))
             }
             WorkerEvent::NeedsInput(input) => SessionEvent::Interaction(interaction(input)),
+            WorkerEvent::Activity(activity) => {
+                self.rich_activity = true;
+                SessionEvent::Activity(activity)
+            }
             WorkerEvent::Failed(error) => SessionEvent::Failure(error),
         }
     }
@@ -133,33 +156,30 @@ impl SessionTransport for WorkerSessionTransport {
             SessionCommand::ListModels => self.response(
                 id.clone(),
                 "get_available_models",
-                json!({"models": []}),
+                json!({"models": self.metadata.models.clone()}),
             ),
             SessionCommand::ListReasoningLevels => self.response(
                 id.clone(),
                 "get_available_thinking_levels",
-                json!({"levels": ["off", "minimal", "low", "medium", "high", "xhigh"]}),
+                json!({"levels": self.metadata.efforts.clone()}),
             ),
-            SessionCommand::ListCommands => {
-                self.response(id.clone(), "get_commands", json!({"commands": []}));
-            }
+            SessionCommand::ListCommands => self.response(
+                id.clone(),
+                "get_commands",
+                json!({"commands": self.metadata.commands.clone()}),
+            ),
             SessionCommand::Prompt {
                 mode,
                 message,
                 images,
             } => {
-                if !images.is_empty() {
-                    return Err(format!(
-                        "{} main-session image delivery is not connected yet",
-                        self.harness
-                    ));
-                }
                 let worker_mode = match mode {
                     PromptMode::Normal => WorkerSendMode::Prompt,
                     PromptMode::Steer => WorkerSendMode::Steer,
                     PromptMode::FollowUp => WorkerSendMode::Queue,
                 };
-                self.worker.send(message, worker_mode)?;
+                self.worker
+                    .send_with_images(message, worker_mode, images)?;
                 let command = match mode {
                     PromptMode::Normal => "prompt",
                     PromptMode::Steer => "steer",
@@ -172,6 +192,7 @@ impl SessionTransport for WorkerSessionTransport {
                 self.response(id.clone(), "abort", json!({}));
             }
             SessionCommand::SelectModel { provider, model_id } => {
+                self.worker.select_model(&provider, &model_id)?;
                 self.model = Some((provider.clone(), model_id.clone()));
                 self.response(
                     id.clone(),
@@ -180,6 +201,7 @@ impl SessionTransport for WorkerSessionTransport {
                 );
             }
             SessionCommand::SelectReasoning { level } => {
+                self.worker.select_effort(&level)?;
                 self.effort = level;
                 self.response(id.clone(), "set_thinking_level", json!({}));
             }
@@ -234,7 +256,14 @@ impl SessionTransport for WorkerSessionTransport {
 }
 
 fn interaction(input: WorkerInput) -> ExtensionUiRequest {
-    if input.options.len() == 2 {
+    if input.options.is_empty() {
+        ExtensionUiRequest::Input {
+            id: input.id,
+            title: input.prompt,
+            placeholder: None,
+            timeout: None,
+        }
+    } else if input.options.len() == 2 {
         ExtensionUiRequest::Confirm {
             id: input.id,
             title: input.prompt.clone(),

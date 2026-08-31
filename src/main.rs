@@ -4,7 +4,6 @@ mod assets;
 mod composer_sessions;
 #[cfg(test)]
 mod composer_sessions_test;
-mod conversation;
 mod extension_ui;
 mod keybindings;
 mod keyboard;
@@ -16,13 +15,10 @@ mod primitives;
 mod project_trust_view;
 mod theme;
 mod tool_changes;
-mod transcript;
-mod transcript_attachments;
-mod transcript_list;
-mod transcript_markdown;
 mod user_invocations;
 
 pub(crate) use app::runtime;
+pub(crate) use app::views::transcript::conversation;
 pub(crate) use modules::agents::extensions as protocol;
 pub(crate) use modules::sessions::activity as agent_activity;
 pub(crate) use modules::{access, agents, projects, repository, sessions};

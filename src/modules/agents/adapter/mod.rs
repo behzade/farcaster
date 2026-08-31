@@ -59,8 +59,13 @@ pub(crate) fn spawn_session(
         command.program = std::env::var_os("FARCASTER_CODEX_PATH")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| "codex".into());
-        let (worker, locator) = codex::spawn_main(&command, &launch)?;
-        return main_session::WorkerSessionTransport::new("codex-cli", locator, worker)
+        let (worker, locator, metadata) = codex::spawn_main(&command, &launch)?;
+        return main_session::WorkerSessionTransport::new(
+            "codex-cli",
+            locator,
+            worker,
+            metadata,
+        )
             .map(|transport| Box::new(transport) as _);
     }
     if launch.harness == "opencode2" {
@@ -68,8 +73,13 @@ pub(crate) fn spawn_session(
         command.program = std::env::var_os("FARCASTER_OPENCODE_PATH")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| "opencode2".into());
-        let (worker, locator) = opencode::spawn_main(&command, &launch)?;
-        return main_session::WorkerSessionTransport::new("opencode2", locator, worker)
+        let (worker, locator, metadata) = opencode::spawn_main(&command, &launch)?;
+        return main_session::WorkerSessionTransport::new(
+            "opencode2",
+            locator,
+            worker,
+            metadata,
+        )
             .map(|transport| Box::new(transport) as _);
     }
     if launch.harness != "pi" {

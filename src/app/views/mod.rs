@@ -21,6 +21,7 @@ mod settings;
 mod shell;
 mod surface_switcher;
 mod terminal;
+pub(crate) mod transcript;
 mod usage;
 pub(super) mod workgraph;
 
@@ -793,35 +794,35 @@ fn render_draft_heading(
                 .child("?"),
         )
         .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(THEME.space.xs)
-                .children(crate::agents::backend_statuses().into_iter().map(|backend| {
-                    let selected = backend.id == harness;
-                    let target = backend.id.clone();
-                    let entity = entity.clone();
-                    let label = if backend.available {
-                        backend.name
-                    } else {
-                        format!("{} unavailable", backend.name)
-                    };
-                    button(
-                        format!("draft-harness-{target}"),
-                        label,
-                        if selected {
-                            ButtonTone::Accent
+            div().flex().items_center().gap(THEME.space.xs).children(
+                crate::agents::backend_statuses()
+                    .into_iter()
+                    .map(|backend| {
+                        let selected = backend.id == harness;
+                        let target = backend.id.clone();
+                        let entity = entity.clone();
+                        let label = if backend.available {
+                            backend.name
                         } else {
-                            ButtonTone::Quiet
-                        },
-                        backend.available && !selected,
-                        move |window, cx| {
-                            let _ = entity.update(cx, |this, cx| {
-                                this.change_draft_harness(target.clone(), window, cx);
-                            });
-                        },
-                    )
-                })),
+                            format!("{} unavailable", backend.name)
+                        };
+                        button(
+                            format!("draft-harness-{target}"),
+                            label,
+                            if selected {
+                                ButtonTone::Accent
+                            } else {
+                                ButtonTone::Quiet
+                            },
+                            backend.available && !selected,
+                            move |window, cx| {
+                                let _ = entity.update(cx, |this, cx| {
+                                    this.change_draft_harness(target.clone(), window, cx);
+                                });
+                            },
+                        )
+                    }),
+            ),
         )
 }
 

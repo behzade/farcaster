@@ -27,14 +27,14 @@ mod slash_commands;
 mod submissions;
 mod surfaces;
 mod terminal;
-mod transcript_ui;
 mod trust;
-mod views;
+pub(crate) mod views;
 pub(crate) use composer_images::ComposerImage;
 pub(crate) use composer_pastes::ComposerPaste;
 pub(crate) use picker::{PICKER_KEY_CONTEXT, PickerScope, ProjectPickerIntent};
 use submissions::PendingSubmission;
 pub(crate) use views::OVERLAY_KEY_CONTEXT;
+pub(crate) use views::transcript::list::TRANSCRIPT_SELECTION_KEY_CONTEXT;
 pub(crate) use views::workgraph::{WORKGRAPH_KEY_CONTEXT, WORKGRAPH_NAV_KEY_CONTEXT};
 use views::workgraph::{WorkGraphBoardView, WorkGraphSidebarView};
 use views::{
@@ -60,9 +60,10 @@ use gpui_libghostty::Terminal;
 use gpui_neovim::NvimEditor;
 
 #[cfg(test)]
-use crate::transcript::transcript_splice;
+use crate::app::views::transcript::transcript_splice;
 use crate::{
     agent_activity::AgentActivity,
+    app::views::transcript::list::TranscriptListState,
     composer_sessions::{
         ComposerSessions, ComposerSnapshot, HistoryNavigation, draft_target, project_target,
         session_target,
@@ -74,7 +75,6 @@ use crate::{
     sessions::{
         SessionRootIndex, SessionSummary, SessionTarget, descendant_sessions, root_session_for_path,
     },
-    transcript_list::TranscriptListState,
 };
 
 const SYSTEM_NOTIFICATION_TAG: &str = "farcaster-agent";
@@ -271,7 +271,8 @@ pub(crate) struct FarcasterApp {
     sheet_return_focus: Option<FocusHandle>,
     pending_sheet_setup: bool,
     transcript_list: TranscriptListState,
-    transcript_rows: Arc<crate::persistent_vec::PersistentVec<crate::transcript::TranscriptRow>>,
+    transcript_rows:
+        Arc<crate::persistent_vec::PersistentVec<crate::app::views::transcript::TranscriptRow>>,
     transcript_following: bool,
     transcript_unseen: usize,
     pub(crate) transcript_disclosure_states: HashMap<usize, bool>,
@@ -439,12 +440,13 @@ impl FarcasterApp {
                 InputEvent::PressEnter { shift: false, .. } => {
                     let input = state.read(cx);
                     let value = input.value();
-                    if let Some(completion) = composer_completion::resolve(
+                    if let Some(completion) = composer_completion::resolve_for_harness(
                         &value,
                         input.cursor(),
                         &this.composer_project_files,
                         this.composer_suggestion_selection,
                         &this.snapshot.commands,
+                        this.active_harness(),
                     ) {
                         let submitted_value = completion
                             .submit
@@ -875,8 +877,10 @@ impl FarcasterApp {
                             crate::performance::OperationKind::FullProjection,
                             snapshot.conversation.items.len(),
                         );
-                        crate::transcript::TranscriptRowUpdate::replace(
-                            crate::transcript::project_rows(&snapshot.conversation.items),
+                        crate::app::views::transcript::TranscriptRowUpdate::replace(
+                            crate::app::views::transcript::project_rows(
+                                &snapshot.conversation.items,
+                            ),
                         )
                     } else {
                         self.project_transcript_rows(&snapshot)

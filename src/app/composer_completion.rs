@@ -7,12 +7,31 @@ pub(super) struct ComposerCompletion {
     pub(super) submit: bool,
 }
 
+#[cfg(test)]
 pub(super) fn resolve(
     text: &str,
     cursor: usize,
     project_files: &[String],
     suggestion_selection: usize,
     commands: &[SlashCommand],
+) -> Option<ComposerCompletion> {
+    resolve_for_harness(
+        text,
+        cursor,
+        project_files,
+        suggestion_selection,
+        commands,
+        "pi",
+    )
+}
+
+pub(super) fn resolve_for_harness(
+    text: &str,
+    cursor: usize,
+    project_files: &[String],
+    suggestion_selection: usize,
+    commands: &[SlashCommand],
+    harness: &str,
 ) -> Option<ComposerCompletion> {
     if let Some(query) = file_mentions::query_at_cursor(text, cursor) {
         let matches = file_mentions::matches(project_files, &query.text);
@@ -26,7 +45,8 @@ pub(super) fn resolve(
     }
 
     let prefix = text.get(..cursor)?;
-    let suggestions = slash_commands::suggestions(text.trim_start(), commands)
+    let suggestions =
+        slash_commands::suggestions_for_harness(text.trim_start(), commands, harness)
         .into_iter()
         .chain(user_invocations::suggestions(prefix, commands))
         .collect::<Vec<_>>();

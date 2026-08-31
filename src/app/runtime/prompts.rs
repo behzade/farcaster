@@ -31,7 +31,10 @@ impl RuntimeOwner {
         }
         let was_running = self.active_snapshot().conversation.running;
         if !can_send_prompt(mode, was_running, allow_while_running) {
-            self.reject_prompt(&target, "Pi is already working on this session".into());
+            self.reject_prompt(
+                &target,
+                format!("{} is already working on this session", self.backend_name()),
+            );
             return;
         }
         let outbox_id = match self.state.as_ref() {
@@ -129,17 +132,18 @@ impl RuntimeOwner {
             return;
         }
         if self.active_session.is_none() {
-            const ERROR: &str = "Pi did not provide a session path";
+            let error = format!("{} did not provide a session locator", self.backend_name());
+            let error = error.as_str();
             let was_running = self
                 .active_snapshot()
                 .session
                 .as_ref()
                 .is_some_and(|state| state.is_streaming);
-            self.mark_outbox_failed(ERROR);
+            self.mark_outbox_failed(error);
             let target = self.pending_prompt_target.take().unwrap_or_default();
             self.rollback_pending_prompt();
             conversation_mut(self.active_snapshot_mut()).running = was_running;
-            self.reject_prompt(&target, ERROR.into());
+            self.reject_prompt(&target, error.into());
             return;
         }
         if let Some(id) = outbox_id
@@ -166,8 +170,9 @@ impl RuntimeOwner {
                 self.fail(error);
             }
             None => {
-                self.mark_outbox_failed("Pi is not connected");
-                self.fail("Cannot send prompt: Pi is not connected".into());
+                let error = format!("{} is not connected", self.backend_name());
+                self.mark_outbox_failed(&error);
+                self.fail(format!("Cannot send prompt: {error}"));
             }
         }
     }

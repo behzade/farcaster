@@ -7,7 +7,6 @@ use gpui::{
     ScrollWheelEvent, Size, Style, Window, point, px, relative,
 };
 
-#[path = "transcript_list/height_index.rs"]
 mod height_index;
 use self::height_index::HeightIndex;
 
@@ -587,5 +586,4 @@ fn request_scroll_frame(window: &Window, view: EntityId, state: TranscriptListSt
 }
 
 #[cfg(test)]
-#[path = "transcript_list_tests.rs"]
 mod tests;

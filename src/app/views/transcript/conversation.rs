@@ -1392,5 +1392,4 @@ fn retry_notice(event: &Value) -> String {
 }
 
 #[cfg(test)]
-#[path = "conversation_tests.rs"]
 mod tests;

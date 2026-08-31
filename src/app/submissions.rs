@@ -145,6 +145,26 @@ impl FarcasterApp {
         }
 
         self.consume_composer_command(value, window, cx);
+        let harness = self.active_harness().to_owned();
+        if !crate::app::slash_commands::available_for_harness(invocation.command, &harness) {
+            self.push_builtin_error(
+                "Command unavailable",
+                &format!("/{} is not supported by {harness}.", invocation.name),
+                cx,
+            );
+            return;
+        }
+        if invocation.command == BuiltinSlashCommand::Compact
+            && invocation.arguments.is_some()
+            && harness != "pi"
+        {
+            self.push_builtin_error(
+                "Custom compaction unavailable",
+                &format!("{harness} supports compaction without custom instructions."),
+                cx,
+            );
+            return;
+        }
         match invocation.command {
             BuiltinSlashCommand::Model => {
                 if let Some(reference) = invocation.arguments {

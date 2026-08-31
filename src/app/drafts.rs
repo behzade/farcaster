@@ -38,6 +38,24 @@ impl FarcasterApp {
         )
     }
 
+    pub(super) fn active_harness(&self) -> &str {
+        if let Some(id) = self.selected_draft.as_deref()
+            && let Some(draft) = self.drafts.iter().find(|draft| draft.id == id)
+        {
+            return &draft.harness;
+        }
+        self.snapshot
+            .selected_session
+            .as_deref()
+            .and_then(|path| {
+                self.all_sessions
+                    .iter()
+                    .find(|session| session.path == path)
+            })
+            .map(|session| session.harness.as_str())
+            .unwrap_or("pi")
+    }
+
     pub(super) fn editable_draft_harness(&self) -> Option<String> {
         let id = self.selected_draft.as_deref()?;
         let target = draft_target(id);

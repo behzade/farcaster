@@ -1,3 +1,9 @@
+pub(crate) mod attachments;
+pub(crate) mod conversation;
+pub(crate) mod list;
+pub(crate) mod markdown;
+mod ui;
+
 use std::{
     borrow::Cow,
     hash::{Hash, Hasher},
@@ -15,14 +21,18 @@ use gpui_component::{
 };
 
 use crate::{
-    app::FarcasterApp,
-    conversation::{self, TranscriptItem, TranscriptKind},
+    app::views::transcript::conversation::{TranscriptItem, TranscriptKind},
+    app::{
+        FarcasterApp,
+        views::transcript::{
+            attachments::{ATTACHMENT_ROW_HEIGHT, render_attachments},
+            list::{TranscriptListState, transcript_list_grouped},
+            markdown::{MarkdownStateKey, TranscriptMarkdownCache},
+        },
+    },
     persistent_vec::{Indexed, PersistentVec},
     primitives::{ButtonTone, button, disclosure_detail, disclosure_title_row},
     theme::{MONO_FONT_FAMILY, THEME},
-    transcript_attachments::{ATTACHMENT_ROW_HEIGHT, render_attachments},
-    transcript_list::{TranscriptListState, transcript_list_grouped},
-    transcript_markdown::{MarkdownStateKey, TranscriptMarkdownCache},
 };
 
 const MARKDOWN_CHUNK_TARGET_BYTES: usize = 2 * 1024;
@@ -800,7 +810,7 @@ pub(crate) fn render(
     list_state: &TranscriptListState,
     viewport: TranscriptViewport,
     rows: std::sync::Arc<PersistentVec<TranscriptRow>>,
-    conversation: Arc<crate::conversation::ConversationState>,
+    conversation: Arc<crate::app::views::transcript::conversation::ConversationState>,
     disclosure_states: std::collections::HashMap<usize, bool>,
     markdown_cache: TranscriptMarkdownCache,
     entity: WeakEntity<FarcasterApp>,
@@ -855,7 +865,7 @@ pub(crate) fn render(
     div()
         .size_full()
         .when(visual_selection_active, |root| {
-            root.key_context(crate::transcript_list::TRANSCRIPT_SELECTION_KEY_CONTEXT)
+            root.key_context(crate::app::views::transcript::list::TRANSCRIPT_SELECTION_KEY_CONTEXT)
         })
         .flex()
         .flex_col()
@@ -1875,5 +1885,4 @@ fn item_color(item: &TranscriptItem) -> gpui::Rgba {
 }
 
 #[cfg(test)]
-#[path = "transcript_tests.rs"]
 mod tests;

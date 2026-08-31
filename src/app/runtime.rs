@@ -27,7 +27,7 @@ use crate::{
         SessionTransport,
     },
     app::persistence::StateStore,
-    conversation::{ConversationState, TranscriptItem, TranscriptKind},
+    app::views::transcript::conversation::{ConversationState, TranscriptItem, TranscriptKind},
     protocol::{
         ExtensionUiRequest, ExtensionUiResponse, Model, PromptImage, PromptMode, SessionState,
         SlashCommand,
@@ -1605,6 +1605,15 @@ fn run(
 }
 
 impl RuntimeOwner {
+    pub(super) fn backend_name(&self) -> &str {
+        match self.harness.as_str() {
+            "pi" => "Pi",
+            "codex-cli" => "Codex",
+            "opencode2" => "OpenCode",
+            other => other,
+        }
+    }
+
     fn start_process(&mut self, session: Option<PathBuf>) {
         self.start_process_from(session, None, false);
     }
@@ -1876,7 +1885,10 @@ impl RuntimeOwner {
         match self.process.as_mut().map(|process| process.send(request)) {
             Some(Ok(_)) => {}
             Some(Err(error)) => self.fail(error),
-            None => self.fail(format!("Cannot {operation}: Pi is not connected")),
+            None => self.fail(format!(
+                "Cannot {operation}: {} is not connected",
+                self.backend_name()
+            )),
         }
     }
 
@@ -2216,7 +2228,7 @@ impl RuntimeOwner {
                     response
                         .error
                         .as_deref()
-                        .unwrap_or("Pi rejected the prompt"),
+                        .unwrap_or("The harness rejected the prompt"),
                 );
             }
             if response.success {
@@ -2420,7 +2432,7 @@ impl RuntimeOwner {
             && self.snapshot.history_preview
             && self.parked_snapshot.is_some();
         let details = failure_details(&error);
-        zlog::error!("Pi runtime failed: {details}");
+        zlog::error!("agent runtime failed: {details}");
         self.mark_outbox_failed(&details);
         self.pending_prompt_id = None;
         self.deferred_prompt = None;
@@ -2434,7 +2446,8 @@ impl RuntimeOwner {
             self.emit_prompt_result(&target, false);
         }
         if preserve_history {
-            self.fail_session_control_resume("Failed", "Couldn’t start Pi", details);
+            let label = format!("Couldn’t start {}", self.backend_name());
+            self.fail_session_control_resume("Failed", &label, details);
             return;
         }
         self.pending_session_controls = PendingSessionControls::default();
@@ -2442,20 +2455,17 @@ impl RuntimeOwner {
             let _ = process.close();
         }
         let previewing = self.parked_snapshot.is_some();
+        let label = if starting {
+            format!("Couldn’t start {}", self.backend_name())
+        } else {
+            format!("{} stopped", self.backend_name())
+        };
         let snapshot = self.active_snapshot_mut();
         snapshot.connected = false;
         snapshot.status = "Failed".into();
         let conversation = conversation_mut(snapshot);
         conversation.diagnostics.push(details.clone());
-        conversation.push_local_error_with_details(
-            if starting {
-                "Couldn’t start Pi"
-            } else {
-                "Pi stopped"
-            },
-            failure_summary(&details),
-            details,
-        );
+        conversation.push_local_error_with_details(&label, failure_summary(&details), details);
         if previewing && let Some(snapshot) = self.parked_snapshot.take() {
             self.snapshot = snapshot;
         }
@@ -4731,7 +4741,8 @@ mod tests {
         assert!(owner.pending_prompt_id.is_none());
         assert!(!owner.snapshot.history_preview);
         assert!(owner.snapshot.conversation.items.iter().any(|item| {
-            item.kind == crate::conversation::TranscriptKind::User && item.text == "continue"
+            item.kind == crate::app::views::transcript::conversation::TranscriptKind::User
+                && item.text == "continue"
         }));
         assert!(event_rx.try_iter().any(|event| matches!(
             event,

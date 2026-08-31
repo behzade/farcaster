@@ -88,10 +88,13 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             writer,
             incoming,
             thread_id: thread_id.clone(),
+            model: launch.model,
             effort: launch.effort,
             next_id,
             current_turn: None,
             output: String::new(),
+            message_started: false,
+            reasoning_started: false,
             pending: HashMap::new(),
             pending_inputs: HashMap::new(),
             events: VecDeque::from([WorkerEvent::SessionChanged { locator: thread_id }]),
@@ -102,7 +105,14 @@ impl WorkerSessionFactory for CodexWorkerFactory {
 pub(in crate::modules::agents::adapter) fn spawn_main(
     command: &AgentLaunchConfig,
     launch: &crate::agents::SessionLaunch,
-) -> Result<(Box<dyn WorkerSession>, String), String> {
+) -> Result<
+    (
+        Box<dyn WorkerSession>,
+        String,
+        crate::modules::agents::adapter::main_session::MainSessionMetadata,
+    ),
+    String,
+> {
     let mut sandbox = command.command(&launch.project)?;
     let caller_identity = crate::modules::agents::core::CallerRegistry::shared().issue();
     configure_farcaster_mcp(&mut sandbox.command, caller_identity.token());
@@ -114,7 +124,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         .spawn()
         .map_err(|error| format!("start Codex main-session app-server: {error}"))?;
     let setup = setup_main_connection(&mut child, launch);
-    let (mut reader, writer, queued, next_id, thread) = match setup {
+    let ((mut reader, writer, queued, next_id, thread), metadata) = match setup {
         Ok(setup) => setup,
         Err(error) => {
             let _ = child.kill();
@@ -150,15 +160,18 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         writer,
         incoming,
         thread_id: thread_id.clone(),
+        model: None,
         effort: None,
         next_id,
         current_turn: None,
         output: String::new(),
+        message_started: false,
+        reasoning_started: false,
         pending: HashMap::new(),
         pending_inputs: HashMap::new(),
         events: VecDeque::new(),
     };
-    Ok((Box::new(session), thread_id))
+    Ok((Box::new(session), thread_id, metadata))
 }
 
 type CodexSetup = (
@@ -211,7 +224,13 @@ fn setup_connection(child: &mut Child, launch: &WorkerLaunch) -> Result<CodexSet
 fn setup_main_connection(
     child: &mut Child,
     launch: &crate::agents::SessionLaunch,
-) -> Result<CodexSetup, String> {
+) -> Result<
+    (
+        CodexSetup,
+        crate::modules::agents::adapter::main_session::MainSessionMetadata,
+    ),
+    String,
+> {
     let stdin = child
         .stdin
         .take()
@@ -226,6 +245,7 @@ fn setup_main_connection(
         title: Some("Farcaster".into()),
         version: env!("CARGO_PKG_VERSION").into(),
     })?;
+    let metadata = load_main_metadata(&mut connection)?;
     let cwd = launch.project.to_string_lossy();
     let thread = match &launch.start {
         crate::agents::SessionStart::New => connection.start_thread(&cwd, None, None)?,
@@ -246,7 +266,60 @@ fn setup_main_connection(
         )?,
     };
     let (reader, writer, queued, next_id) = connection.into_parts();
-    Ok((reader, writer, queued, next_id, thread))
+    Ok(((reader, writer, queued, next_id, thread), metadata))
+}
+
+fn load_main_metadata(
+    connection: &mut CodexConnection<BufReader<std::process::ChildStdout>, ChildStdin>,
+) -> Result<crate::modules::agents::adapter::main_session::MainSessionMetadata, String> {
+    let id = connection.send_request("model/list", json!({"limit": 100}))?;
+    let response: Value = connection.wait_response(&id)?;
+    let mut efforts = Vec::new();
+    let models = response
+        .get("data")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|model| {
+            let id = model.get("id")?.as_str()?;
+            for effort in model
+                .get("supportedReasoningEfforts")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let effort = effort
+                    .as_str()
+                    .or_else(|| effort.get("reasoningEffort")?.as_str());
+                if let Some(effort) = effort
+                    && !efforts.iter().any(|known| known == effort)
+                {
+                    efforts.push(effort.to_owned());
+                }
+            }
+            Some(json!({
+                "id": id,
+                "name": model
+                    .get("displayName")
+                    .and_then(Value::as_str)
+                    .unwrap_or(id),
+                "provider": model
+                    .get("modelProvider")
+                    .and_then(Value::as_str)
+                    .unwrap_or("openai"),
+                "contextWindow": model
+                    .get("contextWindow")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0),
+                "reasoning": model.get("supportedReasoningEfforts").is_some(),
+            }))
+        })
+        .collect();
+    Ok(crate::modules::agents::adapter::main_session::MainSessionMetadata {
+        models,
+        efforts,
+        commands: Vec::new(),
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -262,10 +335,13 @@ struct CodexWorkerSession {
     writer: ChildStdin,
     incoming: mpsc::Receiver<Result<CodexInbound, String>>,
     thread_id: String,
+    model: Option<String>,
     effort: Option<String>,
     next_id: i64,
     current_turn: Option<String>,
     output: String,
+    message_started: bool,
+    reasoning_started: bool,
     pending: HashMap<CodexRequestId, PendingRequest>,
     pending_inputs: HashMap<String, CodexRequestId>,
     events: VecDeque<WorkerEvent>,
@@ -273,34 +349,20 @@ struct CodexWorkerSession {
 
 impl WorkerSession for CodexWorkerSession {
     fn send(&mut self, message: String, mode: WorkerSendMode) -> Result<(), String> {
-        let input = vec![CodexUserInput::text(message)];
-        if mode == WorkerSendMode::Steer {
-            let turn_id = self
-                .current_turn
-                .as_deref()
-                .ok_or_else(|| "Codex worker has not reported its active turn".to_owned())?;
-            let id = self.request(
-                "turn/steer",
-                json!({
-                    "threadId": self.thread_id,
-                    "expectedTurnId": turn_id,
-                    "input": input,
-                }),
-            )?;
-            self.pending.insert(id, PendingRequest::Ignore);
-            return Ok(());
-        }
-        self.output.clear();
-        let id = self.request(
-            "turn/start",
-            json!({
-                "threadId": self.thread_id,
-                "input": input,
-                "effort": self.effort,
-            }),
-        )?;
-        self.pending.insert(id, PendingRequest::StartTurn);
-        Ok(())
+        self.send_input(vec![CodexUserInput::text(message)], mode)
+    }
+
+    fn send_with_images(
+        &mut self,
+        message: String,
+        mode: WorkerSendMode,
+        images: Vec<crate::protocol::PromptImage>,
+    ) -> Result<(), String> {
+        let mut input = vec![CodexUserInput::text(message)];
+        input.extend(images.into_iter().map(|image| CodexUserInput::Image {
+            url: format!("data:{};base64,{}", image.mime_type, image.data),
+        }));
+        self.send_input(input, mode)
     }
 
     fn respond(&mut self, response: WorkerInputResponse) -> Result<(), String> {
@@ -352,6 +414,16 @@ impl WorkerSession for CodexWorkerSession {
         Ok(())
     }
 
+    fn select_model(&mut self, _provider: &str, model: &str) -> Result<(), String> {
+        self.model = Some(model.to_owned());
+        Ok(())
+    }
+
+    fn select_effort(&mut self, effort: &str) -> Result<(), String> {
+        self.effort = Some(effort.to_owned());
+        Ok(())
+    }
+
     fn poll(&mut self) -> Option<WorkerEvent> {
         if let Some(event) = self.events.pop_front() {
             return Some(event);
@@ -393,6 +465,81 @@ impl WorkerSession for CodexWorkerSession {
                         "item/agentMessage/delta" => {
                             if let Some(delta) = params["delta"].as_str() {
                                 self.output.push_str(delta);
+                                let index = usize::from(self.reasoning_started);
+                                let update = WorkerEvent::Activity(json!({
+                                    "type": "message_update",
+                                    "assistantMessageEvent": {
+                                        "type": "text_delta",
+                                        "contentIndex": index,
+                                        "delta": delta,
+                                    }
+                                }));
+                                if !self.message_started {
+                                    self.message_started = true;
+                                    self.events.push_back(update);
+                                    return Some(WorkerEvent::Activity(json!({
+                                        "type": "message_start",
+                                        "message": {"role": "assistant", "content": []}
+                                    })));
+                                }
+                                return Some(update);
+                            }
+                        }
+                        "item/reasoning/summaryTextDelta" | "item/reasoning/textDelta" => {
+                            if let Some(delta) = params["delta"].as_str() {
+                                if !self.message_started {
+                                    self.message_started = true;
+                                    self.events.push_back(WorkerEvent::Activity(json!({
+                                        "type": "message_update",
+                                        "assistantMessageEvent": {
+                                            "type": "thinking_start",
+                                            "contentIndex": 0,
+                                        }
+                                    })));
+                                    self.events.push_back(WorkerEvent::Activity(json!({
+                                        "type": "message_update",
+                                        "assistantMessageEvent": {
+                                            "type": "thinking_delta",
+                                            "contentIndex": 0,
+                                            "delta": delta,
+                                        }
+                                    })));
+                                    self.reasoning_started = true;
+                                    return Some(WorkerEvent::Activity(json!({
+                                        "type": "message_start",
+                                        "message": {"role": "assistant", "content": []}
+                                    })));
+                                }
+                                self.reasoning_started = true;
+                                return Some(WorkerEvent::Activity(json!({
+                                    "type": "message_update",
+                                    "assistantMessageEvent": {
+                                        "type": "thinking_delta",
+                                        "contentIndex": 0,
+                                        "delta": delta,
+                                    }
+                                })));
+                            }
+                        }
+                        "item/started" => {
+                            if let Some(event) = codex_tool_start(&params) {
+                                return Some(WorkerEvent::Activity(event));
+                            }
+                        }
+                        "item/commandExecution/outputDelta" => {
+                            if let (Some(id), Some(delta)) =
+                                (params["itemId"].as_str(), params["delta"].as_str())
+                            {
+                                return Some(WorkerEvent::Activity(json!({
+                                    "type": "tool_execution_update",
+                                    "toolCallId": id,
+                                    "partialResult": {"content": [{"type": "text", "text": delta}]},
+                                })));
+                            }
+                        }
+                        "item/completed" => {
+                            if let Some(event) = codex_tool_end(&params) {
+                                return Some(WorkerEvent::Activity(event));
                             }
                         }
                         "turn/completed" => {
@@ -402,9 +549,17 @@ impl WorkerSession for CodexWorkerSession {
                                     "Codex worker turn failed".into(),
                                 ));
                             }
-                            return Some(WorkerEvent::Settled {
+                            let settled = WorkerEvent::Settled {
                                 output: self.output.clone(),
-                            });
+                            };
+                            if self.message_started {
+                                self.events.push_back(settled);
+                                return Some(WorkerEvent::Activity(json!({
+                                    "type": "message_end",
+                                    "message": {"role": "assistant"}
+                                })));
+                            }
+                            return Some(settled);
                         }
                         _ => {}
                     }
@@ -446,6 +601,43 @@ impl WorkerSession for CodexWorkerSession {
 }
 
 impl CodexWorkerSession {
+    fn send_input(
+        &mut self,
+        input: Vec<CodexUserInput>,
+        mode: WorkerSendMode,
+    ) -> Result<(), String> {
+        if mode == WorkerSendMode::Steer {
+            let turn_id = self
+                .current_turn
+                .as_deref()
+                .ok_or_else(|| "Codex worker has not reported its active turn".to_owned())?;
+            let id = self.request(
+                "turn/steer",
+                json!({
+                    "threadId": self.thread_id,
+                    "expectedTurnId": turn_id,
+                    "input": input,
+                }),
+            )?;
+            self.pending.insert(id, PendingRequest::Ignore);
+            return Ok(());
+        }
+        self.output.clear();
+        self.message_started = false;
+        self.reasoning_started = false;
+        let id = self.request(
+            "turn/start",
+            json!({
+                "threadId": self.thread_id,
+                "input": input,
+                "model": self.model,
+                "effort": self.effort,
+            }),
+        )?;
+        self.pending.insert(id, PendingRequest::StartTurn);
+        Ok(())
+    }
+
     fn request(&mut self, method: &str, params: Value) -> Result<CodexRequestId, String> {
         self.next_id = self
             .next_id
@@ -481,6 +673,61 @@ fn configure_farcaster_mcp(command: &mut std::process::Command, caller_token: &s
         ))
         .arg("-c")
         .arg("mcp_servers.farcaster.required=true");
+}
+
+fn codex_tool_start(params: &Value) -> Option<Value> {
+    let item = params.get("item")?;
+    let kind = item.get("type")?.as_str()?;
+    if !matches!(
+        kind,
+        "commandExecution" | "mcpToolCall" | "fileChange" | "webSearch"
+    ) {
+        return None;
+    }
+    let id = item.get("id")?.as_str()?;
+    let name = item
+        .get("server")
+        .and_then(Value::as_str)
+        .or_else(|| item.get("name").and_then(Value::as_str))
+        .unwrap_or(kind);
+    let args = item
+        .get("arguments")
+        .cloned()
+        .or_else(|| item.get("command").cloned())
+        .unwrap_or_else(|| json!({}));
+    Some(json!({
+        "type": "tool_execution_start",
+        "toolCallId": id,
+        "toolName": name,
+        "args": args,
+    }))
+}
+
+fn codex_tool_end(params: &Value) -> Option<Value> {
+    let item = params.get("item")?;
+    let kind = item.get("type")?.as_str()?;
+    if !matches!(
+        kind,
+        "commandExecution" | "mcpToolCall" | "fileChange" | "webSearch"
+    ) {
+        return None;
+    }
+    let id = item.get("id")?.as_str()?;
+    let output = item
+        .get("aggregatedOutput")
+        .and_then(Value::as_str)
+        .or_else(|| item.get("result").and_then(Value::as_str))
+        .unwrap_or_default();
+    let failed = item
+        .get("status")
+        .and_then(Value::as_str)
+        .is_some_and(|status| matches!(status, "failed" | "declined"));
+    Some(json!({
+        "type": "tool_execution_end",
+        "toolCallId": id,
+        "result": {"content": [{"type": "text", "text": output}]},
+        "isError": failed,
+    }))
 }
 
 fn approval_prompt(method: &str, params: &Value) -> String {

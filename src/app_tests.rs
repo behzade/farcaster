@@ -3,7 +3,7 @@ use std::time::SystemTime;
 use super::*;
 use crate::{
     agent_activity::{AgentActivity, AgentLifecycle},
-    conversation::{TranscriptItem, TranscriptKind},
+    app::views::transcript::conversation::{TranscriptItem, TranscriptKind},
     sessions::UsageSummary,
 };
 

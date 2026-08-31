@@ -107,6 +107,26 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
         decode_empty(response)
     }
 
+    pub(crate) fn models(&mut self, directory: &str) -> Result<Value, String> {
+        let directory = url::form_urlencoded::byte_serialize(directory.as_bytes())
+            .collect::<String>();
+        self.json(
+            OpenCodeHttpMethod::Get,
+            format!("/api/model?directory={directory}"),
+            None,
+        )
+    }
+
+    pub(crate) fn commands(&mut self, directory: &str) -> Result<Value, String> {
+        let directory = url::form_urlencoded::byte_serialize(directory.as_bytes())
+            .collect::<String>();
+        self.json(
+            OpenCodeHttpMethod::Get,
+            format!("/api/command?directory={directory}"),
+            None,
+        )
+    }
+
     pub(crate) fn list_sessions(&mut self, query: &str) -> Result<Value, String> {
         let encoded = url::form_urlencoded::byte_serialize(query.as_bytes()).collect::<String>();
         self.json(
@@ -125,6 +145,72 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
             ),
             None,
         )
+    }
+
+    pub(crate) fn reply_permission(
+        &mut self,
+        session_id: &str,
+        request_id: &str,
+        reply: &str,
+    ) -> Result<(), String> {
+        let response = self.execute(
+            OpenCodeHttpMethod::Post,
+            format!(
+                "/api/session/{}/permission/{}/reply",
+                path_segment(session_id),
+                path_segment(request_id)
+            ),
+            Some(json!({"reply": reply})),
+        )?;
+        ensure_success(&response)
+    }
+
+    pub(crate) fn reply_form(
+        &mut self,
+        session_id: &str,
+        form_id: &str,
+        answer: Value,
+    ) -> Result<(), String> {
+        let response = self.execute(
+            OpenCodeHttpMethod::Post,
+            format!(
+                "/api/session/{}/form/{}/reply",
+                path_segment(session_id),
+                path_segment(form_id)
+            ),
+            Some(json!({"answer": answer})),
+        )?;
+        ensure_success(&response)
+    }
+
+    pub(crate) fn cancel_form(&mut self, session_id: &str, form_id: &str) -> Result<(), String> {
+        let response = self.execute(
+            OpenCodeHttpMethod::Post,
+            format!(
+                "/api/session/{}/form/{}/cancel",
+                path_segment(session_id),
+                path_segment(form_id)
+            ),
+            None,
+        )?;
+        ensure_success(&response)
+    }
+
+    pub(crate) fn select_model(
+        &mut self,
+        session_id: &str,
+        provider: &str,
+        model: &str,
+        variant: Option<&str>,
+    ) -> Result<(), String> {
+        let response = self.execute(
+            OpenCodeHttpMethod::Post,
+            format!("/api/session/{}/model", path_segment(session_id)),
+            Some(json!({
+                "model": {"providerID": provider, "id": model, "variant": variant}
+            })),
+        )?;
+        ensure_success(&response)
     }
 
     pub(crate) fn compact_session(&mut self, session_id: &str) -> Result<(), String> {

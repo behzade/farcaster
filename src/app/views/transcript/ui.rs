@@ -1,15 +1,15 @@
 use gpui::Context;
 
 use super::FarcasterApp;
-use crate::conversation::TranscriptKind;
+use crate::app::views::transcript::conversation::TranscriptKind;
 
 impl FarcasterApp {
-    pub(super) fn project_transcript_rows(
+    pub(in crate::app) fn project_transcript_rows(
         &self,
         snapshot: &crate::runtime::RuntimeSnapshot,
-    ) -> crate::transcript::TranscriptRowUpdate {
+    ) -> crate::app::views::transcript::TranscriptRowUpdate {
         let _timing = crate::performance::Timing::new("transcript.project_rows");
-        crate::transcript::update_rows_incremental(
+        crate::app::views::transcript::update_rows_incremental(
             &self.transcript_rows,
             &self.snapshot.conversation.items,
             &snapshot.conversation.items,
@@ -41,7 +41,7 @@ impl FarcasterApp {
         self.notify_transcript(cx);
     }
 
-    pub(super) fn sync_composer_history(&mut self) {
+    pub(in crate::app) fn sync_composer_history(&mut self) {
         let _timing = crate::performance::OperationTiming::new(
             crate::performance::OperationKind::ComposerHistory,
             self.snapshot.conversation.items.len(),
@@ -74,9 +74,9 @@ impl FarcasterApp {
         self.composer_history_marker = Some((target, user_count, last_user.to_owned()));
     }
 
-    pub(super) fn apply_transcript_rows(
+    pub(in crate::app) fn apply_transcript_rows(
         &mut self,
-        update: crate::transcript::TranscriptRowUpdate,
+        update: crate::app::views::transcript::TranscriptRowUpdate,
     ) -> bool {
         update.apply(
             &self.transcript_list,
@@ -85,14 +85,15 @@ impl FarcasterApp {
         )
     }
 
-    pub(super) fn mark_transcript_changed(&mut self, index: usize, _was_empty: bool) {
-        let rows = crate::transcript::update_rows_from(
+    pub(in crate::app) fn mark_transcript_changed(&mut self, index: usize, _was_empty: bool) {
+        let rows = crate::app::views::transcript::update_rows_from(
             &self.transcript_rows,
             &self.snapshot.conversation.items,
             &self.snapshot.conversation.items,
             Some(index),
         );
-        let _changed =
-            self.apply_transcript_rows(crate::transcript::TranscriptRowUpdate::replace(rows));
+        let _changed = self.apply_transcript_rows(
+            crate::app::views::transcript::TranscriptRowUpdate::replace(rows),
+        );
     }
 }
