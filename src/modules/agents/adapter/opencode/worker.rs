@@ -35,7 +35,7 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
         if launch.provider.is_some() != launch.model.is_some() {
             return Err("OpenCode worker provider and model must be supplied together".into());
         }
-        let mut sandbox = self.command.command(&launch.project)?;
+        let mut sandbox = self.command.command_with_home_metadata(&launch.project)?;
         let caller_identity =
             crate::modules::agents::core::CallerRegistry::shared().issue(&launch.project);
         configure_farcaster_mcp(&mut sandbox.command, caller_identity.token())?;
@@ -108,7 +108,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
     ),
     String,
 > {
-    let mut sandbox = command.command(&launch.project)?;
+    let mut sandbox = command.command_with_home_metadata(&launch.project)?;
     let caller_identity =
         crate::modules::agents::core::CallerRegistry::shared().issue(&launch.project);
     configure_farcaster_mcp(&mut sandbox.command, caller_identity.token())?;

@@ -49,6 +49,7 @@ pub(crate) fn prepare_sandboxed_command(
             access,
             grants.map(GrantStore::resolve).unwrap_or_default(),
             network,
+            paths.metadata_read,
         )?)
         .map_err(|error| format!("write Farcaster sandbox profile: {error}"))?;
     profile
@@ -213,6 +214,7 @@ mod tests {
                 home,
                 agent_state: &agent_state,
                 temporary,
+                metadata_read: &[],
             },
             AccessPolicy {
                 filesystem: FilesystemAccess::Sandboxed,
@@ -305,6 +307,7 @@ mod tests {
                 home: &home,
                 agent_state: &agent_state,
                 temporary: &temporary,
+                metadata_read: std::slice::from_ref(&home),
             },
             AccessPolicy {
                 filesystem: FilesystemAccess::Sandboxed,
@@ -322,9 +325,14 @@ mod tests {
             .position(|argument| *argument == "--profile")
             .ok_or("profile argument")?;
         let profile = std::fs::read(arguments[profile_index + 1])?;
+        let profile = serde_json::from_slice::<serde_json::Value>(&profile)?;
+        assert_eq!(profile["meta"]["name"], "farcaster-agent");
         assert_eq!(
-            serde_json::from_slice::<serde_json::Value>(&profile)?["meta"]["name"],
-            "farcaster-agent"
+            profile["unsafe_macos_seatbelt_rules"],
+            serde_json::json!([format!(
+                "(allow file-read-metadata (literal \"{}\"))",
+                home.display()
+            )])
         );
         Ok(())
     }
@@ -393,6 +401,7 @@ mod tests {
                     home: Path::new("/unused"),
                     agent_state: Path::new("/unused"),
                     temporary: Path::new("/unused"),
+                    metadata_read: &[],
                 },
                 access,
                 None,
