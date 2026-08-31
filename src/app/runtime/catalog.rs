@@ -1,97 +1,7 @@
 use super::*;
 
-#[derive(Default)]
-pub(super) struct ExternalActivityTracker {
-    deadlines: HashMap<PathBuf, Instant>,
-}
-
-impl ExternalActivityTracker {
-    pub(super) fn observe_files(
-        &mut self,
-        catalog: &[SessionSummary],
-        owned: &HashSet<PathBuf>,
-        paths: &[PathBuf],
-        now: Instant,
-    ) -> bool {
-        let mut refresh = false;
-        for candidate in paths {
-            if owned.contains(candidate) {
-                continue;
-            }
-            let known = catalog
-                .iter()
-                .find(|session| session.path == candidate.as_path());
-            let (path, is_running) = if let Some(session) = known {
-                (session.path.clone(), session.is_running)
-            } else {
-                let path = if self.deadlines.contains_key(candidate) {
-                    candidate.clone()
-                } else {
-                    crate::sessions::normalize_session_path(candidate)
-                };
-                let is_running = catalog
-                    .iter()
-                    .any(|session| session.path == path && session.is_running);
-                (path, is_running)
-            };
-            if owned.contains(&path) {
-                continue;
-            }
-            let became_active = self
-                .deadlines
-                .insert(path, now + RUNNING_ACTIVITY_TIMEOUT)
-                .is_none();
-            refresh |= became_active && !is_running;
-        }
-        refresh
-    }
-
-    pub(super) fn remove_owned(&mut self, owned: &HashSet<PathBuf>) {
-        self.deadlines.retain(|path, _| !owned.contains(path));
-    }
-
-    pub(super) fn sync_catalog(
-        &mut self,
-        sessions: &[SessionSummary],
-        exhaustive: bool,
-        owned: &HashSet<PathBuf>,
-        now: Instant,
-        wall_now: SystemTime,
-    ) {
-        let mut seen = HashSet::new();
-        for session in sessions {
-            let path = session.path.clone();
-            seen.insert(path.clone());
-            if owned.contains(&path) || !session.is_running {
-                self.deadlines.remove(&path);
-                continue;
-            }
-            let remaining = wall_now
-                .duration_since(session.modified)
-                .map_or(RUNNING_ACTIVITY_TIMEOUT, |age| {
-                    RUNNING_ACTIVITY_TIMEOUT.saturating_sub(age)
-                });
-            let due = now + remaining;
-            self.deadlines
-                .entry(path)
-                .and_modify(|current| *current = (*current).max(due))
-                .or_insert(due);
-        }
-        if exhaustive {
-            self.deadlines.retain(|path, _| seen.contains(path));
-        }
-    }
-
-    pub(super) fn take_expired(&mut self, now: Instant) -> bool {
-        let previous_len = self.deadlines.len();
-        self.deadlines.retain(|_, due| *due > now);
-        self.deadlines.len() != previous_len
-    }
-
-    pub(super) fn next_deadline(&self) -> Option<Instant> {
-        self.deadlines.values().copied().min()
-    }
-}
+#[cfg(test)]
+use crate::sessions::RUNNING_ACTIVITY_TIMEOUT;
 
 impl RuntimeOwner {
     pub(super) fn load_sessions(&mut self, query: String) {
@@ -275,12 +185,14 @@ mod tests {
             &HashSet::new(),
             std::slice::from_ref(&path),
             start,
+            crate::sessions::normalize_session_path,
         ));
         assert!(!activity.observe_files(
             std::slice::from_ref(&dormant),
             &HashSet::new(),
             std::slice::from_ref(&path),
             start + Duration::from_secs(1),
+            crate::sessions::normalize_session_path,
         ));
         assert!(!activity.take_expired(start + RUNNING_ACTIVITY_TIMEOUT));
         assert!(activity.take_expired(start + Duration::from_secs(1) + RUNNING_ACTIVITY_TIMEOUT));
@@ -293,12 +205,19 @@ mod tests {
             &HashSet::new(),
             std::slice::from_ref(&path),
             start,
+            crate::sessions::normalize_session_path,
         ));
         assert!(active.take_expired(start + RUNNING_ACTIVITY_TIMEOUT));
 
         let mut owned = ExternalActivityTracker::default();
         let owned_paths = HashSet::from([path.clone()]);
-        assert!(!owned.observe_files(&[dormant], &owned_paths, &[path], start));
+        assert!(!owned.observe_files(
+            &[dormant],
+            &owned_paths,
+            &[path],
+            start,
+            crate::sessions::normalize_session_path,
+        ));
         assert!(!owned.take_expired(start + RUNNING_ACTIVITY_TIMEOUT));
     }
 

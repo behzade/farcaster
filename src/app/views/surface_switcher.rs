@@ -24,6 +24,13 @@ impl FarcasterApp {
             .and_then(|path| self.sessions.iter().find(|session| session.path == path))
             .or(session)
             .map(|session| AppIcon::for_harness(&session.harness))
+            .or_else(|| {
+                let selected = self.selected_draft.as_deref()?;
+                self.drafts
+                    .iter()
+                    .find(|draft| draft.id == selected)
+                    .map(|draft| AppIcon::for_harness(&draft.harness))
+            })
             .unwrap_or(AppIcon::Pi);
         let title = session.map(|session| session.title.clone()).or_else(|| {
             let selected = self.selected_draft.as_deref()?;

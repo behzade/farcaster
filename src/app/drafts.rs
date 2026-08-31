@@ -81,9 +81,16 @@ impl FarcasterApp {
         let Some(id) = self.selected_draft.clone() else {
             return;
         };
-        let Some(draft) = self.drafts.iter_mut().find(|draft| draft.id == id) else {
-            return;
-        };
+        if !self.drafts.iter().any(|draft| draft.id == id) {
+            let mut draft = DraftSession::with_id(id.clone(), self.project.clone());
+            draft.app_session_id = self.draft_session_ids.get(&id).copied().unwrap_or_default();
+            self.drafts.insert(0, draft);
+        }
+        let draft = self
+            .drafts
+            .iter_mut()
+            .find(|draft| draft.id == id)
+            .expect("selected draft was materialized");
         if !draft.change_harness(harness.clone()) {
             return;
         }

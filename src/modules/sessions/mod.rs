@@ -13,7 +13,8 @@ pub(crate) use contract::{
     TransferMember, UsageSummary,
 };
 pub(crate) use core::{
-    SessionRootIndex, SessionStore, archived_root_family_for_path, cached_sessions,
+    ExternalActivityTracker, SessionRootIndex, SessionStore, archived_root_family_for_path,
+    cached_sessions,
     collect_changes, delete_state, descendant_sessions, filter_session_tree, index_sessions,
     is_subagent_path, normalize_lexical, relocate_state, root_session_for_path, root_sessions,
     session_family_for_path, set_archived,

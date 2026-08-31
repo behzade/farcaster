@@ -5,6 +5,14 @@ use std::{
 
 use super::super::SessionSummary;
 
+pub(crate) fn document_is_live(
+    session: &SessionSummary,
+    interacted: bool,
+    transport_attached: bool,
+) -> bool {
+    transport_attached || session.is_running || (interacted && !session.archived)
+}
+
 pub(crate) fn filter_session_tree(
     mut sessions: Vec<SessionSummary>,
     query: &str,

@@ -33,13 +33,12 @@ use crate::{
         SessionState, SlashCommand,
     },
     sessions::{
-        self, LoadedHistory, RUNNING_ACTIVITY_TIMEOUT, SessionDiscovery, SessionSummary,
-        SessionWatchEvent, SessionWatcher, TransferMember, archived_root_family_for_path,
+        self, ExternalActivityTracker, LoadedHistory, SessionDiscovery, SessionSummary, SessionWatchEvent, SessionWatcher, TransferMember,
+        archived_root_family_for_path,
         configured_session_root, discover, load_history, project_display_history,
         session_family_for_path,
     },
 };
-use catalog::ExternalActivityTracker;
 use session_controls::PendingSessionControls;
 use session_identity::SessionControlDefaults;
 
@@ -670,6 +669,7 @@ fn run_supervisor(
                             &rpc_owned_session_paths(&latest),
                             &paths,
                             Instant::now(),
+                            sessions::normalize_session_path,
                         );
                         if refresh && let Some(catalog) = actors.get(&catalog_key) {
                             catalog.send(RuntimeCommand::RefreshSessions);
