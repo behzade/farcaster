@@ -12,9 +12,9 @@ use super::server::OpenCodeServerProcess;
 use crate::{
     access::SandboxedCommand,
     agents::{
-        AgentLaunchConfig, WorkerContext, WorkerEvent, WorkerInput, WorkerInputResponse,
-        WorkerLaunch,
-        WorkerSendMode, WorkerSession, WorkerSessionFactory,
+        AgentLaunchConfig, TokenUsage, WorkerActivity, WorkerContext, WorkerEvent, WorkerInput,
+        WorkerInputResponse, WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory,
+        WorkerUsage,
     },
     modules::agents::adapter::{child_stderr, farcaster_mcp},
 };
@@ -87,8 +87,9 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
             model: launch.model,
             effort: launch.effort,
             incoming,
-            message_started: false,
             reasoning_started: false,
+            session_usage: TokenUsage::default(),
+            context_window: 0,
             pending_inputs: HashMap::new(),
             generation: 0,
             completions: None,
@@ -130,6 +131,12 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
     let server = OpenCodeServerProcess::attach(child, "opencode", password)?;
     let mut client = server.client();
     let metadata = load_main_metadata(&mut client, &launch.project.to_string_lossy())?;
+    let context_window = metadata
+        .models
+        .first()
+        .and_then(|model| model.get("contextWindow"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
     let session = match &launch.start {
         crate::agents::SessionStart::New => client.create_session(
             &launch.project.to_string_lossy(),
@@ -163,8 +170,9 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
             model: None,
             effort: None,
             incoming,
-            message_started: false,
             reasoning_started: false,
+            session_usage: TokenUsage::default(),
+            context_window,
             pending_inputs: HashMap::new(),
             generation: 0,
             completions: None,
@@ -284,8 +292,9 @@ struct OpenCodeWorkerSession {
     model: Option<String>,
     effort: Option<String>,
     incoming: mpsc::Receiver<Result<super::contract::OpenCodeEvent, String>>,
-    message_started: bool,
     reasoning_started: bool,
+    session_usage: TokenUsage,
+    context_window: u64,
     pending_inputs: HashMap<String, PendingOpenCodeInput>,
     generation: u64,
     completions: Option<mpsc::Receiver<(u64, Result<String, String>)>>,
@@ -309,7 +318,6 @@ impl OpenCodeWorkerSession {
             .client()
             .prompt(&self.session_id, &message, files, delivery)?;
         if mode != WorkerSendMode::Steer {
-            self.message_started = false;
             self.reasoning_started = false;
         }
         self.generation = self.generation.saturating_add(1);
@@ -349,87 +357,48 @@ impl OpenCodeWorkerSession {
             match event.event.as_deref()? {
                 "session.text.delta" => {
                     let delta = event.data.get("delta").and_then(Value::as_str)?;
-                    let index = usize::from(self.reasoning_started);
-                    let update = WorkerEvent::Activity(json!({
-                        "type": "message_update",
-                        "assistantMessageEvent": {
-                            "type": "text_delta",
-                            "contentIndex": index,
-                            "delta": delta,
-                        }
+                    return Some(WorkerEvent::Activity(WorkerActivity::TextDelta {
+                        content_index: usize::from(self.reasoning_started),
+                        delta: delta.to_owned(),
                     }));
-                    if !self.message_started {
-                        self.message_started = true;
-                        self.pending.push_back(update);
-                        return Some(WorkerEvent::Activity(json!({
-                            "type": "message_start",
-                            "message": {"role": "assistant", "content": []}
-                        })));
-                    }
-                    return Some(update);
                 }
                 "session.reasoning.delta" => {
                     let delta = event.data.get("delta").and_then(Value::as_str)?;
-                    if !self.message_started {
-                        self.message_started = true;
-                        self.reasoning_started = true;
-                        self.pending.push_back(WorkerEvent::Activity(json!({
-                            "type": "message_update",
-                            "assistantMessageEvent": {
-                                "type": "thinking_start",
-                                "contentIndex": 0,
-                            }
-                        })));
-                        self.pending.push_back(WorkerEvent::Activity(json!({
-                            "type": "message_update",
-                            "assistantMessageEvent": {
-                                "type": "thinking_delta",
-                                "contentIndex": 0,
-                                "delta": delta,
-                            }
-                        })));
-                        return Some(WorkerEvent::Activity(json!({
-                            "type": "message_start",
-                            "message": {"role": "assistant", "content": []}
-                        })));
-                    }
                     self.reasoning_started = true;
-                    return Some(WorkerEvent::Activity(json!({
-                        "type": "message_update",
-                        "assistantMessageEvent": {
-                            "type": "thinking_delta",
-                            "contentIndex": 0,
-                            "delta": delta,
-                        }
-                    })));
+                    return Some(WorkerEvent::Activity(WorkerActivity::ThinkingDelta {
+                        content_index: 0,
+                        delta: delta.to_owned(),
+                    }));
                 }
                 "session.tool.input.started" => {
-                    return Some(WorkerEvent::Activity(json!({
-                        "type": "tool_execution_start",
-                        "toolCallId": event.data.get("id").and_then(Value::as_str)?,
-                        "toolName": event.data.get("name").and_then(Value::as_str).unwrap_or("tool"),
-                        "args": {},
-                    })));
+                    return Some(WorkerEvent::Activity(WorkerActivity::ToolStarted {
+                        id: event.data.get("id").and_then(Value::as_str)?.to_owned(),
+                        name: event
+                            .data
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or("tool")
+                            .to_owned(),
+                        args: json!({}),
+                    }));
                 }
                 "session.tool.called" => {
-                    return Some(WorkerEvent::Activity(json!({
-                        "type": "tool_execution_update",
-                        "toolCallId": event.data.get("id").and_then(Value::as_str)?,
-                        "partialResult": {"content": [{
+                    return Some(WorkerEvent::Activity(WorkerActivity::ToolUpdated {
+                        id: event.data.get("id").and_then(Value::as_str)?.to_owned(),
+                        content: json!([{
                             "type": "text",
                             "text": event.data.get("input").map(Value::to_string).unwrap_or_default(),
-                        }]},
-                    })));
+                        }]),
+                    }));
                 }
                 "session.tool.progress" => {
-                    return Some(WorkerEvent::Activity(json!({
-                        "type": "tool_execution_update",
-                        "toolCallId": event.data.get("id").and_then(Value::as_str)?,
-                        "partialResult": {"content": [{
+                    return Some(WorkerEvent::Activity(WorkerActivity::ToolUpdated {
+                        id: event.data.get("id").and_then(Value::as_str)?.to_owned(),
+                        content: json!([{
                             "type": "text",
                             "text": event.data.get("metadata").map(Value::to_string).unwrap_or_default(),
-                        }]},
-                    })));
+                        }]),
+                    }));
                 }
                 "session.step.ended" => {
                     let usage = event
@@ -447,25 +416,46 @@ impl OpenCodeWorkerSession {
                         .pointer("/cache/write")
                         .and_then(Value::as_u64)
                         .unwrap_or(0);
-                    return Some(WorkerEvent::Activity(json!({
-                        "type": "turn_end",
-                        "usage": {
-                            "input": input,
-                            "output": output + reasoning,
-                            "cacheRead": cache_read,
-                            "cacheWrite": cache_write,
-                            "totalTokens": input + output + reasoning + cache_read + cache_write,
-                        }
+                    let turn = TokenUsage {
+                        input,
+                        output: output.saturating_add(reasoning),
+                        cache_read,
+                        cache_write,
+                    };
+                    self.session_usage = self.session_usage.saturating_add(turn);
+                    return Some(WorkerEvent::Activity(WorkerActivity::Usage(WorkerUsage {
+                        turn,
+                        session: self.session_usage,
+                        context_window: self.context_window,
                     })));
                 }
                 "session.tool.success" | "session.tool.failed" => {
-                    let failed = event.event.as_deref() == Some("session.tool.failed");
-                    return Some(WorkerEvent::Activity(json!({
-                        "type": "tool_execution_end",
-                        "toolCallId": event.data.get("id").and_then(Value::as_str)?,
-                        "result": {"content": event.data.get("content").cloned().unwrap_or_else(|| json!([]))},
-                        "isError": failed,
-                    })));
+                    return Some(WorkerEvent::Activity(WorkerActivity::ToolFinished {
+                        id: event.data.get("id").and_then(Value::as_str)?.to_owned(),
+                        result: event
+                            .data
+                            .get("content")
+                            .cloned()
+                            .unwrap_or_else(|| json!([])),
+                        is_error: event.event.as_deref() == Some("session.tool.failed"),
+                    }));
+                }
+                "session.compaction.started" | "session.next.compaction.started.1" => {
+                    return Some(WorkerEvent::Activity(WorkerActivity::CompactionStarted));
+                }
+                "session.compaction.ended" | "session.next.compaction.ended.1" => {
+                    return Some(WorkerEvent::Activity(WorkerActivity::CompactionFinished {
+                        aborted: event
+                            .data
+                            .get("aborted")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false),
+                        error: event
+                            .data
+                            .get("error")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
+                    }));
                 }
                 "permission.asked" => {
                     let id = event.data.get("id").and_then(Value::as_str)?.to_owned();
@@ -652,17 +642,7 @@ impl WorkerSession for OpenCodeWorkerSession {
         }
         self.completions = None;
         Some(match completion.1 {
-            Ok(output) => {
-                if self.message_started {
-                    self.pending.push_back(WorkerEvent::Settled { output });
-                    WorkerEvent::Activity(json!({
-                        "type": "message_end",
-                        "message": {"role": "assistant"}
-                    }))
-                } else {
-                    WorkerEvent::Settled { output }
-                }
-            }
+            Ok(output) => WorkerEvent::Settled { output },
             Err(error) => WorkerEvent::Failed(error),
         })
     }

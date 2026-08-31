@@ -16,8 +16,9 @@ use super::{
 use crate::{
     access::SandboxedCommand,
     agents::{
-        AgentLaunchConfig, WorkerContext, WorkerEvent, WorkerInput, WorkerInputResponse,
-        WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory,
+        AgentLaunchConfig, TokenUsage, WorkerActivity, WorkerContext, WorkerEvent, WorkerInput,
+        WorkerInputResponse, WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory,
+        WorkerUsage,
     },
     modules::agents::adapter::{child_stderr, farcaster_mcp},
 };
@@ -105,8 +106,8 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             next_id,
             current_turn: None,
             output: String::new(),
-            message_started: false,
             reasoning_started: false,
+            compacting: false,
             pending: HashMap::new(),
             pending_inputs: HashMap::new(),
             events: VecDeque::from([WorkerEvent::SessionChanged { locator: thread_id }]),
@@ -196,8 +197,8 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         next_id,
         current_turn: None,
         output: String::new(),
-        message_started: false,
         reasoning_started: false,
+        compacting: false,
         pending: HashMap::new(),
         pending_inputs: HashMap::new(),
         events: VecDeque::new(),
@@ -409,8 +410,8 @@ struct CodexWorkerSession {
     next_id: i64,
     current_turn: Option<String>,
     output: String,
-    message_started: bool,
     reasoning_started: bool,
+    compacting: bool,
     pending: HashMap<CodexRequestId, PendingRequest>,
     pending_inputs: HashMap<String, CodexRequestId>,
     events: VecDeque<WorkerEvent>,
@@ -542,7 +543,6 @@ impl WorkerSession for CodexWorkerSession {
                                 self.current_turn = Some(turn_id.to_owned());
                                 if new_turn {
                                     self.output.clear();
-                                    self.message_started = false;
                                     self.reasoning_started = false;
                                     return Some(WorkerEvent::Started);
                                 }
@@ -551,63 +551,32 @@ impl WorkerSession for CodexWorkerSession {
                         "item/agentMessage/delta" => {
                             if let Some(delta) = params["delta"].as_str() {
                                 self.output.push_str(delta);
-                                let index = usize::from(self.reasoning_started);
-                                let update = WorkerEvent::Activity(json!({
-                                    "type": "message_update",
-                                    "assistantMessageEvent": {
-                                        "type": "text_delta",
-                                        "contentIndex": index,
-                                        "delta": delta,
-                                    }
+                                return Some(WorkerEvent::Activity(WorkerActivity::TextDelta {
+                                    content_index: usize::from(self.reasoning_started),
+                                    delta: delta.to_owned(),
                                 }));
-                                if !self.message_started {
-                                    self.message_started = true;
-                                    self.events.push_back(update);
-                                    return Some(WorkerEvent::Activity(json!({
-                                        "type": "message_start",
-                                        "message": {"role": "assistant", "content": []}
-                                    })));
-                                }
-                                return Some(update);
                             }
                         }
                         "item/reasoning/summaryTextDelta" | "item/reasoning/textDelta" => {
                             if let Some(delta) = params["delta"].as_str() {
-                                if !self.message_started {
-                                    self.message_started = true;
-                                    self.events.push_back(WorkerEvent::Activity(json!({
-                                        "type": "message_update",
-                                        "assistantMessageEvent": {
-                                            "type": "thinking_start",
-                                            "contentIndex": 0,
-                                        }
-                                    })));
-                                    self.events.push_back(WorkerEvent::Activity(json!({
-                                        "type": "message_update",
-                                        "assistantMessageEvent": {
-                                            "type": "thinking_delta",
-                                            "contentIndex": 0,
-                                            "delta": delta,
-                                        }
-                                    })));
-                                    self.reasoning_started = true;
-                                    return Some(WorkerEvent::Activity(json!({
-                                        "type": "message_start",
-                                        "message": {"role": "assistant", "content": []}
-                                    })));
-                                }
                                 self.reasoning_started = true;
-                                return Some(WorkerEvent::Activity(json!({
-                                    "type": "message_update",
-                                    "assistantMessageEvent": {
-                                        "type": "thinking_delta",
-                                        "contentIndex": 0,
-                                        "delta": delta,
-                                    }
-                                })));
+                                return Some(WorkerEvent::Activity(
+                                    WorkerActivity::ThinkingDelta {
+                                        content_index: 0,
+                                        delta: delta.to_owned(),
+                                    },
+                                ));
                             }
                         }
                         "item/started" => {
+                            if params.pointer("/item/type").and_then(Value::as_str)
+                                == Some("contextCompaction")
+                            {
+                                self.compacting = true;
+                                return Some(WorkerEvent::Activity(
+                                    WorkerActivity::CompactionStarted,
+                                ));
+                            }
                             if let Some(event) = codex_tool_start(&params) {
                                 return Some(WorkerEvent::Activity(event));
                             }
@@ -616,11 +585,10 @@ impl WorkerSession for CodexWorkerSession {
                             if let (Some(id), Some(delta)) =
                                 (params["itemId"].as_str(), params["delta"].as_str())
                             {
-                                return Some(WorkerEvent::Activity(json!({
-                                    "type": "tool_execution_update",
-                                    "toolCallId": id,
-                                    "partialResult": {"content": [{"type": "text", "text": delta}]},
-                                })));
+                                return Some(WorkerEvent::Activity(WorkerActivity::ToolUpdated {
+                                    id: id.to_owned(),
+                                    content: json!([{"type": "text", "text": delta}]),
+                                }));
                             }
                         }
                         "item/completed" => {
@@ -629,43 +597,58 @@ impl WorkerSession for CodexWorkerSession {
                             {
                                 self.output.push_str(&output);
                             }
+                            if params.pointer("/item/type").and_then(Value::as_str)
+                                == Some("contextCompaction")
+                            {
+                                return Some(WorkerEvent::Activity(
+                                    WorkerActivity::CompactionFinished {
+                                        aborted: false,
+                                        error: None,
+                                    },
+                                ));
+                            }
                             if let Some(event) = codex_tool_end(&params) {
                                 return Some(WorkerEvent::Activity(event));
                             }
                         }
                         "thread/tokenUsage/updated" => {
                             let usage = params.get("tokenUsage")?;
-                            let total = usage.get("total")?;
-                            return Some(WorkerEvent::Activity(json!({
-                                "type": "turn_end",
-                                "contextWindow": usage.get("modelContextWindow").and_then(Value::as_u64).unwrap_or(0),
-                                "usage": {
-                                    "input": total.get("inputTokens").and_then(Value::as_u64).unwrap_or(0),
-                                    "output": total.get("outputTokens").and_then(Value::as_u64).unwrap_or(0),
-                                    "cacheRead": total.get("cachedInputTokens").and_then(Value::as_u64).unwrap_or(0),
-                                    "cacheWrite": total.get("cacheWriteInputTokens").and_then(Value::as_u64).unwrap_or(0),
-                                    "totalTokens": total.get("totalTokens").and_then(Value::as_u64).unwrap_or(0),
-                                }
-                            })));
+                            let session = codex_usage(usage.get("total")?);
+                            let turn = usage.get("last").map(codex_usage).unwrap_or(session);
+                            return Some(WorkerEvent::Activity(WorkerActivity::Usage(
+                                WorkerUsage {
+                                    turn,
+                                    session,
+                                    context_window: usage
+                                        .get("modelContextWindow")
+                                        .and_then(Value::as_u64)
+                                        .unwrap_or(0),
+                                },
+                            )));
                         }
                         "turn/completed" => {
                             self.current_turn = None;
-                            if params["turn"]["status"].as_str() == Some("failed") {
+                            let failed = params["turn"]["status"].as_str() == Some("failed");
+                            if self.compacting {
+                                self.compacting = false;
+                                if failed {
+                                    return Some(WorkerEvent::Activity(
+                                        WorkerActivity::CompactionFinished {
+                                            aborted: false,
+                                            error: Some("Codex compaction failed".into()),
+                                        },
+                                    ));
+                                }
+                                continue;
+                            }
+                            if failed {
                                 return Some(WorkerEvent::Failed(
                                     "Codex worker turn failed".into(),
                                 ));
                             }
-                            let settled = WorkerEvent::Settled {
+                            return Some(WorkerEvent::Settled {
                                 output: self.output.clone(),
-                            };
-                            if self.message_started {
-                                self.events.push_back(settled);
-                                return Some(WorkerEvent::Activity(json!({
-                                    "type": "message_end",
-                                    "message": {"role": "assistant"}
-                                })));
-                            }
-                            return Some(settled);
+                            });
                         }
                         _ => {}
                     }
@@ -742,7 +725,6 @@ impl CodexWorkerSession {
             return Ok(());
         }
         self.output.clear();
-        self.message_started = false;
         self.reasoning_started = false;
         let id = self.request(
             "turn/start",
@@ -816,7 +798,28 @@ fn codex_agent_message_text(item: &Value) -> Option<String> {
         })
 }
 
-fn codex_tool_start(params: &Value) -> Option<Value> {
+fn codex_usage(value: &Value) -> TokenUsage {
+    TokenUsage {
+        input: value
+            .get("inputTokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        output: value
+            .get("outputTokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        cache_read: value
+            .get("cachedInputTokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        cache_write: value
+            .get("cacheWriteInputTokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+    }
+}
+
+fn codex_tool_start(params: &Value) -> Option<WorkerActivity> {
     let item = params.get("item")?;
     let kind = item.get("type")?.as_str()?;
     if !matches!(
@@ -836,15 +839,14 @@ fn codex_tool_start(params: &Value) -> Option<Value> {
         .cloned()
         .or_else(|| item.get("command").cloned())
         .unwrap_or_else(|| json!({}));
-    Some(json!({
-        "type": "tool_execution_start",
-        "toolCallId": id,
-        "toolName": name,
-        "args": args,
-    }))
+    Some(WorkerActivity::ToolStarted {
+        id: id.to_owned(),
+        name: name.to_owned(),
+        args,
+    })
 }
 
-fn codex_tool_end(params: &Value) -> Option<Value> {
+fn codex_tool_end(params: &Value) -> Option<WorkerActivity> {
     let item = params.get("item")?;
     let kind = item.get("type")?.as_str()?;
     if !matches!(
@@ -863,12 +865,11 @@ fn codex_tool_end(params: &Value) -> Option<Value> {
         .get("status")
         .and_then(Value::as_str)
         .is_some_and(|status| matches!(status, "failed" | "declined"));
-    Some(json!({
-        "type": "tool_execution_end",
-        "toolCallId": id,
-        "result": {"content": [{"type": "text", "text": output}]},
-        "isError": failed,
-    }))
+    Some(WorkerActivity::ToolFinished {
+        id: id.to_owned(),
+        result: json!([{"type": "text", "text": output}]),
+        is_error: failed,
+    })
 }
 
 fn approval_prompt(method: &str, params: &Value) -> String {

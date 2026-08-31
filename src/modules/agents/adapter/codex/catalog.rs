@@ -196,11 +196,47 @@ fn summary(
             .get("turns")
             .and_then(Value::as_array)
             .map_or(0, Vec::len),
-        usage: DiscoveredUsage::default(),
+        usage: codex_usage(thread),
         archived,
         is_running,
         search,
     }))
+}
+
+fn codex_usage(thread: &Value) -> DiscoveredUsage {
+    let usage = thread
+        .pointer("/tokenUsage/total")
+        .or_else(|| thread.pointer("/usage/total"));
+    let Some(usage) = usage else {
+        return DiscoveredUsage::default();
+    };
+    let input = usage
+        .get("inputTokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let output = usage
+        .get("outputTokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let cache_read = usage
+        .get("cachedInputTokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let cache_write = usage
+        .get("cacheWriteInputTokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    DiscoveredUsage {
+        input,
+        output,
+        cache_read,
+        cache_write,
+        total: input
+            .saturating_add(output)
+            .saturating_add(cache_read)
+            .saturating_add(cache_write),
+        cost_micros: 0,
+    }
 }
 
 fn history_message(item: &Value) -> Option<Value> {
@@ -289,11 +325,15 @@ mod tests {
                 .map_err(|error| error.to_string())?
                 .as_secs(),
             "status": {"type": "active"},
+            "tokenUsage": {"total": {"inputTokens": 100, "outputTokens": 20, "cachedInputTokens": 80}},
         });
         let session = summary(project.as_path(), &value, false)?.ok_or("summary")?;
         assert_eq!(session.harness, "codex-cli");
         assert!(session.is_running);
         assert_eq!(session.title, "Fix tests");
+        assert_eq!(session.usage.input, 100);
+        assert_eq!(session.usage.output, 20);
+        assert_eq!(session.usage.cache_read, 80);
         Ok(())
     }
 

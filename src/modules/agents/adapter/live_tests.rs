@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::{
     agents::{
@@ -148,6 +148,7 @@ fn session_path(session: &mut dyn SessionTransport) -> Result<PathBuf, String> {
 
 fn exercise_live_session(session: &mut dyn SessionTransport) -> Result<(), String> {
     let mut conversation = ConversationState::default();
+    let mut observed_usage = None;
     let mut tool_starts = HashSet::new();
     let mut tool_ends = HashSet::new();
     let mut steered = false;
@@ -161,6 +162,7 @@ fn exercise_live_session(session: &mut dyn SessionTransport) -> Result<(), Strin
         &mut conversation,
         TURN_TIMEOUT,
         |session, event, _| {
+            capture_usage(event, &mut observed_usage);
             if event.get("type").and_then(Value::as_str) == Some("tool_execution_start") {
                 if let Some(id) = event.get("toolCallId").and_then(Value::as_str) {
                     tool_starts.insert(id.to_owned());
@@ -193,6 +195,7 @@ fn exercise_live_session(session: &mut dyn SessionTransport) -> Result<(), Strin
         ));
     }
     require_assistant_text(&conversation, "FARCASTER_STEER_OK")?;
+    require_usage(observed_usage.as_ref())?;
 
     let mut follow_up_sent = false;
     session.send(SessionCommand::Prompt {
@@ -206,6 +209,7 @@ fn exercise_live_session(session: &mut dyn SessionTransport) -> Result<(), Strin
         &mut conversation,
         TURN_TIMEOUT,
         |session, event, conversation| {
+            capture_usage(event, &mut observed_usage);
             if event.get("type").and_then(Value::as_str) == Some("agent_start") && !follow_up_sent {
                 session.send(SessionCommand::Prompt {
                     mode: PromptMode::FollowUp,
@@ -225,7 +229,84 @@ fn exercise_live_session(session: &mut dyn SessionTransport) -> Result<(), Strin
     if !follow_up_sent {
         return Err("the harness settled before a follow-up could be queued".into());
     }
-    require_assistant_text(&conversation, "FARCASTER_FOLLOWUP_OK")
+    require_assistant_text(&conversation, "FARCASTER_FOLLOWUP_OK")?;
+    require_usage(observed_usage.as_ref())?;
+    if conversation.average_cache_hit_rate.is_none() {
+        return Err("assistant finalization omitted cache usage".into());
+    }
+    require_usage_response(session)?;
+
+    session.send(SessionCommand::Compact { instructions: None })?;
+    let mut compaction_started = false;
+    poll_until(session, &mut conversation, TURN_TIMEOUT, |_, event, _| {
+        match event.get("type").and_then(Value::as_str) {
+            Some("compaction_start") => compaction_started = true,
+            Some("compaction_end") if compaction_started => return Ok(true),
+            _ => {}
+        }
+        Ok(false)
+    })?;
+    Ok(())
+}
+
+fn capture_usage(event: &Value, observed: &mut Option<Value>) {
+    if event.get("type").and_then(Value::as_str) == Some("turn_end") {
+        *observed = Some(event.clone());
+    }
+}
+
+fn require_usage(event: Option<&Value>) -> Result<(), String> {
+    let event = event.ok_or_else(|| "backend emitted no normalized token usage".to_owned())?;
+    let usage = event
+        .get("usage")
+        .ok_or_else(|| "turn usage is missing".to_owned())?;
+    for key in ["input", "output", "cacheRead", "cacheWrite", "totalTokens"] {
+        if usage.get(key).and_then(Value::as_u64).is_none() {
+            return Err(format!("turn usage omitted {key}"));
+        }
+    }
+    if usage.get("input").and_then(Value::as_u64).unwrap_or(0) == 0
+        || usage.get("output").and_then(Value::as_u64).unwrap_or(0) == 0
+    {
+        return Err(format!("turn usage is empty: {usage}"));
+    }
+    if event
+        .get("contextWindow")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        == 0
+    {
+        return Err("backend omitted the model context window".into());
+    }
+    Ok(())
+}
+
+fn require_usage_response(session: &mut dyn SessionTransport) -> Result<(), String> {
+    session.send(SessionCommand::LoadUsage)?;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        match session.poll() {
+            Some(SessionEvent::Response(response)) if response.command == "get_session_stats" => {
+                require_usage(Some(&json!({
+                    "type": "turn_end",
+                    "contextWindow": response.data.pointer("/contextUsage/contextWindow"),
+                    "usage": response.data.get("tokens"),
+                })))?;
+                let percent = response
+                    .data
+                    .pointer("/contextUsage/percent")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.0);
+                return (percent > 0.0)
+                    .then_some(())
+                    .ok_or_else(|| "context usage percentage was not populated".to_owned());
+            }
+            Some(SessionEvent::Failure(error)) => return Err(error),
+            Some(_) => {}
+            None => thread::sleep(Duration::from_millis(20)),
+        }
+    }
+    Err("timed out loading normalized token usage".into())
 }
 
 fn poll_until(

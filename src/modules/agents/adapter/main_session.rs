@@ -6,8 +6,8 @@ use std::{
 use serde_json::{Value, json};
 
 use crate::agents::{
-    SessionCommand, SessionEvent, SessionResponse, SessionTransport, WorkerEvent, WorkerInput,
-    WorkerInputResponse, WorkerSendMode, WorkerSession,
+    SessionCommand, SessionEvent, SessionResponse, SessionTransport, TokenUsage, WorkerActivity,
+    WorkerEvent, WorkerInput, WorkerInputResponse, WorkerSendMode, WorkerSession, WorkerUsage,
     extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptMode},
 };
 
@@ -32,8 +32,7 @@ pub(super) struct WorkerSessionTransport {
     effort: String,
     metadata: MainSessionMetadata,
     selected_mode: Option<String>,
-    usage_tokens: u64,
-    context_window: u64,
+    usage: WorkerUsage,
 }
 
 impl WorkerSessionTransport {
@@ -80,8 +79,10 @@ impl WorkerSessionTransport {
                 .unwrap_or_else(|| "off".into()),
             metadata,
             selected_mode,
-            usage_tokens: 0,
-            context_window,
+            usage: WorkerUsage {
+                context_window,
+                ..WorkerUsage::default()
+            },
         })
     }
 
@@ -102,7 +103,7 @@ impl WorkerSessionTransport {
                 "id": id,
                 "name": id,
                 "provider": provider,
-                "contextWindow": 0,
+                "contextWindow": self.usage.context_window,
                 "reasoning": true,
             })
         });
@@ -125,6 +126,7 @@ impl WorkerSessionTransport {
             WorkerEvent::Started => {
                 self.running = true;
                 self.assistant_message.clear();
+                self.usage.turn = TokenUsage::default();
                 self.pending
                     .push_back(SessionEvent::Activity(json!({"type": "agent_start"})));
             }
@@ -155,6 +157,7 @@ impl WorkerSessionTransport {
                     "message": {
                         "role": "assistant",
                         "content": self.assistant_message.content(),
+                        "usage": usage_json(self.usage.turn),
                     }
                 })));
                 self.pending
@@ -171,26 +174,97 @@ impl WorkerSessionTransport {
                 self.pending
                     .push_back(SessionEvent::Interaction(interaction(input)));
             }
-            WorkerEvent::Activity(activity) => {
-                if let Some(tokens) = activity
-                    .pointer("/usage/totalTokens")
-                    .and_then(Value::as_u64)
-                {
-                    self.usage_tokens = tokens;
-                }
-                if let Some(window) = activity
-                    .get("contextWindow")
-                    .and_then(Value::as_u64)
-                    .filter(|window| *window > 0)
-                {
-                    self.context_window = window;
-                }
-                if !self.assistant_message.observe(&activity) {
-                    self.pending.push_back(SessionEvent::Activity(activity));
-                }
-            }
+            WorkerEvent::Activity(activity) => self.enqueue_activity(activity),
             WorkerEvent::Failed(error) => self.pending.push_back(SessionEvent::Failure(error)),
         }
+    }
+
+    fn enqueue_activity(&mut self, activity: WorkerActivity) {
+        let event = match activity {
+            WorkerActivity::TextDelta {
+                content_index,
+                delta,
+            } => {
+                self.start_assistant_message();
+                self.assistant_message
+                    .append_delta(content_index, "text", "text", &delta);
+                json!({
+                    "type": "message_update",
+                    "assistantMessageEvent": {
+                        "type": "text_delta",
+                        "contentIndex": content_index,
+                        "delta": delta,
+                    }
+                })
+            }
+            WorkerActivity::ThinkingDelta {
+                content_index,
+                delta,
+            } => {
+                self.start_assistant_message();
+                self.assistant_message
+                    .append_delta(content_index, "thinking", "thinking", &delta);
+                json!({
+                    "type": "message_update",
+                    "assistantMessageEvent": {
+                        "type": "thinking_delta",
+                        "contentIndex": content_index,
+                        "delta": delta,
+                    }
+                })
+            }
+            WorkerActivity::ToolStarted { id, name, args } => json!({
+                "type": "tool_execution_start",
+                "toolCallId": id,
+                "toolName": name,
+                "args": args,
+            }),
+            WorkerActivity::ToolUpdated { id, content } => json!({
+                "type": "tool_execution_update",
+                "toolCallId": id,
+                "partialResult": {"content": content},
+            }),
+            WorkerActivity::ToolFinished {
+                id,
+                result,
+                is_error,
+            } => json!({
+                "type": "tool_execution_end",
+                "toolCallId": id,
+                "result": {"content": result},
+                "isError": is_error,
+            }),
+            WorkerActivity::Usage(usage) => {
+                self.usage = usage;
+                json!({
+                    "type": "turn_end",
+                    "contextWindow": usage.context_window,
+                    "usage": usage_json(usage.turn),
+                })
+            }
+            WorkerActivity::CompactionStarted => json!({
+                "type": "compaction_start",
+                "reason": "manual",
+            }),
+            WorkerActivity::CompactionFinished { aborted, error } => json!({
+                "type": "compaction_end",
+                "reason": "manual",
+                "aborted": aborted,
+                "errorMessage": error,
+            }),
+        };
+        self.pending.push_back(SessionEvent::Activity(event));
+    }
+
+    fn start_assistant_message(&mut self) {
+        if self.assistant_message.started {
+            return;
+        }
+        self.assistant_message.started = true;
+        self.pending.push_back(SessionEvent::Activity(json!({
+            "type": "message_start",
+            "message": {"role": "assistant", "content": []}
+        })));
     }
 }
 
@@ -215,14 +289,15 @@ impl SessionTransport for WorkerSessionTransport {
                 "get_session_stats",
                 json!({
                     "contextUsage": {
-                        "tokens": self.usage_tokens,
-                        "contextWindow": self.context_window,
-                        "percent": if self.context_window > 0 {
-                            self.usage_tokens as f64 * 100.0 / self.context_window as f64
+                        "tokens": self.usage.turn.total(),
+                        "contextWindow": self.usage.context_window,
+                        "percent": if self.usage.context_window > 0 {
+                            self.usage.turn.total() as f64 * 100.0 / self.usage.context_window as f64
                         } else {
                             0.0
                         },
-                    }
+                    },
+                    "tokens": usage_json(self.usage.session),
                 }),
             ),
             SessionCommand::ListModels => self.response(
@@ -351,75 +426,12 @@ impl AssistantMessage {
         self.content.clear();
     }
 
-    fn observe(&mut self, activity: &Value) -> bool {
-        match activity.get("type").and_then(Value::as_str) {
-            Some("message_start") => {
-                self.clear();
-                self.started = true;
-                false
-            }
-            Some("message_update") => {
-                self.started = true;
-                self.apply_delta(activity.get("assistantMessageEvent"));
-                false
-            }
-            Some("message_end") => true,
-            _ => false,
-        }
-    }
-
-    fn apply_delta(&mut self, delta: Option<&Value>) {
-        let Some(delta) = delta else { return };
-        let Some(index) = delta.get("contentIndex").and_then(Value::as_u64) else {
-            return;
-        };
-        let index = index as usize;
-        match delta.get("type").and_then(Value::as_str) {
-            Some("text_start") => {
-                self.content
-                    .insert(index, json!({"type": "text", "text": ""}));
-            }
-            Some("text_delta") => append_content_text(
-                self.content
-                    .entry(index)
-                    .or_insert_with(|| json!({"type": "text", "text": ""})),
-                "text",
-                delta
-                    .get("delta")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default(),
-            ),
-            Some("text_end") => {
-                self.content.insert(
-                    index,
-                    json!({
-                        "type": "text",
-                        "text": delta.get("content").and_then(Value::as_str).unwrap_or_default(),
-                    }),
-                );
-            }
-            Some("thinking_start") => {
-                self.content
-                    .insert(index, json!({"type": "thinking", "thinking": ""}));
-            }
-            Some("thinking_delta") => append_content_text(
-                self.content
-                    .entry(index)
-                    .or_insert_with(|| json!({"type": "thinking", "thinking": ""})),
-                "thinking",
-                delta
-                    .get("delta")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default(),
-            ),
-            Some("thinking_end") => {
-                self.content.insert(index, json!({
-                    "type": "thinking",
-                    "thinking": delta.get("content").and_then(Value::as_str).unwrap_or_default(),
-                }));
-            }
-            _ => {}
-        }
+    fn append_delta(&mut self, index: usize, kind: &str, field: &str, delta: &str) {
+        let part = self
+            .content
+            .entry(index)
+            .or_insert_with(|| json!({"type": kind, field: ""}));
+        append_content_text(part, field, delta);
     }
 
     fn text(&self) -> Option<&str> {
@@ -464,6 +476,16 @@ fn append_content_text(part: &mut Value, field: &str, delta: &str) {
         Some(Value::String(text)) => text.push_str(delta),
         _ => part[field] = Value::String(delta.to_owned()),
     }
+}
+
+fn usage_json(usage: TokenUsage) -> Value {
+    json!({
+        "input": usage.input,
+        "output": usage.output,
+        "cacheRead": usage.cache_read,
+        "cacheWrite": usage.cache_write,
+        "totalTokens": usage.total(),
+    })
 }
 
 fn interaction(input: WorkerInput) -> ExtensionUiRequest {
@@ -543,22 +565,8 @@ mod tests {
     #[test]
     fn completion_is_an_authoritative_message_before_settling() {
         let mut message = AssistantMessage::default();
-        assert!(!message.observe(&json!({
-            "type": "message_update",
-            "assistantMessageEvent": {
-                "type": "thinking_delta",
-                "contentIndex": 0,
-                "delta": "plan",
-            }
-        })));
-        assert!(!message.observe(&json!({
-            "type": "message_update",
-            "assistantMessageEvent": {
-                "type": "text_delta",
-                "contentIndex": 1,
-                "delta": "partial",
-            }
-        })));
+        message.append_delta(0, "thinking", "thinking", "plan");
+        message.append_delta(1, "text", "text", "partial");
         message.replace_text("final");
         assert_eq!(
             message.content(),
@@ -567,9 +575,5 @@ mod tests {
                 json!({"type": "text", "text": "final"}),
             ]
         );
-        assert!(message.observe(&json!({
-            "type": "message_end",
-            "message": {"role": "assistant"}
-        })));
     }
 }

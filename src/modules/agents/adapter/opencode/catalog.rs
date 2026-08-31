@@ -149,7 +149,7 @@ fn summary(
             .and_then(Value::as_u64)
             .and_then(|count| count.try_into().ok())
             .unwrap_or(0),
-        usage: DiscoveredUsage::default(),
+        usage: opencode_usage(value),
         archived,
         is_running,
         search,
@@ -171,7 +171,54 @@ fn history_message(value: &Value) -> Option<Value> {
     } else {
         Vec::new()
     };
-    Some(json!({"role": role, "content": content}))
+    let mut message = json!({"role": role, "content": content});
+    if role == "assistant" {
+        let usage = opencode_usage(value);
+        message["usage"] = json!({
+            "input": usage.input,
+            "output": usage.output,
+            "cacheRead": usage.cache_read,
+            "cacheWrite": usage.cache_write,
+            "totalTokens": usage.total,
+        });
+    }
+    Some(message)
+}
+
+fn opencode_usage(value: &Value) -> DiscoveredUsage {
+    let tokens = value.get("tokens").unwrap_or(value);
+    let input = token(tokens, "input", "tokens_input");
+    let output = token(tokens, "output", "tokens_output").saturating_add(token(
+        tokens,
+        "reasoning",
+        "tokens_reasoning",
+    ));
+    let cache = tokens.get("cache").unwrap_or(tokens);
+    let cache_read = token(cache, "read", "tokens_cache_read");
+    let cache_write = token(cache, "write", "tokens_cache_write");
+    DiscoveredUsage {
+        input,
+        output,
+        cache_read,
+        cache_write,
+        total: input
+            .saturating_add(output)
+            .saturating_add(cache_read)
+            .saturating_add(cache_write),
+        cost_micros: value
+            .get("cost")
+            .and_then(Value::as_f64)
+            .map(|cost| (cost * 1_000_000.0).max(0.0) as u64)
+            .unwrap_or(0),
+    }
+}
+
+fn token(value: &Value, nested: &str, flat: &str) -> u64 {
+    value
+        .get(nested)
+        .and_then(Value::as_u64)
+        .or_else(|| value.get(flat).and_then(Value::as_u64))
+        .unwrap_or(0)
 }
 
 fn millis(value: Option<u64>) -> SystemTime {
@@ -192,10 +239,14 @@ mod tests {
             "location": {"directory": project},
             "title": "Implement feature",
             "time": {"created": 1, "updated": 2},
+            "tokens": {"input": 100, "output": 20, "reasoning": 5, "cache": {"read": 80, "write": 10}},
         });
         let session = summary(project.as_path(), &value).ok_or("summary")??;
         assert_eq!(session.harness, "opencode2");
         assert_eq!(session.title, "Implement feature");
+        assert_eq!(session.usage.input, 100);
+        assert_eq!(session.usage.output, 25);
+        assert_eq!(session.usage.cache_read, 80);
         Ok(())
     }
 }

@@ -15,8 +15,8 @@ pub(crate) use contract::{
     StartWorker, WorkerContext, WorkerInput, WorkerInputResponse, WorkerMessageMode,
 };
 pub(crate) use core::{
-    CallerContext, CallerRegistry, PromptStore, WorkerEvent, WorkerLaunch, WorkerPool,
-    WorkerSendMode, WorkerSession, WorkerSessionFactory, begin_prompt, complete_prompt,
-    enqueue_prompt, fail_prompt, has_queued_prompts_for, is_hidden_text, is_hidden_user_message,
-    queued_prompts, sandbox_grant_continuation,
+    CallerContext, CallerRegistry, PromptStore, TokenUsage, WorkerActivity, WorkerEvent,
+    WorkerLaunch, WorkerPool, WorkerSendMode, WorkerSession, WorkerSessionFactory, WorkerUsage,
+    begin_prompt, complete_prompt, enqueue_prompt, fail_prompt, has_queued_prompts_for,
+    is_hidden_text, is_hidden_user_message, queued_prompts, sandbox_grant_continuation,
 };
