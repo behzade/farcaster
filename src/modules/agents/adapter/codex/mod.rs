@@ -6,6 +6,7 @@ mod wire;
 mod worker;
 
 pub(crate) use worker::CodexWorkerFactory;
+pub(super) use worker::spawn_main;
 
 use super::super::contract::{
     AgentBackendDescriptor, AgentBackendId, AgentCapabilities, CapabilitySupport,

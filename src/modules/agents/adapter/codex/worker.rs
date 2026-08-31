@@ -99,6 +99,68 @@ impl WorkerSessionFactory for CodexWorkerFactory {
     }
 }
 
+pub(in crate::modules::agents::adapter) fn spawn_main(
+    command: &AgentLaunchConfig,
+    launch: &crate::agents::SessionLaunch,
+) -> Result<(Box<dyn WorkerSession>, String), String> {
+    let mut sandbox = command.command(&launch.project)?;
+    let caller_identity = crate::modules::agents::core::CallerRegistry::shared().issue();
+    configure_farcaster_mcp(&mut sandbox.command, caller_identity.token());
+    let mut child = sandbox
+        .command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| format!("start Codex main-session app-server: {error}"))?;
+    let setup = setup_main_connection(&mut child, launch);
+    let (mut reader, writer, queued, next_id, thread) = match setup {
+        Ok(setup) => setup,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+    };
+    let (sender, incoming) = mpsc::channel();
+    let thread_id = thread.id.clone();
+    let reader_name = thread_id.clone();
+    thread::Builder::new()
+        .name(format!("codex-session-{reader_name}"))
+        .spawn(move || {
+            for message in queued {
+                if sender.send(Ok(message)).is_err() {
+                    return;
+                }
+            }
+            loop {
+                let message = read_message(&mut reader);
+                let failed = message.is_err();
+                if sender.send(message).is_err() || failed {
+                    return;
+                }
+            }
+        })
+        .map_err(|error| format!("read Codex main-session events: {error}"))?;
+    caller_identity.bind(thread_id.clone());
+    let session = CodexWorkerSession {
+        _caller_identity: caller_identity,
+        _sandbox: sandbox,
+        child,
+        writer,
+        incoming,
+        thread_id: thread_id.clone(),
+        effort: None,
+        next_id,
+        current_turn: None,
+        output: String::new(),
+        pending: HashMap::new(),
+        pending_inputs: HashMap::new(),
+        events: VecDeque::new(),
+    };
+    Ok((Box::new(session), thread_id))
+}
+
 type CodexSetup = (
     BufReader<std::process::ChildStdout>,
     ChildStdin,
@@ -141,6 +203,47 @@ fn setup_connection(child: &mut Child, launch: &WorkerLaunch) -> Result<CodexSet
                 launch.model.as_deref(),
             )?
         }
+    };
+    let (reader, writer, queued, next_id) = connection.into_parts();
+    Ok((reader, writer, queued, next_id, thread))
+}
+
+fn setup_main_connection(
+    child: &mut Child,
+    launch: &crate::agents::SessionLaunch,
+) -> Result<CodexSetup, String> {
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "Codex main-session stdin must be piped".to_owned())?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Codex main-session stdout must be piped".to_owned())?;
+    let mut connection = CodexConnection::new(BufReader::new(stdout), stdin);
+    connection.initialize(CodexClientInfo {
+        name: "farcaster".into(),
+        title: Some("Farcaster".into()),
+        version: env!("CARGO_PKG_VERSION").into(),
+    })?;
+    let cwd = launch.project.to_string_lossy();
+    let thread = match &launch.start {
+        crate::agents::SessionStart::New => connection.start_thread(&cwd, None, None)?,
+        crate::agents::SessionStart::Resume(_) => connection.resume_thread(
+            launch
+                .session_id
+                .as_deref()
+                .ok_or_else(|| "Codex resume requires a thread id".to_owned())?,
+        )?,
+        crate::agents::SessionStart::Fork(_) => connection.fork_thread(
+            launch
+                .session_id
+                .as_deref()
+                .ok_or_else(|| "Codex fork requires a thread id".to_owned())?,
+            &cwd,
+            None,
+            None,
+        )?,
     };
     let (reader, writer, queued, next_id) = connection.into_parts();
     Ok((reader, writer, queued, next_id, thread))

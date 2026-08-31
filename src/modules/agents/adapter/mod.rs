@@ -1,6 +1,7 @@
 #[allow(dead_code)]
 mod codex;
 mod farcaster_mcp;
+mod main_session;
 #[allow(dead_code)]
 mod opencode;
 mod pi;
@@ -53,11 +54,26 @@ pub(crate) fn spawn_session(
     config: &crate::agents::AgentLaunchConfig,
     launch: crate::agents::SessionLaunch,
 ) -> Result<Box<dyn crate::agents::SessionTransport>, String> {
+    if launch.harness == "codex-cli" {
+        let mut command = config.clone();
+        command.program = std::env::var_os("FARCASTER_CODEX_PATH")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| "codex".into());
+        let (worker, locator) = codex::spawn_main(&command, &launch)?;
+        return main_session::WorkerSessionTransport::new("codex-cli", locator, worker)
+            .map(|transport| Box::new(transport) as _);
+    }
+    if launch.harness == "opencode2" {
+        let mut command = config.clone();
+        command.program = std::env::var_os("FARCASTER_OPENCODE_PATH")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| "opencode2".into());
+        let (worker, locator) = opencode::spawn_main(&command, &launch)?;
+        return main_session::WorkerSessionTransport::new("opencode2", locator, worker)
+            .map(|transport| Box::new(transport) as _);
+    }
     if launch.harness != "pi" {
-        return Err(format!(
-            "{} main-session transport is not installed",
-            launch.harness
-        ));
+        return Err(format!("unsupported main-session harness: {}", launch.harness));
     }
     let process = match &launch.start {
         crate::agents::SessionStart::New => {

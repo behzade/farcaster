@@ -2294,14 +2294,16 @@ impl RuntimeOwner {
                 }
             },
             "get_entries" => {
-                let entries = response
-                    .data
-                    .get("entries")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default();
-                let messages = project_display_history(&entries);
-                conversation_mut(self.active_snapshot_mut()).replace_history(&messages);
+                if response.data.get("preserve").and_then(Value::as_bool) != Some(true) {
+                    let entries = response
+                        .data
+                        .get("entries")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                    let messages = project_display_history(&entries);
+                    conversation_mut(self.active_snapshot_mut()).replace_history(&messages);
+                }
                 self.startup_history_loaded = true;
             }
             "get_available_models" => {

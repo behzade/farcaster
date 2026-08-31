@@ -86,6 +86,61 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
     }
 }
 
+pub(in crate::modules::agents::adapter) fn spawn_main(
+    command: &AgentLaunchConfig,
+    launch: &crate::agents::SessionLaunch,
+) -> Result<(Box<dyn WorkerSession>, String), String> {
+    let mut sandbox = command.command(&launch.project)?;
+    let caller_identity = crate::modules::agents::core::CallerRegistry::shared().issue();
+    configure_farcaster_mcp(&mut sandbox.command, caller_identity.token())?;
+    let password = worker_password()?;
+    let child = sandbox
+        .command
+        .args(["serve", "--stdio"])
+        .env("OPENCODE_SERVER_PASSWORD", &password)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| format!("start OpenCode main-session server: {error}"))?;
+    let server = OpenCodeServerProcess::attach(child, "opencode", password)?;
+    let mut client = server.client();
+    let session = match &launch.start {
+        crate::agents::SessionStart::New => client.create_session(
+            &launch.project.to_string_lossy(),
+            None,
+            None,
+        )?,
+        crate::agents::SessionStart::Resume(_) => client.get_session(
+            launch
+                .session_id
+                .as_deref()
+                .ok_or_else(|| "OpenCode resume requires a session id".to_owned())?,
+        )?,
+        crate::agents::SessionStart::Fork(_) => client.fork_session(
+            launch
+                .session_id
+                .as_deref()
+                .ok_or_else(|| "OpenCode fork requires a session id".to_owned())?,
+            None,
+        )?,
+    };
+    let session_id = session.id;
+    caller_identity.bind(session_id.clone());
+    Ok((
+        Box::new(OpenCodeWorkerSession {
+            _caller_identity: caller_identity,
+            _sandbox: sandbox,
+            server,
+            session_id: session_id.clone(),
+            generation: 0,
+            completions: None,
+            pending: VecDeque::new(),
+        }),
+        session_id,
+    ))
+}
+
 struct OpenCodeWorkerSession {
     _caller_identity: crate::modules::agents::core::CallerIdentity,
     _sandbox: SandboxedCommand,
