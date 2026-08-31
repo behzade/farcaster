@@ -1,4 +1,5 @@
 use std::{
+    cmp::Reverse,
     collections::{HashMap, HashSet},
     path::Path,
 };
@@ -113,12 +114,7 @@ pub(super) fn session_rail_lists(
         id > 0 && id == right.app_session_id()
     });
     apply_manual_order(&mut active, manual_order, ActiveSessionItem::app_session_id);
-    archived.sort_by(|left, right| {
-        right
-            .session
-            .app_session_id
-            .cmp(&left.session.app_session_id)
-    });
+    archived.sort_by_key(|item| Reverse((item.session.modified, item.session.app_session_id)));
 
     SessionRailLists { active, archived }
 }
@@ -186,7 +182,10 @@ const fn active_kind_rank(item: &ActiveSessionItem) -> u8 {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, time::SystemTime};
+    use std::{
+        path::PathBuf,
+        time::{Duration, SystemTime},
+    };
 
     use super::*;
     use crate::sessions::UsageSummary;
@@ -284,6 +283,26 @@ mod tests {
         assert_eq!(lists.active[0].app_session_id(), 3);
         assert_eq!(lists.archived.len(), 1);
         assert_eq!(lists.archived[0].session.app_session_id, 1);
+    }
+
+    #[test]
+    fn archived_sessions_are_sorted_by_recency_not_imported_id() {
+        let project = PathBuf::from("/project");
+        let mut recent = session("recent", 1, &project, true);
+        recent.modified = SystemTime::UNIX_EPOCH + Duration::from_secs(2);
+        let mut old = session("old", 2, &project, true);
+        old.modified = SystemTime::UNIX_EPOCH + Duration::from_secs(1);
+
+        let lists = session_rail_lists(&[old, recent], &[], None, &[]);
+
+        assert_eq!(
+            lists
+                .archived
+                .iter()
+                .map(|item| item.session.id.as_str())
+                .collect::<Vec<_>>(),
+            ["recent", "old"]
+        );
     }
 
     #[test]
