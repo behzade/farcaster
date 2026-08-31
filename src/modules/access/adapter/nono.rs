@@ -96,7 +96,7 @@ fn validate_policy_bytes(nono: &SandboxRuntime, policy: &[u8]) -> Result<(), Str
 
 fn validate_profile(nono_program: &Path, profile: &Path) -> Result<(), String> {
     let output = Command::new(nono_program)
-        .args(["policy", "validate"])
+        .args(["profile", "validate"])
         .arg(profile)
         .output()
         .map_err(|error| format!("validate Farcaster sandbox profile: {error}"))?;

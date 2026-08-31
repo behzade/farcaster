@@ -55,7 +55,7 @@ make bundle-macos
 open target/release/Farcaster.app
 ```
 
-The bundle script downloads the architecture-specific upstream `nono` v0.61.1
+The bundle script downloads the architecture-specific upstream `nono` v0.74.0
 release when its verified archive is not already in `target/release`, verifies
 its pinned SHA-256 digest, places it in `Contents/MacOS`, and signs the complete
 bundle. Signing is ad hoc by default; set
