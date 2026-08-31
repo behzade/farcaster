@@ -1,5 +1,6 @@
 mod button;
 mod content;
+mod context_menu;
 mod dialog;
 mod disclosure;
 mod feedback;
@@ -12,6 +13,7 @@ pub(crate) use button::{
     prominent_icon_button,
 };
 pub(crate) use content::{panel, section_heading};
+pub(crate) use context_menu::ContextMenuTrigger;
 pub(crate) use dialog::modal;
 pub(crate) use disclosure::{disclosure_button, disclosure_detail, disclosure_title_row};
 pub(crate) use feedback::{FeedbackTone, feedback};

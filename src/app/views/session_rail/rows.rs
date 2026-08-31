@@ -4,13 +4,12 @@ use std::{
 };
 
 use gpui::{
-    AnyElement, AppContext as _, Context, CursorStyle, Div, Entity, FontWeight,
-    InteractiveElement as _, Interactivity, IntoElement, MouseButton, ParentElement as _, Pixels,
-    Render, RenderOnce, Rgba, Role, Stateful, StatefulInteractiveElement as _, StyleRefinement,
-    Styled as _, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
+    AnyElement, AppContext as _, Context, CursorStyle, Entity, FontWeight, InteractiveElement as _,
+    IntoElement, MouseButton, ParentElement as _, Pixels, Render, Rgba, Role,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div,
+    prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
-    Selectable, StyledExt as _,
     input::{Escape, Input, InputState},
     kbd::Kbd,
     menu::{DropdownMenu as _, PopupMenuItem},
@@ -25,62 +24,13 @@ use crate::{
     app::ui::assets::AppIcon,
     app::ui::keybindings::PRIMARY_MODIFIER,
     app::ui::primitives::{
-        AppIconSize, ReorderPosition, ReorderTargetExt as _, app_icon, icon_control,
+        AppIconSize, ContextMenuTrigger, ReorderPosition, ReorderTargetExt as _, app_icon,
+        icon_control,
     },
     app::ui::theme::THEME,
     app::{FarcasterApp, PickerScope, ProjectPickerIntent},
     projects::DraftSession,
 };
-
-#[derive(IntoElement)]
-struct SessionContextTrigger {
-    base: Stateful<Div>,
-    selected: bool,
-    style: StyleRefinement,
-}
-
-impl SessionContextTrigger {
-    fn new(id: impl Into<gpui::ElementId>, child: AnyElement) -> Self {
-        Self {
-            base: div().id(id).size_full().child(child),
-            selected: false,
-            style: StyleRefinement::default(),
-        }
-    }
-}
-
-impl Selectable for SessionContextTrigger {
-    fn selected(mut self, selected: bool) -> Self {
-        self.selected = selected;
-        self
-    }
-
-    fn is_selected(&self) -> bool {
-        self.selected
-    }
-}
-
-impl gpui::Styled for SessionContextTrigger {
-    fn style(&mut self) -> &mut StyleRefinement {
-        &mut self.style
-    }
-}
-
-impl gpui::InteractiveElement for SessionContextTrigger {
-    fn interactivity(&mut self) -> &mut Interactivity {
-        self.base.interactivity()
-    }
-}
-
-impl gpui::StatefulInteractiveElement for SessionContextTrigger {}
-
-impl RenderOnce for SessionContextTrigger {
-    fn render(self, _: &mut Window, _: &mut gpui::App) -> impl IntoElement {
-        self.base.refine_style(&self.style)
-    }
-}
-
-impl gpui_component::menu::DropdownMenu for SessionContextTrigger {}
 
 #[derive(Clone)]
 pub(super) struct DraggedSession {
@@ -740,7 +690,8 @@ fn session_context_menu(
     entity: WeakEntity<FarcasterApp>,
     row: AnyElement,
 ) -> AnyElement {
-    SessionContextTrigger::new(format!("session-context-trigger-{id}"), row)
+    ContextMenuTrigger::new(format!("session-context-trigger-{id}"), row)
+        .size_full()
         .dropdown_menu_with_anchor(gpui::Anchor::TopLeft, move |menu, _, _| {
             let fork_path = path.clone();
             let fork_project = project.clone();

@@ -5,18 +5,22 @@ use std::{
 };
 
 use gpui::{
-    AnyElement, Div, Entity, FontWeight, HighlightStyle, InteractiveElement as _, IntoElement as _,
-    Overflow, ParentElement as _, Pixels, Stateful, StatefulInteractiveElement as _,
-    StyleRefinement, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px, rems,
+    AnyElement, ClipboardItem, Div, Entity, FontWeight, HighlightStyle, InteractiveElement as _,
+    IntoElement as _, MouseButton, Overflow, ParentElement as _, Pixels, Stateful,
+    StatefulInteractiveElement as _, StyleRefinement, Styled as _, WeakEntity, div,
+    prelude::FluentBuilder as _, px, rems,
 };
 use gpui_component::{
     highlighter::HighlightTheme,
+    menu::{DropdownMenu as _, PopupMenuItem},
     text::{TextView, TextViewState, TextViewStyle},
 };
 
 use crate::{
     app::ui::persistent_vec::{Indexed, PersistentVec},
-    app::ui::primitives::{ButtonTone, button, disclosure_detail, disclosure_title_row},
+    app::ui::primitives::{
+        ButtonTone, ContextMenuTrigger, button, disclosure_detail, disclosure_title_row,
+    },
     app::ui::theme::{MONO_FONT_FAMILY, THEME},
     app::{
         FarcasterApp,
@@ -840,7 +844,7 @@ pub(crate) fn render(
             let expanded = resolved_expanded(row, &conversation.items, &disclosure_states);
             let reserves_tail = index + 1 == rows.len()
                 && latest_allows_tail_reserve(row, &conversation.items, expanded);
-            div()
+            let content = div()
                 .w_full()
                 .when(reserves_tail, |row| row.pb(viewport.tail_reserve))
                 .child(
@@ -858,7 +862,14 @@ pub(crate) fn render(
                             cx,
                         ))),
                 )
-                .into_any_element()
+                .into_any_element();
+            transcript_context_menu(
+                index,
+                row,
+                conversation.items.clone(),
+                selection_state.clone(),
+                content,
+            )
         },
     );
 
@@ -901,6 +912,57 @@ pub(crate) fn render(
                     )),
             )
         })
+        .into_any_element()
+}
+
+fn transcript_context_menu(
+    row_index: usize,
+    row: TranscriptRow,
+    items: PersistentVec<Arc<TranscriptItem>>,
+    selection_state: TranscriptListState,
+    content: AnyElement,
+) -> AnyElement {
+    ContextMenuTrigger::new(format!("transcript-context-trigger-{row_index}"), content)
+        .dropdown_menu_with_anchor(gpui::Anchor::TopLeft, move |menu, _, _| {
+            let selected_text = selection_state
+                .selected_text()
+                .filter(|text| !text.trim().is_empty());
+            let mut menu = menu.min_w(px(190.0));
+            if let Some(text) = selected_text {
+                menu = menu
+                    .item(
+                        PopupMenuItem::new("Copy selection").on_click(move |_, _, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+                        }),
+                    )
+                    .separator();
+            }
+
+            let row_text = copy_transcript_items(&items, row.item_start()..=row.item_end() - 1);
+            let all_text =
+                (!items.is_empty()).then(|| copy_transcript_items(&items, 0..=items.len() - 1));
+            menu.item(
+                PopupMenuItem::new(if matches!(row, TranscriptRow::ReadGroup { .. }) {
+                    "Copy tool group"
+                } else {
+                    "Copy message"
+                })
+                .disabled(row_text.trim().is_empty())
+                .on_click(move |_, _, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(row_text.clone()));
+                }),
+            )
+            .item(
+                PopupMenuItem::new("Copy transcript")
+                    .disabled(all_text.is_none())
+                    .on_click(move |_, _, cx| {
+                        if let Some(text) = &all_text {
+                            cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+                        }
+                    }),
+            )
+        })
+        .mouse_button(MouseButton::Right)
         .into_any_element()
 }
 
