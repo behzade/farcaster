@@ -1,6 +1,5 @@
 mod activity_tracker;
 mod catalog;
-mod changes;
 mod metrics;
 mod path;
 mod persistence;
@@ -11,7 +10,6 @@ pub(crate) use catalog::{
     filter_session_tree, is_subagent_path, root_session_for_path, root_sessions,
     session_family_for_path,
 };
-pub(crate) use changes::collect as collect_changes;
 pub(crate) use metrics::{CatalogMetrics, take_catalog_metrics};
 pub(in crate::modules::sessions) use metrics::{count_cache_hit, count_parse, count_scan};
 pub(crate) use path::normalize_lexical;

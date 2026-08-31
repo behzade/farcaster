@@ -179,7 +179,6 @@ pub(crate) struct FarcasterApp {
     agent_activities: HashMap<String, AgentActivity>,
     agent_row_focus: HashMap<String, FocusHandle>,
     background_jobs: Vec<BackgroundJob>,
-    changes: session::changes::ChangesState,
     repository: repository::RepositoryState,
     session_order: Vec<i64>,
     session_drop_target: Option<(i64, crate::app::ui::primitives::ReorderPosition)>,
@@ -618,7 +617,6 @@ impl FarcasterApp {
             agent_activities: HashMap::new(),
             agent_row_focus: HashMap::new(),
             background_jobs: Vec::new(),
-            changes: session::changes::ChangesState::new(cx),
             repository: repository::RepositoryState::load(
                 project.clone(),
                 repository_execution_allowed,
@@ -1247,7 +1245,6 @@ impl FarcasterApp {
         }
         if run_dirty {
             self.notify_run_panel(cx);
-            self.request_changes_refresh(cx);
         }
         if root_dirty {
             cx.notify();

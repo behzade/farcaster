@@ -262,8 +262,6 @@ fn activity(id: &str, text: &str) -> AgentActivity {
         started: SystemTime::UNIX_EPOCH,
         ended: None,
         elapsed: None,
-        changed_paths: Vec::new(),
-        file_mutations: Vec::new(),
     }
 }
 

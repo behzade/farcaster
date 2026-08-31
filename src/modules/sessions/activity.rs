@@ -1,13 +1,13 @@
 use std::{
     collections::HashMap,
-    path::{Path, PathBuf},
+    path::PathBuf,
     time::{Duration, SystemTime},
 };
 
 use serde_json::Value;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
-use crate::sessions::{UsageSummary, normalize_lexical};
+use crate::sessions::UsageSummary;
 
 const MAX_ACTIVITY_CHARS: usize = 160;
 const MAX_TOOL_TARGET_CHARS: usize = 120;
@@ -36,32 +36,6 @@ pub(crate) struct AgentToolActivity {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ObservedPath {
-    pub path: PathBuf,
-    pub observed_at: SystemTime,
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum FileMutationKind {
-    Edit { patch: String, complete: bool },
-    Write { content: String },
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct FileMutation {
-    pub path: PathBuf,
-    pub observed_at: SystemTime,
-    pub kind: FileMutationKind,
-}
-
-#[derive(Clone, Debug)]
-struct PendingMutation {
-    path: PathBuf,
-    observed_at: Option<SystemTime>,
-    kind: FileMutationKind,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AgentActivity {
     pub session_id: String,
     pub session_path: PathBuf,
@@ -76,8 +50,6 @@ pub(crate) struct AgentActivity {
     pub started: SystemTime,
     pub ended: Option<SystemTime>,
     pub elapsed: Option<Duration>,
-    pub changed_paths: Vec<ObservedPath>,
-    pub file_mutations: Vec<FileMutation>,
 }
 
 #[derive(Default)]
@@ -88,21 +60,10 @@ pub(crate) struct ActivityBuilder {
     tool_call_count: usize,
     outcome: Option<AgentOutcome>,
     terminal_time: Option<SystemTime>,
-    pending_mutations: HashMap<String, PendingMutation>,
-    observed_paths: Vec<(PathBuf, Option<SystemTime>)>,
-    file_mutations: Vec<PendingMutation>,
 }
 
 impl ActivityBuilder {
     pub(crate) fn observe_entry(&mut self, entry: &Value) {
-        if entry.get("type").and_then(Value::as_str) == Some("compaction") {
-            let observed_at = entry
-                .get("timestamp")
-                .and_then(Value::as_str)
-                .and_then(parse_iso_timestamp);
-            self.observe_compaction_paths(entry, observed_at);
-            return;
-        }
         let Some(message) = entry
             .get("message")
             .filter(|_| entry.get("type").and_then(Value::as_str) == Some("message"))
@@ -139,7 +100,6 @@ impl ActivityBuilder {
                     .to_owned();
                 let arguments = block.get("arguments").unwrap_or(&Value::Null);
                 let target = tool_target(arguments);
-                let mutation = pending_mutation(&name, arguments, observed_at);
                 let tool = AgentToolActivity {
                     name,
                     target,
@@ -147,9 +107,6 @@ impl ActivityBuilder {
                 };
                 self.tool_call_count = self.tool_call_count.saturating_add(1);
                 if !id.is_empty() {
-                    if let Some(mutation) = mutation {
-                        self.pending_mutations.insert(id.clone(), mutation);
-                    }
                     self.tools.insert(id.clone(), tool);
                     self.outstanding_tool_ids.push(id);
                 } else {
@@ -187,49 +144,10 @@ impl ActivityBuilder {
         });
         tool.failed = failed;
         self.recent_tool = Some(tool);
-        if let Some(mut mutation) = self.pending_mutations.remove(id)
-            && !failed
-        {
-            if let FileMutationKind::Edit { patch, complete } = &mut mutation.kind
-                && let Some(result_patch) = message
-                    .pointer("/details/patch")
-                    .or_else(|| message.pointer("/details/diff"))
-                    .and_then(Value::as_str)
-                    .filter(|patch| !patch.is_empty())
-            {
-                *patch = result_patch.to_owned();
-                *complete = true;
-            }
-            self.observed_paths
-                .push((mutation.path.clone(), mutation.observed_at));
-            self.file_mutations.push(mutation);
-        }
         self.outstanding_tool_ids
             .retain(|outstanding| outstanding != id);
         self.outcome = None;
         self.terminal_time = None;
-    }
-
-    fn observe_compaction_paths(&mut self, entry: &Value, observed_at: Option<SystemTime>) {
-        for source in [
-            entry.get("changedPaths"),
-            entry.get("modifiedFiles"),
-            entry.pointer("/details/changedPaths"),
-            entry.pointer("/details/modifiedFiles"),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            if let Some(paths) = source.as_array() {
-                self.observed_paths.extend(
-                    paths
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .filter(|path| !path.is_empty())
-                        .map(|path| (PathBuf::from(path), observed_at)),
-                );
-            }
-        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -237,7 +155,6 @@ impl ActivityBuilder {
         self,
         session_id: String,
         session_path: PathBuf,
-        project: &Path,
         title: &str,
         first_user_message: &str,
         usage: UsageSummary,
@@ -267,41 +184,6 @@ impl ActivityBuilder {
         } else {
             (unmatched_tool, self.recent_tool)
         };
-        let mut changed_paths = Vec::<ObservedPath>::new();
-        for (path, observed_at) in self.observed_paths {
-            let path = if path.is_absolute() {
-                normalize_lexical(&path)
-            } else {
-                normalize_lexical(&project.join(path))
-            };
-            let observed_at = observed_at.unwrap_or(modified);
-            if let Some(observed) = changed_paths
-                .iter_mut()
-                .find(|observed| observed.path == path)
-            {
-                observed.observed_at = observed.observed_at.max(observed_at);
-            } else {
-                changed_paths.push(ObservedPath { path, observed_at });
-            }
-        }
-        changed_paths.sort_by_key(|observed| observed.observed_at);
-        let mut file_mutations = self
-            .file_mutations
-            .into_iter()
-            .map(|mutation| {
-                let path = if mutation.path.is_absolute() {
-                    normalize_lexical(&mutation.path)
-                } else {
-                    normalize_lexical(&project.join(mutation.path))
-                };
-                FileMutation {
-                    path,
-                    observed_at: mutation.observed_at.unwrap_or(modified),
-                    kind: mutation.kind,
-                }
-            })
-            .collect::<Vec<_>>();
-        file_mutations.sort_by_key(|mutation| mutation.observed_at);
         AgentActivity {
             session_id,
             session_path,
@@ -316,79 +198,8 @@ impl ActivityBuilder {
             started,
             ended,
             elapsed,
-            changed_paths,
-            file_mutations,
         }
     }
-}
-
-fn pending_mutation(
-    name: &str,
-    arguments: &Value,
-    observed_at: Option<SystemTime>,
-) -> Option<PendingMutation> {
-    let path = arguments
-        .get("path")
-        .or_else(|| arguments.get("file_path"))
-        .and_then(Value::as_str)
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from)?;
-    let kind = match name.trim().to_ascii_lowercase().as_str() {
-        "edit" => FileMutationKind::Edit {
-            patch: edit_preview(arguments),
-            complete: false,
-        },
-        "write" => FileMutationKind::Write {
-            content: arguments.get("content").and_then(Value::as_str)?.to_owned(),
-        },
-        _ => return None,
-    };
-    Some(PendingMutation {
-        path,
-        observed_at,
-        kind,
-    })
-}
-
-fn edit_preview(arguments: &Value) -> String {
-    let edits = arguments
-        .get("edits")
-        .and_then(Value::as_array)
-        .map(|edits| {
-            edits
-                .iter()
-                .filter_map(|edit| {
-                    edit.get("oldText")
-                        .and_then(Value::as_str)
-                        .zip(edit.get("newText").and_then(Value::as_str))
-                })
-                .collect::<Vec<_>>()
-        })
-        .or_else(|| {
-            arguments
-                .get("oldText")
-                .and_then(Value::as_str)
-                .zip(arguments.get("newText").and_then(Value::as_str))
-                .map(|edit| vec![edit])
-        })
-        .unwrap_or_default();
-    let mut patch = String::new();
-    for (index, (old, new)) in edits.into_iter().enumerate() {
-        if index > 0 {
-            patch.push_str("     ...\n");
-        }
-        for line in old.lines() {
-            patch.push_str("- ");
-            patch.push_str(line);
-            patch.push('\n');
-        }
-        for line in new.lines() {
-            patch.push_str("+ ");
-            patch.push_str(line);
-            patch.push('\n');
-        }
-    }
-    patch
 }
 
 fn entry_timestamp(entry: &Value, message: &Value) -> Option<SystemTime> {
@@ -459,7 +270,7 @@ mod tests {
     }
 
     #[test]
-    fn pairs_current_and_recent_tools_and_collects_typed_paths() {
+    fn pairs_current_and_recent_tools() {
         let mut builder = ActivityBuilder::default();
         builder.observe_entry(&serde_json::json!({
             "type":"message",
@@ -470,7 +281,6 @@ mod tests {
         let active = builder.finish(
             "child".into(),
             PathBuf::from("/sessions/child"),
-            Path::new("/project"),
             "Implementation session",
             "Implement the feature",
             UsageSummary::default(),
@@ -484,8 +294,6 @@ mod tests {
             active.current_tool.as_ref().map(|tool| tool.name.as_str()),
             Some("edit")
         );
-        assert!(active.changed_paths.is_empty());
-
         let mut builder = ActivityBuilder::default();
         builder.observe_entry(&serde_json::json!({
             "type":"message",
@@ -502,7 +310,6 @@ mod tests {
         let done = builder.finish(
             "child".into(),
             PathBuf::from("/sessions/child"),
-            Path::new("/project"),
             "Review session",
             "Review",
             UsageSummary::default(),
@@ -538,7 +345,6 @@ mod tests {
         let activity = builder.finish(
             "id".into(),
             PathBuf::new(),
-            Path::new("/project"),
             "worker",
             "task",
             UsageSummary::default(),
@@ -557,111 +363,6 @@ mod tests {
     }
 
     #[test]
-    fn successful_mutations_keep_call_timestamps_and_failed_mutations_are_omitted() {
-        let mut builder = ActivityBuilder::default();
-        for (timestamp, id, name, path) in [
-            ("1970-01-01T00:00:03Z", "late", "edit", "src/late.rs"),
-            ("1970-01-01T00:00:01Z", "early", "write", "src/early.rs"),
-            ("1970-01-01T00:00:02Z", "failed", "edit", "src/failed.rs"),
-        ] {
-            builder.observe_entry(&serde_json::json!({
-                "type":"message","timestamp":timestamp,
-                "message":{"role":"assistant","stopReason":"toolUse","content":[
-                    {"type":"toolCall","id":id,"name":name,"arguments":{
-                        "path":path,
-                        "content":"created\n",
-                        "oldText":"before",
-                        "newText":"after"
-                    }}
-                ]}
-            }));
-        }
-        for (id, failed) in [("late", false), ("failed", true), ("early", false)] {
-            builder.observe_entry(&serde_json::json!({
-                "type":"message","message":{
-                    "role":"toolResult",
-                    "toolCallId":id,
-                    "toolName":"edit",
-                    "isError":failed,
-                    "details":{"patch":"@@\n-before\n+after\n"}
-                }
-            }));
-        }
-        let activity = builder.finish(
-            "id".into(),
-            PathBuf::new(),
-            Path::new("/project"),
-            "worker",
-            "task",
-            UsageSummary::default(),
-            SystemTime::UNIX_EPOCH,
-            SystemTime::UNIX_EPOCH + Duration::from_secs(4),
-            false,
-            false,
-        );
-        assert_eq!(
-            activity
-                .changed_paths
-                .iter()
-                .map(|path| path.path.as_path())
-                .collect::<Vec<_>>(),
-            vec![
-                Path::new("/project/src/early.rs"),
-                Path::new("/project/src/late.rs")
-            ]
-        );
-        assert_eq!(
-            activity
-                .changed_paths
-                .iter()
-                .map(|path| path
-                    .observed_at
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .expect("timestamp")
-                    .as_secs())
-                .collect::<Vec<_>>(),
-            vec![1, 3]
-        );
-        assert_eq!(activity.file_mutations.len(), 2);
-        assert!(matches!(
-            &activity.file_mutations[0].kind,
-            FileMutationKind::Write { content } if content == "created\n"
-        ));
-        assert!(matches!(
-            &activity.file_mutations[1].kind,
-            FileMutationKind::Edit { patch, complete: true } if patch.contains("+after")
-        ));
-    }
-
-    #[test]
-    fn structured_compaction_paths_and_limited_counts_are_preserved() {
-        let mut builder = ActivityBuilder::default();
-        builder.observe_entry(&serde_json::json!({
-            "type":"compaction","details":{"changedPaths":["src/lib.rs", "src/lib.rs"],"modifiedFiles":["src/main.rs"]}
-        }));
-        let activity = builder.finish(
-            "id".into(),
-            PathBuf::new(),
-            Path::new("/project"),
-            "Implementation session",
-            &"x".repeat(MAX_ACTIVITY_CHARS + 5),
-            UsageSummary::default(),
-            SystemTime::UNIX_EPOCH,
-            SystemTime::UNIX_EPOCH,
-            true,
-            true,
-        );
-        assert!(activity.limited);
-        assert!(activity.activity.ends_with('…'));
-        assert_eq!(activity.changed_paths.len(), 2);
-        assert!(activity.file_mutations.is_empty());
-        assert_eq!(
-            activity.changed_paths[0].path,
-            PathBuf::from("/project/src/lib.rs")
-        );
-    }
-
-    #[test]
     fn terminal_outcomes_use_only_explicit_stop_reasons() {
         for (reason, expected) in [
             ("error", AgentOutcome::Failed),
@@ -675,7 +376,6 @@ mod tests {
             let activity = builder.finish(
                 "id".into(),
                 PathBuf::new(),
-                Path::new("/project"),
                 "worker",
                 "task",
                 UsageSummary::default(),

@@ -1,6 +1,5 @@
 use std::time::{Duration, SystemTime};
 
-pub(in crate::app::views) mod changes;
 mod repository;
 mod repository_presentation;
 #[cfg(test)]

@@ -317,6 +317,33 @@ fn git_snapshot_and_lazy_diff_use_separate_layers() {
     assert_eq!(diff.additions, Some(1));
     assert_eq!(diff.deletions, Some(1));
     assert!(diff.exists);
+
+    run_git(&repository, &home, &config, &["reset", "--hard", "HEAD"]);
+    fs::remove_file(repository.join("file.txt")).expect("delete tracked file");
+    let deleted = backend.snapshot().expect("capture deleted file");
+    assert_eq!(deleted.changes.len(), 1);
+    assert_eq!(deleted.changes[0].kind, ChangeKind::Deleted);
+    assert!(!deleted.changes[0].target.exists);
+
+    fs::write(repository.join("file.txt"), "base\n").expect("restore tracked file");
+    assert!(
+        backend
+            .snapshot()
+            .expect("capture restored working copy")
+            .changes
+            .is_empty()
+    );
+
+    fs::write(repository.join("file.txt"), "committed\n").expect("modify tracked file");
+    run_git(&repository, &home, &config, &["add", "file.txt"]);
+    run_git(&repository, &home, &config, &["commit", "-m", "change"]);
+    assert!(
+        backend
+            .snapshot()
+            .expect("capture committed working copy")
+            .changes
+            .is_empty()
+    );
 }
 
 #[test]

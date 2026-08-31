@@ -122,13 +122,6 @@ impl FarcasterApp {
                     )
                 },
             )
-            .when(
-                show_session_change_fallback(
-                    snapshot.map(|snapshot| snapshot.changes.len()),
-                    !self.changes.set.files.is_empty(),
-                ) && (self.repository.initialized || !self.repository.loading),
-                |section| section.child(self.render_session_change_fallback(entity.clone())),
-            )
             .into_any_element()
     }
 
@@ -550,13 +543,6 @@ fn change_page(total: usize, requested: usize) -> (usize, usize, usize) {
     (visible, remaining, remaining.min(EXPAND_CHANGE_PAGE))
 }
 
-fn show_session_change_fallback(
-    repository_change_count: Option<usize>,
-    has_session_changes: bool,
-) -> bool {
-    repository_change_count.is_none() || (repository_change_count == Some(0) && has_session_changes)
-}
-
 fn repository_notice(message: &str, color: gpui::Rgba) -> AnyElement {
     div()
         .id(message.to_owned())
@@ -598,13 +584,5 @@ mod tests {
         assert_eq!(change_page(50, 25), (25, 25, 20));
         assert_eq!(change_page(30, 25), (25, 5, 5));
         assert_eq!(change_page(3, 5), (3, 0, 0));
-    }
-
-    #[test]
-    fn clean_repository_reveals_files_touched_during_the_session() {
-        assert!(show_session_change_fallback(Some(0), true));
-        assert!(!show_session_change_fallback(Some(0), false));
-        assert!(!show_session_change_fallback(Some(1), true));
-        assert!(show_session_change_fallback(None, false));
     }
 }

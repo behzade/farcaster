@@ -741,7 +741,6 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
     let mut activity = activity.finish(
         id.clone(),
         session_path.clone(),
-        &project,
         &title,
         &first_user_message,
         usage,

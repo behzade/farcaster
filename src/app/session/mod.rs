@@ -3,7 +3,6 @@
 use super::*;
 
 pub(super) mod archive;
-pub(crate) mod changes;
 pub(super) mod deletion;
 pub(in crate::app) mod drafts;
 mod expiries;

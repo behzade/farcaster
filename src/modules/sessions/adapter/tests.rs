@@ -531,16 +531,6 @@ fn discovery_carries_transient_agent_activity_without_persisting_it() -> TestRes
             crate::sessions::activity::AgentOutcome::Complete
         )
     );
-    assert_eq!(
-        activity.changed_paths[0].path,
-        project.path().canonicalize()?.join("src/main.rs")
-    );
-    assert_eq!(activity.file_mutations.len(), 1);
-    assert!(matches!(
-        &activity.file_mutations[0].kind,
-        crate::sessions::activity::FileMutationKind::Edit { patch, complete: true }
-            if patch.contains("+after")
-    ));
     Ok(())
 }
 
@@ -573,15 +563,11 @@ fn discovery_aggregates_only_the_active_branch_from_an_external_session() -> Tes
 
     let discovery = discover_in_with_status(root.path(), "")?;
     let activity = discovery.activities.get("external").expect("activity");
-    assert_eq!(activity.file_mutations.len(), 1);
+    assert_eq!(activity.tool_call_count, 1);
     assert_eq!(
-        activity.file_mutations[0].path,
-        project.path().canonicalize()?.join("current.txt")
+        activity.recent_tool.as_ref().map(|tool| tool.name.as_str()),
+        Some("write")
     );
-    assert!(matches!(
-        activity.file_mutations[0].kind,
-        crate::sessions::activity::FileMutationKind::Write { .. }
-    ));
     Ok(())
 }
 

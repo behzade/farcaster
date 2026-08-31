@@ -8,14 +8,14 @@ pub(crate) use adapter::{
     load_history, move_family, normalize_session_path, project_display_history,
 };
 pub(crate) use contract::{
-    ChangeSet, FileChange, FileChangeKind, LoadedHistory, RUNNING_ACTIVITY_TIMEOUT,
-    RestoredQuestion, SessionDiscovery, SessionImport, SessionSummary, SessionTarget,
-    SessionTransfer, SessionWatchEvent, TransferMember, UsageSummary,
+    LoadedHistory, RUNNING_ACTIVITY_TIMEOUT, RestoredQuestion, SessionDiscovery, SessionImport,
+    SessionSummary, SessionTarget, SessionTransfer, SessionWatchEvent, TransferMember,
+    UsageSummary,
 };
 pub(crate) use core::{
     CatalogMetrics, ExternalActivityTracker, SessionRootIndex, SessionStore,
-    archived_root_family_for_path, cached_sessions, collect_changes, delete_state,
-    descendant_sessions, document_is_live, filter_session_tree, index_sessions, is_subagent_path,
-    normalize_lexical, relocate_state, root_session_for_path, root_sessions,
-    session_family_for_path, set_archived, take_catalog_metrics,
+    archived_root_family_for_path, cached_sessions, delete_state, descendant_sessions,
+    document_is_live, filter_session_tree, index_sessions, is_subagent_path, normalize_lexical,
+    relocate_state, root_session_for_path, root_sessions, session_family_for_path, set_archived,
+    take_catalog_metrics,
 };
