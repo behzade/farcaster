@@ -10,10 +10,10 @@ use rusqlite::{Connection, params};
 use tempfile::tempdir;
 
 use crate::{
+    app::persistence::{ComposerRecord, StateStore, WindowPlacement, WindowState},
     projects::{DraftSession, Registry},
     protocol::{PromptImage, PromptMode},
     sessions::{SessionSummary, UsageSummary},
-    state::{ComposerRecord, StateStore, WindowPlacement, WindowState},
 };
 
 #[test]
@@ -202,6 +202,7 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
     let draft = DraftSession {
         id: "draft-one".into(),
         app_session_id: 1,
+        harness: "pi".into(),
         project: project.clone(),
         created_ms: 7,
         submitted: true,
@@ -218,6 +219,7 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
         store.save_app_session_order(&[7, 3, 1])?;
         store.enqueue_prompt(
             "draft:draft-one",
+            "pi",
             &project,
             None,
             PromptMode::Normal,
@@ -361,6 +363,7 @@ fn prompt_completion_persists_draft_session_association_atomically()
         drafts: vec![DraftSession {
             id: "pending".into(),
             app_session_id: 1,
+            harness: "pi".into(),
             project: project.clone(),
             created_ms: 1,
             submitted: false,
@@ -387,6 +390,7 @@ fn prompt_completion_persists_draft_session_association_atomically()
     assert_ne!(store.cached_sessions("")?[0].app_session_id, 1);
     let outbox = store.enqueue_prompt(
         "draft:pending",
+        "pi",
         &project,
         None,
         PromptMode::Normal,
@@ -444,7 +448,7 @@ fn partial_session_index_updates_do_not_delete_omitted_rows()
 }
 
 #[test]
-fn schema_v1_migrates_to_v8_with_defaults_and_outbox_preserved()
+fn schema_v1_migrates_to_v9_with_defaults_and_outbox_preserved()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
@@ -458,6 +462,7 @@ fn schema_v1_migrates_to_v8_with_defaults_and_outbox_preserved()
         vec![DraftSession {
             id: "legacy-draft".into(),
             app_session_id: 1,
+            harness: "pi".into(),
             project: project.canonicalize()?,
             created_ms: 7,
             submitted: false,
@@ -471,12 +476,12 @@ fn schema_v1_migrates_to_v8_with_defaults_and_outbox_preserved()
     assert!(queued[0].images.is_empty());
     drop(store);
 
-    assert_eq!(database_schema_version(&database)?, 8);
+    assert_eq!(database_schema_version(&database)?, 9);
     Ok(())
 }
 
 #[test]
-fn schema_v2_migrates_to_v8_with_defaults_and_outbox_preserved()
+fn schema_v2_migrates_to_v9_with_defaults_and_outbox_preserved()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
@@ -490,6 +495,7 @@ fn schema_v2_migrates_to_v8_with_defaults_and_outbox_preserved()
         vec![DraftSession {
             id: "legacy-draft".into(),
             app_session_id: 1,
+            harness: "pi".into(),
             project: project.canonicalize()?,
             created_ms: 7,
             submitted: false,
@@ -506,12 +512,12 @@ fn schema_v2_migrates_to_v8_with_defaults_and_outbox_preserved()
     );
     drop(store);
 
-    assert_eq!(database_schema_version(&database)?, 8);
+    assert_eq!(database_schema_version(&database)?, 9);
     Ok(())
 }
 
 #[test]
-fn schema_v3_migrates_to_v8_with_running_default() -> Result<(), Box<dyn std::error::Error>> {
+fn schema_v3_migrates_to_v9_with_running_default() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
     fs::create_dir(&project)?;
@@ -524,13 +530,13 @@ fn schema_v3_migrates_to_v8_with_running_default() -> Result<(), Box<dyn std::er
     )?;
 
     let store = StateStore::open_at(&database)?;
-    assert_eq!(database_schema_version(&database)?, 8);
+    assert_eq!(database_schema_version(&database)?, 9);
     assert!(store.cached_sessions("")?.is_empty());
     Ok(())
 }
 
 #[test]
-fn schema_v4_migrates_to_v8_with_provisional_title_default()
+fn schema_v4_migrates_to_v9_with_provisional_title_default()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
@@ -545,7 +551,7 @@ fn schema_v4_migrates_to_v8_with_provisional_title_default()
     )?;
 
     let store = StateStore::open_at(&database)?;
-    assert_eq!(database_schema_version(&database)?, 8);
+    assert_eq!(database_schema_version(&database)?, 9);
     assert_eq!(store.load_registry()?.drafts[0].title, None);
     Ok(())
 }
@@ -588,7 +594,7 @@ fn schema_v5_migrates_existing_sessions_and_drafts_to_incremental_ids()
     assert!(session.app_session_id > 0);
     assert_ne!(draft.app_session_id, session.app_session_id);
     assert_eq!(session.harness, "pi");
-    assert_eq!(database_schema_version(&database)?, 8);
+    assert_eq!(database_schema_version(&database)?, 9);
     Ok(())
 }
 
@@ -785,6 +791,7 @@ fn submitted_draft_without_session_path_survives_reopen() -> Result<(), Box<dyn 
         drafts: vec![DraftSession {
             id: "pending".into(),
             app_session_id: 1,
+            harness: "pi".into(),
             project,
             created_ms: 1,
             submitted: true,

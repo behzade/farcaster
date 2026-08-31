@@ -542,6 +542,7 @@ mod tests {
         let draft = DraftSession {
             id: "pending".into(),
             app_session_id: 1,
+            harness: "pi".into(),
             project: PathBuf::from("/project"),
             created_ms: 1,
             submitted: true,
@@ -623,9 +624,9 @@ mod tests {
         use tempfile::tempdir;
 
         use crate::{
+            app::persistence::StateStore,
             projects::Registry,
             sessions::{SessionSummary, UsageSummary},
-            state::StateStore,
         };
 
         let temp = tempdir()?;
@@ -638,6 +639,7 @@ mod tests {
         let mut drafts = vec![DraftSession {
             id: "a".into(),
             app_session_id: 1,
+            harness: "pi".into(),
             project: project.clone(),
             created_ms: 1,
             submitted: false,
@@ -697,6 +699,7 @@ mod tests {
         let mut drafts = vec![DraftSession {
             id: "a".into(),
             app_session_id: 1,
+            harness: "pi".into(),
             project: PathBuf::from("/project"),
             created_ms: 1,
             submitted: false,

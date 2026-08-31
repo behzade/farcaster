@@ -15,9 +15,6 @@ mod performance;
 mod persistent_vec;
 mod primitives;
 mod project_trust_view;
-mod state;
-#[cfg(test)]
-mod state_test;
 mod theme;
 mod tool_changes;
 mod transcript;
@@ -87,7 +84,7 @@ fn main() -> std::process::ExitCode {
         Err(error) => return fail(format!("initialize worker pool: {error}")),
     };
     let (workgraph_updates, workgraph_update_receiver) = async_channel::bounded(1);
-    let _mcp_server = match state::state_path().and_then(|database| {
+    let _mcp_server = match app::persistence::state_path().and_then(|database| {
         app::mcp_server::start(database, approvals, worker_pool, workgraph_updates)
     }) {
         Ok(server) => server,

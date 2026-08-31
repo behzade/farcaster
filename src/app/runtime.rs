@@ -26,6 +26,7 @@ use crate::{
         AgentLaunchConfig, SessionCommand, SessionEvent, SessionLaunch, SessionStart,
         SessionTransport,
     },
+    app::persistence::StateStore,
     conversation::{ConversationState, TranscriptItem, TranscriptKind},
     protocol::{
         ExtensionUiRequest, ExtensionUiResponse, Model, PromptImage, PromptMode, SessionState,
@@ -37,7 +38,6 @@ use crate::{
         configured_session_root, discover, load_history, project_display_history,
         session_family_for_path,
     },
-    state::StateStore,
 };
 use catalog::ExternalActivityTracker;
 use session_controls::PendingSessionControls;
@@ -115,7 +115,7 @@ pub(crate) enum RuntimeCommand {
     ReloadSandboxGrants,
     ActivateSandboxGrant,
     ExtensionResponse(ExtensionUiResponse),
-    DeliverQueued(crate::state::QueuedPrompt),
+    DeliverQueued(crate::app::persistence::QueuedPrompt),
     SetSessionArchived {
         path: PathBuf,
         archived: bool,

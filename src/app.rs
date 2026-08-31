@@ -12,6 +12,9 @@ mod expiries;
 mod file_mentions;
 pub(crate) mod launch;
 pub(crate) mod mcp_server;
+pub(crate) mod persistence;
+#[cfg(test)]
+mod persistence_tests;
 mod picker;
 mod project_registry;
 mod quit;
@@ -373,7 +376,7 @@ impl FarcasterApp {
         }
         let submitted_drafts = drafts::submitted_draft_associations(&registry.drafts);
         sandbox_approval_ui.set_project_trusted(repository_execution_allowed);
-        let saved_proxy = crate::state::StateStore::open()
+        let saved_proxy = crate::app::persistence::StateStore::open()
             .and_then(|store| store.load_network_proxy())
             .unwrap_or(None);
         let runtime = RuntimeHandle::spawn_with_grants(
@@ -564,12 +567,18 @@ impl FarcasterApp {
         let transcript_view = cx.new(|_| TranscriptView::new(app.clone()));
         let composer_view = cx.new(|_| ComposerView::new(app.clone()));
         let run_panel_view = cx.new(|_| RunPanelView::new(app.clone()));
-        let workgraph_view =
-            cx.new(|cx| WorkGraphBoardView::new(crate::state::state_path(), project.clone(), cx));
+        let workgraph_view = cx.new(|cx| {
+            WorkGraphBoardView::new(crate::app::persistence::state_path(), project.clone(), cx)
+        });
         let workgraph_detail_view =
             cx.new(|cx| WorkGraphDetailView::new(app.clone(), workgraph_view.clone(), cx));
         let workgraph_sidebar_view = cx.new(|cx| {
-            WorkGraphSidebarView::new(app.clone(), crate::state::state_path(), project.clone(), cx)
+            WorkGraphSidebarView::new(
+                app.clone(),
+                crate::app::persistence::state_path(),
+                project.clone(),
+                cx,
+            )
         });
         transcript_list.set_scroll_handler(move |following, _, cx| {
             let needs_update = app.upgrade().is_some_and(|app| {

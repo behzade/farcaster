@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::{projects, state::StateStore};
+use crate::{app::persistence::StateStore, projects};
 
 pub(super) fn new_draft(project: PathBuf) -> Result<projects::DraftSession, String> {
     let elapsed = std::time::SystemTime::now()

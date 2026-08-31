@@ -7,11 +7,11 @@ use gpui::{AppContext as _, Context, FocusHandle, Window};
 
 use super::FarcasterApp;
 use crate::{
+    app::persistence::StateStore,
     repository::{
         BackendPreference, DiffTargetKey, RepositoryBackend, RepositoryLocation,
         RepositorySyncAction, RepositoryWatcher, WorkingCopySnapshot,
     },
-    state::StateStore,
 };
 
 #[derive(Default)]

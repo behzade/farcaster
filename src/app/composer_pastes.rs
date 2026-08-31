@@ -9,7 +9,7 @@ use std::{
 use gpui::{Context, Window};
 
 use super::FarcasterApp;
-use crate::state::state_path;
+use crate::app::persistence::state_path;
 
 const MAX_INLINE_PASTE_LINES: usize = 3;
 static PASTE_SEQUENCE: AtomicU64 = AtomicU64::new(0);

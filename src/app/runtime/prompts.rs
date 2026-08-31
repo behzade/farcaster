@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use crate::{
     agents::SessionCommand,
+    app::persistence::QueuedPrompt,
     protocol::{PromptImage, PromptMode},
-    state::QueuedPrompt,
 };
 
 use super::{RuntimeEvent, RuntimeOwner, can_send_prompt, conversation_mut};
@@ -37,6 +37,7 @@ impl RuntimeOwner {
         let outbox_id = match self.state.as_ref() {
             Some(state) => match state.enqueue_prompt(
                 &target,
+                "pi",
                 &self.project,
                 self.snapshot.selected_session.as_deref(),
                 mode,

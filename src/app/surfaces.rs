@@ -504,7 +504,9 @@ impl FarcasterApp {
     }
 
     pub(super) fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match crate::state::StateStore::open().and_then(|store| store.load_network_proxy()) {
+        match crate::app::persistence::StateStore::open()
+            .and_then(|store| store.load_network_proxy())
+        {
             Ok(proxy) => {
                 self.network_proxy_input.update(cx, |input, cx| {
                     input.set_value(proxy.unwrap_or_default(), window, cx);
@@ -531,7 +533,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match crate::state::StateStore::open()
+        match crate::app::persistence::StateStore::open()
             .and_then(|store| store.save_network_proxy(proxy.as_deref()))
         {
             Ok(()) => {

@@ -35,6 +35,8 @@ pub(crate) struct DraftSession {
     pub id: String,
     #[serde(default)]
     pub app_session_id: i64,
+    #[serde(default = "default_harness")]
+    pub harness: String,
     pub project: PathBuf,
     pub created_ms: u64,
     #[serde(default)]
@@ -50,6 +52,7 @@ impl DraftSession {
         Self {
             id,
             app_session_id,
+            harness: default_harness(),
             project,
             created_ms,
             submitted: false,
@@ -73,6 +76,10 @@ impl DraftSession {
         self.project = project;
         true
     }
+}
+
+fn default_harness() -> String {
+    "pi".into()
 }
 
 fn current_time_ms() -> u64 {

@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use crate::state::{ComposerRecord, StateStore};
+use crate::app::persistence::{ComposerRecord, StateStore};
 
 const MAX_HISTORY: usize = 100;
 const WRITE_DELAY: Duration = Duration::from_millis(250);

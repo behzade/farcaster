@@ -19,6 +19,7 @@ fn registry_round_trips_unique_existing_projects() -> Result<(), Box<dyn std::er
             drafts: vec![DraftSession {
                 id: "draft-one".into(),
                 app_session_id: 7,
+                harness: "pi".into(),
                 project: first.clone(),
                 created_ms: 1,
                 submitted: true,
@@ -36,6 +37,7 @@ fn registry_round_trips_unique_existing_projects() -> Result<(), Box<dyn std::er
             drafts: vec![DraftSession {
                 id: "draft-one".into(),
                 app_session_id: 7,
+                harness: "pi".into(),
                 project: first.canonicalize()?,
                 created_ms: 1,
                 submitted: true,
@@ -59,6 +61,7 @@ fn registry_ignores_projects_that_no_longer_exist() -> Result<(), Box<dyn std::e
             drafts: vec![DraftSession {
                 id: "gone".into(),
                 app_session_id: 8,
+                harness: "pi".into(),
                 project: temp.path().join("gone"),
                 created_ms: 1,
                 submitted: false,

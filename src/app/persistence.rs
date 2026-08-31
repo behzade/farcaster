@@ -15,7 +15,7 @@ use crate::{
     sessions::{SessionSummary, UsageSummary},
 };
 
-const SCHEMA_VERSION: i64 = 8;
+const SCHEMA_VERSION: i64 = 9;
 const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 const REPOSITORY_BACKEND_PREFERENCES_KEY: &str = "repository_backend_preferences";
 const NETWORK_PROXY_KEY: &str = "network_proxy";
@@ -30,6 +30,7 @@ pub(crate) struct StateStore {
 pub(crate) struct QueuedPrompt {
     pub id: i64,
     pub target: String,
+    pub harness: String,
     pub project: PathBuf,
     pub session: Option<PathBuf>,
     pub mode: PromptMode,
@@ -200,7 +201,7 @@ impl StateStore {
                      UPDATE meta SET value='5' WHERE key='schema_version';",
                 )
                 .map_err(|error| format!("migrate GUI state schema to 5: {error}"))?,
-            5 | 6 | 7 | SCHEMA_VERSION => {}
+            5 | 6 | 7 | 8 | SCHEMA_VERSION => {}
             _ => {
                 return Err(format!(
                     "GUI state schema {schema_version} is not supported by this build"
@@ -261,6 +262,17 @@ impl StateStore {
                      UPDATE meta SET value='8' WHERE key='schema_version';",
                 )
                 .map_err(|error| format!("migrate GUI state schema to 8: {error}"))?;
+            schema_version = 8;
+        }
+        if schema_version == 8 {
+            migration
+                .execute_batch(
+                    "ALTER TABLE drafts ADD COLUMN harness TEXT NOT NULL DEFAULT 'pi';
+                     ALTER TABLE outbox ADD COLUMN harness TEXT NOT NULL DEFAULT 'pi';
+                     ALTER TABLE app_sessions ADD COLUMN harness TEXT NOT NULL DEFAULT 'pi';
+                     UPDATE meta SET value='9' WHERE key='schema_version';",
+                )
+                .map_err(|error| format!("migrate GUI state schema to 9: {error}"))?;
         }
         migration
             .commit()
@@ -570,7 +582,7 @@ impl StateStore {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT id, app_session_id, project, created_ms, submitted, session_path,
+                "SELECT id, app_session_id, harness, project, created_ms, submitted, session_path,
                         provisional_title
                    FROM drafts ORDER BY created_ms DESC",
             )
@@ -581,20 +593,22 @@ impl StateStore {
                     row.get::<_, String>(0)?,
                     row.get::<_, i64>(1)?,
                     row.get::<_, String>(2)?,
-                    row.get::<_, u64>(3)?,
-                    row.get::<_, bool>(4)?,
-                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, u64>(4)?,
+                    row.get::<_, bool>(5)?,
                     row.get::<_, Option<String>>(6)?,
+                    row.get::<_, Option<String>>(7)?,
                 ))
             })
             .map_err(|error| format!("query drafts: {error}"))?;
         for row in rows {
-            let (id, app_session_id, project, created_ms, submitted, session_path, title) =
+            let (id, app_session_id, harness, project, created_ms, submitted, session_path, title) =
                 row.map_err(|error| error.to_string())?;
             if let Some(project) = existing_directory(&project) {
                 drafts.push(DraftSession {
                     id,
                     app_session_id,
+                    harness,
                     project,
                     created_ms,
                     submitted,
@@ -652,12 +666,13 @@ impl StateStore {
             transaction
                 .execute(
                     "INSERT INTO drafts(
-                       id, app_session_id, project, created_ms, submitted, session_path,
+                       id, app_session_id, harness, project, created_ms, submitted, session_path,
                        provisional_title
-                     ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                     ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                     params![
                         draft.id,
                         app_session_id,
+                        draft.harness,
                         draft.project.to_string_lossy(),
                         draft.created_ms,
                         draft.submitted,
@@ -920,6 +935,7 @@ impl StateStore {
     pub(crate) fn enqueue_prompt(
         &self,
         target: &str,
+        harness: &str,
         project: &Path,
         session: Option<&Path>,
         mode: PromptMode,
@@ -931,10 +947,11 @@ impl StateStore {
         self.connection
             .execute(
                 "INSERT INTO outbox(
-                   target, project, session_path, mode, message, images_json, created_ms
-                 ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                   target, harness, project, session_path, mode, message, images_json, created_ms
+                 ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     target,
+                    harness,
                     project.to_string_lossy(),
                     session.map(|path| path.to_string_lossy()),
                     prompt_mode(mode),
@@ -951,17 +968,17 @@ impl StateStore {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT id, target, project, session_path, mode, message, images_json
+                "SELECT id, target, harness, project, session_path, mode, message, images_json
                    FROM outbox WHERE state='queued' ORDER BY id",
             )
             .map_err(|error| format!("prepare prompt queue: {error}"))?;
         statement
             .query_map([], |row| {
-                let mode = row.get::<_, String>(4)?;
-                let images_json = row.get::<_, String>(6)?;
+                let mode = row.get::<_, String>(5)?;
+                let images_json = row.get::<_, String>(7)?;
                 let images = serde_json::from_str(&images_json).map_err(|error| {
                     rusqlite::Error::FromSqlConversionFailure(
-                        6,
+                        7,
                         rusqlite::types::Type::Text,
                         Box::new(error),
                     )
@@ -969,10 +986,11 @@ impl StateStore {
                 Ok(QueuedPrompt {
                     id: row.get(0)?,
                     target: row.get(1)?,
-                    project: PathBuf::from(row.get::<_, String>(2)?),
-                    session: row.get::<_, Option<String>>(3)?.map(PathBuf::from),
+                    harness: row.get(2)?,
+                    project: PathBuf::from(row.get::<_, String>(3)?),
+                    session: row.get::<_, Option<String>>(4)?.map(PathBuf::from),
                     mode: parse_prompt_mode(&mode),
-                    message: row.get(5)?,
+                    message: row.get(6)?,
                     images,
                 })
             })
@@ -1180,13 +1198,18 @@ fn ensure_draft_app_session(
 ) -> rusqlite::Result<i64> {
     if draft.app_session_id > 0 {
         transaction.execute(
-            "INSERT OR IGNORE INTO app_sessions(id, draft_id, created_ms) VALUES(?1, ?2, ?3)",
-            params![draft.app_session_id, draft.id, u64_to_i64(draft.created_ms)],
+            "INSERT OR IGNORE INTO app_sessions(id, draft_id, created_ms, harness) VALUES(?1, ?2, ?3, ?4)",
+            params![
+                draft.app_session_id,
+                draft.id,
+                u64_to_i64(draft.created_ms),
+                draft.harness
+            ],
         )?;
     }
     transaction.execute(
-        "INSERT OR IGNORE INTO app_sessions(draft_id, created_ms) VALUES(?1, ?2)",
-        params![draft.id, u64_to_i64(draft.created_ms)],
+        "INSERT OR IGNORE INTO app_sessions(draft_id, created_ms, harness) VALUES(?1, ?2, ?3)",
+        params![draft.id, u64_to_i64(draft.created_ms), draft.harness],
     )?;
     let app_session_id = transaction.query_row(
         "SELECT id FROM app_sessions WHERE draft_id=?1",

@@ -12,12 +12,12 @@ use std::{
 };
 
 use crate::{
+    app::persistence::{StateStore, WindowPlacement, WindowState},
     app::{FarcasterApp, QuitApplication},
     assets::AppAssets,
     keybindings,
     project_trust_view::ProjectTrustView,
     projects,
-    state::{StateStore, WindowPlacement, WindowState},
     theme::{THEME, install_component_theme},
 };
 use gpui::{
