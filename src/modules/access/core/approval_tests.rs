@@ -91,11 +91,10 @@ async fn session_approval_activates_exact_external_right() -> Result<(), String>
     assert_eq!(prompt.options, [SESSION_LABEL, DENY_LABEL]);
     assert!(prompt.title.contains("update the sibling checkout"));
     assert!(ui.respond(&prompt.id, SESSION_LABEL)?);
-    let result = tokio::time::timeout(std::time::Duration::from_secs(2), request)
+    tokio::time::timeout(std::time::Duration::from_secs(2), request)
         .await
         .map_err(|_| "approval response timed out".to_owned())?
         .map_err(|error| error.to_string())??;
-    assert!(result.contains("activate after this agent turn ends"));
     let grants = ui.grants().resolve();
     assert_eq!(
         grants.writable,
@@ -245,7 +244,7 @@ async fn rejected_nono_profile_is_not_activated_or_persisted() -> Result<(), Str
 }
 
 #[tokio::test]
-async fn untrusted_projects_and_symlinked_paths_fail_closed() -> Result<(), String> {
+async fn untrusted_projects_and_protected_paths_fail_closed() -> Result<(), String> {
     let (root, service, ui, project, _home) = setup()?;
     let untrusted = service
         .request_access(RequestAccessParams {
@@ -289,27 +288,57 @@ async fn untrusted_projects_and_symlinked_paths_fail_closed() -> Result<(), Stri
         .await
         .expect_err("protected writes must fail");
     assert!(protected.contains("protected write"));
-
-    let target = project.join("target");
-    fs::create_dir(&target).map_err(|error| error.to_string())?;
-    let link = project.join("link");
-    #[cfg(unix)]
-    std::os::unix::fs::symlink(&target, &link).map_err(|error| error.to_string())?;
-    #[cfg(unix)]
-    {
-        let error = service
-            .request_access(RequestAccessParams {
-                rights: vec![AccessRight::Filesystem {
-                    access: FilesystemRightAccess::Read,
-                    path: link.display().to_string(),
-                    scope: FilesystemScope::Tree,
-                }],
-                reason: "test".into(),
-            })
-            .await
-            .expect_err("symlinked request must fail");
-        assert!(error.contains("symlinks"));
-    }
     drop(root);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_rights_are_checked_at_the_resolved_target() -> Result<(), String> {
+    let root = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let project = root.path().join("project");
+    let home = root.path().join("home");
+    let target = root.path().join("target");
+    fs::create_dir(&project).map_err(|error| error.to_string())?;
+    fs::create_dir(&target).map_err(|error| error.to_string())?;
+    fs::create_dir_all(home.join(".ssh")).map_err(|error| error.to_string())?;
+
+    let link = project.join("link");
+    std::os::unix::fs::symlink(&target, &link).map_err(|error| error.to_string())?;
+    let normalized = normalize_right(
+        &AccessRight::Filesystem {
+            access: FilesystemRightAccess::Read,
+            path: link.display().to_string(),
+            scope: FilesystemScope::Tree,
+        },
+        &project,
+        &home,
+    )?;
+    let AccessRight::Filesystem { path, .. } = normalized else {
+        return Err("filesystem right changed kind".into());
+    };
+    assert_eq!(
+        path,
+        target
+            .canonicalize()
+            .map_err(|error| error.to_string())?
+            .display()
+            .to_string()
+    );
+
+    let protected_link = project.join("protected-link");
+    std::os::unix::fs::symlink(home.join(".ssh"), &protected_link)
+        .map_err(|error| error.to_string())?;
+    let error = normalize_right(
+        &AccessRight::Filesystem {
+            access: FilesystemRightAccess::Read,
+            path: protected_link.display().to_string(),
+            scope: FilesystemScope::Tree,
+        },
+        &project,
+        &home,
+    )
+    .expect_err("protected symlink target must fail");
+    assert!(error.contains("protected read"));
     Ok(())
 }

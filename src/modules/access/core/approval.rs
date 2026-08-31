@@ -247,7 +247,7 @@ impl ApprovalService {
             .map_err(|_| "Sandbox approval was cancelled. No command was retried.".to_owned())??;
         pending.disarm();
         Ok(format!(
-            "Updated {} sandbox rights in {}. They activate after this agent turn ends; do not retry the denied operation in this turn.",
+            "Updated {} sandbox rights in {}.",
             result.scope, result.policy_path
         ))
     }
@@ -580,7 +580,6 @@ fn normalize_right(
                 return Err("filesystem path must contain from 1 to 1024 characters".into());
             }
             let lexical = expand_path(path, project, home)?;
-            assert_symlink_free(&lexical)?;
             let actual = lexical.canonicalize().map_err(|error| {
                 format!("resolve filesystem grant {}: {error}", lexical.display())
             })?;
@@ -824,23 +823,6 @@ fn portable_path(path: &Path, project: &Path, home: &Path) -> String {
         };
     }
     path.to_string_lossy().into_owned()
-}
-
-fn assert_symlink_free(path: &Path) -> Result<(), String> {
-    let mut current = PathBuf::new();
-    for component in path.components() {
-        current.push(component.as_os_str());
-        let metadata = current
-            .symlink_metadata()
-            .map_err(|error| format!("inspect {}: {error}", current.display()))?;
-        if metadata.file_type().is_symlink() {
-            return Err(format!(
-                "filesystem grants cannot contain symlinks: {}",
-                current.display()
-            ));
-        }
-    }
-    Ok(())
 }
 
 fn canonical_directory(path: &Path, label: &str) -> Result<PathBuf, String> {

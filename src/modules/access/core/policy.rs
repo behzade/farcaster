@@ -11,7 +11,6 @@ struct Profile {
     #[serde(rename = "$schema")]
     schema: &'static str,
     extends: &'static str,
-    #[serde(skip_serializing_if = "is_false")]
     allow_parent_of_protected: bool,
     meta: ProfileMeta,
     filesystem: FilesystemPolicy,
@@ -41,10 +40,6 @@ struct NetworkPolicy {
     open_port: Vec<u16>,
 }
 
-fn is_false(value: &bool) -> bool {
-    !*value
-}
-
 pub(crate) fn compile(
     project: &Path,
     home: &Path,
@@ -60,6 +55,15 @@ pub(crate) fn compile(
     let temporary = canonical_directory(temporary, "temporary directory")?;
     let mut readable = user_runtime_libraries(&home);
     let mut readable_files = user_configuration(&home);
+    let mut protection_bypasses = grants
+        .readable
+        .iter()
+        .chain(&grants.readable_files)
+        .chain(&grants.writable)
+        .chain(&grants.writable_files)
+        .filter(|path| *path != &project)
+        .cloned()
+        .collect::<Vec<_>>();
     let mut writable = vec![temporary.clone(), agent_state.clone()];
     if let Ok(slash_tmp) = Path::new("/tmp").canonicalize()
         && slash_tmp.is_dir()
@@ -79,6 +83,7 @@ pub(crate) fn compile(
     } else if matches!(access.filesystem, FilesystemAccess::Full) {
         writable = vec![PathBuf::from("/")];
         writable_files.clear();
+        protection_bypasses = vec![PathBuf::from("/")];
     } else {
         readable.push(project.clone());
     }
@@ -98,14 +103,6 @@ pub(crate) fn compile(
     writable.dedup();
     writable_files.sort();
     writable_files.dedup();
-    let mut protection_bypasses = readable
-        .iter()
-        .chain(&readable_files)
-        .chain(&writable)
-        .chain(&writable_files)
-        .filter(|path| *path != &project)
-        .cloned()
-        .collect::<Vec<_>>();
     protection_bypasses.sort();
     protection_bypasses.dedup();
 
@@ -136,8 +133,8 @@ pub(crate) fn compile(
             read_file: readable_files,
             allow: writable,
             allow_file: writable_files,
-            // Recursive workspace access must not disable protections for descendants.
-            // Exact support paths and user-approved grants retain their explicit bypasses.
+            // Baseline access must not disable protection after symlink resolution.
+            // Only explicit user-approved grants and full access bypass protection.
             bypass_protection: protection_bypasses,
         },
         network: NetworkPolicy {
@@ -176,7 +173,7 @@ fn canonical_directory(path: &Path, label: &str) -> Result<PathBuf, String> {
 fn user_runtime_libraries(home: &Path) -> Vec<PathBuf> {
     [".local/lib"]
         .into_iter()
-        .filter_map(|relative| symlink_free_existing_path(home, relative))
+        .filter_map(|relative| existing_user_path(home, relative))
         .collect()
 }
 
@@ -221,31 +218,13 @@ fn development_storage(home: &Path) -> Vec<PathBuf> {
     ];
     PATHS
         .iter()
-        .filter_map(|relative| symlink_free_existing_path(home, relative))
+        .filter_map(|relative| existing_user_path(home, relative))
         .collect()
 }
 
-fn symlink_free_existing_path(home: &Path, relative: &str) -> Option<PathBuf> {
-    let path = symlink_free_path(home, relative)?;
-    path.symlink_metadata().ok()?;
-    Some(path)
-}
-
-fn symlink_free_path(home: &Path, relative: &str) -> Option<PathBuf> {
-    let mut path = home.to_owned();
-    let mut components = relative.split('/');
-    while let Some(component) = components.next() {
-        path.push(component);
-        match path.symlink_metadata() {
-            Ok(metadata) if metadata.file_type().is_symlink() => return None,
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                path.extend(components);
-                return Some(path);
-            }
-            Err(_) => return None,
-        }
-    }
+fn existing_user_path(home: &Path, relative: &str) -> Option<PathBuf> {
+    let path = home.join(relative);
+    path.metadata().ok()?;
     Some(path)
 }
 
@@ -354,84 +333,6 @@ mod tests {
                 .is_some_and(|hosts| hosts.iter().any(|host| host == "127.0.0.1"))
         );
         assert_eq!(profile["network"]["open_port"][0], 8765);
-        Ok(())
-    }
-
-    #[test]
-    fn workspace_allows_protected_descendants_without_bypassing_them()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let root = tempfile::tempdir()?;
-        let workspace = root.path().join("workspace");
-        let home = root.path().join("home");
-        let temporary = root.path().join("tmp");
-        std::fs::create_dir(&workspace)?;
-        std::fs::create_dir_all(home.join(".pi/agent"))?;
-        std::fs::create_dir(&temporary)?;
-        let workspace = workspace.canonicalize()?;
-        let profile: serde_json::Value = serde_json::from_slice(&compile(
-            &workspace,
-            &home,
-            &home.join(".pi/agent"),
-            &temporary,
-            AccessPolicy {
-                filesystem: FilesystemAccess::Sandboxed,
-                network: NetworkAccess::Sandboxed,
-            },
-            crate::access::approval::ResolvedGrants::default(),
-            &NetworkConfiguration::default(),
-        )?)?;
-
-        assert_eq!(profile["allow_parent_of_protected"], true);
-        assert!(
-            profile["filesystem"]["allow"]
-                .as_array()
-                .is_some_and(|paths| paths.contains(&serde_json::json!(workspace)))
-        );
-        assert!(
-            !profile["filesystem"]["bypass_protection"]
-                .as_array()
-                .is_some_and(|paths| paths.contains(&serde_json::json!(workspace)))
-        );
-        Ok(())
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn symlinked_git_config_remains_an_exact_file_grant() -> Result<(), Box<dyn std::error::Error>>
-    {
-        use std::os::unix::fs::symlink;
-
-        let root = tempfile::tempdir()?;
-        let project = root.path().join("project");
-        let home = root.path().join("home");
-        let temporary = root.path().join("tmp");
-        let target = root.path().join("git-config");
-        std::fs::create_dir(&project)?;
-        std::fs::create_dir_all(home.join(".pi/agent"))?;
-        std::fs::create_dir_all(home.join(".config/git"))?;
-        std::fs::create_dir(&temporary)?;
-        std::fs::write(&target, "[user]\n")?;
-        let config = home.join(".config/git/config");
-        symlink(&target, &config)?;
-        let granted_config = home.canonicalize()?.join(".config/git/config");
-
-        let profile: serde_json::Value = serde_json::from_slice(&compile(
-            &project,
-            &home,
-            &home.join(".pi/agent"),
-            &temporary,
-            AccessPolicy {
-                filesystem: FilesystemAccess::Sandboxed,
-                network: NetworkAccess::Sandboxed,
-            },
-            crate::access::approval::ResolvedGrants::default(),
-            &NetworkConfiguration::default(),
-        )?)?;
-        assert!(
-            profile["filesystem"]["read_file"]
-                .as_array()
-                .is_some_and(|paths| paths.contains(&serde_json::json!(granted_config)))
-        );
         Ok(())
     }
 

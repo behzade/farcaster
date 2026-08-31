@@ -205,6 +205,53 @@ pub(crate) const fn test_nono_bypass() -> NonoExecutable {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    fn path_executable(name: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        let path = std::env::var_os("PATH").ok_or("PATH is unavailable")?;
+        std::env::split_paths(&path)
+            .map(|directory| directory.join(name))
+            .find(|candidate| is_executable_file(candidate))
+            .ok_or_else(|| format!("{name} is unavailable on PATH").into())
+    }
+
+    #[cfg(unix)]
+    fn run_real_nono(
+        project: &Path,
+        home: &Path,
+        temporary: &Path,
+        program: &Path,
+        arguments: &[String],
+    ) -> Result<std::process::Output, Box<dyn std::error::Error>> {
+        let nono = configured_nono_program(std::env::var_os("FARCASTER_NONO_PATH"));
+        let agent_state = home.join(".pi/agent");
+        let mut prepared = prepare_command(
+            &nono,
+            program,
+            arguments,
+            PolicyPaths {
+                project,
+                home,
+                agent_state: &agent_state,
+                temporary,
+            },
+            AccessPolicy {
+                filesystem: FilesystemAccess::Sandboxed,
+                network: NetworkAccess::Full,
+            },
+            None,
+            &NetworkConfiguration::default(),
+        )?;
+        let path = std::env::var_os("PATH").ok_or("PATH is unavailable")?;
+        Ok(prepared
+            .command
+            .current_dir(project)
+            .env_clear()
+            .env("HOME", home)
+            .env("TMPDIR", temporary)
+            .env("PATH", path)
+            .output()?)
+    }
+
     #[test]
     fn resolves_bundled_nono_before_path() -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
@@ -299,6 +346,58 @@ mod tests {
             serde_json::from_slice::<serde_json::Value>(&profile)?["meta"]["name"],
             "farcaster-agent"
         );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn real_nono_enforces_symlink_targets_in_home_workspace()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir()?;
+        let home = root.path().join("home");
+        let temporary = root.path().join("tmp");
+        std::fs::create_dir_all(home.join(".pi/agent"))?;
+        std::fs::create_dir_all(home.join(".config/git"))?;
+        std::fs::create_dir_all(home.join(".ssh"))?;
+        std::fs::create_dir(&temporary)?;
+
+        let configured_target = root.path().join("git-config");
+        std::fs::write(&configured_target, "configured-symlink\n")?;
+        let configured_link = home.join(".config/git/config");
+        symlink(&configured_target, &configured_link)?;
+
+        let marker = "protected-marker-must-not-leak\n";
+        let secret = home.join(".ssh/id_rsa");
+        std::fs::write(&secret, marker)?;
+        let protected_link = home.join("harmless");
+        symlink(&secret, &protected_link)?;
+
+        let cat = path_executable("cat")?;
+        let configured = run_real_nono(
+            &home,
+            &home,
+            &temporary,
+            &cat,
+            &[configured_link.to_string_lossy().into_owned()],
+        )?;
+        assert!(
+            configured.status.success(),
+            "real nono denied configured symlink: {}",
+            String::from_utf8_lossy(&configured.stderr)
+        );
+        assert_eq!(configured.stdout, b"configured-symlink\n");
+
+        let protected = run_real_nono(
+            &home,
+            &home,
+            &temporary,
+            &cat,
+            &[protected_link.to_string_lossy().into_owned()],
+        )?;
+        assert!(!protected.status.success());
+        assert!(!String::from_utf8_lossy(&protected.stdout).contains(marker.trim()));
         Ok(())
     }
 
