@@ -355,6 +355,93 @@ fn session_harness_survives_the_cache() -> Result<(), Box<dyn std::error::Error>
 }
 
 #[test]
+fn imported_sessions_are_active_only_while_recent_and_not_done()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let project = temp.path().join("project");
+    fs::create_dir(&project)?;
+    let now = SystemTime::now();
+    let summaries = [
+        ("recent-running", now, true),
+        ("recent-done", now, false),
+        (
+            "old-running",
+            now - std::time::Duration::from_secs(4 * 60 * 60),
+            true,
+        ),
+    ]
+    .into_iter()
+    .map(|(id, modified, is_running)| {
+        let path = temp.path().join(format!("{id}.jsonl"));
+        fs::write(&path, "{}")?;
+        Ok::<_, std::io::Error>(SessionSummary::from_cached(
+            id.into(),
+            path,
+            project.clone(),
+            id.into(),
+            String::new(),
+            String::new(),
+            None,
+            modified,
+            0,
+            UsageSummary::default(),
+            false,
+            is_running,
+            id.into(),
+        ))
+    })
+    .collect::<Result<Vec<_>, _>>()?;
+    let mut store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;
+
+    store.replace_sessions(&summaries)?;
+
+    let sessions = store.cached_sessions("")?;
+    let archived = sessions
+        .iter()
+        .map(|session| (session.id.as_str(), session.archived))
+        .collect::<std::collections::HashMap<_, _>>();
+    assert!(!archived["recent-running"]);
+    assert!(archived["recent-done"]);
+    assert!(archived["old-running"]);
+    Ok(())
+}
+
+#[test]
+fn import_classification_is_not_reapplied_when_a_session_finishes()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let project = temp.path().join("project");
+    let path = temp.path().join("session.jsonl");
+    fs::create_dir(&project)?;
+    fs::write(&path, "{}")?;
+    let summary = |is_running| {
+        SessionSummary::from_cached(
+            "session".into(),
+            path.clone(),
+            project.clone(),
+            "Session".into(),
+            String::new(),
+            String::new(),
+            None,
+            SystemTime::now(),
+            0,
+            UsageSummary::default(),
+            false,
+            is_running,
+            String::new(),
+        )
+    };
+    let mut store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;
+
+    store.replace_sessions(&[summary(true)])?;
+    assert!(!store.cached_sessions("")?[0].archived);
+    store.replace_sessions(&[summary(false)])?;
+
+    assert!(!store.cached_sessions("")?[0].archived);
+    Ok(())
+}
+
+#[test]
 fn draft_harness_survives_the_registry() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
@@ -479,7 +566,7 @@ fn partial_session_index_updates_do_not_delete_omitted_rows()
 }
 
 #[test]
-fn schema_v1_migrates_to_v9_with_defaults_and_outbox_preserved()
+fn schema_v1_migrates_to_v10_with_defaults_and_outbox_preserved()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
@@ -507,12 +594,12 @@ fn schema_v1_migrates_to_v9_with_defaults_and_outbox_preserved()
     assert!(queued[0].images.is_empty());
     drop(store);
 
-    assert_eq!(database_schema_version(&database)?, 9);
+    assert_eq!(database_schema_version(&database)?, 10);
     Ok(())
 }
 
 #[test]
-fn schema_v2_migrates_to_v9_with_defaults_and_outbox_preserved()
+fn schema_v2_migrates_to_v10_with_defaults_and_outbox_preserved()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
@@ -543,12 +630,12 @@ fn schema_v2_migrates_to_v9_with_defaults_and_outbox_preserved()
     );
     drop(store);
 
-    assert_eq!(database_schema_version(&database)?, 9);
+    assert_eq!(database_schema_version(&database)?, 10);
     Ok(())
 }
 
 #[test]
-fn schema_v3_migrates_to_v9_with_running_default() -> Result<(), Box<dyn std::error::Error>> {
+fn schema_v3_migrates_to_v10_with_running_default() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
     fs::create_dir(&project)?;
@@ -561,13 +648,13 @@ fn schema_v3_migrates_to_v9_with_running_default() -> Result<(), Box<dyn std::er
     )?;
 
     let store = StateStore::open_at(&database)?;
-    assert_eq!(database_schema_version(&database)?, 9);
+    assert_eq!(database_schema_version(&database)?, 10);
     assert!(store.cached_sessions("")?.is_empty());
     Ok(())
 }
 
 #[test]
-fn schema_v4_migrates_to_v9_with_provisional_title_default()
+fn schema_v4_migrates_to_v10_with_provisional_title_default()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
@@ -582,7 +669,7 @@ fn schema_v4_migrates_to_v9_with_provisional_title_default()
     )?;
 
     let store = StateStore::open_at(&database)?;
-    assert_eq!(database_schema_version(&database)?, 9);
+    assert_eq!(database_schema_version(&database)?, 10);
     assert_eq!(store.load_registry()?.drafts[0].title, None);
     Ok(())
 }
@@ -625,7 +712,7 @@ fn schema_v5_migrates_existing_sessions_and_drafts_to_incremental_ids()
     assert!(session.app_session_id > 0);
     assert_ne!(draft.app_session_id, session.app_session_id);
     assert_eq!(session.harness, "pi");
-    assert_eq!(database_schema_version(&database)?, 9);
+    assert_eq!(database_schema_version(&database)?, 10);
     Ok(())
 }
 

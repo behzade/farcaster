@@ -16,8 +16,9 @@ use crate::{
     sessions::{SessionSummary, UsageSummary},
 };
 
-const SCHEMA_VERSION: i64 = 9;
+const SCHEMA_VERSION: i64 = 10;
 const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(10);
+const ACTIVE_IMPORT_WINDOW: Duration = Duration::from_secs(3 * 60 * 60);
 const REPOSITORY_BACKEND_PREFERENCES_KEY: &str = "repository_backend_preferences";
 const NETWORK_PROXY_KEY: &str = "network_proxy";
 const LEGACY_PI_GPUI_IMPORT_KEY: &str = "legacy_pi_gpui_state_imported";
@@ -190,7 +191,7 @@ impl StateStore {
                      UPDATE meta SET value='5' WHERE key='schema_version';",
                 )
                 .map_err(|error| format!("migrate GUI state schema to 5: {error}"))?,
-            5 | 6 | 7 | 8 | SCHEMA_VERSION => {}
+            5 | 6 | 7 | 8 | 9 | SCHEMA_VERSION => {}
             _ => {
                 return Err(format!(
                     "GUI state schema {schema_version} is not supported by this build"
@@ -262,6 +263,26 @@ impl StateStore {
                      UPDATE meta SET value='9' WHERE key='schema_version';",
                 )
                 .map_err(|error| format!("migrate GUI state schema to 9: {error}"))?;
+            schema_version = 9;
+        }
+        if schema_version == 9 {
+            migration
+                .execute_batch(
+                    "ALTER TABLE app_sessions
+                       ADD COLUMN import_classified INTEGER NOT NULL DEFAULT 0;
+                     UPDATE sessions
+                        SET settled_ms=COALESCE(settled_ms, CAST(unixepoch('now') AS INTEGER) * 1000)
+                      WHERE app_session_id IN (
+                              SELECT id FROM app_sessions WHERE draft_id IS NULL
+                            )
+                        AND (
+                          is_running=0
+                          OR modified_ms < CAST(unixepoch('now') AS INTEGER) * 1000 - 10800000
+                        );
+                     UPDATE app_sessions SET import_classified=1;
+                     UPDATE meta SET value='10' WHERE key='schema_version';",
+                )
+                .map_err(|error| format!("migrate GUI state schema to 10: {error}"))?;
         }
         migration
             .commit()
@@ -724,10 +745,10 @@ impl StateStore {
                        parent_session, modified_ms, file_size, message_count,
                        input_tokens, output_tokens, cache_read_tokens,
                        cache_write_tokens, total_tokens, cost_micros, search_text,
-                       is_running, app_session_id, harness
+                       is_running, app_session_id, harness, settled_ms
                      ) VALUES(
                        ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
-                       ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20
+                       ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21
                      ) ON CONFLICT(path) DO UPDATE SET
                        id=excluded.id, project=excluded.project, title=excluded.title,
                        first_user_message=excluded.first_user_message,
@@ -743,10 +764,13 @@ impl StateStore {
                 )
                 .map_err(|error| format!("prepare session index update: {error}"))?;
             for session in sessions {
-                let app_session_id =
+                let (app_session_id, classify_import) =
                     ensure_session_app_session(&transaction, session).map_err(|error| {
                         format!("identify session {}: {error}", session.path.display())
                     })?;
+                let settled_ms = (session.archived
+                    || classify_import && imported_session_is_archived(session, SystemTime::now()))
+                .then(|| now_ms());
                 let size = std::fs::metadata(&session.path)
                     .map(|metadata| metadata.len())
                     .unwrap_or(0);
@@ -772,10 +796,24 @@ impl StateStore {
                         session.is_running,
                         app_session_id,
                         session.harness,
+                        settled_ms,
                     ])
                     .map_err(|error| {
                         format!("index session {}: {error}", session.path.display())
                     })?;
+                if classify_import {
+                    transaction
+                        .execute(
+                            "UPDATE app_sessions SET import_classified=1 WHERE id=?1",
+                            [app_session_id],
+                        )
+                        .map_err(|error| {
+                            format!(
+                                "classify imported session {}: {error}",
+                                session.path.display()
+                            )
+                        })?;
+                }
             }
         }
         if prune_missing {
@@ -1320,17 +1358,17 @@ fn ensure_draft_app_session(
 fn ensure_session_app_session(
     transaction: &Transaction<'_>,
     session: &SessionSummary,
-) -> rusqlite::Result<i64> {
+) -> rusqlite::Result<(i64, bool)> {
     let path = crate::sessions::normalize_session_path(&session.path);
-    if let Some(id) = transaction
+    if let Some((id, classified)) = transaction
         .query_row(
-            "SELECT id FROM app_sessions WHERE session_path=?1",
+            "SELECT id, import_classified FROM app_sessions WHERE session_path=?1",
             [path.to_string_lossy()],
-            |row| row.get::<_, i64>(0),
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, bool>(1)?)),
         )
         .optional()?
     {
-        return Ok(id);
+        return Ok((id, !classified));
     }
     if session.app_session_id > 0 {
         transaction.execute(
@@ -1357,11 +1395,18 @@ fn ensure_session_app_session(
             ],
         )?;
     }
-    transaction.query_row(
-        "SELECT id FROM app_sessions WHERE session_path=?1",
-        [path.to_string_lossy()],
-        |row| row.get::<_, i64>(0),
-    )
+    transaction
+        .query_row(
+            "SELECT id, import_classified FROM app_sessions WHERE session_path=?1",
+            [path.to_string_lossy()],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, bool>(1)?)),
+        )
+        .map(|(id, classified)| (id, !classified))
+}
+
+fn imported_session_is_archived(session: &SessionSummary, now: SystemTime) -> bool {
+    !session.is_running
+        || now.duration_since(session.modified).unwrap_or_default() > ACTIVE_IMPORT_WINDOW
 }
 
 fn associate_app_session(
@@ -1387,7 +1432,7 @@ fn associate_app_session(
     }
     transaction.execute(
         "UPDATE app_sessions
-            SET draft_id=COALESCE(draft_id, ?2), session_path=?3
+            SET draft_id=COALESCE(draft_id, ?2), session_path=?3, import_classified=1
           WHERE id=?1",
         params![app_session_id, draft_id, path.to_string_lossy()],
     )?;
