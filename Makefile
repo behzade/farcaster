@@ -1,7 +1,10 @@
 PROJECT ?= $(CURDIR)
 CARGO_TARGET_DIR ?= $(CURDIR)/target
+LOG_LINES ?= 50
+LOG_FILE ?= $(if $(FARCASTER_DATA_DIR),$(FARCASTER_DATA_DIR),$(HOME)/Library/Application Support/Farcaster)/logs/farcaster.log
+TAIL_ARGS ?= -n $(LOG_LINES)
 
-.PHONY: run test debug release release-debug bundle-macos check check-flake
+.PHONY: run test debug release release-debug bundle-macos logs check check-flake
 
 run:
 	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo run -- "$(PROJECT)"
@@ -20,6 +23,10 @@ release-debug:
 
 bundle-macos:
 	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" ./scripts/bundle-macos.sh
+
+# Override LOG_LINES, TAIL_ARGS (for example, "-n 100 -f"), or LOG_FILE.
+logs:
+	@tail $(TAIL_ARGS) "$(LOG_FILE)"
 
 check:
 	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo fmt --check
