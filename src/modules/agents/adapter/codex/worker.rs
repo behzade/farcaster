@@ -795,21 +795,21 @@ fn configure_farcaster_mcp(command: &mut std::process::Command, caller_token: &s
 }
 
 fn codex_agent_message_text(item: &Value) -> Option<String> {
-    (item.get("type")?.as_str()? == "agentMessage").then(|| {
-        item.get("text")
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-            .or_else(|| {
-                item.get("content")?.as_array().map(|content| {
-                    content
-                        .iter()
-                        .filter_map(|part| part.get("text").and_then(Value::as_str))
-                        .collect::<Vec<_>>()
-                        .join("")
-                })
-            })
-            .unwrap_or_default()
-    })
+    if item.get("type").and_then(Value::as_str) != Some("agentMessage") {
+        return None;
+    }
+    item.get("text")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .or_else(|| {
+            let content = item.get("content")?.as_array()?;
+            Some(
+                content
+                    .iter()
+                    .filter_map(|part| part.get("text").and_then(Value::as_str))
+                    .collect(),
+            )
+        })
 }
 
 fn codex_tool_start(params: &Value) -> Option<Value> {
