@@ -211,6 +211,30 @@ fn load_main_metadata(
             }))
         })
         .collect();
+    let agent_response = client.agents(directory)?;
+    let agent_rows = agent_response
+        .as_array()
+        .or_else(|| agent_response.get("data").and_then(Value::as_array))
+        .cloned()
+        .unwrap_or_default();
+    let modes = agent_rows
+        .iter()
+        .filter(|agent| agent.get("hidden").and_then(Value::as_bool) != Some(true))
+        .filter(|agent| {
+            agent
+                .get("mode")
+                .and_then(Value::as_str)
+                .is_some_and(|mode| matches!(mode, "primary" | "all"))
+        })
+        .filter_map(|agent| {
+            let id = agent.get("id")?.as_str()?;
+            Some(json!({
+                "id": id,
+                "name": agent.get("name").and_then(Value::as_str).unwrap_or(id),
+                "description": agent.get("description").and_then(Value::as_str),
+            }))
+        })
+        .collect();
     let command_response = client.commands(directory)?;
     let command_rows = command_response
         .as_array()
@@ -231,6 +255,7 @@ fn load_main_metadata(
         models,
         efforts,
         commands,
+        modes,
     })
 }
 
@@ -573,6 +598,10 @@ impl WorkerSession for OpenCodeWorkerSession {
                 .select_model(&self.session_id, provider, model, Some(effort))?;
         }
         Ok(())
+    }
+
+    fn select_mode(&mut self, mode: &str) -> Result<(), String> {
+        self.server.client().select_agent(&self.session_id, mode)
     }
 
     fn poll(&mut self) -> Option<WorkerEvent> {

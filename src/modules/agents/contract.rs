@@ -37,6 +37,7 @@ pub(crate) enum SessionCommand {
     LoadUsage,
     ListModels,
     ListReasoningLevels,
+    ListModes,
     ListCommands,
     Prompt {
         mode: PromptMode,
@@ -63,6 +64,9 @@ pub(crate) enum SessionCommand {
     SelectReasoning {
         level: String,
     },
+    SelectMode {
+        mode: String,
+    },
 }
 
 impl SessionCommand {
@@ -74,6 +78,7 @@ impl SessionCommand {
             Self::LoadUsage => "load usage",
             Self::ListModels => "list models",
             Self::ListReasoningLevels => "list reasoning levels",
+            Self::ListModes => "list modes",
             Self::ListCommands => "list commands",
             Self::Prompt { mode, .. } => match mode {
                 PromptMode::Normal => "prompt",
@@ -87,6 +92,7 @@ impl SessionCommand {
             Self::ForkAt { .. } => "fork session",
             Self::SelectModel { .. } => "select model",
             Self::SelectReasoning { .. } => "select reasoning",
+            Self::SelectMode { .. } => "select mode",
         }
     }
 }

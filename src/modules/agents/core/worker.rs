@@ -57,6 +57,9 @@ pub(crate) trait WorkerSession: Send {
     fn select_effort(&mut self, _effort: &str) -> Result<(), String> {
         Err("worker backend does not support effort selection".into())
     }
+    fn select_mode(&mut self, _mode: &str) -> Result<(), String> {
+        Err("worker backend does not support mode selection".into())
+    }
     fn poll(&mut self) -> Option<WorkerEvent>;
     fn close(&mut self) -> Result<(), String>;
 }

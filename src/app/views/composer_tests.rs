@@ -2,7 +2,7 @@ use super::composer::{
     QueuedMessageKind, choice_copy, composer_primary_action, default_dialog_selection, dialog_copy,
     dialog_number_selection, numbered_dialog_choice, plain_text_html, queued_message_groups,
 };
-use crate::{conversation::QueueState, protocol::ExtensionUiRequest};
+use crate::{app::views::transcript::conversation::QueueState, protocol::ExtensionUiRequest};
 
 #[test]
 fn primary_action_only_appears_for_submit_ready_content() {

@@ -19,6 +19,7 @@ pub(super) fn encode_request(request: SessionCommand) -> Value {
         SessionCommand::ListReasoningLevels => {
             json!({"type": "get_available_thinking_levels"})
         }
+        SessionCommand::ListModes => json!({"type": "get_modes"}),
         SessionCommand::ListCommands => json!({"type": "get_commands"}),
         SessionCommand::Prompt {
             mode,
@@ -57,6 +58,7 @@ pub(super) fn encode_request(request: SessionCommand) -> Value {
         SessionCommand::SelectReasoning { level } => {
             json!({"type": "set_thinking_level", "level": level})
         }
+        SessionCommand::SelectMode { mode } => json!({"type": "set_mode", "mode": mode}),
     }
 }
 

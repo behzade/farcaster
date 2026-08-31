@@ -256,6 +256,31 @@ pub(super) fn render_runtime_picker(
                         },
                     )),
             )
+            .when(!app.snapshot.modes.is_empty(), |picker| {
+                picker.child(
+                    div()
+                        .pt(px(7.0))
+                        .flex()
+                        .items_center()
+                        .gap(px(6.0))
+                        .child(picker_label("Mode"))
+                        .children(app.snapshot.modes.iter().enumerate().map(|(index, mode)| {
+                            let target = mode.id.clone();
+                            let selected = app.snapshot.selected_mode.as_deref() == Some(&mode.id);
+                            let entity = entity.clone();
+                            runtime_option(
+                                ("runtime-mode", index),
+                                mode.name.clone(),
+                                selected,
+                                move |cx| {
+                                    let _ = entity.update(cx, |this, cx| {
+                                        this.set_agent_mode(target.clone(), cx);
+                                    });
+                                },
+                            )
+                        })),
+                )
+            })
             .into_any_element(),
     )
 }

@@ -1933,6 +1933,11 @@ impl FarcasterApp {
         cx.notify();
     }
 
+    fn set_agent_mode(&mut self, mode: String, cx: &mut Context<Self>) {
+        self.send(RuntimeCommand::SetMode(mode));
+        cx.notify();
+    }
+
     fn set_permission_level(
         &mut self,
         level: crate::runtime::PermissionLevel,

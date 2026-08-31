@@ -9,8 +9,8 @@ use gpui::{ClipboardItem, Context, Window};
 use super::{ComposerImage, ComposerPaste, FarcasterApp, composer_pastes, slash_commands};
 use crate::{
     app::slash_commands::{BuiltinInvocation, BuiltinSlashCommand},
+    app::views::transcript::conversation::TranscriptKind,
     composer_sessions::{ComposerSnapshot, session_target},
-    conversation::TranscriptKind,
     protocol::{PromptImage, PromptMode},
     runtime::RuntimeCommand,
     sessions::{SessionSummary, normalize_session_path},

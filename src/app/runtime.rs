@@ -29,7 +29,8 @@ use crate::{
     app::persistence::StateStore,
     app::views::transcript::conversation::{ConversationState, TranscriptItem, TranscriptKind},
     protocol::{
-        ExtensionUiRequest, ExtensionUiResponse, Model, PromptImage, PromptMode, SessionState,
+        AgentMode, ExtensionUiRequest, ExtensionUiResponse, Model, PromptImage, PromptMode,
+        SessionState,
         SlashCommand,
     },
     sessions::{
@@ -120,6 +121,7 @@ pub(crate) enum RuntimeCommand {
         model_id: String,
     },
     SetThinking(String),
+    SetMode(String),
     SetPermissionLevel(PermissionLevel),
     SetAppProxy(Option<String>),
     ReloadSandboxGrants,
@@ -204,6 +206,8 @@ pub(crate) struct RuntimeSnapshot {
     pub conversation: Arc<ConversationState>,
     pub models: Vec<Model>,
     pub thinking_levels: Vec<String>,
+    pub modes: Vec<AgentMode>,
+    pub selected_mode: Option<String>,
     pub stats: Value,
     pub commands: Vec<SlashCommand>,
     pub stderr: String,
@@ -1725,6 +1729,9 @@ impl RuntimeOwner {
         for command in startup_commands() {
             self.send(command);
         }
+        if self.harness != "pi" {
+            self.send(SessionCommand::ListModes);
+        }
     }
 
     fn apply_command(&mut self, runtime_command: RuntimeCommand) {
@@ -1832,6 +1839,7 @@ impl RuntimeOwner {
             }
             RuntimeCommand::SetModel { provider, model_id } => self.set_model(provider, model_id),
             RuntimeCommand::SetThinking(level) => self.set_thinking(level),
+            RuntimeCommand::SetMode(mode) => self.send(SessionCommand::SelectMode { mode }),
             RuntimeCommand::SetPermissionLevel(level) => self.set_permission_level(level),
             RuntimeCommand::SetAppProxy(proxy) => self.set_app_proxy(proxy),
             RuntimeCommand::ReloadSandboxGrants => self.reload_sandbox_grants(),
@@ -2340,6 +2348,21 @@ impl RuntimeOwner {
                     })
                     .unwrap_or_default();
             }
+            "get_modes" => {
+                self.active_snapshot_mut().modes = response
+                    .data
+                    .get("modes")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|mode| serde_json::from_value(mode.clone()).ok())
+                    .collect();
+                self.active_snapshot_mut().selected_mode = response
+                    .data
+                    .get("selected")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+            }
             "get_session_stats" => {
                 let running = self.active_snapshot().conversation.running;
                 let previous = self.active_snapshot().stats.clone();
@@ -2366,6 +2389,10 @@ impl RuntimeOwner {
                 self.send(SessionCommand::LoadState);
             }
             "set_thinking_level" => {
+                self.send(SessionCommand::LoadState);
+            }
+            "set_mode" => {
+                self.send(SessionCommand::ListModes);
                 self.send(SessionCommand::LoadState);
             }
             "new_session"

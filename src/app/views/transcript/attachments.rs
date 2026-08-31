@@ -6,9 +6,8 @@ use gpui::{
     StyledImage as _, WeakEntity, Window, div, img, px,
 };
 
-use crate::{
-    app::FarcasterApp, conversation::TranscriptItem, primitives::activates_button, theme::THEME,
-};
+use super::conversation::TranscriptItem;
+use crate::{app::FarcasterApp, primitives::activates_button, theme::THEME};
 
 pub(crate) const ATTACHMENT_ROW_HEIGHT: Pixels = px(126.0);
 

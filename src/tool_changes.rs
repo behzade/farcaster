@@ -1,6 +1,6 @@
 use crate::{
+    app::views::transcript::conversation::ToolPresentation,
     assets::AppIcon,
-    conversation::ToolPresentation,
     primitives::{ButtonTone, disclosure_detail, disclosure_title_row, icon_button},
     theme::{MONO_FONT_FAMILY, THEME},
 };

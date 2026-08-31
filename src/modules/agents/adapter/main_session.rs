@@ -13,6 +13,7 @@ pub(super) struct MainSessionMetadata {
     pub models: Vec<Value>,
     pub efforts: Vec<String>,
     pub commands: Vec<Value>,
+    pub modes: Vec<Value>,
 }
 
 pub(super) struct WorkerSessionTransport {
@@ -27,6 +28,7 @@ pub(super) struct WorkerSessionTransport {
     model: Option<(String, String)>,
     effort: String,
     metadata: MainSessionMetadata,
+    selected_mode: Option<String>,
 }
 
 impl WorkerSessionTransport {
@@ -53,6 +55,7 @@ impl WorkerSessionTransport {
                 .cloned()
                 .unwrap_or_else(|| "off".into()),
             metadata,
+            selected_mode: None,
         })
     }
 
@@ -163,6 +166,11 @@ impl SessionTransport for WorkerSessionTransport {
                 "get_available_thinking_levels",
                 json!({"levels": self.metadata.efforts.clone()}),
             ),
+            SessionCommand::ListModes => self.response(
+                id.clone(),
+                "get_modes",
+                json!({"modes": self.metadata.modes.clone(), "selected": self.selected_mode}),
+            ),
             SessionCommand::ListCommands => self.response(
                 id.clone(),
                 "get_commands",
@@ -204,6 +212,11 @@ impl SessionTransport for WorkerSessionTransport {
                 self.worker.select_effort(&level)?;
                 self.effort = level;
                 self.response(id.clone(), "set_thinking_level", json!({}));
+            }
+            SessionCommand::SelectMode { mode } => {
+                self.worker.select_mode(&mode)?;
+                self.selected_mode = Some(mode);
+                self.response(id.clone(), "set_mode", json!({}));
             }
             SessionCommand::Compact { .. } => {
                 self.worker.compact()?;

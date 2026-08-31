@@ -18,7 +18,6 @@ mod tool_changes;
 mod user_invocations;
 
 pub(crate) use app::runtime;
-pub(crate) use app::views::transcript::conversation;
 pub(crate) use modules::agents::extensions as protocol;
 pub(crate) use modules::sessions::activity as agent_activity;
 pub(crate) use modules::{access, agents, projects, repository, sessions};

@@ -1,15 +1,17 @@
 use gpui::Context;
 
-use super::FarcasterApp;
-use crate::app::views::transcript::conversation::TranscriptKind;
+use super::{
+    TranscriptRowUpdate, conversation::TranscriptKind, update_rows_from, update_rows_incremental,
+};
+use crate::app::FarcasterApp;
 
 impl FarcasterApp {
     pub(in crate::app) fn project_transcript_rows(
         &self,
         snapshot: &crate::runtime::RuntimeSnapshot,
-    ) -> crate::app::views::transcript::TranscriptRowUpdate {
+    ) -> TranscriptRowUpdate {
         let _timing = crate::performance::Timing::new("transcript.project_rows");
-        crate::app::views::transcript::update_rows_incremental(
+        update_rows_incremental(
             &self.transcript_rows,
             &self.snapshot.conversation.items,
             &snapshot.conversation.items,
@@ -17,14 +19,14 @@ impl FarcasterApp {
         )
     }
 
-    pub(crate) fn jump_to_latest(&mut self, cx: &mut Context<Self>) {
+    pub(in crate::app) fn jump_to_latest(&mut self, cx: &mut Context<Self>) {
         self.transcript_following = true;
         self.transcript_unseen = 0;
         self.transcript_list.scroll_to_end();
         self.notify_transcript(cx);
     }
 
-    pub(crate) fn set_transcript_item_expanded(
+    pub(in crate::app) fn set_transcript_item_expanded(
         &mut self,
         key: usize,
         expanded: bool,
@@ -74,10 +76,7 @@ impl FarcasterApp {
         self.composer_history_marker = Some((target, user_count, last_user.to_owned()));
     }
 
-    pub(in crate::app) fn apply_transcript_rows(
-        &mut self,
-        update: crate::app::views::transcript::TranscriptRowUpdate,
-    ) -> bool {
+    pub(in crate::app) fn apply_transcript_rows(&mut self, update: TranscriptRowUpdate) -> bool {
         update.apply(
             &self.transcript_list,
             &mut self.transcript_rows,
@@ -86,14 +85,12 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn mark_transcript_changed(&mut self, index: usize, _was_empty: bool) {
-        let rows = crate::app::views::transcript::update_rows_from(
+        let rows = update_rows_from(
             &self.transcript_rows,
             &self.snapshot.conversation.items,
             &self.snapshot.conversation.items,
             Some(index),
         );
-        let _changed = self.apply_transcript_rows(
-            crate::app::views::transcript::TranscriptRowUpdate::replace(rows),
-        );
+        let _changed = self.apply_transcript_rows(TranscriptRowUpdate::replace(rows));
     }
 }

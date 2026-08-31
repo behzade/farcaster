@@ -1,7 +1,7 @@
-pub(crate) mod attachments;
+mod attachments;
 pub(crate) mod conversation;
-pub(crate) mod list;
-pub(crate) mod markdown;
+pub(in crate::app) mod list;
+pub(in crate::app) mod markdown;
 mod ui;
 
 use std::{
@@ -20,16 +20,14 @@ use gpui_component::{
     text::{TextView, TextViewState, TextViewStyle},
 };
 
+use self::{
+    attachments::{ATTACHMENT_ROW_HEIGHT, render_attachments},
+    conversation::{TranscriptItem, TranscriptKind},
+    list::{TranscriptListState, transcript_list_grouped},
+    markdown::{MarkdownStateKey, TranscriptMarkdownCache},
+};
 use crate::{
-    app::views::transcript::conversation::{TranscriptItem, TranscriptKind},
-    app::{
-        FarcasterApp,
-        views::transcript::{
-            attachments::{ATTACHMENT_ROW_HEIGHT, render_attachments},
-            list::{TranscriptListState, transcript_list_grouped},
-            markdown::{MarkdownStateKey, TranscriptMarkdownCache},
-        },
-    },
+    app::FarcasterApp,
     persistent_vec::{Indexed, PersistentVec},
     primitives::{ButtonTone, button, disclosure_detail, disclosure_title_row},
     theme::{MONO_FONT_FAMILY, THEME},
@@ -810,7 +808,7 @@ pub(crate) fn render(
     list_state: &TranscriptListState,
     viewport: TranscriptViewport,
     rows: std::sync::Arc<PersistentVec<TranscriptRow>>,
-    conversation: Arc<crate::app::views::transcript::conversation::ConversationState>,
+    conversation: Arc<conversation::ConversationState>,
     disclosure_states: std::collections::HashMap<usize, bool>,
     markdown_cache: TranscriptMarkdownCache,
     entity: WeakEntity<FarcasterApp>,
@@ -865,7 +863,7 @@ pub(crate) fn render(
     div()
         .size_full()
         .when(visual_selection_active, |root| {
-            root.key_context(crate::app::views::transcript::list::TRANSCRIPT_SELECTION_KEY_CONTEXT)
+            root.key_context(list::TRANSCRIPT_SELECTION_KEY_CONTEXT)
         })
         .flex()
         .flex_col()

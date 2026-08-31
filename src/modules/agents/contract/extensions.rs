@@ -66,6 +66,14 @@ pub(crate) struct Model {
     pub reasoning: bool,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub(crate) struct AgentMode {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 pub(crate) struct SlashCommand {
     pub name: String,

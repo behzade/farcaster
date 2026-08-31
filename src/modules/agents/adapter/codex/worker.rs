@@ -90,6 +90,8 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             thread_id: thread_id.clone(),
             model: launch.model,
             effort: launch.effort,
+            collaboration_mode: None,
+            collaboration_modes: HashMap::new(),
             next_id,
             current_turn: None,
             output: String::new(),
@@ -153,6 +155,16 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         })
         .map_err(|error| format!("read Codex main-session events: {error}"))?;
     caller_identity.bind(thread_id.clone());
+    let collaboration_modes = metadata
+        .modes
+        .iter()
+        .filter_map(|mode| {
+            Some((
+                mode.get("id")?.as_str()?.to_owned(),
+                mode.get("configuration")?.clone(),
+            ))
+        })
+        .collect();
     let session = CodexWorkerSession {
         _caller_identity: caller_identity,
         _sandbox: sandbox,
@@ -162,6 +174,8 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         thread_id: thread_id.clone(),
         model: None,
         effort: None,
+        collaboration_mode: None,
+        collaboration_modes,
         next_id,
         current_turn: None,
         output: String::new(),
@@ -275,7 +289,7 @@ fn load_main_metadata(
     let id = connection.send_request("model/list", json!({"limit": 100}))?;
     let response: Value = connection.wait_response(&id)?;
     let mut efforts = Vec::new();
-    let models = response
+    let models: Vec<Value> = response
         .get("data")
         .and_then(Value::as_array)
         .into_iter()
@@ -315,10 +329,45 @@ fn load_main_metadata(
             }))
         })
         .collect();
+    let default_model = models
+        .first()
+        .and_then(|model| model.get("id"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let id = connection.send_request("collaborationMode/list", json!({}))?;
+    let response: Value = connection.wait_response(&id)?;
+    let modes = response
+        .get("data")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|mode| {
+            let id = mode.get("mode")?.as_str()?;
+            let model = mode
+                .get("model")
+                .and_then(Value::as_str)
+                .unwrap_or(default_model);
+            let effort = mode.get("reasoning_effort").cloned().unwrap_or(Value::Null);
+            Some(json!({
+                "id": id,
+                "name": mode.get("name").and_then(Value::as_str).unwrap_or(id),
+                "description": null,
+                "configuration": {
+                    "mode": id,
+                    "settings": {
+                        "model": model,
+                        "reasoning_effort": effort,
+                        "developer_instructions": null,
+                    }
+                }
+            }))
+        })
+        .collect();
     Ok(crate::modules::agents::adapter::main_session::MainSessionMetadata {
         models,
         efforts,
         commands: Vec::new(),
+        modes,
     })
 }
 
@@ -337,6 +386,8 @@ struct CodexWorkerSession {
     thread_id: String,
     model: Option<String>,
     effort: Option<String>,
+    collaboration_mode: Option<Value>,
+    collaboration_modes: HashMap<String, Value>,
     next_id: i64,
     current_turn: Option<String>,
     output: String,
@@ -421,6 +472,16 @@ impl WorkerSession for CodexWorkerSession {
 
     fn select_effort(&mut self, effort: &str) -> Result<(), String> {
         self.effort = Some(effort.to_owned());
+        Ok(())
+    }
+
+    fn select_mode(&mut self, mode: &str) -> Result<(), String> {
+        self.collaboration_mode = Some(
+            self.collaboration_modes
+                .get(mode)
+                .cloned()
+                .ok_or_else(|| format!("unknown Codex collaboration mode: {mode}"))?,
+        );
         Ok(())
     }
 
@@ -632,6 +693,7 @@ impl CodexWorkerSession {
                 "input": input,
                 "model": self.model,
                 "effort": self.effort,
+                "collaborationMode": self.collaboration_mode,
             }),
         )?;
         self.pending.insert(id, PendingRequest::StartTurn);

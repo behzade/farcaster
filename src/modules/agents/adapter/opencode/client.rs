@@ -117,6 +117,16 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
         )
     }
 
+    pub(crate) fn agents(&mut self, directory: &str) -> Result<Value, String> {
+        let directory = url::form_urlencoded::byte_serialize(directory.as_bytes())
+            .collect::<String>();
+        self.json(
+            OpenCodeHttpMethod::Get,
+            format!("/api/agent?directory={directory}"),
+            None,
+        )
+    }
+
     pub(crate) fn commands(&mut self, directory: &str) -> Result<Value, String> {
         let directory = url::form_urlencoded::byte_serialize(directory.as_bytes())
             .collect::<String>();
@@ -192,6 +202,15 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
                 path_segment(form_id)
             ),
             None,
+        )?;
+        ensure_success(&response)
+    }
+
+    pub(crate) fn select_agent(&mut self, session_id: &str, agent: &str) -> Result<(), String> {
+        let response = self.execute(
+            OpenCodeHttpMethod::Post,
+            format!("/api/session/{}/agent", path_segment(session_id)),
+            Some(json!({"agent": agent})),
         )?;
         ensure_success(&response)
     }
