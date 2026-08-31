@@ -22,6 +22,8 @@ use crate::{
     modules::agents::adapter::{child_stderr, farcaster_mcp},
 };
 
+const CODEX_CA_ENVIRONMENT: &str = "CODEX_CA_CERTIFICATE";
+
 #[derive(Clone)]
 pub(crate) struct CodexWorkerFactory {
     command: AgentLaunchConfig,
@@ -38,7 +40,9 @@ impl WorkerSessionFactory for CodexWorkerFactory {
         if launch.provider.is_some() != launch.model.is_some() {
             return Err("Codex worker provider and model must be supplied together".into());
         }
-        let mut sandbox = self.command.command(&launch.project)?;
+        let mut sandbox = self
+            .command
+            .command_with_tls_ca_environment(&launch.project, CODEX_CA_ENVIRONMENT)?;
         let caller_identity =
             crate::modules::agents::core::CallerRegistry::shared().issue(&launch.project);
         configure_farcaster_mcp(&mut sandbox.command, caller_identity.token());
@@ -118,7 +122,8 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
     ),
     String,
 > {
-    let mut sandbox = command.command(&launch.project)?;
+    let mut sandbox =
+        command.command_with_tls_ca_environment(&launch.project, CODEX_CA_ENVIRONMENT)?;
     let caller_identity =
         crate::modules::agents::core::CallerRegistry::shared().issue(&launch.project);
     configure_farcaster_mcp(&mut sandbox.command, caller_identity.token());

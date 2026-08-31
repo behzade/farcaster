@@ -40,6 +40,13 @@ struct NetworkPolicy {
     block: bool,
     allow_domain: Vec<String>,
     open_port: Vec<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tls_intercept: Option<TlsInterceptPolicy>,
+}
+
+#[derive(Debug, Serialize)]
+struct TlsInterceptPolicy {
+    ca_env_vars: Vec<String>,
 }
 
 pub(crate) fn compile(
@@ -156,6 +163,9 @@ pub(crate) fn compile(
             } else {
                 loopback_ports
             },
+            tls_intercept: (!network.tls_ca_env_vars.is_empty()).then(|| TlsInterceptPolicy {
+                ca_env_vars: network.tls_ca_env_vars.clone(),
+            }),
         },
     };
     let mut encoded = serde_json::to_vec_pretty(&profile)
@@ -441,6 +451,7 @@ mod tests {
         let network = NetworkConfiguration {
             proxy_hosts: vec!["proxy.example".into()],
             proxy_loopback_ports: vec![8080],
+            tls_ca_env_vars: vec!["CODEX_CA_CERTIFICATE".into()],
             app_proxy: None,
         };
         let profile: serde_json::Value = serde_json::from_slice(&compile(
@@ -465,6 +476,10 @@ mod tests {
             profile["network"]["open_port"]
                 .as_array()
                 .is_some_and(|ports| ports.iter().any(|port| port == 8080))
+        );
+        assert_eq!(
+            profile["network"]["tls_intercept"]["ca_env_vars"],
+            serde_json::json!(["CODEX_CA_CERTIFICATE"])
         );
         Ok(())
     }

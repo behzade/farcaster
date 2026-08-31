@@ -81,6 +81,7 @@ pub(crate) struct NetworkConfiguration {
     pub(crate) proxy_hosts: Vec<String>,
     pub(crate) proxy_loopback_ports: Vec<u16>,
     pub(crate) app_proxy: Option<String>,
+    pub(crate) tls_ca_env_vars: Vec<String>,
 }
 
 impl std::fmt::Debug for NetworkConfiguration {
@@ -90,6 +91,7 @@ impl std::fmt::Debug for NetworkConfiguration {
             .field("proxy_hosts", &self.proxy_hosts)
             .field("proxy_loopback_ports", &self.proxy_loopback_ports)
             .field("app_proxy", &self.app_proxy.as_ref().map(|_| "<redacted>"))
+            .field("tls_ca_env_vars", &self.tls_ca_env_vars)
             .finish()
     }
 }

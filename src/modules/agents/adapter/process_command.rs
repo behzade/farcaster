@@ -25,7 +25,7 @@ impl AgentLaunchConfig {
         &self,
         project: &Path,
     ) -> Result<access::SandboxedCommand, String> {
-        self.command_with_metadata(project, false)
+        self.command_with_options(project, false, &[])
     }
 
     /// Let backends resolve the home directory without granting access to its contents.
@@ -33,13 +33,22 @@ impl AgentLaunchConfig {
         &self,
         project: &Path,
     ) -> Result<access::SandboxedCommand, String> {
-        self.command_with_metadata(project, true)
+        self.command_with_options(project, true, &[])
     }
 
-    fn command_with_metadata(
+    pub(in crate::modules::agents) fn command_with_tls_ca_environment(
+        &self,
+        project: &Path,
+        environment_variable: &str,
+    ) -> Result<access::SandboxedCommand, String> {
+        self.command_with_options(project, false, &[environment_variable])
+    }
+
+    fn command_with_options(
         &self,
         project: &Path,
         read_home_metadata: bool,
+        tls_ca_environment: &[&str],
     ) -> Result<access::SandboxedCommand, String> {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         let mut environment = super::shell_environment::project_shell_environment(project)?;
@@ -69,11 +78,15 @@ impl AgentLaunchConfig {
         }
         let program =
             resolve_agent_program(&self.program, project, environment_value("PATH").as_deref())?;
-        let network = access::network_configuration(
+        let mut network = access::network_configuration(
             environment.as_deref(),
             self.app_proxy.as_deref(),
             matches!(access.network, access::NetworkAccess::Sandboxed),
         )?;
+        network.tls_ca_env_vars = tls_ca_environment
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect();
         if let Some(environment) = environment.as_mut() {
             access::append_app_proxy_environment(environment, &network);
         }
