@@ -82,9 +82,8 @@ Useful environment variables:
 - `FARCASTER_SHELL`: login shell override
 - `FARCASTER_GIT`, `FARCASTER_JJ`, `FARCASTER_NVIM`: executable overrides
 
-On macOS, application data defaults to
-`~/Library/Application Support/Farcaster`. Other platforms use
-`$XDG_DATA_HOME/farcaster` or `~/.local/share/farcaster`.
+On all platforms, application data defaults to `$XDG_DATA_HOME/farcaster` or
+`~/.local/share/farcaster` when `XDG_DATA_HOME` is unset.
 
 ## Check
 

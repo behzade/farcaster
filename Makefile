@@ -1,7 +1,8 @@
 PROJECT ?= $(CURDIR)
 CARGO_TARGET_DIR ?= $(CURDIR)/target
 LOG_LINES ?= 50
-LOG_FILE ?= $(if $(FARCASTER_DATA_DIR),$(FARCASTER_DATA_DIR),$(HOME)/Library/Application Support/Farcaster)/logs/farcaster.log
+DEFAULT_FARCASTER_DATA_DIR := $(if $(XDG_DATA_HOME),$(XDG_DATA_HOME),$(HOME)/.local/share)/farcaster
+LOG_FILE ?= $(if $(FARCASTER_DATA_DIR),$(FARCASTER_DATA_DIR),$(DEFAULT_FARCASTER_DATA_DIR))/logs/farcaster.log
 TAIL_ARGS ?= -n $(LOG_LINES)
 
 .PHONY: run test debug release release-debug bundle-macos logs check check-flake

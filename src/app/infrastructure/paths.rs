@@ -5,10 +5,6 @@ pub(crate) fn data_dir() -> Result<PathBuf, String> {
         return absolute(PathBuf::from(path));
     }
 
-    #[cfg(target_os = "macos")]
-    let path = home_dir()?.join("Library/Application Support/Farcaster");
-
-    #[cfg(not(target_os = "macos"))]
     let path = match std::env::var_os("XDG_DATA_HOME") {
         Some(path) => PathBuf::from(path),
         None => home_dir()?.join(".local/share"),

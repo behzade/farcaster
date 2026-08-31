@@ -3,7 +3,7 @@ use std::{ffi::OsString, path::Path, process::Command};
 type Environment = Vec<(OsString, OsString)>;
 
 const APP_ENV_IMPORTED: &str = "FARCASTER_SHELL_ENV_IMPORTED";
-const LAUNCH_ENVIRONMENT: [&str; 11] = [
+const LAUNCH_ENVIRONMENT: [&str; 12] = [
     "FARCASTER_CODEX_PATH",
     "FARCASTER_DATA_DIR",
     "FARCASTER_GIT",
@@ -15,6 +15,7 @@ const LAUNCH_ENVIRONMENT: [&str; 11] = [
     "FARCASTER_SHELL",
     "PI_CODING_AGENT_DIR",
     "PI_CODING_AGENT_SESSION_DIR",
+    "XDG_DATA_HOME",
 ];
 
 pub(crate) fn import() -> Result<(), String> {
