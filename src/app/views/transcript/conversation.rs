@@ -194,7 +194,11 @@ impl ConversationState {
         images: &[PromptImage],
         invocation: bool,
     ) -> Arc<TranscriptItem> {
-        self.push_local_user_with_images(message, decode_prompt_images(images), invocation)
+        self.push_local_user_with_images(
+            pasted_file_summary(&message).to_owned(),
+            decode_prompt_images(images),
+            invocation,
+        )
     }
 
     fn push_local_user_with_images(
@@ -387,7 +391,9 @@ impl ConversationState {
             "message_start" => Some(previous_len.saturating_sub(1)),
             "message_update" if incremental_content_changed => previous_live_start,
             "message_update" => None,
-            "message_end" => previous_live_start,
+            "message_end" => {
+                previous_live_start.map(|start| start.min(previous_len.saturating_sub(1)))
+            }
             "tool_execution_update" if !incremental_content_changed => None,
             "tool_execution_start" | "tool_execution_update" | "tool_execution_end" => event
                 .get("toolCallId")

@@ -42,6 +42,29 @@ fn pasted_file_contents_stay_out_of_the_transcript() {
 
     assert_eq!(state.items.len(), 1);
     assert_eq!(state.items[0].text, display);
+
+    let mut runtime_state = ConversationState::default();
+    runtime_state.push_local_user_with_prompt_images(prompt.into(), &[], false);
+    assert_eq!(runtime_state.items[0].text, display);
+}
+
+#[test]
+fn finalizing_an_optimistic_user_invalidates_its_original_row() {
+    let mut state = ConversationState::default();
+    state.push_local_user_with_prompt_images("optimistic".into(), &[], false);
+
+    state.reduce(&json!({
+        "type": "message_start",
+        "message": {"role": "user", "content": "final"}
+    }));
+    assert_eq!(
+        state.reduce(&json!({
+            "type": "message_end",
+            "message": {"role": "user", "content": "final"}
+        })),
+        Some(0)
+    );
+    assert_eq!(state.items[0].text, "final");
 }
 
 #[test]
