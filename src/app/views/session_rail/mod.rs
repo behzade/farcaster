@@ -46,7 +46,7 @@ use crate::{
     sessions::{SessionSummary, root_session_for_path},
 };
 
-const INACTIVE_PREVIEW_LIMIT: usize = 3;
+const INACTIVE_PREVIEW_LIMIT: usize = 5;
 const ARCHIVED_LEADING_GAP: f32 = 34.0;
 
 fn session_section_drop_target(

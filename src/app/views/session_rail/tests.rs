@@ -128,6 +128,16 @@ fn collapsed_archived_rail_includes_a_leading_gap() {
 }
 
 #[test]
+fn collapsed_archived_rail_previews_at_most_five_sessions() {
+    let height = collapsed_inactive_rail_height(10, false);
+    assert_eq!(
+        f32::from(height),
+        f32::from(THEME.controls.utility_row)
+            + f32::from(THEME.controls.archived_preview_row) * 5.0
+    );
+}
+
+#[test]
 fn session_rail_resize_stays_within_design_bounds() {
     assert_eq!(
         clamped_session_rail_width(100.0),
