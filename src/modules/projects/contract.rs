@@ -5,6 +5,31 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum StartupTrust {
+    Ready,
+    Prompt,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TrustChoice {
+    TrustProject,
+    TrustParent,
+    DistrustProject,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TrustOption {
+    pub label: String,
+    pub choice: TrustChoice,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AppliedTrust {
+    pub trusted: bool,
+    pub saved_path: Option<PathBuf>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct DraftSession {
     pub id: String,

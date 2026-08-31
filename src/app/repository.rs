@@ -198,7 +198,7 @@ impl FarcasterApp {
 
     pub(super) fn select_repository_project(&mut self, project: PathBuf, cx: &mut Context<Self>) {
         let execution_allowed =
-            crate::project_trust::repository_execution_allowed(&project).unwrap_or(false);
+            crate::projects::repository_execution_allowed(&project).unwrap_or(false);
         self.set_repository_project_execution(project, execution_allowed, cx);
     }
 

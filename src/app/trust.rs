@@ -2,7 +2,7 @@ use gpui::{Context, Window};
 
 use super::FarcasterApp;
 use crate::{
-    project_trust::{self, StartupTrust, TrustChoice},
+    projects::{self, StartupTrust, TrustChoice},
     runtime::RuntimeCommand,
 };
 
@@ -17,7 +17,7 @@ impl FarcasterApp {
         if self.pending_project_trust_command.is_some() {
             return;
         }
-        match project_trust::startup_trust(project) {
+        match projects::startup_trust(project) {
             Ok(StartupTrust::Ready) => self.send(command),
             Ok(StartupTrust::Prompt) => {
                 self.open_project_trust(window, cx);
@@ -43,7 +43,7 @@ impl FarcasterApp {
             .project_trust_project
             .clone()
             .unwrap_or_else(|| self.project.clone());
-        match project_trust::apply(&project, choice) {
+        match projects::apply(&project, choice) {
             Ok(applied) => {
                 self.set_repository_project_execution(project, applied.trusted, cx);
                 let scope = applied.saved_path.map_or_else(

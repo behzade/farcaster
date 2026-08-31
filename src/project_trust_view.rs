@@ -11,7 +11,7 @@ use gpui::{
 use crate::{
     app::FarcasterApp,
     primitives::{ButtonTone, button},
-    project_trust::{self, StartupTrust, TrustChoice},
+    projects::{self, StartupTrust, TrustChoice},
     theme::{MONO_FONT_FAMILY, THEME},
 };
 
@@ -55,7 +55,7 @@ impl ProjectTrustView {
     }
 
     fn select_trust(&mut self, choice: TrustChoice, window: &mut Window, cx: &mut Context<Self>) {
-        match project_trust::apply(&self.project, choice) {
+        match projects::apply(&self.project, choice) {
             Ok(applied) => self.start_app(Some(applied.trusted), window, cx),
             Err(error) => {
                 self.error = Some(error);
@@ -71,9 +71,8 @@ impl ProjectTrustView {
         cx: &mut Context<Self>,
     ) {
         let project = self.project.clone();
-        let repository_execution_allowed = repository_execution_allowed.unwrap_or_else(|| {
-            project_trust::repository_execution_allowed(&project).unwrap_or(false)
-        });
+        let repository_execution_allowed = repository_execution_allowed
+            .unwrap_or_else(|| projects::repository_execution_allowed(&project).unwrap_or(false));
         let approval_ui = self.approval_ui.clone();
         let workgraph_updates = self.workgraph_updates.clone();
         let app = cx.new(|cx| {
@@ -101,10 +100,7 @@ impl Render for ProjectTrustView {
         let entity = cx.entity().downgrade();
         let project = self.project.display().to_string();
         let mut options = div().flex().flex_col().gap(THEME.space.xs);
-        for (index, option) in project_trust::options(&self.project)
-            .into_iter()
-            .enumerate()
-        {
+        for (index, option) in projects::options(&self.project).into_iter().enumerate() {
             let choice = option.choice;
             let select = entity.clone();
             let tone = if index == 0 {

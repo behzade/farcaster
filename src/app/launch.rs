@@ -14,8 +14,9 @@ use std::{
 use crate::{
     app::{FarcasterApp, QuitApplication},
     assets::AppAssets,
-    keybindings, project_trust,
+    keybindings,
     project_trust_view::ProjectTrustView,
+    projects,
     state::{StateStore, WindowPlacement, WindowState},
     theme::{THEME, install_component_theme},
 };
@@ -67,8 +68,7 @@ pub(crate) fn run(
     const FONT_FAILURE: u8 = 1;
     const WINDOW_FAILURE: u8 = 2;
 
-    let startup_trust =
-        project_trust::startup_trust(&project).map_err(LaunchError::ProjectTrust)?;
+    let startup_trust = projects::startup_trust(&project).map_err(LaunchError::ProjectTrust)?;
     let failure = Arc::new(AtomicU8::new(0));
     let failure_in_app = failure.clone();
     gpui_platform::application()

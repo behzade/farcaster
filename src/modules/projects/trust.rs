@@ -17,30 +17,7 @@ const PROJECT_CONFIG_RESOURCES: &[&str] = &[
     "APPEND_SYSTEM.md",
 ];
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum StartupTrust {
-    Ready,
-    Prompt,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum TrustChoice {
-    TrustProject,
-    TrustParent,
-    DistrustProject,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct TrustOption {
-    pub label: String,
-    pub choice: TrustChoice,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct AppliedTrust {
-    pub trusted: bool,
-    pub saved_path: Option<PathBuf>,
-}
+use super::{AppliedTrust, StartupTrust, TrustChoice, TrustOption};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum DefaultProjectTrust {

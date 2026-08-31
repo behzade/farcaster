@@ -7,7 +7,7 @@ use super::super::FarcasterApp;
 use crate::{
     app::OVERLAY_KEY_CONTEXT,
     primitives::{ButtonTone, button, modal},
-    project_trust,
+    projects,
     theme::{MONO_FONT_FAMILY, THEME},
 };
 
@@ -17,7 +17,7 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
         .project_trust_project
         .as_deref()
         .unwrap_or(app.project.as_path());
-    let saved = match project_trust::saved_decision(project) {
+    let saved = match projects::saved_decision(project) {
         Ok(Some((path, trusted))) => format!(
             "Saved decision: {} ({})",
             if trusted { "trusted" } else { "untrusted" },
@@ -36,7 +36,7 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
         },
         |surface| {
             let mut choices = div().flex().flex_col().gap(THEME.space.xs);
-            for (index, option) in project_trust::options(project)
+            for (index, option) in projects::options(project)
                 .into_iter()
                 .enumerate()
             {
