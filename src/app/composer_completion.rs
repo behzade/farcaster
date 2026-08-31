@@ -1,4 +1,7 @@
-use crate::{composer_sessions::ComposerSnapshot, protocol::SlashCommand, user_invocations};
+use crate::{
+    app::{composer_sessions::ComposerSnapshot, user_invocations},
+    protocol::SlashCommand,
+};
 
 use super::{file_mentions, slash_commands};
 
@@ -45,8 +48,7 @@ pub(super) fn resolve_for_harness(
     }
 
     let prefix = text.get(..cursor)?;
-    let suggestions =
-        slash_commands::suggestions_for_harness(text.trim_start(), commands, harness)
+    let suggestions = slash_commands::suggestions_for_harness(text.trim_start(), commands, harness)
         .into_iter()
         .chain(user_invocations::suggestions(prefix, commands))
         .collect::<Vec<_>>();

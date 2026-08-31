@@ -42,7 +42,8 @@ impl FarcasterApp {
                 super::shell_environment::terminal_login_shell_command(),
                 project.clone(),
             );
-            options.configuration = TerminalConfiguration::Custom(crate::theme::terminal_theme());
+            options.configuration =
+                TerminalConfiguration::Custom(crate::app::ui::theme::terminal_theme());
             match Terminal::spawn(options, window, cx) {
                 Ok(terminal) => {
                     self.terminal = Some(terminal);

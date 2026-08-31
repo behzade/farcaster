@@ -19,6 +19,7 @@ mod session_rail;
 mod session_rows;
 mod settings;
 mod shell;
+pub(in crate::app) mod startup_trust;
 mod surface_switcher;
 mod terminal;
 pub(crate) mod transcript;
@@ -60,20 +61,20 @@ fn session_shortcuts_visible(current: bool, requested: bool, has_text_selection:
 }
 
 use crate::{
-    assets::AppIcon,
-    keyboard::CopySelection,
-    layout::{
+    app::ui::assets::AppIcon,
+    app::ui::keyboard::CopySelection,
+    app::ui::layout::{
         layout_mode, shows_left_inline, shows_right_inline, shows_run_sheet_button,
         shows_session_sheet_button,
     },
-    primitives::{ButtonTone, FeedbackTone, button, feedback, icon_button, modal},
+    app::ui::primitives::{ButtonTone, FeedbackTone, button, feedback, icon_button, modal},
+    app::ui::theme::{THEME, ui_font},
     protocol::ExtensionUiRequest,
-    theme::{THEME, ui_font},
 };
 
 impl Render for FarcasterApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let _timing = crate::performance::Timing::new("render.root");
+        let _timing = crate::app::performance::Timing::new("render.root");
         self.resolve_pending_submission(window, cx);
         let native_surface = matches!(self.surface, AppSurface::Editor | AppSurface::Terminal);
         if self.post_render_focus.is_some() {
@@ -138,7 +139,8 @@ impl Render for FarcasterApp {
         if let Some((generation, text)) = self.pending_editor_text.take() {
             cx.defer_in(window, move |this, window, cx| {
                 if this.runtime_generation == generation {
-                    let snapshot = crate::composer_sessions::ComposerSnapshot::new(text, 0, 0..0);
+                    let snapshot =
+                        crate::app::composer_sessions::ComposerSnapshot::new(text, 0, 0..0);
                     this.apply_composer_snapshot(snapshot.clone(), window, cx);
                     this.composer_sessions.capture_current(snapshot);
                 }
@@ -270,7 +272,7 @@ impl Render for FarcasterApp {
             .text_color(THEME.colors.text)
             .text_size(THEME.type_scale.body)
             .on_action(cx.listener(|this, _: &CopySelection, _, cx| {
-                crate::keyboard::copy_selection(
+                crate::app::ui::keyboard::copy_selection(
                     this.transcript_list.selected_text(),
                     this.composer.read(cx).selected_value().to_string(),
                     cx,
@@ -827,7 +829,7 @@ fn render_draft_heading(
 }
 
 fn render_keybindings_help() -> impl IntoElement {
-    let shortcuts = crate::keybindings::registry();
+    let shortcuts = crate::app::ui::keybindings::registry();
     let mut content = div()
         .flex()
         .flex_col()

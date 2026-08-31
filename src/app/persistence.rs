@@ -66,8 +66,8 @@ impl StateStore {
     }
 
     pub(crate) fn open_at(path: &Path) -> Result<Self, String> {
-        let _timing = crate::performance::OperationTiming::new(
-            crate::performance::OperationKind::StateDatabase,
+        let _timing = crate::app::performance::OperationTiming::new(
+            crate::app::performance::OperationKind::StateDatabase,
             1,
         );
         let parent = path
@@ -1128,7 +1128,7 @@ impl StateStore {
 }
 
 pub(crate) fn state_path() -> Result<PathBuf, String> {
-    crate::app_paths::data_dir().map(|root| root.join("state.sqlite3"))
+    crate::app::paths::data_dir().map(|root| root.join("state.sqlite3"))
 }
 
 fn legacy_pi_gpui_state_path() -> Option<PathBuf> {

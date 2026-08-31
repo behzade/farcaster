@@ -15,13 +15,13 @@ use super::super::{
 };
 use super::models;
 use crate::{
+    app::composer_sessions::ComposerSnapshot,
     app::file_mentions::MentionQuery,
+    app::ui::primitives::{ButtonTone, button},
+    app::ui::theme::{MONO_FONT_FAMILY, THEME},
+    app::user_invocations::{self, ComposerSuggestion},
     app::views::transcript::conversation::{self, QueueState},
-    composer_sessions::ComposerSnapshot,
-    primitives::{ButtonTone, button},
     protocol::ExtensionUiRequest,
-    theme::{MONO_FONT_FAMILY, THEME},
-    user_invocations::{self, ComposerSuggestion},
 };
 
 impl FarcasterApp {

@@ -9,10 +9,10 @@ use super::{
     session_rows::project_label,
 };
 use crate::{
-    assets::AppIcon,
-    primitives::{AppIconSize, app_icon, icon_control},
+    app::ui::assets::AppIcon,
+    app::ui::primitives::{AppIconSize, app_icon, icon_control},
+    app::ui::theme::THEME,
     sessions::root_session_for_path,
-    theme::THEME,
 };
 
 impl FarcasterApp {

@@ -5,13 +5,19 @@ mod changes;
 mod composer_completion;
 mod composer_images;
 mod composer_pastes;
+pub(crate) mod composer_sessions;
+#[cfg(test)]
+mod composer_sessions_tests;
 mod deletion;
 mod drafts;
 mod editor;
 mod expiries;
+pub(crate) mod extension_ui;
 mod file_mentions;
 pub(crate) mod launch;
 pub(crate) mod mcp_server;
+pub(crate) mod paths;
+pub(crate) mod performance;
 pub(crate) mod persistence;
 #[cfg(test)]
 mod persistence_tests;
@@ -28,6 +34,8 @@ mod submissions;
 mod surfaces;
 mod terminal;
 mod trust;
+pub(crate) mod ui;
+pub(crate) mod user_invocations;
 pub(crate) mod views;
 pub(crate) use composer_images::ComposerImage;
 pub(crate) use composer_pastes::ComposerPaste;
@@ -63,12 +71,12 @@ use gpui_neovim::NvimEditor;
 use crate::app::views::transcript::transcript_splice;
 use crate::{
     agent_activity::AgentActivity,
-    app::views::transcript::list::TranscriptListState,
-    composer_sessions::{
+    app::composer_sessions::{
         ComposerSessions, ComposerSnapshot, HistoryNavigation, draft_target, project_target,
         session_target,
     },
-    extension_ui::{ExtensionEffect, ExtensionUiState},
+    app::extension_ui::{ExtensionEffect, ExtensionUiState},
+    app::views::transcript::list::TranscriptListState,
     projects,
     protocol::{BackgroundJob, ExtensionUiRequest, Model},
     runtime::{RuntimeCommand, RuntimeEvent, RuntimeHandle, RuntimeSnapshot},
@@ -195,7 +203,7 @@ pub(crate) struct FarcasterApp {
     changes: changes::ChangesState,
     repository: repository::RepositoryState,
     session_order: Vec<i64>,
-    session_drop_target: Option<(i64, crate::primitives::ReorderPosition)>,
+    session_drop_target: Option<(i64, crate::app::ui::primitives::ReorderPosition)>,
     run_statuses: HashMap<String, String>,
     recent_completions: HashMap<String, Instant>,
     recent_completion_expiries: HashMap<String, (Instant, Task<()>)>,
@@ -271,15 +279,16 @@ pub(crate) struct FarcasterApp {
     sheet_return_focus: Option<FocusHandle>,
     pending_sheet_setup: bool,
     transcript_list: TranscriptListState,
-    transcript_rows:
-        Arc<crate::persistent_vec::PersistentVec<crate::app::views::transcript::TranscriptRow>>,
+    transcript_rows: Arc<
+        crate::app::ui::persistent_vec::PersistentVec<crate::app::views::transcript::TranscriptRow>,
+    >,
     transcript_following: bool,
     transcript_unseen: usize,
     pub(crate) transcript_disclosure_states: HashMap<usize, bool>,
     last_transcript_count: usize,
-    performance_monitor: Option<crate::performance::PerformanceMonitor>,
+    performance_monitor: Option<crate::app::performance::PerformanceMonitor>,
     _performance_task: Option<Task<()>>,
-    pending_session_switch: Option<(PathBuf, crate::performance::Timing)>,
+    pending_session_switch: Option<(PathBuf, crate::app::performance::Timing)>,
     extension: ExtensionUiState,
     sandbox_approval_ui: crate::access::approval::ApprovalUi,
     parked_extension: Option<ExtensionUiState>,
@@ -540,30 +549,29 @@ impl FarcasterApp {
         transcript_list.scroll_to_end();
         let debug = std::env::var("DEBUG").ok().as_deref() == Some("true");
         let performance_monitor = debug.then(|| {
-            crate::performance::PerformanceMonitor::new(window.window_handle().window_id())
+            crate::app::performance::PerformanceMonitor::new(window.window_handle().window_id())
         });
-        let performance_task =
-            debug.then(|| {
-                cx.spawn(async move |weak, cx| {
-                    loop {
-                        cx.background_executor()
-                            .timer(crate::performance::sample_interval())
-                            .await;
-                        if weak
-                            .update(cx, |this, cx| {
-                                if this.performance_monitor.as_mut().is_some_and(
-                                    crate::performance::PerformanceMonitor::sample_if_due,
-                                ) {
-                                    this.notify_run_panel(cx);
-                                }
-                            })
-                            .is_err()
-                        {
-                            break;
-                        }
+        let performance_task = debug.then(|| {
+            cx.spawn(async move |weak, cx| {
+                loop {
+                    cx.background_executor()
+                        .timer(crate::app::performance::sample_interval())
+                        .await;
+                    if weak
+                        .update(cx, |this, cx| {
+                            if this.performance_monitor.as_mut().is_some_and(
+                                crate::app::performance::PerformanceMonitor::sample_if_due,
+                            ) {
+                                this.notify_run_panel(cx);
+                            }
+                        })
+                        .is_err()
+                    {
+                        break;
                     }
-                })
-            });
+                }
+            })
+        });
         let app = cx.entity().downgrade();
         let session_rail_view = cx.new(|_| SessionRailView::new(app.clone()));
         let archived_session_rail_view =
@@ -599,7 +607,7 @@ impl FarcasterApp {
             let app = app.clone();
             let deferred_at = Instant::now();
             cx.defer(move |cx| {
-                crate::performance::record_scroll_defer(deferred_at.elapsed());
+                crate::app::performance::record_scroll_defer(deferred_at.elapsed());
                 let _ = app.update(cx, |this, cx| {
                     if update_transcript_follow_state(
                         &mut this.transcript_following,
@@ -648,15 +656,15 @@ impl FarcasterApp {
             session_list: ListState::new(
                 0,
                 ListAlignment::Top,
-                crate::theme::THEME.layout.transcript_overdraw,
+                crate::app::ui::theme::THEME.layout.transcript_overdraw,
             ),
             session_list_rows: RefCell::new(Vec::new()),
-            session_rail_width: crate::theme::THEME.layout.session_rail,
+            session_rail_width: crate::app::ui::theme::THEME.layout.session_rail,
             session_rail_resize_start: None,
             archived_session_list: ListState::new(
                 0,
                 ListAlignment::Top,
-                crate::theme::THEME.layout.transcript_overdraw,
+                crate::app::ui::theme::THEME.layout.transcript_overdraw,
             ),
             archived_session_list_rows: RefCell::new(Vec::new()),
             session_generation: 0,
@@ -686,7 +694,7 @@ impl FarcasterApp {
             native_surface_covered: false,
             surface: AppSurface::Chat,
             workgraph_inspector_issue: None,
-            run_panel_width: crate::theme::THEME.layout.run_panel,
+            run_panel_width: crate::app::ui::theme::THEME.layout.run_panel,
             run_panel_resize_start: None,
             run_panel_scroll: ScrollHandle::new(),
             composer_footer_scroll: ScrollHandle::new(),
@@ -714,7 +722,7 @@ impl FarcasterApp {
             sheet_return_focus: None,
             pending_sheet_setup: false,
             transcript_list,
-            transcript_rows: Arc::new(crate::persistent_vec::PersistentVec::default()),
+            transcript_rows: Arc::new(crate::app::ui::persistent_vec::PersistentVec::default()),
             transcript_following: true,
             transcript_unseen: 0,
             transcript_disclosure_states: HashMap::new(),
@@ -763,16 +771,16 @@ impl FarcasterApp {
     }
 
     fn drain_runtime(&mut self, cx: &mut Context<Self>) {
-        let mut operation = crate::performance::OperationTiming::new(
-            crate::performance::OperationKind::RuntimeDrain,
+        let mut operation = crate::app::performance::OperationTiming::new(
+            crate::app::performance::OperationKind::RuntimeDrain,
             0,
         );
-        let _timing = crate::performance::Timing::new("runtime.drain_events");
+        let _timing = crate::app::performance::Timing::new("runtime.drain_events");
         let mut root_dirty = false;
         let performance_changed = self
             .performance_monitor
             .as_mut()
-            .is_some_and(crate::performance::PerformanceMonitor::sample_if_due);
+            .is_some_and(crate::app::performance::PerformanceMonitor::sample_if_due);
         let mut rail_dirty = false;
         let mut archived_rail_dirty = false;
         let mut transcript_dirty = false;
@@ -873,8 +881,8 @@ impl FarcasterApp {
                     let row_update = if transcript_preselected {
                         self.project_transcript_rows(&snapshot)
                     } else if session_changed {
-                        let _timing = crate::performance::OperationTiming::new(
-                            crate::performance::OperationKind::FullProjection,
+                        let _timing = crate::app::performance::OperationTiming::new(
+                            crate::app::performance::OperationKind::FullProjection,
                             snapshot.conversation.items.len(),
                         );
                         crate::app::views::transcript::TranscriptRowUpdate::replace(
@@ -1381,7 +1389,7 @@ impl FarcasterApp {
     fn reset_transcript_ui(&mut self) {
         self.transcript_list.reset();
         self.transcript_list.scroll_to_end();
-        self.transcript_rows = Arc::new(crate::persistent_vec::PersistentVec::default());
+        self.transcript_rows = Arc::new(crate::app::ui::persistent_vec::PersistentVec::default());
         self.transcript_disclosure_states.clear();
         self.transcript_following = true;
         self.transcript_unseen = 0;
@@ -1420,7 +1428,7 @@ impl FarcasterApp {
         if self.pending_project_trust_command.is_some() {
             return;
         }
-        let _timing = crate::performance::Timing::new("switch.session_request");
+        let _timing = crate::app::performance::Timing::new("switch.session_request");
         if self.snapshot.selected_session.as_deref() == Some(path.as_path())
             && self.selected_draft.is_none()
         {
@@ -1441,7 +1449,7 @@ impl FarcasterApp {
         }
         self.pending_session_switch = Some((
             path.clone(),
-            crate::performance::Timing::new("switch.session_total"),
+            crate::app::performance::Timing::new("switch.session_total"),
         ));
         let target = self.backend_target_for_path(&path);
         self.send_project_command(

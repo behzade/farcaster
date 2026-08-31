@@ -49,5 +49,5 @@ pub(crate) fn most_recent() -> Option<PathBuf> {
 }
 
 fn legacy_registry_path() -> Result<PathBuf, String> {
-    crate::app_paths::data_dir().map(|root| root.join("projects.json"))
+    crate::app::paths::data_dir().map(|root| root.join("projects.json"))
 }

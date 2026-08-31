@@ -8,7 +8,7 @@ use gpui::{
 use gpui_base::GlobalState;
 
 use super::{AppIconSize, activates_button, app_icon, icon_control};
-use crate::{assets::AppIcon, theme::THEME};
+use crate::app::ui::{assets::AppIcon, theme::THEME};
 
 pub(crate) fn disclosure_button(
     id: impl Into<ElementId>,

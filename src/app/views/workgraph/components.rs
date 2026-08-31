@@ -9,9 +9,9 @@ use super::{
     contract::PlanRow,
 };
 use crate::{
-    assets::AppIcon,
-    primitives::{AppIconSize, ButtonTone, app_icon, button},
-    theme::THEME,
+    app::ui::assets::AppIcon,
+    app::ui::primitives::{AppIconSize, ButtonTone, app_icon, button},
+    app::ui::theme::THEME,
 };
 
 pub(super) fn render_plan_list(

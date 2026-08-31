@@ -1,4 +1,4 @@
-use crate::theme::THEME;
+use crate::app::ui::theme::THEME;
 use gpui::{
     App, Div, FocusHandle, InteractiveElement as _, ParentElement as _, Role, SharedString,
     Stateful, StatefulInteractiveElement as _, Styled as _, Window, div,

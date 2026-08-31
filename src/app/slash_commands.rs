@@ -1,6 +1,6 @@
 use crate::{
+    app::user_invocations::ComposerSuggestion,
     protocol::{SlashCommand, SlashCommandSource},
-    user_invocations::ComposerSuggestion,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

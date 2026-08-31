@@ -11,8 +11,8 @@ use gpui_component::{
 };
 
 use crate::{
-    primitives::{AppIconSize, app_icon, icon_control},
-    theme::THEME,
+    app::ui::primitives::{AppIconSize, app_icon, icon_control},
+    app::ui::theme::THEME,
 };
 
 type ButtonPress = dyn Fn(&mut Window, &mut App);

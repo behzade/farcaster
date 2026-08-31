@@ -12,8 +12,8 @@ use super::{
     layout::BoardLayoutMode,
 };
 use crate::{
-    primitives::{ButtonTone, FeedbackTone, button, feedback},
-    theme::THEME,
+    app::ui::primitives::{ButtonTone, FeedbackTone, button, feedback},
+    app::ui::theme::THEME,
 };
 use gpui::{
     AppContext as _, Context, Entity, FocusHandle, Focusable as _, FontWeight,

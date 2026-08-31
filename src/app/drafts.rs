@@ -4,7 +4,7 @@ use gpui::{Context, Window};
 
 use super::FarcasterApp;
 use crate::{
-    composer_sessions::{draft_target, session_target},
+    app::composer_sessions::{draft_target, session_target},
     projects::{self, DraftSession},
     runtime::RuntimeCommand,
     sessions::normalize_session_path,
@@ -159,7 +159,7 @@ impl FarcasterApp {
 
     pub(super) fn sync_current_draft(
         &mut self,
-        composer: &crate::composer_sessions::ComposerSnapshot,
+        composer: &crate::app::composer_sessions::ComposerSnapshot,
         target: &str,
     ) -> bool {
         let Some(id) = self.selected_draft.as_deref() else {
@@ -406,7 +406,7 @@ fn fill_session_association(
     association.clone()
 }
 
-fn draft_has_content(composer: &crate::composer_sessions::ComposerSnapshot) -> bool {
+fn draft_has_content(composer: &crate::app::composer_sessions::ComposerSnapshot) -> bool {
     !composer.text.trim().is_empty()
 }
 
@@ -558,13 +558,13 @@ mod tests {
         let mut drafts = Vec::new();
 
         assert!(!draft_has_content(
-            &crate::composer_sessions::ComposerSnapshot::default()
+            &crate::app::composer_sessions::ComposerSnapshot::default()
         ));
         assert!(!draft_has_content(
-            &crate::composer_sessions::ComposerSnapshot::new("   ".into(), 3, 3..3)
+            &crate::app::composer_sessions::ComposerSnapshot::new("   ".into(), 3, 3..3)
         ));
         assert!(draft_has_content(
-            &crate::composer_sessions::ComposerSnapshot::new("work".into(), 4, 4..4)
+            &crate::app::composer_sessions::ComposerSnapshot::new("work".into(), 4, 4..4)
         ));
         assert!(!sync_materialized_draft(
             &mut drafts,

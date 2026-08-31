@@ -23,11 +23,13 @@ use super::{
     session_hover::{draft_hover_details, session_hover_details, session_hover_panel},
 };
 use crate::{
-    assets::AppIcon,
-    keybindings::PRIMARY_MODIFIER,
-    primitives::{AppIconSize, ReorderPosition, ReorderTargetExt as _, app_icon, icon_control},
+    app::ui::assets::AppIcon,
+    app::ui::keybindings::PRIMARY_MODIFIER,
+    app::ui::primitives::{
+        AppIconSize, ReorderPosition, ReorderTargetExt as _, app_icon, icon_control,
+    },
+    app::ui::theme::THEME,
     projects::DraftSession,
-    theme::THEME,
 };
 
 #[derive(IntoElement)]

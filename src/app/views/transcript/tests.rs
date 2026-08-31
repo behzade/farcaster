@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use super::*;
 use super::conversation::{TranscriptItem, TranscriptKind};
-use crate::{persistent_vec::PersistentVec, theme::THEME};
+use super::*;
+use crate::app::ui::{persistent_vec::PersistentVec, theme::THEME};
 use gpui::{Image, ImageFormat, px};
 
 fn item(kind: TranscriptKind, label: &str, text: &str) -> Arc<TranscriptItem> {

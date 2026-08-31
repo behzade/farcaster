@@ -1,8 +1,8 @@
 use crate::{
+    app::ui::assets::AppIcon,
+    app::ui::primitives::{ButtonTone, disclosure_detail, disclosure_title_row, icon_button},
+    app::ui::theme::{MONO_FONT_FAMILY, THEME},
     app::views::transcript::conversation::ToolPresentation,
-    assets::AppIcon,
-    primitives::{ButtonTone, disclosure_detail, disclosure_title_row, icon_button},
-    theme::{MONO_FONT_FAMILY, THEME},
 };
 use gpui::{
     AnyElement, App, InteractiveElement as _, IntoElement, ParentElement as _, Styled as _, Window,

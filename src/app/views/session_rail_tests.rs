@@ -7,11 +7,11 @@ use super::{
     status_visual, subagent_counts, visible_session_shortcuts,
 };
 use crate::{
+    app::ui::assets::AppIcon,
+    app::ui::theme::THEME,
     app::views::session_hover::session_tooltip_lines,
-    assets::AppIcon,
     projects::DraftSession,
     sessions::{SessionSummary, UsageSummary},
-    theme::THEME,
 };
 
 #[test]

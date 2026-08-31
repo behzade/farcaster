@@ -11,10 +11,10 @@ use super::{
     usage::{ComposerUsage, composer_usage, format_cost, format_tokens, has_meaningful_usage},
 };
 use crate::{
-    assets::AppIcon,
-    primitives::{AppIconSize, ButtonTone, app_icon, prominent_icon_button},
+    app::ui::assets::AppIcon,
+    app::ui::primitives::{AppIconSize, ButtonTone, app_icon, prominent_icon_button},
+    app::ui::theme::{MONO_FONT_FAMILY, THEME},
     runtime::RuntimeCommand,
-    theme::{MONO_FONT_FAMILY, THEME},
 };
 
 impl FarcasterApp {

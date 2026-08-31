@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    primitives::ReorderPosition,
+    app::ui::primitives::ReorderPosition,
     projects::DraftSession,
     sessions::{SessionSummary, root_sessions},
 };

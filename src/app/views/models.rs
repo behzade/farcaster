@@ -9,12 +9,12 @@ use gpui_component::{input::Input, tooltip::Tooltip};
 
 use super::{super::FarcasterApp, composer_footer::separator};
 use crate::{
-    assets::AppIcon,
-    primitives::{
+    app::ui::assets::AppIcon,
+    app::ui::primitives::{
         AppIconSize, ButtonTone, activates_button, app_icon, dropdown_content_button, icon_button,
     },
+    app::ui::theme::{MONO_FONT_FAMILY, THEME},
     runtime::{FileAccessMode, NetworkAccessMode, PermissionLevel},
-    theme::{MONO_FONT_FAMILY, THEME},
 };
 
 pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement {

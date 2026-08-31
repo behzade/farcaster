@@ -10,7 +10,7 @@ impl FarcasterApp {
         &self,
         snapshot: &crate::runtime::RuntimeSnapshot,
     ) -> TranscriptRowUpdate {
-        let _timing = crate::performance::Timing::new("transcript.project_rows");
+        let _timing = crate::app::performance::Timing::new("transcript.project_rows");
         update_rows_incremental(
             &self.transcript_rows,
             &self.snapshot.conversation.items,
@@ -44,8 +44,8 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn sync_composer_history(&mut self) {
-        let _timing = crate::performance::OperationTiming::new(
-            crate::performance::OperationKind::ComposerHistory,
+        let _timing = crate::app::performance::OperationTiming::new(
+            crate::app::performance::OperationKind::ComposerHistory,
             self.snapshot.conversation.items.len(),
         );
         let target = self.composer_sessions.current_target().to_owned();

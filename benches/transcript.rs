@@ -11,15 +11,25 @@ use gpui::{IntoElement as _, Render, TestApp, WeakEntity};
 use serde_json::{Value, json};
 
 mod app {
+    pub(crate) use crate::performance;
+
     #[derive(Clone, Debug, Eq, PartialEq, gpui::Action)]
     #[action(namespace = farcaster_bench, no_json)]
     pub(crate) struct RemoveProject {
         pub(crate) path: std::path::PathBuf,
     }
 
+    pub(crate) mod ui {
+        pub(crate) use crate::assets;
+        pub(crate) use crate::persistent_vec;
+        pub(crate) use crate::primitives;
+        pub(crate) use crate::theme;
+    }
+
     pub(crate) mod views {
         pub(crate) mod transcript {
             pub(crate) use crate::conversation;
+            pub(crate) use crate::tool_changes;
             pub(crate) use crate::transcript_attachments as attachments;
             pub(crate) use crate::transcript_list as list;
             pub(crate) use crate::transcript_markdown as markdown;
@@ -66,21 +76,34 @@ mod agents {
     }
 }
 
-#[path = "../src/assets.rs"]
+mod sessions {
+    #[derive(Clone, Copy, Default)]
+    pub(crate) struct CatalogMetrics {
+        pub(crate) scans: u64,
+        pub(crate) parses: u64,
+        pub(crate) cache_hits: u64,
+    }
+
+    pub(crate) fn take_catalog_metrics() -> CatalogMetrics {
+        CatalogMetrics::default()
+    }
+}
+
+#[path = "../src/app/ui/assets.rs"]
 mod assets;
 #[path = "../src/app/views/transcript/conversation.rs"]
 mod conversation;
-#[path = "../src/performance.rs"]
+#[path = "../src/app/performance.rs"]
 mod performance;
-#[path = "../src/persistent_vec.rs"]
+#[path = "../src/app/ui/persistent_vec.rs"]
 mod persistent_vec;
-#[path = "../src/primitives/mod.rs"]
+#[path = "../src/app/ui/primitives/mod.rs"]
 mod primitives;
 #[path = "../src/modules/agents/contract/extensions.rs"]
 mod protocol;
-#[path = "../src/theme.rs"]
+#[path = "../src/app/ui/theme.rs"]
 mod theme;
-#[path = "../src/tool_changes.rs"]
+#[path = "../src/app/views/transcript/tool_changes.rs"]
 mod tool_changes;
 #[path = "../src/app/views/transcript/render.rs"]
 mod transcript;

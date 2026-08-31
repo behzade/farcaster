@@ -1,16 +1,19 @@
 mod activity_tracker;
 mod catalog;
 mod changes;
+mod metrics;
 mod path;
 mod persistence;
 
 pub(crate) use activity_tracker::ExternalActivityTracker;
 pub(crate) use catalog::{
     SessionRootIndex, archived_root_family_for_path, descendant_sessions, document_is_live,
-    filter_session_tree,
-    is_subagent_path, root_session_for_path, root_sessions, session_family_for_path,
+    filter_session_tree, is_subagent_path, root_session_for_path, root_sessions,
+    session_family_for_path,
 };
 pub(crate) use changes::collect as collect_changes;
+pub(crate) use metrics::{CatalogMetrics, take_catalog_metrics};
+pub(in crate::modules::sessions) use metrics::{count_cache_hit, count_parse, count_scan};
 pub(crate) use path::normalize_lexical;
 pub(crate) use persistence::{
     SessionStore, cached as cached_sessions, delete as delete_state, index as index_sessions,

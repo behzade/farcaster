@@ -7,10 +7,10 @@ use gpui::{
 
 use super::super::FarcasterApp;
 use crate::{
-    primitives::activates_button,
+    app::ui::primitives::activates_button,
+    app::ui::theme::{MONO_FONT_FAMILY, THEME},
     sessions::root_session_for_path,
     sessions::{ChangeSet, FileChange, FileChangeKind},
-    theme::{MONO_FONT_FAMILY, THEME},
 };
 
 const MAX_VISIBLE_CHANGE_FILES: usize = 5;

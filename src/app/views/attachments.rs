@@ -8,7 +8,7 @@ use gpui_component::{
 };
 
 use super::super::FarcasterApp;
-use crate::theme::{MONO_FONT_FAMILY, THEME};
+use crate::app::ui::theme::{MONO_FONT_FAMILY, THEME};
 
 pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> Option<AnyElement> {
     let images = app.current_composer_images();

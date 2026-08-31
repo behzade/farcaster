@@ -5,9 +5,9 @@ use gpui::{
 
 use super::super::FarcasterApp;
 use crate::{
-    assets::AppIcon,
-    primitives::{ButtonTone, icon_button, modal},
-    theme::THEME,
+    app::ui::assets::AppIcon,
+    app::ui::primitives::{ButtonTone, icon_button, modal},
+    app::ui::theme::THEME,
 };
 
 pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> Option<AnyElement> {

@@ -51,8 +51,8 @@ pub(super) fn query_at_cursor(value: &str, cursor: usize) -> Option<MentionQuery
 }
 
 pub(super) fn matches(files: &[String], query: &str) -> Vec<String> {
-    let _timing = crate::performance::OperationTiming::new(
-        crate::performance::OperationKind::FileMentionMatch,
+    let _timing = crate::app::performance::OperationTiming::new(
+        crate::app::performance::OperationKind::FileMentionMatch,
         files.len(),
     );
     let pattern = Atom::new(

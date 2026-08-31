@@ -27,15 +27,15 @@ use super::{
     },
 };
 use crate::{
-    app::{PickerScope, ProjectPickerIntent},
-    assets::AppIcon,
-    primitives::{
+    app::ui::assets::AppIcon,
+    app::ui::primitives::{
         AppIconSize, ButtonTone, FeedbackTone, ReorderPosition, app_icon, disclosure_button,
         dropdown_button, feedback, icon_button,
     },
+    app::ui::theme::THEME,
+    app::{PickerScope, ProjectPickerIntent},
     projects::DraftSession,
     sessions::{SessionSummary, root_session_for_path},
-    theme::THEME,
 };
 
 const INACTIVE_PREVIEW_LIMIT: usize = 3;

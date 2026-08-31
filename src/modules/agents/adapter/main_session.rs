@@ -298,7 +298,7 @@ pub(in crate::modules::agents::adapter) fn external_session_path(
     locator: &str,
 ) -> Result<PathBuf, String> {
     let encoded = url::form_urlencoded::byte_serialize(locator.as_bytes()).collect::<String>();
-    crate::app_paths::data_dir()
+    crate::app::paths::data_dir()
         .map(|root| root.join("session-locators").join(harness).join(encoded))
 }
 

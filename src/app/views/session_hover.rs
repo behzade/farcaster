@@ -10,9 +10,9 @@ use gpui_component::{ElementExt as _, Placement};
 
 use super::usage::{format_cost, format_tokens};
 use crate::{
+    app::ui::theme::{MONO_FONT_FAMILY, THEME},
     projects::DraftSession,
     sessions::{SessionSummary, UsageSummary},
-    theme::{MONO_FONT_FAMILY, THEME},
 };
 
 const OPEN_DELAY: Duration = Duration::from_millis(250);

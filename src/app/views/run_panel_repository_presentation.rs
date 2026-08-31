@@ -4,10 +4,10 @@ use std::{
 };
 
 use crate::{
+    app::ui::theme::THEME,
     repository::{
         ChangeKind, ChangeLayer, DiffTargetKey, GitIdentity, SnapshotIdentity, WorkingCopyChange,
     },
-    theme::THEME,
 };
 
 pub(super) fn repository_row_id(key: &DiffTargetKey) -> u64 {

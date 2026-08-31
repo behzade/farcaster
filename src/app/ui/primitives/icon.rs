@@ -5,7 +5,7 @@ use gpui::{
 use gpui_base::GlobalState;
 use gpui_component::{Icon, IconNamed, Sizable as _, tooltip::Tooltip};
 
-use crate::theme::THEME;
+use crate::app::ui::theme::THEME;
 
 #[derive(Clone, Copy)]
 pub(crate) enum AppIconSize {

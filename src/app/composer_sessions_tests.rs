@@ -1,4 +1,4 @@
-use crate::composer_sessions::{ComposerSessions, ComposerSnapshot, HistoryNavigation};
+use crate::app::composer_sessions::{ComposerSessions, ComposerSnapshot, HistoryNavigation};
 
 fn sessions(target: &str) -> ComposerSessions {
     ComposerSessions::for_test(target.into())

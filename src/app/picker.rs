@@ -18,11 +18,11 @@ use gpui_component::{
 
 use super::FarcasterApp;
 use crate::{
-    assets::AppIcon,
-    keybindings::primary_key,
-    primitives::{PickerDelegate, PickerRow, modal},
+    app::ui::assets::AppIcon,
+    app::ui::keybindings::primary_key,
+    app::ui::primitives::{PickerDelegate, PickerRow, modal},
+    app::ui::theme::THEME,
     sessions::SessionSummary,
-    theme::THEME,
 };
 
 pub(crate) const PICKER_KEY_CONTEXT: &str = "PiPicker";

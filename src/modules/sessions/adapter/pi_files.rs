@@ -175,8 +175,6 @@ pub(crate) fn discover(query: &str) -> Result<SessionDiscovery, String> {
 }
 
 pub(crate) fn load_history(path: &Path) -> Result<LoadedHistory, String> {
-    let mut timing =
-        crate::performance::OperationTiming::new(crate::performance::OperationKind::HistoryLoad, 0);
     let file = File::open(path).map_err(|error| format!("open {}: {error}", path.display()))?;
     let mut reader = BufReader::new(file);
     let mut line = Vec::new();
@@ -197,7 +195,6 @@ pub(crate) fn load_history(path: &Path) -> Result<LoadedHistory, String> {
             entries.push(entry);
         }
     }
-    timing.set_work(entries.len());
     let branch = active_branch_entries(&entries);
     let (model, thinking_level) = session_settings(&branch);
     Ok(LoadedHistory {
@@ -454,7 +451,7 @@ fn discover_in_cached(
     query: &str,
     cache: &mut DiscoveryCache,
 ) -> Result<SessionDiscovery, String> {
-    crate::performance::count_catalog_scan();
+    super::super::core::count_scan();
     match fs::metadata(root) {
         Ok(_) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -552,7 +549,7 @@ fn discover_in_cached(
             && cached.len == len
             && cached.modified == modified
         {
-            crate::performance::count_catalog_cache_hit();
+            super::super::core::count_cache_hit();
             let mut value = cached.parsed.clone();
             value.0.is_running =
                 recently_running(value.0.is_running, value.0.modified, SystemTime::now());
@@ -610,7 +607,7 @@ fn discover_in_cached(
 }
 
 fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)>, String> {
-    crate::performance::count_catalog_parse();
+    super::super::core::count_parse();
     let file = File::open(path).map_err(|error| format!("open {}: {error}", path.display()))?;
     let metadata = file.metadata().ok();
     let modified = metadata

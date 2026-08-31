@@ -1,7 +1,7 @@
 use gpui::{AnyElement, IntoElement as _, ParentElement as _, Styled as _, div};
 
 use super::super::FarcasterApp;
-use crate::theme::THEME;
+use crate::app::ui::theme::THEME;
 
 impl FarcasterApp {
     pub(super) fn render_editor_surface(&self) -> AnyElement {

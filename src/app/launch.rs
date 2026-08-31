@@ -13,12 +13,11 @@ use std::{
 
 use crate::{
     app::persistence::{StateStore, WindowPlacement, WindowState},
+    app::ui::theme::{THEME, install_component_theme},
+    app::ui::{assets::AppAssets, keybindings},
+    app::views::startup_trust::ProjectTrustView,
     app::{FarcasterApp, QuitApplication},
-    assets::AppAssets,
-    keybindings,
-    project_trust_view::ProjectTrustView,
     projects,
-    theme::{THEME, install_component_theme},
 };
 use gpui::{
     App, AppContext as _, Bounds, Context, DisplayId, Subscription, TitlebarOptions, WeakEntity,

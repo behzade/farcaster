@@ -1,4 +1,4 @@
-use crate::theme::THEME;
+use crate::app::ui::theme::THEME;
 use gpui::{
     Div, FontWeight, InteractiveElement as _, ParentElement as _, Role, SharedString,
     StatefulInteractiveElement as _, Styled as _, div,

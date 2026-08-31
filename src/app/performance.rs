@@ -115,6 +115,7 @@ fn add_counter(counter: &AtomicU64, count: u64) {
 }
 
 fn reset_counters() {
+    let _ = crate::sessions::take_catalog_metrics();
     for counter in [
         &SNAPSHOTS_PUBLISHED,
         &STREAM_EVENTS_OBSERVED,
@@ -170,16 +171,10 @@ pub(crate) fn count_remeasured_rows(count: usize) {
     add_counter(&TRANSCRIPT_ROWS_REMEASURED, count as u64);
 }
 
-pub(crate) fn count_catalog_scan() {
-    add_counter(&CATALOG_SCANS, 1);
-}
-
-pub(crate) fn count_catalog_parse() {
-    add_counter(&CATALOG_FILES_PARSED, 1);
-}
-
-pub(crate) fn count_catalog_cache_hit() {
-    add_counter(&CATALOG_CACHE_HITS, 1);
+pub(crate) fn record_catalog_metrics(metrics: crate::sessions::CatalogMetrics) {
+    add_counter(&CATALOG_SCANS, metrics.scans);
+    add_counter(&CATALOG_FILES_PARSED, metrics.parses);
+    add_counter(&CATALOG_CACHE_HITS, metrics.cache_hits);
 }
 
 pub(crate) fn count_markdown_cache_hit() {
@@ -405,6 +400,7 @@ fn collect_summary(
     window_id: WindowId,
     sample_interval: Duration,
 ) -> PerformanceSummary {
+    record_catalog_metrics(crate::sessions::take_catalog_metrics());
     let frames = frames
         .collect_unseen()
         .into_iter()

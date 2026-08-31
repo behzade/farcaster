@@ -10,9 +10,9 @@ use gpui::{
 
 use crate::{
     app::FarcasterApp,
-    primitives::{ButtonTone, button},
+    app::ui::primitives::{ButtonTone, button},
+    app::ui::theme::{MONO_FONT_FAMILY, THEME},
     projects::{self, StartupTrust, TrustChoice},
-    theme::{MONO_FONT_FAMILY, THEME},
 };
 
 pub(crate) struct ProjectTrustView {

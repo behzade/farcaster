@@ -3,8 +3,8 @@ use gpui::{AnyElement, IntoElement as _, ParentElement as _, Styled as _, WeakEn
 use super::super::FarcasterApp;
 use crate::{
     app::OVERLAY_KEY_CONTEXT,
-    primitives::{ButtonTone, button, modal},
-    theme::THEME,
+    app::ui::primitives::{ButtonTone, button, modal},
+    app::ui::theme::THEME,
 };
 
 pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement {

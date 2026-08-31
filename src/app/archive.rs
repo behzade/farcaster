@@ -4,7 +4,7 @@ use gpui::{Context, FocusHandle, Window};
 
 use super::FarcasterApp;
 use crate::{
-    composer_sessions::session_target,
+    app::composer_sessions::session_target,
     runtime::RuntimeCommand,
     sessions::{SessionSummary, root_session_for_path, session_family_for_path},
 };

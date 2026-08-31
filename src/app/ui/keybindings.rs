@@ -3,6 +3,7 @@ use crate::app::APP_SHORTCUT_CONTEXT;
 #[cfg(target_os = "macos")]
 use crate::app::ShowActionPicker;
 use crate::app::TRANSCRIPT_SELECTION_KEY_CONTEXT;
+use crate::app::ui::keyboard::CopySelection;
 use crate::app::{
     AbortRun, AddProject, CloseCurrent, ComposerCompletionNext, ComposerCompletionPrevious,
     ComposerEscape, ComposerHistoryNext, ComposerHistoryPrevious, DismissSurface, FocusComposer,
@@ -14,7 +15,6 @@ use crate::app::{
     WorkPreviousIssue,
 };
 use crate::app::{WORKGRAPH_KEY_CONTEXT, WORKGRAPH_NAV_KEY_CONTEXT};
-use crate::keyboard::CopySelection;
 use gpui::{KeyBinding, Unbind};
 use gpui_base::actions::{SelectDown, SelectUp};
 #[cfg(not(target_os = "macos"))]

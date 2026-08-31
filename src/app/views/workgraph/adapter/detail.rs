@@ -5,6 +5,8 @@ use gpui::{
 
 use super::WorkGraphBoardView;
 use crate::{
+    app::ui::primitives::{ButtonTone, FeedbackTone, button, feedback},
+    app::ui::theme::THEME,
     app::views::workgraph::{
         components::{
             detail_action, detail_copy, detail_empty, detail_rule, detail_section, evidence_label,
@@ -13,8 +15,6 @@ use crate::{
         contract::{PlanData, PlanLoadState},
         layout::{BoardLayoutMode, DETAIL_MIN_WIDTH, DETAIL_WIDTH},
     },
-    primitives::{ButtonTone, FeedbackTone, button, feedback},
-    theme::THEME,
 };
 
 impl WorkGraphBoardView {

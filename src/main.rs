@@ -1,21 +1,5 @@
 mod app;
-mod app_paths;
-mod assets;
-mod composer_sessions;
-#[cfg(test)]
-mod composer_sessions_test;
-mod extension_ui;
-mod keybindings;
-mod keyboard;
-mod layout;
 mod modules;
-mod performance;
-mod persistent_vec;
-mod primitives;
-mod project_trust_view;
-mod theme;
-mod tool_changes;
-mod user_invocations;
 
 pub(crate) use app::runtime;
 pub(crate) use modules::agents::extensions as protocol;
@@ -45,7 +29,7 @@ fn main() -> std::process::ExitCode {
         Some(home) => std::path::PathBuf::from(home),
         None => return fail("HOME is required to initialize sandbox approvals"),
     };
-    let data_root = match app_paths::data_dir() {
+    let data_root = match app::paths::data_dir() {
         Ok(path) => path,
         Err(error) => return fail(error),
     };
@@ -144,7 +128,7 @@ fn init_log_file() -> Result<(), String> {
     static LOG_PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
     static OLD_LOG_PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 
-    let directory = crate::app_paths::data_dir()?.join("logs");
+    let directory = crate::app::paths::data_dir()?.join("logs");
     std::fs::create_dir_all(&directory)
         .map_err(|error| format!("create {}: {error}", directory.display()))?;
     let path = LOG_PATH.get_or_init(|| directory.join("farcaster.log"));

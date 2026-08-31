@@ -12,12 +12,12 @@ use super::{
 };
 use crate::{
     app::FarcasterApp,
-    assets::AppIcon,
-    primitives::{
+    app::ui::assets::AppIcon,
+    app::ui::primitives::{
         AppIconSize, ButtonTone, FeedbackTone, app_icon, button, feedback, icon_button,
         section_heading,
     },
-    theme::THEME,
+    app::ui::theme::THEME,
 };
 use workgraph::load_plan;
 
@@ -105,7 +105,7 @@ fn prepare_refresh(state: &mut PlanLoadState) -> bool {
 
 impl Render for WorkGraphSidebarView {
     fn render(&mut self, _: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let _timing = crate::performance::Timing::new("render.workgraph_sidebar");
+        let _timing = crate::app::performance::Timing::new("render.workgraph_sidebar");
         let entity = cx.entity().downgrade();
         let header = div()
             .flex()

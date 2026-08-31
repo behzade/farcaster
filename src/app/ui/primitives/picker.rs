@@ -12,9 +12,9 @@ use gpui_component::{
 
 use crate::{
     app::RemoveProject,
-    assets::AppIcon,
-    primitives::{AppIconSize, app_icon, icon_control},
-    theme::THEME,
+    app::ui::assets::AppIcon,
+    app::ui::primitives::{AppIconSize, app_icon, icon_control},
+    app::ui::theme::THEME,
 };
 
 #[derive(Clone)]

@@ -7,7 +7,7 @@ use base64::Engine as _;
 use gpui::{Image, ImageFormat};
 use serde_json::Value;
 
-use crate::{persistent_vec::PersistentVec, protocol::PromptImage};
+use crate::{app::ui::persistent_vec::PersistentVec, protocol::PromptImage};
 
 const MAX_DIAGNOSTICS: usize = 32;
 const STREAM_CHUNK_BYTES: usize = 2 * 1024;

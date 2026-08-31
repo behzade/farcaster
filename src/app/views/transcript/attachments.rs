@@ -7,7 +7,10 @@ use gpui::{
 };
 
 use super::conversation::TranscriptItem;
-use crate::{app::FarcasterApp, primitives::activates_button, theme::THEME};
+use crate::{
+    app::FarcasterApp,
+    app::ui::{primitives::activates_button, theme::THEME},
+};
 
 pub(crate) const ATTACHMENT_ROW_HEIGHT: Pixels = px(126.0);
 

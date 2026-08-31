@@ -4,8 +4,8 @@ use gpui::{
 
 use super::super::FarcasterApp;
 use crate::{
-    primitives::{ButtonTone, button},
-    theme::THEME,
+    app::ui::primitives::{ButtonTone, button},
+    app::ui::theme::THEME,
 };
 
 impl FarcasterApp {

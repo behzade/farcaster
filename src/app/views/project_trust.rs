@@ -6,9 +6,9 @@ use gpui::{
 use super::super::FarcasterApp;
 use crate::{
     app::OVERLAY_KEY_CONTEXT,
-    primitives::{ButtonTone, button, modal},
+    app::ui::primitives::{ButtonTone, button, modal},
+    app::ui::theme::{MONO_FONT_FAMILY, THEME},
     projects,
-    theme::{MONO_FONT_FAMILY, THEME},
 };
 
 pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement {

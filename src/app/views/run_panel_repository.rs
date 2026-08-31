@@ -12,15 +12,15 @@ use super::{
     },
 };
 use crate::{
-    assets::AppIcon,
-    primitives::{
+    app::ui::assets::AppIcon,
+    app::ui::primitives::{
         AppIconSize, ButtonTone, activates_button, app_icon, disclosure_button, icon_button,
     },
+    app::ui::theme::{MONO_FONT_FAMILY, THEME},
     repository::{
         BackendPreference, RepositoryBackend, RepositoryKind, RepositorySyncAction,
         SnapshotIdentity, WorkingCopyChange, WorkingCopySnapshot,
     },
-    theme::{MONO_FONT_FAMILY, THEME},
 };
 
 const INITIAL_VISIBLE_CHANGES: usize = 5;

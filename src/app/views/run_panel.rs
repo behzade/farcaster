@@ -13,11 +13,11 @@ use gpui::{
 use super::super::FarcasterApp;
 use crate::{
     agent_activity::{AgentActivity, AgentLifecycle, AgentOutcome},
-    assets::AppIcon,
-    primitives::{AppIconSize, app_icon, disclosure_button, panel, section_heading},
+    app::ui::assets::AppIcon,
+    app::ui::primitives::{AppIconSize, app_icon, disclosure_button, panel, section_heading},
+    app::ui::theme::{MONO_FONT_FAMILY, THEME},
     protocol::{BackgroundJob, BackgroundJobState},
     sessions::{descendant_sessions, root_session_for_path},
-    theme::{MONO_FONT_FAMILY, THEME},
 };
 
 const MAX_VISIBLE_COMPLETED_AGENTS: usize = 5;
@@ -413,7 +413,7 @@ impl FarcasterApp {
     }
 }
 
-fn render_performance(summary: &crate::performance::PerformanceSummary) -> impl IntoElement {
+fn render_performance(summary: &crate::app::performance::PerformanceSummary) -> impl IntoElement {
     div()
         .p(THEME.space.sm)
         .border(THEME.border)
@@ -434,13 +434,13 @@ fn render_performance(summary: &crate::performance::PerformanceSummary) -> impl 
             "Draw p95 / max",
             format!(
                 "{} / {}",
-                crate::performance::duration_label(summary.draw_p95),
-                crate::performance::duration_label(summary.draw_max)
+                crate::app::performance::duration_label(summary.draw_p95),
+                crate::app::performance::duration_label(summary.draw_max)
             ),
         ))
         .child(metric_row(
             "Dirty to draw p95",
-            crate::performance::duration_label(summary.dirty_to_draw_p95),
+            crate::app::performance::duration_label(summary.dirty_to_draw_p95),
         ))
         .child(metric_row(
             "Dirty requests avg / max",
@@ -501,19 +501,19 @@ fn render_performance(summary: &crate::performance::PerformanceSummary) -> impl 
             format!(
                 "{} / {}",
                 summary.scroll_events_after_end,
-                crate::performance::duration_label(summary.scroll_after_end_max),
+                crate::app::performance::duration_label(summary.scroll_after_end_max),
             ),
         ))
         .child(metric_row(
             "Scroll handler max gap",
-            crate::performance::duration_label(summary.scroll_event_gap_max),
+            crate::app::performance::duration_label(summary.scroll_event_gap_max),
         ))
         .child(metric_row(
             "Scroll defers · count / max wait",
             format!(
                 "{} / {}",
                 summary.scroll_deferred_updates,
-                crate::performance::duration_label(summary.scroll_defer_max),
+                crate::app::performance::duration_label(summary.scroll_defer_max),
             ),
         ))
         .children(summary.operations.iter().map(operation_metric_row))
@@ -528,15 +528,15 @@ fn render_performance(summary: &crate::performance::PerformanceSummary) -> impl 
 }
 
 fn operation_metric_row(
-    operation: &crate::performance::OperationSummary,
+    operation: &crate::app::performance::OperationSummary,
 ) -> impl IntoElement + use<> {
     metric_row(
         operation.label,
         format!(
             "{} calls · {} total · {} max · {} {}",
             operation.calls,
-            crate::performance::duration_label(operation.total),
-            crate::performance::duration_label(operation.max),
+            crate::app::performance::duration_label(operation.total),
+            crate::app::performance::duration_label(operation.max),
             operation.work,
             operation.work_label,
         ),

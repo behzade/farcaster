@@ -1062,7 +1062,7 @@ fn run_supervisor(
                 let next = command_target(&command);
                 if let Some((requested_key, project)) = next {
                     let _selection_timing = is_view_only_selection(&command)
-                        .then(|| crate::performance::Timing::new("switch.runtime_route"));
+                        .then(|| crate::app::performance::Timing::new("switch.runtime_route"));
                     let key = match &command {
                         RuntimeCommand::SelectSession { path, .. }
                         | RuntimeCommand::RestartSession { path, .. } => {
@@ -1571,7 +1571,7 @@ fn run(
                 SnapshotChange::None => {}
                 SnapshotChange::Streaming => {
                     let coalesced = stream_publish_due.is_some();
-                    crate::performance::count_stream_event(coalesced);
+                    crate::app::performance::count_stream_event(coalesced);
                     if !coalesced {
                         stream_publish_due = Some(Instant::now() + STREAM_PUBLISH_INTERVAL);
                     }
@@ -2025,7 +2025,7 @@ impl RuntimeOwner {
     }
 
     fn select_history(&mut self, path: PathBuf, project: PathBuf) {
-        let _timing = crate::performance::Timing::new("switch.select_document");
+        let _timing = crate::app::performance::Timing::new("switch.select_document");
         self.history_generation = self.history_generation.saturating_add(1);
         self.pending_document_refresh = None;
         if self.snapshot.selected_session.as_deref() == Some(path.as_path())
@@ -2075,8 +2075,15 @@ impl RuntimeOwner {
         if let Err(error) = thread::Builder::new()
             .name("farcaster-history".into())
             .spawn(move || {
-                let _timing = crate::performance::Timing::new("switch.load_history");
+                let _timing = crate::app::performance::Timing::new("switch.load_history");
+                let mut operation = crate::app::performance::OperationTiming::new(
+                    crate::app::performance::OperationKind::HistoryLoad,
+                    0,
+                );
                 let result = load_history(&path);
+                if let Ok(history) = &result {
+                    operation.set_work(history.messages.len());
+                }
                 let _ = sender.send(HistoryResult {
                     generation,
                     path,
@@ -2508,7 +2515,7 @@ impl RuntimeOwner {
     }
 
     fn publish(&mut self) {
-        crate::performance::count_snapshot();
+        crate::app::performance::count_snapshot();
         self.snapshot.permission_level = self
             .permission_changes
             .requested_level(self.process_command.permission_level);

@@ -58,10 +58,8 @@ impl RuntimeOwner {
         if let Err(error) = thread::Builder::new()
             .name("farcaster-sessions".into())
             .spawn(move || {
-                let _ = sender.send(DiscoveryResult {
-                    generation,
-                    result: discover(""),
-                });
+                let result = discover("");
+                let _ = sender.send(DiscoveryResult { generation, result });
                 wake.unpark();
             })
         {
