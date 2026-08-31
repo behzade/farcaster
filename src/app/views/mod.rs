@@ -22,6 +22,7 @@ mod shell;
 mod surface_switcher;
 mod terminal;
 mod usage;
+pub(super) mod workgraph;
 
 pub(super) use regions::{
     ComposerView, InactiveSessionRailView, RunPanelView, SessionRailView, TranscriptView,
@@ -572,7 +573,7 @@ impl Render for FarcasterApp {
                     "project-work",
                     "Plans",
                     &workgraph_focus,
-                    crate::app::workgraph::adapter::WORKGRAPH_KEY_CONTEXT,
+                    crate::app::views::workgraph::WORKGRAPH_KEY_CONTEXT,
                     move |window, cx| {
                         let _ = close.update(cx, |this, cx| {
                             this.show_chat_surface(window, cx);

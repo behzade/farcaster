@@ -5,13 +5,12 @@ use gpui::{
 
 use super::WorkGraphBoardView;
 use crate::{
-    app::workgraph::{
+    app::views::workgraph::{
         components::{
             detail_action, detail_copy, detail_empty, detail_rule, detail_section, evidence_label,
             requirement_label,
         },
         contract::{PlanData, PlanLoadState},
-        core::active_outcome,
         layout::{BoardLayoutMode, DETAIL_MIN_WIDTH, DETAIL_WIDTH},
     },
     primitives::{ButtonTone, FeedbackTone, button, feedback},
@@ -50,7 +49,7 @@ impl WorkGraphBoardView {
             })
             .child(match (snapshot, node) {
                 (Some(snapshot), Some(node)) => {
-                    let outcome = active_outcome(snapshot, node.number);
+                    let outcome = snapshot.active_outcome(node.number);
                     let current = snapshot
                         .walk
                         .as_ref()

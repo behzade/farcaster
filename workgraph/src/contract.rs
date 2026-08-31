@@ -131,6 +131,14 @@ pub struct PlanSnapshot {
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ProjectSelection {
+    pub plans: Vec<Plan>,
+    pub snapshot: Option<PlanSnapshot>,
+    pub session_link: Option<SessionLink>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProjectGraph {
     pub plans: Vec<Plan>,
     pub nodes: Vec<Node>,

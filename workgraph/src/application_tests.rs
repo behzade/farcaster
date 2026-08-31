@@ -1,13 +1,11 @@
-use super::persistence::{add_node, create_plan, link_session, load_plan};
+use crate::{add_node, create_plan, link_session, load_plan};
 
 #[test]
-fn native_plan_adapter_round_trips_nodes_walk_and_session() {
+fn application_round_trips_nodes_walk_and_session() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let database = directory.path().join("gui-state.sqlite3");
     let project = directory.path().join("project");
     std::fs::create_dir(&project).expect("project directory");
-    let _state = crate::state::StateStore::open_at(&database).expect("GUI state");
-
     let (created, root) = create_plan(
         database.clone(),
         project.clone(),

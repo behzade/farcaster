@@ -1,11 +1,12 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use workgraph::{PlanSnapshot, WalkStep};
+use workgraph::PlanSnapshot;
 
 use super::contract::PlanRow;
 
 pub(super) fn plan_rows(snapshot: &PlanSnapshot, search: &str) -> Vec<PlanRow> {
-    let reached = active_steps(snapshot)
+    let reached = snapshot
+        .active_steps()
         .into_iter()
         .map(|step| step.node_number)
         .collect::<HashSet<_>>();
@@ -23,29 +24,6 @@ pub(super) fn plan_rows(snapshot: &PlanSnapshot, search: &str) -> Vec<PlanRow> {
             })
         })
         .collect()
-}
-
-pub(super) fn active_steps(snapshot: &PlanSnapshot) -> Vec<&WalkStep> {
-    let Some(walk) = &snapshot.walk else {
-        return Vec::new();
-    };
-    let mut reversed = Vec::new();
-    let mut current = walk.head_step;
-    while let Some(id) = current {
-        let Some(step) = snapshot.steps.iter().find(|step| step.id == id) else {
-            break;
-        };
-        reversed.push(step);
-        current = step.parent_step;
-    }
-    reversed.reverse();
-    reversed
-}
-
-pub(super) fn active_outcome(snapshot: &PlanSnapshot, number: u64) -> Option<&WalkStep> {
-    active_steps(snapshot)
-        .into_iter()
-        .find(|step| step.node_number == number)
 }
 
 pub(super) fn create_form_valid(has_plan: bool, title: &str, detail: &str) -> bool {
@@ -245,21 +223,6 @@ mod tests {
         assert!(rows[0].reached);
         assert!(rows[1].current);
         assert!(rows.iter().all(|row| !row.detached));
-    }
-
-    #[test]
-    fn active_chain_ignores_abandoned_steps() {
-        let mut snapshot = snapshot();
-        snapshot.steps.push(WalkStep {
-            id: 2,
-            walk_number: 1,
-            node_number: 3,
-            parent_step: Some(1),
-            outcome: snapshot.steps[0].outcome.clone(),
-            completed_at: 1,
-        });
-        assert_eq!(active_steps(&snapshot).len(), 1);
-        assert!(active_outcome(&snapshot, 3).is_none());
     }
 
     #[test]

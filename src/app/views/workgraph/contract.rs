@@ -1,11 +1,4 @@
-use workgraph::{Plan, PlanSnapshot, SessionLink};
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(super) struct PlanData {
-    pub plans: Vec<Plan>,
-    pub snapshot: Option<PlanSnapshot>,
-    pub session_link: Option<SessionLink>,
-}
+pub(super) type PlanData = workgraph::ProjectSelection;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum PlanLoadState {

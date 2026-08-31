@@ -113,14 +113,14 @@ impl<P: Persistence> WorkGraph<P> {
             | SearchRequest::Node { project, .. }
             | SearchRequest::Session { project, .. } => project,
         };
-        let stored = transaction.project(project)?.unwrap_or_else(StoredProject::new);
+        let stored = transaction
+            .project(project)?
+            .unwrap_or_else(StoredProject::new);
         match request {
             SearchRequest::Project { .. } => Ok(SearchResult::Project(stored.graph)),
-            SearchRequest::Plan { plan, walk, .. } => Ok(SearchResult::Plan(snapshot(
-                &stored.graph,
-                *plan,
-                *walk,
-            )?)),
+            SearchRequest::Plan { plan, walk, .. } => {
+                Ok(SearchResult::Plan(snapshot(&stored.graph, *plan, *walk)?))
+            }
             SearchRequest::Node { plan, number, .. } => stored
                 .graph
                 .nodes
@@ -577,11 +577,7 @@ fn require_plan(graph: &ProjectGraph, number: u64) -> Result<&Plan, WorkGraphErr
         .ok_or(WorkGraphError::PlanNotFound)
 }
 
-fn require_node(
-    graph: &ProjectGraph,
-    plan: u64,
-    number: u64,
-) -> Result<&Node, WorkGraphError> {
+fn require_node(graph: &ProjectGraph, plan: u64, number: u64) -> Result<&Node, WorkGraphError> {
     graph
         .nodes
         .iter()
@@ -600,7 +596,10 @@ fn bump_plan(graph: &mut ProjectGraph, number: u64, now: i64) -> Result<(), Work
     Ok(())
 }
 
-fn choose_successor(successors: &[u64], requested: Option<u64>) -> Result<Option<u64>, WorkGraphError> {
+fn choose_successor(
+    successors: &[u64],
+    requested: Option<u64>,
+) -> Result<Option<u64>, WorkGraphError> {
     match (successors, requested) {
         ([], None) => Ok(None),
         ([], Some(_)) => Err(WorkGraphError::InvalidSuccessor),
@@ -630,6 +629,31 @@ fn reaches(graph: &ProjectGraph, plan: u64, from: u64, target: u64) -> bool {
         }
     }
     false
+}
+
+impl PlanSnapshot {
+    pub fn active_steps(&self) -> Vec<&WalkStep> {
+        let Some(walk) = &self.walk else {
+            return Vec::new();
+        };
+        let mut steps = Vec::new();
+        let mut current = walk.head_step;
+        while let Some(id) = current {
+            let Some(step) = self.steps.iter().find(|step| step.id == id) else {
+                break;
+            };
+            steps.push(step);
+            current = step.parent_step;
+        }
+        steps.reverse();
+        steps
+    }
+
+    pub fn active_outcome(&self, node: u64) -> Option<&WalkStep> {
+        self.active_steps()
+            .into_iter()
+            .find(|step| step.node_number == node)
+    }
 }
 
 fn active_steps<'a>(graph: &'a ProjectGraph, walk: &Walk) -> Vec<&'a WalkStep> {
@@ -686,9 +710,7 @@ fn validate_request(request: &EditRequest) -> Result<(), WorkGraphError> {
         } if !valid_title(title) || !valid_title(root_title) || !valid_files(files) => {
             Err(WorkGraphError::InvalidInput("plan fields are invalid"))
         }
-        EditAction::AddNode { title, files, .. }
-            if !valid_title(title) || !valid_files(files) =>
-        {
+        EditAction::AddNode { title, files, .. } if !valid_title(title) || !valid_files(files) => {
             Err(WorkGraphError::InvalidInput("node fields are invalid"))
         }
         EditAction::SetNode {
@@ -696,9 +718,7 @@ fn validate_request(request: &EditRequest) -> Result<(), WorkGraphError> {
             files,
             completion,
             ..
-        } if title
-            .as_ref()
-            .is_some_and(|title| !valid_title(title))
+        } if title.as_ref().is_some_and(|title| !valid_title(title))
             || files.as_ref().is_some_and(|files| !valid_files(files))
             || (title.is_none() && files.is_none() && completion.is_none()) =>
         {
@@ -729,7 +749,9 @@ fn validate_request(request: &EditRequest) -> Result<(), WorkGraphError> {
                 || outcome.evidence.reference.trim().is_empty()
                 || outcome.evidence.reference.len() > 4096 =>
         {
-            Err(WorkGraphError::InvalidInput("completion outcome is invalid"))
+            Err(WorkGraphError::InvalidInput(
+                "completion outcome is invalid",
+            ))
         }
         EditAction::Complete { session_id, .. }
             if session_id.trim().is_empty() || session_id.len() > 256 =>

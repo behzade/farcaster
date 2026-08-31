@@ -27,18 +27,17 @@ mod terminal;
 mod transcript_ui;
 mod trust;
 mod views;
-mod workgraph;
 pub(crate) use composer_images::ComposerImage;
 pub(crate) use composer_pastes::ComposerPaste;
 pub(crate) use picker::{PICKER_KEY_CONTEXT, PickerScope, ProjectPickerIntent};
 use submissions::PendingSubmission;
 pub(crate) use views::OVERLAY_KEY_CONTEXT;
+pub(crate) use views::workgraph::{WORKGRAPH_KEY_CONTEXT, WORKGRAPH_NAV_KEY_CONTEXT};
+use views::workgraph::{WorkGraphBoardView, WorkGraphSidebarView};
 use views::{
     ComposerView, InactiveSessionRailView, RunPanelView, SessionRailKind, SessionRailView,
     TranscriptView, WorkGraphDetailView, roots_waiting_for_descendants,
 };
-pub(crate) use workgraph::adapter::{WORKGRAPH_KEY_CONTEXT, WORKGRAPH_NAV_KEY_CONTEXT};
-use workgraph::{adapter::WorkGraphBoardView, sidebar::WorkGraphSidebarView};
 
 use std::{
     cell::RefCell,

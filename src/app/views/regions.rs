@@ -5,7 +5,7 @@ use gpui::{
 
 use super::{FarcasterApp, session_groups::SessionRailKind};
 use crate::{
-    app::workgraph::adapter::WorkGraphBoardView,
+    app::views::workgraph::WorkGraphBoardView,
     primitives::{ButtonTone, button},
     theme::THEME,
     transcript,

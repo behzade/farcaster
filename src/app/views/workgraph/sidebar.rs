@@ -9,7 +9,6 @@ use gpui::{
 use super::{
     contract::{PlanLoadState, PlanRow},
     core::plan_rows,
-    persistence::load_plan,
 };
 use crate::{
     app::FarcasterApp,
@@ -20,6 +19,7 @@ use crate::{
     },
     theme::THEME,
 };
+use workgraph::load_plan;
 
 pub(crate) struct WorkGraphSidebarView {
     app: WeakEntity<FarcasterApp>,
@@ -293,7 +293,7 @@ mod tests {
     use workgraph::SessionLink;
 
     use super::*;
-    use crate::app::workgraph::contract::PlanData;
+    use crate::app::views::workgraph::contract::PlanData;
 
     fn state(attached: bool) -> PlanLoadState {
         PlanLoadState::Ready(Box::new(PlanData {

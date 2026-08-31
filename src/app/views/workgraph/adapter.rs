@@ -10,7 +10,6 @@ use super::{
     contract::PlanLoadState,
     core::{adjacent_node_number, create_form_valid, plan_rows},
     layout::BoardLayoutMode,
-    persistence::{link_session, load_plan},
 };
 use crate::{
     primitives::{ButtonTone, FeedbackTone, button, feedback},
@@ -22,6 +21,7 @@ use gpui::{
     Task, Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::input::{Input, InputEvent, InputState, TextareaState};
+use workgraph::{link_session, load_plan};
 
 pub(crate) const WORKGRAPH_KEY_CONTEXT: &str = "PiWorkGraph";
 pub(crate) const WORKGRAPH_NAV_KEY_CONTEXT: &str = "PiWorkGraph && !Input";

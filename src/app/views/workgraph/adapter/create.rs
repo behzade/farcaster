@@ -1,14 +1,11 @@
 use gpui::{AppContext as _, Context, Focusable as _, Window};
 
 use super::WorkGraphBoardView;
-use crate::app::workgraph::{
-    contract::PlanLoadState,
-    core::create_form_valid,
-    persistence::{add_node, create_plan},
-};
+use crate::app::views::workgraph::{contract::PlanLoadState, core::create_form_valid};
+use workgraph::{add_node, create_plan};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::app::workgraph) enum CreateStage {
+pub(in crate::app::views::workgraph) enum CreateStage {
     Closed,
     Node,
     CurrentState,
@@ -16,7 +13,7 @@ pub(in crate::app::workgraph) enum CreateStage {
 }
 
 impl CreateStage {
-    pub(in crate::app::workgraph) const fn is_open(self) -> bool {
+    pub(in crate::app::views::workgraph) const fn is_open(self) -> bool {
         !matches!(self, Self::Closed)
     }
 }
@@ -42,7 +39,7 @@ impl WorkGraphBoardView {
         cx.notify();
     }
 
-    pub(in crate::app::workgraph) fn next_create_step(
+    pub(in crate::app::views::workgraph) fn next_create_step(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -60,7 +57,7 @@ impl WorkGraphBoardView {
         }
     }
 
-    pub(in crate::app::workgraph) fn previous_create_step(
+    pub(in crate::app::views::workgraph) fn previous_create_step(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -74,7 +71,7 @@ impl WorkGraphBoardView {
         }
     }
 
-    pub(in crate::app::workgraph) fn cancel_create(
+    pub(in crate::app::views::workgraph) fn cancel_create(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -87,7 +84,7 @@ impl WorkGraphBoardView {
         }
     }
 
-    pub(in crate::app::workgraph) fn submit_create_inputs(
+    pub(in crate::app::views::workgraph) fn submit_create_inputs(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
