@@ -98,9 +98,24 @@ impl<R: BufRead, W: Write> CodexConnection<R, W> {
         &mut self,
         client: CodexClientInfo,
     ) -> Result<CodexInitializeResponse, String> {
+        self.initialize_with_capabilities(client, Value::Null)
+    }
+
+    pub(crate) fn initialize_experimental(
+        &mut self,
+        client: CodexClientInfo,
+    ) -> Result<CodexInitializeResponse, String> {
+        self.initialize_with_capabilities(client, json!({"experimentalApi": true}))
+    }
+
+    fn initialize_with_capabilities(
+        &mut self,
+        client: CodexClientInfo,
+        capabilities: Value,
+    ) -> Result<CodexInitializeResponse, String> {
         let id = self.send_request(
             "initialize",
-            json!({"clientInfo": client, "capabilities": null}),
+            json!({"clientInfo": client, "capabilities": capabilities}),
         )?;
         let response = self.wait_response(&id)?;
         self.send_notification("initialized", None)?;

@@ -92,6 +92,7 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             effort: launch.effort,
             collaboration_mode: None,
             collaboration_modes: HashMap::new(),
+            native_queue: false,
             next_id,
             current_turn: None,
             output: String::new(),
@@ -176,6 +177,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         effort: None,
         collaboration_mode: None,
         collaboration_modes,
+        native_queue: true,
         next_id,
         current_turn: None,
         output: String::new(),
@@ -254,7 +256,7 @@ fn setup_main_connection(
         .take()
         .ok_or_else(|| "Codex main-session stdout must be piped".to_owned())?;
     let mut connection = CodexConnection::new(BufReader::new(stdout), stdin);
-    connection.initialize(CodexClientInfo {
+    connection.initialize_experimental(CodexClientInfo {
         name: "farcaster".into(),
         title: Some("Farcaster".into()),
         version: env!("CARGO_PKG_VERSION").into(),
@@ -388,6 +390,7 @@ struct CodexWorkerSession {
     effort: Option<String>,
     collaboration_mode: Option<Value>,
     collaboration_modes: HashMap<String, Value>,
+    native_queue: bool,
     next_id: i64,
     current_turn: Option<String>,
     output: String,
@@ -520,7 +523,14 @@ impl WorkerSession for CodexWorkerSession {
                     match method.as_str() {
                         "turn/started" => {
                             if let Some(turn_id) = params["turn"]["id"].as_str() {
+                                let new_turn = self.current_turn.as_deref() != Some(turn_id);
                                 self.current_turn = Some(turn_id.to_owned());
+                                if new_turn {
+                                    self.output.clear();
+                                    self.message_started = false;
+                                    self.reasoning_started = false;
+                                    return Some(WorkerEvent::Started);
+                                }
                             }
                         }
                         "item/agentMessage/delta" => {
@@ -677,6 +687,19 @@ impl CodexWorkerSession {
                 json!({
                     "threadId": self.thread_id,
                     "expectedTurnId": turn_id,
+                    "input": input,
+                }),
+            )?;
+            self.pending.insert(id, PendingRequest::Ignore);
+            return Ok(());
+        }
+        if mode == WorkerSendMode::Queue && self.native_queue {
+            let client_id = format!("farcaster-queue-{}", self.next_id.saturating_add(1));
+            let id = self.request(
+                "thread/queue/add",
+                json!({
+                    "threadId": self.thread_id,
+                    "clientUserMessageId": client_id,
                     "input": input,
                 }),
             )?;

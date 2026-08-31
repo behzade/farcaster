@@ -58,7 +58,7 @@ pub(crate) struct CodexInitializeResponse {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CodexThread {
     pub id: String,
-    pub session_id: String,
+    #[serde(default)]
     pub parent_thread_id: Option<String>,
     pub cwd: String,
 }
