@@ -267,6 +267,10 @@ pub(super) fn draft_session_row(
                                             .child(project_badge(&draft.project)),
                                     )
                                     .child(draft_badge())
+                                    .child(app_icon(
+                                        AppIcon::for_harness(&draft.harness),
+                                        AppIconSize::Inline,
+                                    ))
                                     .when(status != "Draft", |metadata| {
                                         metadata.when_some(
                                             status_icon(target_app_session_id, status),
@@ -674,12 +678,12 @@ pub(super) fn session_row_with_height(
                                                         .text_ellipsis()
                                                         .child(project_label(&session.project)),
                                                 ),
-                                        )
-                                        .child(app_icon(
-                                            AppIcon::for_harness(&session.harness),
-                                            AppIconSize::Inline,
-                                        )),
+                                        ),
                                 )
+                                .child(app_icon(
+                                    AppIcon::for_harness(&session.harness),
+                                    AppIconSize::Inline,
+                                ))
                                 .when_some(
                                     status_icon(target_app_session_id, &status_text),
                                     |metadata, icon| metadata.child(icon),
@@ -866,7 +870,6 @@ fn project_badge(project: &Path) -> AnyElement {
                 .text_ellipsis()
                 .child(project_label(project)),
         )
-        .child(app_icon(AppIcon::Pi, AppIconSize::Inline))
         .into_any_element()
 }
 
