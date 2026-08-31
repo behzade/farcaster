@@ -62,6 +62,10 @@ pub(crate) fn compile(
     let temporary = canonical_directory(temporary, "temporary directory")?;
     let mut readable = immutable_runtime_roots();
     readable.extend(user_runtime_libraries(&home));
+    // Seatbelt preserves the default profile's protected-child denies within this grant.
+    // Linux Landlock cannot express deny-within-allow, so it keeps explicit reads below.
+    #[cfg(target_os = "macos")]
+    readable.push(home.clone());
     let mut readable_files = user_configuration(&home);
     let mut protection_bypasses = grants
         .readable
@@ -325,6 +329,11 @@ mod tests {
             path.as_str()
                 .is_some_and(|path| path.ends_with("/.local/lib"))
         }));
+        #[cfg(target_os = "macos")]
+        {
+            let home = root.path().join("home").canonicalize()?;
+            assert!(read.contains(&serde_json::json!(home)));
+        }
         if Path::new("/nix/store").is_dir() {
             assert!(read.iter().any(|path| path == "/nix/store"));
         }
