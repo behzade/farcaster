@@ -781,24 +781,20 @@ fn render_draft_heading(
             div().flex().items_center().gap(THEME.space.xs).children(
                 crate::agents::backend_statuses()
                     .into_iter()
+                    .filter(|backend| backend.available)
                     .map(|backend| {
                         let selected = backend.id == harness;
                         let target = backend.id.clone();
                         let entity = entity.clone();
-                        let label = if backend.available {
-                            backend.name
-                        } else {
-                            format!("{} unavailable", backend.name)
-                        };
                         button(
                             format!("draft-harness-{target}"),
-                            label,
+                            backend.name,
                             if selected {
                                 ButtonTone::Accent
                             } else {
                                 ButtonTone::Quiet
                             },
-                            backend.available && !selected,
+                            !selected,
                             move |window, cx| {
                                 let _ = entity.update(cx, |this, cx| {
                                     this.change_draft_harness(target.clone(), window, cx);

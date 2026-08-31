@@ -20,8 +20,8 @@ pub(crate) fn descriptor() -> AgentBackendDescriptor {
     use CapabilitySupport::{Available, Unsupported};
 
     AgentBackendDescriptor {
-        id: AgentBackendId::new("codex-cli").expect("Codex CLI backend id is valid"),
-        name: "Codex CLI".into(),
+        id: AgentBackendId::new("codex-cli").expect("Codex backend id is valid"),
+        name: "Codex".into(),
         capabilities: AgentCapabilities {
             sessions: SessionCapabilities {
                 list: Available,

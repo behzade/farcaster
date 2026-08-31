@@ -23,7 +23,7 @@ pub(crate) fn descriptor() -> AgentBackendDescriptor {
 
     AgentBackendDescriptor {
         id: AgentBackendId::new("opencode2").expect("OpenCode backend id is valid"),
-        name: "OpenCode 2".into(),
+        name: "OpenCode".into(),
         capabilities: AgentCapabilities {
             sessions: SessionCapabilities {
                 list: Available,
