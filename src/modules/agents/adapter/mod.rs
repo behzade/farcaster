@@ -9,14 +9,14 @@ mod shell_environment;
 
 pub(crate) use shell_environment::{app_shell_environment, default_login_shell};
 
-pub(super) fn validate_launch(
+pub(crate) fn validate_launch(
     config: &crate::agents::AgentLaunchConfig,
     project: &std::path::Path,
 ) -> Result<(), String> {
     config.command(project).map(|_| ())
 }
 
-pub(super) fn worker_factories(
+pub(crate) fn worker_factories(
     config: crate::agents::AgentLaunchConfig,
 ) -> (
     std::collections::BTreeMap<String, std::sync::Arc<dyn crate::agents::WorkerSessionFactory>>,
@@ -49,7 +49,7 @@ pub(super) fn worker_factories(
     (factories, default_backend)
 }
 
-pub(super) fn spawn_session(
+pub(crate) fn spawn_session(
     config: &crate::agents::AgentLaunchConfig,
     launch: crate::agents::SessionLaunch,
 ) -> Result<Box<dyn crate::agents::SessionTransport>, String> {
@@ -77,7 +77,7 @@ pub(super) fn spawn_session(
     Ok(Box::new(process))
 }
 
-pub(super) fn rename_session(
+pub(crate) fn rename_session(
     config: &crate::agents::AgentLaunchConfig,
     project: &std::path::Path,
     session: &std::path::Path,

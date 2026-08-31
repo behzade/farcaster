@@ -30,25 +30,13 @@ pub(crate) fn prepare_sandboxed_command(
     network: &NetworkConfiguration,
 ) -> Result<SandboxedCommand, String> {
     if access.unrestricted() {
-        let mut command = Command::new(agent_program);
-        command.args(prefix_args);
-        return Ok(SandboxedCommand {
-            command,
-            _profile: None,
-        });
+        return Ok(direct_command(agent_program, prefix_args));
     }
     let nono_program = match &nono.kind {
         SandboxRuntimeKind::Fixed(program) => validate_nono_program(program)?,
         SandboxRuntimeKind::Unavailable => return Err(missing_nono_error()),
         #[cfg(test)]
-        SandboxRuntimeKind::TestBypass => {
-            let mut command = Command::new(agent_program);
-            command.args(prefix_args);
-            return Ok(SandboxedCommand {
-                command,
-                _profile: None,
-            });
-        }
+        SandboxRuntimeKind::TestBypass => return Ok(direct_command(agent_program, prefix_args)),
     };
     let mut profile = tempfile::NamedTempFile::new()
         .map_err(|error| format!("create Farcaster sandbox profile: {error}"))?;
@@ -79,6 +67,15 @@ pub(crate) fn prepare_sandboxed_command(
         command,
         _profile: Some(profile),
     })
+}
+
+fn direct_command(agent_program: &Path, prefix_args: &[String]) -> SandboxedCommand {
+    let mut command = Command::new(agent_program);
+    command.args(prefix_args);
+    SandboxedCommand {
+        command,
+        _profile: None,
+    }
 }
 
 fn validate_policy_bytes(nono: &SandboxRuntime, policy: &[u8]) -> Result<(), String> {
