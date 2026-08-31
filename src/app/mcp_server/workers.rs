@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use rmcp::schemars;
 use serde::Deserialize;
 
@@ -8,16 +6,11 @@ use crate::agents::{CallerContext, StartWorker, WorkerContext, WorkerMessageMode
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct StartParams {
-    /// Absolute project directory for the worker.
-    pub(super) project: String,
     /// Task for the worker.
     pub(super) prompt: String,
     /// Agent backend. Use `worker_backends` to list available backends.
     #[serde(default)]
     pub(super) backend: Option<String>,
-    /// Parent backend session. Normally supplied automatically by Farcaster.
-    #[serde(default)]
-    pub(super) parent_session: Option<String>,
     /// Existing backend session to use as context. Omit to fork the parent.
     #[serde(default)]
     pub(super) source_session: Option<String>,
@@ -98,39 +91,30 @@ pub(super) fn start(
     params: StartParams,
     caller: Option<CallerContext>,
 ) -> Result<serde_json::Value, String> {
-    let project = PathBuf::from(&params.project);
-    let caller_parent = if let Some(caller) = caller {
-        let requested = canonical_directory(&project)?;
-        let caller_project = canonical_directory(&caller.project)?;
-        if requested != caller_project {
-            return Err(format!(
-                "worker project does not match its calling session: {}",
-                requested.display()
-            ));
-        }
-        pool.allow_project(&caller_project)?;
-        Some(caller.session)
-    } else {
-        None
-    };
-    let backend = params
-        .backend
-        .unwrap_or_else(|| pool.default_backend().to_owned());
-    let source_session = params.source_session;
-    let parent_session = params
-        .parent_session
-        .or(caller_parent)
-        .or_else(|| source_session.clone())
-        .ok_or_else(|| "worker start requires a parent session".to_owned())?;
+    let caller = caller
+        .ok_or_else(|| "worker start requires a registered Farcaster caller".to_owned())?;
+    pool.allow_project(&caller.project)?;
+    encode(&pool.start(prepare_start(pool.default_backend(), params, caller))?)
+}
+
+fn prepare_start(
+    default_backend: &str,
+    params: StartParams,
+    caller: CallerContext,
+) -> StartWorker {
+    let backend = params.backend.unwrap_or_else(|| default_backend.to_owned());
+    let parent_session = caller.session;
     let context = match params.context {
-        StartContext::Auto if backend != pool.default_backend() => WorkerContext::Fresh,
+        StartContext::Auto if backend != default_backend => WorkerContext::Fresh,
         StartContext::Auto | StartContext::Fork => WorkerContext::Session {
-            session_locator: source_session.unwrap_or_else(|| parent_session.clone()),
+            session_locator: params
+                .source_session
+                .unwrap_or_else(|| parent_session.clone()),
         },
         StartContext::Fresh => WorkerContext::Fresh,
     };
-    encode(&pool.start(StartWorker {
-        project,
+    StartWorker {
+        project: caller.project,
         prompt: params.prompt,
         backend,
         parent_session,
@@ -138,7 +122,7 @@ pub(super) fn start(
         provider: params.provider,
         model: params.model,
         effort: params.effort,
-    })?)
+    }
 }
 
 pub(super) fn send(pool: &WorkerPool, params: SendParams) -> Result<serde_json::Value, String> {
@@ -169,18 +153,42 @@ pub(super) fn stop(pool: &WorkerPool, params: WorkerParams) -> Result<serde_json
     encode(&pool.stop(&params.id)?)
 }
 
-fn canonical_directory(path: &std::path::Path) -> Result<PathBuf, String> {
-    let canonical = std::fs::canonicalize(path)
-        .map_err(|error| format!("resolve worker project {}: {error}", path.display()))?;
-    if !canonical.is_dir() {
-        return Err(format!(
-            "worker project is not a directory: {}",
-            canonical.display()
-        ));
-    }
-    Ok(canonical)
-}
-
 fn encode(value: &impl serde::Serialize) -> Result<serde_json::Value, String> {
     serde_json::to_value(value).map_err(|error| format!("encode worker result: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+
+    #[test]
+    fn worker_start_is_bound_to_its_caller() {
+        let request = prepare_start(
+            "pi",
+            StartParams {
+                prompt: "check".into(),
+                backend: None,
+                source_session: None,
+                context: StartContext::Auto,
+                provider: None,
+                model: None,
+                effort: None,
+            },
+            CallerContext {
+                project: PathBuf::from("/caller/project"),
+                session: "caller-session".into(),
+            },
+        );
+
+        assert_eq!(request.project, PathBuf::from("/caller/project"));
+        assert_eq!(request.parent_session, "caller-session");
+        assert_eq!(
+            request.context,
+            WorkerContext::Session {
+                session_locator: "caller-session".into()
+            }
+        );
+    }
 }
