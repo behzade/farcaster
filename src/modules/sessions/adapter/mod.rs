@@ -14,7 +14,7 @@ pub(crate) fn delete_family(
         .first()
         .is_some_and(|path| crate::agents::is_external_session(path))
     {
-        for path in paths {
+        for path in paths.iter().rev() {
             crate::agents::delete_external_session(path)
                 .ok_or_else(|| "session family mixes backend locators".to_owned())??;
         }

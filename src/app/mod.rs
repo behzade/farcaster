@@ -1821,6 +1821,14 @@ impl FarcasterApp {
         if session.project == target_project {
             return;
         }
+        if session.harness != "pi" {
+            self.sessions_error = Some(format!(
+                "Moving {} sessions between projects is not supported",
+                session.harness
+            ));
+            self.notify_session_rail(cx);
+            return;
+        }
         if session.is_running {
             self.sessions_error = Some(
                 "Wait for the session to finish before moving it to another project".to_owned(),

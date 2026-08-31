@@ -47,6 +47,12 @@ impl WorkerSessionTransport {
                 model.get("id")?.as_str()?.to_owned(),
             ))
         });
+        let selected_mode = metadata
+            .modes
+            .first()
+            .and_then(|mode| mode.get("id"))
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         let context_window = metadata
             .models
             .first()
@@ -69,7 +75,7 @@ impl WorkerSessionTransport {
                 .cloned()
                 .unwrap_or_else(|| "off".into()),
             metadata,
-            selected_mode: None,
+            selected_mode,
             usage_tokens: 0,
             context_window,
         })
