@@ -3,10 +3,25 @@ mod pi_files;
 mod transfer;
 mod watcher;
 
-pub(crate) use deletion::delete_family;
 pub(crate) use pi_files::{
     configured_session_root, normalize_session_path, project_display_history,
 };
+
+pub(crate) fn delete_family(
+    paths: &[std::path::PathBuf],
+) -> Result<Vec<(std::path::PathBuf, String)>, String> {
+    if paths
+        .first()
+        .is_some_and(|path| crate::agents::is_external_session(path))
+    {
+        for path in paths {
+            crate::agents::delete_external_session(path)
+                .ok_or_else(|| "session family mixes backend locators".to_owned())??;
+        }
+        return Ok(Vec::new());
+    }
+    deletion::delete_family(paths)
+}
 
 pub(crate) fn discover(query: &str) -> Result<super::SessionDiscovery, String> {
     let mut discovery = pi_files::discover(query)?;

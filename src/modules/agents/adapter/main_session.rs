@@ -183,10 +183,15 @@ impl SessionTransport for WorkerSessionTransport {
                 self.effort = level;
                 self.response(id.clone(), "set_thinking_level", json!({}));
             }
-            SessionCommand::Compact { .. }
-            | SessionCommand::ExportHtml { .. }
-            | SessionCommand::Rename { .. }
-            | SessionCommand::ForkAt { .. } => {
+            SessionCommand::Compact { .. } => {
+                self.worker.compact()?;
+                self.response(id.clone(), "compact", json!({}));
+            }
+            SessionCommand::Rename { name } => {
+                self.worker.rename(&name)?;
+                self.response(id.clone(), "set_session_name", json!({}));
+            }
+            SessionCommand::ExportHtml { .. } | SessionCommand::ForkAt { .. } => {
                 return Err(format!(
                     "{} does not expose this command through its main-session bridge yet",
                     self.harness

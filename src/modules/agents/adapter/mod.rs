@@ -104,13 +104,30 @@ pub(crate) fn rename_session(
     harness: &str,
     project: &std::path::Path,
     session: &std::path::Path,
-    _session_id: &str,
+    session_id: &str,
     name: &str,
 ) -> Result<(), String> {
-    if harness != "pi" {
-        return Err(format!("{harness} session rename is not installed"));
+    match harness {
+        "pi" => pi::PiRpcProcess::rename_session(config, project, session, name),
+        "codex-cli" => codex::rename_session(session_id, name),
+        "opencode2" => opencode::rename_session(session_id, name),
+        _ => Err(format!("unsupported session harness: {harness}")),
     }
-    pi::PiRpcProcess::rename_session(config, project, session, name)
+}
+
+pub(crate) fn is_external_session(path: &std::path::Path) -> bool {
+    main_session::external_session_locator("codex-cli", path).is_some()
+        || main_session::external_session_locator("opencode2", path).is_some()
+}
+
+pub(crate) fn delete_external_session(path: &std::path::Path) -> Option<Result<(), String>> {
+    if let Some(locator) = main_session::external_session_locator("codex-cli", path) {
+        return Some(codex::delete_session(&locator));
+    }
+    if let Some(locator) = main_session::external_session_locator("opencode2", path) {
+        return Some(opencode::delete_session(&locator));
+    }
+    None
 }
 
 pub(crate) fn discover_external_sessions(

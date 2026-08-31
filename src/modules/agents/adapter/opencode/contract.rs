@@ -5,6 +5,7 @@ use serde_json::Value;
 pub(crate) enum OpenCodeHttpMethod {
     Get,
     Post,
+    Patch,
     Delete,
 }
 

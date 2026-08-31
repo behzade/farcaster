@@ -127,6 +127,24 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
         )
     }
 
+    pub(crate) fn compact_session(&mut self, session_id: &str) -> Result<(), String> {
+        let response = self.execute(
+            OpenCodeHttpMethod::Post,
+            format!("/api/session/{}/compact", path_segment(session_id)),
+            Some(json!({})),
+        )?;
+        ensure_success(&response)
+    }
+
+    pub(crate) fn rename_session(&mut self, session_id: &str, title: &str) -> Result<(), String> {
+        let response = self.execute(
+            OpenCodeHttpMethod::Patch,
+            format!("/api/session/{}", path_segment(session_id)),
+            Some(json!({"title": title})),
+        )?;
+        ensure_success(&response)
+    }
+
     pub(crate) fn delete_session(&mut self, session_id: &str) -> Result<(), String> {
         let response = self.execute(
             OpenCodeHttpMethod::Delete,

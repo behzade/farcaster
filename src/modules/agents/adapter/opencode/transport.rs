@@ -126,6 +126,7 @@ fn method_name(method: OpenCodeHttpMethod) -> &'static str {
     match method {
         OpenCodeHttpMethod::Get => "GET",
         OpenCodeHttpMethod::Post => "POST",
+        OpenCodeHttpMethod::Patch => "PATCH",
         OpenCodeHttpMethod::Delete => "DELETE",
     }
 }

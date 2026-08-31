@@ -32,6 +32,12 @@ pub(crate) trait WorkerSession: Send {
     fn send(&mut self, message: String, mode: WorkerSendMode) -> Result<(), String>;
     fn respond(&mut self, response: WorkerInputResponse) -> Result<(), String>;
     fn abort(&mut self) -> Result<(), String>;
+    fn compact(&mut self) -> Result<(), String> {
+        Err("worker backend does not support compaction".into())
+    }
+    fn rename(&mut self, _name: &str) -> Result<(), String> {
+        Err("worker backend does not support session naming".into())
+    }
     fn poll(&mut self) -> Option<WorkerEvent>;
     fn close(&mut self) -> Result<(), String>;
 }

@@ -191,6 +191,14 @@ impl WorkerSession for OpenCodeWorkerSession {
         self.server.client().interrupt(&self.session_id)
     }
 
+    fn compact(&mut self) -> Result<(), String> {
+        self.server.client().compact_session(&self.session_id)
+    }
+
+    fn rename(&mut self, name: &str) -> Result<(), String> {
+        self.server.client().rename_session(&self.session_id, name)
+    }
+
     fn poll(&mut self) -> Option<WorkerEvent> {
         if let Some(event) = self.pending.pop_front() {
             return Some(event);

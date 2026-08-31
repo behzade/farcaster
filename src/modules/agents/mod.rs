@@ -3,8 +3,9 @@ mod contract;
 mod core;
 
 pub(crate) use adapter::{
-    app_shell_environment, backend_statuses, default_login_shell, discover_external_sessions,
-    load_external_history, rename_session, spawn_session, validate_launch, worker_factories,
+    app_shell_environment, backend_statuses, default_login_shell, delete_external_session,
+    discover_external_sessions, is_external_session, load_external_history, rename_session,
+    spawn_session, validate_launch, worker_factories,
 };
 pub(crate) use contract::extensions;
 pub(crate) use contract::{

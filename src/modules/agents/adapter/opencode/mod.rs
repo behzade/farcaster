@@ -9,7 +9,7 @@ mod transport;
 mod worker;
 
 pub(crate) use worker::OpenCodeWorkerFactory;
-pub(super) use catalog::{discover, load_history};
+pub(super) use catalog::{delete_session, discover, load_history, rename_session};
 pub(super) use worker::spawn_main;
 
 use super::super::contract::{

@@ -334,6 +334,24 @@ impl WorkerSession for CodexWorkerSession {
         Ok(())
     }
 
+    fn compact(&mut self) -> Result<(), String> {
+        let id = self.request(
+            "thread/compact/start",
+            json!({"threadId": self.thread_id}),
+        )?;
+        self.pending.insert(id, PendingRequest::Ignore);
+        Ok(())
+    }
+
+    fn rename(&mut self, name: &str) -> Result<(), String> {
+        let id = self.request(
+            "thread/name/set",
+            json!({"threadId": self.thread_id, "name": name}),
+        )?;
+        self.pending.insert(id, PendingRequest::Ignore);
+        Ok(())
+    }
+
     fn poll(&mut self) -> Option<WorkerEvent> {
         if let Some(event) = self.events.pop_front() {
             return Some(event);

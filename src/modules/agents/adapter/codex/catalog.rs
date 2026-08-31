@@ -45,6 +45,26 @@ pub(in crate::modules::agents::adapter) fn discover(query: &str) -> Result<Vec<S
     })
 }
 
+pub(in crate::modules::agents::adapter) fn rename_session(
+    session_id: &str,
+    name: &str,
+) -> Result<(), String> {
+    with_connection(|connection| {
+        let id = connection.send_request(
+            "thread/name/set",
+            json!({"threadId": session_id, "name": name}),
+        )?;
+        connection.wait_response::<Value>(&id).map(|_| ())
+    })
+}
+
+pub(in crate::modules::agents::adapter) fn delete_session(session_id: &str) -> Result<(), String> {
+    with_connection(|connection| {
+        let id = connection.send_request("thread/delete", json!({"threadId": session_id}))?;
+        connection.wait_response::<Value>(&id).map(|_| ())
+    })
+}
+
 pub(in crate::modules::agents::adapter) fn load_history(path: &Path) -> Result<LoadedHistory, String> {
     let locator = external_session_locator("codex-cli", path)
         .ok_or_else(|| format!("invalid Codex session locator: {}", path.display()))?;

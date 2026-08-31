@@ -23,6 +23,17 @@ pub(in crate::modules::agents::adapter) fn discover(query: &str) -> Result<Vec<S
     })
 }
 
+pub(in crate::modules::agents::adapter) fn rename_session(
+    session_id: &str,
+    name: &str,
+) -> Result<(), String> {
+    with_server(|server| server.client().rename_session(session_id, name))
+}
+
+pub(in crate::modules::agents::adapter) fn delete_session(session_id: &str) -> Result<(), String> {
+    with_server(|server| server.client().delete_session(session_id))
+}
+
 pub(in crate::modules::agents::adapter) fn load_history(path: &Path) -> Result<LoadedHistory, String> {
     let locator = external_session_locator("opencode2", path)
         .ok_or_else(|| format!("invalid OpenCode session locator: {}", path.display()))?;
