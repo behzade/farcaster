@@ -10,9 +10,9 @@ use serde_json::Value;
 
 use super::server::OpenCodeServerProcess;
 use crate::{
-    access::PreparedCommand,
+    access::SandboxedCommand,
     agents::{
-        AgentProcessCommand, WorkerContext, WorkerEvent, WorkerInputResponse, WorkerLaunch,
+        AgentLaunchConfig, WorkerContext, WorkerEvent, WorkerInputResponse, WorkerLaunch,
         WorkerSendMode, WorkerSession, WorkerSessionFactory,
     },
     modules::agents::adapter::farcaster_mcp,
@@ -20,11 +20,11 @@ use crate::{
 
 #[derive(Clone)]
 pub(crate) struct OpenCodeWorkerFactory {
-    command: AgentProcessCommand,
+    command: AgentLaunchConfig,
 }
 
 impl OpenCodeWorkerFactory {
-    pub(crate) fn new(command: AgentProcessCommand) -> Self {
+    pub(crate) fn new(command: AgentLaunchConfig) -> Self {
         Self { command }
     }
 }
@@ -35,7 +35,7 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
             return Err("OpenCode worker provider and model must be supplied together".into());
         }
         let mut sandbox = self.command.command(&launch.project)?;
-        let caller_identity = crate::agents::CallerRegistry::shared().issue();
+        let caller_identity = crate::modules::agents::core::CallerRegistry::shared().issue();
         configure_farcaster_mcp(&mut sandbox.command, caller_identity.token())?;
         let password = worker_password()?;
         let child = sandbox
@@ -87,8 +87,8 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
 }
 
 struct OpenCodeWorkerSession {
-    _caller_identity: crate::agents::CallerIdentity,
-    _sandbox: PreparedCommand,
+    _caller_identity: crate::modules::agents::core::CallerIdentity,
+    _sandbox: SandboxedCommand,
     server: OpenCodeServerProcess,
     session_id: String,
     generation: u64,

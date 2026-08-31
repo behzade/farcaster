@@ -22,7 +22,10 @@ use serde_json::{Value, json};
 
 use crate::{
     agent_activity::AgentActivity,
-    agents::{PiEvent, PiProcessCommand, PiRequest, PiRpcProcess, PiSessionTransport},
+    agents::{
+        AgentLaunchConfig, SessionCommand, SessionEvent, SessionLaunch, SessionStart,
+        SessionTransport,
+    },
     conversation::{ConversationState, TranscriptItem, TranscriptKind},
     protocol::{
         ExtensionUiRequest, ExtensionUiResponse, Model, PromptImage, PromptMode, SessionState,
@@ -110,6 +113,7 @@ pub(crate) enum RuntimeCommand {
     SetPermissionLevel(PermissionLevel),
     SetAppProxy(Option<String>),
     ReloadSandboxGrants,
+    ActivateSandboxGrant,
     ExtensionResponse(ExtensionUiResponse),
     DeliverQueued(crate::state::QueuedPrompt),
     SetSessionArchived {
@@ -230,10 +234,10 @@ impl RuntimeHandle {
         grants: crate::access::GrantStore,
         app_proxy: Option<String>,
     ) -> Self {
-        let command = PiProcessCommand {
+        let command = AgentLaunchConfig {
             grants: Some(grants),
             app_proxy,
-            ..PiProcessCommand::default()
+            ..AgentLaunchConfig::default()
         };
         Self::spawn_with(project, draft_id, initial_session, command)
     }
@@ -242,7 +246,7 @@ impl RuntimeHandle {
         project: PathBuf,
         draft_id: String,
         initial_session: Option<PathBuf>,
-        process_command: PiProcessCommand,
+        process_command: AgentLaunchConfig,
     ) -> Self {
         let (commands, command_rx) = mpsc::channel();
         let (events_tx, events) = mpsc::channel();
@@ -327,7 +331,7 @@ struct SessionRuntimeHandle {
 impl SessionRuntimeHandle {
     fn spawn(
         project: PathBuf,
-        process_command: PiProcessCommand,
+        process_command: AgentLaunchConfig,
         load_catalog: bool,
         supervisor: thread::Thread,
     ) -> Self {
@@ -418,7 +422,7 @@ fn run_supervisor(
     project: PathBuf,
     draft_id: String,
     initial_session: Option<PathBuf>,
-    mut process_command: PiProcessCommand,
+    mut process_command: AgentLaunchConfig,
     command_rx: mpsc::Receiver<RuntimeCommand>,
     event_tx: UiEventSender,
 ) {
@@ -1373,10 +1377,16 @@ enum SnapshotChange {
     Immediate,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SandboxGrantHandoff {
+    WaitingForSiblingTools,
+    Interrupting,
+}
+
 struct RuntimeOwner {
     project: PathBuf,
-    process_command: PiProcessCommand,
-    process: Option<Box<dyn PiSessionTransport>>,
+    process_command: AgentLaunchConfig,
+    process: Option<Box<dyn SessionTransport>>,
     snapshot: RuntimeSnapshot,
     owns_session_catalog: bool,
     session_generation: u64,
@@ -1401,6 +1411,8 @@ struct RuntimeOwner {
     deferred_prompt: Option<DeferredPrompt>,
     pending_session_controls: PendingSessionControls,
     permission_changes: PermissionChangeState,
+    sandbox_grant_handoff: Option<SandboxGrantHandoff>,
+    active_tool_calls: HashMap<String, String>,
     startup_state_loaded: bool,
     startup_history_loaded: bool,
     state: Option<StateStore>,
@@ -1428,7 +1440,7 @@ struct HistoryResult {
 
 fn run(
     project: PathBuf,
-    process_command: PiProcessCommand,
+    process_command: AgentLaunchConfig,
     command_rx: mpsc::Receiver<RuntimeCommand>,
     event_tx: SessionEventSender,
     load_catalog: bool,
@@ -1483,6 +1495,8 @@ fn run(
         deferred_prompt: None,
         pending_session_controls: PendingSessionControls::default(),
         permission_changes: PermissionChangeState::default(),
+        sandbox_grant_handoff: None,
+        active_tool_calls: HashMap::new(),
         startup_state_loaded: false,
         startup_history_loaded: false,
         state,
@@ -1611,6 +1625,8 @@ impl RuntimeOwner {
         self.startup_history_loaded = false;
         self.pending_prompt_id = None;
         self.pending_prompt_item = None;
+        self.sandbox_grant_handoff = None;
+        self.active_tool_calls.clear();
         self.process_command.permission_level = self
             .permission_changes
             .take_requested_level(self.process_command.permission_level);
@@ -1646,24 +1662,24 @@ impl RuntimeOwner {
             preserve_submission: preserve_transcript,
         });
         self.publish();
-        let process = if let Some(source) = fork.as_deref() {
-            PiRpcProcess::spawn_fork_with_waker(
-                &self.process_command,
-                &self.project,
-                source,
-                thread::current(),
-            )
+        let start = if let Some(source) = fork {
+            SessionStart::Fork(source)
+        } else if let Some(session) = session {
+            SessionStart::Resume(session)
         } else {
-            PiRpcProcess::spawn_with_waker(
-                &self.process_command,
-                &self.project,
-                session.as_deref(),
-                thread::current(),
-            )
+            SessionStart::New
         };
+        let process = crate::agents::spawn_session(
+            &self.process_command,
+            SessionLaunch {
+                project: self.project.clone(),
+                start,
+                wake: Some(thread::current()),
+            },
+        );
         match process {
             Ok(process) => {
-                self.process = Some(Box::new(process));
+                self.process = Some(process);
                 let snapshot = self.active_snapshot_mut();
                 snapshot.connected = true;
                 snapshot.status = "Loading session".into();
@@ -1690,28 +1706,28 @@ impl RuntimeOwner {
                 allow_while_running,
             } => self.send_prompt(target, mode, message, images, allow_while_running),
             RuntimeCommand::DeliverQueued(prompt) => self.deliver_queued(prompt),
-            RuntimeCommand::Abort => self.send(PiRequest::Abort),
+            RuntimeCommand::Abort => self.send(SessionCommand::Abort),
             RuntimeCommand::Reload => self.reload(),
             RuntimeCommand::Compact {
                 custom_instructions,
-            } => self.send(PiRequest::Compact {
+            } => self.send(SessionCommand::Compact {
                 instructions: custom_instructions,
             }),
             RuntimeCommand::ExportHtml { output_path } => {
-                self.send(PiRequest::ExportHtml { output_path })
+                self.send(SessionCommand::ExportHtml { output_path })
             }
             RuntimeCommand::SetSessionName(name) => {
                 if let Some(state) = self.active_snapshot_mut().session.as_mut() {
                     state.session_name = Some(name.clone());
                 }
-                self.send(PiRequest::Rename { name })
+                self.send(SessionCommand::Rename { name })
             }
             RuntimeCommand::RenameSession {
                 path,
                 project,
                 name,
             } => {
-                match PiRpcProcess::rename_session(&self.process_command, &project, &path, &name) {
+                match crate::agents::rename_session(&self.process_command, &project, &path, &name) {
                     Ok(()) => self.load_sessions(self.session_query.clone()),
                     Err(message) => {
                         let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
@@ -1746,6 +1762,7 @@ impl RuntimeOwner {
             RuntimeCommand::SetPermissionLevel(level) => self.set_permission_level(level),
             RuntimeCommand::SetAppProxy(proxy) => self.set_app_proxy(proxy),
             RuntimeCommand::ReloadSandboxGrants => self.reload_sandbox_grants(),
+            RuntimeCommand::ActivateSandboxGrant => self.activate_sandbox_grant(),
             RuntimeCommand::ExtensionResponse(response) => {
                 if let Some(process) = self.process.as_mut()
                     && let Err(error) = process.respond(response)
@@ -1790,7 +1807,7 @@ impl RuntimeOwner {
         self.start_process(session);
     }
 
-    fn send(&mut self, request: PiRequest) {
+    fn send(&mut self, request: SessionCommand) {
         let operation = request.operation();
         match self.process.as_mut().map(|process| process.send(request)) {
             Some(Ok(_)) => {}
@@ -1799,13 +1816,13 @@ impl RuntimeOwner {
         }
     }
 
-    fn apply_process_item(&mut self, item: PiEvent) -> SnapshotChange {
+    fn apply_process_item(&mut self, item: SessionEvent) -> SnapshotChange {
         match item {
-            PiEvent::Response(response) => {
+            SessionEvent::Response(response) => {
                 self.apply_response(response);
                 SnapshotChange::None
             }
-            PiEvent::Interaction(request) => {
+            SessionEvent::Interaction(request) => {
                 if let Some(result) = request.sandbox_mode_result() {
                     self.apply_sandbox_mode_result(result);
                     return SnapshotChange::None;
@@ -1817,9 +1834,23 @@ impl RuntimeOwner {
                 });
                 SnapshotChange::None
             }
-            PiEvent::Activity(event) => {
+            SessionEvent::Activity(event) => {
                 let event_type = event.get("type").and_then(Value::as_str);
                 let settled = event_type == Some("agent_settled");
+                let tool_finished = event_type == Some("tool_execution_end");
+                if event_type == Some("tool_execution_start")
+                    && let (Some(id), Some(name)) = (
+                        event.get("toolCallId").and_then(Value::as_str),
+                        event.get("toolName").and_then(Value::as_str),
+                    )
+                {
+                    self.active_tool_calls
+                        .insert(id.to_owned(), name.to_owned());
+                } else if tool_finished
+                    && let Some(id) = event.get("toolCallId").and_then(Value::as_str)
+                {
+                    self.active_tool_calls.remove(id);
+                }
                 let session_starting = event_type == Some("agent_start")
                     && self.active_session.is_none()
                     && self.parked_snapshot.is_none();
@@ -1854,19 +1885,22 @@ impl RuntimeOwner {
                 }
                 let should_publish = (!previewing && snapshot_changed) || live_status_changed;
                 if session_starting {
-                    self.send(PiRequest::LoadState);
+                    self.send(SessionCommand::LoadState);
                 }
                 if event_type == Some("agent_start") {
                     self.refresh_sessions();
                 }
                 if event_type == Some("session_info_changed") {
-                    self.send(PiRequest::LoadState);
+                    self.send(SessionCommand::LoadState);
                     self.refresh_sessions();
                 }
                 if settled {
-                    self.send(PiRequest::LoadState);
-                    self.send(PiRequest::LoadUsage);
+                    self.send(SessionCommand::LoadState);
+                    self.send(SessionCommand::LoadUsage);
                     self.refresh_sessions();
+                    self.finish_sandbox_grant_handoff();
+                } else if tool_finished {
+                    self.maybe_interrupt_for_sandbox_grant();
                 }
                 if !should_publish {
                     SnapshotChange::None
@@ -1879,7 +1913,7 @@ impl RuntimeOwner {
                     SnapshotChange::Immediate
                 }
             }
-            PiEvent::Stderr(chunk) => {
+            SessionEvent::Stderr(chunk) => {
                 let previewing = self.parked_snapshot.is_some();
                 let snapshot = self.active_snapshot_mut();
                 snapshot.stderr.push_str(&chunk);
@@ -1892,7 +1926,7 @@ impl RuntimeOwner {
                     SnapshotChange::Streaming
                 }
             }
-            PiEvent::Failure(error) => {
+            SessionEvent::Failure(error) => {
                 self.fail(error);
                 SnapshotChange::None
             }
@@ -2095,7 +2129,7 @@ impl RuntimeOwner {
         }
     }
 
-    fn apply_response(&mut self, response: crate::agents::PiResponse) {
+    fn apply_response(&mut self, response: crate::agents::SessionResponse) {
         if self.apply_permission_command_response(&response) {
             return;
         }
@@ -2250,11 +2284,11 @@ impl RuntimeOwner {
                 {
                     state.model = Some(model);
                 }
-                self.send(PiRequest::ListReasoningLevels);
-                self.send(PiRequest::LoadState);
+                self.send(SessionCommand::ListReasoningLevels);
+                self.send(SessionCommand::LoadState);
             }
             "set_thinking_level" => {
-                self.send(PiRequest::LoadState);
+                self.send(SessionCommand::LoadState);
             }
             "new_session"
                 if response.data.get("cancelled").and_then(Value::as_bool) != Some(true) =>
@@ -2276,15 +2310,15 @@ impl RuntimeOwner {
             }
             "prompt" | "steer" | "follow_up" => {
                 self.active_snapshot_mut().status = "Accepted".into();
-                self.send(PiRequest::LoadState);
+                self.send(SessionCommand::LoadState);
             }
             "abort" => self.active_snapshot_mut().status = "Stopping".into(),
             "compact" | "set_auto_compaction" | "set_auto_retry" | "abort_retry" => {
-                self.send(PiRequest::LoadState)
+                self.send(SessionCommand::LoadState)
             }
             "set_session_name" => {
                 self.active_snapshot_mut().status = "Session named".into();
-                self.send(PiRequest::LoadState);
+                self.send(SessionCommand::LoadState);
                 self.refresh_sessions();
             }
             "export_html" => {
@@ -2324,6 +2358,8 @@ impl RuntimeOwner {
         self.mark_outbox_failed(&details);
         self.pending_prompt_id = None;
         self.deferred_prompt = None;
+        self.sandbox_grant_handoff = None;
+        self.active_tool_calls.clear();
         self.process_command.permission_level = self
             .permission_changes
             .take_requested_level(self.process_command.permission_level);
@@ -2459,15 +2495,15 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
     truncated
 }
 
-fn startup_commands() -> [PiRequest; 7] {
+fn startup_commands() -> [SessionCommand; 7] {
     [
-        PiRequest::ConfigureSteering,
-        PiRequest::LoadState,
-        PiRequest::LoadHistory,
-        PiRequest::LoadUsage,
-        PiRequest::ListModels,
-        PiRequest::ListReasoningLevels,
-        PiRequest::ListCommands,
+        SessionCommand::ConfigureSteering,
+        SessionCommand::LoadState,
+        SessionCommand::LoadHistory,
+        SessionCommand::LoadUsage,
+        SessionCommand::ListModels,
+        SessionCommand::ListReasoningLevels,
+        SessionCommand::ListCommands,
     ]
 }
 
@@ -2592,12 +2628,12 @@ mod tests {
             temp.path().to_path_buf(),
             "shutdown-test".into(),
             None,
-            PiProcessCommand::test_script(
+            AgentLaunchConfig::test_script(
                 &script,
                 vec!["term-marker".into(), marker.to_string_lossy().into_owned()],
             ),
         );
-        // PiRpcProcess permits up to 15 seconds for its readiness handshake. The
+        // The session adapter permits up to 15 seconds for its readiness handshake. The
         // full test suite can also delay this supervisor under build-machine load.
         let deadline = Instant::now() + Duration::from_secs(20);
         let mut connected = false;
@@ -2635,11 +2671,11 @@ mod tests {
         (
             RuntimeOwner {
                 project: project.clone(),
-                process_command: PiProcessCommand {
+                process_command: AgentLaunchConfig {
                     program: PathBuf::from("/definitely/missing/farcaster-test-command"),
                     prefix_args: Vec::new(),
                     permission_level: PermissionLevel::default(),
-                    nono: crate::access::test_nono_bypass(),
+                    sandbox: crate::access::test_sandbox_bypass(),
                     grants: None,
                     app_proxy: None,
                 },
@@ -2673,6 +2709,8 @@ mod tests {
                 deferred_prompt: None,
                 pending_session_controls: PendingSessionControls::default(),
                 permission_changes: PermissionChangeState::default(),
+                sandbox_grant_handoff: None,
+                active_tool_calls: HashMap::new(),
                 startup_state_loaded: false,
                 startup_history_loaded: false,
                 state: None,
@@ -2715,7 +2753,7 @@ mod tests {
             .map_err(|error| error.to_string())?;
         let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
         owner.process_command =
-            PiProcessCommand::test_script(&script, vec!["preconnect-permission".into()]);
+            AgentLaunchConfig::test_script(&script, vec!["preconnect-permission".into()]);
         let target = PermissionLevel {
             files: FileAccessMode::Full,
             network: NetworkAccessMode::Full,
@@ -2786,7 +2824,8 @@ mod tests {
             .map_err(|error| error.to_string())?;
         let session = temp.path().join("session.jsonl");
         let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
-        owner.process_command = PiProcessCommand::test_script(&script, vec!["sandbox-mode".into()]);
+        owner.process_command =
+            AgentLaunchConfig::test_script(&script, vec!["sandbox-mode".into()]);
         owner.start_process(Some(session));
         drive_process_until(&mut owner, |owner| {
             owner.startup_state_loaded && owner.startup_history_loaded
@@ -2838,7 +2877,8 @@ mod tests {
             .map_err(|error| error.to_string())?;
         let session = temp.path().join("session.jsonl");
         let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
-        owner.process_command = PiProcessCommand::test_script(&script, vec!["sandbox-mode".into()]);
+        owner.process_command =
+            AgentLaunchConfig::test_script(&script, vec!["sandbox-mode".into()]);
         owner.start_process(Some(session));
         drive_process_until(&mut owner, |owner| {
             owner.startup_state_loaded && owner.startup_history_loaded
@@ -2859,6 +2899,64 @@ mod tests {
         assert!(owner.permission_changes.is_idle());
         assert_eq!(owner.process_generation, generation + 1);
         assert_eq!(owner.snapshot.conversation.items, transcript);
+        Ok(())
+    }
+
+    #[test]
+    fn accepted_sandbox_grant_interrupts_restarts_and_continues_without_visible_user_message()
+    -> Result<(), String> {
+        let temp = tempdir().map_err(|error| error.to_string())?;
+        let script = temp.path().join("fake-pi.sh");
+        fs::write(&script, include_str!("../../tests/fixtures/fake-pi.sh"))
+            .map_err(|error| error.to_string())?;
+        let session = temp.path().join("session.jsonl");
+        let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
+        owner.process_command =
+            AgentLaunchConfig::test_script(&script, vec!["history-control".into()]);
+        owner.start_process(Some(session));
+        drive_process_until(&mut owner, |owner| {
+            owner.startup_state_loaded && owner.startup_history_loaded
+        });
+        let generation = owner.process_generation;
+        conversation_mut(owner.active_snapshot_mut()).running = true;
+        owner
+            .active_tool_calls
+            .insert("access-call".into(), "farcaster_request_access".into());
+        owner
+            .active_tool_calls
+            .insert("sibling-call".into(), "read".into());
+
+        owner.apply_command(RuntimeCommand::ActivateSandboxGrant);
+
+        assert_eq!(
+            owner.sandbox_grant_handoff,
+            Some(SandboxGrantHandoff::WaitingForSiblingTools)
+        );
+        owner.apply_process_item(SessionEvent::Activity(json!({
+            "type":"tool_execution_end",
+            "toolCallId":"sibling-call",
+            "toolName":"read",
+            "result":{"content":[]},
+            "isError":false
+        })));
+        assert_eq!(
+            owner.sandbox_grant_handoff,
+            Some(SandboxGrantHandoff::Interrupting)
+        );
+        assert_eq!(owner.process_generation, generation);
+
+        owner.apply_process_item(SessionEvent::Activity(json!({"type":"agent_settled"})));
+
+        assert_eq!(owner.process_generation, generation + 1);
+        drive_process_until(&mut owner, |owner| {
+            owner.startup_state_loaded
+                && owner.startup_history_loaded
+                && owner.deferred_prompt.is_none()
+        });
+        assert!(owner.sandbox_grant_handoff.is_none());
+        assert!(owner.snapshot.conversation.items.iter().all(|item| {
+            item.kind != TranscriptKind::User || !item.text.contains("sandbox-grant-activated")
+        }));
         Ok(())
     }
 
@@ -3107,7 +3205,7 @@ mod tests {
         owner.snapshot.status = "Working".into();
         conversation_mut(&mut owner.snapshot).running = true;
 
-        let changed = owner.apply_process_item(PiEvent::Activity(json!({
+        let changed = owner.apply_process_item(SessionEvent::Activity(json!({
             "type": "turn_start"
         })));
 
@@ -3121,7 +3219,7 @@ mod tests {
         owner.owns_session_catalog = false;
         owner.active_session = Some(PathBuf::from("/sessions/new.jsonl"));
 
-        owner.apply_process_item(PiEvent::Activity(json!({"type":"agent_start"})));
+        owner.apply_process_item(SessionEvent::Activity(json!({"type":"agent_start"})));
 
         assert!(matches!(
             events.try_recv(),
@@ -3204,7 +3302,7 @@ mod tests {
             &mut touches,
             &mut revisions,
             &mut paths,
-            &PiProcessCommand::default(),
+            &AgentLaunchConfig::default(),
             &thread::current(),
         );
 
@@ -3245,7 +3343,7 @@ mod tests {
             &mut touches,
             &mut revisions,
             &mut paths,
-            &PiProcessCommand::default(),
+            &AgentLaunchConfig::default(),
             &thread::current(),
         );
 
@@ -3405,7 +3503,7 @@ mod tests {
         fs::write(&script, include_str!("../../tests/fixtures/fake-pi.sh"))?;
         let session = temp.path().join("session.jsonl");
         let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
-        owner.process_command = PiProcessCommand::test_script(&script, vec!["quiet".into()]);
+        owner.process_command = AgentLaunchConfig::test_script(&script, vec!["quiet".into()]);
         owner.active_session = Some(session.clone());
         owner.snapshot.selected_session = Some(session.clone());
         let generation = owner.process_generation;
@@ -3428,13 +3526,16 @@ mod tests {
         let temp = tempdir()?;
         let script = temp.path().join("fake-pi.sh");
         fs::write(&script, include_str!("../../tests/fixtures/fake-pi.sh"))?;
-        let process = PiRpcProcess::spawn(
-            &PiProcessCommand::test_script(&script, vec!["quiet".into()]),
-            temp.path(),
-            None,
+        let process = crate::agents::spawn_session(
+            &AgentLaunchConfig::test_script(&script, vec!["quiet".into()]),
+            SessionLaunch {
+                project: temp.path().to_path_buf(),
+                start: SessionStart::New,
+                wake: None,
+            },
         )?;
         let (mut owner, events, _discovery) = owner_without_process(temp.path().to_path_buf());
-        owner.process = Some(Box::new(process));
+        owner.process = Some(process);
         owner.state = Some(StateStore::open_at(&temp.path().join("gui-state.sqlite3"))?);
 
         owner.send_prompt(
@@ -3511,7 +3612,7 @@ mod tests {
         fs::write(&script, include_str!("../../tests/fixtures/fake-pi.sh"))?;
         let (mut owner, _events, _discovery) =
             owner_without_process(old_project.path().to_path_buf());
-        owner.process_command = PiProcessCommand::test_script(&script, vec!["quiet".into()]);
+        owner.process_command = AgentLaunchConfig::test_script(&script, vec!["quiet".into()]);
 
         owner.apply_command(RuntimeCommand::NewSession {
             id: "draft-new".into(),
@@ -3771,7 +3872,7 @@ mod tests {
         let session = project.join("new-session.jsonl");
         let (mut owner, _events, _discovery) = owner_without_process(project);
 
-        owner.apply_response(crate::agents::PiResponse {
+        owner.apply_response(crate::agents::SessionResponse {
             id: Some("state".into()),
             command: "get_state".into(),
             success: true,
@@ -3804,7 +3905,7 @@ mod tests {
         symlink(&session, &link)?;
         let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
 
-        owner.apply_response(crate::agents::PiResponse {
+        owner.apply_response(crate::agents::SessionResponse {
             id: Some("state".into()),
             command: "get_state".into(),
             success: true,
@@ -4017,7 +4118,7 @@ mod tests {
 
     #[test]
     fn startup_delivers_all_composer_steers_at_one_turn_boundary() {
-        assert_eq!(startup_commands()[0], PiRequest::ConfigureSteering);
+        assert_eq!(startup_commands()[0], SessionCommand::ConfigureSteering);
     }
 
     #[test]
@@ -4093,7 +4194,7 @@ mod tests {
         let session = temp.path().join("history.jsonl");
         let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
         owner.process_command =
-            PiProcessCommand::test_script(&script, vec!["history-control".into()]);
+            AgentLaunchConfig::test_script(&script, vec!["history-control".into()]);
         preview_history(&mut owner, session.clone(), "preserved history");
 
         owner.apply_command(RuntimeCommand::SetModel {
@@ -4150,11 +4251,11 @@ mod tests {
         let project = std::env::temp_dir();
         let session = project.join("history.jsonl");
         let (mut owner, _events, _discovery) = owner_without_process(project);
-        owner.process_command = PiProcessCommand {
+        owner.process_command = AgentLaunchConfig {
             program: PathBuf::from("/definitely/missing/farcaster-test-command"),
             prefix_args: Vec::new(),
             permission_level: PermissionLevel::default(),
-            nono: crate::access::test_nono_bypass(),
+            sandbox: crate::access::test_sandbox_bypass(),
             grants: None,
             app_proxy: None,
         };
@@ -4184,11 +4285,11 @@ mod tests {
         let (history_tx, _history_rx) = mpsc::channel();
         let mut owner = RuntimeOwner {
             project: std::env::temp_dir(),
-            process_command: PiProcessCommand {
+            process_command: AgentLaunchConfig {
                 program: PathBuf::from("/definitely/missing/farcaster-test-command"),
                 prefix_args: Vec::new(),
                 permission_level: PermissionLevel::default(),
-                nono: crate::access::test_nono_bypass(),
+                sandbox: crate::access::test_sandbox_bypass(),
                 grants: None,
                 app_proxy: None,
             },
@@ -4238,6 +4339,8 @@ mod tests {
             deferred_prompt: None,
             pending_session_controls: PendingSessionControls::default(),
             permission_changes: PermissionChangeState::default(),
+            sandbox_grant_handoff: None,
+            active_tool_calls: HashMap::new(),
             startup_state_loaded: false,
             startup_history_loaded: false,
             state: None,
@@ -4311,11 +4414,11 @@ mod tests {
         let temp = tempdir()?;
         let database = temp.path().join("gui-state.sqlite3");
         let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
-        owner.process_command = PiProcessCommand {
+        owner.process_command = AgentLaunchConfig {
             program: PathBuf::from("/definitely/missing/farcaster-test-command"),
             prefix_args: Vec::new(),
             permission_level: PermissionLevel::default(),
-            nono: crate::access::test_nono_bypass(),
+            sandbox: crate::access::test_sandbox_bypass(),
             grants: None,
             app_proxy: None,
         };
@@ -4378,8 +4481,15 @@ mod tests {
         let script = temp.path().join("fake-pi.sh");
         fs::write(&script, include_str!("../../tests/fixtures/fake-pi.sh"))
             .map_err(|error| error.to_string())?;
-        let process_command = PiProcessCommand::test_script(&script, vec!["quiet".into()]);
-        let process = PiRpcProcess::spawn(&process_command, temp.path(), None)?;
+        let process_command = AgentLaunchConfig::test_script(&script, vec!["quiet".into()]);
+        let process = crate::agents::spawn_session(
+            &process_command,
+            SessionLaunch {
+                project: temp.path().to_path_buf(),
+                start: SessionStart::New,
+                wake: None,
+            },
+        )?;
         let (event_tx, event_rx) = test_event_channel();
         let (discovery_tx, _discovery_rx) = mpsc::channel();
         let (history_tx, _history_rx) = mpsc::channel();
@@ -4391,7 +4501,7 @@ mod tests {
         let mut owner = RuntimeOwner {
             project: old_project.clone(),
             process_command,
-            process: Some(Box::new(process)),
+            process: Some(process),
             snapshot: RuntimeSnapshot {
                 connected: true,
                 status: "Working".into(),
@@ -4422,6 +4532,8 @@ mod tests {
             deferred_prompt: None,
             pending_session_controls: PendingSessionControls::default(),
             permission_changes: PermissionChangeState::default(),
+            sandbox_grant_handoff: None,
+            active_tool_calls: HashMap::new(),
             startup_state_loaded: false,
             startup_history_loaded: false,
             state: Some(StateStore::open_at(&temp.path().join("gui-state.sqlite3"))?),
@@ -4568,7 +4680,7 @@ mod tests {
         let (history_tx, history_rx) = mpsc::channel();
         let mut owner = RuntimeOwner {
             project: temp.path().to_path_buf(),
-            process_command: PiProcessCommand::default(),
+            process_command: AgentLaunchConfig::default(),
             process: None,
             snapshot: RuntimeSnapshot {
                 connected: true,
@@ -4600,6 +4712,8 @@ mod tests {
             deferred_prompt: None,
             pending_session_controls: PendingSessionControls::default(),
             permission_changes: PermissionChangeState::default(),
+            sandbox_grant_handoff: None,
+            active_tool_calls: HashMap::new(),
             startup_state_loaded: true,
             startup_history_loaded: true,
             state: None,
@@ -4635,7 +4749,7 @@ mod tests {
         assert_eq!(visible.conversation.items[0].text, "history message");
 
         assert_eq!(
-            owner.apply_process_item(PiEvent::Activity(json!({
+            owner.apply_process_item(SessionEvent::Activity(json!({
                 "type": "message_start",
                 "message": {
                     "role": "assistant",
@@ -4659,7 +4773,7 @@ mod tests {
                 .all(|event| !matches!(event, RuntimeEvent::Snapshot { .. }))
         );
 
-        let changed = owner.apply_process_item(PiEvent::Activity(json!({
+        let changed = owner.apply_process_item(SessionEvent::Activity(json!({
             "type": "compaction_start",
             "reason": "test"
         })));

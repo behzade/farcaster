@@ -5,14 +5,14 @@ use tempfile::tempdir;
 
 type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 
-fn fake(case: &str) -> TestResult<(tempfile::TempDir, PiProcessCommand)> {
+fn fake(case: &str) -> TestResult<(tempfile::TempDir, AgentLaunchConfig)> {
     let temp = tempdir()?;
     let script = temp.path().join("fake.sh");
     fs::write(
         &script,
         include_str!("../../../../../tests/fixtures/fake-pi.sh"),
     )?;
-    let command = PiProcessCommand::test_script(&script, vec![case.into()]);
+    let command = AgentLaunchConfig::test_script(&script, vec![case.into()]);
     Ok((temp, command))
 }
 
@@ -42,9 +42,9 @@ fn fork_process_passes_the_source_session_to_pi() -> TestResult {
     let project = tempdir()?;
     let source = Path::new("/sessions/source session.jsonl");
     let process = rpc_command(
-        &PiProcessCommand {
-            nono: crate::access::test_nono_bypass(),
-            ..PiProcessCommand::default()
+        &AgentLaunchConfig {
+            sandbox: crate::access::test_sandbox_bypass(),
+            ..AgentLaunchConfig::default()
         },
         project.path(),
         SessionLaunch::Fork(source),
@@ -115,14 +115,14 @@ fn pi_disables_its_inner_sandbox_inside_farcaster() -> TestResult {
         use std::os::unix::fs::PermissionsExt as _;
         fs::set_permissions(&pi, fs::Permissions::from_mode(0o700))?;
     }
-    let command = PiProcessCommand {
+    let command = AgentLaunchConfig {
         program: pi,
         permission_level: PermissionLevel {
             files: FileAccessMode::ReadOnly,
             network: NetworkAccessMode::Sandboxed,
         },
-        nono: crate::access::NonoExecutable::Fixed(nono.clone()),
-        ..PiProcessCommand::default()
+        sandbox: crate::access::SandboxRuntime::fixed(nono.clone()),
+        ..AgentLaunchConfig::default()
     };
     let prepared = rpc_command(
         &command,
@@ -148,7 +148,7 @@ fn pi_disables_its_inner_sandbox_inside_farcaster() -> TestResult {
 fn request_and_wait_confirms_configuration_before_returning() -> TestResult {
     let (temp, command) = fake("normal")?;
     let mut rpc = PiRpcProcess::spawn(&command, temp.path(), None)?;
-    let response = rpc.request_and_wait(PiRequest::SelectReasoning {
+    let response = rpc.request_and_wait(SessionCommand::SelectReasoning {
         level: "medium".into(),
     })?;
     assert_eq!(response.command, "set_thinking_level");
@@ -161,7 +161,7 @@ fn handshake_routes_async_event_and_correlates_unique_ids() -> TestResult {
     let (temp, command) = fake("normal")?;
     let mut rpc = PiRpcProcess::spawn(&command, temp.path(), None)?;
     assert!(
-        matches!(rpc.try_next(), Some(PiEvent::Activity(value)) if value["type"] == "agent_start")
+        matches!(rpc.try_next(), Some(SessionEvent::Activity(value)) if value["type"] == "agent_start")
     );
     let first = rpc.send_command(serde_json::json!({"type":"get_messages"}))?;
     let second = rpc.send_command(serde_json::json!({"type":"get_state"}))?;
@@ -172,7 +172,7 @@ fn handshake_routes_async_event_and_correlates_unique_ids() -> TestResult {
     let mut responses = 0;
     let mut context_shape = false;
     while Instant::now() < deadline && responses < 3 {
-        if let Some(PiEvent::Response(response)) = rpc.try_next() {
+        if let Some(SessionEvent::Response(response)) = rpc.try_next() {
             responses += 1;
             context_shape |= response.command == "get_session_stats"
                 && response
@@ -206,7 +206,7 @@ fn eof_with_pending_request_is_failure_and_stderr_is_visible() -> TestResult {
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut failure = String::new();
     while Instant::now() < deadline && failure.is_empty() {
-        if let Some(PiEvent::Failure(error)) = rpc.try_next() {
+        if let Some(SessionEvent::Failure(error)) = rpc.try_next() {
             failure = error;
         }
         thread::sleep(Duration::from_millis(5));
@@ -235,7 +235,7 @@ fn stdout_eof_waits_for_delayed_final_stderr() -> TestResult {
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut failure = String::new();
     while Instant::now() < deadline && failure.is_empty() {
-        if let Some(PiEvent::Failure(error)) = rpc.try_next() {
+        if let Some(SessionEvent::Failure(error)) = rpc.try_next() {
             failure = error;
         }
         thread::sleep(Duration::from_millis(5));
@@ -263,7 +263,7 @@ fn ordinary_response_rejects_a_command_mismatch_for_the_right_id() -> TestResult
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut failure = String::new();
     while Instant::now() < deadline && failure.is_empty() {
-        if let Some(PiEvent::Failure(error)) = rpc.try_next() {
+        if let Some(SessionEvent::Failure(error)) = rpc.try_next() {
             failure = error;
         }
         thread::sleep(Duration::from_millis(5));

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    agents::PiRequest,
+    agents::SessionCommand,
     protocol::{PromptImage, PromptMode},
     state::QueuedPrompt,
 };
@@ -150,7 +150,7 @@ impl RuntimeOwner {
             self.reject_prompt(&target, error);
             return;
         }
-        let request = PiRequest::Prompt {
+        let request = SessionCommand::Prompt {
             mode,
             message,
             images,
@@ -194,7 +194,9 @@ impl RuntimeOwner {
             return;
         }
         if let Some(prompt) = self.deferred_prompt.take() {
-            if self.pending_prompt_item.is_none() {
+            if !crate::internal_messages::is_hidden_text(&prompt.message)
+                && self.pending_prompt_item.is_none()
+            {
                 let invocation = crate::user_invocations::contains_invocation(
                     &prompt.message,
                     &self.active_snapshot().commands,

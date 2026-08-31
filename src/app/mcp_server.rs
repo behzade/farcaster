@@ -123,13 +123,29 @@ impl FarcasterMcp {
 impl FarcasterMcp {
     #[tool(
         name = "request_access",
-        description = "Ask the user to grant exact filesystem or network rights to Farcaster's outer sandbox. The grant activates after the current agent turn ends; never retry in the same turn"
+        description = "Ask the user to grant exact filesystem or network rights to Farcaster's outer sandbox. If accepted, Farcaster interrupts and resumes the current task with the grant active; do not retry before this call completes"
     )]
     async fn request_access(
         &self,
         Parameters(params): Parameters<crate::access::approval::RequestAccessParams>,
+        Extension(parts): Extension<axum::http::request::Parts>,
     ) -> Result<String, String> {
-        self.approvals.request_access(params).await
+        let caller_token = parts
+            .headers
+            .get(CALLER_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let caller_session = tokio::task::spawn_blocking(move || {
+            caller_token
+                .as_deref()
+                .map(|token| crate::workers::CallerRegistry::shared().resolve(token))
+                .transpose()
+        })
+        .await
+        .map_err(|error| format!("access caller task failed: {error}"))??;
+        self.approvals
+            .request_access_for_session(params, caller_session)
+            .await
     }
 
     #[tool(
@@ -300,21 +316,14 @@ impl ServerHandler for FarcasterMcp {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, sync::Arc};
 
     use super::*;
 
     fn worker_pool(project: &std::path::Path) -> crate::workers::WorkerPool {
-        let factory: Arc<dyn crate::workers::WorkerSessionFactory> = Arc::new(
-            crate::agents::PiWorkerFactory::new(crate::agents::PiProcessCommand::default()),
-        );
-        crate::workers::WorkerPool::new(
-            BTreeMap::from([("pi".into(), factory)]),
-            "pi".into(),
-            project.to_owned(),
-            4,
-        )
-        .expect("worker pool")
+        let (factories, default_backend) =
+            crate::agents::worker_factories(crate::agents::AgentLaunchConfig::default());
+        crate::workers::WorkerPool::new(factories, default_backend, project.to_owned(), 4)
+            .expect("worker pool")
     }
 
     #[test]
@@ -363,7 +372,7 @@ mod tests {
             temp.path(),
             &home.join(".pi/agent"),
             &temporary,
-            crate::access::test_nono_bypass(),
+            crate::access::test_sandbox_bypass(),
         )
         .expect("approval channel");
         let (workgraph_updates, _) = async_channel::bounded(1);

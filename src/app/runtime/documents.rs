@@ -22,7 +22,7 @@ pub(super) fn reconcile_live_session_documents(
     last_touch: &mut HashMap<String, u64>,
     revisions: &mut HashMap<PathBuf, SessionDocumentRevision>,
     actor_paths: &mut HashMap<PathBuf, String>,
-    process_command: &PiProcessCommand,
+    process_command: &AgentLaunchConfig,
     supervisor: &thread::Thread,
 ) {
     let mut session_keys = HashSet::new();

@@ -127,12 +127,25 @@ struct PendingApproval {
     project_candidate: Option<Vec<AccessRight>>,
     session_candidate: Vec<AccessRight>,
     expected_project_source: Option<String>,
-    response: async_channel::Sender<Result<ApprovalResult, String>>,
+    caller_session: Option<String>,
+    response: async_channel::Sender<Result<ApprovalDecision, String>>,
+}
+
+enum ApprovalDecision {
+    Complete(ApprovalResult),
+    Handoff,
 }
 
 struct ApprovalResult {
     scope: &'static str,
     policy_path: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ApprovalEffect {
+    None,
+    Reload,
+    Handoff,
 }
 
 struct PendingGuard {
@@ -158,7 +171,7 @@ impl Drop for PendingGuard {
 type PreparedApproval = (
     String,
     ApprovalPrompt,
-    async_channel::Receiver<Result<ApprovalResult, String>>,
+    async_channel::Receiver<Result<ApprovalDecision, String>>,
 );
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -225,11 +238,20 @@ pub(crate) fn channel(
 }
 
 impl ApprovalService {
+    #[cfg(test)]
     pub(crate) async fn request_access(
         &self,
         params: RequestAccessParams,
     ) -> Result<String, String> {
-        let prepared = prepare_request(&self.shared, params)?;
+        self.request_access_for_session(params, None).await
+    }
+
+    pub(crate) async fn request_access_for_session(
+        &self,
+        params: RequestAccessParams,
+        caller_session: Option<String>,
+    ) -> Result<String, String> {
+        let prepared = prepare_request(&self.shared, params, caller_session)?;
         let Some((id, prompt, response)) = prepared else {
             return Ok("All requested rights are already active. No command was retried.".into());
         };
@@ -241,15 +263,18 @@ impl ApprovalService {
         if self.prompts.send(prompt).await.is_err() {
             return Err("Farcaster approval UI is unavailable. No command was retried.".into());
         }
-        let result = response
+        let decision = response
             .recv()
             .await
             .map_err(|_| "Sandbox approval was cancelled. No command was retried.".to_owned())??;
         pending.disarm();
-        Ok(format!(
-            "Updated {} sandbox rights in {}.",
-            result.scope, result.policy_path
-        ))
+        match decision {
+            ApprovalDecision::Complete(result) => Ok(format!(
+                "Updated {} sandbox rights in {}.",
+                result.scope, result.policy_path
+            )),
+            ApprovalDecision::Handoff => std::future::pending().await,
+        }
     }
 }
 
@@ -270,7 +295,12 @@ impl ApprovalUi {
         }
     }
 
-    pub(crate) fn respond(&self, id: &str, choice: &str) -> Result<bool, String> {
+    pub(crate) fn respond(
+        &self,
+        id: &str,
+        choice: &str,
+        active_session: Option<&Path>,
+    ) -> Result<ApprovalEffect, String> {
         let pending = {
             let mut state = self
                 .shared
@@ -280,19 +310,32 @@ impl ApprovalUi {
             state.pending.remove(id)
         };
         let Some(pending) = pending else {
-            return Ok(false);
+            return Ok(ApprovalEffect::None);
         };
         if choice == DENY_LABEL {
             let _ = pending
                 .response
                 .try_send(Err("Sandbox access denied. No command was retried.".into()));
-            return Ok(false);
+            return Ok(ApprovalEffect::None);
         }
+        let handoff = pending.caller_session.as_deref().is_some_and(|caller| {
+            active_session.is_some_and(|active| same_session(caller, active))
+        });
         let response = pending.response.clone();
-        let result = apply_approval(&self.shared, pending, choice);
-        let activated = result.is_ok();
-        let _ = response.try_send(result);
-        Ok(activated)
+        let decision = apply_approval(&self.shared, pending, choice).map(|result| {
+            if handoff {
+                ApprovalDecision::Handoff
+            } else {
+                ApprovalDecision::Complete(result)
+            }
+        });
+        let effect = match &decision {
+            Ok(ApprovalDecision::Handoff) => ApprovalEffect::Handoff,
+            Ok(ApprovalDecision::Complete(_)) => ApprovalEffect::Reload,
+            Err(_) => ApprovalEffect::None,
+        };
+        let _ = response.try_send(decision);
+        Ok(effect)
     }
 
     pub(crate) fn cancel(&self, id: &str) -> bool {
@@ -321,6 +364,16 @@ impl ApprovalUi {
             ));
         }
     }
+}
+
+fn same_session(caller: &str, active: &Path) -> bool {
+    let caller = Path::new(caller);
+    caller == active
+        || caller
+            .canonicalize()
+            .ok()
+            .zip(active.canonicalize().ok())
+            .is_some_and(|(caller, active)| caller == active)
 }
 
 fn apply_approval(
@@ -372,6 +425,7 @@ fn apply_approval(
 fn prepare_request(
     shared: &Arc<Shared>,
     params: RequestAccessParams,
+    caller_session: Option<String>,
 ) -> Result<Option<PreparedApproval>, String> {
     if shared.project_trusted.load(Ordering::Acquire) == 0 {
         return Err("Sandbox access can be changed only for a trusted project".into());
@@ -449,6 +503,7 @@ fn prepare_request(
             project_candidate,
             session_candidate,
             expected_project_source,
+            caller_session,
             response: response_tx,
         },
     );

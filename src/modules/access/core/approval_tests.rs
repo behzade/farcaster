@@ -10,11 +10,11 @@ fn setup() -> Result<
     ),
     String,
 > {
-    setup_with_nono(crate::access::test_nono_bypass())
+    setup_with_nono(crate::access::test_sandbox_bypass())
 }
 
 fn setup_with_nono(
-    nono: crate::access::NonoExecutable,
+    nono: crate::access::SandboxRuntime,
 ) -> Result<
     (
         tempfile::TempDir,
@@ -90,7 +90,10 @@ async fn session_approval_activates_exact_external_right() -> Result<(), String>
         .map_err(|error| error.to_string())?;
     assert_eq!(prompt.options, [SESSION_LABEL, DENY_LABEL]);
     assert!(prompt.title.contains("update the sibling checkout"));
-    assert!(ui.respond(&prompt.id, SESSION_LABEL)?);
+    assert_eq!(
+        ui.respond(&prompt.id, SESSION_LABEL, None)?,
+        ApprovalEffect::Reload
+    );
     tokio::time::timeout(std::time::Duration::from_secs(2), request)
         .await
         .map_err(|_| "approval response timed out".to_owned())?
@@ -104,6 +107,56 @@ async fn session_approval_activates_exact_external_right() -> Result<(), String>
         grants.readable_files,
         [input.canonicalize().map_err(|error| error.to_string())?]
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn matching_session_approval_holds_the_tool_result_for_runtime_handoff() -> Result<(), String>
+{
+    let (_root, service, ui, project, _home) = setup()?;
+    ui.set_project_trusted(true);
+    let caller = project.join("session.jsonl");
+    let request = tokio::spawn({
+        let service = service.clone();
+        let caller = caller.display().to_string();
+        async move {
+            service
+                .request_access_for_session(
+                    RequestAccessParams {
+                        rights: vec![AccessRight::NetworkHost {
+                            host: "handoff.example.com".into(),
+                        }],
+                        reason: "continue after activating access".into(),
+                    },
+                    Some(caller),
+                )
+                .await
+        }
+    });
+    let prompt = ui
+        .receiver()
+        .recv()
+        .await
+        .map_err(|error| error.to_string())?;
+    assert_eq!(
+        ui.respond(&prompt.id, SESSION_LABEL, Some(&caller))?,
+        ApprovalEffect::Handoff
+    );
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(50), async {
+            while !request.is_finished() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .is_err(),
+        "accepted handoff must not return a tool result to the old harness"
+    );
+    assert_eq!(
+        ui.grants().resolve().network_hosts,
+        ["handoff.example.com".to_owned()]
+    );
+    request.abort();
     Ok(())
 }
 
@@ -129,7 +182,10 @@ async fn project_approval_is_bound_and_persisted_outside_the_workspace() -> Resu
         .await
         .map_err(|error| error.to_string())?;
     assert_eq!(prompt.options, [SESSION_LABEL, PROJECT_LABEL, DENY_LABEL]);
-    assert!(ui.respond(&prompt.id, PROJECT_LABEL)?);
+    assert_eq!(
+        ui.respond(&prompt.id, PROJECT_LABEL, None)?,
+        ApprovalEffect::Reload
+    );
     request.await.map_err(|error| error.to_string())??;
 
     let canonical_root = root
@@ -161,7 +217,7 @@ async fn project_approval_is_bound_and_persisted_outside_the_workspace() -> Resu
         root.path(),
         &home.join(".pi/agent"),
         &root.path().join("tmp"),
-        crate::access::test_nono_bypass(),
+        crate::access::test_sandbox_bypass(),
     )?;
     assert_eq!(reloaded.grants().resolve().network_hosts, [host.to_owned()]);
     Ok(())
@@ -206,7 +262,7 @@ async fn rejected_nono_profile_is_not_activated_or_persisted() -> Result<(), Str
     fs::set_permissions(&nono, fs::Permissions::from_mode(0o700))
         .map_err(|error| error.to_string())?;
     let (root, service, ui, project, _home) =
-        setup_with_nono(crate::access::NonoExecutable::Fixed(nono))?;
+        setup_with_nono(crate::access::SandboxRuntime::fixed(nono))?;
     ui.set_project_trusted(true);
     let request = tokio::spawn(async move {
         service
@@ -223,7 +279,10 @@ async fn rejected_nono_profile_is_not_activated_or_persisted() -> Result<(), Str
         .recv()
         .await
         .map_err(|error| error.to_string())?;
-    assert!(!ui.respond(&prompt.id, PROJECT_LABEL)?);
+    assert_eq!(
+        ui.respond(&prompt.id, PROJECT_LABEL, None)?,
+        ApprovalEffect::None
+    );
     let error = request
         .await
         .map_err(|error| error.to_string())?

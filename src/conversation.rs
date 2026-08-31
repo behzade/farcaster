@@ -854,6 +854,9 @@ fn cache_hit_rate(message: &Value) -> Option<f64> {
 }
 
 fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
+    if crate::internal_messages::is_hidden_user_message(message) {
+        return Vec::new();
+    }
     let Some(role) = message.get("role").and_then(Value::as_str) else {
         return Vec::new();
     };

@@ -237,7 +237,6 @@ pub(crate) enum ExtensionUiResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agents::{PiWireMessage as WireMessage, parse_frame};
 
     #[test]
     fn gpui_notification_transport_separates_title_and_body() {
@@ -370,8 +369,8 @@ mod tests {
         ];
         for (frame, expected) in cases {
             assert_eq!(
-                parse_frame(frame.as_bytes()),
-                Ok(WireMessage::ExtensionUi(expected))
+                serde_json::from_str::<ExtensionUiRequest>(frame).expect("extension request"),
+                expected
             );
         }
     }
@@ -382,45 +381,35 @@ mod tests {
             r#"{"type":"extension_ui_request","method":"confirm","title":"T","message":"M"}"#,
             r#"{"type":"extension_ui_request","id":"1","method":"select","title":"T","options":["a",1]}"#,
         ] {
-            assert!(parse_frame(frame.as_bytes()).is_err(), "accepted {frame}");
+            assert!(
+                serde_json::from_str::<ExtensionUiRequest>(frame).is_err(),
+                "accepted {frame}"
+            );
         }
-    }
-
-    #[test]
-    fn preserves_unknown_extension_methods() {
-        assert_eq!(
-            parse_frame(
-                br#"{"type":"extension_ui_request","id":"future","method":"openPanel","payload":1}"#
-            ),
-            Ok(WireMessage::ExtensionUi(ExtensionUiRequest::Unknown {
-                id: Some("future".into()),
-                method: "openPanel".into(),
-            }))
-        );
     }
 
     #[test]
     fn unknown_extension_enum_values_use_protocol_defaults() {
         assert_eq!(
-            parse_frame(
-                br#"{"type":"extension_ui_request","id":"1","method":"notify","message":"M","notifyType":"future"}"#
-            ),
-            Ok(WireMessage::ExtensionUi(ExtensionUiRequest::Notify {
+            serde_json::from_str::<ExtensionUiRequest>(
+                r#"{"type":"extension_ui_request","id":"1","method":"notify","message":"M","notifyType":"future"}"#
+            ).expect("notification"),
+            ExtensionUiRequest::Notify {
                 id: "1".into(),
                 message: "M".into(),
                 tone: NotifyTone::Info,
-            }))
+            }
         );
         assert_eq!(
-            parse_frame(
-                br#"{"type":"extension_ui_request","id":"2","method":"setWidget","widgetKey":"k","widgetPlacement":"future"}"#
-            ),
-            Ok(WireMessage::ExtensionUi(ExtensionUiRequest::SetWidget {
+            serde_json::from_str::<ExtensionUiRequest>(
+                r#"{"type":"extension_ui_request","id":"2","method":"setWidget","widgetKey":"k","widgetPlacement":"future"}"#
+            ).expect("widget"),
+            ExtensionUiRequest::SetWidget {
                 id: "2".into(),
                 key: "k".into(),
                 lines: None,
                 placement: WidgetPlacement::AboveEditor,
-            }))
+            }
         );
     }
 
@@ -476,10 +465,5 @@ mod tests {
                 source: SlashCommandSource::Extension,
             }
         );
-    }
-
-    #[test]
-    fn malformed_json_is_reported() {
-        assert!(parse_frame(b"{").is_err());
     }
 }

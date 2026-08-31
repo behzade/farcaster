@@ -276,9 +276,18 @@ impl FarcasterApp {
     ) {
         if id.starts_with("farcaster-access-") {
             if self.extension.respond_value(&id, value.clone()).is_some() {
-                match self.sandbox_approval_ui.respond(&id, &value) {
-                    Ok(true) => self.send(RuntimeCommand::ReloadSandboxGrants),
-                    Ok(false) => {}
+                match self.sandbox_approval_ui.respond(
+                    &id,
+                    &value,
+                    self.snapshot.live_session.as_deref(),
+                ) {
+                    Ok(crate::access::approval::ApprovalEffect::Handoff) => {
+                        self.send(RuntimeCommand::ActivateSandboxGrant)
+                    }
+                    Ok(crate::access::approval::ApprovalEffect::Reload) => {
+                        self.send(RuntimeCommand::ReloadSandboxGrants)
+                    }
+                    Ok(crate::access::approval::ApprovalEffect::None) => {}
                     Err(error) => {
                         zlog::error!("Sandbox approval failed: {error}");
                     }

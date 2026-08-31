@@ -7,22 +7,22 @@ use std::{
 
 use serde_json::Value;
 
-use super::process::{PiProcessCommand, PiRpcProcess};
+use super::process::PiRpcProcess;
 use crate::{
     agents::extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptMode, SessionState},
     agents::{
-        PiEvent, PiRequest, WorkerContext, WorkerEvent, WorkerInput, WorkerInputResponse,
-        WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory,
+        AgentLaunchConfig, SessionCommand, SessionEvent, WorkerContext, WorkerEvent, WorkerInput,
+        WorkerInputResponse, WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory,
     },
 };
 
 #[derive(Clone)]
 pub(crate) struct PiWorkerFactory {
-    command: PiProcessCommand,
+    command: AgentLaunchConfig,
 }
 
 impl PiWorkerFactory {
-    pub(crate) fn new(command: PiProcessCommand) -> Self {
+    pub(crate) fn new(command: AgentLaunchConfig) -> Self {
         Self { command }
     }
 }
@@ -55,19 +55,19 @@ impl WorkerSessionFactory for PiWorkerFactory {
                 if let Some(entry_id) = parent_before_worker_call(&source)? {
                     let mut process =
                         PiRpcProcess::spawn(&self.command, &launch.project, Some(&source))?;
-                    process.request_and_wait(PiRequest::ForkAt { entry_id })?;
+                    process.request_and_wait(SessionCommand::ForkAt { entry_id })?;
                     process
                 } else {
                     PiRpcProcess::spawn_fork(&self.command, &launch.project, &source)?
                 }
             }
         };
-        process.request_and_wait(PiRequest::ConfigureSteering)?;
+        process.request_and_wait(SessionCommand::ConfigureSteering)?;
         if let (Some(provider), Some(model_id)) = (launch.provider, launch.model) {
-            process.request_and_wait(PiRequest::SelectModel { provider, model_id })?;
+            process.request_and_wait(SessionCommand::SelectModel { provider, model_id })?;
         }
         if let Some(level) = launch.effort {
-            process.request_and_wait(PiRequest::SelectReasoning { level })?;
+            process.request_and_wait(SessionCommand::SelectReasoning { level })?;
         }
         Ok(Box::new(PiWorkerSession {
             process,
@@ -102,7 +102,7 @@ impl WorkerSession for PiWorkerSession {
             WorkerSendMode::Queue => PromptMode::FollowUp,
             WorkerSendMode::Steer => PromptMode::Steer,
         };
-        self.process.send_request(PiRequest::Prompt {
+        self.process.send_request(SessionCommand::Prompt {
             mode,
             message,
             images: Vec::new(),
@@ -142,14 +142,14 @@ impl WorkerSession for PiWorkerSession {
     }
 
     fn abort(&mut self) -> Result<(), String> {
-        self.process.send_request(PiRequest::Abort)?;
+        self.process.send_request(SessionCommand::Abort)?;
         Ok(())
     }
 
     fn poll(&mut self) -> Option<WorkerEvent> {
         loop {
             match self.process.try_next()? {
-                PiEvent::Activity(event) => match event["type"].as_str() {
+                SessionEvent::Activity(event) => match event["type"].as_str() {
                     Some("agent_start") => {
                         self.settled = false;
                         self.latest_output.clear();
@@ -174,7 +174,7 @@ impl WorkerSession for PiWorkerSession {
                     }
                     _ => {}
                 },
-                PiEvent::Interaction(request) => match worker_input(request) {
+                SessionEvent::Interaction(request) => match worker_input(request) {
                     Ok(Some((input, kind))) => {
                         self.pending_inputs.insert(input.id.clone(), kind);
                         return Some(WorkerEvent::NeedsInput(input));
@@ -182,14 +182,14 @@ impl WorkerSession for PiWorkerSession {
                     Ok(None) => {}
                     Err(error) => return Some(WorkerEvent::Failed(error)),
                 },
-                PiEvent::Response(response) if !response.success => {
+                SessionEvent::Response(response) if !response.success => {
                     return Some(WorkerEvent::Failed(
                         response
                             .error
                             .unwrap_or_else(|| format!("Pi rejected {}", response.command)),
                     ));
                 }
-                PiEvent::Response(response)
+                SessionEvent::Response(response)
                     if response.id.as_ref() == self.state_request.as_ref() =>
                 {
                     self.state_request = None;
@@ -211,8 +211,8 @@ impl WorkerSession for PiWorkerSession {
                         ));
                     }
                 }
-                PiEvent::Failure(error) => return Some(WorkerEvent::Failed(error)),
-                PiEvent::Response(_) | PiEvent::Stderr(_) => {}
+                SessionEvent::Failure(error) => return Some(WorkerEvent::Failed(error)),
+                SessionEvent::Response(_) | SessionEvent::Stderr(_) => {}
             }
         }
     }
@@ -225,7 +225,7 @@ impl WorkerSession for PiWorkerSession {
 impl PiWorkerSession {
     fn request_session_state(&mut self) -> Result<(), String> {
         if !self.has_session_locator && self.state_request.is_none() {
-            self.state_request = Some(self.process.send_request(PiRequest::LoadState)?);
+            self.state_request = Some(self.process.send_request(SessionCommand::LoadState)?);
         }
         Ok(())
     }

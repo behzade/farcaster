@@ -7,61 +7,44 @@ use std::{
 };
 
 use super::super::core::policy;
-use super::super::{AccessPolicy, GrantStore, NetworkConfiguration};
+use super::super::{
+    AccessPolicy, GrantStore, NetworkConfiguration, SandboxPaths, SandboxRuntime, SandboxedCommand,
+    contract::SandboxRuntimeKind,
+};
 #[cfg(test)]
 use super::super::{FilesystemAccess, NetworkAccess};
 
-#[derive(Clone, Debug)]
-pub(crate) enum NonoExecutable {
-    Fixed(PathBuf),
-    Unavailable,
-    #[cfg(test)]
-    TestBypass,
-}
-
-impl super::super::core::PolicyValidator for NonoExecutable {
+impl super::super::core::PolicyValidator for SandboxRuntime {
     fn validate(&self, policy: &[u8]) -> Result<(), String> {
         validate_policy_bytes(self, policy)
     }
 }
 
-pub(crate) struct PolicyPaths<'a> {
-    pub(crate) project: &'a Path,
-    pub(crate) home: &'a Path,
-    pub(crate) agent_state: &'a Path,
-    pub(crate) temporary: &'a Path,
-}
-
-pub(crate) struct PreparedCommand {
-    pub(crate) command: Command,
-    _profile: Option<tempfile::NamedTempFile>,
-}
-
-pub(crate) fn prepare_command(
-    nono: &NonoExecutable,
+pub(crate) fn prepare_sandboxed_command(
+    nono: &SandboxRuntime,
     agent_program: &Path,
     prefix_args: &[String],
-    paths: PolicyPaths<'_>,
+    paths: SandboxPaths<'_>,
     access: AccessPolicy,
     grants: Option<&GrantStore>,
     network: &NetworkConfiguration,
-) -> Result<PreparedCommand, String> {
+) -> Result<SandboxedCommand, String> {
     if access.unrestricted() {
         let mut command = Command::new(agent_program);
         command.args(prefix_args);
-        return Ok(PreparedCommand {
+        return Ok(SandboxedCommand {
             command,
             _profile: None,
         });
     }
-    let nono_program = match nono {
-        NonoExecutable::Fixed(program) => validate_nono_program(program)?,
-        NonoExecutable::Unavailable => return Err(missing_nono_error()),
+    let nono_program = match &nono.kind {
+        SandboxRuntimeKind::Fixed(program) => validate_nono_program(program)?,
+        SandboxRuntimeKind::Unavailable => return Err(missing_nono_error()),
         #[cfg(test)]
-        NonoExecutable::TestBypass => {
+        SandboxRuntimeKind::TestBypass => {
             let mut command = Command::new(agent_program);
             command.args(prefix_args);
-            return Ok(PreparedCommand {
+            return Ok(SandboxedCommand {
                 command,
                 _profile: None,
             });
@@ -92,18 +75,18 @@ pub(crate) fn prepare_command(
         .arg("--")
         .arg(agent_program)
         .args(prefix_args);
-    Ok(PreparedCommand {
+    Ok(SandboxedCommand {
         command,
         _profile: Some(profile),
     })
 }
 
-fn validate_policy_bytes(nono: &NonoExecutable, policy: &[u8]) -> Result<(), String> {
-    let nono_program = match nono {
-        NonoExecutable::Fixed(program) => validate_nono_program(program)?,
-        NonoExecutable::Unavailable => return Err(missing_nono_error()),
+fn validate_policy_bytes(nono: &SandboxRuntime, policy: &[u8]) -> Result<(), String> {
+    let nono_program = match &nono.kind {
+        SandboxRuntimeKind::Fixed(program) => validate_nono_program(program)?,
+        SandboxRuntimeKind::Unavailable => return Err(missing_nono_error()),
         #[cfg(test)]
-        NonoExecutable::TestBypass => return Ok(()),
+        SandboxRuntimeKind::TestBypass => return Ok(()),
     };
     let mut profile = tempfile::NamedTempFile::new()
         .map_err(|error| format!("create Farcaster sandbox profile: {error}"))?;
@@ -161,7 +144,7 @@ fn is_executable_file(path: &Path) -> bool {
     }
 }
 
-pub(crate) fn configured_nono_program(value: Option<std::ffi::OsString>) -> NonoExecutable {
+pub(crate) fn configured_sandbox_runtime(value: Option<std::ffi::OsString>) -> SandboxRuntime {
     resolve_nono_program(
         value,
         std::env::current_exe().ok().as_deref(),
@@ -173,15 +156,15 @@ fn resolve_nono_program(
     value: Option<std::ffi::OsString>,
     current_executable: Option<&Path>,
     search_path: Option<std::ffi::OsString>,
-) -> NonoExecutable {
+) -> SandboxRuntime {
     if let Some(program) = value.filter(|value| !value.is_empty()) {
-        return NonoExecutable::Fixed(PathBuf::from(program));
+        return SandboxRuntime::fixed(PathBuf::from(program));
     }
     let sibling = current_executable
         .and_then(Path::parent)
         .map(|directory| directory.join("nono"));
     if let Some(program) = sibling.filter(|program| is_executable_file(program)) {
-        return NonoExecutable::Fixed(program);
+        return SandboxRuntime::fixed(program);
     }
     if let Some(search_path) = search_path {
         for directory in std::env::split_paths(&search_path) {
@@ -189,16 +172,16 @@ fn resolve_nono_program(
             if is_executable_file(&candidate)
                 && let Ok(program) = candidate.canonicalize()
             {
-                return NonoExecutable::Fixed(program);
+                return SandboxRuntime::fixed(program);
             }
         }
     }
-    NonoExecutable::Unavailable
+    SandboxRuntime::unavailable()
 }
 
 #[cfg(test)]
-pub(crate) const fn test_nono_bypass() -> NonoExecutable {
-    NonoExecutable::TestBypass
+pub(crate) const fn test_sandbox_bypass() -> SandboxRuntime {
+    SandboxRuntime::test_bypass()
 }
 
 #[cfg(test)]
@@ -222,13 +205,13 @@ mod tests {
         program: &Path,
         arguments: &[String],
     ) -> Result<std::process::Output, Box<dyn std::error::Error>> {
-        let nono = configured_nono_program(std::env::var_os("FARCASTER_NONO_PATH"));
+        let nono = configured_sandbox_runtime(std::env::var_os("FARCASTER_NONO_PATH"));
         let agent_state = home.join(".pi/agent");
-        let mut prepared = prepare_command(
+        let mut prepared = prepare_sandboxed_command(
             &nono,
             program,
             arguments,
-            PolicyPaths {
+            SandboxPaths {
                 project,
                 home,
                 agent_state: &agent_state,
@@ -268,7 +251,7 @@ mod tests {
             Some(&executable),
             Some(std::env::join_paths([Path::new("/missing")])?),
         );
-        let NonoExecutable::Fixed(program) = resolved else {
+        let SandboxRuntimeKind::Fixed(program) = resolved.kind else {
             return Err("bundled nono was not resolved".into());
         };
         assert_eq!(program, bundled);
@@ -290,7 +273,7 @@ mod tests {
             Some(Path::new("/missing/farcaster")),
             Some(std::env::join_paths([root.path()])?),
         );
-        let NonoExecutable::Fixed(program) = resolved else {
+        let SandboxRuntimeKind::Fixed(program) = resolved.kind else {
             return Err("PATH nono was not resolved".into());
         };
         assert_eq!(program, nono.canonicalize()?);
@@ -316,11 +299,11 @@ mod tests {
             use std::os::unix::fs::PermissionsExt as _;
             std::fs::set_permissions(&nono, std::fs::Permissions::from_mode(0o700))?;
         }
-        let prepared = prepare_command(
-            &NonoExecutable::Fixed(nono.clone()),
+        let prepared = prepare_sandboxed_command(
+            &SandboxRuntime::fixed(nono.clone()),
             Path::new("/agent/pi"),
             &["prefix".into()],
-            PolicyPaths {
+            SandboxPaths {
                 project: &project,
                 home: &home,
                 agent_state: &agent_state,
@@ -403,12 +386,12 @@ mod tests {
 
     #[test]
     fn unrestricted_or_test_launches_do_not_wrap_agent() -> Result<(), String> {
-        let direct = |nono: &NonoExecutable, access| {
-            prepare_command(
+        let direct = |nono: &SandboxRuntime, access| {
+            prepare_sandboxed_command(
                 nono,
                 Path::new("/agent/pi"),
                 &[],
-                PolicyPaths {
+                SandboxPaths {
                     project: Path::new("/unused"),
                     home: Path::new("/unused"),
                     agent_state: Path::new("/unused"),
@@ -420,7 +403,7 @@ mod tests {
             )
         };
         let unrestricted = direct(
-            &NonoExecutable::Fixed(PathBuf::from("/missing/nono")),
+            &SandboxRuntime::fixed(PathBuf::from("/missing/nono")),
             AccessPolicy {
                 filesystem: FilesystemAccess::Full,
                 network: NetworkAccess::Full,
@@ -431,11 +414,11 @@ mod tests {
             filesystem: FilesystemAccess::Sandboxed,
             network: NetworkAccess::Sandboxed,
         };
-        let test_bypass = direct(&NonoExecutable::TestBypass, restricted)?;
+        let test_bypass = direct(&SandboxRuntime::test_bypass(), restricted)?;
         assert_eq!(test_bypass.command.get_program(), "/agent/pi");
         assert!(
             direct(
-                &NonoExecutable::Fixed(PathBuf::from("/missing/nono")),
+                &SandboxRuntime::fixed(PathBuf::from("/missing/nono")),
                 restricted,
             )
             .is_err()

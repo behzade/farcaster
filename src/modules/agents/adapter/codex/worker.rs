@@ -14,9 +14,9 @@ use super::{
     wire::{encode_request, encode_response},
 };
 use crate::{
-    access::PreparedCommand,
+    access::SandboxedCommand,
     agents::{
-        AgentProcessCommand, WorkerContext, WorkerEvent, WorkerInput, WorkerInputResponse,
+        AgentLaunchConfig, WorkerContext, WorkerEvent, WorkerInput, WorkerInputResponse,
         WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory,
     },
     modules::agents::adapter::farcaster_mcp,
@@ -24,11 +24,11 @@ use crate::{
 
 #[derive(Clone)]
 pub(crate) struct CodexWorkerFactory {
-    command: AgentProcessCommand,
+    command: AgentLaunchConfig,
 }
 
 impl CodexWorkerFactory {
-    pub(crate) fn new(command: AgentProcessCommand) -> Self {
+    pub(crate) fn new(command: AgentLaunchConfig) -> Self {
         Self { command }
     }
 }
@@ -39,7 +39,7 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             return Err("Codex worker provider and model must be supplied together".into());
         }
         let mut sandbox = self.command.command(&launch.project)?;
-        let caller_identity = crate::agents::CallerRegistry::shared().issue();
+        let caller_identity = crate::modules::agents::core::CallerRegistry::shared().issue();
         configure_farcaster_mcp(&mut sandbox.command, caller_identity.token());
         let mut child = sandbox
             .command
@@ -153,8 +153,8 @@ enum PendingRequest {
 }
 
 struct CodexWorkerSession {
-    _caller_identity: crate::agents::CallerIdentity,
-    _sandbox: PreparedCommand,
+    _caller_identity: crate::modules::agents::core::CallerIdentity,
+    _sandbox: SandboxedCommand,
     child: Child,
     writer: ChildStdin,
     incoming: mpsc::Receiver<Result<CodexInbound, String>>,

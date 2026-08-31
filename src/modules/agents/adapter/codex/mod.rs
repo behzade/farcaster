@@ -7,7 +7,7 @@ mod worker;
 
 pub(crate) use worker::CodexWorkerFactory;
 
-use crate::agents::{
+use super::super::contract::{
     AgentBackendDescriptor, AgentBackendId, AgentCapabilities, CapabilitySupport,
     ConfigurationCapabilities, InteractionCapabilities, ObservationCapabilities,
     SessionCapabilities, TurnCapabilities,

@@ -1,8 +1,122 @@
-use std::fmt;
+use std::{fmt, path::PathBuf, thread};
 
 use serde::{Deserialize, Serialize};
 
 pub(crate) mod extensions;
+
+use crate::access::{GrantStore, SandboxRuntime};
+use extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptImage, PromptMode};
+
+#[derive(Clone)]
+pub(crate) struct AgentLaunchConfig {
+    pub(crate) program: PathBuf,
+    pub(crate) prefix_args: Vec<String>,
+    pub(crate) permission_level: PermissionLevel,
+    pub(crate) sandbox: SandboxRuntime,
+    pub(crate) grants: Option<GrantStore>,
+    pub(crate) app_proxy: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum SessionEvent {
+    Response(SessionResponse),
+    Interaction(ExtensionUiRequest),
+    Activity(serde_json::Value),
+    Stderr(String),
+    Failure(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SessionCommand {
+    ConfigureSteering,
+    LoadState,
+    LoadHistory,
+    LoadUsage,
+    ListModels,
+    ListReasoningLevels,
+    ListCommands,
+    Prompt {
+        mode: PromptMode,
+        message: String,
+        images: Vec<PromptImage>,
+    },
+    Abort,
+    Compact {
+        instructions: Option<String>,
+    },
+    ExportHtml {
+        output_path: Option<String>,
+    },
+    Rename {
+        name: String,
+    },
+    ForkAt {
+        entry_id: String,
+    },
+    SelectModel {
+        provider: String,
+        model_id: String,
+    },
+    SelectReasoning {
+        level: String,
+    },
+}
+
+impl SessionCommand {
+    pub(crate) const fn operation(&self) -> &'static str {
+        match self {
+            Self::ConfigureSteering => "configure steering",
+            Self::LoadState => "load state",
+            Self::LoadHistory => "load history",
+            Self::LoadUsage => "load usage",
+            Self::ListModels => "list models",
+            Self::ListReasoningLevels => "list reasoning levels",
+            Self::ListCommands => "list commands",
+            Self::Prompt { mode, .. } => match mode {
+                PromptMode::Normal => "prompt",
+                PromptMode::Steer => "steer",
+                PromptMode::FollowUp => "follow up",
+            },
+            Self::Abort => "abort",
+            Self::Compact { .. } => "compact",
+            Self::ExportHtml { .. } => "export HTML",
+            Self::Rename { .. } => "rename session",
+            Self::ForkAt { .. } => "fork session",
+            Self::SelectModel { .. } => "select model",
+            Self::SelectReasoning { .. } => "select reasoning",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub(crate) struct SessionResponse {
+    pub(crate) id: Option<String>,
+    pub(crate) command: String,
+    pub(crate) success: bool,
+    #[serde(default)]
+    pub(crate) data: serde_json::Value,
+    pub(crate) error: Option<String>,
+}
+
+pub(crate) trait SessionTransport {
+    fn send(&mut self, command: SessionCommand) -> Result<String, String>;
+    fn respond(&mut self, response: ExtensionUiResponse) -> Result<(), String>;
+    fn poll(&mut self) -> Option<SessionEvent>;
+    fn close(&mut self) -> Result<(), String>;
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum SessionStart {
+    New,
+    Resume(PathBuf),
+    Fork(PathBuf),
+}
+
+pub(crate) struct SessionLaunch {
+    pub(crate) project: PathBuf,
+    pub(crate) start: SessionStart,
+    pub(crate) wake: Option<thread::Thread>,
+}
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct AgentBackendId(String);

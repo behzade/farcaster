@@ -389,7 +389,10 @@ fn active_branch_entries(entries: &[Value]) -> Vec<&Value> {
 
 fn entry_message(entry: &Value) -> Option<Value> {
     match entry.get("type").and_then(Value::as_str)? {
-        "message" => entry.get("message").cloned(),
+        "message" => entry
+            .get("message")
+            .filter(|message| !crate::internal_messages::is_hidden_user_message(message))
+            .cloned(),
         "custom_message" => Some(json_object([
             ("role", Value::String("custom".into())),
             (
@@ -691,8 +694,12 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
                     .map(str::to_owned)
             }
             Some("message") => {
-                message_count = message_count.saturating_add(1);
                 if let Some(message) = entry.get("message") {
+                    if crate::internal_messages::is_hidden_user_message(message) {
+                        activity_entries.push(entry);
+                        continue;
+                    }
+                    message_count = message_count.saturating_add(1);
                     usage.add(message_usage(message));
                     is_running = message_keeps_session_running(message);
                     let text = visible_user_text(message);

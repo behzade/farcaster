@@ -1,21 +1,11 @@
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::agents::extensions::ExtensionUiRequest;
-
-#[derive(Clone, Debug, Deserialize, PartialEq)]
-pub(crate) struct PiResponse {
-    pub id: Option<String>,
-    pub command: String,
-    pub success: bool,
-    #[serde(default)]
-    pub data: Value,
-    pub error: Option<String>,
-}
+use crate::agents::{SessionResponse, extensions::ExtensionUiRequest};
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum PiWireMessage {
-    Response(PiResponse),
+    Response(SessionResponse),
     ExtensionUi(ExtensionUiRequest),
     Event(Value),
 }
@@ -73,7 +63,7 @@ mod tests {
     fn parses_response_and_activity_frames() {
         assert_eq!(
             parse_frame(br#"{"type":"response","id":"1","command":"abort","success":true}"#),
-            Ok(PiWireMessage::Response(PiResponse {
+            Ok(PiWireMessage::Response(SessionResponse {
                 id: Some("1".into()),
                 command: "abort".into(),
                 success: true,

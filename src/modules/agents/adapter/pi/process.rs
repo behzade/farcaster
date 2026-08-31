@@ -15,7 +15,7 @@ use serde_json::Value;
 use super::{
     framing::{JsonlFramer, encode_json_line},
     mcp_config::TransientMcpConfig,
-    wire::{PiResponse, PiWireMessage, parse_frame},
+    wire::{PiWireMessage, parse_frame},
 };
 use crate::modules::agents::adapter::farcaster_mcp::INSTRUCTIONS;
 #[cfg(test)]
@@ -23,18 +23,16 @@ use crate::modules::agents::adapter::process_command::resolve_agent_program;
 use crate::{
     access,
     agents::extensions::ExtensionUiResponse,
-    agents::{AgentProcessCommand, PiEvent, PiRequest, encode_pi_request},
+    agents::{AgentLaunchConfig, SessionCommand, SessionEvent, SessionResponse},
 };
 
-pub(crate) type PiProcessCommand = crate::agents::AgentProcessCommand;
-
-impl Default for crate::agents::AgentProcessCommand {
+impl Default for crate::agents::AgentLaunchConfig {
     fn default() -> Self {
         Self {
             program: pi_program(std::env::var_os("FARCASTER_PI_PATH")),
             prefix_args: Vec::new(),
             permission_level: crate::agents::PermissionLevel::default(),
-            nono: access::configured_nono_program(std::env::var_os("FARCASTER_NONO_PATH")),
+            sandbox: access::configured_sandbox_runtime(std::env::var_os("FARCASTER_NONO_PATH")),
             grants: None,
             app_proxy: None,
         }
@@ -77,11 +75,11 @@ enum SessionLaunch<'a> {
 }
 
 fn rpc_command(
-    command: &AgentProcessCommand,
+    command: &AgentLaunchConfig,
     project: &Path,
     launch: SessionLaunch<'_>,
     mcp_config: &Path,
-) -> Result<access::PreparedCommand, String> {
+) -> Result<access::SandboxedCommand, String> {
     let mut prepared = command.command(project)?;
     prepared
         .command
@@ -108,13 +106,13 @@ fn rpc_command(
 }
 
 pub(crate) struct PiRpcProcess {
-    caller_identity: crate::agents::CallerIdentity,
+    caller_identity: crate::modules::agents::core::CallerIdentity,
     _mcp_config: TransientMcpConfig,
-    _sandbox: access::PreparedCommand,
+    _sandbox: access::SandboxedCommand,
     child: Arc<Mutex<Child>>,
     stdin: Arc<Mutex<ChildStdin>>,
     incoming: mpsc::Receiver<ReaderItem>,
-    queued: VecDeque<PiEvent>,
+    queued: VecDeque<SessionEvent>,
     pending: HashMap<String, String>,
     next_id: u64,
     stderr: String,
@@ -122,7 +120,7 @@ pub(crate) struct PiRpcProcess {
 
 impl PiRpcProcess {
     pub(crate) fn spawn(
-        command: &AgentProcessCommand,
+        command: &AgentLaunchConfig,
         project: &Path,
         session: Option<&Path>,
     ) -> Result<Self, String> {
@@ -130,40 +128,40 @@ impl PiRpcProcess {
         Self::spawn_inner(command, project, launch, None)
     }
 
-    pub(crate) fn spawn_with_waker(
-        command: &AgentProcessCommand,
+    pub(in crate::modules::agents::adapter) fn spawn_with_optional_waker(
+        command: &AgentLaunchConfig,
         project: &Path,
         session: Option<&Path>,
-        wake: thread::Thread,
+        wake: Option<thread::Thread>,
     ) -> Result<Self, String> {
         let launch = session.map_or(SessionLaunch::New, SessionLaunch::Resume);
-        Self::spawn_inner(command, project, launch, Some(wake))
+        Self::spawn_inner(command, project, launch, wake)
     }
 
     pub(crate) fn spawn_fork(
-        command: &AgentProcessCommand,
+        command: &AgentLaunchConfig,
         project: &Path,
         source: &Path,
     ) -> Result<Self, String> {
         Self::spawn_inner(command, project, SessionLaunch::Fork(source), None)
     }
 
-    pub(crate) fn spawn_fork_with_waker(
-        command: &AgentProcessCommand,
+    pub(in crate::modules::agents::adapter) fn spawn_fork_with_optional_waker(
+        command: &AgentLaunchConfig,
         project: &Path,
         source: &Path,
-        wake: thread::Thread,
+        wake: Option<thread::Thread>,
     ) -> Result<Self, String> {
-        Self::spawn_inner(command, project, SessionLaunch::Fork(source), Some(wake))
+        Self::spawn_inner(command, project, SessionLaunch::Fork(source), wake)
     }
 
     fn spawn_inner(
-        command: &AgentProcessCommand,
+        command: &AgentLaunchConfig,
         project: &Path,
         launch: SessionLaunch<'_>,
         wake: Option<thread::Thread>,
     ) -> Result<Self, String> {
-        let caller_identity = crate::agents::CallerRegistry::shared().issue();
+        let caller_identity = crate::modules::agents::core::CallerRegistry::shared().issue();
         let mcp_config = TransientMcpConfig::create(caller_identity.token())?;
         let mut prepared = rpc_command(command, project, launch, mcp_config.path())?;
         let mut child = prepared
@@ -212,8 +210,8 @@ impl PiRpcProcess {
         Ok(rpc)
     }
 
-    pub(crate) fn send_request(&mut self, request: PiRequest) -> Result<String, String> {
-        self.send_command(encode_pi_request(request))
+    pub(crate) fn send_request(&mut self, request: SessionCommand) -> Result<String, String> {
+        self.send_command(super::protocol::encode_request(request))
     }
 
     fn send_command(&mut self, mut command: Value) -> Result<String, String> {
@@ -238,7 +236,10 @@ impl PiRpcProcess {
         Ok(id)
     }
 
-    pub(crate) fn request_and_wait(&mut self, request: PiRequest) -> Result<PiResponse, String> {
+    pub(crate) fn request_and_wait(
+        &mut self,
+        request: SessionCommand,
+    ) -> Result<SessionResponse, String> {
         let operation = request.operation();
         let id = self.send_request(request)?;
         let deadline = Instant::now() + Duration::from_secs(15);
@@ -246,7 +247,7 @@ impl PiRpcProcess {
             match self.incoming.recv_timeout(Duration::from_millis(50)) {
                 Ok(ReaderItem::StderrEof) => {}
                 Ok(item) => match self.route(item) {
-                    PiEvent::Response(response) if response.id.as_deref() == Some(&id) => {
+                    SessionEvent::Response(response) if response.id.as_deref() == Some(&id) => {
                         return if response.success {
                             Ok(response)
                         } else {
@@ -255,7 +256,7 @@ impl PiRpcProcess {
                                 .unwrap_or_else(|| format!("Pi could not {operation}")))
                         };
                     }
-                    PiEvent::Failure(error) => return Err(error),
+                    SessionEvent::Failure(error) => return Err(error),
                     other => self.queued.push_back(other),
                 },
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -270,20 +271,22 @@ impl PiRpcProcess {
     }
 
     pub(crate) fn rename_session(
-        command: &AgentProcessCommand,
+        command: &AgentLaunchConfig,
         project: &Path,
         session: &Path,
         name: &str,
     ) -> Result<(), String> {
         let mut rpc = Self::spawn(command, project, Some(session))?;
         let result = (|| {
-            let id = rpc.send_request(PiRequest::Rename {
+            let id = rpc.send_request(SessionCommand::Rename {
                 name: name.to_owned(),
             })?;
             let deadline = Instant::now() + Duration::from_secs(15);
             while Instant::now() < deadline {
                 match rpc.try_next() {
-                    Some(PiEvent::Response(response)) if response.id.as_deref() == Some(&id) => {
+                    Some(SessionEvent::Response(response))
+                        if response.id.as_deref() == Some(&id) =>
+                    {
                         return if response.success {
                             Ok(())
                         } else {
@@ -292,7 +295,7 @@ impl PiRpcProcess {
                                 .unwrap_or_else(|| "Pi rejected the session name".to_owned()))
                         };
                     }
-                    Some(PiEvent::Failure(error)) => return Err(error),
+                    Some(SessionEvent::Failure(error)) => return Err(error),
                     Some(_) | None => thread::sleep(Duration::from_millis(10)),
                 }
             }
@@ -313,7 +316,7 @@ impl PiRpcProcess {
         self.write(&encoded)
     }
 
-    pub(crate) fn try_next(&mut self) -> Option<PiEvent> {
+    pub(crate) fn try_next(&mut self) -> Option<SessionEvent> {
         if let Some(item) = self.queued.pop_front() {
             return Some(item);
         }
@@ -323,7 +326,7 @@ impl PiRpcProcess {
             Ok(item) => Some(self.route(item)),
             Err(mpsc::TryRecvError::Empty) => None,
             Err(mpsc::TryRecvError::Disconnected) => {
-                Some(PiEvent::Failure("Pi reader threads stopped".into()))
+                Some(SessionEvent::Failure("Pi reader threads stopped".into()))
             }
         }
     }
@@ -390,13 +393,13 @@ impl PiRpcProcess {
     }
 
     fn readiness_handshake(&mut self, timeout: Duration) -> Result<(), String> {
-        let id = self.send_request(PiRequest::LoadState)?;
+        let id = self.send_request(SessionCommand::LoadState)?;
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
             match self.incoming.recv_timeout(Duration::from_millis(50)) {
                 Ok(ReaderItem::StderrEof) => continue,
                 Ok(item) => match self.route(item) {
-                    PiEvent::Response(response) if response.id.as_deref() == Some(&id) => {
+                    SessionEvent::Response(response) if response.id.as_deref() == Some(&id) => {
                         if response.command != "get_state" {
                             return Err(format!(
                                 "readiness response command was {}",
@@ -411,7 +414,7 @@ impl PiRpcProcess {
                         }
                         return Ok(());
                     }
-                    PiEvent::Failure(error) => return Err(error),
+                    SessionEvent::Failure(error) => return Err(error),
                     other => self.queued.push_back(other),
                 },
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -438,20 +441,20 @@ impl PiRpcProcess {
             .map_err(|error| format!("write Pi stdin: {error}"))
     }
 
-    fn route(&mut self, item: ReaderItem) -> PiEvent {
+    fn route(&mut self, item: ReaderItem) -> SessionEvent {
         match item {
             ReaderItem::Wire(Ok(PiWireMessage::Response(response))) => {
                 let Some(id) = response.id.as_deref() else {
-                    return PiEvent::Failure(format!(
+                    return SessionEvent::Failure(format!(
                         "uncorrelated response for {}",
                         response.command
                     ));
                 };
                 let Some(expected_command) = self.pending.remove(id) else {
-                    return PiEvent::Failure(format!("response used unknown request id {id}"));
+                    return SessionEvent::Failure(format!("response used unknown request id {id}"));
                 };
                 if response.command != expected_command {
-                    return PiEvent::Failure(format!(
+                    return SessionEvent::Failure(format!(
                         "response {id} was for {}, expected {expected_command}",
                         response.command
                     ));
@@ -462,23 +465,23 @@ impl PiRpcProcess {
                 {
                     self.caller_identity.bind(session);
                 }
-                PiEvent::Response(response)
+                SessionEvent::Response(response)
             }
             ReaderItem::Wire(Ok(PiWireMessage::ExtensionUi(request))) => {
-                PiEvent::Interaction(request)
+                SessionEvent::Interaction(request)
             }
-            ReaderItem::Wire(Ok(PiWireMessage::Event(event))) => PiEvent::Activity(event),
-            ReaderItem::Wire(Err(error)) => PiEvent::Failure(error),
+            ReaderItem::Wire(Ok(PiWireMessage::Event(event))) => SessionEvent::Activity(event),
+            ReaderItem::Wire(Err(error)) => SessionEvent::Failure(error),
             ReaderItem::Stderr(chunk) => {
                 self.stderr.push_str(&chunk);
-                PiEvent::Stderr(chunk)
+                SessionEvent::Stderr(chunk)
             }
             ReaderItem::Eof => self.finish_after_stdout_eof(),
-            ReaderItem::StderrEof => PiEvent::Stderr(String::new()),
+            ReaderItem::StderrEof => SessionEvent::Stderr(String::new()),
         }
     }
 
-    fn finish_after_stdout_eof(&mut self) -> PiEvent {
+    fn finish_after_stdout_eof(&mut self) -> SessionEvent {
         let deadline = Instant::now() + Duration::from_millis(500);
         while Instant::now() < deadline {
             match self.incoming.recv_timeout(Duration::from_millis(20)) {
@@ -486,10 +489,12 @@ impl PiRpcProcess {
                 Ok(ReaderItem::StderrEof) => break,
                 Ok(ReaderItem::Wire(wire)) => {
                     self.queued.push_back(match wire {
-                        Ok(PiWireMessage::Response(response)) => PiEvent::Response(response),
-                        Ok(PiWireMessage::ExtensionUi(request)) => PiEvent::Interaction(request),
-                        Ok(PiWireMessage::Event(event)) => PiEvent::Activity(event),
-                        Err(error) => PiEvent::Failure(error),
+                        Ok(PiWireMessage::Response(response)) => SessionEvent::Response(response),
+                        Ok(PiWireMessage::ExtensionUi(request)) => {
+                            SessionEvent::Interaction(request)
+                        }
+                        Ok(PiWireMessage::Event(event)) => SessionEvent::Activity(event),
+                        Err(error) => SessionEvent::Failure(error),
                     });
                 }
                 Ok(ReaderItem::Eof) => {}
@@ -499,12 +504,12 @@ impl PiRpcProcess {
         }
         let exit = self.exit_description();
         if self.pending.is_empty() {
-            PiEvent::Failure(format!(
+            SessionEvent::Failure(format!(
                 "Pi closed stdout ({exit}). Stderr: {}",
                 self.stderr
             ))
         } else {
-            PiEvent::Failure(format!(
+            SessionEvent::Failure(format!(
                 "Pi closed stdout with {} pending request(s), {exit}. Stderr: {}",
                 self.pending.len(),
                 self.stderr

@@ -1,3 +1,54 @@
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+};
+
+#[derive(Clone, Debug)]
+pub(crate) struct SandboxRuntime {
+    pub(in crate::modules::access) kind: SandboxRuntimeKind,
+}
+
+#[derive(Clone, Debug)]
+pub(in crate::modules::access) enum SandboxRuntimeKind {
+    Fixed(PathBuf),
+    Unavailable,
+    #[cfg(test)]
+    TestBypass,
+}
+
+impl SandboxRuntime {
+    pub(crate) fn fixed(program: PathBuf) -> Self {
+        Self {
+            kind: SandboxRuntimeKind::Fixed(program),
+        }
+    }
+
+    pub(in crate::modules::access) const fn unavailable() -> Self {
+        Self {
+            kind: SandboxRuntimeKind::Unavailable,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn test_bypass() -> Self {
+        Self {
+            kind: SandboxRuntimeKind::TestBypass,
+        }
+    }
+}
+
+pub(crate) struct SandboxPaths<'a> {
+    pub(crate) project: &'a Path,
+    pub(crate) home: &'a Path,
+    pub(crate) agent_state: &'a Path,
+    pub(crate) temporary: &'a Path,
+}
+
+pub(crate) struct SandboxedCommand {
+    pub(crate) command: Command,
+    pub(in crate::modules::access) _profile: Option<tempfile::NamedTempFile>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum FilesystemAccess {
     ReadOnly,

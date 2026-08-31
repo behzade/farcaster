@@ -67,8 +67,10 @@ Farcaster serves stateless Streamable HTTP MCP at
 `worker_send`, `worker_respond`, `worker_list`, `worker_status`, `worker_stop`,
 `request_access`, and the `workgraph_*` tools. It accepts MCP `2026-07-28` only.
 Approved session grants last until Farcaster exits; project grants are stored in
-Farcaster application data and bound to the workspace identity. Grants activate
-by restarting and resuming the agent after its current turn. Farcaster passes
+Farcaster application data and bound to the workspace identity. On approval,
+Farcaster interrupts the pending access call, restarts the harness with the grant,
+and resumes the task with an internal continuation hidden from the UI
+transcript. Farcaster passes
 the endpoint to each launched agent through its native transient configuration;
 it does not create or modify a project MCP file.
 

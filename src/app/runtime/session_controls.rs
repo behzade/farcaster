@@ -45,10 +45,10 @@ impl SessionControl {
         }
     }
 
-    fn into_request(self) -> PiRequest {
+    fn into_request(self) -> SessionCommand {
         match self {
-            Self::Model(provider, model_id) => PiRequest::SelectModel { provider, model_id },
-            Self::Thinking(level) => PiRequest::SelectReasoning { level },
+            Self::Model(provider, model_id) => SessionCommand::SelectModel { provider, model_id },
+            Self::Thinking(level) => SessionCommand::SelectReasoning { level },
         }
     }
 }
@@ -155,11 +155,11 @@ mod tests {
         assert_eq!(
             requests,
             vec![
-                PiRequest::SelectModel {
+                SessionCommand::SelectModel {
                     provider: "new-provider".into(),
                     model_id: "new-model".into(),
                 },
-                PiRequest::SelectReasoning {
+                SessionCommand::SelectReasoning {
                     level: "high".into(),
                 },
             ]

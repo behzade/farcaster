@@ -3,24 +3,24 @@ use serde_json::{Value, json};
 use super::process::PiRpcProcess;
 use crate::{
     agents::extensions::{ExtensionUiResponse, PromptMode},
-    agents::{PiEvent, PiRequest, PiSessionTransport},
+    agents::{SessionCommand, SessionEvent, SessionTransport},
 };
 
-pub(super) fn encode_request(request: PiRequest) -> Value {
+pub(super) fn encode_request(request: SessionCommand) -> Value {
     match request {
-        PiRequest::ConfigureSteering => json!({
+        SessionCommand::ConfigureSteering => json!({
             "type": "set_steering_mode",
             "mode": "all",
         }),
-        PiRequest::LoadState => json!({"type": "get_state"}),
-        PiRequest::LoadHistory => json!({"type": "get_entries"}),
-        PiRequest::LoadUsage => json!({"type": "get_session_stats"}),
-        PiRequest::ListModels => json!({"type": "get_available_models"}),
-        PiRequest::ListReasoningLevels => {
+        SessionCommand::LoadState => json!({"type": "get_state"}),
+        SessionCommand::LoadHistory => json!({"type": "get_entries"}),
+        SessionCommand::LoadUsage => json!({"type": "get_session_stats"}),
+        SessionCommand::ListModels => json!({"type": "get_available_models"}),
+        SessionCommand::ListReasoningLevels => {
             json!({"type": "get_available_thinking_levels"})
         }
-        PiRequest::ListCommands => json!({"type": "get_commands"}),
-        PiRequest::Prompt {
+        SessionCommand::ListCommands => json!({"type": "get_commands"}),
+        SessionCommand::Prompt {
             mode,
             message,
             images,
@@ -36,32 +36,32 @@ pub(super) fn encode_request(request: PiRequest) -> Value {
             }
             value
         }
-        PiRequest::Abort => json!({"type": "abort"}),
-        PiRequest::Compact { instructions } => {
+        SessionCommand::Abort => json!({"type": "abort"}),
+        SessionCommand::Compact { instructions } => {
             optional_string("compact", "customInstructions", instructions)
         }
-        PiRequest::ExportHtml { output_path } => {
+        SessionCommand::ExportHtml { output_path } => {
             optional_string("export_html", "outputPath", output_path)
         }
-        PiRequest::Rename { name } => {
+        SessionCommand::Rename { name } => {
             json!({"type": "set_session_name", "name": name})
         }
-        PiRequest::ForkAt { entry_id } => {
+        SessionCommand::ForkAt { entry_id } => {
             json!({"type": "fork", "entryId": entry_id})
         }
-        PiRequest::SelectModel { provider, model_id } => json!({
+        SessionCommand::SelectModel { provider, model_id } => json!({
             "type": "set_model",
             "provider": provider,
             "modelId": model_id,
         }),
-        PiRequest::SelectReasoning { level } => {
+        SessionCommand::SelectReasoning { level } => {
             json!({"type": "set_thinking_level", "level": level})
         }
     }
 }
 
-impl PiSessionTransport for PiRpcProcess {
-    fn send(&mut self, request: PiRequest) -> Result<String, String> {
+impl SessionTransport for PiRpcProcess {
+    fn send(&mut self, request: SessionCommand) -> Result<String, String> {
         self.send_request(request)
     }
 
@@ -69,7 +69,7 @@ impl PiSessionTransport for PiRpcProcess {
         self.send_extension_response(response)
     }
 
-    fn poll(&mut self) -> Option<PiEvent> {
+    fn poll(&mut self) -> Option<SessionEvent> {
         self.try_next()
     }
 
@@ -94,11 +94,11 @@ mod tests {
     #[test]
     fn encodes_pi_requests_only_at_the_adapter_boundary() {
         assert_eq!(
-            encode_request(PiRequest::ConfigureSteering),
+            encode_request(SessionCommand::ConfigureSteering),
             json!({"type":"set_steering_mode","mode":"all"})
         );
         assert_eq!(
-            encode_request(PiRequest::Prompt {
+            encode_request(SessionCommand::Prompt {
                 mode: PromptMode::FollowUp,
                 message: "later".into(),
                 images: vec![PromptImage::new("aGVsbG8=".into(), "image/png".into())],
@@ -110,7 +110,7 @@ mod tests {
             })
         );
         assert_eq!(
-            encode_request(PiRequest::Compact { instructions: None }),
+            encode_request(SessionCommand::Compact { instructions: None }),
             json!({"type":"compact"})
         );
     }

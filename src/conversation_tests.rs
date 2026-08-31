@@ -640,6 +640,19 @@ fn queue_retry_compaction_and_settlement_project_correctly() {
 }
 
 #[test]
+fn internal_sandbox_continuation_is_hidden_from_the_transcript() {
+    let mut state = ConversationState::default();
+    let message = json!({
+        "role": "user",
+        "content": crate::internal_messages::sandbox_grant_continuation()
+    });
+    state.reduce(&json!({"type": "message_start", "message": message}));
+    state.reduce(&json!({"type": "message_end", "message": message}));
+
+    assert!(state.items.is_empty());
+}
+
+#[test]
 fn delivered_user_message_is_removed_from_the_visible_queue() {
     let mut state = ConversationState::default();
     state.reduce(&json!({

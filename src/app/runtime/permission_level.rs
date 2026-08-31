@@ -62,7 +62,7 @@ impl RuntimeOwner {
             self.publish();
             return;
         }
-        if let Err(error) = next_command.command(&self.project) {
+        if let Err(error) = crate::agents::validate_launch(&next_command, &self.project) {
             let snapshot = self.active_snapshot_mut();
             snapshot.status = "Permissions unchanged".into();
             conversation_mut(snapshot).push_local_error("Permissions unchanged", error);
@@ -87,7 +87,7 @@ impl RuntimeOwner {
             self.publish();
             return;
         }
-        if let Err(error) = self.process_command.command(&self.project) {
+        if let Err(error) = crate::agents::validate_launch(&self.process_command, &self.project) {
             self.process_command.app_proxy = previous;
             let snapshot = self.active_snapshot_mut();
             snapshot.status = "Proxy unchanged".into();
@@ -107,13 +107,63 @@ impl RuntimeOwner {
         if self.process.is_none() {
             return;
         }
-        if let Err(error) = self.process_command.command(&self.project) {
+        if let Err(error) = crate::agents::validate_launch(&self.process_command, &self.project) {
             let snapshot = self.active_snapshot_mut();
             snapshot.status = "Sandbox grants inactive".into();
             conversation_mut(snapshot).push_local_error("Sandbox grants inactive", error);
             self.publish();
             return;
         }
+        self.restart_process_preserving_transcript();
+    }
+
+    pub(super) fn activate_sandbox_grant(&mut self) {
+        if self.sandbox_grant_handoff.is_some() {
+            return;
+        }
+        self.sandbox_grant_handoff = Some(super::SandboxGrantHandoff::WaitingForSiblingTools);
+        self.active_snapshot_mut().status = "Activating sandbox access".into();
+        self.maybe_interrupt_for_sandbox_grant();
+        self.publish();
+    }
+
+    pub(super) fn maybe_interrupt_for_sandbox_grant(&mut self) {
+        if self.sandbox_grant_handoff != Some(super::SandboxGrantHandoff::WaitingForSiblingTools) {
+            return;
+        }
+        let only_access_request_remains = self
+            .active_tool_calls
+            .values()
+            .all(|name| name == "request_access" || name.ends_with("_request_access"));
+        if !only_access_request_remains {
+            return;
+        }
+        self.sandbox_grant_handoff = Some(super::SandboxGrantHandoff::Interrupting);
+        self.send(crate::agents::SessionCommand::Abort);
+    }
+
+    pub(super) fn finish_sandbox_grant_handoff(&mut self) {
+        if self.sandbox_grant_handoff.take().is_none() {
+            return;
+        }
+        let error = if self.active_session.is_none() {
+            Some("The interrupted agent session could not be resumed".into())
+        } else {
+            crate::agents::validate_launch(&self.process_command, &self.project).err()
+        };
+        if let Some(error) = error {
+            let snapshot = self.active_snapshot_mut();
+            snapshot.status = "Sandbox grant inactive".into();
+            conversation_mut(snapshot).push_local_error("Sandbox grant inactive", error);
+            self.publish();
+            return;
+        }
+        self.deferred_prompt = Some(super::DeferredPrompt {
+            mode: crate::protocol::PromptMode::Normal,
+            message: crate::internal_messages::sandbox_grant_continuation(),
+            images: Vec::new(),
+            outbox_id: None,
+        });
         self.restart_process_preserving_transcript();
     }
 
@@ -137,7 +187,7 @@ impl RuntimeOwner {
 
     pub(super) fn apply_permission_command_response(
         &mut self,
-        _response: &crate::agents::PiResponse,
+        _response: &crate::agents::SessionResponse,
     ) -> bool {
         false
     }

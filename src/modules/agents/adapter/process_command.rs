@@ -2,20 +2,10 @@ use std::path::{Path, PathBuf};
 
 use crate::{
     access,
-    agents::{FileAccessMode, NetworkAccessMode, PermissionLevel},
+    agents::{AgentLaunchConfig, FileAccessMode, NetworkAccessMode, PermissionLevel},
 };
 
-#[derive(Clone)]
-pub(crate) struct AgentProcessCommand {
-    pub program: PathBuf,
-    pub prefix_args: Vec<String>,
-    pub permission_level: PermissionLevel,
-    pub nono: access::NonoExecutable,
-    pub grants: Option<access::GrantStore>,
-    pub app_proxy: Option<String>,
-}
-
-impl AgentProcessCommand {
+impl AgentLaunchConfig {
     #[cfg(test)]
     pub(crate) fn test_script(script: &Path, mut arguments: Vec<String>) -> Self {
         let mut prefix_args = Vec::with_capacity(arguments.len() + 1);
@@ -25,13 +15,16 @@ impl AgentProcessCommand {
             program: PathBuf::from("sh"),
             prefix_args,
             permission_level: PermissionLevel::default(),
-            nono: access::test_nono_bypass(),
+            sandbox: access::test_sandbox_bypass(),
             grants: None,
             app_proxy: None,
         }
     }
 
-    pub(crate) fn command(&self, project: &Path) -> Result<access::PreparedCommand, String> {
+    pub(in crate::modules::agents) fn command(
+        &self,
+        project: &Path,
+    ) -> Result<access::SandboxedCommand, String> {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         let mut environment = super::shell_environment::project_shell_environment(project)?;
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -63,11 +56,11 @@ impl AgentProcessCommand {
         if let Some(environment) = environment.as_mut() {
             access::append_app_proxy_environment(environment, &network);
         }
-        let mut prepared = access::prepare_command(
-            &self.nono,
+        let mut prepared = access::prepare_sandboxed_command(
+            &self.sandbox,
             &program,
             &self.prefix_args,
-            access::PolicyPaths {
+            access::SandboxPaths {
                 project,
                 home: &home,
                 agent_state: &agent_state,

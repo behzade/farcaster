@@ -1,4 +1,3 @@
-mod contract;
 mod framing;
 mod mcp_config;
 mod process;
@@ -6,22 +5,14 @@ mod protocol;
 mod wire;
 mod worker;
 
-pub(crate) use contract::{PiEvent, PiRequest, PiSessionTransport};
-pub(crate) use process::{PiProcessCommand, PiRpcProcess};
-pub(crate) use wire::PiResponse;
-#[cfg(test)]
-pub(crate) use wire::{PiWireMessage, parse_frame};
-pub(crate) use worker::PiWorkerFactory;
+pub(super) use process::PiRpcProcess;
+pub(super) use worker::PiWorkerFactory;
 
-use crate::agents::{
+use super::super::contract::{
     AgentBackendDescriptor, AgentBackendId, AgentCapabilities, CapabilitySupport,
     ConfigurationCapabilities, InteractionCapabilities, ObservationCapabilities,
     SessionCapabilities, TurnCapabilities,
 };
-
-pub(in crate::modules::agents) fn encode_request(request: PiRequest) -> serde_json::Value {
-    protocol::encode_request(request)
-}
 
 pub(crate) fn descriptor() -> AgentBackendDescriptor {
     use CapabilitySupport::{Available, Unsupported};
