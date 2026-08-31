@@ -42,7 +42,6 @@ pub(crate) struct SandboxPaths<'a> {
     pub(crate) home: &'a Path,
     pub(crate) agent_state: &'a Path,
     pub(crate) temporary: &'a Path,
-    pub(crate) metadata_read: &'a [PathBuf],
 }
 
 pub(crate) struct SandboxedCommand {

@@ -9,6 +9,7 @@ const MODEL_SERVICE_HOSTS: &[&str] = &[
     "*.githubcopilot.com",
     "*.googleapis.com",
     "*.openai.azure.com",
+    "*.opencode.ai",
     "ai-gateway.vercel.sh",
     "api.ant-ling.com",
     "api.anthropic.com",
@@ -127,6 +128,7 @@ mod tests {
             "generativelanguage.googleapis.com"
         ));
         assert!(base_network_host_allowed("example-resource.ai.azure.com"));
+        assert!(base_network_host_allowed("models.opencode.ai"));
         assert!(!base_network_host_allowed("chatgpt.com.example.org"));
     }
 }

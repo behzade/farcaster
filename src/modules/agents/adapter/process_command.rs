@@ -25,15 +25,7 @@ impl AgentLaunchConfig {
         &self,
         project: &Path,
     ) -> Result<access::SandboxedCommand, String> {
-        self.command_with_options(project, false, &[])
-    }
-
-    /// Let backends resolve the home directory without granting access to its contents.
-    pub(in crate::modules::agents) fn command_with_home_metadata(
-        &self,
-        project: &Path,
-    ) -> Result<access::SandboxedCommand, String> {
-        self.command_with_options(project, true, &[])
+        self.command_with_tls_ca_environments(project, &[])
     }
 
     pub(in crate::modules::agents) fn command_with_tls_ca_environment(
@@ -41,13 +33,12 @@ impl AgentLaunchConfig {
         project: &Path,
         environment_variable: &str,
     ) -> Result<access::SandboxedCommand, String> {
-        self.command_with_options(project, false, &[environment_variable])
+        self.command_with_tls_ca_environments(project, &[environment_variable])
     }
 
-    fn command_with_options(
+    fn command_with_tls_ca_environments(
         &self,
         project: &Path,
-        read_home_metadata: bool,
         tls_ca_environment: &[&str],
     ) -> Result<access::SandboxedCommand, String> {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -67,11 +58,6 @@ impl AgentLaunchConfig {
         let agent_state =
             environment_path("PI_CODING_AGENT_DIR").unwrap_or_else(|| home.join(".pi/agent"));
         let temporary = environment_path("TMPDIR").unwrap_or_else(std::env::temp_dir);
-        let metadata_read = if read_home_metadata {
-            vec![home.clone()]
-        } else {
-            Vec::new()
-        };
         let access = sandbox_access(self.permission_level);
         if let Some(grants) = &self.grants {
             grants.set_access(access.filesystem, access.network);
@@ -99,7 +85,6 @@ impl AgentLaunchConfig {
                 home: &home,
                 agent_state: &agent_state,
                 temporary: &temporary,
-                metadata_read: &metadata_read,
             },
             access,
             self.grants.as_ref(),

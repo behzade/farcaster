@@ -616,7 +616,6 @@ fn validate_rights(shared: &Shared, rights: &[AccessRight]) -> Result<(), String
         access,
         resolve_rights(shared, rights),
         &super::NetworkConfiguration::default(),
-        &[],
     )?;
     shared.policy_validator.validate(&policy)
 }

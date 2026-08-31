@@ -12,8 +12,6 @@ struct Profile {
     schema: &'static str,
     extends: &'static str,
     allow_parent_of_protected: bool,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    unsafe_macos_seatbelt_rules: Vec<String>,
     meta: ProfileMeta,
     filesystem: FilesystemPolicy,
     network: NetworkPolicy,
@@ -57,7 +55,6 @@ pub(crate) fn compile(
     access: AccessPolicy,
     grants: super::approval::ResolvedGrants,
     network: &NetworkConfiguration,
-    metadata_read: &[PathBuf],
 ) -> Result<Vec<u8>, String> {
     let project = canonical_directory(project, "project")?;
     let home = canonical_directory(home, "home")?;
@@ -117,8 +114,6 @@ pub(crate) fn compile(
     protection_bypasses.sort();
     protection_bypasses.dedup();
 
-    let unsafe_macos_seatbelt_rules = metadata_read_rules(metadata_read)?;
-
     let unrestricted_network = matches!(access.network, NetworkAccess::Full);
     let mut allowed_network_hosts = super::network::allowed_network_hosts()
         .map(str::to_owned)
@@ -136,7 +131,6 @@ pub(crate) fn compile(
         schema: "https://nono.sh/schemas/nono-profile.schema.json",
         extends: "default",
         allow_parent_of_protected: true,
-        unsafe_macos_seatbelt_rules,
         meta: ProfileMeta {
             name: "farcaster-agent",
             version: "1",
@@ -172,24 +166,6 @@ pub(crate) fn compile(
         .map_err(|error| format!("encode Farcaster sandbox profile: {error}"))?;
     encoded.push(b'\n');
     Ok(encoded)
-}
-
-fn metadata_read_rules(paths: &[PathBuf]) -> Result<Vec<String>, String> {
-    paths
-        .iter()
-        .map(|path| {
-            let path = path.to_str().ok_or_else(|| {
-                format!(
-                    "sandbox metadata path is not valid UTF-8: {}",
-                    path.display()
-                )
-            })?;
-            let escaped = path.replace('\\', "\\\\").replace('"', "\\\"");
-            Ok(format!(
-                "(allow file-read-metadata (literal \"{escaped}\"))"
-            ))
-        })
-        .collect()
 }
 
 fn canonical_directory(path: &Path, label: &str) -> Result<PathBuf, String> {
@@ -299,7 +275,6 @@ mod tests {
             access,
             crate::access::approval::ResolvedGrants::default(),
             &NetworkConfiguration::default(),
-            &[],
         )?)?)
     }
 
@@ -414,7 +389,6 @@ mod tests {
                 ..Default::default()
             },
             &NetworkConfiguration::default(),
-            &[],
         )?)?;
         assert!(
             profile["filesystem"]["read"]
@@ -465,7 +439,6 @@ mod tests {
             },
             crate::access::approval::ResolvedGrants::default(),
             &network,
-            &[],
         )?)?;
         assert!(
             profile["network"]["allow_domain"]
