@@ -11,8 +11,8 @@ use std::{
 use serde_json::Value;
 
 use crate::{
-    agent_activity::{ActivityBuilder, AgentActivity, parse_iso_timestamp},
-    protocol::ExtensionUiRequest,
+    agents::extensions::ExtensionUiRequest,
+    sessions::activity::{ActivityBuilder, AgentActivity, parse_iso_timestamp},
 };
 
 use super::super::{
@@ -552,11 +552,11 @@ fn discover_in_cached(
             if !value.0.is_running
                 && matches!(
                     value.1.lifecycle,
-                    crate::agent_activity::AgentLifecycle::NeedsInput
-                        | crate::agent_activity::AgentLifecycle::Working
+                    crate::sessions::activity::AgentLifecycle::NeedsInput
+                        | crate::sessions::activity::AgentLifecycle::Working
                 )
             {
-                value.1.lifecycle = crate::agent_activity::AgentLifecycle::Unknown;
+                value.1.lifecycle = crate::sessions::activity::AgentLifecycle::Unknown;
                 value.1.current_tool = None;
             }
             parsed.push(value);
@@ -756,7 +756,7 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
         detail_limited,
     );
     if detail_limited {
-        activity.lifecycle = crate::agent_activity::AgentLifecycle::Unknown;
+        activity.lifecycle = crate::sessions::activity::AgentLifecycle::Unknown;
         activity.current_tool = None;
         activity.ended = None;
         activity.elapsed = None;

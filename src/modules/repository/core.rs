@@ -1,8 +1,7 @@
+pub(super) mod port;
+mod sync;
+
 use super::{
-    adapter::{
-        git, jj,
-        process::{CommandOutput, CommandRunner},
-    },
     contract::{
         BackendPreference, ChangeKind, ChangeLayer, DiffResult, DiffTarget, DiffTargetKey,
         RepositoryError, RepositoryKind, RepositoryLocation, SnapshotIdentity, WorkingCopyChange,
@@ -14,141 +13,39 @@ use super::{
 use std::{
     ffi::OsString,
     path::{Component, Path, PathBuf},
-    sync::{Mutex, MutexGuard, OnceLock},
-    time::Duration,
+    sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
 
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(8);
-const DEFAULT_SYNC_TIMEOUT: Duration = Duration::from_secs(120);
-const DEFAULT_OUTPUT_LIMIT: usize = 8 * 1024 * 1024;
+use port::{CommandExecutor, CommandMode, CommandOutput, RepositoryOperations};
+
 static REPOSITORY_OPERATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
-#[derive(Clone, Debug)]
-struct RepositoryOptions {
-    git_executable: OsString,
-    jj_executable: OsString,
-    timeout: Duration,
-    sync_timeout: Duration,
-    output_limit: usize,
-    environment: Vec<(OsString, OsString)>,
-}
-
-impl Default for RepositoryOptions {
-    fn default() -> Self {
-        Self {
-            git_executable: std::env::var_os("FARCASTER_GIT")
-                .unwrap_or_else(|| OsString::from("git")),
-            jj_executable: std::env::var_os("FARCASTER_JJ").unwrap_or_else(|| OsString::from("jj")),
-            timeout: DEFAULT_TIMEOUT,
-            sync_timeout: DEFAULT_SYNC_TIMEOUT,
-            output_limit: DEFAULT_OUTPUT_LIMIT,
-            environment: Vec::new(),
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct RepositoryBackend {
     pub(super) location: RepositoryLocation,
-    options: RepositoryOptions,
+    executor: Arc<dyn CommandExecutor>,
+    operations: Arc<dyn RepositoryOperations>,
+}
+
+impl std::fmt::Debug for RepositoryBackend {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RepositoryBackend")
+            .field("location", &self.location)
+            .finish_non_exhaustive()
+    }
 }
 
 impl RepositoryBackend {
-    pub(crate) fn discover(
-        project: &Path,
-        preference: BackendPreference,
-    ) -> Result<Option<Self>, RepositoryError> {
-        Self::discover_with_options(project, preference, RepositoryOptions::default())
-    }
-
-    fn discover_with_options(
-        project: &Path,
-        preference: BackendPreference,
-        options: RepositoryOptions,
-    ) -> Result<Option<Self>, RepositoryError> {
-        let canonical = project
-            .canonicalize()
-            .map_err(|source| RepositoryError::Io {
-                context: format!("resolve project path {}", project.display()),
-                source,
-            })?;
-        let project_root = if canonical.is_file() {
-            canonical.parent().map(Path::to_path_buf).ok_or_else(|| {
-                RepositoryError::InvalidRepository(format!(
-                    "project path has no parent: {}",
-                    canonical.display()
-                ))
-            })?
-        } else {
-            canonical
-        };
-
-        let git_available = executable_available(&options.git_executable);
-        let jj_available = executable_available(&options.jj_executable);
-        let preference = available_preference(preference, git_available, jj_available);
-        let selected = find_marker(&project_root, preference, git_available, jj_available)?;
-        let Some((workspace_root, kind)) = selected else {
-            return match preference {
-                BackendPreference::Auto => Ok(None),
-                BackendPreference::Git => Err(RepositoryError::BackendUnavailable {
-                    kind: RepositoryKind::Git,
-                    project: project_root,
-                }),
-                BackendPreference::Jujutsu => Err(RepositoryError::BackendUnavailable {
-                    kind: RepositoryKind::Jujutsu,
-                    project: project_root,
-                }),
-            };
-        };
-        Ok(Some(Self {
-            location: RepositoryLocation {
-                kind,
-                workspace_root,
-                project_root,
-            },
-            options,
-        }))
-    }
-
-    pub(crate) fn available_backends() -> (bool, bool) {
-        let options = RepositoryOptions::default();
-        (
-            executable_available(&options.git_executable),
-            executable_available(&options.jj_executable),
-        )
-    }
-
-    pub(crate) fn jj_init_required(location: &RepositoryLocation) -> Result<bool, RepositoryError> {
-        Ok(location.kind == RepositoryKind::Git
-            && !marker_exists(&location.workspace_root.join(".jj"))?)
-    }
-
-    pub(crate) fn init_jj_colocated(repository: &Path) -> Result<(), RepositoryError> {
-        Self::init_jj_colocated_with_options(repository, RepositoryOptions::default())
-    }
-
-    fn init_jj_colocated_with_options(
-        repository: &Path,
-        options: RepositoryOptions,
-    ) -> Result<(), RepositoryError> {
-        if !marker_exists(&repository.join(".git"))? {
-            return Err(RepositoryError::BackendUnavailable {
-                kind: RepositoryKind::Git,
-                project: repository.to_path_buf(),
-            });
-        }
-        let _operation = repository_operation()?;
-        let runner = CommandRunner::new(
-            options.timeout,
-            options.output_limit,
-            options.environment.clone(),
-        );
-        let arguments = [OsString::from("git"), OsString::from("init")];
-        let output = runner.run(&options.jj_executable, &arguments, repository)?;
-        if output.status.success() {
-            Ok(())
-        } else {
-            Err(command_failed(&options.jj_executable, &output))
+    pub(super) fn new(
+        location: RepositoryLocation,
+        executor: Arc<dyn CommandExecutor>,
+        operations: Arc<dyn RepositoryOperations>,
+    ) -> Self {
+        Self {
+            location,
+            executor,
+            operations,
         }
     }
 
@@ -158,10 +55,7 @@ impl RepositoryBackend {
 
     pub(crate) fn snapshot(&self) -> Result<WorkingCopySnapshot, RepositoryError> {
         let _operation = repository_operation()?;
-        match self.location.kind {
-            RepositoryKind::Git => git::snapshot(self),
-            RepositoryKind::Jujutsu => jj::snapshot(self),
-        }
+        self.operations.snapshot(self)
     }
 
     pub(crate) fn working_copy_totals(
@@ -206,7 +100,7 @@ impl RepositoryBackend {
                     .iter()
                     .filter(|change| change.layer == ChangeLayer::GitUntracked)
                 {
-                    let diff = git::load_diff(self, change.target.clone())?;
+                    let diff = self.operations.load_diff(self, change.target.clone())?;
                     patch.extend(diff.patch.into_bytes());
                 }
                 patch
@@ -236,18 +130,12 @@ impl RepositoryBackend {
     pub(crate) fn load_diff(&self, target: DiffTarget) -> Result<DiffResult, RepositoryError> {
         self.validate_target(&target)?;
         let _operation = repository_operation()?;
-        match self.location.kind {
-            RepositoryKind::Git => git::load_diff(self, target),
-            RepositoryKind::Jujutsu => jj::load_diff(self, target),
-        }
+        self.operations.load_diff(self, target)
     }
 
     pub(crate) fn list_project_files(&self) -> Result<Vec<String>, RepositoryError> {
         let _operation = repository_operation()?;
-        match self.location.kind {
-            RepositoryKind::Git => git::list_project_files(self),
-            RepositoryKind::Jujutsu => jj::list_project_files(self),
-        }
+        self.operations.list_project_files(self)
     }
 
     pub(super) fn project_relative_path(&self, path: &Path) -> Option<PathBuf> {
@@ -303,32 +191,19 @@ impl RepositoryBackend {
             .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
     }
 
-    fn runner(&self) -> CommandRunner {
-        self.runner_with_timeout(self.options.timeout)
-    }
-
-    pub(super) fn sync_runner(&self) -> CommandRunner {
-        self.runner_with_timeout(self.options.sync_timeout)
-    }
-
-    fn runner_with_timeout(&self, timeout: Duration) -> CommandRunner {
-        CommandRunner::new(
-            timeout,
-            self.options.output_limit,
-            self.options.environment.clone(),
-        )
-    }
-
-    pub(super) fn executable(&self) -> &OsString {
-        match self.location.kind {
-            RepositoryKind::Git => &self.options.git_executable,
-            RepositoryKind::Jujutsu => &self.options.jj_executable,
-        }
+    pub(super) fn executable(&self) -> &std::ffi::OsStr {
+        self.executor.executable()
     }
 
     pub(super) fn run(&self, arguments: &[OsString]) -> Result<CommandOutput, RepositoryError> {
-        self.runner()
-            .run(self.executable(), arguments, &self.location.workspace_root)
+        self.executor.run(arguments, CommandMode::Query)
+    }
+
+    pub(super) fn run_sync(
+        &self,
+        arguments: &[OsString],
+    ) -> Result<CommandOutput, RepositoryError> {
+        self.executor.run(arguments, CommandMode::Synchronization)
     }
 
     pub(super) fn run_success(
@@ -351,6 +226,51 @@ pub(super) fn repository_operation() -> Result<MutexGuard<'static, ()>, Reposito
         .map_err(|_| {
             RepositoryError::InvalidRepository("repository operation lock is poisoned".into())
         })
+}
+
+pub(super) fn discover_location(
+    project: &Path,
+    preference: BackendPreference,
+    git_available: bool,
+    jj_available: bool,
+) -> Result<Option<RepositoryLocation>, RepositoryError> {
+    let canonical = project
+        .canonicalize()
+        .map_err(|source| RepositoryError::Io {
+            context: format!("resolve project path {}", project.display()),
+            source,
+        })?;
+    let project_root = if canonical.is_file() {
+        canonical.parent().map(Path::to_path_buf).ok_or_else(|| {
+            RepositoryError::InvalidRepository(format!(
+                "project path has no parent: {}",
+                canonical.display()
+            ))
+        })?
+    } else {
+        canonical
+    };
+    let preference = available_preference(preference, git_available, jj_available);
+    let Some((workspace_root, kind)) =
+        find_marker(&project_root, preference, git_available, jj_available)?
+    else {
+        return match preference {
+            BackendPreference::Auto => Ok(None),
+            BackendPreference::Git => Err(RepositoryError::BackendUnavailable {
+                kind: RepositoryKind::Git,
+                project: project_root,
+            }),
+            BackendPreference::Jujutsu => Err(RepositoryError::BackendUnavailable {
+                kind: RepositoryKind::Jujutsu,
+                project: project_root,
+            }),
+        };
+    };
+    Ok(Some(RepositoryLocation {
+        kind,
+        workspace_root,
+        project_root,
+    }))
 }
 
 fn available_preference(
@@ -394,7 +314,7 @@ fn find_marker(
     Ok(None)
 }
 
-fn executable_available(executable: &std::ffi::OsStr) -> bool {
+pub(super) fn executable_available(executable: &std::ffi::OsStr) -> bool {
     let executable = Path::new(executable);
     if executable.components().count() > 1 {
         return executable.is_file();
@@ -404,7 +324,7 @@ fn executable_available(executable: &std::ffi::OsStr) -> bool {
     })
 }
 
-fn marker_exists(path: &Path) -> Result<bool, RepositoryError> {
+pub(super) fn marker_exists(path: &Path) -> Result<bool, RepositoryError> {
     match std::fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(false),
@@ -495,7 +415,7 @@ pub(super) fn diff_result(target: DiffTarget, patch: String) -> DiffResult {
     }
 }
 
-fn patch_counts(patch: &str) -> (Option<u64>, Option<u64>) {
+pub(super) fn patch_counts(patch: &str) -> (Option<u64>, Option<u64>) {
     if patch.contains("GIT binary patch")
         || patch.contains("Binary files ")
         || patch.contains("Binary file ")
@@ -516,7 +436,3 @@ fn patch_counts(patch: &str) -> (Option<u64>, Option<u64>) {
     }
     (Some(additions), Some(deletions))
 }
-
-#[cfg(test)]
-#[path = "tests.rs"]
-mod tests;

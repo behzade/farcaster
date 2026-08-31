@@ -1,6 +1,12 @@
 use std::ffi::OsString;
 
-use super::*;
+#[cfg(test)]
+use super::super::JujutsuIdentity;
+use super::super::{
+    GitIdentity, RepositoryError, RepositoryKind, RepositorySyncAction, SnapshotIdentity,
+    WorkingCopySnapshot,
+};
+use super::{RepositoryBackend, command_failed, repository_operation};
 
 impl RepositorySyncAction {
     pub(crate) fn is_available_for(self, identity: &SnapshotIdentity) -> bool {
@@ -21,9 +27,7 @@ impl RepositoryBackend {
         }
         let arguments = arguments(&snapshot.identity, action)?;
         let _operation = repository_operation()?;
-        let output =
-            self.sync_runner()
-                .run(self.executable(), &arguments, &self.location.workspace_root)?;
+        let output = self.run_sync(&arguments)?;
         if output.status.success() {
             Ok(())
         } else {

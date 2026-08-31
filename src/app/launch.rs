@@ -42,7 +42,7 @@ pub(crate) enum LaunchError {
 }
 
 pub(crate) fn resolve_project(path: Option<PathBuf>) -> Result<PathBuf, LaunchError> {
-    let path = match path.or_else(crate::projects::most_recent) {
+    let path = match path.or_else(crate::app::project_registry::most_recent) {
         Some(path) => path,
         None => std::env::current_dir().map_err(|source| LaunchError::Resolve {
             path: PathBuf::from("."),

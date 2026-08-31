@@ -13,11 +13,13 @@ mod file_mentions;
 pub(crate) mod launch;
 pub(crate) mod mcp_server;
 mod picker;
+mod project_registry;
 mod quit;
 mod region_state;
 mod repository;
 pub(crate) mod runtime;
 mod session_titles;
+pub(crate) mod shell_environment;
 mod slash_commands;
 mod submissions;
 mod surfaces;
@@ -324,7 +326,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let (mut registry, mut project_registry_error) = match projects::load() {
+        let (mut registry, mut project_registry_error) = match project_registry::load() {
             Ok(registry) => (registry, None),
             Err(error) => (projects::Registry::default(), Some(error)),
         };
@@ -333,7 +335,7 @@ impl FarcasterApp {
             &registry.excluded_projects,
             project.clone(),
         );
-        let session_order = match projects::load_app_session_order() {
+        let session_order = match project_registry::load_app_session_order() {
             Ok(order) => order,
             Err(error) => {
                 if project_registry_error.is_none() {
@@ -342,7 +344,7 @@ impl FarcasterApp {
                 Vec::new()
             }
         };
-        let initial_draft = match projects::new_draft(project.clone()) {
+        let initial_draft = match project_registry::new_draft(project.clone()) {
             Ok(draft) => draft,
             Err(error) => {
                 if project_registry_error.is_none() {
@@ -362,7 +364,7 @@ impl FarcasterApp {
             .collect::<HashMap<_, _>>();
         draft_session_ids.insert(initial_draft.id, initial_draft.app_session_id);
         if project_registry_error.is_none()
-            && let Err(error) = projects::save(&registry)
+            && let Err(error) = project_registry::save(&registry)
         {
             project_registry_error = Some(error);
         }
@@ -1052,7 +1054,7 @@ impl FarcasterApp {
                     if selected_was_deleted && generation >= self.runtime_generation {
                         let current_target = self.composer_sessions.current_target().to_owned();
                         let (next_target, next_draft) =
-                            match projects::new_draft(self.project.clone()) {
+                            match project_registry::new_draft(self.project.clone()) {
                                 Ok(draft) => (draft_target(&draft.id), Some(draft)),
                                 Err(error) => {
                                     self.sessions_error = Some(error);
@@ -1473,7 +1475,7 @@ impl FarcasterApp {
             return;
         }
         self.run_panel_scroll.set_offset(point(px(0.0), px(0.0)));
-        let draft = match projects::new_draft(project.clone()) {
+        let draft = match project_registry::new_draft(project.clone()) {
             Ok(draft) => draft,
             Err(error) => {
                 self.sessions_error = Some(error);
@@ -1686,7 +1688,7 @@ impl FarcasterApp {
     }
 
     fn save_project_registry(&mut self) {
-        if let Err(error) = projects::save(&projects::Registry {
+        if let Err(error) = project_registry::save(&projects::Registry {
             projects: self.projects.clone(),
             excluded_projects: self.excluded_projects.clone(),
             drafts: self.drafts.clone(),

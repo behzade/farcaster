@@ -5,7 +5,7 @@ use std::{
 };
 
 use super::super::{WorkerInputResponse, WorkerSnapshot, WorkerStatus};
-use super::port::{WorkerEvent, WorkerSendMode, WorkerSession};
+use crate::agents::{WorkerEvent, WorkerSendMode, WorkerSession};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 

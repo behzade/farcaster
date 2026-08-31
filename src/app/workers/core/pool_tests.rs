@@ -5,10 +5,13 @@ use std::{
 };
 
 use super::super::{
-    StartWorker, WorkerContext, WorkerInput, WorkerInputResponse, WorkerMessageMode,
-    WorkerSnapshot, WorkerStatus,
+    StartWorker, WorkerContext, WorkerInputResponse, WorkerMessageMode, WorkerSnapshot,
+    WorkerStatus,
 };
 use super::*;
+use crate::agents::{
+    WorkerEvent, WorkerInput, WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory,
+};
 
 #[derive(Default)]
 struct FakeFactory {

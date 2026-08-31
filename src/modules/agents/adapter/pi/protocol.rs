@@ -2,8 +2,8 @@ use serde_json::{Value, json};
 
 use super::process::PiRpcProcess;
 use crate::{
+    agents::extensions::{ExtensionUiResponse, PromptMode},
     agents::{PiEvent, PiRequest, PiSessionTransport},
-    protocol::{ExtensionUiResponse, PromptMode},
 };
 
 pub(super) fn encode_request(request: PiRequest) -> Value {
@@ -89,7 +89,7 @@ fn optional_string(kind: &str, field: &str, value: Option<String>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::PromptImage;
+    use crate::agents::extensions::PromptImage;
 
     #[test]
     fn encodes_pi_requests_only_at_the_adapter_boundary() {

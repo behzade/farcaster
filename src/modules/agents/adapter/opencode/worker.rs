@@ -11,12 +11,11 @@ use serde_json::Value;
 use super::server::OpenCodeServerProcess;
 use crate::{
     access::PreparedCommand,
-    agents::AgentProcessCommand,
-    modules::agents::adapter::farcaster_mcp,
-    workers::{
-        WorkerContext, WorkerEvent, WorkerInputResponse, WorkerLaunch, WorkerSendMode,
-        WorkerSession, WorkerSessionFactory,
+    agents::{
+        AgentProcessCommand, WorkerContext, WorkerEvent, WorkerInputResponse, WorkerLaunch,
+        WorkerSendMode, WorkerSession, WorkerSessionFactory,
     },
+    modules::agents::adapter::farcaster_mcp,
 };
 
 #[derive(Clone)]
@@ -36,7 +35,7 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
             return Err("OpenCode worker provider and model must be supplied together".into());
         }
         let mut sandbox = self.command.command(&launch.project)?;
-        let caller_identity = crate::workers::CallerRegistry::shared().issue();
+        let caller_identity = crate::agents::CallerRegistry::shared().issue();
         configure_farcaster_mcp(&mut sandbox.command, caller_identity.token())?;
         let password = worker_password()?;
         let child = sandbox
@@ -88,7 +87,7 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
 }
 
 struct OpenCodeWorkerSession {
-    _caller_identity: crate::workers::CallerIdentity,
+    _caller_identity: crate::agents::CallerIdentity,
     _sandbox: PreparedCommand,
     server: OpenCodeServerProcess,
     session_id: String,

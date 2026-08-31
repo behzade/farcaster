@@ -1,16 +1,24 @@
 mod adapter;
 mod contract;
+mod core;
 
 pub(crate) use adapter::{
     AgentProcessCommand, CodexWorkerFactory, OpenCodeWorkerFactory, PiEvent, PiProcessCommand,
     PiRequest, PiResponse, PiRpcProcess, PiSessionTransport, PiWorkerFactory,
+    app_shell_environment, default_login_shell,
 };
 #[cfg(test)]
 pub(crate) use adapter::{PiWireMessage, parse_frame};
+pub(crate) use contract::extensions;
 pub(crate) use contract::{
     AgentBackendDescriptor, AgentBackendId, AgentCapabilities, CapabilitySupport,
     ConfigurationCapabilities, FileAccessMode, InteractionCapabilities, NetworkAccessMode,
-    ObservationCapabilities, PermissionLevel, SessionCapabilities, TurnCapabilities,
+    ObservationCapabilities, PermissionLevel, SessionCapabilities, TurnCapabilities, WorkerContext,
+    WorkerInput, WorkerInputResponse,
+};
+pub(crate) use core::{
+    CallerIdentity, CallerRegistry, WorkerEvent, WorkerLaunch, WorkerSendMode, WorkerSession,
+    WorkerSessionFactory,
 };
 
 pub(crate) fn encode_pi_request(request: PiRequest) -> serde_json::Value {

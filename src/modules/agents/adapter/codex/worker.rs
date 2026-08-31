@@ -15,12 +15,11 @@ use super::{
 };
 use crate::{
     access::PreparedCommand,
-    agents::AgentProcessCommand,
-    modules::agents::adapter::farcaster_mcp,
-    workers::{
-        WorkerContext, WorkerEvent, WorkerInput, WorkerInputResponse, WorkerLaunch, WorkerSendMode,
-        WorkerSession, WorkerSessionFactory,
+    agents::{
+        AgentProcessCommand, WorkerContext, WorkerEvent, WorkerInput, WorkerInputResponse,
+        WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory,
     },
+    modules::agents::adapter::farcaster_mcp,
 };
 
 #[derive(Clone)]
@@ -40,7 +39,7 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             return Err("Codex worker provider and model must be supplied together".into());
         }
         let mut sandbox = self.command.command(&launch.project)?;
-        let caller_identity = crate::workers::CallerRegistry::shared().issue();
+        let caller_identity = crate::agents::CallerRegistry::shared().issue();
         configure_farcaster_mcp(&mut sandbox.command, caller_identity.token());
         let mut child = sandbox
             .command
@@ -154,7 +153,7 @@ enum PendingRequest {
 }
 
 struct CodexWorkerSession {
-    _caller_identity: crate::workers::CallerIdentity,
+    _caller_identity: crate::agents::CallerIdentity,
     _sandbox: PreparedCommand,
     child: Child,
     writer: ChildStdin,

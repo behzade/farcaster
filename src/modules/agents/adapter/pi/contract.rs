@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use super::wire::PiResponse;
-use crate::protocol::{ExtensionUiRequest, ExtensionUiResponse, PromptImage, PromptMode};
+use crate::agents::extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptImage, PromptMode};
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum PiEvent {

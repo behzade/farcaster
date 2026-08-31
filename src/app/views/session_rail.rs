@@ -33,7 +33,7 @@ use crate::{
         AppIconSize, ButtonTone, FeedbackTone, ReorderPosition, app_icon, disclosure_button,
         dropdown_button, feedback, icon_button,
     },
-    projects::{self, DraftSession},
+    projects::DraftSession,
     sessions::{SessionSummary, root_session_for_path},
     theme::THEME,
 };
@@ -847,7 +847,9 @@ impl FarcasterApp {
             let active_ids = all.into_iter().collect::<HashSet<_>>();
             self.session_order.retain(|id| !active_ids.contains(id));
             self.session_order.extend(active_order);
-            if let Err(error) = projects::save_app_session_order(&self.session_order) {
+            if let Err(error) =
+                crate::app::project_registry::save_app_session_order(&self.session_order)
+            {
                 self.sessions_error = Some(error);
             }
         }

@@ -527,8 +527,8 @@ fn discovery_carries_transient_agent_activity_without_persisting_it() -> TestRes
     );
     assert_eq!(
         activity.lifecycle,
-        crate::agent_activity::AgentLifecycle::Completed(
-            crate::agent_activity::AgentOutcome::Complete
+        crate::sessions::activity::AgentLifecycle::Completed(
+            crate::sessions::activity::AgentOutcome::Complete
         )
     );
     assert_eq!(
@@ -538,7 +538,7 @@ fn discovery_carries_transient_agent_activity_without_persisting_it() -> TestRes
     assert_eq!(activity.file_mutations.len(), 1);
     assert!(matches!(
         &activity.file_mutations[0].kind,
-        crate::agent_activity::FileMutationKind::Edit { patch, complete: true }
+        crate::sessions::activity::FileMutationKind::Edit { patch, complete: true }
             if patch.contains("+after")
     ));
     Ok(())
@@ -580,7 +580,7 @@ fn discovery_aggregates_only_the_active_branch_from_an_external_session() -> Tes
     );
     assert!(matches!(
         activity.file_mutations[0].kind,
-        crate::agent_activity::FileMutationKind::Write { .. }
+        crate::sessions::activity::FileMutationKind::Write { .. }
     ));
     Ok(())
 }
@@ -692,7 +692,7 @@ fn truncated_long_sessions_do_not_infer_lifecycle_from_the_prefix() -> TestResul
     assert!(activity.limited);
     assert_eq!(
         activity.lifecycle,
-        crate::agent_activity::AgentLifecycle::Unknown
+        crate::sessions::activity::AgentLifecycle::Unknown
     );
     assert!(activity.current_tool.is_none());
     Ok(())
@@ -816,7 +816,7 @@ fn unanswered_request_user_input_is_restored_from_history() {
 
     assert_eq!(
         pending_question_from_branch(&branch),
-        Some(crate::protocol::ExtensionUiRequest::Select {
+        Some(crate::agents::extensions::ExtensionUiRequest::Select {
             id: "restored-question:question-1".into(),
             title: "Run this command?".into(),
             options: vec!["Run".into(), "Cancel".into()],

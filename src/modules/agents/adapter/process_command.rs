@@ -33,7 +33,7 @@ impl AgentProcessCommand {
 
     pub(crate) fn command(&self, project: &Path) -> Result<access::PreparedCommand, String> {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
-        let mut environment = crate::shell_environment::project_shell_environment(project)?;
+        let mut environment = super::shell_environment::project_shell_environment(project)?;
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         let mut environment: Option<Vec<(std::ffi::OsString, std::ffi::OsString)>> = None;
         let environment_value = |name: &str| {

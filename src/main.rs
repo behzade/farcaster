@@ -1,4 +1,3 @@
-mod agent_activity;
 mod app;
 mod app_paths;
 mod assets;
@@ -16,10 +15,7 @@ mod persistent_vec;
 mod primitives;
 mod project_trust;
 mod project_trust_view;
-mod protocol;
 mod session_changes;
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
-mod shell_environment;
 mod state;
 #[cfg(test)]
 mod state_test;
@@ -33,6 +29,8 @@ mod user_invocations;
 
 pub(crate) use app::runtime;
 pub(crate) use app::workers;
+pub(crate) use modules::agents::extensions as protocol;
+pub(crate) use modules::sessions::activity as agent_activity;
 pub(crate) use modules::{access, agents, projects, repository, sessions};
 
 fn main() -> std::process::ExitCode {
@@ -41,7 +39,7 @@ fn main() -> std::process::ExitCode {
         return fail(error);
     }
 
-    if let Err(error) = shell_environment::import_app_shell_environment() {
+    if let Err(error) = app::shell_environment::import() {
         return fail(format!("import app shell environment: {error}"));
     }
 

@@ -9,13 +9,12 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
-const APP_ENV_IMPORTED: &str = "FARCASTER_SHELL_ENV_IMPORTED";
 const PROJECT_PATH_HANDOFF: &str = "FARCASTER_CAPTURED_PROJECT_PATH";
 const START_MARKER: &[u8] = b"\x1eFARCASTER_ENV_START\x1f\0";
 const END_MARKER: &[u8] = b"\x1eFARCASTER_ENV_END\x1f\0";
 const CAPTURE_COMMAND: &str = "/bin/sh -c \"command stty -echo -opost; command printf '\\\\036FARCASTER_ENV_START\\\\037\\\\0'; command env -0; command printf '\\\\036FARCASTER_ENV_END\\\\037\\\\0'\" 2>/dev/null; exit\n";
 
-type Environment = Vec<(OsString, OsString)>;
+pub(crate) type Environment = Vec<(OsString, OsString)>;
 
 static SHELL_ENVIRONMENTS: OnceLock<Mutex<HashMap<PathBuf, Environment>>> = OnceLock::new();
 
@@ -45,7 +44,7 @@ fn with_project_path_handoff(mut environment: Environment) -> Environment {
     environment
 }
 
-fn app_shell_environment() -> Result<Environment, String> {
+pub(crate) fn app_shell_environment() -> Result<Environment, String> {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .ok_or_else(|| "HOME is not set".to_owned())?;
@@ -68,38 +67,7 @@ fn shell_environment_at(working_directory: &Path) -> Result<Environment, String>
     Ok(environment)
 }
 
-pub(crate) fn import_app_shell_environment() -> Result<(), String> {
-    use std::os::unix::process::CommandExt as _;
-
-    if std::env::var(APP_ENV_IMPORTED).as_deref() == Ok("1") {
-        return Ok(());
-    }
-    let environment = app_shell_environment()?;
-    let executable = std::env::current_exe()
-        .map_err(|error| format!("resolve farcaster executable for shell environment: {error}"))?;
-    let error = Command::new(executable)
-        .args(std::env::args_os().skip(1))
-        .env_clear()
-        .envs(environment)
-        .env(APP_ENV_IMPORTED, "1")
-        .exec();
-    Err(format!(
-        "relaunch farcaster with the login-shell environment: {error}"
-    ))
-}
-
-pub(crate) fn terminal_login_shell_command() -> String {
-    let shell = std::env::var_os("FARCASTER_SHELL")
-        .map(PathBuf::from)
-        .unwrap_or_else(default_login_shell);
-    login_shell_command(&shell)
-}
-
-fn login_shell_command(shell: &Path) -> String {
-    format!("'{}' -l", shell.to_string_lossy().replace('\'', "'\\''"))
-}
-
-fn default_login_shell() -> PathBuf {
+pub(crate) fn default_login_shell() -> PathBuf {
     #[cfg(target_os = "macos")]
     let shell = account_login_shell().or_else(|| std::env::var_os("SHELL").map(PathBuf::from));
     #[cfg(target_os = "linux")]
@@ -255,14 +223,6 @@ mod tests {
     use tempfile::tempdir;
 
     type TestResult = Result<(), Box<dyn Error>>;
-
-    #[test]
-    fn login_shell_command_quotes_the_executable_path() {
-        assert_eq!(
-            login_shell_command(Path::new("/tmp/my shell's bin")),
-            "'/tmp/my shell'\\''s bin' -l"
-        );
-    }
 
     #[test]
     fn account_record_yields_its_absolute_login_shell() {

@@ -22,8 +22,8 @@ use crate::modules::agents::adapter::farcaster_mcp::INSTRUCTIONS;
 use crate::modules::agents::adapter::process_command::resolve_agent_program;
 use crate::{
     access,
+    agents::extensions::ExtensionUiResponse,
     agents::{AgentProcessCommand, PiEvent, PiRequest, encode_pi_request},
-    protocol::ExtensionUiResponse,
 };
 
 pub(crate) type PiProcessCommand = crate::agents::AgentProcessCommand;
@@ -108,7 +108,7 @@ fn rpc_command(
 }
 
 pub(crate) struct PiRpcProcess {
-    caller_identity: crate::workers::CallerIdentity,
+    caller_identity: crate::agents::CallerIdentity,
     _mcp_config: TransientMcpConfig,
     _sandbox: access::PreparedCommand,
     child: Arc<Mutex<Child>>,
@@ -163,7 +163,7 @@ impl PiRpcProcess {
         launch: SessionLaunch<'_>,
         wake: Option<thread::Thread>,
     ) -> Result<Self, String> {
-        let caller_identity = crate::workers::CallerRegistry::shared().issue();
+        let caller_identity = crate::agents::CallerRegistry::shared().issue();
         let mcp_config = TransientMcpConfig::create(caller_identity.token())?;
         let mut prepared = rpc_command(command, project, launch, mcp_config.path())?;
         let mut child = prepared

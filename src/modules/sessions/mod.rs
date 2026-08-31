@@ -1,3 +1,4 @@
+pub(crate) mod activity;
 mod adapter;
 mod contract;
 mod core;

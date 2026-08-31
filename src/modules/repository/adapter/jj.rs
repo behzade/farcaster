@@ -1,11 +1,37 @@
 use std::{ffi::OsString, path::PathBuf, sync::Arc, time::SystemTime};
 
 use super::super::{
-    ChangeKind, ChangeLayer, JujutsuIdentity, RepositoryBackend, RepositoryError, RepositoryKind,
-    SnapshotIdentity, SnapshotToken, WorkingCopySnapshot, change, require_complete_stdout,
+    ChangeKind, ChangeLayer, DiffResult, DiffTarget, JujutsuIdentity, RepositoryBackend,
+    RepositoryError, RepositoryKind, SnapshotIdentity, SnapshotToken, WorkingCopySnapshot, change,
+    core::port::{CommandOutput, RepositoryOperations},
+    diff_result, require_complete_stdout,
 };
-#[cfg(test)]
-use super::super::{DiffResult, DiffTarget, diff_result};
+
+pub(super) struct JujutsuOperations;
+
+impl RepositoryOperations for JujutsuOperations {
+    fn snapshot(
+        &self,
+        backend: &RepositoryBackend,
+    ) -> Result<WorkingCopySnapshot, RepositoryError> {
+        snapshot(backend)
+    }
+
+    fn load_diff(
+        &self,
+        backend: &RepositoryBackend,
+        target: DiffTarget,
+    ) -> Result<DiffResult, RepositoryError> {
+        load_diff(backend, target)
+    }
+
+    fn list_project_files(
+        &self,
+        backend: &RepositoryBackend,
+    ) -> Result<Vec<String>, RepositoryError> {
+        list_project_files(backend)
+    }
+}
 
 const OPERATION_TEMPLATE: &str = "id ++ \"\\n\"";
 const IDENTITY_TEMPLATE: &str = concat!(
@@ -104,7 +130,6 @@ pub(in crate::modules::repository) fn list_project_files(
     Ok(files)
 }
 
-#[cfg(test)]
 pub(in crate::modules::repository) fn load_diff(
     backend: &RepositoryBackend,
     target: DiffTarget,
@@ -167,7 +192,7 @@ fn run_at_operation(
     operation_id: &str,
     command: &[&str],
     project_scoped: bool,
-) -> Result<super::process::CommandOutput, RepositoryError> {
+) -> Result<CommandOutput, RepositoryError> {
     let mut arguments = vec![
         OsString::from("--no-pager"),
         OsString::from("--color=never"),
@@ -289,7 +314,6 @@ fn scope_change_to_project(
     }
 }
 
-#[cfg(test)]
 fn diff_fileset(target: &DiffTarget) -> Result<String, RepositoryError> {
     let target_fileset = literal_fileset(&target.relative_path)?;
     if let Some(source) = target.original_relative_path.as_deref() {
@@ -299,7 +323,6 @@ fn diff_fileset(target: &DiffTarget) -> Result<String, RepositoryError> {
     }
 }
 
-#[cfg(test)]
 fn literal_fileset(path: &std::path::Path) -> Result<String, RepositoryError> {
     let path = path
         .to_str()
@@ -307,7 +330,6 @@ fn literal_fileset(path: &std::path::Path) -> Result<String, RepositoryError> {
     Ok(format!("root-file:{}", encode_json_string(path)?))
 }
 
-#[cfg(test)]
 fn encode_json_string(value: &str) -> Result<String, RepositoryError> {
     serde_json::to_string(value).map_err(|error| invalid(format!("encode JSON string: {error}")))
 }

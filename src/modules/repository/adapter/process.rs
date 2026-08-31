@@ -1,13 +1,16 @@
 use std::{
     ffi::{OsStr, OsString},
     path::Path,
-    process::{Command, ExitStatus, Stdio},
+    process::{Command, Stdio},
     sync::mpsc,
     thread,
     time::{Duration, Instant},
 };
 
-use super::super::RepositoryError;
+use super::super::{
+    RepositoryError,
+    core::port::{CommandExecutor, CommandMode, CommandOutput},
+};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 const SPAWN_RETRY_GRACE: Duration = Duration::from_secs(1);
@@ -25,13 +28,56 @@ const ROUTING_ENVIRONMENT: [&str; 8] = [
     "JJ_REPO",
 ];
 
-#[derive(Debug)]
-pub(in crate::modules::repository) struct CommandOutput {
-    pub(in crate::modules::repository) status: ExitStatus,
-    pub(in crate::modules::repository) stdout: Vec<u8>,
-    pub(in crate::modules::repository) stderr: Vec<u8>,
-    pub(in crate::modules::repository) stdout_truncated: bool,
-    pub(in crate::modules::repository) stderr_truncated: bool,
+pub(super) struct ProcessExecutor {
+    program: OsString,
+    working_directory: std::path::PathBuf,
+    timeout: Duration,
+    sync_timeout: Duration,
+    output_limit: usize,
+    environment: Vec<(OsString, OsString)>,
+}
+
+impl ProcessExecutor {
+    pub(super) fn new(
+        program: OsString,
+        working_directory: std::path::PathBuf,
+        timeout: Duration,
+        sync_timeout: Duration,
+        output_limit: usize,
+        environment: Vec<(OsString, OsString)>,
+    ) -> Self {
+        Self {
+            program,
+            working_directory,
+            timeout,
+            sync_timeout,
+            output_limit,
+            environment,
+        }
+    }
+}
+
+impl CommandExecutor for ProcessExecutor {
+    fn executable(&self) -> &OsStr {
+        &self.program
+    }
+
+    fn run(
+        &self,
+        arguments: &[OsString],
+        mode: CommandMode,
+    ) -> Result<CommandOutput, RepositoryError> {
+        let timeout = if matches!(mode, CommandMode::Synchronization) {
+            self.sync_timeout
+        } else {
+            self.timeout
+        };
+        CommandRunner::new(timeout, self.output_limit, self.environment.clone()).run(
+            &self.program,
+            arguments,
+            &self.working_directory,
+        )
+    }
 }
 
 #[derive(Clone, Debug)]

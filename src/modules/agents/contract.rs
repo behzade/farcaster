@@ -1,5 +1,9 @@
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
+pub(crate) mod extensions;
+
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct AgentBackendId(String);
 
@@ -98,6 +102,32 @@ pub(crate) struct AgentBackendDescriptor {
     pub id: AgentBackendId,
     pub name: String,
     pub capabilities: AgentCapabilities,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub(crate) enum WorkerContext {
+    #[default]
+    Fresh,
+    Session {
+        session_locator: String,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WorkerInput {
+    pub(crate) id: String,
+    pub(crate) prompt: String,
+    pub(crate) options: Vec<String>,
+    pub(crate) secret: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct WorkerInputResponse {
+    pub(crate) id: String,
+    pub(crate) value: Option<String>,
+    pub(crate) cancel: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

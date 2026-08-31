@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::protocol::ExtensionUiRequest;
+use crate::agents::extensions::ExtensionUiRequest;
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub(crate) struct PiResponse {

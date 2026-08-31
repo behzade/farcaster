@@ -3,8 +3,36 @@ use std::{ffi::OsString, path::PathBuf, sync::Arc, time::SystemTime};
 use super::super::{
     ChangeKind, ChangeLayer, DiffResult, DiffTarget, GitIdentity, RepositoryBackend,
     RepositoryError, RepositoryKind, SnapshotIdentity, SnapshotToken, WorkingCopySnapshot, change,
-    command_failed, diff_result, require_complete_stdout,
+    command_failed,
+    core::port::{CommandOutput, RepositoryOperations},
+    diff_result, require_complete_stdout,
 };
+
+pub(super) struct GitOperations;
+
+impl RepositoryOperations for GitOperations {
+    fn snapshot(
+        &self,
+        backend: &RepositoryBackend,
+    ) -> Result<WorkingCopySnapshot, RepositoryError> {
+        snapshot(backend)
+    }
+
+    fn load_diff(
+        &self,
+        backend: &RepositoryBackend,
+        target: DiffTarget,
+    ) -> Result<DiffResult, RepositoryError> {
+        load_diff(backend, target)
+    }
+
+    fn list_project_files(
+        &self,
+        backend: &RepositoryBackend,
+    ) -> Result<Vec<String>, RepositoryError> {
+        list_project_files(backend)
+    }
+}
 
 pub(in crate::modules::repository) fn snapshot(
     backend: &RepositoryBackend,
@@ -108,9 +136,7 @@ pub(in crate::modules::repository) fn load_diff(
     ))
 }
 
-fn status_output(
-    backend: &RepositoryBackend,
-) -> Result<super::process::CommandOutput, RepositoryError> {
+fn status_output(backend: &RepositoryBackend) -> Result<CommandOutput, RepositoryError> {
     let mut arguments = [
         "--no-pager",
         "--no-optional-locks",

@@ -9,11 +9,10 @@ use serde_json::Value;
 
 use super::process::{PiProcessCommand, PiRpcProcess};
 use crate::{
-    agents::{PiEvent, PiRequest},
-    protocol::{ExtensionUiRequest, ExtensionUiResponse, PromptMode, SessionState},
-    workers::{
-        WorkerContext, WorkerEvent, WorkerInput, WorkerInputResponse, WorkerLaunch, WorkerSendMode,
-        WorkerSession, WorkerSessionFactory,
+    agents::extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptMode, SessionState},
+    agents::{
+        PiEvent, PiRequest, WorkerContext, WorkerEvent, WorkerInput, WorkerInputResponse,
+        WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory,
     },
 };
 
@@ -459,7 +458,7 @@ mod tests {
             worker_input(ExtensionUiRequest::Notify {
                 id: "notice".into(),
                 message: "done".into(),
-                tone: crate::protocol::NotifyTone::Info,
+                tone: crate::agents::extensions::NotifyTone::Info,
             })
             .expect("non-interactive request")
             .is_none()

@@ -2,7 +2,9 @@ use std::{collections::HashMap, path::PathBuf, time::SystemTime};
 
 use serde_json::Value;
 
-use crate::{agent_activity::AgentActivity, protocol::ExtensionUiRequest};
+use crate::agents::extensions::ExtensionUiRequest;
+
+use super::activity::AgentActivity;
 
 pub(crate) const RUNNING_ACTIVITY_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(30 * 60);

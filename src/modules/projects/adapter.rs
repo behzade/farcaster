@@ -1,67 +1,8 @@
-use std::{
-    collections::HashSet,
-    fs,
-    path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{collections::HashSet, fs, path::Path};
 
-use crate::state::StateStore;
+use super::Registry;
 
-use super::{DraftSession, Registry};
-
-pub(crate) fn new_draft(project: PathBuf) -> Result<DraftSession, String> {
-    let elapsed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    let id = format!("draft-{}-{}", elapsed.as_nanos(), std::process::id());
-    draft_with_id_at(
-        id,
-        project,
-        elapsed.as_millis().try_into().unwrap_or(u64::MAX),
-    )
-}
-
-fn draft_with_id_at(id: String, project: PathBuf, created_ms: u64) -> Result<DraftSession, String> {
-    let mut store = StateStore::open()?;
-    let app_session_id = store.allocate_app_session_id(&id, created_ms)?;
-    Ok(DraftSession::new(id, app_session_id, project, created_ms))
-}
-
-pub(crate) fn load() -> Result<Registry, String> {
-    let mut store = StateStore::open()?;
-    let registry = store.load_registry()?;
-    if registry == Registry::default() {
-        let legacy_path = registry_path()?;
-        if legacy_path.exists() {
-            let legacy = load_from(&legacy_path)?;
-            store.save_registry(&legacy)?;
-            return Ok(legacy);
-        }
-    }
-    Ok(registry)
-}
-
-pub(crate) fn save(registry: &Registry) -> Result<(), String> {
-    StateStore::open()?.save_registry(registry)
-}
-
-pub(crate) fn load_app_session_order() -> Result<Vec<i64>, String> {
-    StateStore::open()?.load_app_session_order()
-}
-
-pub(crate) fn save_app_session_order(order: &[i64]) -> Result<(), String> {
-    StateStore::open()?.save_app_session_order(order)
-}
-
-pub(crate) fn most_recent() -> Option<PathBuf> {
-    load().ok()?.projects.into_iter().next()
-}
-
-fn registry_path() -> Result<PathBuf, String> {
-    crate::app_paths::data_dir().map(|root| root.join("projects.json"))
-}
-
-pub(super) fn load_from(path: &Path) -> Result<Registry, String> {
+pub(crate) fn load_legacy(path: &Path) -> Result<Registry, String> {
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {

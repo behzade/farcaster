@@ -39,7 +39,7 @@ impl FarcasterApp {
         } else {
             self.clear_terminal_process();
             let mut options = TerminalOptions::new(
-                crate::shell_environment::terminal_login_shell_command(),
+                super::shell_environment::terminal_login_shell_command(),
                 project.clone(),
             );
             options.configuration = TerminalConfiguration::Custom(crate::theme::terminal_theme());
