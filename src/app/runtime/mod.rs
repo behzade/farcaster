@@ -36,8 +36,7 @@ use crate::{
     sessions::{
         self, ExternalActivityTracker, LoadedHistory, SessionDiscovery, SessionSummary,
         SessionWatchEvent, SessionWatcher, TransferMember, archived_root_family_for_path,
-        configured_session_root, discover, load_history, project_display_history,
-        session_family_for_path,
+        configured_session_root, project_display_history, session_family_for_path,
     },
 };
 use session_controls::PendingSessionControls;
@@ -254,6 +253,65 @@ struct RuntimeOwner {
     startup_history_loaded: bool,
     state: Option<StateStore>,
     session_query: String,
+}
+
+fn import_agent_session(session: agents::DiscoveredSession) -> SessionSummary {
+    SessionSummary::import(crate::sessions::SessionImport {
+        id: session.id,
+        harness: session.harness,
+        path: session.path,
+        project: session.project,
+        title: session.title,
+        first_user_message: session.first_user_message,
+        timestamp: session.timestamp,
+        parent_session: session.parent_session,
+        modified: session.modified,
+        message_count: session.message_count,
+        usage: crate::sessions::UsageSummary {
+            input: session.usage.input,
+            output: session.usage.output,
+            cache_read: session.usage.cache_read,
+            cache_write: session.usage.cache_write,
+            total: session.usage.total,
+            cost_micros: session.usage.cost_micros,
+        },
+        archived: session.archived,
+        is_running: session.is_running,
+        search: session.search,
+    })
+}
+
+fn import_agent_history(history: agents::DiscoveredHistory) -> LoadedHistory {
+    LoadedHistory {
+        messages: history.messages,
+        model: history.model,
+        thinking_level: history.thinking_level,
+        pending_question: None,
+    }
+}
+
+fn restored_question_request(question: crate::sessions::RestoredQuestion) -> ExtensionUiRequest {
+    if question.options.is_empty() {
+        ExtensionUiRequest::Input {
+            id: question.id,
+            title: question.title,
+            placeholder: None,
+            timeout: None,
+        }
+    } else {
+        ExtensionUiRequest::Select {
+            id: question.id,
+            title: question.title,
+            options: question.options,
+            timeout: None,
+        }
+    }
+}
+
+fn load_session_history(path: &std::path::Path) -> Result<LoadedHistory, String> {
+    agents::load_external_history(path)
+        .map(|result| result.map(import_agent_history))
+        .unwrap_or_else(|| sessions::load_history(path))
 }
 
 struct DiscoveryResult {
@@ -898,7 +956,7 @@ impl RuntimeOwner {
                     crate::app::infrastructure::performance::OperationKind::HistoryLoad,
                     0,
                 );
-                let result = load_history(&path);
+                let result = load_session_history(&path);
                 if let Ok(history) = &result {
                     operation.set_work(history.messages.len());
                 }
@@ -1010,7 +1068,7 @@ impl RuntimeOwner {
             stats,
             auto_retry,
             history_preview: true,
-            pending_question: history.pending_question,
+            pending_question: history.pending_question.map(restored_question_request),
             prefill_model,
             prefill_thinking_level: history.thinking_level,
             ..RuntimeSnapshot::default()

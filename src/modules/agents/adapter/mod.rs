@@ -61,7 +61,12 @@ pub(crate) fn spawn_session(
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| "codex".into());
         let (worker, locator, metadata) = codex::spawn_main(&command, &launch)?;
+        let locator_root = config
+            .session_locator_root
+            .as_deref()
+            .ok_or_else(|| "agent session locator root is not configured".to_owned())?;
         return main_session::WorkerSessionTransport::new(
+            locator_root,
             "codex-cli",
             locator,
             worker,
@@ -75,7 +80,12 @@ pub(crate) fn spawn_session(
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| "opencode2".into());
         let (worker, locator, metadata) = opencode::spawn_main(&command, &launch)?;
+        let locator_root = config
+            .session_locator_root
+            .as_deref()
+            .ok_or_else(|| "agent session locator root is not configured".to_owned())?;
         return main_session::WorkerSessionTransport::new(
+            locator_root,
             "opencode2",
             locator,
             worker,
@@ -142,8 +152,12 @@ pub(crate) fn delete_external_session(path: &std::path::Path) -> Option<Result<(
 }
 
 pub(crate) fn discover_external_sessions(
+    locator_root: Option<&std::path::Path>,
     query: &str,
-) -> (Vec<crate::sessions::SessionSummary>, bool) {
+) -> (Vec<crate::agents::DiscoveredSession>, bool) {
+    let Some(locator_root) = locator_root else {
+        return (Vec::new(), false);
+    };
     let statuses = backend_statuses();
     let mut sessions = Vec::new();
     let mut exhaustive = true;
@@ -151,7 +165,7 @@ pub(crate) fn discover_external_sessions(
         .iter()
         .any(|backend| backend.id == "codex-cli" && backend.available)
     {
-        match codex::discover(query) {
+        match codex::discover(locator_root, query) {
             Ok(mut discovered) => sessions.append(&mut discovered),
             Err(_) => exhaustive = false,
         }
@@ -160,7 +174,7 @@ pub(crate) fn discover_external_sessions(
         .iter()
         .any(|backend| backend.id == "opencode2" && backend.available)
     {
-        match opencode::discover(query) {
+        match opencode::discover(locator_root, query) {
             Ok(mut discovered) => sessions.append(&mut discovered),
             Err(_) => exhaustive = false,
         }
@@ -170,7 +184,7 @@ pub(crate) fn discover_external_sessions(
 
 pub(crate) fn load_external_history(
     path: &std::path::Path,
-) -> Option<Result<crate::sessions::LoadedHistory, String>> {
+) -> Option<Result<crate::agents::DiscoveredHistory, String>> {
     if main_session::external_session_locator("codex-cli", path).is_some() {
         return Some(codex::load_history(path));
     }

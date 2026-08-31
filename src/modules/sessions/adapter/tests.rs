@@ -747,7 +747,7 @@ fn history_follows_the_current_branch_and_projects_display_entries() {
 fn display_history_hides_internal_sandbox_continuations() {
     let entries = vec![
         serde_json::json!({"type":"message","id":"one","parentId":null,"message":{"role":"user","content":"visible"}}),
-        serde_json::json!({"type":"message","id":"two","parentId":"one","message":{"role":"user","content":crate::agents::sandbox_grant_continuation()}}),
+        serde_json::json!({"type":"message","id":"two","parentId":"one","message":{"role":"user","content":"<farcaster-internal kind=\"sandbox-grant-activated\">hidden</farcaster-internal>"}}),
         serde_json::json!({"type":"message","id":"three","parentId":"two","message":{"role":"assistant","content":[{"type":"text","text":"continued"}]}}),
     ];
 
@@ -831,11 +831,10 @@ fn unanswered_request_user_input_is_restored_from_history() {
 
     assert_eq!(
         pending_question_from_branch(&branch),
-        Some(crate::agents::extensions::ExtensionUiRequest::Select {
+        Some(RestoredQuestion {
             id: "restored-question:question-1".into(),
             title: "Run this command?".into(),
             options: vec!["Run".into(), "Cancel".into()],
-            timeout: None,
         })
     );
 

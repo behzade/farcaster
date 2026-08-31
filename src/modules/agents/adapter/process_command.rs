@@ -18,6 +18,7 @@ impl AgentLaunchConfig {
             sandbox: access::test_sandbox_bypass(),
             grants: None,
             app_proxy: None,
+            session_locator_root: None,
         }
     }
 

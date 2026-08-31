@@ -53,6 +53,7 @@ fn main() -> std::process::ExitCode {
     };
     let worker_command = agents::AgentLaunchConfig {
         grants: Some(approval_ui.grants()),
+        session_locator_root: Some(data_root.join("session-locators")),
         ..agents::AgentLaunchConfig::default()
     };
     let (factories, default_backend) = agents::worker_factories(worker_command);

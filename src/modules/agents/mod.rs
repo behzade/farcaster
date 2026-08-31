@@ -9,8 +9,9 @@ pub(crate) use adapter::{
 };
 pub(crate) use contract::extensions;
 pub(crate) use contract::{
-    AgentLaunchConfig, FileAccessMode, NetworkAccessMode, PermissionLevel, QueuedPrompt,
-    SessionCommand, SessionEvent, SessionLaunch, SessionResponse, SessionStart, SessionTransport,
+    AgentLaunchConfig, DiscoveredHistory, DiscoveredSession, DiscoveredUsage, FileAccessMode,
+    NetworkAccessMode, PermissionLevel, QueuedPrompt, SessionCommand, SessionEvent, SessionLaunch,
+    SessionResponse, SessionStart, SessionTransport,
     StartWorker, WorkerContext, WorkerInput, WorkerInputResponse, WorkerMessageMode,
 };
 pub(crate) use core::{

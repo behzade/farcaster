@@ -1,4 +1,4 @@
-use std::{fmt, path::PathBuf, thread};
+use std::{fmt, path::PathBuf, thread, time::SystemTime};
 
 use serde::{Deserialize, Serialize};
 
@@ -9,6 +9,41 @@ pub(crate) use workers::{StartWorker, WorkerMessageMode, WorkerSnapshot, WorkerS
 
 use crate::access::{GrantStore, SandboxRuntime};
 use extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptImage, PromptMode};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DiscoveredSession {
+    pub(crate) id: String,
+    pub(crate) harness: String,
+    pub(crate) path: PathBuf,
+    pub(crate) project: PathBuf,
+    pub(crate) title: String,
+    pub(crate) first_user_message: String,
+    pub(crate) timestamp: String,
+    pub(crate) parent_session: Option<String>,
+    pub(crate) modified: SystemTime,
+    pub(crate) message_count: usize,
+    pub(crate) usage: DiscoveredUsage,
+    pub(crate) archived: bool,
+    pub(crate) is_running: bool,
+    pub(crate) search: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct DiscoveredUsage {
+    pub(crate) input: u64,
+    pub(crate) output: u64,
+    pub(crate) cache_read: u64,
+    pub(crate) cache_write: u64,
+    pub(crate) total: u64,
+    pub(crate) cost_micros: u64,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct DiscoveredHistory {
+    pub(crate) messages: Vec<serde_json::Value>,
+    pub(crate) model: Option<(String, String)>,
+    pub(crate) thinking_level: Option<String>,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct QueuedPrompt {
@@ -30,6 +65,7 @@ pub(crate) struct AgentLaunchConfig {
     pub(crate) sandbox: SandboxRuntime,
     pub(crate) grants: Option<GrantStore>,
     pub(crate) app_proxy: Option<String>,
+    pub(crate) session_locator_root: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

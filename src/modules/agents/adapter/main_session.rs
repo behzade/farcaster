@@ -35,12 +35,13 @@ pub(super) struct WorkerSessionTransport {
 
 impl WorkerSessionTransport {
     pub(super) fn new(
+        locator_root: &std::path::Path,
         harness: &str,
         locator: String,
         worker: Box<dyn WorkerSession>,
         metadata: MainSessionMetadata,
     ) -> Result<Self, String> {
-        let path = external_session_path(harness, &locator)?;
+        let path = external_session_path(locator_root, harness, &locator);
         let model = metadata.models.first().and_then(|model| {
             Some((
                 model.get("provider")?.as_str()?.to_owned(),
@@ -347,12 +348,12 @@ fn interaction(input: WorkerInput) -> ExtensionUiRequest {
 }
 
 pub(in crate::modules::agents::adapter) fn external_session_path(
+    locator_root: &std::path::Path,
     harness: &str,
     locator: &str,
-) -> Result<PathBuf, String> {
+) -> PathBuf {
     let encoded = url::form_urlencoded::byte_serialize(locator.as_bytes()).collect::<String>();
-    crate::app::paths::data_dir()
-        .map(|root| root.join("session-locators").join(harness).join(encoded))
+    locator_root.join(harness).join(encoded)
 }
 
 pub(in crate::modules::agents::adapter) fn external_session_locator(

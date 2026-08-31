@@ -2,8 +2,6 @@ use std::{collections::HashMap, path::PathBuf, time::SystemTime};
 
 use serde_json::Value;
 
-use crate::agents::extensions::ExtensionUiRequest;
-
 use super::activity::AgentActivity;
 
 pub(crate) const RUNNING_ACTIVITY_TIMEOUT: std::time::Duration =
@@ -71,6 +69,24 @@ impl SessionTarget {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SessionImport {
+    pub id: String,
+    pub harness: String,
+    pub path: PathBuf,
+    pub project: PathBuf,
+    pub title: String,
+    pub first_user_message: String,
+    pub timestamp: String,
+    pub parent_session: Option<String>,
+    pub modified: SystemTime,
+    pub message_count: usize,
+    pub usage: UsageSummary,
+    pub archived: bool,
+    pub is_running: bool,
+    pub search: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SessionSummary {
     pub id: String,
     pub app_session_id: i64,
@@ -92,6 +108,33 @@ pub(crate) struct SessionSummary {
 }
 
 impl SessionSummary {
+    pub(crate) fn import(value: SessionImport) -> Self {
+        let is_running = value.is_running
+            && SystemTime::now()
+                .duration_since(value.modified)
+                .unwrap_or_default()
+                <= RUNNING_ACTIVITY_TIMEOUT;
+        Self {
+            id: value.id,
+            app_session_id: 0,
+            harness: value.harness,
+            path: value.path,
+            project: value.project,
+            title: value.title,
+            first_user_message: value.first_user_message,
+            timestamp: value.timestamp,
+            parent_session: value.parent_session,
+            modified: value.modified,
+            message_count: value.message_count,
+            usage: value.usage,
+            archived: value.archived,
+            is_running,
+            model: None,
+            thinking_level: None,
+            search: value.search.to_lowercase(),
+        }
+    }
+
     pub(crate) fn target(&self) -> SessionTarget {
         SessionTarget {
             harness: self.harness.clone(),
@@ -137,10 +180,17 @@ pub(crate) struct SessionTransfer {
     pub paths: HashMap<PathBuf, PathBuf>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RestoredQuestion {
+    pub id: String,
+    pub title: String,
+    pub options: Vec<String>,
+}
+
 #[derive(Debug)]
 pub(crate) struct LoadedHistory {
     pub messages: Vec<Value>,
     pub model: Option<(String, String)>,
     pub thinking_level: Option<String>,
-    pub pending_question: Option<ExtensionUiRequest>,
+    pub pending_question: Option<RestoredQuestion>,
 }

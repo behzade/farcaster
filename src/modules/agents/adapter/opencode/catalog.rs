@@ -7,14 +7,17 @@ use std::{
 use serde_json::{Value, json};
 
 use super::server::OpenCodeServerProcess;
-use crate::sessions::{LoadedHistory, SessionSummary, UsageSummary};
+use crate::agents::{DiscoveredHistory, DiscoveredSession, DiscoveredUsage};
 
 use super::super::{
     child_stderr,
     main_session::{external_session_locator, external_session_path},
 };
 
-pub(in crate::modules::agents::adapter) fn discover(query: &str) -> Result<Vec<SessionSummary>, String> {
+pub(in crate::modules::agents::adapter) fn discover(
+    locator_root: &Path,
+    query: &str,
+) -> Result<Vec<DiscoveredSession>, String> {
     with_server(|server| {
         let value = server.client().list_sessions(query)?;
         let rows = value
@@ -22,7 +25,9 @@ pub(in crate::modules::agents::adapter) fn discover(query: &str) -> Result<Vec<S
             .or_else(|| value.get("data").and_then(Value::as_array))
             .cloned()
             .unwrap_or_default();
-        rows.iter().filter_map(summary).collect()
+        rows.iter()
+            .filter_map(|value| summary(locator_root, value))
+            .collect()
     })
 }
 
@@ -37,7 +42,9 @@ pub(in crate::modules::agents::adapter) fn delete_session(session_id: &str) -> R
     with_server(|server| server.client().delete_session(session_id))
 }
 
-pub(in crate::modules::agents::adapter) fn load_history(path: &Path) -> Result<LoadedHistory, String> {
+pub(in crate::modules::agents::adapter) fn load_history(
+    path: &Path,
+) -> Result<DiscoveredHistory, String> {
     let locator = external_session_locator("opencode2", path)
         .ok_or_else(|| format!("invalid OpenCode session locator: {}", path.display()))?;
     with_server(|server| {
@@ -51,11 +58,10 @@ pub(in crate::modules::agents::adapter) fn load_history(path: &Path) -> Result<L
             .map(|message| json!({"type": "message", "message": message}))
             .collect();
         let _session = server.client().get_session(&locator)?;
-        Ok(LoadedHistory {
+        Ok(DiscoveredHistory {
             messages,
             model: None,
             thinking_level: None,
-            pending_question: None,
         })
     })
 }
@@ -85,7 +91,10 @@ fn with_server<T>(
     }
 }
 
-fn summary(value: &Value) -> Option<Result<SessionSummary, String>> {
+fn summary(
+    locator_root: &Path,
+    value: &Value,
+) -> Option<Result<DiscoveredSession, String>> {
     let id = value.get("id")?.as_str()?;
     let directory = value
         .pointer("/location/directory")
@@ -120,34 +129,31 @@ fn summary(value: &Value) -> Option<Result<SessionSummary, String>> {
         .get("status")
         .and_then(Value::as_str)
         .is_some_and(|status| matches!(status, "running" | "active"));
-    let path = match external_session_path("opencode2", id) {
-        Ok(path) => path,
-        Err(error) => return Some(Err(error)),
-    };
+    let path = external_session_path(locator_root, "opencode2", id);
     let search = format!("{title} {first_user_message} {directory} opencode");
-    Some(Ok(SessionSummary::from_cached_for_harness(
-        id.to_owned(),
-        "opencode2".into(),
+    Some(Ok(DiscoveredSession {
+        id: id.to_owned(),
+        harness: "opencode2".into(),
         path,
         project,
         title,
         first_user_message,
         timestamp,
-        value
+        parent_session: value
             .get("parentID")
             .and_then(Value::as_str)
             .map(str::to_owned),
         modified,
-        value
+        message_count: value
             .get("messageCount")
             .and_then(Value::as_u64)
             .and_then(|count| count.try_into().ok())
             .unwrap_or(0),
-        UsageSummary::default(),
+        usage: DiscoveredUsage::default(),
         archived,
         is_running,
         search,
-    )))
+    }))
 }
 
 fn history_message(value: &Value) -> Option<Value> {
@@ -187,7 +193,7 @@ mod tests {
             "title": "Implement feature",
             "time": {"created": 1, "updated": 2},
         });
-        let session = summary(&value).ok_or("summary")??;
+        let session = summary(project.as_path(), &value).ok_or("summary")??;
         assert_eq!(session.harness, "opencode2");
         assert_eq!(session.title, "Implement feature");
         Ok(())

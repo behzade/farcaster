@@ -35,6 +35,7 @@ impl Default for crate::agents::AgentLaunchConfig {
             sandbox: access::configured_sandbox_runtime(std::env::var_os("FARCASTER_NONO_PATH")),
             grants: None,
             app_proxy: None,
+            session_locator_root: None,
         }
     }
 }

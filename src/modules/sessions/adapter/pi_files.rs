@@ -10,14 +10,11 @@ use std::{
 
 use serde_json::Value;
 
-use crate::{
-    agents::extensions::ExtensionUiRequest,
-    sessions::activity::{ActivityBuilder, AgentActivity, parse_iso_timestamp},
-};
+use crate::sessions::activity::{ActivityBuilder, AgentActivity, parse_iso_timestamp};
 
 use super::super::{
-    LoadedHistory, RUNNING_ACTIVITY_TIMEOUT, SessionDiscovery, SessionSummary, UsageSummary,
-    filter_session_tree, normalize_lexical,
+    LoadedHistory, RUNNING_ACTIVITY_TIMEOUT, RestoredQuestion, SessionDiscovery, SessionSummary,
+    UsageSummary, filter_session_tree, normalize_lexical,
 };
 #[cfg(test)]
 use super::super::{descendant_sessions, is_subagent_path, root_session_for_path, root_sessions};
@@ -250,7 +247,7 @@ fn is_application_exit(entry: &Value) -> bool {
     )
 }
 
-fn pending_question_from_branch(branch: &[&Value]) -> Option<ExtensionUiRequest> {
+fn pending_question_from_branch(branch: &[&Value]) -> Option<RestoredQuestion> {
     let mut answered = HashSet::new();
     let mut application_exited = false;
     for entry in branch.iter().rev() {
@@ -321,20 +318,10 @@ fn pending_question_from_branch(branch: &[&Value]) -> Option<ExtensionUiRequest>
                 .map(str::to_owned)
                 .collect::<Vec<_>>();
             let id = format!("restored-question:{tool_call_id}");
-            return Some(if options.is_empty() {
-                ExtensionUiRequest::Input {
-                    id,
-                    title: question.to_owned(),
-                    placeholder: None,
-                    timeout: None,
-                }
-            } else {
-                ExtensionUiRequest::Select {
-                    id,
-                    title: question.to_owned(),
-                    options,
-                    timeout: None,
-                }
+            return Some(RestoredQuestion {
+                id,
+                title: question.to_owned(),
+                options,
             });
         }
         return None;
@@ -392,7 +379,7 @@ fn entry_message(entry: &Value) -> Option<Value> {
     match entry.get("type").and_then(Value::as_str)? {
         "message" => entry
             .get("message")
-            .filter(|message| !crate::agents::is_hidden_user_message(message))
+            .filter(|message| !is_private_application_message(message))
             .cloned(),
         "custom_message" => Some(json_object([
             ("role", Value::String("custom".into())),
@@ -696,7 +683,7 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
             }
             Some("message") => {
                 if let Some(message) = entry.get("message") {
-                    if crate::agents::is_hidden_user_message(message) {
+                    if is_private_application_message(message) {
                         activity_entries.push(entry);
                         continue;
                     }
@@ -928,6 +915,22 @@ fn parent_session_from_path(path: &Path) -> Option<String> {
         }
     }
     None
+}
+
+fn is_private_application_message(message: &Value) -> bool {
+    message.get("role").and_then(Value::as_str) == Some("user")
+        && first_message_text(message)
+            .is_some_and(|text| text.starts_with("<farcaster-internal "))
+}
+
+fn first_message_text(message: &Value) -> Option<&str> {
+    let content = message.get("content")?;
+    content.as_str().or_else(|| {
+        content
+            .as_array()?
+            .iter()
+            .find_map(|block| block.get("text").and_then(Value::as_str))
+    })
 }
 
 fn visible_user_text(message: &Value) -> String {

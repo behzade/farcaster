@@ -16,6 +16,21 @@ pub(super) struct UiEventSender {
     pub(super) wake: async_channel::Sender<()>,
 }
 
+fn delete_session_files(paths: &[PathBuf]) -> Result<Vec<(PathBuf, String)>, String> {
+    if paths
+        .first()
+        .is_some_and(|path| agents::is_external_session(path))
+    {
+        for path in paths.iter().rev() {
+            agents::delete_external_session(path)
+                .ok_or_else(|| "session family mixes backend locators".to_owned())??;
+        }
+        Ok(Vec::new())
+    } else {
+        sessions::delete_family(paths)
+    }
+}
+
 impl UiEventSender {
     fn send(&self, event: RuntimeEvent) -> Result<(), ()> {
         self.events.send(event).map_err(|_| ())?;
@@ -35,6 +50,9 @@ impl RuntimeHandle {
         let command = AgentLaunchConfig {
             grants: Some(grants),
             app_proxy,
+            session_locator_root: crate::app::paths::data_dir()
+                .ok()
+                .map(|root| root.join("session-locators")),
             ..AgentLaunchConfig::default()
         };
         Self::spawn_with(project, draft_id, initial_session, command)
@@ -617,7 +635,7 @@ fn run_supervisor(
                             selected = catalog_key.clone();
                             generation = generation.saturating_add(1);
                         }
-                        let leftovers = sessions::delete_family(&paths)?;
+                        let leftovers = delete_session_files(&paths)?;
                         let state_warning = sessions::delete_state(&mut state, &paths).err();
                         Ok((family_paths, leftovers, state_warning))
                     })();

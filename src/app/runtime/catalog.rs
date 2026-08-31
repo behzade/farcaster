@@ -3,6 +3,22 @@ use super::*;
 #[cfg(test)]
 use crate::sessions::RUNNING_ACTIVITY_TIMEOUT;
 
+fn discover_catalog(
+    locator_root: Option<&std::path::Path>,
+    query: &str,
+) -> Result<SessionDiscovery, String> {
+    let mut discovery = sessions::discover(query)?;
+    let (external, external_exhaustive) = agents::discover_external_sessions(locator_root, query);
+    discovery
+        .sessions
+        .extend(external.into_iter().map(import_agent_session));
+    discovery.exhaustive &= external_exhaustive;
+    discovery
+        .sessions
+        .sort_by_key(|session| std::cmp::Reverse(session.modified));
+    Ok(discovery)
+}
+
 impl RuntimeOwner {
     pub(super) fn load_sessions(&mut self, query: String) {
         self.session_query = query;
@@ -54,11 +70,12 @@ impl RuntimeOwner {
         self.session_discovery_in_flight = true;
         let generation = self.session_generation;
         let sender = self.discovery_tx.clone();
+        let locator_root = self.process_command.session_locator_root.clone();
         let wake = thread::current();
         if let Err(error) = thread::Builder::new()
             .name("farcaster-sessions".into())
             .spawn(move || {
-                let result = discover("");
+                let result = discover_catalog(locator_root.as_deref(), "");
                 let _ = sender.send(DiscoveryResult { generation, result });
                 wake.unpark();
             })

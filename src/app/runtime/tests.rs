@@ -131,6 +131,7 @@ fn owner_without_process(
                 sandbox: crate::access::test_sandbox_bypass(),
                 grants: None,
                 app_proxy: None,
+                session_locator_root: None,
             },
             process: None,
             snapshot: RuntimeSnapshot {
@@ -1717,6 +1718,7 @@ fn failed_model_reconnect_keeps_the_loaded_history() {
         sandbox: crate::access::test_sandbox_bypass(),
         grants: None,
         app_proxy: None,
+        session_locator_root: None,
     };
     preview_history(&mut owner, session.clone(), "keep this history");
 
@@ -1755,6 +1757,7 @@ fn failed_resume_publishes_no_state_from_the_previous_process() {
             sandbox: crate::access::test_sandbox_bypass(),
             grants: None,
             app_proxy: None,
+            session_locator_root: None,
         },
         process: None,
         snapshot: RuntimeSnapshot {
@@ -1884,6 +1887,7 @@ fn failed_start_marks_the_deferred_prompt_failed() -> Result<(), Box<dyn std::er
         sandbox: crate::access::test_sandbox_bypass(),
         grants: None,
         app_proxy: None,
+        session_locator_root: None,
     };
     owner.state = Some(StateStore::open_at(&database)?);
 
@@ -2031,11 +2035,10 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
             messages: vec![json!({"role":"user","content":"previewed"})],
             model: None,
             thinking_level: None,
-            pending_question: Some(ExtensionUiRequest::Input {
+            pending_question: Some(crate::sessions::RestoredQuestion {
                 id: "restored-question:one".into(),
                 title: "Continue?".into(),
-                placeholder: None,
-                timeout: None,
+                options: Vec::new(),
             }),
         }),
     });

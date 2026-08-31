@@ -11,14 +11,17 @@ use super::{
     connection::CodexConnection,
     contract::CodexClientInfo,
 };
-use crate::sessions::{LoadedHistory, SessionSummary, UsageSummary};
+use crate::agents::{DiscoveredHistory, DiscoveredSession, DiscoveredUsage};
 
 use super::super::{
     child_stderr,
     main_session::{external_session_locator, external_session_path},
 };
 
-pub(in crate::modules::agents::adapter) fn discover(query: &str) -> Result<Vec<SessionSummary>, String> {
+pub(in crate::modules::agents::adapter) fn discover(
+    locator_root: &Path,
+    query: &str,
+) -> Result<Vec<DiscoveredSession>, String> {
     with_connection(|connection| {
         let mut sessions = Vec::new();
         for archived in [false, true] {
@@ -39,7 +42,7 @@ pub(in crate::modules::agents::adapter) fn discover(query: &str) -> Result<Vec<S
                 .into_iter()
                 .flatten()
             {
-                if let Some(summary) = summary(thread, archived)? {
+                if let Some(summary) = summary(locator_root, thread, archived)? {
                     sessions.push(summary);
                 }
             }
@@ -68,7 +71,9 @@ pub(in crate::modules::agents::adapter) fn delete_session(session_id: &str) -> R
     })
 }
 
-pub(in crate::modules::agents::adapter) fn load_history(path: &Path) -> Result<LoadedHistory, String> {
+pub(in crate::modules::agents::adapter) fn load_history(
+    path: &Path,
+) -> Result<DiscoveredHistory, String> {
     let locator = external_session_locator("codex-cli", path)
         .ok_or_else(|| format!("invalid Codex session locator: {}", path.display()))?;
     with_connection(|connection| {
@@ -99,11 +104,10 @@ pub(in crate::modules::agents::adapter) fn load_history(path: &Path) -> Result<L
         let model = string(thread, &["model"])
             .map(|model| ("openai".to_owned(), model.to_owned()));
         let thinking_level = string(thread, &["effort", "reasoningEffort"]).map(str::to_owned);
-        Ok(LoadedHistory {
+        Ok(DiscoveredHistory {
             messages,
             model,
             thinking_level,
-            pending_question: None,
         })
     })
 }
@@ -148,7 +152,11 @@ fn connect(
     Ok(connection)
 }
 
-fn summary(thread: &Value, archived: bool) -> Result<Option<SessionSummary>, String> {
+fn summary(
+    locator_root: &Path,
+    thread: &Value,
+    archived: bool,
+) -> Result<Option<DiscoveredSession>, String> {
     let Some(id) = string(thread, &["id"]) else {
         return Ok(None);
     };
@@ -172,11 +180,11 @@ fn summary(thread: &Value, archived: bool) -> Result<Option<SessionSummary>, Str
     let is_running = status(thread).is_some_and(|status| {
         matches!(status, "active" | "running" | "inProgress" | "in_progress")
     });
-    let path = external_session_path("codex-cli", id)?;
+    let path = external_session_path(locator_root, "codex-cli", id);
     let search = format!("{title} {first_user_message} {cwd} codex");
-    Ok(Some(SessionSummary::from_cached_for_harness(
-        id.to_owned(),
-        "codex-cli".into(),
+    Ok(Some(DiscoveredSession {
+        id: id.to_owned(),
+        harness: "codex-cli".into(),
         path,
         project,
         title,
@@ -184,15 +192,15 @@ fn summary(thread: &Value, archived: bool) -> Result<Option<SessionSummary>, Str
         timestamp,
         parent_session,
         modified,
-        thread
+        message_count: thread
             .get("turns")
             .and_then(Value::as_array)
             .map_or(0, Vec::len),
-        UsageSummary::default(),
+        usage: DiscoveredUsage::default(),
         archived,
         is_running,
         search,
-    )))
+    }))
 }
 
 fn history_message(item: &Value) -> Option<Value> {
@@ -282,7 +290,7 @@ mod tests {
                 .as_secs(),
             "status": {"type": "active"},
         });
-        let session = summary(&value, false)?.ok_or("summary")?;
+        let session = summary(project.as_path(), &value, false)?.ok_or("summary")?;
         assert_eq!(session.harness, "codex-cli");
         assert!(session.is_running);
         assert_eq!(session.title, "Fix tests");
