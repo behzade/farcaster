@@ -76,6 +76,7 @@ pub(crate) struct ApprovalPrompt {
     pub(crate) id: String,
     pub(crate) title: String,
     pub(crate) options: Vec<String>,
+    pub(crate) caller_session: Option<String>,
 }
 
 #[derive(Clone)]
@@ -295,6 +296,13 @@ impl ApprovalUi {
         }
     }
 
+    pub(crate) fn is_pending(&self, id: &str) -> bool {
+        self.shared
+            .state
+            .lock()
+            .is_ok_and(|state| state.pending.contains_key(id))
+    }
+
     pub(crate) fn respond(
         &self,
         id: &str,
@@ -351,19 +359,6 @@ impl ApprovalUi {
         true
     }
 
-    pub(crate) fn cancel_all(&self) {
-        let pending = self
-            .shared
-            .state
-            .lock()
-            .map(|mut state| state.pending.drain().map(|(_, pending)| pending).collect())
-            .unwrap_or_else(|_| Vec::<PendingApproval>::new());
-        for pending in pending {
-            let _ = pending.response.try_send(Err(
-                "Sandbox approval was cancelled. No command was retried.".into(),
-            ));
-        }
-    }
 }
 
 fn same_session(caller: &str, active: &Path) -> bool {
@@ -503,13 +498,18 @@ fn prepare_request(
             project_candidate,
             session_candidate,
             expected_project_source,
-            caller_session,
+            caller_session: caller_session.clone(),
             response: response_tx,
         },
     );
     Ok(Some((
         id.clone(),
-        ApprovalPrompt { id, title, options },
+        ApprovalPrompt {
+            id,
+            title,
+            options,
+            caller_session,
+        },
         response_rx,
     )))
 }

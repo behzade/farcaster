@@ -254,7 +254,12 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn native_workspace_covered_by_overlay(&self) -> bool {
-        self.native_workspace_modal_active() || self.extension.dialog.is_some()
+        self.native_workspace_modal_active()
+            || self.extension.dialog.as_ref().is_some_and(|dialog| {
+                !dialog
+                    .dialog_id()
+                    .is_some_and(|id| id.starts_with("farcaster-access-"))
+            })
     }
 
     pub(in crate::app) fn center_surface_switch_blocked(&self) -> bool {
@@ -284,6 +289,7 @@ impl FarcasterApp {
     ) {
         if id.starts_with("farcaster-access-") {
             if self.extension.respond_value(&id, value.clone()).is_some() {
+                self.remove_sandbox_approval_prompt(&id);
                 match self.sandbox_approval_ui.respond(
                     &id,
                     &value,
@@ -300,6 +306,7 @@ impl FarcasterApp {
                         zlog::error!("Sandbox approval failed: {error}");
                     }
                 }
+                self.sync_sandbox_approval_dialogs();
                 self.advance_or_restore_dialog(window, cx);
             }
             return;
@@ -371,7 +378,9 @@ impl FarcasterApp {
             self.advance_or_restore_dialog(window, cx);
         } else if id.starts_with("farcaster-access-") {
             let _ = self.extension.cancel(&id);
+            self.remove_sandbox_approval_prompt(&id);
             let _ = self.sandbox_approval_ui.cancel(&id);
+            self.sync_sandbox_approval_dialogs();
             self.advance_or_restore_dialog(window, cx);
         } else if let Some(response) = self.extension.cancel(&id) {
             self.send(RuntimeCommand::ExtensionResponse(response));

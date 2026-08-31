@@ -138,6 +138,7 @@ async fn matching_session_approval_holds_the_tool_result_for_runtime_handoff() -
         .recv()
         .await
         .map_err(|error| error.to_string())?;
+    assert_eq!(prompt.caller_session.as_deref(), caller.to_str());
     assert_eq!(
         ui.respond(&prompt.id, SESSION_LABEL, Some(&caller))?,
         ApprovalEffect::Handoff
@@ -220,33 +221,6 @@ async fn project_approval_is_bound_and_persisted_outside_the_workspace() -> Resu
         crate::access::test_sandbox_bypass(),
     )?;
     assert_eq!(reloaded.grants().resolve().network_hosts, [host.to_owned()]);
-    Ok(())
-}
-
-#[tokio::test]
-async fn cancelling_ui_state_unblocks_pending_tool_calls() -> Result<(), String> {
-    let (_root, service, ui, _project, _home) = setup()?;
-    ui.set_project_trusted(true);
-    let request = tokio::spawn(async move {
-        service
-            .request_access(RequestAccessParams {
-                rights: vec![AccessRight::NetworkHost {
-                    host: "cancel.example.com".into(),
-                }],
-                reason: "test cancellation".into(),
-            })
-            .await
-    });
-    ui.receiver()
-        .recv()
-        .await
-        .map_err(|error| error.to_string())?;
-    ui.cancel_all();
-    let error = request
-        .await
-        .map_err(|error| error.to_string())?
-        .expect_err("cancelled approval must fail");
-    assert!(error.contains("cancelled"));
     Ok(())
 }
 
