@@ -373,7 +373,10 @@ mod tests {
 
     #[test]
     fn panel_width_stops_at_the_window_midline() {
-        assert_eq!(panel_width(px(1200.0)), px(328.0));
+        assert_eq!(
+            panel_width(px(1200.0)),
+            px(600.0 - f32::from(THEME.layout.session_rail))
+        );
         assert_eq!(panel_width(px(800.0)), px(MIN_PANEL_WIDTH));
         assert_eq!(panel_width(px(2000.0)), px(MAX_PANEL_WIDTH));
     }

@@ -2830,8 +2830,7 @@ mod tests {
         fs::write(&script, include_str!("../../tests/fixtures/fake-pi.sh"))
             .map_err(|error| error.to_string())?;
         let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
-        owner.process_command =
-            AgentLaunchConfig::test_script(&script, vec!["preconnect-permission".into()]);
+        owner.process_command = AgentLaunchConfig::test_script(&script, vec!["quiet".into()]);
         let target = PermissionLevel {
             files: FileAccessMode::Full,
             network: NetworkAccessMode::Full,
