@@ -16,7 +16,7 @@ use crate::{
         WorkerLaunch,
         WorkerSendMode, WorkerSession, WorkerSessionFactory,
     },
-    modules::agents::adapter::farcaster_mcp,
+    modules::agents::adapter::{child_stderr, farcaster_mcp},
 };
 
 #[derive(Clone)]
@@ -40,15 +40,16 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
             crate::modules::agents::core::CallerRegistry::shared().issue(&launch.project);
         configure_farcaster_mcp(&mut sandbox.command, caller_identity.token())?;
         let password = worker_password()?;
-        let child = sandbox
+        let mut child = sandbox
             .command
-            .args(["serve", "--stdio"])
+            .args(["serve", "--stdio", "--print-logs"])
             .env("OPENCODE_SERVER_PASSWORD", &password)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|error| format!("start OpenCode worker server: {error}"))?;
+        child_stderr::capture(&mut child, "opencode-worker")?;
         let server = OpenCodeServerProcess::attach(child, "opencode", password)?;
         let mut client = server.client();
         let selected_model = launch
@@ -112,15 +113,16 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         crate::modules::agents::core::CallerRegistry::shared().issue(&launch.project);
     configure_farcaster_mcp(&mut sandbox.command, caller_identity.token())?;
     let password = worker_password()?;
-    let child = sandbox
+    let mut child = sandbox
         .command
-        .args(["serve", "--stdio"])
+        .args(["serve", "--stdio", "--print-logs"])
         .env("OPENCODE_SERVER_PASSWORD", &password)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| format!("start OpenCode main-session server: {error}"))?;
+    child_stderr::capture(&mut child, "opencode-main-session")?;
     let server = OpenCodeServerProcess::attach(child, "opencode", password)?;
     let mut client = server.client();
     let metadata = load_main_metadata(&mut client, &launch.project.to_string_lossy())?;

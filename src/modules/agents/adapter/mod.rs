@@ -1,3 +1,4 @@
+mod child_stderr;
 #[allow(dead_code)]
 mod codex;
 mod farcaster_mcp;

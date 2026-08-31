@@ -19,7 +19,7 @@ use crate::{
         AgentLaunchConfig, WorkerContext, WorkerEvent, WorkerInput, WorkerInputResponse,
         WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory,
     },
-    modules::agents::adapter::farcaster_mcp,
+    modules::agents::adapter::{child_stderr, farcaster_mcp},
 };
 
 #[derive(Clone)]
@@ -46,9 +46,10 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             .command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|error| format!("start Codex worker app-server: {error}"))?;
+        child_stderr::capture(&mut child, "codex-worker")?;
         let (mut reader, writer, queued, next_id, thread) =
             match setup_connection(&mut child, &launch) {
                 Ok(setup) => setup,
@@ -125,9 +126,10 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         .command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| format!("start Codex main-session app-server: {error}"))?;
+    child_stderr::capture(&mut child, "codex-main-session")?;
     let setup = setup_main_connection(&mut child, launch);
     let ((mut reader, writer, queued, next_id, thread), metadata) = match setup {
         Ok(setup) => setup,

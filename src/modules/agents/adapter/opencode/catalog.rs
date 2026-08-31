@@ -9,7 +9,10 @@ use serde_json::{Value, json};
 use super::server::OpenCodeServerProcess;
 use crate::sessions::{LoadedHistory, SessionSummary, UsageSummary};
 
-use super::super::main_session::{external_session_locator, external_session_path};
+use super::super::{
+    child_stderr,
+    main_session::{external_session_locator, external_session_path},
+};
 
 pub(in crate::modules::agents::adapter) fn discover(query: &str) -> Result<Vec<SessionSummary>, String> {
     with_server(|server| {
@@ -64,14 +67,15 @@ fn with_server<T>(
         .map(PathBuf::from)
         .unwrap_or_else(|| "opencode2".into());
     let password = format!("farcaster-catalog-{}", std::process::id());
-    let child = Command::new(program)
-        .args(["serve", "--stdio"])
+    let mut child = Command::new(program)
+        .args(["serve", "--stdio", "--print-logs"])
         .env("OPENCODE_SERVER_PASSWORD", &password)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| format!("start OpenCode catalog server: {error}"))?;
+    child_stderr::capture(&mut child, "opencode-catalog")?;
     let mut server = OpenCodeServerProcess::attach(child, "opencode", password)?;
     let result = operation(&server);
     let close = server.terminate();

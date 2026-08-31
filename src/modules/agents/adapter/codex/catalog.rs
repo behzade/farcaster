@@ -13,7 +13,10 @@ use super::{
 };
 use crate::sessions::{LoadedHistory, SessionSummary, UsageSummary};
 
-use super::super::main_session::{external_session_locator, external_session_path};
+use super::super::{
+    child_stderr,
+    main_session::{external_session_locator, external_session_path},
+};
 
 pub(in crate::modules::agents::adapter) fn discover(query: &str) -> Result<Vec<SessionSummary>, String> {
     with_connection(|connection| {
@@ -115,9 +118,10 @@ fn with_connection<T>(
         .args(["app-server", "--stdio"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| format!("start Codex catalog app-server: {error}"))?;
+    child_stderr::capture(&mut child, "codex-catalog")?;
     let result = connect(&mut child).and_then(|mut connection| operation(&mut connection));
     let _ = child.kill();
     let _ = child.wait();
