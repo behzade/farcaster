@@ -53,7 +53,8 @@ pub(crate) fn compile(
     let home = canonical_directory(home, "home")?;
     let agent_state = canonical_directory(agent_state, "agent state")?;
     let temporary = canonical_directory(temporary, "temporary directory")?;
-    let mut readable = user_runtime_libraries(&home);
+    let mut readable = immutable_runtime_roots();
+    readable.extend(user_runtime_libraries(&home));
     let mut readable_files = user_configuration(&home);
     let mut protection_bypasses = grants
         .readable
@@ -168,6 +169,13 @@ fn canonical_directory(path: &Path, label: &str) -> Result<PathBuf, String> {
         ));
     }
     Ok(path)
+}
+
+fn immutable_runtime_roots() -> Vec<PathBuf> {
+    [PathBuf::from("/nix/store")]
+        .into_iter()
+        .filter(|path| path.is_dir())
+        .collect()
 }
 
 fn user_runtime_libraries(home: &Path) -> Vec<PathBuf> {
@@ -307,6 +315,9 @@ mod tests {
             path.as_str()
                 .is_some_and(|path| path.ends_with("/.local/lib"))
         }));
+        if Path::new("/nix/store").is_dir() {
+            assert!(read.iter().any(|path| path == "/nix/store"));
+        }
         let read_file = profile["filesystem"]["read_file"]
             .as_array()
             .ok_or("read_file must be an array")?;

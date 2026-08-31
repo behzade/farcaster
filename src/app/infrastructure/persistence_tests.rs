@@ -137,7 +137,8 @@ fn repository_backend_preferences_reject_unknown_and_malformed_values()
 }
 
 #[test]
-fn legacy_pi_gpui_state_import_restores_archives_once() -> Result<(), Box<dyn std::error::Error>> {
+fn legacy_pi_gpui_v7_state_import_restores_archives_once() -> Result<(), Box<dyn std::error::Error>>
+{
     let temp = tempdir()?;
     let project = temp.path().join("project");
     let session_path = temp.path().join("session.jsonl");
@@ -172,6 +173,10 @@ fn legacy_pi_gpui_state_import_restores_archives_once() -> Result<(), Box<dyn st
             ..ComposerRecord::default()
         })?;
     }
+    Connection::open(&legacy_path)?.execute_batch(
+        "ALTER TABLE sessions DROP COLUMN harness;
+         UPDATE meta SET value='7' WHERE key='schema_version';",
+    )?;
     let mut destination = StateStore::open_at(&destination_path)?;
     destination.replace_sessions(std::slice::from_ref(&session))?;
 

@@ -78,6 +78,7 @@
             '' + pkgs.lib.optionalString pkgs.stdenv.isLinux ''
               export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath nativeRuntimeLibraries}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
               export NIX_LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath nativeRuntimeLibraries}''${NIX_LD_LIBRARY_PATH:+:$NIX_LD_LIBRARY_PATH}"
+              export NIX_LDFLAGS="-rpath ${pkgs.lib.makeLibraryPath nativeRuntimeLibraries} ''${NIX_LDFLAGS:-}"
             '';
           };
         }
