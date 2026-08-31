@@ -39,19 +39,25 @@ impl FarcasterApp {
 
         if let Some(editor) = self.reusable_editor(&project, cx) {
             let opened = editor.update(cx, |editor, cx| editor.open_file_at_line(path, line, cx));
-            match opened {
-                Ok(()) => {
-                    self.editor_error = None;
-                    self.set_surface(AppSurface::Editor, cx);
-                    editor.update(cx, |editor, cx| editor.focus(window, cx));
-                }
-                Err(error) => {
-                    editor.update(cx, |editor, cx| editor.set_visible(false, cx));
-                    self.editor_error = Some(error);
-                    self.set_surface(AppSurface::Editor, cx);
-                }
-            }
+            self.editor_error = None;
+            self.set_surface(AppSurface::Editor, cx);
+            editor.update(cx, |editor, cx| editor.focus(window, cx));
             cx.notify();
+            cx.spawn(async move |weak, cx| {
+                let Err(error) = opened.await else {
+                    return;
+                };
+                let _ = weak.update(cx, |this, cx| {
+                    if this.editor.as_ref() != Some(&editor) {
+                        return;
+                    }
+                    editor.update(cx, |editor, cx| editor.set_visible(false, cx));
+                    this.editor_error = Some(error);
+                    this.set_surface(AppSurface::Editor, cx);
+                    cx.notify();
+                });
+            })
+            .detach();
             return;
         }
 

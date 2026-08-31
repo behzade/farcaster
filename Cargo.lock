@@ -2501,9 +2501,9 @@ dependencies = [
 
 [[package]]
 name = "gpui-neovim"
-version = "0.1.5"
+version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ba5fd5f0f6b69f615af9e8d030cbf55a28235d7f53fd8b878aa22e95c95994e"
+checksum = "8a5d240db2185e6a461d3f38bc1a93c1c18209cdc382ba03a231da125b036dc3"
 dependencies = [
  "gpui",
  "gpui-libghostty",

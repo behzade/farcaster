@@ -14,7 +14,7 @@ gpui = { path = "third_party/zed-gpui-cc053a4/crates/gpui", features = ["profile
 gpui-base = { path = "third_party/gpui-component-bd83329/base" }
 gpui-component = { path = "third_party/gpui-component-bd83329/ui" }
 gpui-libghostty = "0.2.0"
-gpui-neovim = "0.1.5"
+gpui-neovim = "0.1.6"
 gpui_platform = { path = "third_party/zed-gpui-cc053a4/crates/gpui_platform", features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
 notify = "7.0.0"
 nucleo-matcher = "0.3.1"
