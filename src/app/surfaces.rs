@@ -92,13 +92,14 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.native_workspace_modal_active() {
+        let overlay_active = self.native_workspace_covered_by_overlay();
+        if !overlay_active {
             self.native_surface_covered = false;
             if let Some(snapshot) = self.native_surface_snapshot.take() {
                 let _ = window.drop_image(snapshot);
             }
         }
-        if self.native_workspace_covered_by_overlay() {
+        if overlay_active {
             self.hide_native_workspace_surfaces(cx);
             return;
         }
@@ -244,7 +245,7 @@ impl FarcasterApp {
             || self.repository.pending_jj_init.is_some()
     }
 
-    fn native_workspace_covered_by_overlay(&self) -> bool {
+    pub(super) fn native_workspace_covered_by_overlay(&self) -> bool {
         self.native_workspace_modal_active() || self.extension.dialog.is_some()
     }
 
@@ -383,6 +384,7 @@ impl FarcasterApp {
             .take()
             .unwrap_or_else(|| self.composer_focus.clone());
         focus.focus(window, cx);
+        self.restore_active_native_workspace_surface(window, cx);
         cx.notify();
     }
 

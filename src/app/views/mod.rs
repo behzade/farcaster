@@ -73,6 +73,7 @@ impl Render for FarcasterApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _timing = crate::performance::Timing::new("render.root");
         self.resolve_pending_submission(window, cx);
+        let native_surface = matches!(self.surface, AppSurface::Editor | AppSurface::Terminal);
         if self.post_render_focus.is_some() {
             cx.defer_in(window, |this, window, cx| {
                 this.apply_post_render_focus(window, cx);
@@ -89,15 +90,13 @@ impl Render for FarcasterApp {
             cx.defer_in(window, move |_, window, cx| focus.focus(window, cx));
         }
         if self.pending_dialog_setup {
-            if matches!(self.surface, AppSurface::Editor | AppSurface::Terminal) {
-                self.hide_native_workspace_surfaces(cx);
-                self.set_surface(AppSurface::Chat, cx);
-                self.dialog_return_focus = Some(self.composer_focus.clone());
-            }
-            self.pending_dialog_setup = false;
             if self.dialog_return_focus.is_none() {
                 self.dialog_return_focus = window.focused(cx);
             }
+            if native_surface {
+                self.cover_native_workspace_surface(cx);
+            }
+            self.pending_dialog_setup = false;
             let dialog = self.extension.dialog.as_ref();
             let prefill = match dialog {
                 Some(ExtensionUiRequest::Editor { prefill, .. }) => {
@@ -124,7 +123,7 @@ impl Render for FarcasterApp {
                 focus.focus(window, cx);
             });
         }
-        if self.native_surface_covered && !self.native_workspace_modal_active() {
+        if self.native_surface_covered && !self.native_workspace_covered_by_overlay() {
             self.restore_active_native_workspace_surface(window, cx);
         }
         if let Some((generation, title)) = self.pending_title.take() {
@@ -207,9 +206,9 @@ impl Render for FarcasterApp {
                 main.child(self.composer_view.clone())
             })
             .into_any_element();
-        let native_surface_covered = self.native_surface_covered
-            && self.native_workspace_modal_active()
-            && matches!(self.surface, AppSurface::Editor | AppSurface::Terminal);
+        let native_surface_covered = native_surface
+            && self.native_surface_covered
+            && self.native_workspace_covered_by_overlay();
         let main = if native_surface_covered {
             div()
                 .size_full()
@@ -232,7 +231,19 @@ impl Render for FarcasterApp {
             .flex()
             .flex_col()
             .child(self.render_workspace_bar(entity.clone()))
-            .child(div().flex_1().min_h_0().child(main))
+            .child(div().relative().flex_1().min_h_0().child(main).when(
+                native_surface && self.extension.dialog.is_some(),
+                |center| {
+                    center.child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .right_0()
+                            .bottom_0()
+                            .child(self.render_composer_request(entity.clone())),
+                    )
+                },
+            ))
             .into_any_element();
         let workgraph_focus = self.workgraph_view.read(cx).focus_handle();
         let picker = self.render_picker(entity.clone(), cx);

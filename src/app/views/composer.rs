@@ -278,7 +278,7 @@ impl FarcasterApp {
         true
     }
 
-    fn render_composer_request(&self, entity: WeakEntity<Self>) -> AnyElement {
+    pub(super) fn render_composer_request(&self, entity: WeakEntity<Self>) -> AnyElement {
         let Some(dialog) = self.extension.dialog.as_ref() else {
             return div().into_any_element();
         };
