@@ -195,8 +195,7 @@ impl RuntimeOwner {
             return;
         }
         if let Some(prompt) = self.deferred_prompt.take() {
-            if !crate::internal_messages::is_hidden_text(&prompt.message)
-                && self.pending_prompt_item.is_none()
+            if !crate::agents::is_hidden_text(&prompt.message) && self.pending_prompt_item.is_none()
             {
                 let invocation = crate::user_invocations::contains_invocation(
                     &prompt.message,

@@ -14,5 +14,5 @@ pub(crate) use contract::{
 };
 pub(crate) use core::{
     CallerRegistry, WorkerEvent, WorkerLaunch, WorkerPool, WorkerSendMode, WorkerSession,
-    WorkerSessionFactory,
+    WorkerSessionFactory, is_hidden_text, is_hidden_user_message, sandbox_grant_continuation,
 };

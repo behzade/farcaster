@@ -747,7 +747,7 @@ fn history_follows_the_current_branch_and_projects_display_entries() {
 fn display_history_hides_internal_sandbox_continuations() {
     let entries = vec![
         serde_json::json!({"type":"message","id":"one","parentId":null,"message":{"role":"user","content":"visible"}}),
-        serde_json::json!({"type":"message","id":"two","parentId":"one","message":{"role":"user","content":crate::internal_messages::sandbox_grant_continuation()}}),
+        serde_json::json!({"type":"message","id":"two","parentId":"one","message":{"role":"user","content":crate::agents::sandbox_grant_continuation()}}),
         serde_json::json!({"type":"message","id":"three","parentId":"two","message":{"role":"assistant","content":[{"type":"text","text":"continued"}]}}),
     ];
 

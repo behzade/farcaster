@@ -391,7 +391,7 @@ fn entry_message(entry: &Value) -> Option<Value> {
     match entry.get("type").and_then(Value::as_str)? {
         "message" => entry
             .get("message")
-            .filter(|message| !crate::internal_messages::is_hidden_user_message(message))
+            .filter(|message| !crate::agents::is_hidden_user_message(message))
             .cloned(),
         "custom_message" => Some(json_object([
             ("role", Value::String("custom".into())),
@@ -695,7 +695,7 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
             }
             Some("message") => {
                 if let Some(message) = entry.get("message") {
-                    if crate::internal_messages::is_hidden_user_message(message) {
+                    if crate::agents::is_hidden_user_message(message) {
                         activity_entries.push(entry);
                         continue;
                     }

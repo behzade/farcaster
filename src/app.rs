@@ -71,7 +71,9 @@ use crate::{
     projects,
     protocol::{BackgroundJob, ExtensionUiRequest, Model},
     runtime::{RuntimeCommand, RuntimeEvent, RuntimeHandle, RuntimeSnapshot},
-    sessions::{SessionRootIndex, SessionSummary, descendant_sessions, root_session_for_path},
+    sessions::{
+        SessionRootIndex, SessionSummary, SessionTarget, descendant_sessions, root_session_for_path,
+    },
     transcript_list::TranscriptListState,
 };
 
@@ -1085,6 +1087,7 @@ impl FarcasterApp {
                             self.save_project_registry();
                             self.send(RuntimeCommand::NewSession {
                                 id: draft.id,
+                                harness: draft.harness,
                                 project: draft.project,
                             });
                         }
@@ -1151,7 +1154,9 @@ impl FarcasterApp {
                     if selected_was_moved {
                         self.select_project(target_project.clone(), cx);
                         self.send(RuntimeCommand::SelectSession {
+                            session_id: target_root.to_string_lossy().into_owned(),
                             path: target_root,
+                            harness: "pi".into(),
                             project: target_project,
                         });
                     }
@@ -1393,6 +1398,14 @@ impl FarcasterApp {
         }
     }
 
+    fn backend_target_for_path(&self, path: &Path) -> SessionTarget {
+        self.all_sessions
+            .iter()
+            .find(|session| session.path == path)
+            .map(SessionSummary::target)
+            .unwrap_or_else(|| SessionTarget::pi(path.to_path_buf()))
+    }
+
     fn select_session(
         &mut self,
         path: PathBuf,
@@ -1426,10 +1439,13 @@ impl FarcasterApp {
             path.clone(),
             crate::performance::Timing::new("switch.session_total"),
         ));
+        let target = self.backend_target_for_path(&path);
         self.send_project_command(
             &project,
             RuntimeCommand::SelectSession {
                 path,
+                harness: target.harness,
+                session_id: target.id,
                 project: project.clone(),
             },
             window,
@@ -1460,10 +1476,13 @@ impl FarcasterApp {
         self.selected_draft = None;
         self.select_project(project.clone(), cx);
         self.restore_center_surface(project.clone(), window, cx);
+        let target = self.backend_target_for_path(&path);
         self.send_project_command(
             &project,
             RuntimeCommand::ForkSession {
                 path,
+                harness: target.harness,
+                session_id: target.id,
                 project: project.clone(),
             },
             window,
@@ -1502,6 +1521,7 @@ impl FarcasterApp {
             &project,
             RuntimeCommand::NewSession {
                 id: draft.id,
+                harness: draft.harness,
                 project: project.clone(),
             },
             window,
@@ -1538,14 +1558,24 @@ impl FarcasterApp {
         self.selected_draft = Some(id.clone());
         self.select_project(project.clone(), cx);
         self.restore_center_surface(project.clone(), window, cx);
+        let draft_harness = self
+            .drafts
+            .iter()
+            .find(|draft| draft.id == id)
+            .map(|draft| draft.harness.clone())
+            .unwrap_or_else(|| "pi".into());
         let command = if let Some(Some(path)) = self.submitted_drafts.get(&id).cloned() {
+            let target = self.backend_target_for_path(&path);
             RuntimeCommand::SelectSession {
                 path,
+                harness: target.harness,
+                session_id: target.id,
                 project: project.clone(),
             }
         } else {
             RuntimeCommand::ResumeDraft {
                 id,
+                harness: draft_harness,
                 project: project.clone(),
             }
         };
@@ -1732,6 +1762,8 @@ impl FarcasterApp {
                     &session.project,
                     RuntimeCommand::SelectSession {
                         path: session.path,
+                        harness: session.harness,
+                        session_id: session.id,
                         project: session.project.clone(),
                     },
                     window,

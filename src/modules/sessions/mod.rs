@@ -9,8 +9,8 @@ pub(crate) use adapter::{
 };
 pub(crate) use contract::{
     ChangeSet, FileChange, FileChangeKind, LoadedHistory, RUNNING_ACTIVITY_TIMEOUT,
-    SessionDiscovery, SessionSummary, SessionTransfer, SessionWatchEvent, TransferMember,
-    UsageSummary,
+    SessionDiscovery, SessionSummary, SessionTarget, SessionTransfer, SessionWatchEvent,
+    TransferMember, UsageSummary,
 };
 pub(crate) use core::{
     SessionRootIndex, archived_root_family_for_path, collect_changes, descendant_sessions,

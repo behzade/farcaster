@@ -1153,6 +1153,26 @@ fn legacy_pi_gpui_state_path() -> Option<PathBuf> {
     Some(root.join("gui-state.sqlite3"))
 }
 
+impl crate::repository::PreferenceStore for StateStore {
+    fn load(&self) -> Result<BTreeMap<PathBuf, crate::repository::BackendPreference>, String> {
+        self.load_repository_backend_preferences()?
+            .into_iter()
+            .map(|(project, preference)| preference.parse().map(|preference| (project, preference)))
+            .collect()
+    }
+
+    fn save(
+        &self,
+        preferences: &BTreeMap<PathBuf, crate::repository::BackendPreference>,
+    ) -> Result<(), String> {
+        let preferences = preferences
+            .iter()
+            .map(|(project, preference)| (project.clone(), preference.as_str().to_owned()))
+            .collect();
+        self.save_repository_backend_preferences(&preferences)
+    }
+}
+
 fn validate_repository_backend_preferences(
     preferences: &BTreeMap<PathBuf, String>,
 ) -> Result<(), String> {

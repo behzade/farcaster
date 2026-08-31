@@ -160,7 +160,7 @@ impl RuntimeOwner {
         }
         self.deferred_prompt = Some(super::DeferredPrompt {
             mode: crate::protocol::PromptMode::Normal,
-            message: crate::internal_messages::sandbox_grant_continuation(),
+            message: crate::agents::sandbox_grant_continuation(),
             images: Vec::new(),
             outbox_id: None,
         });

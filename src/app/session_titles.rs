@@ -53,8 +53,11 @@ impl FarcasterApp {
         if active_path.as_deref() == Some(edited_path.as_path()) && !self.snapshot.history_preview {
             self.send(RuntimeCommand::SetSessionName(title));
         } else {
+            let target = self.backend_target_for_path(&edit.path);
             self.send(RuntimeCommand::RenameSession {
                 path: edit.path,
+                harness: target.harness,
+                session_id: target.id,
                 project: edit.project,
                 name: title,
             });

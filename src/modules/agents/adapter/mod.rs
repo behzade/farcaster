@@ -53,6 +53,12 @@ pub(crate) fn spawn_session(
     config: &crate::agents::AgentLaunchConfig,
     launch: crate::agents::SessionLaunch,
 ) -> Result<Box<dyn crate::agents::SessionTransport>, String> {
+    if launch.harness != "pi" {
+        return Err(format!(
+            "{} main-session transport is not installed",
+            launch.harness
+        ));
+    }
     let process = match &launch.start {
         crate::agents::SessionStart::New => {
             pi::PiRpcProcess::spawn_with_optional_waker(config, &launch.project, None, launch.wake)
@@ -79,10 +85,15 @@ pub(crate) fn spawn_session(
 
 pub(crate) fn rename_session(
     config: &crate::agents::AgentLaunchConfig,
+    harness: &str,
     project: &std::path::Path,
     session: &std::path::Path,
+    _session_id: &str,
     name: &str,
 ) -> Result<(), String> {
+    if harness != "pi" {
+        return Err(format!("{harness} session rename is not installed"));
+    }
     pi::PiRpcProcess::rename_session(config, project, session, name)
 }
 

@@ -6,7 +6,6 @@ mod composer_sessions;
 mod composer_sessions_test;
 mod conversation;
 mod extension_ui;
-mod internal_messages;
 mod keybindings;
 mod keyboard;
 mod layout;

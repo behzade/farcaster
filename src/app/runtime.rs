@@ -74,6 +74,8 @@ pub(crate) enum RuntimeCommand {
     SetSessionName(String),
     RenameSession {
         path: PathBuf,
+        harness: String,
+        session_id: String,
         project: PathBuf,
         name: String,
     },
@@ -83,22 +85,30 @@ pub(crate) enum RuntimeCommand {
     },
     NewSession {
         id: String,
+        harness: String,
         project: PathBuf,
     },
     ForkSession {
         path: PathBuf,
+        harness: String,
+        session_id: String,
         project: PathBuf,
     },
     ResumeDraft {
         id: String,
+        harness: String,
         project: PathBuf,
     },
     SelectSession {
         path: PathBuf,
+        harness: String,
+        session_id: String,
         project: PathBuf,
     },
     RestartSession {
         path: PathBuf,
+        harness: String,
+        session_id: String,
         project: PathBuf,
     },
     RefreshSessionDocument {
@@ -1158,9 +1168,15 @@ fn initial_draft_command(id: String, project: PathBuf, session: Option<PathBuf>)
     session.map_or(
         RuntimeCommand::ResumeDraft {
             id,
+            harness: "pi".into(),
             project: project.clone(),
         },
-        |path| RuntimeCommand::SelectSession { path, project },
+        |path| RuntimeCommand::SelectSession {
+            session_id: path.to_string_lossy().into_owned(),
+            path,
+            harness: "pi".into(),
+            project,
+        },
     )
 }
 
@@ -1184,15 +1200,15 @@ fn route_session_discovery(
 
 fn command_target(command: &RuntimeCommand) -> Option<(String, PathBuf)> {
     match command {
-        RuntimeCommand::NewSession { id, project }
-        | RuntimeCommand::ResumeDraft { id, project } => {
+        RuntimeCommand::NewSession { id, project, .. }
+        | RuntimeCommand::ResumeDraft { id, project, .. } => {
             Some((format!("draft:{id}"), project.clone()))
         }
-        RuntimeCommand::ForkSession { path, project } => {
+        RuntimeCommand::ForkSession { path, project, .. } => {
             Some((format!("fork:{}", path.display()), project.clone()))
         }
-        RuntimeCommand::SelectSession { path, project }
-        | RuntimeCommand::RestartSession { path, project } => {
+        RuntimeCommand::SelectSession { path, project, .. }
+        | RuntimeCommand::RestartSession { path, project, .. } => {
             Some((format!("session:{}", path.display()), project.clone()))
         }
         _ => None,
@@ -1385,6 +1401,8 @@ enum SandboxGrantHandoff {
 
 struct RuntimeOwner {
     project: PathBuf,
+    harness: String,
+    session_id: Option<String>,
     process_command: AgentLaunchConfig,
     process: Option<Box<dyn SessionTransport>>,
     snapshot: RuntimeSnapshot,
@@ -1464,6 +1482,8 @@ fn run(
     };
     let mut owner = RuntimeOwner {
         project: project.clone(),
+        harness: "pi".into(),
+        session_id: None,
         process_command,
         process: None,
         snapshot: RuntimeSnapshot {
@@ -1672,6 +1692,8 @@ impl RuntimeOwner {
         let process = crate::agents::spawn_session(
             &self.process_command,
             SessionLaunch {
+                harness: self.harness.clone(),
+                session_id: self.session_id.clone(),
                 project: self.project.clone(),
                 start,
                 wake: Some(thread::current()),
@@ -1724,10 +1746,19 @@ impl RuntimeOwner {
             }
             RuntimeCommand::RenameSession {
                 path,
+                harness,
+                session_id,
                 project,
                 name,
             } => {
-                match crate::agents::rename_session(&self.process_command, &project, &path, &name) {
+                match crate::agents::rename_session(
+                    &self.process_command,
+                    &harness,
+                    &project,
+                    &path,
+                    &session_id,
+                    &name,
+                ) {
                     Ok(()) => self.load_sessions(self.session_query.clone()),
                     Err(message) => {
                         let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
@@ -1740,18 +1771,51 @@ impl RuntimeOwner {
             RuntimeCommand::MoveSession { .. }
             | RuntimeCommand::StopSessionFamily { .. }
             | RuntimeCommand::DeleteSessionFamily { .. } => {}
-            RuntimeCommand::NewSession { project, .. } => {
+            RuntimeCommand::NewSession {
+                harness, project, ..
+            } => {
                 self.project = project;
+                self.harness = harness;
+                self.session_id = None;
                 self.start_process(None);
             }
-            RuntimeCommand::ForkSession { path, project } => {
+            RuntimeCommand::ForkSession {
+                path,
+                harness,
+                session_id,
+                project,
+            } => {
                 self.project = project;
+                self.harness = harness;
+                self.session_id = Some(session_id);
                 self.start_fork_process(path);
             }
-            RuntimeCommand::ResumeDraft { project, .. } => self.resume_draft(project),
-            RuntimeCommand::SelectSession { path, project } => self.select_history(path, project),
-            RuntimeCommand::RestartSession { path, project } => {
+            RuntimeCommand::ResumeDraft {
+                harness, project, ..
+            } => {
+                self.harness = harness;
+                self.session_id = None;
+                self.resume_draft(project);
+            }
+            RuntimeCommand::SelectSession {
+                path,
+                harness,
+                session_id,
+                project,
+            } => {
+                self.harness = harness;
+                self.session_id = Some(session_id);
+                self.select_history(path, project);
+            }
+            RuntimeCommand::RestartSession {
+                path,
+                harness,
+                session_id,
+                project,
+            } => {
                 self.project = project;
+                self.harness = harness;
+                self.session_id = Some(session_id);
                 self.start_process(Some(path));
             }
             RuntimeCommand::RefreshSessionDocument { path, project } => {
@@ -2671,6 +2735,8 @@ mod tests {
         (
             RuntimeOwner {
                 project: project.clone(),
+                harness: "pi".into(),
+                session_id: None,
                 process_command: AgentLaunchConfig {
                     program: PathBuf::from("/definitely/missing/farcaster-test-command"),
                     prefix_args: Vec::new(),
@@ -2770,7 +2836,11 @@ mod tests {
         drive_process_until(&mut owner, |owner| {
             owner.startup_state_loaded && owner.startup_history_loaded
         });
-        assert!(owner.startup_state_loaded && owner.startup_history_loaded);
+        assert!(
+            owner.startup_state_loaded && owner.startup_history_loaded,
+            "{:?}",
+            owner.snapshot.conversation.diagnostics
+        );
         assert_eq!(owner.snapshot.permission_level, target);
         Ok(())
     }
@@ -2982,12 +3052,12 @@ mod tests {
         let session = PathBuf::from("/sessions/submitted.jsonl");
         assert!(matches!(
             initial_draft_command("draft".into(), project.clone(), Some(session.clone())),
-            RuntimeCommand::SelectSession { path, project: selected_project }
+            RuntimeCommand::SelectSession { path, project: selected_project, .. }
                 if path == session && selected_project == project
         ));
         assert!(matches!(
             initial_draft_command("draft".into(), project.clone(), None),
-            RuntimeCommand::ResumeDraft { id, project: draft_project }
+            RuntimeCommand::ResumeDraft { id, project: draft_project, .. }
                 if id == "draft" && draft_project == project
         ));
     }
@@ -3377,6 +3447,8 @@ mod tests {
         let path = PathBuf::from("/sessions/one.jsonl");
         let command = RuntimeCommand::SelectSession {
             path: path.clone(),
+            harness: "pi".into(),
+            session_id: path.to_string_lossy().into_owned(),
             project: PathBuf::from("/project"),
         };
         let latest = HashMap::from([(
@@ -3395,6 +3467,8 @@ mod tests {
 
         let restart = RuntimeCommand::RestartSession {
             path: path.clone(),
+            harness: "pi".into(),
+            session_id: path.to_string_lossy().into_owned(),
             project: PathBuf::from("/project"),
         };
         assert!(!is_view_only_selection(&restart));
@@ -3529,6 +3603,8 @@ mod tests {
         let process = crate::agents::spawn_session(
             &AgentLaunchConfig::test_script(&script, vec!["quiet".into()]),
             SessionLaunch {
+                harness: "pi".into(),
+                session_id: None,
                 project: temp.path().to_path_buf(),
                 start: SessionStart::New,
                 wake: None,
@@ -3616,6 +3692,7 @@ mod tests {
 
         owner.apply_command(RuntimeCommand::NewSession {
             id: "draft-new".into(),
+            harness: "pi".into(),
             project: new_project.path().to_path_buf(),
         });
 
@@ -4285,6 +4362,8 @@ mod tests {
         let (history_tx, _history_rx) = mpsc::channel();
         let mut owner = RuntimeOwner {
             project: std::env::temp_dir(),
+            harness: "pi".into(),
+            session_id: None,
             process_command: AgentLaunchConfig {
                 program: PathBuf::from("/definitely/missing/farcaster-test-command"),
                 prefix_args: Vec::new(),
@@ -4485,6 +4564,8 @@ mod tests {
         let process = crate::agents::spawn_session(
             &process_command,
             SessionLaunch {
+                harness: "pi".into(),
+                session_id: None,
                 project: temp.path().to_path_buf(),
                 start: SessionStart::New,
                 wake: None,
@@ -4500,6 +4581,8 @@ mod tests {
         fs::create_dir(&new_project).map_err(|error| error.to_string())?;
         let mut owner = RuntimeOwner {
             project: old_project.clone(),
+            harness: "pi".into(),
+            session_id: None,
             process_command,
             process: Some(process),
             snapshot: RuntimeSnapshot {
@@ -4680,6 +4763,8 @@ mod tests {
         let (history_tx, history_rx) = mpsc::channel();
         let mut owner = RuntimeOwner {
             project: temp.path().to_path_buf(),
+            harness: "pi".into(),
+            session_id: None,
             process_command: AgentLaunchConfig::default(),
             process: None,
             snapshot: RuntimeSnapshot {

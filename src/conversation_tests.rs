@@ -644,7 +644,7 @@ fn internal_sandbox_continuation_is_hidden_from_the_transcript() {
     let mut state = ConversationState::default();
     let message = json!({
         "role": "user",
-        "content": crate::internal_messages::sandbox_grant_continuation()
+        "content": crate::agents::sandbox_grant_continuation()
     });
     state.reduce(&json!({"type": "message_start", "message": message}));
     state.reduce(&json!({"type": "message_end", "message": message}));

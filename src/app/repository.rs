@@ -99,7 +99,7 @@ pub(super) struct RepositoryState {
     pub(super) deletions: Option<u64>,
     pub(super) visible_changes: usize,
     pub(super) row_focus: std::collections::HashMap<DiffTargetKey, FocusHandle>,
-    preferences: BTreeMap<PathBuf, String>,
+    preferences: BTreeMap<PathBuf, BackendPreference>,
     refresh: RefreshGate,
     preference_save_in_flight: bool,
     preference_save_pending: bool,
@@ -111,7 +111,7 @@ pub(super) struct RepositoryState {
 impl RepositoryState {
     pub(super) fn load(project: PathBuf, execution_allowed: bool) -> Self {
         let (preferences, preference_error) = StateStore::open()
-            .and_then(|store| store.load_repository_backend_preferences())
+            .and_then(|store| crate::repository::load_preferences(&store))
             .map_or_else(
                 |error| (BTreeMap::new(), Some(error)),
                 |preferences| (preferences, None),
@@ -166,8 +166,7 @@ impl RepositoryState {
             return false;
         }
         self.preference = preference;
-        self.preferences
-            .insert(self.project.clone(), preference.as_str().to_owned());
+        self.preferences.insert(self.project.clone(), preference);
         self.clear_observation();
         true
     }
@@ -532,7 +531,7 @@ impl FarcasterApp {
         self.repository.preference_save_in_flight = true;
         let preferences = self.repository.preferences.clone();
         let task = cx.background_spawn(async move {
-            StateStore::open()?.save_repository_backend_preferences(&preferences)
+            crate::repository::save_preferences(&StateStore::open()?, &preferences)
         });
         cx.spawn(async move |weak, cx| {
             let result = task.await;
@@ -592,13 +591,10 @@ fn displayed_identity_eq(
 }
 
 fn preference_for(
-    preferences: &BTreeMap<PathBuf, String>,
+    preferences: &BTreeMap<PathBuf, BackendPreference>,
     project: &std::path::Path,
 ) -> BackendPreference {
-    preferences
-        .get(project)
-        .and_then(|value| value.parse().ok())
-        .unwrap_or_default()
+    preferences.get(project).copied().unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -679,8 +675,8 @@ mod tests {
         let first = PathBuf::from("/first");
         let second = PathBuf::from("/second");
         let preferences = BTreeMap::from([
-            (first.clone(), "git".to_owned()),
-            (second.clone(), "jj".to_owned()),
+            (first.clone(), BackendPreference::Git),
+            (second.clone(), BackendPreference::Jujutsu),
         ]);
 
         assert_eq!(preference_for(&preferences, &first), BackendPreference::Git);

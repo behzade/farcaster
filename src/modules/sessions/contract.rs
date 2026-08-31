@@ -53,6 +53,23 @@ impl UsageSummary {
     }
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct SessionTarget {
+    pub harness: String,
+    pub id: String,
+    pub path: PathBuf,
+}
+
+impl SessionTarget {
+    pub(crate) fn pi(path: PathBuf) -> Self {
+        Self {
+            harness: "pi".into(),
+            id: path.to_string_lossy().into_owned(),
+            path,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SessionSummary {
     pub id: String,
@@ -75,6 +92,14 @@ pub(crate) struct SessionSummary {
 }
 
 impl SessionSummary {
+    pub(crate) fn target(&self) -> SessionTarget {
+        SessionTarget {
+            harness: self.harness.clone(),
+            id: self.id.clone(),
+            path: self.path.clone(),
+        }
+    }
+
     pub(crate) fn with_app_session_id(mut self, app_session_id: i64) -> Self {
         self.app_session_id = app_session_id;
         self

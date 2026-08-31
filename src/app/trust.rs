@@ -89,9 +89,17 @@ impl FarcasterApp {
 
 fn restart_session_after_trust(command: RuntimeCommand) -> RuntimeCommand {
     match command {
-        RuntimeCommand::SelectSession { path, project } => {
-            RuntimeCommand::RestartSession { path, project }
-        }
+        RuntimeCommand::SelectSession {
+            path,
+            harness,
+            session_id,
+            project,
+        } => RuntimeCommand::RestartSession {
+            path,
+            harness,
+            session_id,
+            project,
+        },
         command => command,
     }
 }
@@ -107,7 +115,12 @@ mod tests {
         let path = PathBuf::from("/session.jsonl");
         let project = PathBuf::from("/project");
         assert!(matches!(
-            restart_session_after_trust(RuntimeCommand::SelectSession { path, project }),
+            restart_session_after_trust(RuntimeCommand::SelectSession {
+                session_id: path.to_string_lossy().into_owned(),
+                path,
+                harness: "pi".into(),
+                project,
+            }),
             RuntimeCommand::RestartSession { .. }
         ));
     }

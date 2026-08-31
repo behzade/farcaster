@@ -116,6 +116,8 @@ pub(crate) enum SessionStart {
 }
 
 pub(crate) struct SessionLaunch {
+    pub(crate) harness: String,
+    pub(crate) session_id: Option<String>,
     pub(crate) project: PathBuf,
     pub(crate) start: SessionStart,
     pub(crate) wake: Option<thread::Thread>,

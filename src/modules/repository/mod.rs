@@ -10,7 +10,7 @@ pub(crate) use contract::{
     SnapshotIdentity, WorkingCopyChange, WorkingCopySnapshot,
 };
 
-pub(crate) use core::RepositoryBackend;
+pub(crate) use core::{PreferenceStore, RepositoryBackend, load_preferences, save_preferences};
 
 use core::{change, command_failed, diff_result, require_complete_stdout};
 use domain::SnapshotToken;

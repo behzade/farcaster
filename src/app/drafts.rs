@@ -68,6 +68,12 @@ impl FarcasterApp {
             &project,
             RuntimeCommand::NewSession {
                 id,
+                harness: self
+                    .drafts
+                    .iter()
+                    .find(|draft| draft.id == self.selected_draft.as_deref().unwrap_or_default())
+                    .map(|draft| draft.harness.clone())
+                    .unwrap_or_else(|| "pi".into()),
                 project: project.clone(),
             },
             window,
