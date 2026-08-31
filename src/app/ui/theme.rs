@@ -38,6 +38,7 @@ pub(crate) struct Colors {
     pub surface: Rgba,
     pub hover: Rgba,
     pub selection: Rgba,
+    pub text_selection: Rgba,
     pub border: Rgba,
     pub text: Rgba,
     pub muted: Rgba,
@@ -132,6 +133,7 @@ pub(crate) const THEME: Theme = Theme {
         surface: rgb(0x2b2b28),
         hover: rgb(0x383734),
         selection: rgb(0x292a27),
+        text_selection: rgb(0x4b5538),
         border: rgb(0x53514c),
         text: rgb(0xd6caad),
         muted: rgb(0x9c9280),
@@ -274,7 +276,7 @@ pub(crate) fn install_component_theme(cx: &mut App) {
     colors.success_foreground = THEME.colors.canvas.into();
     colors.ring = THEME.colors.accent.into();
     colors.caret = THEME.colors.text.into();
-    colors.selection = THEME.colors.selection.into();
+    colors.selection = THEME.colors.text_selection.into();
     theme.tokens = ThemeTokens::from(theme.colors);
 }
 
