@@ -15,7 +15,6 @@ mod performance;
 mod persistent_vec;
 mod primitives;
 mod project_trust_view;
-mod session_changes;
 mod state;
 #[cfg(test)]
 mod state_test;

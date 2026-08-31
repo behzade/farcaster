@@ -9,8 +9,7 @@ use gpui::{AppContext as _, Context, FocusHandle};
 use super::FarcasterApp;
 use crate::{
     agent_activity::FileMutation,
-    session_changes::{self, ChangeSet},
-    sessions::{descendant_sessions, root_session_for_path},
+    sessions::{ChangeSet, collect_changes, descendant_sessions, root_session_for_path},
 };
 
 #[derive(Default)]
@@ -121,7 +120,7 @@ impl FarcasterApp {
             return;
         };
         let task = cx.background_spawn(async move {
-            let mut set = session_changes::collect(mutations);
+            let mut set = collect_changes(mutations);
             set.incomplete = incomplete;
             set
         });

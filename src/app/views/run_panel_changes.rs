@@ -8,8 +8,8 @@ use gpui::{
 use super::super::FarcasterApp;
 use crate::{
     primitives::activates_button,
-    session_changes::{ChangeSet, FileChange, FileChangeKind},
     sessions::root_session_for_path,
+    sessions::{ChangeSet, FileChange, FileChangeKind},
     theme::{MONO_FONT_FAMILY, THEME},
 };
 

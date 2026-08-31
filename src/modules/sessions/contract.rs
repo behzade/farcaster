@@ -9,6 +9,29 @@ use super::activity::AgentActivity;
 pub(crate) const RUNNING_ACTIVITY_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(30 * 60);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum FileChangeKind {
+    Edited,
+    Written,
+    Mixed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct FileChange {
+    pub path: PathBuf,
+    pub kind: FileChangeKind,
+    pub additions: Option<u64>,
+    pub deletions: Option<u64>,
+    pub observed_at: SystemTime,
+    pub partial: bool,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ChangeSet {
+    pub files: Vec<FileChange>,
+    pub incomplete: bool,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct UsageSummary {
     pub input: u64,
