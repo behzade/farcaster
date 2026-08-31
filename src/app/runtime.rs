@@ -33,8 +33,8 @@ use crate::{
         SessionState, SlashCommand,
     },
     sessions::{
-        self, ExternalActivityTracker, LoadedHistory, SessionDiscovery, SessionSummary, SessionWatchEvent, SessionWatcher, TransferMember,
-        archived_root_family_for_path,
+        self, ExternalActivityTracker, LoadedHistory, SessionDiscovery, SessionSummary,
+        SessionWatchEvent, SessionWatcher, TransferMember, archived_root_family_for_path,
         configured_session_root, discover, load_history, project_display_history,
         session_family_for_path,
     },
@@ -3168,13 +3168,13 @@ mod tests {
             String::new(),
         );
 
-        assert!(!documents::session_document_is_live(&session, false, false));
-        assert!(documents::session_document_is_live(&session, true, false));
+        assert!(!sessions::document_is_live(&session, false, false));
+        assert!(sessions::document_is_live(&session, true, false));
         session.archived = true;
-        assert!(!documents::session_document_is_live(&session, true, false));
-        assert!(documents::session_document_is_live(&session, true, true));
+        assert!(!sessions::document_is_live(&session, true, false));
+        assert!(sessions::document_is_live(&session, true, true));
         session.is_running = true;
-        assert!(documents::session_document_is_live(&session, false, false));
+        assert!(sessions::document_is_live(&session, false, false));
     }
 
     #[test]

@@ -4,14 +4,6 @@ use super::*;
 
 type SessionDocumentRevision = (SystemTime, usize);
 
-pub(super) fn session_document_is_live(
-    session: &SessionSummary,
-    interacted: bool,
-    rpc_attached: bool,
-) -> bool {
-    rpc_attached || session.is_running || (interacted && !session.archived)
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(super) fn reconcile_live_session_documents(
     sessions: &[SessionSummary],
@@ -37,7 +29,7 @@ pub(super) fn reconcile_live_session_documents(
         let rpc_attached = documents.get(&key).is_some_and(|snapshot| {
             snapshot.connected && !snapshot.history_preview && snapshot.live_session.is_some()
         });
-        if !session_document_is_live(session, interacted.contains(&key), rpc_attached) {
+        if !sessions::document_is_live(session, interacted.contains(&key), rpc_attached) {
             continue;
         }
         live_keys.insert(key.clone());
