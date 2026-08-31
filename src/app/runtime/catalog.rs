@@ -97,7 +97,7 @@ impl RuntimeOwner {
     pub(super) fn load_sessions(&mut self, query: String) {
         self.session_query = query;
         if let Some(state) = &self.state {
-            match state.cached_sessions("") {
+            match crate::sessions::cached_sessions(state, "") {
                 Ok(mut all_sessions) => {
                     if self.session_generation == 0 {
                         for session in &mut all_sessions {
@@ -173,9 +173,8 @@ impl RuntimeOwner {
                 let discovered = discovery.sessions;
                 let activities = discovery.activities;
                 let (sessions, all_sessions) = if let Some(state) = self.state.as_mut() {
-                    match state
-                        .index_sessions(&discovered, discovery.exhaustive)
-                        .and_then(|()| state.cached_sessions(""))
+                    match crate::sessions::index_sessions(state, &discovered, discovery.exhaustive)
+                        .and_then(|()| crate::sessions::cached_sessions(state, ""))
                     {
                         Ok(all_sessions) => {
                             let sessions = crate::sessions::filter_session_tree(

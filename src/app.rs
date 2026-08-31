@@ -380,7 +380,7 @@ impl FarcasterApp {
         let submitted_drafts = drafts::submitted_draft_associations(&registry.drafts);
         sandbox_approval_ui.set_project_trusted(repository_execution_allowed);
         let saved_proxy = crate::app::persistence::StateStore::open()
-            .and_then(|store| store.load_network_proxy())
+            .and_then(|store| crate::access::load_proxy(&store))
             .unwrap_or(None);
         let runtime = RuntimeHandle::spawn_with_grants(
             project.clone(),

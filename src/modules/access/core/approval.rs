@@ -641,7 +641,9 @@ fn normalize_right(
             let metadata = actual.metadata().map_err(|error| {
                 format!("inspect filesystem grant {}: {error}", actual.display())
             })?;
-            if is_protected_path(&actual, *access, project, home) {
+            let resolved_project = project.canonicalize().unwrap_or_else(|_| project.to_owned());
+            let resolved_home = home.canonicalize().unwrap_or_else(|_| home.to_owned());
+            if is_protected_path(&actual, *access, &resolved_project, &resolved_home) {
                 return Err(format!(
                     "Sandbox policy cannot grant protected {} access: {}",
                     match access {
@@ -663,7 +665,7 @@ fn normalize_right(
             }
             Ok(AccessRight::Filesystem {
                 access: *access,
-                path: portable_path(&actual, project, home),
+                path: portable_path(&actual, &resolved_project, &resolved_home),
                 scope: *scope,
             })
         }

@@ -9,7 +9,7 @@ pub(super) fn new_draft(project: PathBuf) -> Result<projects::DraftSession, Stri
     let id = format!("draft-{}-{}", elapsed.as_nanos(), std::process::id());
     let created_ms = elapsed.as_millis().try_into().unwrap_or(u64::MAX);
     let mut store = StateStore::open()?;
-    let app_session_id = store.allocate_app_session_id(&id, created_ms)?;
+    let app_session_id = projects::allocate_session_id(&mut store, &id, created_ms)?;
     Ok(projects::DraftSession::new(
         id,
         app_session_id,
@@ -20,12 +20,12 @@ pub(super) fn new_draft(project: PathBuf) -> Result<projects::DraftSession, Stri
 
 pub(super) fn load() -> Result<projects::Registry, String> {
     let mut store = StateStore::open()?;
-    let registry = store.load_registry()?;
+    let registry = projects::load_registry(&store)?;
     if registry == projects::Registry::default() {
         let legacy_path = legacy_registry_path()?;
         if legacy_path.exists() {
             let legacy = projects::load_legacy(&legacy_path)?;
-            store.save_registry(&legacy)?;
+            projects::save_registry(&mut store, &legacy)?;
             return Ok(legacy);
         }
     }
@@ -33,7 +33,7 @@ pub(super) fn load() -> Result<projects::Registry, String> {
 }
 
 pub(super) fn save(registry: &projects::Registry) -> Result<(), String> {
-    StateStore::open()?.save_registry(registry)
+    projects::save_registry(&mut StateStore::open()?, registry)
 }
 
 pub(super) fn load_app_session_order() -> Result<Vec<i64>, String> {

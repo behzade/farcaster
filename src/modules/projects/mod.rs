@@ -7,7 +7,10 @@ pub(crate) use adapter::load_legacy;
 pub(crate) use contract::{
     AppliedTrust, DraftSession, Registry, StartupTrust, TrustChoice, TrustOption,
 };
-pub(crate) use core::{add_unique, add_visible, remove, restore, select};
+pub(crate) use core::{
+    ProjectStore, add_unique, add_visible, allocate_session_id, load_registry, remove, restore,
+    save_registry, select,
+};
 pub(crate) use trust::{
     apply, options, repository_execution_allowed, saved_decision, startup_trust,
 };

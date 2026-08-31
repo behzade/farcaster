@@ -10,6 +10,18 @@ pub(crate) use workers::{StartWorker, WorkerMessageMode, WorkerSnapshot, WorkerS
 use crate::access::{GrantStore, SandboxRuntime};
 use extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptImage, PromptMode};
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct QueuedPrompt {
+    pub(crate) id: i64,
+    pub(crate) target: String,
+    pub(crate) harness: String,
+    pub(crate) project: PathBuf,
+    pub(crate) session: Option<PathBuf>,
+    pub(crate) mode: PromptMode,
+    pub(crate) message: String,
+    pub(crate) images: Vec<PromptImage>,
+}
+
 #[derive(Clone)]
 pub(crate) struct AgentLaunchConfig {
     pub(crate) program: PathBuf,

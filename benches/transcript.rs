@@ -17,6 +17,15 @@ mod app {
         pub(crate) path: std::path::PathBuf,
     }
 
+    pub(crate) mod views {
+        pub(crate) mod transcript {
+            pub(crate) use crate::conversation;
+            pub(crate) use crate::transcript_attachments as attachments;
+            pub(crate) use crate::transcript_list as list;
+            pub(crate) use crate::transcript_markdown as markdown;
+        }
+    }
+
     pub(crate) struct FarcasterApp;
 
     impl FarcasterApp {
@@ -51,9 +60,15 @@ mod app {
     }
 }
 
+mod agents {
+    pub(crate) fn is_hidden_user_message(_: &serde_json::Value) -> bool {
+        false
+    }
+}
+
 #[path = "../src/assets.rs"]
 mod assets;
-#[path = "../src/conversation.rs"]
+#[path = "../src/app/views/transcript/conversation.rs"]
 mod conversation;
 #[path = "../src/performance.rs"]
 mod performance;
@@ -61,19 +76,19 @@ mod performance;
 mod persistent_vec;
 #[path = "../src/primitives/mod.rs"]
 mod primitives;
-#[path = "../src/protocol.rs"]
+#[path = "../src/modules/agents/contract/extensions.rs"]
 mod protocol;
 #[path = "../src/theme.rs"]
 mod theme;
 #[path = "../src/tool_changes.rs"]
 mod tool_changes;
-#[path = "../src/transcript.rs"]
+#[path = "../src/app/views/transcript/render.rs"]
 mod transcript;
-#[path = "../src/transcript_attachments.rs"]
+#[path = "../src/app/views/transcript/attachments.rs"]
 mod transcript_attachments;
-#[path = "../src/transcript_list.rs"]
+#[path = "../src/app/views/transcript/list.rs"]
 mod transcript_list;
-#[path = "../src/transcript_markdown.rs"]
+#[path = "../src/app/views/transcript/markdown.rs"]
 mod transcript_markdown;
 
 const WARMUP_FRAMES: usize = 10;

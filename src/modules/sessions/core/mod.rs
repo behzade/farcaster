@@ -1,6 +1,7 @@
 mod catalog;
 mod changes;
 mod path;
+mod persistence;
 
 pub(crate) use catalog::{
     SessionRootIndex, archived_root_family_for_path, descendant_sessions, filter_session_tree,
@@ -8,3 +9,7 @@ pub(crate) use catalog::{
 };
 pub(crate) use changes::collect as collect_changes;
 pub(crate) use path::normalize_lexical;
+pub(crate) use persistence::{
+    SessionStore, cached as cached_sessions, delete as delete_state, index as index_sessions,
+    relocate as relocate_state, set_archived,
+};

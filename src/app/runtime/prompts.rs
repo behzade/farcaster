@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    agents::SessionCommand,
-    app::persistence::QueuedPrompt,
+    agents::{self, QueuedPrompt, SessionCommand},
     protocol::{PromptImage, PromptMode},
 };
 
@@ -38,7 +37,8 @@ impl RuntimeOwner {
             return;
         }
         let outbox_id = match self.state.as_ref() {
-            Some(state) => match state.enqueue_prompt(
+            Some(state) => match agents::enqueue_prompt(
+                state,
                 &target,
                 &self.harness,
                 &self.project,
@@ -148,7 +148,7 @@ impl RuntimeOwner {
         }
         if let Some(id) = outbox_id
             && let Some(state) = &self.state
-            && let Err(error) = state.begin_prompt(id)
+            && let Err(error) = agents::begin_prompt(state, id)
         {
             let target = self.pending_prompt_target.take().unwrap_or_default();
             self.rollback_pending_prompt();

@@ -10,7 +10,9 @@ pub(crate) use contract::{
     AccessPolicy, FilesystemAccess, NetworkAccess, NetworkConfiguration, SandboxPaths,
     SandboxRuntime, SandboxedCommand,
 };
-pub(crate) use core::{approval, approval::GrantStore};
+pub(crate) use core::{
+    NetworkSettingsStore, approval, approval::GrantStore, load_proxy, save_proxy,
+};
 
 #[cfg(test)]
 pub(crate) use adapter::nono::test_sandbox_bypass;

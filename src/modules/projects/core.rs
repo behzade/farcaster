@@ -1,3 +1,7 @@
+mod persistence;
+
+pub(crate) use persistence::{ProjectStore, allocate_session_id, load_registry, save_registry};
+
 use std::path::{Path, PathBuf};
 
 fn is_excluded(excluded_projects: &[PathBuf], project: &Path) -> bool {

@@ -23,15 +23,14 @@ use serde_json::{Value, json};
 use crate::{
     agent_activity::AgentActivity,
     agents::{
-        AgentLaunchConfig, SessionCommand, SessionEvent, SessionLaunch, SessionStart,
+        self, AgentLaunchConfig, SessionCommand, SessionEvent, SessionLaunch, SessionStart,
         SessionTransport,
     },
     app::persistence::StateStore,
     app::views::transcript::conversation::{ConversationState, TranscriptItem, TranscriptKind},
     protocol::{
         AgentMode, ExtensionUiRequest, ExtensionUiResponse, Model, PromptImage, PromptMode,
-        SessionState,
-        SlashCommand,
+        SessionState, SlashCommand,
     },
     sessions::{
         self, LoadedHistory, RUNNING_ACTIVITY_TIMEOUT, SessionDiscovery, SessionSummary,
@@ -127,7 +126,7 @@ pub(crate) enum RuntimeCommand {
     ReloadSandboxGrants,
     ActivateSandboxGrant,
     ExtensionResponse(ExtensionUiResponse),
-    DeliverQueued(crate::app::persistence::QueuedPrompt),
+    DeliverQueued(crate::agents::QueuedPrompt),
     SetSessionArchived {
         path: PathBuf,
         archived: bool,
@@ -501,7 +500,7 @@ fn run_supervisor(
     let mut session_controls = SessionControlDefaults::default();
     let mut published_statuses = HashMap::<String, (Option<PathBuf>, String)>::new();
     if let Ok(state) = StateStore::open()
-        && let Ok(prompts) = state.queued_prompts()
+        && let Ok(prompts) = agents::queued_prompts(&state)
     {
         for prompt in prompts {
             let key = prompt.target.clone();
@@ -806,7 +805,7 @@ fn run_supervisor(
                         }
                         let mut state = StateStore::open()?;
                         let paths = family_paths.iter().cloned().collect::<Vec<_>>();
-                        if state.has_queued_prompts_for(&paths)? {
+                        if agents::has_queued_prompts_for(&state, &paths)? {
                             return Err(
                                 "Send or remove queued prompts before deleting this session"
                                     .to_owned(),
@@ -832,7 +831,7 @@ fn run_supervisor(
                             generation = generation.saturating_add(1);
                         }
                         let leftovers = sessions::delete_family(&paths)?;
-                        let state_warning = state.delete_session_state(&paths).err();
+                        let state_warning = sessions::delete_state(&mut state, &paths).err();
                         Ok((family_paths, leftovers, state_warning))
                     })();
                     match result {
@@ -928,7 +927,7 @@ fn run_supervisor(
                         }
                         let mut state = StateStore::open()?;
                         let paths = family_paths.iter().cloned().collect::<Vec<_>>();
-                        if state.has_queued_prompts_for(&paths)? {
+                        if agents::has_queued_prompts_for(&state, &paths)? {
                             return Err("Send or remove queued prompts before moving this session"
                                 .to_owned());
                         }
@@ -977,9 +976,9 @@ fn run_supervisor(
                             .iter()
                             .map(|(source, target)| (source.clone(), target.clone()))
                             .collect::<Vec<_>>();
-                        let state_warning = state
-                            .relocate_session_paths(&path_updates, target_project)
-                            .err();
+                        let state_warning =
+                            sessions::relocate_state(&mut state, &path_updates, target_project)
+                                .err();
                         Ok((moved, state_warning))
                     })();
                     match result {
@@ -1853,7 +1852,7 @@ impl RuntimeOwner {
             }
             RuntimeCommand::SetSessionArchived { path, archived } => {
                 if let Some(state) = &self.state
-                    && let Err(error) = state.set_session_archived(&path, archived)
+                    && let Err(error) = sessions::set_archived(state, &path, archived)
                 {
                     let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
                         generation: self.session_generation,
@@ -2229,7 +2228,7 @@ impl RuntimeOwner {
                 if let Some(id) = self.pending_outbox_id.take()
                     && let Some(state) = self.state.as_mut()
                 {
-                    let _ = state.complete_prompt(id, &target, session.as_deref());
+                    let _ = agents::complete_prompt(state, id, &target, session.as_deref());
                 }
             } else {
                 self.mark_outbox_failed(
@@ -2502,7 +2501,7 @@ impl RuntimeOwner {
     fn mark_outbox_failed(&mut self, error: &str) {
         if let Some(id) = self.pending_outbox_id.take()
             && let Some(state) = &self.state
-            && let Err(database_error) = state.fail_prompt(id, error)
+            && let Err(database_error) = agents::fail_prompt(state, id, error)
         {
             zlog::error!("Failed to mark queued prompt {id} as failed: {database_error}");
         }
