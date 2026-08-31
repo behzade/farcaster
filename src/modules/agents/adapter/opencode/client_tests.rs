@@ -95,11 +95,9 @@ fn native_vertical_slice_preserves_session_and_prompt_features() -> Result<(), S
     assert_eq!(
         body(&transport.requests[2]),
         json!({
-            "prompt": {
-                "text": "inspect this",
-                "files": [{"uri": "file:///tmp/image.png", "name": "image.png"}],
-                "agents": []
-            },
+            "text": "inspect this",
+            "files": [{"uri": "file:///tmp/image.png", "name": "image.png"}],
+            "agents": [],
             "delivery": "queue",
             "resume": true
         })

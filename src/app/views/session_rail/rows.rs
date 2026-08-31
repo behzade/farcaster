@@ -285,7 +285,7 @@ pub(super) fn draft_session_row(
                                             .expect("fixed session shortcut must parse"),
                                         ))
                                     })
-                                    .when(!draft.submitted, |metadata| {
+                                    .when(draft_can_be_discarded(draft.submitted, status), |metadata| {
                                         metadata.child(
                                             icon_control(
                                                 format!("discard-{discard_id}"),
@@ -826,6 +826,10 @@ fn status_icon(app_session_id: i64, status: &str) -> Option<AnyElement> {
     )
 }
 
+fn draft_can_be_discarded(submitted: bool, status: &str) -> bool {
+    !submitted || status == "Failed"
+}
+
 pub(super) fn status_visual(status: &str) -> Option<(AppIcon, Rgba)> {
     match status {
         "" => None,
@@ -893,5 +897,17 @@ fn relative_age(modified: SystemTime) -> String {
         format!("{}h", age.as_secs() / (60 * 60))
     } else {
         format!("{}d", age.as_secs() / (24 * 60 * 60))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::draft_can_be_discarded;
+
+    #[test]
+    fn failed_submitted_drafts_can_be_discarded() {
+        assert!(draft_can_be_discarded(true, "Failed"));
+        assert!(!draft_can_be_discarded(true, "Working"));
+        assert!(draft_can_be_discarded(false, "Draft"));
     }
 }

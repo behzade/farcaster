@@ -74,7 +74,9 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
             OpenCodeHttpMethod::Post,
             format!("/api/session/{}/prompt", path_segment(session_id)),
             Some(json!({
-                "prompt": {"text": text, "files": files, "agents": []},
+                "text": text,
+                "files": files,
+                "agents": [],
                 "delivery": delivery,
                 "resume": true,
             })),

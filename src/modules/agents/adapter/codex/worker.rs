@@ -766,7 +766,12 @@ fn configure_farcaster_mcp(command: &mut std::process::Command, caller_token: &s
         serde_json::to_string(farcaster_mcp::CALLER_HEADER).expect("static MCP header encodes");
     let token = serde_json::to_string(caller_token).expect("caller token encodes");
     command
-        .args(["app-server", "--stdio"])
+        .args([
+            "app-server",
+            "--stdio",
+            "--enable",
+            "mcp_2026_07_28",
+        ])
         .arg("-c")
         .arg(format!("mcp_servers.farcaster.url={url}"))
         .arg("-c")
@@ -851,7 +856,10 @@ mod tests {
             .get_args()
             .map(|argument| argument.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
-        assert_eq!(&arguments[..2], ["app-server", "--stdio"]);
+        assert_eq!(
+            &arguments[..4],
+            ["app-server", "--stdio", "--enable", "mcp_2026_07_28"]
+        );
         assert!(arguments.contains(&format!(
             "mcp_servers.farcaster.url=\"{}\"",
             farcaster_mcp::URL
