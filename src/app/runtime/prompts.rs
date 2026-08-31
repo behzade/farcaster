@@ -37,7 +37,7 @@ impl RuntimeOwner {
         let outbox_id = match self.state.as_ref() {
             Some(state) => match state.enqueue_prompt(
                 &target,
-                "pi",
+                &self.harness,
                 &self.project,
                 self.snapshot.selected_session.as_deref(),
                 mode,

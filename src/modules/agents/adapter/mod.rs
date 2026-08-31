@@ -97,6 +97,41 @@ pub(crate) fn rename_session(
     pi::PiRpcProcess::rename_session(config, project, session, name)
 }
 
+pub(crate) fn backend_statuses() -> Vec<super::contract::AgentBackendStatus> {
+    let pi_program = crate::agents::AgentLaunchConfig::default().program;
+    let codex_program = std::env::var_os("FARCASTER_CODEX_PATH")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| "codex".into());
+    let opencode_program = std::env::var_os("FARCASTER_OPENCODE_PATH")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| "opencode2".into());
+    known_backend_descriptors()
+        .into_iter()
+        .zip([pi_program, codex_program, opencode_program])
+        .map(|(descriptor, program)| super::contract::AgentBackendStatus {
+            id: descriptor.id.as_str().to_owned(),
+            name: descriptor.name,
+            available: program_available(&program),
+            capabilities: descriptor.capabilities,
+        })
+        .collect()
+}
+
+fn program_available(program: &std::path::Path) -> bool {
+    if program.is_absolute()
+        || program
+            .parent()
+            .is_some_and(|parent| !parent.as_os_str().is_empty())
+    {
+        return program.is_file();
+    }
+    std::env::var_os("PATH").is_some_and(|path| {
+        std::env::split_paths(&path)
+            .map(|directory| directory.join(program))
+            .any(|candidate| candidate.is_file())
+    })
+}
+
 pub(super) fn known_backend_descriptors() -> [super::contract::AgentBackendDescriptor; 3] {
     [
         pi::descriptor(),

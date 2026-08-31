@@ -34,7 +34,7 @@ pub(crate) fn descriptor() -> AgentBackendDescriptor {
                 images: Available,
                 interrupt: Available,
                 steer: Available,
-                follow_up: Unsupported,
+                follow_up: Available,
                 compact: Available,
                 queue: Available,
             },
@@ -71,7 +71,7 @@ mod tests {
     fn descriptor_keeps_codex_specific_features_independent() {
         let capabilities = descriptor().capabilities;
         assert_eq!(capabilities.turns.queue, CapabilitySupport::Available);
-        assert_eq!(capabilities.turns.follow_up, CapabilitySupport::Unsupported);
+        assert_eq!(capabilities.turns.follow_up, CapabilitySupport::Available);
         assert_eq!(
             capabilities.observation.child_agents,
             CapabilitySupport::Available

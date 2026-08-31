@@ -76,6 +76,14 @@ impl DraftSession {
         self.project = project;
         true
     }
+
+    pub(crate) fn change_harness(&mut self, harness: String) -> bool {
+        if !self.can_change_project() || self.harness == harness {
+            return false;
+        }
+        self.harness = harness;
+        true
+    }
 }
 
 fn default_harness() -> String {

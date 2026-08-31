@@ -65,7 +65,7 @@ use crate::{
         layout_mode, shows_left_inline, shows_right_inline, shows_run_sheet_button,
         shows_session_sheet_button,
     },
-    primitives::{ButtonTone, FeedbackTone, feedback, icon_button, modal},
+    primitives::{ButtonTone, FeedbackTone, button, feedback, icon_button, modal},
     protocol::ExtensionUiRequest,
     theme::{THEME, ui_font},
 };
@@ -163,6 +163,9 @@ impl Render for FarcasterApp {
         let editable_draft_project = (!has_conversation)
             .then(|| self.editable_draft_project())
             .flatten();
+        let editable_draft_harness = (!has_conversation)
+            .then(|| self.editable_draft_harness())
+            .flatten();
         let chat_main = div()
             .relative()
             .flex_1()
@@ -196,9 +199,16 @@ impl Render for FarcasterApp {
                                     .flex_col()
                                     .items_center()
                                     .gap(THEME.space.md)
-                                    .when_some(editable_draft_project, |draft, project| {
-                                        draft.child(render_draft_heading(project, heading_entity))
-                                    })
+                                    .when_some(
+                                        editable_draft_project.zip(editable_draft_harness),
+                                        |draft, (project, harness)| {
+                                            draft.child(render_draft_heading(
+                                                project,
+                                                harness,
+                                                heading_entity,
+                                            ))
+                                        },
+                                    )
                                     .child(self.composer_view.clone()),
                             )
                     }),
@@ -740,39 +750,79 @@ impl Render for FarcasterApp {
 
 fn render_draft_heading(
     project: std::path::PathBuf,
+    harness: String,
     entity: gpui::WeakEntity<FarcasterApp>,
 ) -> impl IntoElement {
     let label = session_rows::project_label(&project);
+    let project_entity = entity.clone();
     div()
         .flex()
+        .flex_col()
         .items_center()
-        .justify_center()
-        .text_size(THEME.type_scale.display)
-        .text_color(THEME.colors.text)
-        .child("What needs doing in ")
+        .gap(THEME.space.sm)
         .child(
-            BaseButton::new("draft-project")
-                .accessibility_label(label.clone())
+            div()
                 .flex()
                 .items_center()
-                .cursor_pointer()
+                .justify_center()
                 .text_size(THEME.type_scale.display)
-                .text_color(THEME.colors.accent)
-                .hover(|button| button.text_color(THEME.colors.accent_hover))
-                .active(|button| button.text_color(THEME.colors.accent_active))
-                .focus(|button| button.text_decoration_1())
-                .on_click(move |_, window, cx| {
-                    let _ = entity.update(cx, |this, cx| {
-                        this.open_picker(
-                            PickerScope::Projects(ProjectPickerIntent::ChangeDraft),
-                            window,
-                            cx,
-                        );
-                    });
-                })
-                .child(label),
+                .text_color(THEME.colors.text)
+                .child("What needs doing in ")
+                .child(
+                    BaseButton::new("draft-project")
+                        .accessibility_label(label.clone())
+                        .flex()
+                        .items_center()
+                        .cursor_pointer()
+                        .text_size(THEME.type_scale.display)
+                        .text_color(THEME.colors.accent)
+                        .hover(|button| button.text_color(THEME.colors.accent_hover))
+                        .active(|button| button.text_color(THEME.colors.accent_active))
+                        .focus(|button| button.text_decoration_1())
+                        .on_click(move |_, window, cx| {
+                            let _ = project_entity.update(cx, |this, cx| {
+                                this.open_picker(
+                                    PickerScope::Projects(ProjectPickerIntent::ChangeDraft),
+                                    window,
+                                    cx,
+                                );
+                            });
+                        })
+                        .child(label),
+                )
+                .child("?"),
         )
-        .child("?")
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(THEME.space.xs)
+                .children(crate::agents::backend_statuses().into_iter().map(|backend| {
+                    let selected = backend.id == harness;
+                    let target = backend.id.clone();
+                    let entity = entity.clone();
+                    let label = if backend.available {
+                        backend.name
+                    } else {
+                        format!("{} unavailable", backend.name)
+                    };
+                    button(
+                        format!("draft-harness-{target}"),
+                        label,
+                        if selected {
+                            ButtonTone::Accent
+                        } else {
+                            ButtonTone::Quiet
+                        },
+                        backend.available && !selected,
+                        move |window, cx| {
+                            let _ = entity.update(cx, |this, cx| {
+                                this.change_draft_harness(target.clone(), window, cx);
+                            });
+                        },
+                    )
+                })),
+        )
 }
 
 fn render_keybindings_help() -> impl IntoElement {

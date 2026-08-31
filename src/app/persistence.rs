@@ -1259,12 +1259,13 @@ fn ensure_session_app_session(
     }
     if session.app_session_id > 0 {
         transaction.execute(
-            "INSERT OR IGNORE INTO app_sessions(id, session_path, created_ms)
-             VALUES(?1, ?2, ?3)",
+            "INSERT OR IGNORE INTO app_sessions(id, session_path, created_ms, harness)
+             VALUES(?1, ?2, ?3, ?4)",
             params![
                 session.app_session_id,
                 path.to_string_lossy(),
-                u64_to_i64(system_time_ms(session.modified))
+                u64_to_i64(system_time_ms(session.modified)),
+                session.harness
             ],
         )?;
         transaction.execute(
@@ -1273,10 +1274,11 @@ fn ensure_session_app_session(
         )?;
     } else {
         transaction.execute(
-            "INSERT OR IGNORE INTO app_sessions(session_path, created_ms) VALUES(?1, ?2)",
+            "INSERT OR IGNORE INTO app_sessions(session_path, created_ms, harness) VALUES(?1, ?2, ?3)",
             params![
                 path.to_string_lossy(),
-                u64_to_i64(system_time_ms(session.modified))
+                u64_to_i64(system_time_ms(session.modified)),
+                session.harness
             ],
         )?;
     }

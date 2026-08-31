@@ -38,6 +38,54 @@ impl FarcasterApp {
         )
     }
 
+    pub(super) fn editable_draft_harness(&self) -> Option<String> {
+        let id = self.selected_draft.as_deref()?;
+        let target = draft_target(id);
+        if self.composer_sessions.current_target() != target
+            || self.submitted_drafts.contains_key(id)
+            || self.pending_submissions.contains_key(&target)
+        {
+            return None;
+        }
+        self.drafts
+            .iter()
+            .find(|draft| draft.id == id)
+            .map(|draft| draft.harness.clone())
+            .or_else(|| Some("pi".into()))
+    }
+
+    pub(super) fn change_draft_harness(
+        &mut self,
+        harness: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(id) = self.selected_draft.clone() else {
+            return;
+        };
+        let Some(draft) = self.drafts.iter_mut().find(|draft| draft.id == id) else {
+            return;
+        };
+        if !draft.change_harness(harness.clone()) {
+            return;
+        }
+        let project = draft.project.clone();
+        self.save_project_registry();
+        self.send_project_command(
+            &project,
+            RuntimeCommand::NewSession {
+                id,
+                harness,
+                project: project.clone(),
+            },
+            window,
+            cx,
+        );
+        self.notify_session_rail(cx);
+        self.notify_composer(cx);
+        cx.notify();
+    }
+
     pub(super) fn change_draft_project(
         &mut self,
         project: PathBuf,

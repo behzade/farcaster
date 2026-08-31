@@ -223,6 +223,14 @@ pub(crate) struct AgentBackendDescriptor {
     pub capabilities: AgentCapabilities,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AgentBackendStatus {
+    pub id: String,
+    pub name: String,
+    pub available: bool,
+    pub capabilities: AgentCapabilities,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub(crate) enum WorkerContext {
