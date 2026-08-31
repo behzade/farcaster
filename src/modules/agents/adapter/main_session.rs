@@ -29,6 +29,8 @@ pub(super) struct WorkerSessionTransport {
     effort: String,
     metadata: MainSessionMetadata,
     selected_mode: Option<String>,
+    usage_tokens: u64,
+    context_window: u64,
 }
 
 impl WorkerSessionTransport {
@@ -39,6 +41,18 @@ impl WorkerSessionTransport {
         metadata: MainSessionMetadata,
     ) -> Result<Self, String> {
         let path = external_session_path(harness, &locator)?;
+        let model = metadata.models.first().and_then(|model| {
+            Some((
+                model.get("provider")?.as_str()?.to_owned(),
+                model.get("id")?.as_str()?.to_owned(),
+            ))
+        });
+        let context_window = metadata
+            .models
+            .first()
+            .and_then(|model| model.get("contextWindow"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
         Ok(Self {
             harness: harness.into(),
             locator,
@@ -48,7 +62,7 @@ impl WorkerSessionTransport {
             next_id: 0,
             running: false,
             rich_activity: false,
-            model: None,
+            model,
             effort: metadata
                 .efforts
                 .first()
@@ -56,6 +70,8 @@ impl WorkerSessionTransport {
                 .unwrap_or_else(|| "off".into()),
             metadata,
             selected_mode: None,
+            usage_tokens: 0,
+            context_window,
         })
     }
 
@@ -130,6 +146,19 @@ impl WorkerSessionTransport {
             WorkerEvent::NeedsInput(input) => SessionEvent::Interaction(interaction(input)),
             WorkerEvent::Activity(activity) => {
                 self.rich_activity = true;
+                if let Some(tokens) = activity
+                    .pointer("/usage/totalTokens")
+                    .and_then(Value::as_u64)
+                {
+                    self.usage_tokens = tokens;
+                }
+                if let Some(window) = activity
+                    .get("contextWindow")
+                    .and_then(Value::as_u64)
+                    .filter(|window| *window > 0)
+                {
+                    self.context_window = window;
+                }
                 SessionEvent::Activity(activity)
             }
             WorkerEvent::Failed(error) => SessionEvent::Failure(error),
@@ -154,7 +183,17 @@ impl SessionTransport for WorkerSessionTransport {
             SessionCommand::LoadUsage => self.response(
                 id.clone(),
                 "get_session_stats",
-                json!({"tokens": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0}}),
+                json!({
+                    "contextUsage": {
+                        "tokens": self.usage_tokens,
+                        "contextWindow": self.context_window,
+                        "percent": if self.context_window > 0 {
+                            self.usage_tokens as f64 * 100.0 / self.context_window as f64
+                        } else {
+                            0.0
+                        },
+                    }
+                }),
             ),
             SessionCommand::ListModels => self.response(
                 id.clone(),

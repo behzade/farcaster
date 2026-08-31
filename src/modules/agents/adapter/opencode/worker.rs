@@ -425,6 +425,33 @@ impl OpenCodeWorkerSession {
                         }]},
                     })));
                 }
+                "session.step.ended" => {
+                    let usage = event
+                        .data
+                        .get("tokens")
+                        .or_else(|| event.data.get("usage"))?;
+                    let input = usage.get("input").and_then(Value::as_u64).unwrap_or(0);
+                    let output = usage.get("output").and_then(Value::as_u64).unwrap_or(0);
+                    let reasoning = usage.get("reasoning").and_then(Value::as_u64).unwrap_or(0);
+                    let cache_read = usage
+                        .pointer("/cache/read")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    let cache_write = usage
+                        .pointer("/cache/write")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    return Some(WorkerEvent::Activity(json!({
+                        "type": "turn_end",
+                        "usage": {
+                            "input": input,
+                            "output": output + reasoning,
+                            "cacheRead": cache_read,
+                            "cacheWrite": cache_write,
+                            "totalTokens": input + output + reasoning + cache_read + cache_write,
+                        }
+                    })));
+                }
                 "session.tool.success" | "session.tool.failed" => {
                     let failed = event.event.as_deref() == Some("session.tool.failed");
                     return Some(WorkerEvent::Activity(json!({

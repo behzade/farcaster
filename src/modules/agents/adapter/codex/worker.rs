@@ -615,6 +615,21 @@ impl WorkerSession for CodexWorkerSession {
                                 return Some(WorkerEvent::Activity(event));
                             }
                         }
+                        "thread/tokenUsage/updated" => {
+                            let usage = params.get("tokenUsage")?;
+                            let total = usage.get("total")?;
+                            return Some(WorkerEvent::Activity(json!({
+                                "type": "turn_end",
+                                "contextWindow": usage.get("modelContextWindow").and_then(Value::as_u64).unwrap_or(0),
+                                "usage": {
+                                    "input": total.get("inputTokens").and_then(Value::as_u64).unwrap_or(0),
+                                    "output": total.get("outputTokens").and_then(Value::as_u64).unwrap_or(0),
+                                    "cacheRead": total.get("cachedInputTokens").and_then(Value::as_u64).unwrap_or(0),
+                                    "cacheWrite": total.get("cacheWriteInputTokens").and_then(Value::as_u64).unwrap_or(0),
+                                    "totalTokens": total.get("totalTokens").and_then(Value::as_u64).unwrap_or(0),
+                                }
+                            })));
+                        }
                         "turn/completed" => {
                             self.current_turn = None;
                             if params["turn"]["status"].as_str() == Some("failed") {
