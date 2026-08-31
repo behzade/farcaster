@@ -107,14 +107,14 @@ impl TranscriptMarkdownCache {
         cx: &mut gpui::App,
     ) -> Entity<TextViewState> {
         let (state, hit) = self.states.borrow_mut().get_or_insert_with(key, || {
-            let _timing = crate::app::performance::OperationTiming::new(
-                crate::app::performance::OperationKind::MarkdownParse,
+            let _timing = crate::app::infrastructure::performance::OperationTiming::new(
+                crate::app::infrastructure::performance::OperationKind::MarkdownParse,
                 text.len(),
             );
             cx.new(|cx| TextViewState::markdown(text, cx))
         });
         if hit {
-            crate::app::performance::count_markdown_cache_hit();
+            crate::app::infrastructure::performance::count_markdown_cache_hit();
         }
         state
     }

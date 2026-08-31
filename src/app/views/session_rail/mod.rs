@@ -177,7 +177,7 @@ impl FarcasterApp {
             move |index, _, _| match active_rows.get(index) {
                 Some(ActiveSessionItem::Draft(draft)) => {
                     let selected = selected_draft.as_deref() == Some(draft.id.as_str());
-                    let status = crate::app::drafts::resolved_draft_status(
+                    let status = crate::app::session::drafts::resolved_draft_status(
                         &draft.id,
                         &submitted_drafts,
                         &active_run_statuses,
@@ -856,7 +856,7 @@ impl FarcasterApp {
             self.session_order.retain(|id| !active_ids.contains(id));
             self.session_order.extend(active_order);
             if let Err(error) =
-                crate::app::project_registry::save_app_session_order(&self.session_order)
+                crate::app::project::registry::save_app_session_order(&self.session_order)
             {
                 self.sessions_error = Some(error);
             }

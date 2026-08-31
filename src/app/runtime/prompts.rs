@@ -60,8 +60,10 @@ impl RuntimeOwner {
         };
         self.pending_prompt_target = Some(target);
         self.snapshot.pending_question = None;
-        let invocation =
-            crate::app::user_invocations::contains_invocation(&message, &self.snapshot.commands);
+        let invocation = crate::app::composer::user_invocations::contains_invocation(
+            &message,
+            &self.snapshot.commands,
+        );
         let conversation = Arc::make_mut(&mut self.snapshot.conversation);
         self.pending_prompt_item = (!was_running).then(|| {
             conversation.push_local_user_with_prompt_images(message.clone(), &images, invocation)
@@ -77,7 +79,7 @@ impl RuntimeOwner {
         self.snapshot.project = self.project.clone();
         self.snapshot.selected_session = prompt.session.clone();
         self.pending_prompt_target = Some(prompt.target);
-        let invocation = crate::app::user_invocations::contains_invocation(
+        let invocation = crate::app::composer::user_invocations::contains_invocation(
             &prompt.message,
             &self.snapshot.commands,
         );
@@ -204,7 +206,7 @@ impl RuntimeOwner {
         if let Some(prompt) = self.deferred_prompt.take() {
             if !crate::agents::is_hidden_text(&prompt.message) && self.pending_prompt_item.is_none()
             {
-                let invocation = crate::app::user_invocations::contains_invocation(
+                let invocation = crate::app::composer::user_invocations::contains_invocation(
                     &prompt.message,
                     &self.active_snapshot().commands,
                 );

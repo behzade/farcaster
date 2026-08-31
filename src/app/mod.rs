@@ -1,46 +1,25 @@
 //! Top-level GPUI composition for the active root session.
 
-mod archive;
-mod changes;
-mod composer_completion;
-mod composer_images;
-mod composer_pastes;
-pub(crate) mod composer_sessions;
-#[cfg(test)]
-mod composer_sessions_tests;
-mod deletion;
-mod drafts;
-mod editor;
-mod expiries;
-pub(crate) mod extension_ui;
-mod file_mentions;
-pub(crate) mod launch;
+mod composer;
+pub(crate) mod extensions;
+pub(crate) mod infrastructure;
+#[allow(unused_imports)]
+pub(crate) use infrastructure::{launch, paths, persistence, shell_environment};
 pub(crate) mod mcp_server;
-pub(crate) mod paths;
-pub(crate) mod performance;
-pub(crate) mod persistence;
-#[cfg(test)]
-mod persistence_tests;
-mod picker;
-mod project_registry;
-mod quit;
-mod region_state;
-mod repository;
+mod navigation;
+mod project;
 pub(crate) mod runtime;
-mod session_titles;
-pub(crate) mod shell_environment;
-mod slash_commands;
-mod submissions;
-mod surfaces;
-mod terminal;
-mod trust;
+mod session;
 pub(crate) mod ui;
-pub(crate) mod user_invocations;
 pub(crate) mod views;
-pub(crate) use composer_images::ComposerImage;
-pub(crate) use composer_pastes::ComposerPaste;
-pub(crate) use picker::{PICKER_KEY_CONTEXT, PickerScope, ProjectPickerIntent};
-use submissions::PendingSubmission;
+mod workspace;
+pub(crate) use composer::ComposerImage;
+pub(crate) use composer::ComposerPaste;
+use composer::submissions::PendingSubmission;
+use composer::{completion as composer_completion, file_mentions};
+pub(crate) use navigation::{PICKER_KEY_CONTEXT, PickerScope, ProjectPickerIntent};
+use project::{registry as project_registry, repository};
+use session::{archive, drafts};
 pub(crate) use views::OVERLAY_KEY_CONTEXT;
 pub(crate) use views::transcript::list::TRANSCRIPT_SELECTION_KEY_CONTEXT;
 pub(crate) use views::workgraph::{WORKGRAPH_KEY_CONTEXT, WORKGRAPH_NAV_KEY_CONTEXT};
@@ -71,11 +50,11 @@ use gpui_neovim::NvimEditor;
 use crate::app::views::transcript::transcript_splice;
 use crate::{
     agent_activity::AgentActivity,
-    app::composer_sessions::{
+    app::composer::sessions::{
         ComposerSessions, ComposerSnapshot, HistoryNavigation, draft_target, project_target,
         session_target,
     },
-    app::extension_ui::{ExtensionEffect, ExtensionUiState},
+    app::extensions::{ExtensionEffect, ExtensionUiState},
     app::views::transcript::list::TranscriptListState,
     projects,
     protocol::{BackgroundJob, ExtensionUiRequest, Model},
@@ -200,7 +179,7 @@ pub(crate) struct FarcasterApp {
     agent_activities: HashMap<String, AgentActivity>,
     agent_row_focus: HashMap<String, FocusHandle>,
     background_jobs: Vec<BackgroundJob>,
-    changes: changes::ChangesState,
+    changes: session::changes::ChangesState,
     repository: repository::RepositoryState,
     session_order: Vec<i64>,
     session_drop_target: Option<(i64, crate::app::ui::primitives::ReorderPosition)>,
@@ -216,7 +195,7 @@ pub(crate) struct FarcasterApp {
     submitted_drafts: HashMap<String, Option<PathBuf>>,
     sessions_error: Option<String>,
     session_project_filter: Option<PathBuf>,
-    picker: Option<picker::PickerState>,
+    picker: Option<navigation::PickerState>,
     picker_return_focus: Option<FocusHandle>,
     session_list: ListState,
     session_list_rows: RefCell<Vec<String>>,
@@ -286,9 +265,9 @@ pub(crate) struct FarcasterApp {
     transcript_unseen: usize,
     pub(crate) transcript_disclosure_states: HashMap<usize, bool>,
     last_transcript_count: usize,
-    performance_monitor: Option<crate::app::performance::PerformanceMonitor>,
+    performance_monitor: Option<crate::app::infrastructure::performance::PerformanceMonitor>,
     _performance_task: Option<Task<()>>,
-    pending_session_switch: Option<(PathBuf, crate::app::performance::Timing)>,
+    pending_session_switch: Option<(PathBuf, crate::app::infrastructure::performance::Timing)>,
     extension: ExtensionUiState,
     sandbox_approval_ui: crate::access::approval::ApprovalUi,
     parked_extension: Option<ExtensionUiState>,
@@ -302,8 +281,8 @@ pub(crate) struct FarcasterApp {
     pending_submissions: HashMap<String, PendingSubmission>,
     post_render_focus: Option<PostRenderFocus>,
     sessions_sheet: bool,
-    pending_archive: Option<archive::PendingArchive>,
-    pending_delete: Option<deletion::PendingDelete>,
+    pending_archive: Option<session::archive::PendingArchive>,
+    pending_delete: Option<session::deletion::PendingDelete>,
     archived_sessions_expanded: bool,
     run_sheet: bool,
     keybindings_help: bool,
@@ -388,7 +367,7 @@ impl FarcasterApp {
         }
         let submitted_drafts = drafts::submitted_draft_associations(&registry.drafts);
         sandbox_approval_ui.set_project_trusted(repository_execution_allowed);
-        let saved_proxy = crate::app::persistence::StateStore::open()
+        let saved_proxy = crate::app::infrastructure::persistence::StateStore::open()
             .and_then(|store| crate::access::load_proxy(&store))
             .unwrap_or(None);
         let runtime = RuntimeHandle::spawn_with_grants(
@@ -549,18 +528,20 @@ impl FarcasterApp {
         transcript_list.scroll_to_end();
         let debug = std::env::var("DEBUG").ok().as_deref() == Some("true");
         let performance_monitor = debug.then(|| {
-            crate::app::performance::PerformanceMonitor::new(window.window_handle().window_id())
+            crate::app::infrastructure::performance::PerformanceMonitor::new(
+                window.window_handle().window_id(),
+            )
         });
         let performance_task = debug.then(|| {
             cx.spawn(async move |weak, cx| {
                 loop {
                     cx.background_executor()
-                        .timer(crate::app::performance::sample_interval())
+                        .timer(crate::app::infrastructure::performance::sample_interval())
                         .await;
                     if weak
                         .update(cx, |this, cx| {
                             if this.performance_monitor.as_mut().is_some_and(
-                                crate::app::performance::PerformanceMonitor::sample_if_due,
+                                crate::app::infrastructure::performance::PerformanceMonitor::sample_if_due,
                             ) {
                                 this.notify_run_panel(cx);
                             }
@@ -580,14 +561,18 @@ impl FarcasterApp {
         let composer_view = cx.new(|_| ComposerView::new(app.clone()));
         let run_panel_view = cx.new(|_| RunPanelView::new(app.clone()));
         let workgraph_view = cx.new(|cx| {
-            WorkGraphBoardView::new(crate::app::persistence::state_path(), project.clone(), cx)
+            WorkGraphBoardView::new(
+                crate::app::infrastructure::persistence::state_path(),
+                project.clone(),
+                cx,
+            )
         });
         let workgraph_detail_view =
             cx.new(|cx| WorkGraphDetailView::new(app.clone(), workgraph_view.clone(), cx));
         let workgraph_sidebar_view = cx.new(|cx| {
             WorkGraphSidebarView::new(
                 app.clone(),
-                crate::app::persistence::state_path(),
+                crate::app::infrastructure::persistence::state_path(),
                 project.clone(),
                 cx,
             )
@@ -607,7 +592,7 @@ impl FarcasterApp {
             let app = app.clone();
             let deferred_at = Instant::now();
             cx.defer(move |cx| {
-                crate::app::performance::record_scroll_defer(deferred_at.elapsed());
+                crate::app::infrastructure::performance::record_scroll_defer(deferred_at.elapsed());
                 let _ = app.update(cx, |this, cx| {
                     if update_transcript_follow_state(
                         &mut this.transcript_following,
@@ -632,7 +617,7 @@ impl FarcasterApp {
             agent_activities: HashMap::new(),
             agent_row_focus: HashMap::new(),
             background_jobs: Vec::new(),
-            changes: changes::ChangesState::new(cx),
+            changes: session::changes::ChangesState::new(cx),
             repository: repository::RepositoryState::load(
                 project.clone(),
                 repository_execution_allowed,
@@ -771,16 +756,15 @@ impl FarcasterApp {
     }
 
     fn drain_runtime(&mut self, cx: &mut Context<Self>) {
-        let mut operation = crate::app::performance::OperationTiming::new(
-            crate::app::performance::OperationKind::RuntimeDrain,
+        let mut operation = crate::app::infrastructure::performance::OperationTiming::new(
+            crate::app::infrastructure::performance::OperationKind::RuntimeDrain,
             0,
         );
-        let _timing = crate::app::performance::Timing::new("runtime.drain_events");
+        let _timing = crate::app::infrastructure::performance::Timing::new("runtime.drain_events");
         let mut root_dirty = false;
-        let performance_changed = self
-            .performance_monitor
-            .as_mut()
-            .is_some_and(crate::app::performance::PerformanceMonitor::sample_if_due);
+        let performance_changed = self.performance_monitor.as_mut().is_some_and(
+            crate::app::infrastructure::performance::PerformanceMonitor::sample_if_due,
+        );
         let mut rail_dirty = false;
         let mut archived_rail_dirty = false;
         let mut transcript_dirty = false;
@@ -881,8 +865,8 @@ impl FarcasterApp {
                     let row_update = if transcript_preselected {
                         self.project_transcript_rows(&snapshot)
                     } else if session_changed {
-                        let _timing = crate::app::performance::OperationTiming::new(
-                            crate::app::performance::OperationKind::FullProjection,
+                        let _timing = crate::app::infrastructure::performance::OperationTiming::new(
+                            crate::app::infrastructure::performance::OperationKind::FullProjection,
                             snapshot.conversation.items.len(),
                         );
                         crate::app::views::transcript::TranscriptRowUpdate::replace(
@@ -1428,7 +1412,8 @@ impl FarcasterApp {
         if self.pending_project_trust_command.is_some() {
             return;
         }
-        let _timing = crate::app::performance::Timing::new("switch.session_request");
+        let _timing =
+            crate::app::infrastructure::performance::Timing::new("switch.session_request");
         if self.snapshot.selected_session.as_deref() == Some(path.as_path())
             && self.selected_draft.is_none()
         {
@@ -1449,7 +1434,7 @@ impl FarcasterApp {
         }
         self.pending_session_switch = Some((
             path.clone(),
-            crate::app::performance::Timing::new("switch.session_total"),
+            crate::app::infrastructure::performance::Timing::new("switch.session_total"),
         ));
         let target = self.backend_target_for_path(&path);
         self.send_project_command(

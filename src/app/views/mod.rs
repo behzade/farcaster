@@ -1,27 +1,12 @@
-mod archive_confirmation;
-mod attachments;
 mod composer;
-mod composer_footer;
-#[cfg(test)]
-mod composer_tests;
-mod delete_confirmation;
-mod editor;
-mod image_preview;
-mod jj_init_confirmation;
-mod models;
-mod project_trust;
+pub(in crate::app) mod dialogs;
 mod regions;
 mod run_panel;
-mod run_panel_changes;
 mod session_rail;
-mod settings;
-mod shell;
-pub(in crate::app) mod startup_trust;
-mod surface_switcher;
-mod terminal;
 pub(crate) mod transcript;
 mod usage;
 pub(super) mod workgraph;
+mod workspace;
 
 pub(super) use regions::{
     ComposerView, InactiveSessionRailView, RunPanelView, SessionRailView, TranscriptView,
@@ -71,7 +56,7 @@ use crate::{
 
 impl Render for FarcasterApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let _timing = crate::app::performance::Timing::new("render.root");
+        let _timing = crate::app::infrastructure::performance::Timing::new("render.root");
         self.resolve_pending_submission(window, cx);
         let native_surface = matches!(self.surface, AppSurface::Editor | AppSurface::Terminal);
         if self.post_render_focus.is_some() {
@@ -137,7 +122,7 @@ impl Render for FarcasterApp {
             cx.defer_in(window, move |this, window, cx| {
                 if this.runtime_generation == generation {
                     let snapshot =
-                        crate::app::composer_sessions::ComposerSnapshot::new(text, 0, 0..0);
+                        crate::app::composer::sessions::ComposerSnapshot::new(text, 0, 0..0);
                     this.apply_composer_snapshot(snapshot.clone(), window, cx);
                     this.composer_sessions.capture_current(snapshot);
                 }
@@ -634,23 +619,23 @@ impl Render for FarcasterApp {
                 ))
             })
             .when_some(
-                image_preview::render(self, entity.clone()),
+                dialogs::image_preview::render(self, entity.clone()),
                 |root, preview| root.child(preview),
             )
             .when(self.pending_archive.is_some(), |root| {
-                root.child(archive_confirmation::render(self, entity.clone()))
+                root.child(dialogs::archive_confirmation::render(self, entity.clone()))
             })
             .when(self.pending_delete.is_some(), |root| {
-                root.child(delete_confirmation::render(self, entity.clone()))
+                root.child(dialogs::delete_confirmation::render(self, entity.clone()))
             })
             .when(self.repository.pending_jj_init.is_some(), |root| {
-                root.child(jj_init_confirmation::render(self, entity.clone()))
+                root.child(dialogs::jj_init_confirmation::render(self, entity.clone()))
             })
             .when(self.project_trust_sheet, |root| {
-                root.child(project_trust::render(self, entity.clone()))
+                root.child(dialogs::project_trust::render(self, entity.clone()))
             })
             .when(self.settings_sheet, |root| {
-                root.child(settings::render(self, entity.clone()))
+                root.child(dialogs::settings::render(self, entity.clone()))
             })
             .when(self.keybindings_help, |root| {
                 let close = entity.clone();

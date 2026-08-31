@@ -478,7 +478,7 @@ impl Element for TranscriptList {
             if phase != DispatchPhase::Bubble || !hitbox_id.should_handle_scroll(window) {
                 return;
             }
-            crate::app::performance::record_scroll_event(event.touch_phase);
+            crate::app::infrastructure::performance::record_scroll_event(event.touch_phase);
             if let Some(token) = state.queue_scroll(event.delta.pixel_delta(px(20.0)).y) {
                 request_scroll_frame(window, current_view, state.clone(), token);
             }

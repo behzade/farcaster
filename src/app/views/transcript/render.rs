@@ -293,7 +293,7 @@ pub(crate) fn update_rows_incremental(
         .min(previous_items.len());
     let (matching_items, compared_items) =
         matching_item_prefix_from(previous_items, items, unchanged_hint);
-    crate::app::performance::count_transcript_comparisons(compared_items);
+    crate::app::infrastructure::performance::count_transcript_comparisons(compared_items);
     let unchanged_items = (unchanged_hint + matching_items).min(projected_items);
     if unchanged_items == previous_items.len()
         && unchanged_items == items.len()
@@ -337,7 +337,7 @@ fn sync_transcript_list(
     next: PersistentVec<TranscriptRow>,
     unchanged_prefix_rows: usize,
 ) {
-    let _timing = crate::app::performance::Timing::new("transcript.sync_rows");
+    let _timing = crate::app::infrastructure::performance::Timing::new("transcript.sync_rows");
     let unchanged_prefix_rows = unchanged_prefix_rows.min(current.len()).min(next.len());
     let positions_unchanged = current.len() == next.len()
         && (unchanged_prefix_rows..current.len())
@@ -350,7 +350,7 @@ fn sync_transcript_list(
                 .rev()
                 .find(|&index| current[index] != next[index])
                 .unwrap_or(first);
-            crate::app::performance::count_remeasured_rows(last + 1 - first);
+            crate::app::infrastructure::performance::count_remeasured_rows(last + 1 - first);
             list.remeasure_items(first..last + 1);
         }
     } else if let Some((old_range, new_count)) =
@@ -446,7 +446,9 @@ fn project_rows_from(
     items: &(impl Indexed<Arc<TranscriptItem>> + ?Sized),
     mut index: usize,
 ) -> PersistentVec<TranscriptRow> {
-    crate::app::performance::count_transcript_projections(items.len().saturating_sub(index));
+    crate::app::infrastructure::performance::count_transcript_projections(
+        items.len().saturating_sub(index),
+    );
     let mut rows = PersistentVec::default();
     while index < items.len() {
         let item = items
@@ -828,8 +830,8 @@ pub(crate) fn render(
         move |index| selection_rows.get(index).map_or(index, TranscriptRow::key),
         move |range| copy_transcript_items(&selection_items, range),
         move |index, _, cx| {
-            let _timing = crate::app::performance::OperationTiming::new(
-                crate::app::performance::OperationKind::TranscriptRow,
+            let _timing = crate::app::infrastructure::performance::OperationTiming::new(
+                crate::app::infrastructure::performance::OperationKind::TranscriptRow,
                 1,
             );
             let Some(row) = rows.get(index).copied() else {
@@ -1517,8 +1519,8 @@ fn render_thinking(
             ),
         )
         .when(expanded && has_details, |row| {
-            let _timing = crate::app::performance::OperationTiming::new(
-                crate::app::performance::OperationKind::ThinkingAssembly,
+            let _timing = crate::app::infrastructure::performance::OperationTiming::new(
+                crate::app::infrastructure::performance::OperationKind::ThinkingAssembly,
                 item.stream_chunks.len(),
             );
             row.child(
