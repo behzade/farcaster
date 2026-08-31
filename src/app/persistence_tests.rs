@@ -11,7 +11,7 @@ use tempfile::tempdir;
 
 use crate::{
     app::persistence::{ComposerRecord, StateStore, WindowPlacement, WindowState},
-    projects::{DraftSession, Registry},
+    projects::{self, DraftSession, Registry},
     protocol::{PromptImage, PromptMode},
     sessions::{SessionSummary, UsageSummary},
 };
@@ -269,6 +269,7 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
     assert_eq!(store.load_app_session_order()?, vec![7, 3, 1]);
     let queued = store.queued_prompts()?;
     assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].harness, "pi");
     assert_eq!(queued[0].message, "hello");
     assert_eq!(
         queued[0].images,
@@ -345,6 +346,28 @@ fn session_harness_survives_the_cache() -> Result<(), Box<dyn std::error::Error>
     store.replace_sessions(&[session])?;
 
     assert_eq!(store.cached_sessions("")?[0].harness, "codex-cli");
+    Ok(())
+}
+
+#[test]
+fn draft_harness_survives_the_registry() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let project = temp.path().join("project");
+    fs::create_dir(&project)?;
+    let mut draft = DraftSession::new("draft".into(), 1, project.clone(), 1);
+    assert!(draft.change_harness("opencode2".into()));
+    let mut store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;
+
+    projects::save_registry(
+        &mut store,
+        &Registry {
+            projects: vec![project],
+            excluded_projects: Vec::new(),
+            drafts: vec![draft],
+        },
+    )?;
+
+    assert_eq!(projects::load_registry(&store)?.drafts[0].harness, "opencode2");
     Ok(())
 }
 
