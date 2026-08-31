@@ -618,6 +618,11 @@ impl WorkerSession for CodexWorkerSession {
                             }
                         }
                         "item/completed" => {
+                            if self.output.is_empty()
+                                && let Some(output) = codex_agent_message_text(&params["item"])
+                            {
+                                self.output.push_str(&output);
+                            }
                             if let Some(event) = codex_tool_end(&params) {
                                 return Some(WorkerEvent::Activity(event));
                             }
@@ -789,6 +794,24 @@ fn configure_farcaster_mcp(command: &mut std::process::Command, caller_token: &s
         .arg("mcp_servers.farcaster.required=true");
 }
 
+fn codex_agent_message_text(item: &Value) -> Option<String> {
+    (item.get("type")?.as_str()? == "agentMessage").then(|| {
+        item.get("text")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .or_else(|| {
+                item.get("content")?.as_array().map(|content| {
+                    content
+                        .iter()
+                        .filter_map(|part| part.get("text").and_then(Value::as_str))
+                        .collect::<Vec<_>>()
+                        .join("")
+                })
+            })
+            .unwrap_or_default()
+    })
+}
+
 fn codex_tool_start(params: &Value) -> Option<Value> {
     let item = params.get("item")?;
     let kind = item.get("type")?.as_str()?;
@@ -854,6 +877,18 @@ fn approval_prompt(method: &str, params: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extracts_completed_agent_message_text() {
+        assert_eq!(
+            codex_agent_message_text(&json!({
+                "type": "agentMessage",
+                "content": [{"type": "Text", "text": "hello"}]
+            }))
+            .as_deref(),
+            Some("hello")
+        );
+    }
 
     #[test]
     fn native_startup_configures_required_farcaster_mcp() {

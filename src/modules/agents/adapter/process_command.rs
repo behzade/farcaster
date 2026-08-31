@@ -69,10 +69,12 @@ impl AgentLaunchConfig {
             self.app_proxy.as_deref(),
             matches!(access.network, access::NetworkAccess::Sandboxed),
         )?;
-        network.tls_ca_env_vars = tls_ca_environment
-            .iter()
-            .map(|name| (*name).to_owned())
-            .collect();
+        if matches!(access.network, access::NetworkAccess::Sandboxed) {
+            network.tls_ca_env_vars = tls_ca_environment
+                .iter()
+                .map(|name| (*name).to_owned())
+                .collect();
+        }
         if let Some(environment) = environment.as_mut() {
             access::append_app_proxy_environment(environment, &network);
         }

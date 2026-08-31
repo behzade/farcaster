@@ -24,7 +24,7 @@ pub(super) struct WorkerSessionTransport {
     pending: VecDeque<SessionEvent>,
     next_id: u64,
     running: bool,
-    rich_activity: bool,
+    assistant_message_activity: bool,
     model: Option<(String, String)>,
     effort: String,
     metadata: MainSessionMetadata,
@@ -67,7 +67,7 @@ impl WorkerSessionTransport {
             pending: VecDeque::new(),
             next_id: 0,
             running: false,
-            rich_activity: false,
+            assistant_message_activity: false,
             model,
             effort: metadata
                 .efforts
@@ -120,11 +120,12 @@ impl WorkerSessionTransport {
         match event {
             WorkerEvent::Started => {
                 self.running = true;
+                self.assistant_message_activity = false;
                 SessionEvent::Activity(json!({"type": "agent_start"}))
             }
             WorkerEvent::Settled { output } => {
                 self.running = false;
-                if !self.rich_activity {
+                if !self.assistant_message_activity {
                     self.pending.push_back(SessionEvent::Activity(json!({
                         "type": "message_start",
                         "message": {"role": "assistant", "content": []}
@@ -142,7 +143,7 @@ impl WorkerSessionTransport {
                         "message": {"role": "assistant"}
                     })));
                 }
-                self.rich_activity = false;
+                self.assistant_message_activity = false;
                 SessionEvent::Activity(json!({"type": "agent_settled"}))
             }
             WorkerEvent::SessionChanged { locator } => {
@@ -151,7 +152,7 @@ impl WorkerSessionTransport {
             }
             WorkerEvent::NeedsInput(input) => SessionEvent::Interaction(interaction(input)),
             WorkerEvent::Activity(activity) => {
-                self.rich_activity = true;
+                self.assistant_message_activity |= is_assistant_message_activity(&activity);
                 if let Some(tokens) = activity
                     .pointer("/usage/totalTokens")
                     .and_then(Value::as_u64)
@@ -313,6 +314,13 @@ impl SessionTransport for WorkerSessionTransport {
     }
 }
 
+fn is_assistant_message_activity(activity: &Value) -> bool {
+    matches!(
+        activity.get("type").and_then(Value::as_str),
+        Some("message_start" | "message_update" | "message_end")
+    )
+}
+
 fn interaction(input: WorkerInput) -> ExtensionUiRequest {
     if input.options.is_empty() {
         ExtensionUiRequest::Input {
@@ -380,5 +388,16 @@ const fn hex(byte: u8) -> Option<u8> {
         b'a'..=b'f' => Some(byte - b'a' + 10),
         b'A'..=b'F' => Some(byte - b'A' + 10),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn usage_activity_does_not_hide_fallback_assistant_output() {
+        assert!(!is_assistant_message_activity(&json!({"type": "turn_end"})));
+        assert!(is_assistant_message_activity(&json!({"type": "message_update"})));
     }
 }
