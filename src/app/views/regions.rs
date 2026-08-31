@@ -3,7 +3,7 @@ use gpui::{
     WeakEntity, div,
 };
 
-use super::{FarcasterApp, session_groups::SessionRailKind, transcript};
+use super::{FarcasterApp, SessionRailKind, transcript};
 use crate::{
     app::ui::primitives::{ButtonTone, button},
     app::ui::theme::THEME,

@@ -1,3 +1,9 @@
+mod groups;
+mod hover;
+mod rows;
+#[cfg(test)]
+mod tests;
+
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
@@ -13,19 +19,21 @@ use gpui_component::{
     menu::{DropdownMenu as _, PopupMenuItem},
 };
 
+pub(in crate::app) use groups::{SessionRailKind, roots_waiting_for_descendants};
+pub(in crate::app) use rows::project_label;
+
 #[cfg(test)]
-use super::session_rows::{session_accessible_label, status_visual};
-use super::{
-    super::FarcasterApp,
-    session_groups::{
-        ActiveSessionItem, SessionRailItem, SessionRailKind, merge_visible_session_order,
-        reordered_session_ids, roots_waiting_for_descendants, session_rail_lists,
+use self::rows::{session_accessible_label, status_visual};
+use self::{
+    groups::{
+        ActiveSessionItem, SessionRailItem, merge_visible_session_order, reordered_session_ids,
+        session_rail_lists,
     },
-    session_rows::{
-        DraggedSession, draft_session_row, project_label, session_badge, session_row,
-        session_row_with_height,
+    rows::{
+        DraggedSession, draft_session_row, session_badge, session_row, session_row_with_height,
     },
 };
+use super::super::FarcasterApp;
 use crate::{
     app::ui::assets::AppIcon,
     app::ui::primitives::{
@@ -807,7 +815,7 @@ impl FarcasterApp {
         self.notify_session_rail(cx);
     }
 
-    pub(super) fn complete_session_row_drop(
+    fn complete_session_row_drop(
         &mut self,
         drag: &DraggedSession,
         target_kind: SessionRailKind,
@@ -856,7 +864,7 @@ impl FarcasterApp {
         self.notify_session_rail(cx);
     }
 
-    pub(super) fn complete_session_category_drop(
+    fn complete_session_category_drop(
         &mut self,
         drag: &DraggedSession,
         target_kind: SessionRailKind,
@@ -889,7 +897,3 @@ impl FarcasterApp {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "session_rail_tests.rs"]
-mod tests;

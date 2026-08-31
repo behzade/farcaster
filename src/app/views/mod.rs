@@ -13,10 +13,7 @@ mod project_trust;
 mod regions;
 mod run_panel;
 mod run_panel_changes;
-mod session_groups;
-mod session_hover;
 mod session_rail;
-mod session_rows;
 mod settings;
 mod shell;
 pub(in crate::app) mod startup_trust;
@@ -30,7 +27,7 @@ pub(super) use regions::{
     ComposerView, InactiveSessionRailView, RunPanelView, SessionRailView, TranscriptView,
     WorkGraphDetailView,
 };
-pub(super) use session_groups::{SessionRailKind, roots_waiting_for_descendants};
+pub(in crate::app) use session_rail::{SessionRailKind, roots_waiting_for_descendants};
 
 use gpui::{
     Context, Focusable as _, InteractiveElement as _, IntoElement, ObjectFit, ParentElement as _,
@@ -756,7 +753,7 @@ fn render_draft_heading(
     harness: String,
     entity: gpui::WeakEntity<FarcasterApp>,
 ) -> impl IntoElement {
-    let label = session_rows::project_label(&project);
+    let label = session_rail::project_label(&project);
     let project_entity = entity.clone();
     div()
         .flex()

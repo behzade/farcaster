@@ -8,7 +8,7 @@ use gpui::{
 use gpui_base::{Align, Positioner};
 use gpui_component::{ElementExt as _, Placement};
 
-use super::usage::{format_cost, format_tokens};
+use super::super::usage::{format_cost, format_tokens};
 use crate::{
     app::ui::theme::{MONO_FONT_FAMILY, THEME},
     projects::DraftSession,

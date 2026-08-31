@@ -3,13 +3,13 @@ use std::{path::PathBuf, time::SystemTime};
 use super::{
     ARCHIVED_LEADING_GAP, ActiveSessionItem, SessionRailItem, SessionRailKind,
     clamped_session_rail_width, collapsed_inactive_rail_height, first_unsubmitted_draft,
-    minimal_row_splice, roots_waiting_for_descendants, session_accessible_label, session_badge,
-    status_visual, subagent_counts, visible_session_shortcuts,
+    hover::session_tooltip_lines, minimal_row_splice, roots_waiting_for_descendants,
+    session_accessible_label, session_badge, status_visual, subagent_counts,
+    visible_session_shortcuts,
 };
 use crate::{
     app::ui::assets::AppIcon,
     app::ui::theme::THEME,
-    app::views::session_hover::session_tooltip_lines,
     projects::DraftSession,
     sessions::{SessionSummary, UsageSummary},
 };

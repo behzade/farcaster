@@ -18,9 +18,8 @@ use gpui_component::{
 };
 
 use super::{
-    super::{FarcasterApp, PickerScope, ProjectPickerIntent},
-    session_groups::{SessionRailItem, SessionRailKind},
-    session_hover::{draft_hover_details, session_hover_details, session_hover_panel},
+    groups::{SessionRailItem, SessionRailKind},
+    hover::{draft_hover_details, session_hover_details, session_hover_panel},
 };
 use crate::{
     app::ui::assets::AppIcon,
@@ -29,6 +28,7 @@ use crate::{
         AppIconSize, ReorderPosition, ReorderTargetExt as _, app_icon, icon_control,
     },
     app::ui::theme::THEME,
+    app::{FarcasterApp, PickerScope, ProjectPickerIntent},
     projects::DraftSession,
 };
 
@@ -870,7 +870,7 @@ fn project_badge(project: &Path) -> AnyElement {
         .into_any_element()
 }
 
-pub(super) fn project_label(project: &Path) -> String {
+pub(in crate::app) fn project_label(project: &Path) -> String {
     project
         .file_name()
         .and_then(|name| name.to_str())

@@ -6,7 +6,7 @@ use gpui::{
 
 use super::{
     super::{AppSurface, FarcasterApp},
-    session_rows::project_label,
+    session_rail::project_label,
 };
 use crate::{
     app::ui::assets::AppIcon,
