@@ -277,6 +277,37 @@ fn cache_configuration_catalog(
     true
 }
 
+fn adopts_session_control_defaults(
+    snapshot: &RuntimeSnapshot,
+    sessions: &[SessionSummary],
+) -> bool {
+    let session_path = snapshot
+        .live_session
+        .as_ref()
+        .or(snapshot.selected_session.as_ref());
+    !session_path.is_some_and(|path| crate::sessions::is_subagent_path(sessions, path))
+}
+
+fn update_session_control_defaults(
+    defaults: &mut SessionControlDefaults,
+    snapshot: &RuntimeSnapshot,
+    command: &RuntimeCommand,
+) -> bool {
+    match command {
+        RuntimeCommand::SetModel(model) => defaults.select_model(&snapshot.harness, model.clone()),
+        RuntimeCommand::SetThinking(effort) => {
+            defaults.select_effort(&snapshot.harness, effort.clone())
+        }
+        _ => false,
+    }
+}
+
+fn persist_session_control_defaults(state: Option<&StateStore>, defaults: &SessionControlDefaults) {
+    if let Some(state) = state {
+        let _ = state.save_session_control_defaults(&defaults.cached());
+    }
+}
+
 fn refresh_configuration_catalogs(
     project: PathBuf,
     process_command: AgentLaunchConfig,
@@ -387,6 +418,11 @@ fn run_supervisor(
             entry.catalog.clone(),
         );
     }
+    if let Some(state) = catalog_state.as_ref()
+        && let Ok(defaults) = state.load_session_control_defaults()
+    {
+        session_controls.restore(defaults);
+    }
     let (configuration_tx, configuration_rx) = mpsc::channel();
     if refresh_configuration {
         refresh_configuration_catalogs(
@@ -483,15 +519,16 @@ fn run_supervisor(
                         {
                             let _ = state.save_configuration_catalogs(&configuration_catalogs);
                         }
-                        let session_path = snapshot
-                            .live_session
-                            .clone()
-                            .or_else(|| snapshot.selected_session.clone());
                         let adopts_identity = key == selected
-                            && !session_path.is_some_and(|path| {
-                                crate::sessions::is_subagent_path(&catalog_sessions, &path)
-                            });
-                        session_controls.apply(Arc::make_mut(&mut snapshot), adopts_identity);
+                            && adopts_session_control_defaults(&snapshot, &catalog_sessions);
+                        let identity_changed =
+                            session_controls.apply(Arc::make_mut(&mut snapshot), adopts_identity);
+                        if identity_changed {
+                            persist_session_control_defaults(
+                                catalog_state.as_ref(),
+                                &session_controls,
+                            );
+                        }
                         if snapshot.conversation.settled {
                             needs_input.remove(&key);
                             active_dialogs.remove(&key);
@@ -985,6 +1022,17 @@ fn run_supervisor(
                         actor.send(command.clone());
                     }
                     continue;
+                }
+                let identity_changed = latest.get(&selected).is_some_and(|snapshot| {
+                    adopts_session_control_defaults(snapshot, &catalog_sessions)
+                        && update_session_control_defaults(
+                            &mut session_controls,
+                            snapshot,
+                            &command,
+                        )
+                });
+                if identity_changed {
+                    persist_session_control_defaults(catalog_state.as_ref(), &session_controls);
                 }
                 if let RuntimeCommand::RenameSession { path, name, .. } = &command
                     && let Some((key, actor)) = actors.iter().find(|(key, _)| {

@@ -12,7 +12,8 @@ use tempfile::tempdir;
 use crate::{
     agents::ConfigurationCatalog,
     app::infrastructure::persistence::{
-        CachedConfigurationCatalog, ComposerRecord, StateStore, WindowPlacement, WindowState,
+        CachedConfigurationCatalog, CachedSessionControlDefaults, ComposerRecord, StateStore,
+        WindowPlacement, WindowState,
     },
     projects::{self, DraftSession, Registry},
     protocol::{Model, PromptImage, PromptMode},
@@ -63,6 +64,32 @@ fn configuration_catalogs_survive_reopen() -> Result<(), Box<dyn std::error::Err
 
     assert_eq!(
         StateStore::open_at(&database)?.load_configuration_catalogs()?,
+        vec![cached]
+    );
+    Ok(())
+}
+
+#[test]
+fn session_control_defaults_survive_reopen() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let database = temp.path().join("gui.sqlite3");
+    let cached = CachedSessionControlDefaults {
+        harness: "codex-cli".into(),
+        model: Some(Model {
+            id: "model".into(),
+            name: "Model".into(),
+            provider: "provider".into(),
+            context_window: 200_000,
+            reasoning: true,
+            efforts: Some(vec!["low".into(), "high".into()]),
+        }),
+        effort: Some("high".into()),
+    };
+
+    StateStore::open_at(&database)?.save_session_control_defaults(&[cached.clone()])?;
+
+    assert_eq!(
+        StateStore::open_at(&database)?.load_session_control_defaults()?,
         vec![cached]
     );
     Ok(())

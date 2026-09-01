@@ -55,12 +55,12 @@ impl RuntimeSnapshot {
 
 #[derive(Default)]
 pub(super) struct SessionControlDefaults {
-    by_target: HashMap<(String, PathBuf), HarnessDefaults>,
+    identities: HashMap<String, OwnedSessionIdentity>,
+    catalogs: HashMap<(String, PathBuf), HarnessCatalog>,
 }
 
 #[derive(Default)]
-struct HarnessDefaults {
-    identity: OwnedSessionIdentity,
+struct HarnessCatalog {
     models: Vec<Model>,
     efforts: Vec<String>,
 }
@@ -72,58 +72,118 @@ struct OwnedSessionIdentity {
 }
 
 impl SessionControlDefaults {
+    pub fn restore(
+        &mut self,
+        entries: Vec<crate::app::infrastructure::persistence::CachedSessionControlDefaults>,
+    ) {
+        for entry in entries {
+            self.identities.insert(
+                entry.harness,
+                OwnedSessionIdentity {
+                    model: entry.model,
+                    effort: entry.effort,
+                },
+            );
+        }
+    }
+
+    pub fn cached(
+        &self,
+    ) -> Vec<crate::app::infrastructure::persistence::CachedSessionControlDefaults> {
+        let mut entries = self
+            .identities
+            .iter()
+            .filter(|(_, identity)| identity.model.is_some() || identity.effort.is_some())
+            .map(|(harness, identity)| {
+                crate::app::infrastructure::persistence::CachedSessionControlDefaults {
+                    harness: harness.clone(),
+                    model: identity.model.clone(),
+                    effort: identity.effort.clone(),
+                }
+            })
+            .collect::<Vec<_>>();
+        entries.sort_by(|left, right| left.harness.cmp(&right.harness));
+        entries
+    }
+
+    pub fn select_model(&mut self, harness: &str, model: Model) -> bool {
+        let identity = self.identities.entry(harness.to_owned()).or_default();
+        if identity.model.as_ref() == Some(&model) {
+            return false;
+        }
+        identity.model = Some(model);
+        true
+    }
+
+    pub fn select_effort(&mut self, harness: &str, effort: String) -> bool {
+        let identity = self.identities.entry(harness.to_owned()).or_default();
+        if identity.effort.as_ref() == Some(&effort) {
+            return false;
+        }
+        identity.effort = Some(effort);
+        true
+    }
+
     pub fn set_catalog(
         &mut self,
         harness: String,
         project: PathBuf,
         catalog: crate::agents::ConfigurationCatalog,
     ) {
-        let defaults = self.by_target.entry((harness, project)).or_default();
-        defaults.models = catalog.models;
-        defaults.efforts = catalog.efforts;
+        let cached = self.catalogs.entry((harness, project)).or_default();
+        cached.models = catalog.models;
+        cached.efforts = catalog.efforts;
     }
 
-    pub fn apply(&mut self, snapshot: &mut RuntimeSnapshot, adopt_identity: bool) {
-        let defaults = self
-            .by_target
+    pub fn apply(&mut self, snapshot: &mut RuntimeSnapshot, adopt_identity: bool) -> bool {
+        let catalog = self
+            .catalogs
             .entry((snapshot.harness.clone(), snapshot.project.clone()))
             .or_default();
         if snapshot.models.is_empty() {
-            snapshot.models.clone_from(&defaults.models);
+            snapshot.models.clone_from(&catalog.models);
         } else {
-            defaults.models.clone_from(&snapshot.models);
+            catalog.models.clone_from(&snapshot.models);
         }
         if snapshot.thinking_levels.is_empty() {
-            snapshot.thinking_levels.clone_from(&defaults.efforts);
+            snapshot.thinking_levels.clone_from(&catalog.efforts);
         } else {
-            defaults.efforts.clone_from(&snapshot.thinking_levels);
+            catalog.efforts.clone_from(&snapshot.thinking_levels);
         }
+        let identity = self.identities.entry(snapshot.harness.clone()).or_default();
 
         if let Some(session) = &snapshot.session {
-            if adopt_identity {
-                if let Some(model) = &session.model {
-                    defaults.identity.model = snapshot
-                        .models
-                        .iter()
-                        .find(|candidate| {
-                            candidate.id == model.id && candidate.provider == model.provider
-                        })
-                        .cloned()
-                        .or_else(|| Some(model.clone()));
-                }
-                defaults.identity.effort = Some(session.thinking_level.clone());
+            if !adopt_identity {
+                return false;
             }
-            return;
+            let model = session.model.as_ref().map(|model| {
+                snapshot
+                    .models
+                    .iter()
+                    .find(|candidate| {
+                        candidate.id == model.id && candidate.provider == model.provider
+                    })
+                    .cloned()
+                    .unwrap_or_else(|| model.clone())
+            });
+            let changed = model
+                .as_ref()
+                .is_some_and(|model| identity.model.as_ref() != Some(model))
+                || identity.effort.as_deref() != Some(session.thinking_level.as_str());
+            if let Some(model) = model {
+                identity.model = Some(model);
+            }
+            identity.effort = Some(session.thinking_level.clone());
+            return changed;
         }
 
         if snapshot.prefill_model.is_none() {
-            snapshot.prefill_model.clone_from(&defaults.identity.model);
+            snapshot.prefill_model.clone_from(&identity.model);
         }
         if snapshot.prefill_thinking_level.is_none() {
-            snapshot
-                .prefill_thinking_level
-                .clone_from(&defaults.identity.effort);
+            snapshot.prefill_thinking_level.clone_from(&identity.effort);
         }
+        false
     }
 
     pub fn history_model(models: &[Model], identity: Option<&(String, String)>) -> Option<Model> {
@@ -214,5 +274,34 @@ mod tests {
         };
 
         assert!(snapshot.available_thinking_levels().is_empty());
+    }
+
+    #[test]
+    fn cached_defaults_restore_across_projects_per_harness() {
+        let selected = model("selected", true, Some(&["low", "high"]));
+        let mut defaults = SessionControlDefaults::default();
+        assert!(defaults.select_model("codex-cli", selected.clone()));
+        assert!(defaults.select_effort("codex-cli", "high".into()));
+
+        let mut restarted = SessionControlDefaults::default();
+        restarted.restore(defaults.cached());
+        let mut draft = RuntimeSnapshot {
+            harness: "codex-cli".into(),
+            project: PathBuf::from("/another-project"),
+            ..RuntimeSnapshot::default()
+        };
+        restarted.apply(&mut draft, true);
+
+        assert_eq!(draft.prefill_model, Some(selected));
+        assert_eq!(draft.prefill_thinking_level.as_deref(), Some("high"));
+
+        let mut other_harness = RuntimeSnapshot {
+            harness: "pi".into(),
+            project: PathBuf::from("/another-project"),
+            ..RuntimeSnapshot::default()
+        };
+        restarted.apply(&mut other_harness, true);
+        assert_eq!(other_harness.prefill_model, None);
+        assert_eq!(other_harness.prefill_thinking_level, None);
     }
 }

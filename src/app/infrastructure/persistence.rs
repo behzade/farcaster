@@ -8,6 +8,7 @@ use std::{
 use rusqlite::{
     Connection, ErrorCode, OptionalExtension as _, Transaction, TransactionBehavior, params,
 };
+use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
     agents::{PromptPresentation, QueuedPrompt},
@@ -22,6 +23,7 @@ const ACTIVE_IMPORT_WINDOW: Duration = Duration::from_secs(3 * 60 * 60);
 const REPOSITORY_BACKEND_PREFERENCES_KEY: &str = "repository_backend_preferences";
 const NETWORK_PROXY_KEY: &str = "network_proxy";
 const CONFIGURATION_CATALOGS_KEY: &str = "configuration_catalogs";
+const SESSION_CONTROL_DEFAULTS_KEY: &str = "session_control_defaults";
 const LEGACY_PI_GPUI_IMPORT_KEY: &str = "legacy_pi_gpui_state_imported";
 const REPOSITORY_BACKENDS: [&str; 3] = ["auto", "git", "jj"];
 
@@ -49,6 +51,13 @@ pub(crate) struct CachedConfigurationCatalog {
     pub harness: String,
     pub project: PathBuf,
     pub catalog: crate::agents::ConfigurationCatalog,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+pub(crate) struct CachedSessionControlDefaults {
+    pub harness: String,
+    pub model: Option<crate::protocol::Model>,
+    pub effort: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -521,38 +530,74 @@ impl StateStore {
     pub(crate) fn load_configuration_catalogs(
         &self,
     ) -> Result<Vec<CachedConfigurationCatalog>, String> {
-        let stored = self
-            .connection
-            .query_row(
-                "SELECT value FROM meta WHERE key=?1",
-                [CONFIGURATION_CATALOGS_KEY],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()
-            .map_err(|error| format!("load configuration catalogs: {error}"))?;
-        stored.map_or_else(
-            || Ok(Vec::new()),
-            |value| {
-                serde_json::from_str(&value)
-                    .map_err(|error| format!("decode configuration catalogs: {error}"))
-            },
-        )
+        self.load_json_meta(CONFIGURATION_CATALOGS_KEY, "configuration catalogs")
+            .map(Option::unwrap_or_default)
     }
 
     pub(crate) fn save_configuration_catalogs(
         &self,
         catalogs: &[CachedConfigurationCatalog],
     ) -> Result<(), String> {
-        let value = serde_json::to_string(catalogs)
-            .map_err(|error| format!("encode configuration catalogs: {error}"))?;
+        self.save_json_meta(
+            CONFIGURATION_CATALOGS_KEY,
+            "configuration catalogs",
+            catalogs,
+        )
+    }
+
+    pub(crate) fn load_session_control_defaults(
+        &self,
+    ) -> Result<Vec<CachedSessionControlDefaults>, String> {
+        self.load_json_meta(SESSION_CONTROL_DEFAULTS_KEY, "session control defaults")
+            .map(Option::unwrap_or_default)
+    }
+
+    pub(crate) fn save_session_control_defaults(
+        &self,
+        defaults: &[CachedSessionControlDefaults],
+    ) -> Result<(), String> {
+        self.save_json_meta(
+            SESSION_CONTROL_DEFAULTS_KEY,
+            "session control defaults",
+            defaults,
+        )
+    }
+
+    fn load_json_meta<T: DeserializeOwned>(
+        &self,
+        key: &str,
+        subject: &str,
+    ) -> Result<Option<T>, String> {
+        let stored = self
+            .connection
+            .query_row("SELECT value FROM meta WHERE key=?1", [key], |row| {
+                row.get::<_, String>(0)
+            })
+            .optional()
+            .map_err(|error| format!("load {subject}: {error}"))?;
+        stored
+            .map(|value| {
+                serde_json::from_str(&value).map_err(|error| format!("decode {subject}: {error}"))
+            })
+            .transpose()
+    }
+
+    fn save_json_meta<T: Serialize + ?Sized>(
+        &self,
+        key: &str,
+        subject: &str,
+        value: &T,
+    ) -> Result<(), String> {
+        let value =
+            serde_json::to_string(value).map_err(|error| format!("encode {subject}: {error}"))?;
         self.connection
             .execute(
                 "INSERT INTO meta(key, value) VALUES(?1, ?2)
                  ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                params![CONFIGURATION_CATALOGS_KEY, value],
+                params![key, value],
             )
             .map(|_| ())
-            .map_err(|error| format!("save configuration catalogs: {error}"))
+            .map_err(|error| format!("save {subject}: {error}"))
     }
 
     pub(crate) fn load_repository_backend_preferences(
