@@ -18,7 +18,7 @@ pub(crate) fn supported_access_modes(harness: &str) -> &'static [crate::agents::
     match harness {
         "pi" => &[Sandboxed, Full],
         "codex-cli" => &[Sandboxed, Auto, Full],
-        "opencode2" => &[Auto, Full],
+        "opencode2" => &[Sandboxed, Full],
         _ => &[Full],
     }
 }
@@ -53,7 +53,7 @@ pub(crate) fn worker_factories(
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| "codex".into());
     let mut opencode_config = config.clone();
-    opencode_config.access_mode = crate::agents::HarnessAccessMode::Auto;
+    opencode_config.access_mode = crate::agents::HarnessAccessMode::Sandboxed;
     opencode_config.program = std::env::var_os("FARCASTER_OPENCODE_PATH")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| "opencode2".into());
@@ -370,4 +370,21 @@ pub(super) fn known_backend_descriptors() -> [super::contract::AgentBackendDescr
         codex::descriptor(),
         opencode::descriptor(),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agents::HarnessAccessMode::{Auto, Full, Sandboxed};
+
+    #[test]
+    fn backend_access_modes_match_their_native_safety_models() {
+        assert_eq!(supported_access_modes("pi"), &[Sandboxed, Full]);
+        assert_eq!(
+            supported_access_modes("codex-cli"),
+            &[Sandboxed, Auto, Full]
+        );
+        assert_eq!(supported_access_modes("opencode2"), &[Sandboxed, Full]);
+        assert_eq!(normalize_access_mode("opencode2", Auto), Sandboxed);
+    }
 }

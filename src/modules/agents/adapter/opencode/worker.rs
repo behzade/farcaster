@@ -50,7 +50,7 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
             configure_farcaster_mcp(&mut prepared, caller_identity.token())?;
         }
         let password = worker_password()?;
-        configure_opencode_server(&mut prepared, self.command.access_mode);
+        configure_opencode_server(&mut prepared, self.command.access_mode)?;
         let mut child = prepared
             .env("OPENCODE_SERVER_PASSWORD", &password)
             .stdin(Stdio::piped())
@@ -113,7 +113,7 @@ pub(in crate::modules::agents::adapter) fn load_configuration(
 ) -> Result<crate::modules::agents::adapter::main_session::MainSessionMetadata, String> {
     let mut prepared = command.command(project)?;
     let password = worker_password()?;
-    configure_opencode_server(&mut prepared, command.access_mode);
+    configure_opencode_server(&mut prepared, command.access_mode)?;
     let mut child = prepared
         .env("OPENCODE_SERVER_PASSWORD", &password)
         .stdin(Stdio::piped())
@@ -154,7 +154,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         configure_farcaster_mcp(&mut prepared, caller_identity.token())?;
     }
     let password = worker_password()?;
-    configure_opencode_server(&mut prepared, command.access_mode);
+    configure_opencode_server(&mut prepared, command.access_mode)?;
     let mut child = prepared
         .env("OPENCODE_SERVER_PASSWORD", &password)
         .stdin(Stdio::piped())
@@ -310,6 +310,9 @@ fn load_main_metadata(
 }
 
 enum PendingOpenCodeInput {
+    Permission {
+        session_id: String,
+    },
     Form {
         key: String,
         values: HashMap<String, String>,
@@ -384,19 +387,31 @@ impl OpenCodeWorkerSession {
                 Ok(event) => event,
                 Err(error) => return Some(WorkerEvent::Failed(error)),
             };
-            if matches!(self.access_mode, crate::agents::HarnessAccessMode::Full)
-                && let Some((session_id, request_id)) = opencode_permission_request(&event)
-            {
-                if let Err(error) = self
-                    .server
-                    .client()
-                    .reply_permission(session_id, request_id, "once")
-                {
-                    return Some(WorkerEvent::Failed(format!(
-                        "auto-approve OpenCode permission: {error}"
-                    )));
+            if let Some((session_id, request_id)) = opencode_permission_request(&event) {
+                if matches!(self.access_mode, crate::agents::HarnessAccessMode::Full) {
+                    if let Err(error) = self
+                        .server
+                        .client()
+                        .reply_permission(session_id, request_id, "once")
+                    {
+                        return Some(WorkerEvent::Failed(format!(
+                            "approve OpenCode permission in full-access mode: {error}"
+                        )));
+                    }
+                    continue;
                 }
-                continue;
+                self.pending_inputs.insert(
+                    request_id.to_owned(),
+                    PendingOpenCodeInput::Permission {
+                        session_id: session_id.to_owned(),
+                    },
+                );
+                return Some(WorkerEvent::NeedsInput(WorkerInput {
+                    id: request_id.to_owned(),
+                    prompt: opencode_permission_prompt(&event.data),
+                    options: vec!["Allow once".into(), "Always allow".into(), "Decline".into()],
+                    secret: false,
+                }));
             }
             let event_session = event
                 .data
@@ -602,6 +617,10 @@ impl WorkerSession for OpenCodeWorkerSession {
             .ok_or_else(|| format!("unknown OpenCode interaction: {}", response.id))?;
         let mut client = self.server.client();
         match pending {
+            PendingOpenCodeInput::Permission { session_id } => {
+                let reply = opencode_permission_reply(response.value.as_deref(), response.cancel)?;
+                client.reply_permission(&session_id, &response.id, reply)
+            }
             PendingOpenCodeInput::Form { key, values } => {
                 if response.cancel {
                     return client.cancel_form(&self.session_id, &response.id);
@@ -699,6 +718,41 @@ fn opencode_permission_request(event: &super::contract::OpenCodeEvent) -> Option
     Some((session_id, request_id))
 }
 
+fn opencode_permission_prompt(data: &Value) -> String {
+    let permission = data
+        .get("permission")
+        .and_then(Value::as_str)
+        .unwrap_or("tool use");
+    let patterns = data
+        .get("patterns")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+    if patterns.is_empty() {
+        format!("OpenCode requests permission for {permission}")
+    } else {
+        format!(
+            "OpenCode requests permission for {permission}\n{}",
+            patterns.join("\n")
+        )
+    }
+}
+
+fn opencode_permission_reply(value: Option<&str>, cancel: bool) -> Result<&'static str, String> {
+    if cancel {
+        return Ok("reject");
+    }
+    match value.map(str::trim) {
+        Some("Allow once") => Ok("once"),
+        Some("Always allow") => Ok("always"),
+        Some("Decline") => Ok("reject"),
+        Some(value) => Err(format!("unknown OpenCode permission response: {value}")),
+        None => Err("OpenCode permission response is missing".into()),
+    }
+}
+
 fn opencode_tool_id(data: &Value) -> Option<&str> {
     data.get("id")
         .and_then(Value::as_str)
@@ -792,11 +846,12 @@ fn send_and_wake<T>(
 fn configure_opencode_server(
     command: &mut std::process::Command,
     mode: crate::agents::HarnessAccessMode,
-) {
+) -> Result<(), String> {
     if matches!(mode, crate::agents::HarnessAccessMode::Auto) {
-        command.arg("--auto");
+        return Err("OpenCode does not support model-reviewed automatic approvals".into());
     }
     command.args(["serve", "--stdio", "--print-logs"]);
+    Ok(())
 }
 
 fn configure_farcaster_mcp(
@@ -920,20 +975,50 @@ mod tests {
     }
 
     #[test]
-    fn auto_mode_uses_the_native_opencode_flag() {
-        let mut auto = std::process::Command::new("opencode2");
-        configure_opencode_server(&mut auto, crate::agents::HarnessAccessMode::Auto);
-        assert_eq!(
-            auto.get_args().collect::<Vec<_>>(),
-            ["--auto", "serve", "--stdio", "--print-logs"]
-        );
+    fn supported_modes_use_the_opencode_server_without_auto_approval() {
+        for mode in [
+            crate::agents::HarnessAccessMode::Sandboxed,
+            crate::agents::HarnessAccessMode::Full,
+        ] {
+            let mut command = std::process::Command::new("opencode2");
+            configure_opencode_server(&mut command, mode).expect("supported OpenCode mode");
+            assert_eq!(
+                command.get_args().collect::<Vec<_>>(),
+                ["serve", "--stdio", "--print-logs"]
+            );
+        }
 
-        let mut full = std::process::Command::new("opencode2");
-        configure_opencode_server(&mut full, crate::agents::HarnessAccessMode::Full);
+        let mut command = std::process::Command::new("opencode2");
         assert_eq!(
-            full.get_args().collect::<Vec<_>>(),
-            ["serve", "--stdio", "--print-logs"]
+            configure_opencode_server(&mut command, crate::agents::HarnessAccessMode::Auto),
+            Err("OpenCode does not support model-reviewed automatic approvals".into())
         );
+        assert_eq!(command.get_args().count(), 0);
+    }
+
+    #[test]
+    fn sandboxed_permission_requests_keep_native_choices() {
+        let data = json!({
+            "permission": "bash",
+            "patterns": ["git status", "git diff"]
+        });
+        assert_eq!(
+            opencode_permission_prompt(&data),
+            "OpenCode requests permission for bash\ngit status\ngit diff"
+        );
+        assert_eq!(
+            opencode_permission_reply(Some("Allow once"), false),
+            Ok("once")
+        );
+        assert_eq!(
+            opencode_permission_reply(Some("Always allow"), false),
+            Ok("always")
+        );
+        assert_eq!(
+            opencode_permission_reply(Some("Decline"), false),
+            Ok("reject")
+        );
+        assert_eq!(opencode_permission_reply(None, true), Ok("reject"));
     }
 
     #[test]

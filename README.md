@@ -22,12 +22,13 @@ configures each harness directly:
 
 - **Full access** disables the harness sandbox.
 - **Sandboxed** uses the harness's sandbox integration.
-- **Auto** uses the harness's native automatic mode when available.
+- **Auto** routes approval requests through a model reviewer when the harness
+  supports it.
 
 Unsupported modes are omitted. For Pi, sandboxed mode leaves user-installed
 sandbox extensions such as `pi-nono` active; full access sets
-`PI_NONO_DISABLED=1`. Codex supports all three modes. OpenCode supports full and
-auto modes.
+`PI_NONO_DISABLED=1`. Codex supports all three modes. OpenCode supports sandboxed
+and full modes.
 
 Pi settings, context files, extensions, skills, and authentication load in the
 selected project directory. Farcaster does not modify Pi. The `pi` executable
