@@ -70,6 +70,7 @@ impl WorkerSessionFactory for AcpWorkerFactory {
             },
             None,
             launch.worker_id.clone(),
+            launch.parent_worker_id.clone(),
         );
         if matches!(launch.context, crate::agents::WorkerContext::Session { .. }) {
             return Err(format!(

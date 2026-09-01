@@ -359,3 +359,28 @@ fn terminate_reaps_graceful_and_term_ignoring_children() -> TestResult {
     }
     Ok(())
 }
+
+#[test]
+fn stamp_parent_session_rewrites_the_header_in_place() -> TestResult {
+    let temp = tempdir()?;
+    let path = temp.path().join("child.jsonl");
+    fs::write(
+        &path,
+        concat!(
+            r#"{"type":"session","version":3,"id":"child-1","cwd":"/project"}"#,
+            "\n",
+            r#"{"type":"message","id":"m1"}"#,
+            "\n",
+        ),
+    )?;
+    stamp_parent_session(&path, "/sessions/parent.jsonl")?;
+    let contents = fs::read_to_string(&path)?;
+    let header_line = contents.lines().next().ok_or("missing session header")?;
+    let header: serde_json::Value = serde_json::from_str(header_line)?;
+    assert_eq!(
+        header["parentSession"].as_str(),
+        Some("/sessions/parent.jsonl")
+    );
+    assert!(contents.contains(r#""id":"m1""#));
+    Ok(())
+}

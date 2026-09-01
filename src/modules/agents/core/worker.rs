@@ -62,6 +62,7 @@ pub(crate) struct WorkerLaunch {
     pub(crate) worker_id: String,
     pub(crate) project: PathBuf,
     pub(crate) parent_session: String,
+    pub(crate) parent_worker_id: Option<String>,
     pub(crate) context: WorkerContext,
     pub(crate) provider: Option<String>,
     pub(crate) model: Option<String>,

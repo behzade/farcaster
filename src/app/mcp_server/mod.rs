@@ -111,7 +111,7 @@ impl FarcasterMcp {
 impl FarcasterMcp {
     #[tool(
         name = "worker_send",
-        description = "Send a message to an existing top-level peer in your project. Set `to` to `new` to create a fresh top-level agent in the caller's project using your current harness and model. New workers are independent, visible Farcaster sessions—not subagents—and should only be created for substantial independent work. Use the harness's native subagent facilities for delegated subtasks."
+        description = "Send a message to a worker in your project. Set `to` to `new` for an independent top-level peer (substantial independent work only), `child` for a nested worker under you (delegated subtasks such as review), `parent` to message your parent, or a worker id. Child workers can only message their parent. Peers cannot address another worker's children. Use the harness's native subagents when the harness provides them."
     )]
     async fn worker_send(
         &self,
@@ -128,7 +128,7 @@ impl FarcasterMcp {
 
     #[tool(
         name = "worker_list",
-        description = "List other active top-level Farcaster peers in the caller's project"
+        description = "List other active top-level Farcaster peers in the caller's project. Child workers see only their parent."
     )]
     async fn worker_list(
         &self,
@@ -204,7 +204,7 @@ fn notify_workgraph_changed(updates: &async_channel::Sender<()>) {
 #[tool_handler(
     name = "farcaster",
     version = "0.1.0",
-    instructions = "Farcaster provides project-scoped communication between top-level peer workers and durable work graphs. worker_list returns other workers in the caller's project, and worker_send can only address that set. Use worker_send with `to: new` only for substantial independent work; new workers inherit the caller's project. Use the harness's native subagents for delegated subtasks."
+    instructions = "Farcaster provides project-scoped communication between top-level peer workers and durable work graphs. worker_list returns other top-level peers in this project; child workers see only their parent. Use worker_send with `to: new` only for substantial independent work; it creates an independent top-level agent in this project using this harness and model. Use `to: child` for delegated subtasks such as review. Child workers can only message their parent (`to: parent`). Use the harness's native subagents when the harness provides them."
 )]
 impl ServerHandler for FarcasterMcp {
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {

@@ -49,6 +49,7 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             },
             None,
             launch.worker_id.clone(),
+            launch.parent_worker_id.clone(),
         );
         configure_codex_app_server(&mut prepared, self.command.access_mode);
         if farcaster_mcp::enabled() {

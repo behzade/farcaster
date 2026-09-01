@@ -80,6 +80,7 @@ fn request(project: &std::path::Path) -> StartWorker {
         prompt: "work".into(),
         backend: "pi".into(),
         parent_session: "backend://parent".into(),
+        parent_worker_id: None,
         context: WorkerContext::Fresh,
         provider: None,
         model: None,

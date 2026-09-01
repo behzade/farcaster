@@ -2,7 +2,8 @@
 
 use std::{
     collections::{HashMap, VecDeque},
-    io::Write as _,
+    fs::OpenOptions,
+    io::{Read as _, Seek as _, SeekFrom, Write as _},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
     sync::{Arc, Mutex, mpsc},
@@ -122,6 +123,7 @@ pub(crate) struct PiRpcProcess {
     next_id: u64,
     activity: WorkerActivityState,
     stderr: String,
+    parent_session: Option<String>,
 }
 
 impl PiRpcProcess {
@@ -134,7 +136,7 @@ impl PiRpcProcess {
         command: &AgentLaunchConfig,
         project: &Path,
     ) -> Result<Self, String> {
-        Self::spawn_inner(command, project, SessionLaunch::Catalog, None, None)
+        Self::spawn_inner(command, project, SessionLaunch::Catalog, None, None, None)
     }
 
     pub(crate) fn spawn(
@@ -143,7 +145,7 @@ impl PiRpcProcess {
         session: Option<&Path>,
     ) -> Result<Self, String> {
         let launch = session.map_or(SessionLaunch::New, SessionLaunch::Resume);
-        Self::spawn_inner(command, project, launch, None, None)
+        Self::spawn_inner(command, project, launch, None, None, None)
     }
 
     pub(in crate::modules::agents::adapter) fn spawn_with_optional_waker(
@@ -153,7 +155,7 @@ impl PiRpcProcess {
         wake: Option<thread::Thread>,
     ) -> Result<Self, String> {
         let launch = session.map_or(SessionLaunch::New, SessionLaunch::Resume);
-        Self::spawn_inner(command, project, launch, wake, None)
+        Self::spawn_inner(command, project, launch, wake, None, None)
     }
 
     pub(crate) fn spawn_fork(
@@ -161,7 +163,14 @@ impl PiRpcProcess {
         project: &Path,
         source: &Path,
     ) -> Result<Self, String> {
-        Self::spawn_inner(command, project, SessionLaunch::Fork(source), None, None)
+        Self::spawn_inner(
+            command,
+            project,
+            SessionLaunch::Fork(source),
+            None,
+            None,
+            None,
+        )
     }
 
     pub(in crate::modules::agents::adapter) fn spawn_fork_with_optional_waker(
@@ -170,15 +179,30 @@ impl PiRpcProcess {
         source: &Path,
         wake: Option<thread::Thread>,
     ) -> Result<Self, String> {
-        Self::spawn_inner(command, project, SessionLaunch::Fork(source), wake, None)
+        Self::spawn_inner(
+            command,
+            project,
+            SessionLaunch::Fork(source),
+            wake,
+            None,
+            None,
+        )
     }
 
     pub(crate) fn spawn_worker(
         command: &AgentLaunchConfig,
         project: &Path,
         worker_id: String,
+        parent: Option<(String, String)>,
     ) -> Result<Self, String> {
-        Self::spawn_inner(command, project, SessionLaunch::New, None, Some(worker_id))
+        Self::spawn_inner(
+            command,
+            project,
+            SessionLaunch::New,
+            None,
+            Some(worker_id),
+            parent,
+        )
     }
 
     fn spawn_inner(
@@ -187,6 +211,7 @@ impl PiRpcProcess {
         launch: SessionLaunch<'_>,
         wake: Option<thread::Thread>,
         worker_id: Option<String>,
+        parent: Option<(String, String)>,
     ) -> Result<Self, String> {
         let registry = crate::modules::agents::core::CallerRegistry::shared();
         let profile = crate::modules::agents::core::CallerProfile {
@@ -195,8 +220,10 @@ impl PiRpcProcess {
             model: None,
             effort: None,
         };
+        let parent_worker_id = parent.as_ref().map(|(id, _)| id.clone());
+        let parent_session = parent.map(|(_, session)| session);
         let caller_identity = if let Some(worker_id) = worker_id {
-            registry.issue_as(project, profile, wake.clone(), worker_id)
+            registry.issue_as(project, profile, wake.clone(), worker_id, parent_worker_id)
         } else {
             registry.issue(project, profile, wake.clone())
         };
@@ -243,6 +270,7 @@ impl PiRpcProcess {
             next_id: 0,
             activity: WorkerActivityState::Idle,
             stderr: String::new(),
+            parent_session,
         };
         rpc.readiness_handshake(Duration::from_secs(15))?;
         Ok(rpc)
@@ -551,6 +579,11 @@ impl PiRpcProcess {
                     && response.operation == crate::agents::SessionOperation::LoadState
                     && let Some(session) = response.data["sessionFile"].as_str()
                 {
+                    if let Some(parent) = &self.parent_session
+                        && let Err(error) = stamp_parent_session(Path::new(session), parent)
+                    {
+                        zlog::warn!("stamp Pi child parentSession: {error}");
+                    }
                     self.caller_identity.bind(session);
                 }
                 SessionEvent::Response(response)
@@ -694,6 +727,39 @@ fn spawn_stderr_reader(mut stderr: impl std::io::Read + Send + 'static, sender: 
             let _ = sender.send(ReaderItem::StderrEof);
         })
         .ok();
+}
+
+fn stamp_parent_session(path: &Path, parent: &str) -> Result<(), String> {
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(|error| format!("open Pi child session {}: {error}", path.display()))?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)
+        .map_err(|error| format!("read Pi child session {}: {error}", path.display()))?;
+    let (header_line, rest) = contents.split_once('\n').unwrap_or((contents.as_str(), ""));
+    let mut header: Value = serde_json::from_str(header_line)
+        .map_err(|error| format!("decode Pi child session header: {error}"))?;
+    let object = header
+        .as_object_mut()
+        .filter(|header| header.get("type").and_then(Value::as_str) == Some("session"))
+        .ok_or_else(|| format!("invalid Pi child session header: {}", path.display()))?;
+    if object.get("parentSession").and_then(Value::as_str) == Some(parent) {
+        return Ok(());
+    }
+    object.insert("parentSession".into(), Value::String(parent.to_owned()));
+    let mut encoded = serde_json::to_string(&header)
+        .map_err(|error| format!("encode Pi child session header: {error}"))?;
+    encoded.push('\n');
+    encoded.push_str(rest);
+    file.seek(SeekFrom::Start(0))
+        .map_err(|error| format!("seek Pi child session: {error}"))?;
+    file.write_all(encoded.as_bytes())
+        .map_err(|error| format!("write Pi child session: {error}"))?;
+    file.set_len(encoded.len() as u64)
+        .map_err(|error| format!("truncate Pi child session: {error}"))?;
+    Ok(())
 }
 
 #[cfg(test)]

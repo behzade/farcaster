@@ -135,6 +135,7 @@ impl WorkerPool {
                 worker_id: id.clone(),
                 project: project.clone(),
                 parent_session: request.parent_session,
+                parent_worker_id: request.parent_worker_id,
                 context,
                 provider: request.provider,
                 model: request.model,

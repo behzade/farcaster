@@ -38,6 +38,10 @@ impl WorkerSessionFactory for PiWorkerFactory {
                 &self.command,
                 &launch.project,
                 launch.worker_id.clone(),
+                launch
+                    .parent_worker_id
+                    .clone()
+                    .map(|id| (id, launch.parent_session.clone())),
             )?,
             WorkerContext::Session { session_locator } => {
                 let parent = canonical_session(&launch.parent_session, "parent")?;

@@ -45,6 +45,7 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
             },
             None,
             launch.worker_id.clone(),
+            launch.parent_worker_id.clone(),
         );
         if farcaster_mcp::enabled() {
             configure_farcaster_mcp(&mut prepared, caller_identity.token())?;
@@ -68,7 +69,15 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
             .map(|(provider, model)| (provider, model, launch.effort.as_deref()));
         let session = match launch.context {
             WorkerContext::Fresh => {
-                client.create_session(&launch.project.to_string_lossy(), None, selected_model)?
+                let parent_id = launch
+                    .parent_worker_id
+                    .is_some()
+                    .then_some(launch.parent_session.as_str());
+                client.create_session(
+                    &launch.project.to_string_lossy(),
+                    parent_id,
+                    selected_model,
+                )?
             }
             WorkerContext::Session { session_locator } => {
                 if session_locator != launch.parent_session {

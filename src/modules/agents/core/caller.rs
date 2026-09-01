@@ -32,6 +32,7 @@ pub(crate) struct CallerContext {
     pub(crate) provider: Option<String>,
     pub(crate) model: Option<String>,
     pub(crate) effort: Option<String>,
+    pub(crate) parent_worker_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -65,6 +66,7 @@ struct RegisteredCaller {
     provider: Option<String>,
     model: Option<String>,
     effort: Option<String>,
+    parent_worker_id: Option<String>,
     activity: WorkerActivityState,
     inbox: mpsc::Sender<PeerMessage>,
     wake: Option<thread::Thread>,
@@ -89,7 +91,7 @@ impl CallerRegistry {
         wake: Option<thread::Thread>,
     ) -> CallerIdentity {
         let worker_id = new_worker_id();
-        self.issue_as(project, profile, wake, worker_id)
+        self.issue_as(project, profile, wake, worker_id, None)
     }
 
     pub(crate) fn issue_as(
@@ -98,6 +100,7 @@ impl CallerRegistry {
         profile: CallerProfile,
         wake: Option<thread::Thread>,
         worker_id: String,
+        parent_worker_id: Option<String>,
     ) -> CallerIdentity {
         let token = new_identity("caller");
         let project = canonical_project(project);
@@ -113,6 +116,7 @@ impl CallerRegistry {
                     provider: profile.provider,
                     model: profile.model,
                     effort: profile.effort,
+                    parent_worker_id,
                     activity: WorkerActivityState::Starting,
                     inbox,
                     wake,
@@ -143,6 +147,7 @@ impl CallerRegistry {
                         provider: caller.provider.clone(),
                         model: caller.model.clone(),
                         effort: caller.effort.clone(),
+                        parent_worker_id: caller.parent_worker_id.clone(),
                     })
                 })
             {
@@ -165,11 +170,7 @@ impl CallerRegistry {
             .ok_or_else(|| "unknown Farcaster caller".to_owned())?;
         let mut workers = callers
             .values()
-            .filter(|peer| {
-                peer.worker_id != caller.worker_id
-                    && peer.project == caller.project
-                    && peer.session.is_some()
-            })
+            .filter(|peer| visible_to(caller, peer))
             .map(|peer| WorkerPeer {
                 id: peer.worker_id.clone(),
                 backend: peer.backend.clone(),
@@ -180,7 +181,7 @@ impl CallerRegistry {
         Ok((caller.worker_id.clone(), workers))
     }
 
-    pub(crate) fn send(&self, token: &str, to: &str, message: String) -> Result<(), String> {
+    pub(crate) fn send(&self, token: &str, to: &str, message: String) -> Result<String, String> {
         if message.trim().is_empty() {
             return Err("worker message must not be empty".into());
         }
@@ -200,17 +201,19 @@ impl CallerRegistry {
                 peer.worker_id == to && peer.project == caller.project && peer.session.is_some()
             })
             .ok_or_else(|| format!("unknown worker in this project: {to}"))?;
+        allow_send(caller, recipient)?;
+        let worker_id = recipient.worker_id.clone();
         recipient
             .inbox
             .send(PeerMessage {
                 from: caller.worker_id.clone(),
                 message,
             })
-            .map_err(|_| format!("worker {to} is unavailable"))?;
+            .map_err(|_| format!("worker {worker_id} is unavailable"))?;
         if let Some(wake) = &recipient.wake {
             wake.unpark();
         }
-        Ok(())
+        Ok(worker_id)
     }
 }
 
@@ -263,6 +266,32 @@ impl Drop for CallerIdentity {
         if let Ok(mut callers) = self.registry.callers.lock() {
             callers.remove(&self.token);
         }
+    }
+}
+
+fn visible_to(caller: &RegisteredCaller, peer: &RegisteredCaller) -> bool {
+    if peer.worker_id == caller.worker_id
+        || peer.project != caller.project
+        || peer.session.is_none()
+    {
+        return false;
+    }
+    match caller.parent_worker_id.as_deref() {
+        Some(parent) => peer.worker_id == parent,
+        None => peer.parent_worker_id.is_none(),
+    }
+}
+
+fn allow_send(caller: &RegisteredCaller, recipient: &RegisteredCaller) -> Result<(), String> {
+    match (
+        caller.parent_worker_id.as_deref(),
+        recipient.parent_worker_id.as_deref(),
+    ) {
+        (Some(parent), _) if parent == recipient.worker_id => Ok(()),
+        (Some(_), _) => Err("child workers can only message their parent".into()),
+        (_, Some(parent)) if parent == caller.worker_id => Ok(()),
+        (_, Some(_)) => Err("only the parent can message a child worker".into()),
+        (None, None) => Ok(()),
     }
 }
 
@@ -327,6 +356,7 @@ mod tests {
                 provider: Some("anthropic".into()),
                 model: Some("sonnet".into()),
                 effort: Some("high".into()),
+                parent_worker_id: None,
             })
         );
     }
@@ -382,6 +412,7 @@ mod tests {
             },
             None,
             "starting-worker".into(),
+            None,
         );
         assert!(
             registry
@@ -405,6 +436,61 @@ mod tests {
         second.bind("session-2");
 
         assert_eq!(registry.list(first.token())?.1.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn children_only_list_and_message_their_parent() -> Result<(), String> {
+        let registry = CallerRegistry::default();
+        let parent = identity(&registry, Path::new("/project"), "pi");
+        let peer = identity(&registry, Path::new("/project"), "codex-cli");
+        parent.bind("parent-session");
+        peer.bind("peer-session");
+        let parent_id = worker_id(&registry, &parent);
+        let peer_id = worker_id(&registry, &peer);
+
+        let child = registry.issue_as(
+            Path::new("/project"),
+            CallerProfile {
+                backend: "pi".into(),
+                provider: None,
+                model: None,
+                effort: None,
+            },
+            None,
+            "child-1".into(),
+            Some(parent_id.clone()),
+        );
+        child.bind("child-session");
+
+        let (self_id, listed) = registry.list(child.token())?;
+        assert_eq!(self_id, "child-1");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, parent_id);
+
+        let (_, parent_list) = registry.list(parent.token())?;
+        assert!(parent_list.iter().any(|peer| peer.id == peer_id));
+        assert!(!parent_list.iter().any(|peer| peer.id == "child-1"));
+
+        registry.send(child.token(), &parent_id, "review done".into())?;
+        assert_eq!(
+            parent.try_recv(),
+            Some(PeerMessage {
+                from: "child-1".into(),
+                message: "review done".into(),
+            })
+        );
+        assert!(registry.send(child.token(), &peer_id, "no".into()).is_err());
+        assert!(registry.send(peer.token(), "child-1", "no".into()).is_err());
+
+        registry.send(parent.token(), "child-1", "look at this".into())?;
+        assert_eq!(
+            child.try_recv(),
+            Some(PeerMessage {
+                from: parent_id,
+                message: "look at this".into(),
+            })
+        );
         Ok(())
     }
 }
