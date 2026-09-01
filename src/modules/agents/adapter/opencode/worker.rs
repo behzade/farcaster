@@ -12,9 +12,9 @@ use super::server::OpenCodeServerProcess;
 use crate::{
     access::SandboxedCommand,
     agents::{
-        AgentLaunchConfig, TokenUsage, WorkerActivity, WorkerContext, WorkerEvent, WorkerInput,
-        WorkerInputResponse, WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory,
-        WorkerUsage,
+        AgentLaunchConfig, CommonTool, TokenUsage, WorkerActivity, WorkerContext, WorkerEvent,
+        WorkerInput, WorkerInputResponse, WorkerLaunch, WorkerSendMode, WorkerSession,
+        WorkerSessionFactory, WorkerUsage,
     },
     modules::agents::adapter::{child_stderr, farcaster_mcp, main_session},
 };
@@ -91,6 +91,7 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
             session_usage: TokenUsage::default(),
             context_window: 0,
             pending_inputs: HashMap::new(),
+            active_tools: HashMap::new(),
             generation: 0,
             completions: None,
             wake: None,
@@ -172,6 +173,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
             session_usage: TokenUsage::default(),
             context_window,
             pending_inputs: HashMap::new(),
+            active_tools: HashMap::new(),
             generation: 0,
             completions: None,
             wake: launch.wake.clone(),
@@ -295,6 +297,7 @@ struct OpenCodeWorkerSession {
     session_usage: TokenUsage,
     context_window: u64,
     pending_inputs: HashMap<String, PendingOpenCodeInput>,
+    active_tools: HashMap<String, String>,
     generation: u64,
     completions: Option<mpsc::Receiver<(u64, Result<String, String>)>>,
     wake: Option<thread::Thread>,
@@ -371,30 +374,38 @@ impl OpenCodeWorkerSession {
                         delta: delta.to_owned(),
                     }));
                 }
-                "session.tool.input.started" => {
+                "session.tool.input.started" | "session.next.tool.input.started" => {
+                    let id = opencode_tool_id(&event.data)?.to_owned();
+                    let (name, args) = normalize_opencode_tool(
+                        opencode_tool_name(&event.data).unwrap_or("tool"),
+                        event.data.get("input").unwrap_or(&Value::Null),
+                    );
+                    self.active_tools.insert(id.clone(), name.clone());
                     return Some(WorkerEvent::Activity(WorkerActivity::ToolStarted {
-                        id: event.data.get("id").and_then(Value::as_str)?.to_owned(),
-                        name: event
-                            .data
-                            .get("name")
-                            .and_then(Value::as_str)
-                            .unwrap_or("tool")
-                            .to_owned(),
-                        args: json!({}),
+                        id,
+                        name,
+                        args,
                     }));
                 }
-                "session.tool.called" => {
-                    return Some(WorkerEvent::Activity(WorkerActivity::ToolUpdated {
-                        id: event.data.get("id").and_then(Value::as_str)?.to_owned(),
-                        content: json!([{
-                            "type": "text",
-                            "text": event.data.get("input").map(Value::to_string).unwrap_or_default(),
-                        }]),
+                "session.tool.called" | "session.next.tool.called" => {
+                    let id = opencode_tool_id(&event.data)?.to_owned();
+                    let reported_name = opencode_tool_name(&event.data)
+                        .or_else(|| self.active_tools.get(&id).map(String::as_str))
+                        .unwrap_or("tool");
+                    let (name, args) = normalize_opencode_tool(
+                        reported_name,
+                        event.data.get("input").unwrap_or(&Value::Null),
+                    );
+                    self.active_tools.insert(id.clone(), name.clone());
+                    return Some(WorkerEvent::Activity(WorkerActivity::ToolStarted {
+                        id,
+                        name,
+                        args,
                     }));
                 }
-                "session.tool.progress" => {
+                "session.tool.progress" | "session.next.tool.progress" => {
                     return Some(WorkerEvent::Activity(WorkerActivity::ToolUpdated {
-                        id: event.data.get("id").and_then(Value::as_str)?.to_owned(),
+                        id: opencode_tool_id(&event.data)?.to_owned(),
                         content: json!([{
                             "type": "text",
                             "text": event.data.get("metadata").map(Value::to_string).unwrap_or_default(),
@@ -430,15 +441,23 @@ impl OpenCodeWorkerSession {
                         context_window: self.context_window,
                     })));
                 }
-                "session.tool.success" | "session.tool.failed" => {
+                "session.tool.success"
+                | "session.tool.failed"
+                | "session.next.tool.success"
+                | "session.next.tool.failed" => {
+                    let id = opencode_tool_id(&event.data)?.to_owned();
+                    self.active_tools.remove(&id);
                     return Some(WorkerEvent::Activity(WorkerActivity::ToolFinished {
-                        id: event.data.get("id").and_then(Value::as_str)?.to_owned(),
+                        id,
                         result: event
                             .data
                             .get("content")
                             .cloned()
                             .unwrap_or_else(|| json!([])),
-                        is_error: event.event.as_deref() == Some("session.tool.failed"),
+                        is_error: event
+                            .event
+                            .as_deref()
+                            .is_some_and(|event| event.ends_with("tool.failed")),
                     }));
                 }
                 "session.compaction.started" | "session.next.compaction.started.1" => {
@@ -653,6 +672,58 @@ impl WorkerSession for OpenCodeWorkerSession {
     }
 }
 
+fn opencode_tool_id(data: &Value) -> Option<&str> {
+    data.get("id")
+        .and_then(Value::as_str)
+        .or_else(|| data.get("callID").and_then(Value::as_str))
+}
+
+fn opencode_tool_name(data: &Value) -> Option<&str> {
+    data.get("name")
+        .and_then(Value::as_str)
+        .or_else(|| data.get("tool").and_then(Value::as_str))
+}
+
+fn normalize_opencode_tool(name: &str, arguments: &Value) -> (String, Value) {
+    let normalized_name = name.trim().to_ascii_lowercase();
+    let common =
+        CommonTool::from_name(&normalized_name).or_else(|| match normalized_name.as_str() {
+            "read_file" => Some(CommonTool::Read),
+            "write_file" => Some(CommonTool::Write),
+            "edit_file" | "apply_patch" | "patch" => Some(CommonTool::Edit),
+            "shell" | "command" | "terminal" => Some(CommonTool::Bash),
+            _ => None,
+        });
+    let Some(common) = common else {
+        return (name.to_owned(), arguments.clone());
+    };
+    let mut normalized = arguments.as_object().cloned().unwrap_or_default();
+    rename_argument(&mut normalized, "path", &["file_path", "filePath"]);
+    if common == CommonTool::Edit {
+        rename_argument(&mut normalized, "oldText", &["old_string", "oldString"]);
+        rename_argument(&mut normalized, "newText", &["new_string", "newString"]);
+    } else if common == CommonTool::Bash {
+        rename_argument(&mut normalized, "command", &["cmd"]);
+    }
+    (common.name().into(), Value::Object(normalized))
+}
+
+fn rename_argument(
+    arguments: &mut serde_json::Map<String, Value>,
+    canonical: &str,
+    aliases: &[&str],
+) {
+    let value = aliases.iter().find_map(|alias| arguments.remove(*alias));
+    if !arguments.contains_key(canonical)
+        && let Some(value) = value
+    {
+        arguments.insert(canonical.into(), value);
+    }
+    for alias in aliases {
+        arguments.remove(*alias);
+    }
+}
+
 fn start_event_reader(
     server: &OpenCodeServerProcess,
     session_id: &str,
@@ -777,6 +848,26 @@ fn worker_password() -> Result<String, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn common_tools_use_shared_names_and_arguments() {
+        for (source, canonical) in [
+            ("read_file", "read"),
+            ("write_file", "write"),
+            ("apply_patch", "edit"),
+            ("shell", "bash"),
+        ] {
+            assert_eq!(normalize_opencode_tool(source, &json!({})).0, canonical);
+        }
+        assert_eq!(
+            normalize_opencode_tool(
+                "edit",
+                &json!({"filePath": "src/main.rs", "oldString": "old", "newString": "new"}),
+            )
+            .1,
+            json!({"path": "src/main.rs", "oldText": "old", "newText": "new"})
+        );
+    }
 
     #[test]
     fn native_startup_merges_direct_farcaster_mcp() {

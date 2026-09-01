@@ -486,6 +486,17 @@ fn edit_results_update_the_file_change_action() {
 }
 
 #[test]
+fn structured_patch_changes_have_edit_counts() {
+    let action = tool_presentation(
+        "edit",
+        &json!({"path":"src/main.rs","changes":[{"diff":"-old\n+new\n+line\n"}]}),
+    )
+    .expect("edit action");
+    assert_eq!(action.path(), "src/main.rs");
+    assert_eq!(action.counts(), (2, 1));
+}
+
+#[test]
 fn write_calls_expose_a_file_change_action() {
     let mut state = ConversationState::default();
     state.replace_history(&[json!({"role":"assistant","content":[{

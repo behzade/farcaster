@@ -11,6 +11,33 @@ pub(crate) enum WorkerSendMode {
     Steer,
 }
 
+/// Backend-neutral names for operations with shared transcript presentation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CommonTool {
+    Read,
+    Write,
+    Edit,
+    Bash,
+}
+
+impl CommonTool {
+    pub(crate) const fn name(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Write => "write",
+            Self::Edit => "edit",
+            Self::Bash => "bash",
+        }
+    }
+
+    pub(crate) fn from_name(name: &str) -> Option<Self> {
+        let name = name.trim();
+        [Self::Read, Self::Write, Self::Edit, Self::Bash]
+            .into_iter()
+            .find(|tool| name.eq_ignore_ascii_case(tool.name()))
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct WorkerLaunch {
     pub(crate) project: PathBuf,

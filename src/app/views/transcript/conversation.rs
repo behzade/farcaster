@@ -7,7 +7,7 @@ use base64::Engine as _;
 use gpui::{Image, ImageFormat};
 use serde_json::Value;
 
-use crate::{app::ui::persistent_vec::PersistentVec, protocol::PromptImage};
+use crate::{agents::CommonTool, app::ui::persistent_vec::PersistentVec, protocol::PromptImage};
 
 const MAX_DIAGNOSTICS: usize = 32;
 const STREAM_CHUNK_BYTES: usize = 2 * 1024;
@@ -1155,17 +1155,35 @@ fn tool_presentation(name: &str, arguments: &Value) -> Option<ToolPresentation> 
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_owned();
-    match name.trim().to_ascii_lowercase().as_str() {
-        "edit" => Some(ToolPresentation::edit(path, preview_edit_counts(arguments))),
-        "write" => arguments
+    match CommonTool::from_name(name) {
+        Some(CommonTool::Edit) => {
+            Some(ToolPresentation::edit(path, preview_edit_counts(arguments)))
+        }
+        Some(CommonTool::Write) => arguments
             .get("content")
             .and_then(Value::as_str)
             .map(|content| ToolPresentation::write(path, content)),
-        _ => None,
+        Some(CommonTool::Read | CommonTool::Bash) | None => None,
     }
 }
 
 fn preview_edit_counts(arguments: &Value) -> (usize, usize) {
+    if let Some(diff) = arguments.get("diff").and_then(Value::as_str) {
+        return change_counts(diff);
+    }
+    if let Some(changes) = arguments.get("changes").and_then(Value::as_array) {
+        return changes.iter().fold((0usize, 0usize), |counts, change| {
+            let (additions, deletions) = change
+                .get("diff")
+                .and_then(Value::as_str)
+                .map(change_counts)
+                .unwrap_or_default();
+            (
+                counts.0.saturating_add(additions),
+                counts.1.saturating_add(deletions),
+            )
+        });
+    }
     let edits = arguments.get("edits").and_then(Value::as_array);
     let legacy = arguments
         .get("oldText")

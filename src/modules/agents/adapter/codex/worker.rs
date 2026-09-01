@@ -16,9 +16,9 @@ use super::{
 use crate::{
     access::SandboxedCommand,
     agents::{
-        AgentLaunchConfig, TokenUsage, WorkerActivity, WorkerContext, WorkerEvent, WorkerInput,
-        WorkerInputResponse, WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory,
-        WorkerUsage,
+        AgentLaunchConfig, CommonTool, TokenUsage, WorkerActivity, WorkerContext, WorkerEvent,
+        WorkerInput, WorkerInputResponse, WorkerLaunch, WorkerSendMode, WorkerSession,
+        WorkerSessionFactory, WorkerUsage,
     },
     modules::agents::adapter::{child_stderr, farcaster_mcp, main_session},
 };
@@ -837,21 +837,58 @@ fn codex_tool_start(params: &Value) -> Option<WorkerActivity> {
         return None;
     }
     let id = item.get("id")?.as_str()?;
-    let name = item
-        .get("server")
-        .and_then(Value::as_str)
-        .or_else(|| item.get("name").and_then(Value::as_str))
-        .unwrap_or(kind);
-    let args = item
-        .get("arguments")
-        .cloned()
-        .or_else(|| item.get("command").cloned())
-        .unwrap_or_else(|| json!({}));
+    let (name, args) = codex_tool_call(item, kind);
     Some(WorkerActivity::ToolStarted {
         id: id.to_owned(),
-        name: name.to_owned(),
+        name,
         args,
     })
+}
+
+fn codex_tool_call(item: &Value, kind: &str) -> (String, Value) {
+    match kind {
+        "fileChange" => {
+            let changes = item.get("changes").cloned().unwrap_or_else(|| json!([]));
+            let path = changes
+                .as_array()
+                .and_then(|changes| changes.first())
+                .and_then(|change| change.get("path"))
+                .cloned()
+                .unwrap_or(Value::String(String::new()));
+            (
+                CommonTool::Edit.name().into(),
+                json!({"path": path, "changes": changes}),
+            )
+        }
+        "commandExecution" => {
+            let read = item
+                .get("commandActions")
+                .and_then(Value::as_array)
+                .filter(|actions| actions.len() == 1)
+                .and_then(|actions| actions.first())
+                .filter(|action| action.get("type").and_then(Value::as_str) == Some("read"));
+            if let Some(action) = read {
+                (
+                    CommonTool::Read.name().into(),
+                    json!({"path": action.get("path").cloned().unwrap_or(Value::Null)}),
+                )
+            } else {
+                (
+                    CommonTool::Bash.name().into(),
+                    json!({"command": item.get("command").cloned().unwrap_or(Value::Null)}),
+                )
+            }
+        }
+        _ => {
+            let name = item
+                .get("name")
+                .and_then(Value::as_str)
+                .or_else(|| item.get("server").and_then(Value::as_str))
+                .unwrap_or(kind);
+            let args = item.get("arguments").cloned().unwrap_or_else(|| json!({}));
+            (name.to_owned(), args)
+        }
+    }
 }
 
 fn codex_tool_end(params: &Value) -> Option<WorkerActivity> {
@@ -864,15 +901,21 @@ fn codex_tool_end(params: &Value) -> Option<WorkerActivity> {
         return None;
     }
     let id = item.get("id")?.as_str()?;
-    let output = item
-        .get("aggregatedOutput")
-        .and_then(Value::as_str)
-        .or_else(|| item.get("result").and_then(Value::as_str))
-        .unwrap_or_default();
     let failed = item
         .get("status")
         .and_then(Value::as_str)
         .is_some_and(|status| matches!(status, "failed" | "declined"));
+    let output = item
+        .get("aggregatedOutput")
+        .and_then(Value::as_str)
+        .or_else(|| item.get("result").and_then(Value::as_str))
+        .unwrap_or_else(|| {
+            if kind == "fileChange" && !failed {
+                "Applied patch"
+            } else {
+                ""
+            }
+        });
     Some(WorkerActivity::ToolFinished {
         id: id.to_owned(),
         result: json!([{"type": "text", "text": output}]),
@@ -900,6 +943,31 @@ mod tests {
             }))
             .as_deref(),
             Some("hello")
+        );
+    }
+
+    #[test]
+    fn codex_tools_use_shared_names_and_arguments() {
+        let change = json!({"changes":[{"path":"src/main.rs","diff":"-old\n+new\n"}]});
+        assert_eq!(
+            codex_tool_call(&change, "fileChange"),
+            (
+                "edit".into(),
+                json!({"path":"src/main.rs","changes":change["changes"]})
+            )
+        );
+
+        let read = json!({
+            "command":"cat src/main.rs",
+            "commandActions":[{"type":"read","path":"src/main.rs"}]
+        });
+        assert_eq!(
+            codex_tool_call(&read, "commandExecution"),
+            ("read".into(), json!({"path":"src/main.rs"}))
+        );
+        assert_eq!(
+            codex_tool_call(&json!({"command":"cargo test"}), "commandExecution"),
+            ("bash".into(), json!({"command":"cargo test"}))
         );
     }
 
