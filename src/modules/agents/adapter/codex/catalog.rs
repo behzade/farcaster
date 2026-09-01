@@ -15,6 +15,15 @@ use super::super::{
     main_session::{external_session_locator, external_session_path},
 };
 
+const INTERACTIVE_SOURCE_KINDS: &[&str] = &["cli", "vscode", "exec", "appServer", "unknown"];
+const AGENT_SOURCE_KINDS: &[&str] = &[
+    "subAgent",
+    "subAgentReview",
+    "subAgentCompact",
+    "subAgentThreadSpawn",
+    "subAgentOther",
+];
+
 pub(in crate::modules::agents::adapter) fn discover(
     locator_root: &Path,
     query: &str,
@@ -22,29 +31,36 @@ pub(in crate::modules::agents::adapter) fn discover(
     with_connection(|connection| {
         let mut sessions = Vec::new();
         for archived in [false, true] {
-            let id = connection.send_request(
-                "thread/list",
-                json!({
-                    "archived": archived,
-                    "limit": 100,
-                    "searchTerm": (!query.is_empty()).then_some(query),
-                    "sortKey": "updated_at",
-                    "sortDirection": "desc",
-                }),
-            )?;
-            let response: Value = connection.wait_response(&id)?;
-            for thread in response
-                .get("data")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-            {
-                if let Some(summary) = summary(locator_root, thread, archived)? {
-                    sessions.push(summary);
+            for source_kinds in [INTERACTIVE_SOURCE_KINDS, AGENT_SOURCE_KINDS] {
+                let id = connection.send_request(
+                    "thread/list",
+                    thread_list_params(archived, query, source_kinds),
+                )?;
+                let response: Value = connection.wait_response(&id)?;
+                for thread in response
+                    .get("data")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
+                    if let Some(summary) = summary(locator_root, thread, archived)? {
+                        sessions.push(summary);
+                    }
                 }
             }
         }
         Ok(sessions)
+    })
+}
+
+fn thread_list_params(archived: bool, query: &str, source_kinds: &[&str]) -> Value {
+    json!({
+        "archived": archived,
+        "limit": 100,
+        "searchTerm": (!query.is_empty()).then_some(query),
+        "sortKey": "updated_at",
+        "sortDirection": "desc",
+        "sourceKinds": source_kinds,
     })
 }
 
@@ -94,7 +110,7 @@ pub(in crate::modules::agents::adapter) fn load_history(
                 .flatten()
             {
                 if let Some(message) = history_message(item) {
-                    messages.push(json!({"type": "message", "message": message}));
+                    messages.push(message);
                 }
             }
         }
@@ -337,6 +353,22 @@ mod tests {
         assert_eq!(session.usage.cache_read, 80);
         assert_eq!(session.usage.total, 120);
         Ok(())
+    }
+
+    #[test]
+    fn discovery_requests_native_agent_sources_explicitly() {
+        let params = thread_list_params(false, "", AGENT_SOURCE_KINDS);
+        assert_eq!(
+            params["sourceKinds"],
+            json!([
+                "subAgent",
+                "subAgentReview",
+                "subAgentCompact",
+                "subAgentThreadSpawn",
+                "subAgentOther"
+            ])
+        );
+        assert!(params["searchTerm"].is_null());
     }
 
     #[test]

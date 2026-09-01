@@ -361,7 +361,13 @@ impl SessionTransport for WorkerSessionTransport {
             SessionCommand::LoadHistory => {
                 let data = self.history.as_ref().map_or_else(
                     || json!({"entries": [], "preserve": true}),
-                    |entries| json!({"entries": entries, "preserve": false}),
+                    |messages| {
+                        let entries = messages
+                            .iter()
+                            .map(|message| json!({"type": "message", "message": message}))
+                            .collect::<Vec<_>>();
+                        json!({"entries": entries, "preserve": false})
+                    },
                 );
                 self.response(id.clone(), operation, data);
             }
@@ -827,10 +833,7 @@ mod tests {
     #[test]
     fn resumed_transport_returns_persisted_history() {
         let history = crate::agents::DiscoveredHistory {
-            messages: vec![json!({
-                "type": "message",
-                "message": {"role": "user", "content": "persisted"},
-            })],
+            messages: vec![json!({"role": "user", "content": "persisted"})],
             model: Some(("openai".into(), "gpt-test".into())),
             thinking_level: Some("high".into()),
         };

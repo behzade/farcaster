@@ -55,7 +55,6 @@ pub(in crate::modules::agents::adapter) fn load_history(
             .into_iter()
             .flatten()
             .filter_map(history_message)
-            .map(|message| json!({"type": "message", "message": message}))
             .collect();
         let _session = server.client().get_session(&locator)?;
         Ok(DiscoveredHistory {
@@ -236,6 +235,7 @@ mod tests {
         let project = std::env::current_dir().map_err(|error| error.to_string())?;
         let value = json!({
             "id": "session-1",
+            "parentID": "parent-1",
             "location": {"directory": project},
             "title": "Implement feature",
             "time": {"created": 1, "updated": 2},
@@ -243,6 +243,7 @@ mod tests {
         });
         let session = summary(project.as_path(), &value).ok_or("summary")??;
         assert_eq!(session.harness, "opencode2");
+        assert_eq!(session.parent_session.as_deref(), Some("parent-1"));
         assert_eq!(session.title, "Implement feature");
         assert_eq!(session.usage.input, 100);
         assert_eq!(session.usage.output, 25);
