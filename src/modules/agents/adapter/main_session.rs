@@ -27,6 +27,8 @@ pub(super) struct WorkerSessionTransport {
     pending: VecDeque<SessionEvent>,
     next_id: u64,
     running: bool,
+    steering: Vec<String>,
+    follow_up: Vec<String>,
     assistant_message: AssistantMessage,
     observed_text: String,
     model: Option<(String, String)>,
@@ -71,6 +73,8 @@ impl WorkerSessionTransport {
             pending: VecDeque::new(),
             next_id: 0,
             running: false,
+            steering: Vec::new(),
+            follow_up: Vec::new(),
             assistant_message: AssistantMessage::default(),
             observed_text: String::new(),
             model,
@@ -97,6 +101,32 @@ impl WorkerSessionTransport {
                 data,
                 error: None,
             }));
+    }
+
+    fn enqueue_queue_update(&mut self) {
+        self.pending.push_back(SessionEvent::Activity(json!({
+            "type": "queue_update",
+            "steering": self.steering,
+            "followUp": self.follow_up,
+        })));
+    }
+
+    fn enqueue_message(&mut self, mode: PromptMode, message: String) {
+        match mode {
+            PromptMode::Normal => return,
+            PromptMode::Steer => self.steering.push(message),
+            PromptMode::FollowUp => self.follow_up.push(message),
+        }
+        self.enqueue_queue_update();
+    }
+
+    fn clear_queue(&mut self) {
+        if self.steering.is_empty() && self.follow_up.is_empty() {
+            return;
+        }
+        self.steering.clear();
+        self.follow_up.clear();
+        self.enqueue_queue_update();
     }
 
     fn state(&self) -> Value {
@@ -138,6 +168,7 @@ impl WorkerSessionTransport {
                 self.reconcile_completed_output(&output);
                 self.start_assistant_message();
                 self.finish_assistant_message(Some(self.usage.turn));
+                self.clear_queue();
                 self.pending
                     .push_back(SessionEvent::Activity(json!({"type": "agent_settled"})));
                 self.assistant_message.clear();
@@ -154,7 +185,10 @@ impl WorkerSessionTransport {
                     .push_back(SessionEvent::Interaction(interaction(input)));
             }
             WorkerEvent::Activity(activity) => self.enqueue_activity(activity),
-            WorkerEvent::Failed(error) => self.pending.push_back(SessionEvent::Failure(error)),
+            WorkerEvent::Failed(error) => {
+                self.clear_queue();
+                self.pending.push_back(SessionEvent::Failure(error));
+            }
         }
     }
 
@@ -357,21 +391,21 @@ impl SessionTransport for WorkerSessionTransport {
                 message,
                 images,
             } => {
-                let worker_mode = match mode {
-                    PromptMode::Normal => WorkerSendMode::Prompt,
-                    PromptMode::Steer => WorkerSendMode::Steer,
-                    PromptMode::FollowUp => WorkerSendMode::Queue,
+                let (worker_mode, command) = match mode {
+                    PromptMode::Normal => (WorkerSendMode::Prompt, "prompt"),
+                    PromptMode::Steer => (WorkerSendMode::Steer, "steer"),
+                    PromptMode::FollowUp => (WorkerSendMode::Queue, "follow_up"),
                 };
+                let queued_message = (mode != PromptMode::Normal).then(|| message.clone());
                 self.worker.send_with_images(message, worker_mode, images)?;
-                let command = match mode {
-                    PromptMode::Normal => "prompt",
-                    PromptMode::Steer => "steer",
-                    PromptMode::FollowUp => "follow_up",
-                };
+                if let Some(message) = queued_message {
+                    self.enqueue_message(mode, message);
+                }
                 self.response(id.clone(), command, json!({}));
             }
             SessionCommand::Abort => {
                 self.worker.abort()?;
+                self.clear_queue();
                 self.response(id.clone(), "abort", json!({}));
             }
             SessionCommand::SelectModel { provider, model_id } => {
@@ -715,6 +749,54 @@ mod tests {
         );
         assert_eq!(activities[3]["message"]["content"][0]["text"], "before");
         assert_eq!(activities[7]["message"]["content"][0]["text"], "after");
+    }
+
+    #[test]
+    fn queued_worker_messages_are_reported_until_the_turn_settles() {
+        let mut transport = WorkerSessionTransport::new(
+            std::path::Path::new("/locators"),
+            "codex-cli",
+            "thread-1".into(),
+            Box::new(IdleWorker),
+            MainSessionMetadata::default(),
+        )
+        .expect("transport");
+
+        transport
+            .send(SessionCommand::Prompt {
+                mode: PromptMode::Steer,
+                message: "redirect".into(),
+                images: Vec::new(),
+            })
+            .expect("steer");
+        transport
+            .send(SessionCommand::Prompt {
+                mode: PromptMode::FollowUp,
+                message: "then verify".into(),
+                images: Vec::new(),
+            })
+            .expect("follow-up");
+        transport.enqueue_worker_event(WorkerEvent::Settled {
+            output: String::new(),
+        });
+
+        let updates = transport
+            .pending
+            .iter()
+            .filter_map(|event| match event {
+                SessionEvent::Activity(activity) if activity["type"] == "queue_update" => {
+                    Some(activity.clone())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(updates.len(), 3);
+        assert_eq!(updates[0]["steering"], json!(["redirect"]));
+        assert_eq!(updates[0]["followUp"], json!([]));
+        assert_eq!(updates[1]["steering"], json!(["redirect"]));
+        assert_eq!(updates[1]["followUp"], json!(["then verify"]));
+        assert_eq!(updates[2]["steering"], json!([]));
+        assert_eq!(updates[2]["followUp"], json!([]));
     }
 
     #[test]
