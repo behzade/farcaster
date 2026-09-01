@@ -6,7 +6,8 @@ pub(crate) use adapter::{
     app_shell_environment, backend_statuses, default_login_shell, delete_external_session,
     discover_external_sessions, external_session_identity, is_external_session,
     load_configuration_catalog, load_external_history, normalize_access_mode, rename_session,
-    spawn_session, supported_access_modes, validate_launch, worker_factories,
+    spawn_session, supported_access_modes, supports_startup_command, validate_launch,
+    worker_factories,
 };
 pub(crate) use contract::extensions;
 pub(crate) use contract::{

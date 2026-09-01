@@ -609,7 +609,9 @@ impl RuntimeOwner {
 
     fn send_startup_queries(&mut self) {
         for command in startup_commands() {
-            self.send(command);
+            if agents::supports_startup_command(&self.harness, &command) {
+                self.send(command);
+            }
         }
     }
 

@@ -327,6 +327,29 @@ pub(crate) fn load_external_history(
     })
 }
 
+pub(crate) fn supports_startup_command(
+    harness: &str,
+    command: &crate::agents::SessionCommand,
+) -> bool {
+    use super::contract::CapabilitySupport::Available;
+    use crate::agents::SessionCommand;
+
+    let Some(configuration) = known_backend_descriptors()
+        .into_iter()
+        .find(|descriptor| descriptor.id.as_str() == harness)
+        .map(|descriptor| descriptor.capabilities.configuration)
+    else {
+        return true;
+    };
+    match command {
+        SessionCommand::ListModels => configuration.models == Available,
+        SessionCommand::ListReasoningLevels => configuration.reasoning_effort == Available,
+        SessionCommand::ListModes => configuration.modes == Available,
+        SessionCommand::ListCommands => configuration.commands == Available,
+        _ => true,
+    }
+}
+
 pub(crate) fn backend_statuses() -> Vec<super::contract::AgentBackendStatus> {
     let pi_program = crate::agents::AgentLaunchConfig::default().program;
     let codex_program = std::env::var_os("FARCASTER_CODEX_PATH")
@@ -375,7 +398,15 @@ pub(super) fn known_backend_descriptors() -> [super::contract::AgentBackendDescr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agents::HarnessAccessMode::{Auto, Full, Sandboxed};
+    use crate::agents::{
+        HarnessAccessMode::{Auto, Full, Sandboxed},
+        SessionCommand,
+    };
+
+    #[test]
+    fn pi_startup_skips_unsupported_mode_query() {
+        assert!(!supports_startup_command("pi", &SessionCommand::ListModes));
+    }
 
     #[test]
     fn backend_access_modes_match_their_native_safety_models() {
