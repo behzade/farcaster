@@ -11,6 +11,12 @@ pub(crate) enum WorkerSendMode {
     Steer,
 }
 
+impl WorkerSendMode {
+    pub(crate) const fn for_peer(running: bool) -> Self {
+        if running { Self::Steer } else { Self::Prompt }
+    }
+}
+
 /// Backend-neutral names for operations with shared transcript presentation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CommonTool {

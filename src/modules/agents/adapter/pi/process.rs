@@ -116,6 +116,7 @@ pub(crate) struct PiRpcProcess {
     queued: VecDeque<SessionEvent>,
     pending: HashMap<String, String>,
     next_id: u64,
+    running: bool,
     stderr: String,
 }
 
@@ -230,6 +231,7 @@ impl PiRpcProcess {
             queued: VecDeque::new(),
             pending: HashMap::new(),
             next_id: 0,
+            running: false,
             stderr: String::new(),
         };
         rpc.readiness_handshake(Duration::from_secs(15))?;
@@ -237,6 +239,13 @@ impl PiRpcProcess {
     }
 
     pub(crate) fn send_request(&mut self, request: SessionCommand) -> Result<String, String> {
+        let starts_run = matches!(
+            &request,
+            SessionCommand::Prompt {
+                mode: crate::protocol::PromptMode::Normal,
+                ..
+            }
+        );
         match &request {
             SessionCommand::SelectModel { provider, model_id } => {
                 self.caller_identity.select_model(provider, model_id);
@@ -246,7 +255,9 @@ impl PiRpcProcess {
             }
             _ => {}
         }
-        self.send_command(super::protocol::encode_request(request))
+        let id = self.send_command(super::protocol::encode_request(request))?;
+        self.running |= starts_run;
+        Ok(id)
     }
 
     fn send_command(&mut self, mut command: Value) -> Result<String, String> {
@@ -357,7 +368,11 @@ impl PiRpcProcess {
         }
         if let Some(message) = self.caller_identity.try_recv()
             && let Err(error) = self.send_request(SessionCommand::Prompt {
-                mode: crate::protocol::PromptMode::FollowUp,
+                mode: if self.running {
+                    crate::protocol::PromptMode::Steer
+                } else {
+                    crate::protocol::PromptMode::Normal
+                },
                 message: message.prompt(),
                 images: Vec::new(),
             })
@@ -511,6 +526,11 @@ impl PiRpcProcess {
                 SessionEvent::Interaction(request)
             }
             ReaderItem::Wire(Ok(PiWireMessage::Event(event))) => {
+                match event.get("type").and_then(Value::as_str) {
+                    Some("agent_start") => self.running = true,
+                    Some("agent_settled") => self.running = false,
+                    _ => {}
+                }
                 SessionEvent::Activity(event.into())
             }
             ReaderItem::Wire(Err(error)) => SessionEvent::Failure(error),

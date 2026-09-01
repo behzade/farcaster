@@ -657,7 +657,8 @@ impl WorkerSession for OpenCodeWorkerSession {
             return Some(event);
         }
         if let Some(message) = self.caller_identity.try_recv() {
-            return Some(match self.send(message.prompt(), WorkerSendMode::Queue) {
+            let mode = WorkerSendMode::for_peer(self.completions.is_some());
+            return Some(match self.send(message.prompt(), mode) {
                 Ok(()) => WorkerEvent::Started,
                 Err(error) => WorkerEvent::Failed(error),
             });
