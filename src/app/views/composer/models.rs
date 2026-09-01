@@ -58,7 +58,7 @@ pub(in crate::app::views) fn render(
         "select-runtime",
         "Runtime",
         runtime_content,
-        ButtonTone::Quiet,
+        ButtonTone::Neutral,
         true,
     )
     .flex_none()
@@ -167,7 +167,7 @@ pub(in crate::app::views) fn render_runtime_picker(
             )
             .child(
                 div()
-                    .min_h(px(188.0))
+                    .h(px(300.0))
                     .flex()
                     .border(THEME.border)
                     .border_color(THEME.colors.hover)
@@ -175,38 +175,52 @@ pub(in crate::app::views) fn render_runtime_picker(
                     .child(
                         div()
                             .w(px(138.0))
+                            .min_h_0()
                             .flex_none()
+                            .flex()
+                            .flex_col()
                             .p(px(6.0))
                             .border_r(THEME.border)
                             .border_color(THEME.colors.hover)
                             .child(picker_label("Provider"))
-                            .children(providers.into_iter().enumerate().map(
-                                |(index, provider)| {
-                                    let selected = provider == selected_provider;
-                                    let target = provider.clone();
-                                    let entity = entity.clone();
-                                    runtime_option(
-                                        ("runtime-provider", index),
-                                        provider,
-                                        selected,
-                                        move |cx| {
-                                            let _ = entity.update(cx, |this, cx| {
-                                                this.select_provider(&target, cx);
-                                            });
+                            .child(
+                                div()
+                                    .id("runtime-provider-list")
+                                    .min_h_0()
+                                    .flex_1()
+                                    .overflow_y_scroll()
+                                    .children(providers.into_iter().enumerate().map(
+                                        |(index, provider)| {
+                                            let selected = provider == selected_provider;
+                                            let target = provider.clone();
+                                            let entity = entity.clone();
+                                            runtime_option(
+                                                ("runtime-provider", index),
+                                                provider,
+                                                selected,
+                                                move |cx| {
+                                                    let _ = entity.update(cx, |this, cx| {
+                                                        this.select_provider(&target, cx);
+                                                    });
+                                                },
+                                            )
                                         },
-                                    )
-                                },
-                            )),
+                                    )),
+                            ),
                     )
                     .child(
                         div()
                             .min_w_0()
+                            .min_h_0()
                             .flex_1()
+                            .flex()
+                            .flex_col()
                             .p(px(6.0))
                             .child(picker_label("Model"))
                             .child(
                                 div()
                                     .h(px(28.0))
+                                    .flex_none()
                                     .mb(px(5.0))
                                     .px(px(8.0))
                                     .rounded(px(3.0))
@@ -218,21 +232,31 @@ pub(in crate::app::views) fn render_runtime_picker(
                                             .appearance(false),
                                     ),
                             )
-                            .children(models.into_iter().enumerate().map(|(index, model)| {
-                                let selected = selected_model == Some(model.id.as_str());
-                                let label = model.name.clone();
-                                let entity = entity.clone();
-                                runtime_option(
-                                    ("runtime-model", index),
-                                    label,
-                                    selected,
-                                    move |cx| {
-                                        let _ = entity.update(cx, |this, cx| {
-                                            this.select_model(&model, cx);
-                                        });
-                                    },
-                                )
-                            })),
+                            .child(
+                                div()
+                                    .id("runtime-model-list")
+                                    .min_h_0()
+                                    .flex_1()
+                                    .overflow_y_scroll()
+                                    .children(models.into_iter().enumerate().map(
+                                        |(index, model)| {
+                                            let selected =
+                                                selected_model == Some(model.id.as_str());
+                                            let label = model.name.clone();
+                                            let entity = entity.clone();
+                                            runtime_option(
+                                                ("runtime-model", index),
+                                                label,
+                                                selected,
+                                                move |cx| {
+                                                    let _ = entity.update(cx, |this, cx| {
+                                                        this.select_model(&model, cx);
+                                                    });
+                                                },
+                                            )
+                                        },
+                                    )),
+                            ),
                     ),
             )
             .child(
