@@ -91,17 +91,13 @@ pub(super) fn start(
     params: StartParams,
     caller: Option<CallerContext>,
 ) -> Result<serde_json::Value, String> {
-    let caller = caller
-        .ok_or_else(|| "worker start requires a registered Farcaster caller".to_owned())?;
+    let caller =
+        caller.ok_or_else(|| "worker start requires a registered Farcaster caller".to_owned())?;
     pool.allow_project(&caller.project)?;
     encode(&pool.start(prepare_start(pool.default_backend(), params, caller))?)
 }
 
-fn prepare_start(
-    default_backend: &str,
-    params: StartParams,
-    caller: CallerContext,
-) -> StartWorker {
+fn prepare_start(default_backend: &str, params: StartParams, caller: CallerContext) -> StartWorker {
     let backend = params.backend.unwrap_or_else(|| default_backend.to_owned());
     let parent_session = caller.session;
     let context = match params.context {

@@ -235,23 +235,29 @@ pub(super) fn draft_session_row(
                                             .expect("fixed session shortcut must parse"),
                                         ))
                                     })
-                                    .when(draft_can_be_discarded(draft.submitted, status), |metadata| {
-                                        metadata.child(
-                                            icon_control(
-                                                format!("discard-{discard_id}"),
-                                                "Discard draft",
-                                            )
-                                            .absolute()
-                                            .top(px(4.0))
-                                            .right(px(5.0))
-                                            .size(px(21.0))
-                                            .opacity(0.0)
-                                            .group_hover(action_group, |button| button.opacity(1.0))
-                                            .focus(|button| button.opacity(1.0))
-                                            .hover(|button| button.bg(THEME.colors.hover))
-                                            .child(app_icon(AppIcon::Trash, AppIconSize::Control))
-                                            .on_click(
-                                                move |_, window, cx| {
+                                    .when(
+                                        draft_can_be_discarded(draft.submitted, status),
+                                        |metadata| {
+                                            metadata.child(
+                                                icon_control(
+                                                    format!("discard-{discard_id}"),
+                                                    "Discard draft",
+                                                )
+                                                .absolute()
+                                                .top(px(4.0))
+                                                .right(px(5.0))
+                                                .size(px(21.0))
+                                                .opacity(0.0)
+                                                .group_hover(action_group, |button| {
+                                                    button.opacity(1.0)
+                                                })
+                                                .focus(|button| button.opacity(1.0))
+                                                .hover(|button| button.bg(THEME.colors.hover))
+                                                .child(app_icon(
+                                                    AppIcon::Trash,
+                                                    AppIconSize::Control,
+                                                ))
+                                                .on_click(move |_, window, cx| {
                                                     cx.stop_propagation();
                                                     let _ =
                                                         discard_entity.update(cx, |this, cx| {
@@ -261,10 +267,10 @@ pub(super) fn draft_session_row(
                                                                 cx,
                                                             );
                                                         });
-                                                },
-                                            ),
-                                        )
-                                    }),
+                                                }),
+                                            )
+                                        },
+                                    ),
                             ),
                     ),
             )
