@@ -76,7 +76,7 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
             }
         };
         let session_id = session.id;
-        let incoming = start_event_reader(&server, &session_id)?;
+        let incoming = start_event_reader(&server, &session_id, None)?;
         caller_identity.bind(session_id.clone());
         Ok(Box::new(OpenCodeWorkerSession {
             _caller_identity: caller_identity,
@@ -93,6 +93,7 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
             pending_inputs: HashMap::new(),
             generation: 0,
             completions: None,
+            wake: None,
             pending: VecDeque::from([WorkerEvent::SessionChanged {
                 locator: session_id,
             }]),
@@ -158,7 +159,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         )?,
     };
     let session_id = session.id;
-    let incoming = start_event_reader(&server, &session_id)?;
+    let incoming = start_event_reader(&server, &session_id, launch.wake.clone())?;
     caller_identity.bind(session_id.clone());
     Ok((
         Box::new(OpenCodeWorkerSession {
@@ -176,6 +177,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
             pending_inputs: HashMap::new(),
             generation: 0,
             completions: None,
+            wake: launch.wake.clone(),
             pending: VecDeque::new(),
         }),
         session_id,
@@ -298,6 +300,7 @@ struct OpenCodeWorkerSession {
     pending_inputs: HashMap<String, PendingOpenCodeInput>,
     generation: u64,
     completions: Option<mpsc::Receiver<(u64, Result<String, String>)>>,
+    wake: Option<thread::Thread>,
     pending: VecDeque<WorkerEvent>,
 }
 
@@ -325,6 +328,7 @@ impl OpenCodeWorkerSession {
         let session_id = self.session_id.clone();
         let mut client = self.server.client();
         let (sender, receiver) = mpsc::channel();
+        let wake = self.wake.clone();
         thread::Builder::new()
             .name(format!("opencode-worker-{session_id}"))
             .spawn(move || {
@@ -332,7 +336,7 @@ impl OpenCodeWorkerSession {
                     .wait_session(&session_id)
                     .and_then(|()| client.context(&session_id))
                     .map(|context| final_assistant_text(&context));
-                let _ = sender.send((generation, result));
+                let _ = send_and_wake(&sender, (generation, result), wake.as_ref());
             })
             .map_err(|error| format!("watch OpenCode worker: {error}"))?;
         self.completions = Some(receiver);
@@ -655,31 +659,40 @@ impl WorkerSession for OpenCodeWorkerSession {
 fn start_event_reader(
     server: &OpenCodeServerProcess,
     session_id: &str,
+    wake: Option<thread::Thread>,
 ) -> Result<mpsc::Receiver<Result<super::contract::OpenCodeEvent, String>>, String> {
     let mut stream = server.event_stream()?;
     let (sender, receiver) = mpsc::channel();
     let name = session_id.to_owned();
     thread::Builder::new()
         .name(format!("opencode-events-{name}"))
-        .spawn(move || loop {
-            match stream.next() {
-                Ok(Some(event)) => {
-                    if sender.send(Ok(event)).is_err() {
-                        return;
-                    }
-                }
-                Ok(None) => {
-                    let _ = sender.send(Err("OpenCode event stream closed".into()));
-                    return;
-                }
-                Err(error) => {
-                    let _ = sender.send(Err(error));
+        .spawn(move || {
+            loop {
+                let event = match stream.next() {
+                    Ok(Some(event)) => Ok(event),
+                    Ok(None) => Err("OpenCode event stream closed".into()),
+                    Err(error) => Err(error),
+                };
+                let failed = event.is_err();
+                if send_and_wake(&sender, event, wake.as_ref()).is_err() || failed {
                     return;
                 }
             }
         })
         .map_err(|error| format!("start OpenCode event reader: {error}"))?;
     Ok(receiver)
+}
+
+fn send_and_wake<T>(
+    sender: &mpsc::Sender<T>,
+    message: T,
+    wake: Option<&thread::Thread>,
+) -> Result<(), mpsc::SendError<T>> {
+    sender.send(message)?;
+    if let Some(wake) = wake {
+        wake.unpark();
+    }
+    Ok(())
 }
 
 fn configure_farcaster_mcp(

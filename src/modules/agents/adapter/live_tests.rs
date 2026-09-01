@@ -80,7 +80,7 @@ fn exercise_live_harness(harness: &str) -> Result<(), String> {
         session_id,
         project: project.clone(),
         start,
-        wake: None,
+        wake: Some(thread::current()),
     };
     let mut session = spawn_session(&config, launch(SessionStart::New, None))?;
     let path = session_path(&mut *session)?;
@@ -318,7 +318,7 @@ fn poll_until(
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
         let Some(item) = session.poll() else {
-            thread::sleep(Duration::from_millis(20));
+            thread::park_timeout(Duration::from_secs(30));
             continue;
         };
         match item {

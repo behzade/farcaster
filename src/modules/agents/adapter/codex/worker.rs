@@ -154,18 +154,19 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
     let (sender, incoming) = mpsc::channel();
     let thread_id = thread.id.clone();
     let reader_name = thread_id.clone();
+    let wake = launch.wake.clone();
     thread::Builder::new()
         .name(format!("codex-session-{reader_name}"))
         .spawn(move || {
             for message in queued {
-                if sender.send(Ok(message)).is_err() {
+                if send_and_wake(&sender, Ok(message), wake.as_ref()).is_err() {
                     return;
                 }
             }
             loop {
                 let message = read_message(&mut reader);
                 let failed = message.is_err();
-                if sender.send(message).is_err() || failed {
+                if send_and_wake(&sender, message, wake.as_ref()).is_err() || failed {
                     return;
                 }
             }
@@ -204,6 +205,18 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         events: VecDeque::new(),
     };
     Ok((Box::new(session), thread_id, metadata))
+}
+
+fn send_and_wake<T>(
+    sender: &mpsc::Sender<T>,
+    message: T,
+    wake: Option<&thread::Thread>,
+) -> Result<(), mpsc::SendError<T>> {
+    sender.send(message)?;
+    if let Some(wake) = wake {
+        wake.unpark();
+    }
+    Ok(())
 }
 
 type CodexSetup = (
