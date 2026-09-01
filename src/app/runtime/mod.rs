@@ -24,8 +24,8 @@ use serde_json::{Value, json};
 use crate::{
     agent_activity::AgentActivity,
     agents::{
-        self, AgentLaunchConfig, SessionCommand, SessionEvent, SessionLaunch, SessionStart,
-        SessionTransport,
+        self, AgentLaunchConfig, SessionActivityKind, SessionCommand, SessionEvent, SessionLaunch,
+        SessionOperation, SessionStart, SessionTransport,
     },
     app::infrastructure::persistence::StateStore,
     app::views::transcript::conversation::{ConversationState, TranscriptItem, TranscriptKind},
@@ -619,9 +619,6 @@ impl RuntimeOwner {
         for command in startup_commands() {
             self.send(command);
         }
-        if self.harness != "pi" {
-            self.send(SessionCommand::ListModes);
-        }
     }
 
     fn apply_command(&mut self, runtime_command: RuntimeCommand) {
@@ -800,23 +797,22 @@ impl RuntimeOwner {
                 SnapshotChange::None
             }
             SessionEvent::Activity(event) => {
-                let event_type = event.get("type").and_then(Value::as_str);
-                let settled = event_type == Some("agent_settled");
-                let tool_finished = event_type == Some("tool_execution_end");
-                if event_type == Some("tool_execution_start")
+                let settled = event.kind() == &SessionActivityKind::AgentSettled;
+                let tool_finished = event.kind() == &SessionActivityKind::ToolFinished;
+                if event.kind() == &SessionActivityKind::ToolStarted
                     && let (Some(id), Some(name)) = (
-                        event.get("toolCallId").and_then(Value::as_str),
-                        event.get("toolName").and_then(Value::as_str),
+                        event.value().get("toolCallId").and_then(Value::as_str),
+                        event.value().get("toolName").and_then(Value::as_str),
                     )
                 {
                     self.active_tool_calls
                         .insert(id.to_owned(), name.to_owned());
                 } else if tool_finished
-                    && let Some(id) = event.get("toolCallId").and_then(Value::as_str)
+                    && let Some(id) = event.value().get("toolCallId").and_then(Value::as_str)
                 {
                     self.active_tool_calls.remove(id);
                 }
-                let session_starting = event_type == Some("agent_start")
+                let session_starting = event.kind() == &SessionActivityKind::AgentStarted
                     && self.active_session.is_none()
                     && self.parked_snapshot.is_none();
                 let previewing = self.parked_snapshot.is_some();
@@ -825,8 +821,9 @@ impl RuntimeOwner {
                 let (changed_from, snapshot_changed, live_status_changed) = {
                     let snapshot = self.active_snapshot_mut();
                     let (changed_from, conversation_state_changed) =
-                        conversation_mut(snapshot).reduce_deferred_with_change(&event);
-                    let context_changed = update_context_from_event(&mut snapshot.stats, &event);
+                        conversation_mut(snapshot).reduce_deferred_with_change(event.value());
+                    let context_changed =
+                        update_context_from_event(&mut snapshot.stats, event.value());
                     let status = run_status(&snapshot.conversation);
                     let status_changed = snapshot.status != status;
                     snapshot.status = status.to_owned();
@@ -852,10 +849,10 @@ impl RuntimeOwner {
                 if session_starting {
                     self.send(SessionCommand::LoadState);
                 }
-                if event_type == Some("agent_start") {
+                if event.kind() == &SessionActivityKind::AgentStarted {
                     self.refresh_sessions();
                 }
-                if event_type == Some("session_info_changed") {
+                if event.kind() == &SessionActivityKind::SessionChanged {
                     self.send(SessionCommand::LoadState);
                     self.refresh_sessions();
                 }
@@ -870,8 +867,8 @@ impl RuntimeOwner {
                 if !should_publish {
                     SnapshotChange::None
                 } else if matches!(
-                    event.get("type").and_then(Value::as_str),
-                    Some("message_update" | "tool_execution_update")
+                    event.kind(),
+                    SessionActivityKind::MessageUpdated | SessionActivityKind::ToolUpdated
                 ) {
                     SnapshotChange::Streaming
                 } else {
@@ -1103,10 +1100,9 @@ impl RuntimeOwner {
         if self.apply_permission_command_response(&response) {
             return;
         }
-        let response_command = response.command.clone();
-        let is_prompt_response =
-            matches!(response.command.as_str(), "prompt" | "steer" | "follow_up")
-                && response.id.as_ref() == self.pending_prompt_id.as_ref();
+        let operation = response.operation;
+        let is_prompt_response = matches!(operation, SessionOperation::Prompt(_))
+            && response.id.as_ref() == self.pending_prompt_id.as_ref();
         if is_prompt_response {
             self.pending_prompt_id = None;
             if response.success {
@@ -1135,14 +1131,16 @@ impl RuntimeOwner {
             }
         }
         if !response.success {
-            let startup_query = matches!(response.command.as_str(), "get_state" | "get_entries");
+            let startup_query = matches!(
+                operation,
+                SessionOperation::LoadState | SessionOperation::LoadHistory
+            );
             let blocks_resume = self.deferred_prompt.is_some() && startup_query;
             let blocks_session_command_resume =
                 !self.pending_session_controls.is_empty() && startup_query;
             if blocks_session_command_resume {
                 let details = format!(
-                    "{}: {}",
-                    response.command,
+                    "{operation:?}: {}",
                     response.error.unwrap_or_else(|| "command failed".into())
                 );
                 self.fail_session_control_resume("Command not sent", "Command not sent", details);
@@ -1152,8 +1150,7 @@ impl RuntimeOwner {
             conversation_mut(snapshot).push_local_error(
                 "Command failed",
                 format!(
-                    "{}: {}",
-                    response.command,
+                    "{operation:?}: {}",
                     response.error.unwrap_or_else(|| "command failed".into())
                 ),
             );
@@ -1173,33 +1170,36 @@ impl RuntimeOwner {
             }
             return;
         }
-        match response.command.as_str() {
-            "get_state" => match serde_json::from_value::<SessionState>(response.data) {
-                Ok(state) => {
-                    let previous_session = self.active_session.clone();
-                    let selected_session = state
-                        .session_file
-                        .as_ref()
-                        .map(PathBuf::from)
-                        .map(|path| crate::sessions::normalize_session_path(&path))
-                        .or_else(|| self.active_session.clone());
-                    self.active_session = selected_session.clone();
-                    let snapshot = self.active_snapshot_mut();
-                    snapshot.selected_session = selected_session;
-                    conversation_mut(snapshot).running = state.is_streaming;
-                    snapshot.session = Some(state);
-                    snapshot.status = "Ready".into();
-                    self.startup_state_loaded = true;
-                    if self.active_session.is_some() && self.active_session != previous_session {
-                        self.refresh_sessions();
+        match operation {
+            SessionOperation::LoadState => {
+                match serde_json::from_value::<SessionState>(response.data) {
+                    Ok(state) => {
+                        let previous_session = self.active_session.clone();
+                        let selected_session = state
+                            .session_file
+                            .as_ref()
+                            .map(PathBuf::from)
+                            .map(|path| crate::sessions::normalize_session_path(&path))
+                            .or_else(|| self.active_session.clone());
+                        self.active_session = selected_session.clone();
+                        let snapshot = self.active_snapshot_mut();
+                        snapshot.selected_session = selected_session;
+                        conversation_mut(snapshot).running = state.is_streaming;
+                        snapshot.session = Some(state);
+                        snapshot.status = "Ready".into();
+                        self.startup_state_loaded = true;
+                        if self.active_session.is_some() && self.active_session != previous_session
+                        {
+                            self.refresh_sessions();
+                        }
+                    }
+                    Err(error) => {
+                        self.fail(format!("decode get_state: {error}"));
+                        return;
                     }
                 }
-                Err(error) => {
-                    self.fail(format!("decode get_state: {error}"));
-                    return;
-                }
-            },
-            "get_entries" => {
+            }
+            SessionOperation::LoadHistory => {
                 if response.data.get("preserve").and_then(Value::as_bool) != Some(true) {
                     let entries = response
                         .data
@@ -1212,7 +1212,7 @@ impl RuntimeOwner {
                 }
                 self.startup_history_loaded = true;
             }
-            "get_available_models" => {
+            SessionOperation::ListModels => {
                 self.active_snapshot_mut().models = response
                     .data
                     .get("models")
@@ -1220,7 +1220,7 @@ impl RuntimeOwner {
                     .and_then(|value| serde_json::from_value(value).ok())
                     .unwrap_or_default();
             }
-            "get_available_thinking_levels" => {
+            SessionOperation::ListReasoningLevels => {
                 self.active_snapshot_mut().thinking_levels = response
                     .data
                     .get("levels")
@@ -1234,7 +1234,7 @@ impl RuntimeOwner {
                     })
                     .unwrap_or_default();
             }
-            "get_modes" => {
+            SessionOperation::ListModes => {
                 self.active_snapshot_mut().modes = response
                     .data
                     .get("modes")
@@ -1249,13 +1249,13 @@ impl RuntimeOwner {
                     .and_then(Value::as_str)
                     .map(str::to_owned);
             }
-            "get_session_stats" => {
+            SessionOperation::LoadUsage => {
                 let running = self.active_snapshot().conversation.running;
                 let previous = self.active_snapshot().stats.clone();
                 self.active_snapshot_mut().stats =
                     stable_session_stats(&previous, response.data, running);
             }
-            "get_commands" => {
+            SessionOperation::ListCommands => {
                 self.active_snapshot_mut().commands = response
                     .data
                     .get("commands")
@@ -1265,7 +1265,7 @@ impl RuntimeOwner {
                     .filter_map(|command| serde_json::from_value(command.clone()).ok())
                     .collect()
             }
-            "set_model" => {
+            SessionOperation::SelectModel => {
                 if let Ok(model) = serde_json::from_value::<Model>(response.data)
                     && let Some(state) = self.active_snapshot_mut().session.as_mut()
                 {
@@ -1274,45 +1274,25 @@ impl RuntimeOwner {
                 self.send(SessionCommand::ListReasoningLevels);
                 self.send(SessionCommand::LoadState);
             }
-            "set_thinking_level" => {
+            SessionOperation::SelectReasoning => {
                 self.send(SessionCommand::LoadState);
             }
-            "set_mode" => {
+            SessionOperation::SelectMode => {
                 self.send(SessionCommand::ListModes);
                 self.send(SessionCommand::LoadState);
             }
-            "new_session"
-                if response.data.get("cancelled").and_then(Value::as_bool) != Some(true) =>
-            {
-                self.process_generation = self.process_generation.saturating_add(1);
-                self.active_session = None;
-                self.pending_prompt_id = None;
-                reset_snapshot_for_live_session(
-                    self.active_snapshot_mut(),
-                    "Loading new session".into(),
-                );
-                let _ = self.event_tx.send(RuntimeEvent::SessionReset {
-                    generation: self.process_generation,
-                    preserve_submission: false,
-                });
-                self.publish();
-                self.send_startup_queries();
-                self.refresh_sessions();
-            }
-            "prompt" | "steer" | "follow_up" => {
+            SessionOperation::Prompt(_) => {
                 self.active_snapshot_mut().status = "Accepted".into();
                 self.send(SessionCommand::LoadState);
             }
-            "abort" => self.active_snapshot_mut().status = "Stopping".into(),
-            "compact" | "set_auto_compaction" | "set_auto_retry" | "abort_retry" => {
-                self.send(SessionCommand::LoadState)
-            }
-            "set_session_name" => {
+            SessionOperation::Abort => self.active_snapshot_mut().status = "Stopping".into(),
+            SessionOperation::Compact => self.send(SessionCommand::LoadState),
+            SessionOperation::Rename => {
                 self.active_snapshot_mut().status = "Session named".into();
                 self.send(SessionCommand::LoadState);
                 self.refresh_sessions();
             }
-            "export_html" => {
+            SessionOperation::ExportHtml => {
                 self.active_snapshot_mut().status = response
                     .data
                     .get("path")
@@ -1324,7 +1304,10 @@ impl RuntimeOwner {
             }
             _ => {}
         }
-        if matches!(response_command.as_str(), "get_state" | "get_entries") {
+        if matches!(
+            operation,
+            SessionOperation::LoadState | SessionOperation::LoadHistory
+        ) {
             self.maybe_send_pending_session_controls();
             self.maybe_send_deferred_prompt();
         }
@@ -1436,18 +1419,6 @@ fn reset_snapshot_for_process(
     };
 }
 
-fn reset_snapshot_for_live_session(snapshot: &mut RuntimeSnapshot, status: String) {
-    let auto_retry = snapshot.auto_retry;
-    let project = snapshot.project.clone();
-    *snapshot = RuntimeSnapshot {
-        connected: true,
-        status,
-        project,
-        auto_retry,
-        ..RuntimeSnapshot::default()
-    };
-}
-
 fn failure_details(error: &str) -> String {
     let cleaned = error
         .chars()
@@ -1485,7 +1456,7 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
     truncated
 }
 
-fn startup_commands() -> [SessionCommand; 7] {
+fn startup_commands() -> [SessionCommand; 8] {
     [
         SessionCommand::ConfigureSteering,
         SessionCommand::LoadState,
@@ -1493,6 +1464,7 @@ fn startup_commands() -> [SessionCommand; 7] {
         SessionCommand::LoadUsage,
         SessionCommand::ListModels,
         SessionCommand::ListReasoningLevels,
+        SessionCommand::ListModes,
         SessionCommand::ListCommands,
     ]
 }

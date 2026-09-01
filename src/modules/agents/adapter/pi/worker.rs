@@ -11,8 +11,9 @@ use super::process::PiRpcProcess;
 use crate::{
     agents::extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptMode, SessionState},
     agents::{
-        AgentLaunchConfig, SessionCommand, SessionEvent, WorkerContext, WorkerEvent, WorkerInput,
-        WorkerInputResponse, WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory,
+        AgentLaunchConfig, SessionActivityKind, SessionCommand, SessionEvent, WorkerContext,
+        WorkerEvent, WorkerInput, WorkerInputResponse, WorkerLaunch, WorkerSendMode, WorkerSession,
+        WorkerSessionFactory,
     },
 };
 
@@ -149,8 +150,8 @@ impl WorkerSession for PiWorkerSession {
     fn poll(&mut self) -> Option<WorkerEvent> {
         loop {
             match self.process.try_next()? {
-                SessionEvent::Activity(event) => match event["type"].as_str() {
-                    Some("agent_start") => {
+                SessionEvent::Activity(event) => match event.kind() {
+                    SessionActivityKind::AgentStarted => {
                         self.settled = false;
                         self.latest_output.clear();
                         if let Err(error) = self.request_session_state() {
@@ -158,12 +159,12 @@ impl WorkerSession for PiWorkerSession {
                         }
                         return Some(WorkerEvent::Started);
                     }
-                    Some("message_end") => {
-                        if let Some(output) = final_assistant_text(event.get("message")) {
+                    SessionActivityKind::MessageEnded => {
+                        if let Some(output) = final_assistant_text(event.value().get("message")) {
                             self.latest_output = output;
                         }
                     }
-                    Some("agent_settled") => {
+                    SessionActivityKind::AgentSettled => {
                         self.settled = true;
                         if let Err(error) = self.request_session_state() {
                             return Some(WorkerEvent::Failed(error));
@@ -186,7 +187,7 @@ impl WorkerSession for PiWorkerSession {
                     return Some(WorkerEvent::Failed(
                         response
                             .error
-                            .unwrap_or_else(|| format!("Pi rejected {}", response.command)),
+                            .unwrap_or_else(|| format!("Pi rejected {:?}", response.operation)),
                     ));
                 }
                 SessionEvent::Response(response)

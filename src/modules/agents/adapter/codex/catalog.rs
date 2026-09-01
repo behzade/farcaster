@@ -7,10 +7,7 @@ use std::{
 
 use serde_json::{Value, json};
 
-use super::{
-    connection::CodexConnection,
-    contract::CodexClientInfo,
-};
+use super::{connection::CodexConnection, contract::CodexClientInfo};
 use crate::agents::{DiscoveredHistory, DiscoveredSession, DiscoveredUsage};
 
 use super::super::{
@@ -101,8 +98,7 @@ pub(in crate::modules::agents::adapter) fn load_history(
                 }
             }
         }
-        let model = string(thread, &["model"])
-            .map(|model| ("openai".to_owned(), model.to_owned()));
+        let model = string(thread, &["model"]).map(|model| ("openai".to_owned(), model.to_owned()));
         let thinking_level = string(thread, &["effort", "reasoningEffort"]).map(str::to_owned);
         Ok(DiscoveredHistory {
             messages,
@@ -113,7 +109,9 @@ pub(in crate::modules::agents::adapter) fn load_history(
 }
 
 fn with_connection<T>(
-    operation: impl FnOnce(&mut CodexConnection<BufReader<ChildStdout>, ChildStdin>) -> Result<T, String>,
+    operation: impl FnOnce(
+        &mut CodexConnection<BufReader<ChildStdout>, ChildStdin>,
+    ) -> Result<T, String>,
 ) -> Result<T, String> {
     let program = std::env::var_os("FARCASTER_CODEX_PATH")
         .map(PathBuf::from)
@@ -174,7 +172,10 @@ fn summary(
         .unwrap_or("New Codex session")
         .to_owned();
     let first_user_message = string(thread, &["preview"]).unwrap_or_default().to_owned();
-    let modified = timestamp(thread, &["updatedAt", "updated_at", "createdAt", "created_at"]);
+    let modified = timestamp(
+        thread,
+        &["updatedAt", "updated_at", "createdAt", "created_at"],
+    );
     let timestamp = string(thread, &["createdAt", "created_at"])
         .unwrap_or_default()
         .to_owned();
@@ -212,7 +213,7 @@ fn codex_usage(thread: &Value) -> DiscoveredUsage {
     let Some(usage) = usage else {
         return DiscoveredUsage::default();
     };
-    let input = usage
+    let reported_input = usage
         .get("inputTokens")
         .and_then(Value::as_u64)
         .unwrap_or(0);
@@ -228,6 +229,7 @@ fn codex_usage(thread: &Value) -> DiscoveredUsage {
         .get("cacheWriteInputTokens")
         .and_then(Value::as_u64)
         .unwrap_or(0);
+    let input = reported_input.saturating_sub(cache_read.saturating_add(cache_write));
     DiscoveredUsage {
         input,
         output,
@@ -275,15 +277,13 @@ fn reasoning_text(item: &Value) -> String {
     string(item, &["text"])
         .map(str::to_owned)
         .or_else(|| {
-            item.get("summary")
-                .and_then(Value::as_array)
-                .map(|parts| {
-                    parts
-                        .iter()
-                        .filter_map(|part| string(part, &["text"]))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                })
+            item.get("summary").and_then(Value::as_array).map(|parts| {
+                parts
+                    .iter()
+                    .filter_map(|part| string(part, &["text"]))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
         })
         .unwrap_or_default()
 }
@@ -333,9 +333,10 @@ mod tests {
         assert_eq!(session.harness, "codex-cli");
         assert!(session.is_running);
         assert_eq!(session.title, "Fix tests");
-        assert_eq!(session.usage.input, 100);
+        assert_eq!(session.usage.input, 20);
         assert_eq!(session.usage.output, 20);
         assert_eq!(session.usage.cache_read, 80);
+        assert_eq!(session.usage.total, 120);
         Ok(())
     }
 

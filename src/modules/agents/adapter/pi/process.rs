@@ -412,10 +412,10 @@ impl PiRpcProcess {
                 Ok(ReaderItem::StderrEof) => continue,
                 Ok(item) => match self.route(item) {
                     SessionEvent::Response(response) if response.id.as_deref() == Some(&id) => {
-                        if response.command != "get_state" {
+                        if response.operation != crate::agents::SessionOperation::LoadState {
                             return Err(format!(
-                                "readiness response command was {}",
-                                response.command
+                                "readiness response was for {:?}",
+                                response.operation
                             ));
                         }
                         if !response.success {
@@ -455,24 +455,20 @@ impl PiRpcProcess {
 
     fn route(&mut self, item: ReaderItem) -> SessionEvent {
         match item {
-            ReaderItem::Wire(Ok(PiWireMessage::Response(response))) => {
+            ReaderItem::Wire(Ok(PiWireMessage::Response { response, command })) => {
                 let Some(id) = response.id.as_deref() else {
-                    return SessionEvent::Failure(format!(
-                        "uncorrelated response for {}",
-                        response.command
-                    ));
+                    return SessionEvent::Failure(format!("uncorrelated response for {command}"));
                 };
                 let Some(expected_command) = self.pending.remove(id) else {
                     return SessionEvent::Failure(format!("response used unknown request id {id}"));
                 };
-                if response.command != expected_command {
+                if command != expected_command {
                     return SessionEvent::Failure(format!(
-                        "response {id} was for {}, expected {expected_command}",
-                        response.command
+                        "response {id} was for {command}, expected {expected_command}"
                     ));
                 }
                 if response.success
-                    && response.command == "get_state"
+                    && response.operation == crate::agents::SessionOperation::LoadState
                     && let Some(session) = response.data["sessionFile"].as_str()
                 {
                     self.caller_identity.bind(session);
@@ -482,7 +478,9 @@ impl PiRpcProcess {
             ReaderItem::Wire(Ok(PiWireMessage::ExtensionUi(request))) => {
                 SessionEvent::Interaction(request)
             }
-            ReaderItem::Wire(Ok(PiWireMessage::Event(event))) => SessionEvent::Activity(event),
+            ReaderItem::Wire(Ok(PiWireMessage::Event(event))) => {
+                SessionEvent::Activity(event.into())
+            }
             ReaderItem::Wire(Err(error)) => SessionEvent::Failure(error),
             ReaderItem::Stderr(chunk) => {
                 self.stderr.push_str(&chunk);
@@ -501,11 +499,13 @@ impl PiRpcProcess {
                 Ok(ReaderItem::StderrEof) => break,
                 Ok(ReaderItem::Wire(wire)) => {
                     self.queued.push_back(match wire {
-                        Ok(PiWireMessage::Response(response)) => SessionEvent::Response(response),
+                        Ok(PiWireMessage::Response { response, .. }) => {
+                            SessionEvent::Response(response)
+                        }
                         Ok(PiWireMessage::ExtensionUi(request)) => {
                             SessionEvent::Interaction(request)
                         }
-                        Ok(PiWireMessage::Event(event)) => SessionEvent::Activity(event),
+                        Ok(PiWireMessage::Event(event)) => SessionEvent::Activity(event.into()),
                         Err(error) => SessionEvent::Failure(error),
                     });
                 }

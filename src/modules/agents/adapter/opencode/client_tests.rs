@@ -125,6 +125,24 @@ fn steer_is_encoded_independently_from_queue() -> Result<(), String> {
 }
 
 #[test]
+fn permission_replies_use_requested_session() -> Result<(), String> {
+    let transport = FakeTransport::with_responses([response(204, Value::Null)]);
+    let mut client = OpenCodeClient::new(transport);
+
+    client.reply_permission("child/1", "permission/1", "once")?;
+
+    let transport = client.into_transport();
+    let request = &transport.requests[0];
+    assert_eq!(request.method, OpenCodeHttpMethod::Post);
+    assert_eq!(
+        request.path,
+        "/api/session/child%2F1/permission/permission%2F1/reply"
+    );
+    assert_eq!(body(request), json!({"reply": "once"}));
+    Ok(())
+}
+
+#[test]
 fn api_errors_preserve_status_tag_and_message() {
     let transport = FakeTransport::with_responses([response(
         409,

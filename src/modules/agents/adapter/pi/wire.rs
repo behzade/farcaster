@@ -1,13 +1,29 @@
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::agents::{SessionResponse, extensions::ExtensionUiRequest};
+use crate::agents::{
+    SessionOperation, SessionResponse,
+    extensions::{ExtensionUiRequest, PromptMode},
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum PiWireMessage {
-    Response(SessionResponse),
+    Response {
+        response: SessionResponse,
+        command: String,
+    },
     ExtensionUi(ExtensionUiRequest),
     Event(Value),
+}
+
+#[derive(Deserialize)]
+struct ResponseEnvelope {
+    id: Option<String>,
+    command: String,
+    success: bool,
+    #[serde(default)]
+    data: Value,
+    error: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -23,11 +39,48 @@ pub(crate) fn parse_frame(frame: &[u8]) -> Result<PiWireMessage, String> {
         return Err("JSON frame has no string type".to_owned());
     };
     match kind {
-        "response" => serde_json::from_value(value)
-            .map(PiWireMessage::Response)
-            .map_err(|error| format!("invalid response frame: {error}")),
+        "response" => {
+            let response = ResponseEnvelope::deserialize(value)
+                .map_err(|error| format!("invalid response frame: {error}"))?;
+            let operation = response_operation(&response.command);
+            Ok(PiWireMessage::Response {
+                command: response.command,
+                response: SessionResponse {
+                    id: response.id,
+                    operation,
+                    success: response.success,
+                    data: response.data,
+                    error: response.error,
+                },
+            })
+        }
         "extension_ui_request" => parse_extension_request(value).map(PiWireMessage::ExtensionUi),
         _ => Ok(PiWireMessage::Event(value)),
+    }
+}
+
+fn response_operation(command: &str) -> SessionOperation {
+    match command {
+        "set_steering_mode" => SessionOperation::ConfigureSteering,
+        "get_state" => SessionOperation::LoadState,
+        "get_entries" => SessionOperation::LoadHistory,
+        "get_session_stats" => SessionOperation::LoadUsage,
+        "get_available_models" => SessionOperation::ListModels,
+        "get_available_thinking_levels" => SessionOperation::ListReasoningLevels,
+        "get_modes" => SessionOperation::ListModes,
+        "get_commands" => SessionOperation::ListCommands,
+        "prompt" => SessionOperation::Prompt(PromptMode::Normal),
+        "steer" => SessionOperation::Prompt(PromptMode::Steer),
+        "follow_up" => SessionOperation::Prompt(PromptMode::FollowUp),
+        "abort" => SessionOperation::Abort,
+        "compact" => SessionOperation::Compact,
+        "export_html" => SessionOperation::ExportHtml,
+        "set_session_name" => SessionOperation::Rename,
+        "fork" => SessionOperation::ForkAt,
+        "set_model" => SessionOperation::SelectModel,
+        "set_thinking_level" => SessionOperation::SelectReasoning,
+        "set_mode" => SessionOperation::SelectMode,
+        _ => SessionOperation::Other,
     }
 }
 
@@ -63,13 +116,16 @@ mod tests {
     fn parses_response_and_activity_frames() {
         assert_eq!(
             parse_frame(br#"{"type":"response","id":"1","command":"abort","success":true}"#),
-            Ok(PiWireMessage::Response(SessionResponse {
-                id: Some("1".into()),
+            Ok(PiWireMessage::Response {
                 command: "abort".into(),
-                success: true,
-                data: Value::Null,
-                error: None,
-            }))
+                response: SessionResponse {
+                    id: Some("1".into()),
+                    operation: SessionOperation::Abort,
+                    success: true,
+                    data: Value::Null,
+                    error: None,
+                },
+            })
         );
         assert_eq!(
             parse_frame(br#"{"type":"agent_start"}"#),

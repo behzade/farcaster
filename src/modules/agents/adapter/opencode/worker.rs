@@ -42,10 +42,9 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
             configure_farcaster_mcp(&mut sandbox.command, caller_identity.token())?;
         }
         let password = worker_password()?;
-        sandbox.command.args(["serve", "--stdio", "--print-logs"]);
-        super::configure_permissions(&mut sandbox.command);
         let mut child = sandbox
             .command
+            .args(["serve", "--stdio", "--print-logs"])
             .env("OPENCODE_SERVER_PASSWORD", &password)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -109,10 +108,9 @@ pub(in crate::modules::agents::adapter) fn load_configuration(
 ) -> Result<crate::modules::agents::adapter::main_session::MainSessionMetadata, String> {
     let mut sandbox = command.command(project)?;
     let password = worker_password()?;
-    sandbox.command.args(["serve", "--stdio", "--print-logs"]);
-    super::configure_permissions(&mut sandbox.command);
     let mut child = sandbox
         .command
+        .args(["serve", "--stdio", "--print-logs"])
         .env("OPENCODE_SERVER_PASSWORD", &password)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -144,10 +142,9 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         configure_farcaster_mcp(&mut sandbox.command, caller_identity.token())?;
     }
     let password = worker_password()?;
-    sandbox.command.args(["serve", "--stdio", "--print-logs"]);
-    super::configure_permissions(&mut sandbox.command);
     let mut child = sandbox
         .command
+        .args(["serve", "--stdio", "--print-logs"])
         .env("OPENCODE_SERVER_PASSWORD", &password)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -165,11 +162,9 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         .and_then(Value::as_u64)
         .unwrap_or(0);
     let session = match &launch.start {
-        crate::agents::SessionStart::New => client.create_session(
-            &launch.project.to_string_lossy(),
-            None,
-            None,
-        )?,
+        crate::agents::SessionStart::New => {
+            client.create_session(&launch.project.to_string_lossy(), None, None)?
+        }
         crate::agents::SessionStart::Resume(_) => {
             let session_id = main_session::launch_session_locator(launch)
                 .ok_or_else(|| "OpenCode resume requires a session id".to_owned())?;
@@ -293,16 +288,17 @@ fn load_main_metadata(
             }))
         })
         .collect();
-    Ok(crate::modules::agents::adapter::main_session::MainSessionMetadata {
-        models,
-        efforts,
-        commands,
-        modes,
-    })
+    Ok(
+        crate::modules::agents::adapter::main_session::MainSessionMetadata {
+            models,
+            efforts,
+            commands,
+            modes,
+        },
+    )
 }
 
 enum PendingOpenCodeInput {
-    Permission,
     Form {
         key: String,
         values: HashMap<String, String>,
@@ -375,11 +371,30 @@ impl OpenCodeWorkerSession {
                 Ok(event) => event,
                 Err(error) => return Some(WorkerEvent::Failed(error)),
             };
+            // Farcaster's nono process sandbox owns runtime enforcement. Reply
+            // once instead of persisting a project-wide OpenCode rule.
+            if let Some((session_id, request_id)) = opencode_permission_request(&event) {
+                if let Err(error) = self
+                    .server
+                    .client()
+                    .reply_permission(session_id, request_id, "once")
+                {
+                    return Some(WorkerEvent::Failed(format!(
+                        "auto-approve OpenCode permission: {error}"
+                    )));
+                }
+                continue;
+            }
             let event_session = event
                 .data
                 .get("sessionID")
                 .and_then(Value::as_str)
-                .or_else(|| event.data.pointer("/form/sessionID").and_then(Value::as_str));
+                .or_else(|| {
+                    event
+                        .data
+                        .pointer("/form/sessionID")
+                        .and_then(Value::as_str)
+                });
             if event_session != Some(self.session_id.as_str()) {
                 continue;
             }
@@ -502,39 +517,6 @@ impl OpenCodeWorkerSession {
                             .map(str::to_owned),
                     }));
                 }
-                "permission.asked" => {
-                    let id = event.data.get("id").and_then(Value::as_str)?.to_owned();
-                    let action = event
-                        .data
-                        .get("action")
-                        .and_then(Value::as_str)
-                        .unwrap_or("OpenCode permission");
-                    let resources = event
-                        .data
-                        .get("resources")
-                        .and_then(Value::as_array)
-                        .into_iter()
-                        .flatten()
-                        .filter_map(Value::as_str)
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    self.pending_inputs
-                        .insert(id.clone(), PendingOpenCodeInput::Permission);
-                    return Some(WorkerEvent::NeedsInput(WorkerInput {
-                        id,
-                        prompt: if resources.is_empty() {
-                            action.to_owned()
-                        } else {
-                            format!("{action}\n{resources}")
-                        },
-                        options: vec![
-                            "Allow once".into(),
-                            "Always allow".into(),
-                            "Decline".into(),
-                        ],
-                        secret: false,
-                    }));
-                }
                 "form.created" => {
                     let form = event.data.get("form")?;
                     let id = form.get("id").and_then(Value::as_str)?.to_owned();
@@ -562,10 +544,8 @@ impl OpenCodeWorkerSession {
                             Some(label)
                         })
                         .collect();
-                    self.pending_inputs.insert(
-                        id.clone(),
-                        PendingOpenCodeInput::Form { key, values },
-                    );
+                    self.pending_inputs
+                        .insert(id.clone(), PendingOpenCodeInput::Form { key, values });
                     return Some(WorkerEvent::NeedsInput(WorkerInput {
                         id,
                         prompt: title,
@@ -609,28 +589,13 @@ impl WorkerSession for OpenCodeWorkerSession {
             .ok_or_else(|| format!("unknown OpenCode interaction: {}", response.id))?;
         let mut client = self.server.client();
         match pending {
-            PendingOpenCodeInput::Permission => {
-                let value = response.value.as_deref().unwrap_or_default().to_ascii_lowercase();
-                let reply = if response.cancel || value.contains("decline") {
-                    "reject"
-                } else if value.contains("always") {
-                    "always"
-                } else {
-                    "once"
-                };
-                client.reply_permission(&self.session_id, &response.id, reply)
-            }
             PendingOpenCodeInput::Form { key, values } => {
                 if response.cancel {
                     return client.cancel_form(&self.session_id, &response.id);
                 }
                 let value = response.value.unwrap_or_default();
                 let value = values.get(&value).cloned().unwrap_or(value);
-                client.reply_form(
-                    &self.session_id,
-                    &response.id,
-                    json!({key: value}),
-                )
+                client.reply_form(&self.session_id, &response.id, json!({key: value}))
             }
         }
     }
@@ -695,6 +660,15 @@ impl WorkerSession for OpenCodeWorkerSession {
     fn close(&mut self) -> Result<(), String> {
         self.server.terminate()
     }
+}
+
+fn opencode_permission_request(event: &super::contract::OpenCodeEvent) -> Option<(&str, &str)> {
+    if event.event.as_deref() != Some("permission.asked") {
+        return None;
+    }
+    let session_id = event.data.get("sessionID").and_then(Value::as_str)?;
+    let request_id = event.data.get("id").and_then(Value::as_str)?;
+    Some((session_id, request_id))
 }
 
 fn opencode_tool_id(data: &Value) -> Option<&str> {
@@ -891,6 +865,20 @@ mod tests {
             )
             .1,
             json!({"path": "src/main.rs", "oldText": "old", "newText": "new"})
+        );
+    }
+
+    #[test]
+    fn permission_requests_keep_child_session_identity() {
+        let event = super::super::contract::OpenCodeEvent {
+            id: None,
+            event: Some("permission.asked".into()),
+            data: json!({"sessionID": "child-1", "id": "permission-1"}),
+        };
+
+        assert_eq!(
+            opencode_permission_request(&event),
+            Some(("child-1", "permission-1"))
         );
     }
 

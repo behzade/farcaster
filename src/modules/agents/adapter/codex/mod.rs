@@ -6,8 +6,8 @@ mod contract;
 mod wire;
 mod worker;
 
-pub(crate) use worker::CodexWorkerFactory;
 pub(super) use catalog::{delete_session, discover, load_history, rename_session};
+pub(crate) use worker::CodexWorkerFactory;
 pub(super) use worker::{load_configuration, spawn_main};
 
 fn configure_permissions(command: &mut std::process::Command) {

@@ -74,11 +74,83 @@ pub(crate) struct AgentLaunchConfig {
     pub(crate) session_locator_root: Option<PathBuf>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum SessionActivityKind {
+    AgentStarted,
+    AgentEnded,
+    AgentSettled,
+    MessageStarted,
+    MessageUpdated,
+    MessageEnded,
+    ToolStarted,
+    ToolUpdated,
+    ToolFinished,
+    QueueUpdated,
+    CompactionStarted,
+    CompactionFinished,
+    RetryStarted,
+    TurnEnded,
+    SessionChanged,
+    Other(String),
+}
+
+impl SessionActivityKind {
+    fn from_name(name: &str) -> Self {
+        match name {
+            "agent_start" => Self::AgentStarted,
+            "agent_end" => Self::AgentEnded,
+            "agent_settled" => Self::AgentSettled,
+            "message_start" => Self::MessageStarted,
+            "message_update" => Self::MessageUpdated,
+            "message_end" => Self::MessageEnded,
+            "tool_execution_start" => Self::ToolStarted,
+            "tool_execution_update" => Self::ToolUpdated,
+            "tool_execution_end" => Self::ToolFinished,
+            "queue_update" => Self::QueueUpdated,
+            "compaction_start" => Self::CompactionStarted,
+            "compaction_end" => Self::CompactionFinished,
+            "auto_retry_start"
+            | "summarization_retry_scheduled"
+            | "summarization_retry_attempt_start" => Self::RetryStarted,
+            "turn_end" => Self::TurnEnded,
+            "session_info_changed" => Self::SessionChanged,
+            other => Self::Other(other.to_owned()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct SessionActivity {
+    kind: SessionActivityKind,
+    value: serde_json::Value,
+}
+
+impl SessionActivity {
+    pub(crate) fn kind(&self) -> &SessionActivityKind {
+        &self.kind
+    }
+
+    pub(crate) fn value(&self) -> &serde_json::Value {
+        &self.value
+    }
+}
+
+impl From<serde_json::Value> for SessionActivity {
+    fn from(value: serde_json::Value) -> Self {
+        let kind = value
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .map(SessionActivityKind::from_name)
+            .unwrap_or_else(|| SessionActivityKind::Other(String::new()));
+        Self { kind, value }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum SessionEvent {
     Response(SessionResponse),
     Interaction(ExtensionUiRequest),
-    Activity(serde_json::Value),
+    Activity(SessionActivity),
     Stderr(String),
     Failure(String),
 }
@@ -124,6 +196,28 @@ pub(crate) enum SessionCommand {
 }
 
 impl SessionCommand {
+    pub(crate) const fn response_operation(&self) -> SessionOperation {
+        match self {
+            Self::ConfigureSteering => SessionOperation::ConfigureSteering,
+            Self::LoadState => SessionOperation::LoadState,
+            Self::LoadHistory => SessionOperation::LoadHistory,
+            Self::LoadUsage => SessionOperation::LoadUsage,
+            Self::ListModels => SessionOperation::ListModels,
+            Self::ListReasoningLevels => SessionOperation::ListReasoningLevels,
+            Self::ListModes => SessionOperation::ListModes,
+            Self::ListCommands => SessionOperation::ListCommands,
+            Self::Prompt { mode, .. } => SessionOperation::Prompt(*mode),
+            Self::Abort => SessionOperation::Abort,
+            Self::Compact { .. } => SessionOperation::Compact,
+            Self::ExportHtml { .. } => SessionOperation::ExportHtml,
+            Self::Rename { .. } => SessionOperation::Rename,
+            Self::ForkAt { .. } => SessionOperation::ForkAt,
+            Self::SelectModel { .. } => SessionOperation::SelectModel,
+            Self::SelectReasoning { .. } => SessionOperation::SelectReasoning,
+            Self::SelectMode { .. } => SessionOperation::SelectMode,
+        }
+    }
+
     pub(crate) const fn operation(&self) -> &'static str {
         match self {
             Self::ConfigureSteering => "configure steering",
@@ -151,12 +245,33 @@ impl SessionCommand {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SessionOperation {
+    ConfigureSteering,
+    LoadState,
+    LoadHistory,
+    LoadUsage,
+    ListModels,
+    ListReasoningLevels,
+    ListModes,
+    ListCommands,
+    Prompt(PromptMode),
+    Abort,
+    Compact,
+    ExportHtml,
+    Rename,
+    ForkAt,
+    SelectModel,
+    SelectReasoning,
+    SelectMode,
+    Other,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SessionResponse {
     pub(crate) id: Option<String>,
-    pub(crate) command: String,
+    pub(crate) operation: SessionOperation,
     pub(crate) success: bool,
-    #[serde(default)]
     pub(crate) data: serde_json::Value,
     pub(crate) error: Option<String>,
 }

@@ -6,8 +6,9 @@ use std::{
 use serde_json::{Value, json};
 
 use crate::agents::{
-    SessionCommand, SessionEvent, SessionResponse, SessionTransport, TokenUsage, WorkerActivity,
-    WorkerEvent, WorkerInput, WorkerInputResponse, WorkerSendMode, WorkerSession, WorkerUsage,
+    SessionCommand, SessionEvent, SessionOperation, SessionResponse, SessionTransport, TokenUsage,
+    WorkerActivity, WorkerEvent, WorkerInput, WorkerInputResponse, WorkerSendMode, WorkerSession,
+    WorkerUsage,
     extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptMode},
 };
 
@@ -17,6 +18,10 @@ pub(super) struct MainSessionMetadata {
     pub efforts: Vec<String>,
     pub commands: Vec<Value>,
     pub modes: Vec<Value>,
+}
+
+fn activity(value: Value) -> SessionEvent {
+    SessionEvent::Activity(value.into())
 }
 
 pub(super) struct WorkerSessionTransport {
@@ -34,6 +39,7 @@ pub(super) struct WorkerSessionTransport {
     model: Option<(String, String)>,
     effort: String,
     metadata: MainSessionMetadata,
+    history: Option<Vec<Value>>,
     selected_mode: Option<String>,
     usage: WorkerUsage,
 }
@@ -45,14 +51,20 @@ impl WorkerSessionTransport {
         locator: String,
         worker: Box<dyn WorkerSession>,
         metadata: MainSessionMetadata,
+        history: Option<crate::agents::DiscoveredHistory>,
     ) -> Result<Self, String> {
         let path = external_session_path(locator_root, harness, &locator);
-        let model = metadata.models.first().and_then(|model| {
-            Some((
-                model.get("provider")?.as_str()?.to_owned(),
-                model.get("id")?.as_str()?.to_owned(),
-            ))
-        });
+        let model = history
+            .as_ref()
+            .and_then(|history| history.model.clone())
+            .or_else(|| {
+                metadata.models.first().and_then(|model| {
+                    Some((
+                        model.get("provider")?.as_str()?.to_owned(),
+                        model.get("id")?.as_str()?.to_owned(),
+                    ))
+                })
+            });
         let selected_mode = metadata
             .modes
             .first()
@@ -78,12 +90,13 @@ impl WorkerSessionTransport {
             assistant_message: AssistantMessage::default(),
             observed_text: String::new(),
             model,
-            effort: metadata
-                .efforts
-                .first()
-                .cloned()
+            effort: history
+                .as_ref()
+                .and_then(|history| history.thinking_level.clone())
+                .or_else(|| metadata.efforts.first().cloned())
                 .unwrap_or_else(|| "off".into()),
             metadata,
+            history: history.map(|history| history.messages),
             selected_mode,
             usage: WorkerUsage {
                 context_window,
@@ -92,11 +105,11 @@ impl WorkerSessionTransport {
         })
     }
 
-    fn response(&mut self, id: String, command: &str, data: Value) {
+    fn response(&mut self, id: String, operation: SessionOperation, data: Value) {
         self.pending
             .push_back(SessionEvent::Response(SessionResponse {
                 id: Some(id),
-                command: command.into(),
+                operation,
                 success: true,
                 data,
                 error: None,
@@ -104,7 +117,7 @@ impl WorkerSessionTransport {
     }
 
     fn enqueue_queue_update(&mut self) {
-        self.pending.push_back(SessionEvent::Activity(json!({
+        self.pending.push_back(activity(json!({
             "type": "queue_update",
             "steering": self.steering,
             "followUp": self.follow_up,
@@ -148,7 +161,7 @@ impl WorkerSessionTransport {
             "sessionId": self.locator,
             "sessionName": null,
             "autoCompactionEnabled": true,
-            "messageCount": 0,
+            "messageCount": self.history.as_ref().map_or(0, Vec::len),
             "pendingMessageCount": 0,
         })
     }
@@ -161,7 +174,7 @@ impl WorkerSessionTransport {
                 self.observed_text.clear();
                 self.usage.turn = TokenUsage::default();
                 self.pending
-                    .push_back(SessionEvent::Activity(json!({"type": "agent_start"})));
+                    .push_back(activity(json!({"type": "agent_start"})));
             }
             WorkerEvent::Settled { output } => {
                 self.running = false;
@@ -170,15 +183,14 @@ impl WorkerSessionTransport {
                 self.finish_assistant_message(Some(self.usage.turn));
                 self.clear_queue();
                 self.pending
-                    .push_back(SessionEvent::Activity(json!({"type": "agent_settled"})));
+                    .push_back(activity(json!({"type": "agent_settled"})));
                 self.assistant_message.clear();
                 self.observed_text.clear();
             }
             WorkerEvent::SessionChanged { locator } => {
                 self.locator = locator;
-                self.pending.push_back(SessionEvent::Activity(
-                    json!({"type": "session_info_changed"}),
-                ));
+                self.pending
+                    .push_back(activity(json!({"type": "session_info_changed"})));
             }
             WorkerEvent::NeedsInput(input) => {
                 self.pending
@@ -192,8 +204,8 @@ impl WorkerSessionTransport {
         }
     }
 
-    fn enqueue_activity(&mut self, activity: WorkerActivity) {
-        let event = match activity {
+    fn enqueue_activity(&mut self, worker_activity: WorkerActivity) {
+        let event = match worker_activity {
             WorkerActivity::TextDelta {
                 content_index,
                 delta,
@@ -270,7 +282,7 @@ impl WorkerSessionTransport {
                 "errorMessage": error,
             }),
         };
-        self.pending.push_back(SessionEvent::Activity(event));
+        self.pending.push_back(activity(event));
     }
 
     fn start_assistant_message(&mut self) {
@@ -278,7 +290,7 @@ impl WorkerSessionTransport {
             return;
         }
         self.assistant_message.started = true;
-        self.pending.push_back(SessionEvent::Activity(json!({
+        self.pending.push_back(activity(json!({
             "type": "message_start",
             "message": {"role": "assistant", "content": []}
         })));
@@ -295,7 +307,7 @@ impl WorkerSessionTransport {
         if let Some(usage) = usage {
             message["usage"] = usage_json(usage);
         }
-        self.pending.push_back(SessionEvent::Activity(json!({
+        self.pending.push_back(activity(json!({
             "type": "message_end",
             "message": message,
         })));
@@ -322,7 +334,7 @@ impl WorkerSessionTransport {
         }
         self.start_assistant_message();
         let content_index = self.assistant_message.append_text(text);
-        self.pending.push_back(SessionEvent::Activity(json!({
+        self.pending.push_back(activity(json!({
             "type": "message_update",
             "assistantMessageEvent": {
                 "type": "text_delta",
@@ -338,21 +350,24 @@ impl SessionTransport for WorkerSessionTransport {
     fn send(&mut self, command: SessionCommand) -> Result<String, String> {
         self.next_id = self.next_id.saturating_add(1);
         let id = format!("{}-{}", self.harness, self.next_id);
+        let operation = command.response_operation();
         match command {
             SessionCommand::ConfigureSteering => {
-                self.response(id.clone(), "set_steering_mode", json!({}))
+                self.response(id.clone(), operation, json!({}))
             }
             SessionCommand::LoadState => {
-                self.response(id.clone(), "get_state", self.state());
+                self.response(id.clone(), operation, self.state());
             }
-            SessionCommand::LoadHistory => self.response(
-                id.clone(),
-                "get_entries",
-                json!({"entries": [], "preserve": true}),
-            ),
+            SessionCommand::LoadHistory => {
+                let data = self.history.as_ref().map_or_else(
+                    || json!({"entries": [], "preserve": true}),
+                    |entries| json!({"entries": entries, "preserve": false}),
+                );
+                self.response(id.clone(), operation, data);
+            }
             SessionCommand::LoadUsage => self.response(
                 id.clone(),
-                "get_session_stats",
+                operation,
                 json!({
                     "contextUsage": {
                         "tokens": self.usage.turn.total(),
@@ -368,22 +383,22 @@ impl SessionTransport for WorkerSessionTransport {
             ),
             SessionCommand::ListModels => self.response(
                 id.clone(),
-                "get_available_models",
+                operation,
                 json!({"models": self.metadata.models.clone()}),
             ),
             SessionCommand::ListReasoningLevels => self.response(
                 id.clone(),
-                "get_available_thinking_levels",
+                operation,
                 json!({"levels": self.metadata.efforts.clone()}),
             ),
             SessionCommand::ListModes => self.response(
                 id.clone(),
-                "get_modes",
+                operation,
                 json!({"modes": self.metadata.modes.clone(), "selected": self.selected_mode}),
             ),
             SessionCommand::ListCommands => self.response(
                 id.clone(),
-                "get_commands",
+                operation,
                 json!({"commands": self.metadata.commands.clone()}),
             ),
             SessionCommand::Prompt {
@@ -391,49 +406,49 @@ impl SessionTransport for WorkerSessionTransport {
                 message,
                 images,
             } => {
-                let (worker_mode, command) = match mode {
-                    PromptMode::Normal => (WorkerSendMode::Prompt, "prompt"),
-                    PromptMode::Steer => (WorkerSendMode::Steer, "steer"),
-                    PromptMode::FollowUp => (WorkerSendMode::Queue, "follow_up"),
+                let worker_mode = match mode {
+                    PromptMode::Normal => WorkerSendMode::Prompt,
+                    PromptMode::Steer => WorkerSendMode::Steer,
+                    PromptMode::FollowUp => WorkerSendMode::Queue,
                 };
                 let queued_message = (mode != PromptMode::Normal).then(|| message.clone());
                 self.worker.send_with_images(message, worker_mode, images)?;
                 if let Some(message) = queued_message {
                     self.enqueue_message(mode, message);
                 }
-                self.response(id.clone(), command, json!({}));
+                self.response(id.clone(), operation, json!({}));
             }
             SessionCommand::Abort => {
                 self.worker.abort()?;
                 self.clear_queue();
-                self.response(id.clone(), "abort", json!({}));
+                self.response(id.clone(), operation, json!({}));
             }
             SessionCommand::SelectModel { provider, model_id } => {
                 self.worker.select_model(&provider, &model_id)?;
                 self.model = Some((provider.clone(), model_id.clone()));
                 self.response(
                     id.clone(),
-                    "set_model",
+                    operation,
                     json!({"id": model_id, "name": model_id, "provider": provider, "contextWindow": 0, "reasoning": true}),
                 );
             }
             SessionCommand::SelectReasoning { level } => {
                 self.worker.select_effort(&level)?;
                 self.effort = level;
-                self.response(id.clone(), "set_thinking_level", json!({}));
+                self.response(id.clone(), operation, json!({}));
             }
             SessionCommand::SelectMode { mode } => {
                 self.worker.select_mode(&mode)?;
                 self.selected_mode = Some(mode);
-                self.response(id.clone(), "set_mode", json!({}));
+                self.response(id.clone(), operation, json!({}));
             }
             SessionCommand::Compact { .. } => {
                 self.worker.compact()?;
-                self.response(id.clone(), "compact", json!({}));
+                self.response(id.clone(), operation, json!({}));
             }
             SessionCommand::Rename { name } => {
                 self.worker.rename(&name)?;
-                self.response(id.clone(), "set_session_name", json!({}));
+                self.response(id.clone(), operation, json!({}));
             }
             SessionCommand::ExportHtml { .. } | SessionCommand::ForkAt { .. } => {
                 return Err(format!(
@@ -701,6 +716,7 @@ mod tests {
             "thread-1".into(),
             Box::new(IdleWorker),
             MainSessionMetadata::default(),
+            None,
         )
         .expect("transport");
 
@@ -733,7 +749,7 @@ mod tests {
         assert_eq!(
             activities
                 .iter()
-                .map(|activity| activity["type"].as_str().unwrap_or_default())
+                .map(|activity| activity.value()["type"].as_str().unwrap_or_default())
                 .collect::<Vec<_>>(),
             [
                 "agent_start",
@@ -747,8 +763,14 @@ mod tests {
                 "agent_settled",
             ]
         );
-        assert_eq!(activities[3]["message"]["content"][0]["text"], "before");
-        assert_eq!(activities[7]["message"]["content"][0]["text"], "after");
+        assert_eq!(
+            activities[3].value()["message"]["content"][0]["text"],
+            "before"
+        );
+        assert_eq!(
+            activities[7].value()["message"]["content"][0]["text"],
+            "after"
+        );
     }
 
     #[test]
@@ -759,6 +781,7 @@ mod tests {
             "thread-1".into(),
             Box::new(IdleWorker),
             MainSessionMetadata::default(),
+            None,
         )
         .expect("transport");
 
@@ -784,19 +807,65 @@ mod tests {
             .pending
             .iter()
             .filter_map(|event| match event {
-                SessionEvent::Activity(activity) if activity["type"] == "queue_update" => {
+                SessionEvent::Activity(activity)
+                    if activity.kind() == &crate::agents::SessionActivityKind::QueueUpdated =>
+                {
                     Some(activity.clone())
                 }
                 _ => None,
             })
             .collect::<Vec<_>>();
         assert_eq!(updates.len(), 3);
-        assert_eq!(updates[0]["steering"], json!(["redirect"]));
-        assert_eq!(updates[0]["followUp"], json!([]));
-        assert_eq!(updates[1]["steering"], json!(["redirect"]));
-        assert_eq!(updates[1]["followUp"], json!(["then verify"]));
-        assert_eq!(updates[2]["steering"], json!([]));
-        assert_eq!(updates[2]["followUp"], json!([]));
+        assert_eq!(updates[0].value()["steering"], json!(["redirect"]));
+        assert_eq!(updates[0].value()["followUp"], json!([]));
+        assert_eq!(updates[1].value()["steering"], json!(["redirect"]));
+        assert_eq!(updates[1].value()["followUp"], json!(["then verify"]));
+        assert_eq!(updates[2].value()["steering"], json!([]));
+        assert_eq!(updates[2].value()["followUp"], json!([]));
+    }
+
+    #[test]
+    fn resumed_transport_returns_persisted_history() {
+        let history = crate::agents::DiscoveredHistory {
+            messages: vec![json!({
+                "type": "message",
+                "message": {"role": "user", "content": "persisted"},
+            })],
+            model: Some(("openai".into(), "gpt-test".into())),
+            thinking_level: Some("high".into()),
+        };
+        let mut transport = WorkerSessionTransport::new(
+            std::path::Path::new("/locators"),
+            "codex-cli",
+            "thread-1".into(),
+            Box::new(IdleWorker),
+            MainSessionMetadata::default(),
+            Some(history),
+        )
+        .expect("transport");
+
+        transport
+            .send(SessionCommand::LoadHistory)
+            .expect("load history");
+        let SessionEvent::Response(response) = transport.poll().expect("history response") else {
+            panic!("expected history response");
+        };
+        assert_eq!(response.operation, SessionOperation::LoadHistory);
+        assert_eq!(response.data["preserve"], false);
+        assert_eq!(
+            response.data["entries"][0]["message"]["content"],
+            "persisted"
+        );
+
+        transport
+            .send(SessionCommand::LoadState)
+            .expect("load state");
+        let SessionEvent::Response(response) = transport.poll().expect("state response") else {
+            panic!("expected state response");
+        };
+        assert_eq!(response.data["messageCount"], 1);
+        assert_eq!(response.data["model"]["id"], "gpt-test");
+        assert_eq!(response.data["thinkingLevel"], "high");
     }
 
     #[test]

@@ -1127,11 +1127,15 @@ pub(super) fn initial_draft_command(
             harness: "pi".into(),
             project: project.clone(),
         },
-        |path| RuntimeCommand::SelectSession {
-            session_id: path.to_string_lossy().into_owned(),
-            path,
-            harness: "pi".into(),
-            project,
+        |path| {
+            let (harness, session_id) = agents::external_session_identity(&path)
+                .unwrap_or_else(|| ("pi", path.to_string_lossy().into_owned()));
+            RuntimeCommand::SelectSession {
+                session_id,
+                path,
+                harness: harness.into(),
+                project,
+            }
         },
     )
 }

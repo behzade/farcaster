@@ -386,20 +386,25 @@ fn accepted_sandbox_grant_interrupts_restarts_and_continues_without_visible_user
         owner.sandbox_grant_handoff,
         Some(SandboxGrantHandoff::WaitingForSiblingTools)
     );
-    owner.apply_process_item(SessionEvent::Activity(json!({
-        "type":"tool_execution_end",
-        "toolCallId":"sibling-call",
-        "toolName":"read",
-        "result":{"content":[]},
-        "isError":false
-    })));
+    owner.apply_process_item(SessionEvent::Activity(
+        json!({
+            "type":"tool_execution_end",
+            "toolCallId":"sibling-call",
+            "toolName":"read",
+            "result":{"content":[]},
+            "isError":false
+        })
+        .into(),
+    ));
     assert_eq!(
         owner.sandbox_grant_handoff,
         Some(SandboxGrantHandoff::Interrupting)
     );
     assert_eq!(owner.process_generation, generation);
 
-    owner.apply_process_item(SessionEvent::Activity(json!({"type":"agent_settled"})));
+    owner.apply_process_item(SessionEvent::Activity(
+        json!({"type":"agent_settled"}).into(),
+    ));
 
     assert_eq!(owner.process_generation, generation + 1);
     drive_process_until(&mut owner, |owner| {
@@ -436,8 +441,20 @@ fn persisted_submitted_draft_selects_its_session() {
     let session = PathBuf::from("/sessions/submitted.jsonl");
     assert!(matches!(
         initial_draft_command("draft".into(), project.clone(), Some(session.clone())),
-        RuntimeCommand::SelectSession { path, project: selected_project, .. }
-            if path == session && selected_project == project
+        RuntimeCommand::SelectSession { path, harness, session_id, project: selected_project }
+            if path == session
+                && harness == "pi"
+                && session_id == "/sessions/submitted.jsonl"
+                && selected_project == project
+    ));
+    let codex = PathBuf::from("/locators/codex-cli/thread-1");
+    assert!(matches!(
+        initial_draft_command("draft".into(), project.clone(), Some(codex.clone())),
+        RuntimeCommand::SelectSession { path, harness, session_id, project: selected_project }
+            if path == codex
+                && harness == "codex-cli"
+                && session_id == "thread-1"
+                && selected_project == project
     ));
     assert!(matches!(
         initial_draft_command("draft".into(), project.clone(), None),
@@ -659,9 +676,8 @@ fn no_op_working_events_do_not_request_a_snapshot_publish() {
     owner.snapshot.status = "Working".into();
     conversation_mut(&mut owner.snapshot).running = true;
 
-    let changed = owner.apply_process_item(SessionEvent::Activity(json!({
-        "type": "turn_start"
-    })));
+    let changed =
+        owner.apply_process_item(SessionEvent::Activity(json!({"type": "turn_start"}).into()));
 
     assert_eq!(changed, SnapshotChange::None);
     assert!(events.try_recv().is_err());
@@ -673,7 +689,7 @@ fn first_agent_action_refreshes_catalog_for_draft_promotion() {
     owner.owns_session_catalog = false;
     owner.active_session = Some(PathBuf::from("/sessions/new.jsonl"));
 
-    owner.apply_process_item(SessionEvent::Activity(json!({"type":"agent_start"})));
+    owner.apply_process_item(SessionEvent::Activity(json!({"type":"agent_start"}).into()));
 
     assert!(matches!(
         events.try_recv(),
@@ -1408,7 +1424,7 @@ fn first_session_path_triggers_a_sidebar_refresh() {
 
     owner.apply_response(crate::agents::SessionResponse {
         id: Some("state".into()),
-        command: "get_state".into(),
+        operation: crate::agents::SessionOperation::LoadState,
         success: true,
         data: json!({
             "model": null,
@@ -1440,7 +1456,7 @@ fn get_state_canonicalizes_a_symlinked_session_path() -> Result<(), Box<dyn std:
 
     owner.apply_response(crate::agents::SessionResponse {
         id: Some("state".into()),
-        command: "get_state".into(),
+        operation: crate::agents::SessionOperation::LoadState,
         success: true,
         data: json!({
             "model": null,
@@ -2311,13 +2327,16 @@ fn active_session_events_stay_parked_while_other_history_is_visible() -> Result<
     assert_eq!(visible.conversation.items[0].text, "history message");
 
     assert_eq!(
-        owner.apply_process_item(SessionEvent::Activity(json!({
-            "type": "message_start",
-            "message": {
-                "role": "assistant",
-                "content": [{"type": "text", "text": "active output"}]
-            }
-        }))),
+        owner.apply_process_item(SessionEvent::Activity(
+            json!({
+                "type": "message_start",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "active output"}]
+                }
+            })
+            .into(),
+        )),
         SnapshotChange::None
     );
 
@@ -2335,10 +2354,13 @@ fn active_session_events_stay_parked_while_other_history_is_visible() -> Result<
             .all(|event| !matches!(event, RuntimeEvent::Snapshot { .. }))
     );
 
-    let changed = owner.apply_process_item(SessionEvent::Activity(json!({
-        "type": "compaction_start",
-        "reason": "test"
-    })));
+    let changed = owner.apply_process_item(SessionEvent::Activity(
+        json!({
+            "type": "compaction_start",
+            "reason": "test"
+        })
+        .into(),
+    ));
     assert_eq!(changed, SnapshotChange::Immediate);
     owner.publish();
     let visible = event_rx

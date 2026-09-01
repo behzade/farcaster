@@ -172,7 +172,10 @@ fn request_and_wait_confirms_configuration_before_returning() -> TestResult {
     let response = rpc.request_and_wait(SessionCommand::SelectReasoning {
         level: "medium".into(),
     })?;
-    assert_eq!(response.command, "set_thinking_level");
+    assert_eq!(
+        response.operation,
+        crate::agents::SessionOperation::SelectReasoning
+    );
     rpc.terminate()?;
     Ok(())
 }
@@ -182,7 +185,7 @@ fn handshake_routes_async_event_and_correlates_unique_ids() -> TestResult {
     let (temp, command) = fake("normal")?;
     let mut rpc = PiRpcProcess::spawn(&command, temp.path(), None)?;
     assert!(
-        matches!(rpc.try_next(), Some(SessionEvent::Activity(value)) if value["type"] == "agent_start")
+        matches!(rpc.try_next(), Some(SessionEvent::Activity(value)) if value.kind() == &crate::agents::SessionActivityKind::AgentStarted)
     );
     let first = rpc.send_command(serde_json::json!({"type":"get_messages"}))?;
     let second = rpc.send_command(serde_json::json!({"type":"get_state"}))?;
@@ -195,7 +198,7 @@ fn handshake_routes_async_event_and_correlates_unique_ids() -> TestResult {
     while Instant::now() < deadline && responses < 3 {
         if let Some(SessionEvent::Response(response)) = rpc.try_next() {
             responses += 1;
-            context_shape |= response.command == "get_session_stats"
+            context_shape |= response.operation == crate::agents::SessionOperation::LoadUsage
                 && response
                     .data
                     .pointer("/contextUsage/tokens")

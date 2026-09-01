@@ -130,7 +130,9 @@ fn session_path(session: &mut dyn SessionTransport) -> Result<PathBuf, String> {
     let deadline = Instant::now() + Duration::from_secs(30);
     while Instant::now() < deadline {
         match session.poll() {
-            Some(SessionEvent::Response(response)) if response.command == "get_state" => {
+            Some(SessionEvent::Response(response))
+                if response.operation == crate::agents::SessionOperation::LoadState =>
+            {
                 return response
                     .data
                     .get("sessionFile")
@@ -286,7 +288,9 @@ fn require_usage_response(session: &mut dyn SessionTransport) -> Result<(), Stri
     let deadline = Instant::now() + Duration::from_secs(30);
     while Instant::now() < deadline {
         match session.poll() {
-            Some(SessionEvent::Response(response)) if response.command == "get_session_stats" => {
+            Some(SessionEvent::Response(response))
+                if response.operation == crate::agents::SessionOperation::LoadUsage =>
+            {
                 require_usage(Some(&json!({
                     "type": "turn_end",
                     "contextWindow": response.data.pointer("/contextUsage/contextWindow"),
@@ -323,8 +327,8 @@ fn poll_until(
         };
         match item {
             SessionEvent::Activity(event) => {
-                conversation.reduce(&event);
-                if done(session, &event, conversation)? {
+                conversation.reduce(event.value());
+                if done(session, event.value(), conversation)? {
                     return Ok(());
                 }
             }

@@ -110,8 +110,8 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
     }
 
     pub(crate) fn models(&mut self, directory: &str) -> Result<Value, String> {
-        let directory = url::form_urlencoded::byte_serialize(directory.as_bytes())
-            .collect::<String>();
+        let directory =
+            url::form_urlencoded::byte_serialize(directory.as_bytes()).collect::<String>();
         self.json(
             OpenCodeHttpMethod::Get,
             format!("/api/model?directory={directory}"),
@@ -120,8 +120,8 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
     }
 
     pub(crate) fn agents(&mut self, directory: &str) -> Result<Value, String> {
-        let directory = url::form_urlencoded::byte_serialize(directory.as_bytes())
-            .collect::<String>();
+        let directory =
+            url::form_urlencoded::byte_serialize(directory.as_bytes()).collect::<String>();
         self.json(
             OpenCodeHttpMethod::Get,
             format!("/api/agent?directory={directory}"),
@@ -130,8 +130,8 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
     }
 
     pub(crate) fn commands(&mut self, directory: &str) -> Result<Value, String> {
-        let directory = url::form_urlencoded::byte_serialize(directory.as_bytes())
-            .collect::<String>();
+        let directory =
+            url::form_urlencoded::byte_serialize(directory.as_bytes()).collect::<String>();
         self.json(
             OpenCodeHttpMethod::Get,
             format!("/api/command?directory={directory}"),

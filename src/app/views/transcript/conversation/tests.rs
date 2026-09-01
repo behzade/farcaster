@@ -257,20 +257,20 @@ fn interrupted_empty_thinking_is_removed_from_live_and_history() {
 }
 
 #[test]
-fn cache_hit_rate_averages_assistant_prompt_usage_for_the_session() {
+fn cache_hit_rate_uses_all_assistant_prompt_tokens_for_the_session() {
     let mut state = ConversationState::default();
     state.replace_history(&[
         json!({"role":"assistant","content":[],"usage":{"input":100,"cacheRead":0,"cacheWrite":0}}),
         json!({"role":"assistant","content":[],"usage":{"input":100,"cacheRead":300,"cacheWrite":100}}),
     ]);
-    assert_eq!(state.average_cache_hit_rate, Some(30.0));
+    assert_eq!(state.average_cache_hit_rate, Some(50.0));
 
     state.reduce(&json!({"type":"message_end","message":{
         "role":"assistant",
         "content":[],
         "usage":{"input":200,"cacheRead":700,"cacheWrite":100}
     }}));
-    assert_eq!(state.average_cache_hit_rate, Some(130.0 / 3.0));
+    assert_eq!(state.average_cache_hit_rate, Some(62.5));
 }
 
 #[test]

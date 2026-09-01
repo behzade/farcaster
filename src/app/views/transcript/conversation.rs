@@ -142,8 +142,8 @@ pub(crate) struct ConversationState {
     pub retrying: bool,
     pub average_cache_hit_rate: Option<f64>,
     pub diagnostics: Vec<String>,
-    cache_hit_rate_sum: f64,
-    cache_hit_rate_count: usize,
+    cache_read_tokens: u64,
+    prompt_tokens: u64,
     live_message: Option<LiveMessage>,
     content: BTreeMap<usize, PartialContent>,
     dirty_content: std::collections::BTreeSet<usize>,
@@ -243,8 +243,8 @@ impl ConversationState {
     pub(crate) fn replace_history(&mut self, messages: &[Value]) {
         self.items.clear();
         self.average_cache_hit_rate = None;
-        self.cache_hit_rate_sum = 0.0;
-        self.cache_hit_rate_count = 0;
+        self.cache_read_tokens = 0;
+        self.prompt_tokens = 0;
         for message in messages {
             if message.get("role").and_then(Value::as_str) == Some("assistant") {
                 self.record_cache_hit_rate(message);
@@ -683,13 +683,13 @@ impl ConversationState {
     }
 
     fn record_cache_hit_rate(&mut self, message: &Value) {
-        let Some(rate) = cache_hit_rate(message) else {
+        let Some((cache_read, prompt_tokens)) = cache_usage(message) else {
             return;
         };
-        self.cache_hit_rate_sum += rate;
-        self.cache_hit_rate_count += 1;
+        self.cache_read_tokens = self.cache_read_tokens.saturating_add(cache_read);
+        self.prompt_tokens = self.prompt_tokens.saturating_add(prompt_tokens);
         self.average_cache_hit_rate =
-            Some(self.cache_hit_rate_sum / self.cache_hit_rate_count as f64);
+            Some(self.cache_read_tokens as f64 / self.prompt_tokens as f64 * 100.0);
     }
 
     fn start_tool(&mut self, event: &Value) {
@@ -850,13 +850,13 @@ fn finish_content(partial: &mut PartialContent, delta: &Value) -> bool {
     changed
 }
 
-fn cache_hit_rate(message: &Value) -> Option<f64> {
+fn cache_usage(message: &Value) -> Option<(u64, u64)> {
     let usage = message.get("usage")?;
     let input = usage.get("input").and_then(Value::as_u64)?;
     let cache_read = usage.get("cacheRead").and_then(Value::as_u64).unwrap_or(0);
     let cache_write = usage.get("cacheWrite").and_then(Value::as_u64).unwrap_or(0);
     let prompt_tokens = input.saturating_add(cache_read).saturating_add(cache_write);
-    (prompt_tokens > 0).then(|| cache_read as f64 / prompt_tokens as f64 * 100.0)
+    (prompt_tokens > 0).then_some((cache_read, prompt_tokens))
 }
 
 fn project_message_items(message: &Value) -> Vec<TranscriptItem> {

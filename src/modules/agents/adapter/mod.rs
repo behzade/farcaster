@@ -2,9 +2,9 @@ mod child_stderr;
 #[allow(dead_code)]
 mod codex;
 mod farcaster_mcp;
-mod main_session;
 #[cfg(test)]
 mod live_tests;
+mod main_session;
 #[allow(dead_code)]
 mod opencode;
 mod pi;
@@ -109,15 +109,15 @@ fn load_pi_configuration(
     while std::time::Instant::now() < deadline && !(models_loaded && efforts_loaded) {
         match process.poll() {
             Some(crate::agents::SessionEvent::Response(response)) if response.success => {
-                match response.command.as_str() {
-                    "get_available_models" => {
+                match response.operation {
+                    crate::agents::SessionOperation::ListModels => {
                         catalog.models = serde_json::from_value(
                             response.data.get("models").cloned().unwrap_or_default(),
                         )
                         .map_err(|error| format!("decode Pi model catalog: {error}"))?;
                         models_loaded = true;
                     }
-                    "get_available_thinking_levels" => {
+                    crate::agents::SessionOperation::ListReasoningLevels => {
                         catalog.efforts = serde_json::from_value(
                             response.data.get("levels").cloned().unwrap_or_default(),
                         )
@@ -140,11 +140,24 @@ fn load_pi_configuration(
     }
 }
 
+fn launch_history(
+    launch: &crate::agents::SessionLaunch,
+    load: impl FnOnce(&std::path::Path) -> Result<crate::agents::DiscoveredHistory, String>,
+) -> Result<Option<crate::agents::DiscoveredHistory>, String> {
+    match &launch.start {
+        crate::agents::SessionStart::New => Ok(None),
+        crate::agents::SessionStart::Resume(path) | crate::agents::SessionStart::Fork(path) => {
+            load(path).map(Some)
+        }
+    }
+}
+
 pub(crate) fn spawn_session(
     config: &crate::agents::AgentLaunchConfig,
     launch: crate::agents::SessionLaunch,
 ) -> Result<Box<dyn crate::agents::SessionTransport>, String> {
     if launch.harness == "codex-cli" {
+        let history = launch_history(&launch, codex::load_history)?;
         let mut command = config.clone();
         command.program = std::env::var_os("FARCASTER_CODEX_PATH")
             .map(std::path::PathBuf::from)
@@ -160,10 +173,12 @@ pub(crate) fn spawn_session(
             locator,
             worker,
             metadata,
+            history,
         )
-            .map(|transport| Box::new(transport) as _);
+        .map(|transport| Box::new(transport) as _);
     }
     if launch.harness == "opencode2" {
+        let history = launch_history(&launch, opencode::load_history)?;
         let mut command = config.clone();
         command.program = std::env::var_os("FARCASTER_OPENCODE_PATH")
             .map(std::path::PathBuf::from)
@@ -179,11 +194,15 @@ pub(crate) fn spawn_session(
             locator,
             worker,
             metadata,
+            history,
         )
-            .map(|transport| Box::new(transport) as _);
+        .map(|transport| Box::new(transport) as _);
     }
     if launch.harness != "pi" {
-        return Err(format!("unsupported main-session harness: {}", launch.harness));
+        return Err(format!(
+            "unsupported main-session harness: {}",
+            launch.harness
+        ));
     }
     let process = match &launch.start {
         crate::agents::SessionStart::New => {
@@ -225,19 +244,23 @@ pub(crate) fn rename_session(
     }
 }
 
+pub(crate) fn external_session_identity(path: &std::path::Path) -> Option<(&'static str, String)> {
+    if let Some(locator) = main_session::external_session_locator("codex-cli", path) {
+        return Some(("codex-cli", locator));
+    }
+    main_session::external_session_locator("opencode2", path).map(|locator| ("opencode2", locator))
+}
+
 pub(crate) fn is_external_session(path: &std::path::Path) -> bool {
-    main_session::external_session_locator("codex-cli", path).is_some()
-        || main_session::external_session_locator("opencode2", path).is_some()
+    external_session_identity(path).is_some()
 }
 
 pub(crate) fn delete_external_session(path: &std::path::Path) -> Option<Result<(), String>> {
-    if let Some(locator) = main_session::external_session_locator("codex-cli", path) {
-        return Some(codex::delete_session(&locator));
-    }
-    if let Some(locator) = main_session::external_session_locator("opencode2", path) {
-        return Some(opencode::delete_session(&locator));
-    }
-    None
+    external_session_identity(path).map(|(harness, locator)| match harness {
+        "codex-cli" => codex::delete_session(&locator),
+        "opencode2" => opencode::delete_session(&locator),
+        _ => unreachable!("external session identity returned an unknown backend"),
+    })
 }
 
 pub(crate) fn discover_external_sessions(
@@ -274,13 +297,11 @@ pub(crate) fn discover_external_sessions(
 pub(crate) fn load_external_history(
     path: &std::path::Path,
 ) -> Option<Result<crate::agents::DiscoveredHistory, String>> {
-    if main_session::external_session_locator("codex-cli", path).is_some() {
-        return Some(codex::load_history(path));
-    }
-    if main_session::external_session_locator("opencode2", path).is_some() {
-        return Some(opencode::load_history(path));
-    }
-    None
+    external_session_identity(path).map(|(harness, _)| match harness {
+        "codex-cli" => codex::load_history(path),
+        "opencode2" => opencode::load_history(path),
+        _ => unreachable!("external session identity returned an unknown backend"),
+    })
 }
 
 pub(crate) fn backend_statuses() -> Vec<super::contract::AgentBackendStatus> {
@@ -294,12 +315,14 @@ pub(crate) fn backend_statuses() -> Vec<super::contract::AgentBackendStatus> {
     known_backend_descriptors()
         .into_iter()
         .zip([pi_program, codex_program, opencode_program])
-        .map(|(descriptor, program)| super::contract::AgentBackendStatus {
-            id: descriptor.id.as_str().to_owned(),
-            name: descriptor.name,
-            available: program_available(&program),
-            capabilities: descriptor.capabilities,
-        })
+        .map(
+            |(descriptor, program)| super::contract::AgentBackendStatus {
+                id: descriptor.id.as_str().to_owned(),
+                name: descriptor.name,
+                available: program_available(&program),
+                capabilities: descriptor.capabilities,
+            },
+        )
         .collect()
 }
 

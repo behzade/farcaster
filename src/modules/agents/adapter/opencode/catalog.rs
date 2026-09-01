@@ -74,9 +74,8 @@ fn with_server<T>(
         .unwrap_or_else(|| "opencode2".into());
     let password = format!("farcaster-catalog-{}", std::process::id());
     let mut command = Command::new(program);
-    command.args(["serve", "--stdio", "--print-logs"]);
-    super::configure_permissions(&mut command);
     let mut child = command
+        .args(["serve", "--stdio", "--print-logs"])
         .env("OPENCODE_SERVER_PASSWORD", &password)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -93,10 +92,7 @@ fn with_server<T>(
     }
 }
 
-fn summary(
-    locator_root: &Path,
-    value: &Value,
-) -> Option<Result<DiscoveredSession, String>> {
+fn summary(locator_root: &Path, value: &Value) -> Option<Result<DiscoveredSession, String>> {
     let id = value.get("id")?.as_str()?;
     let directory = value
         .pointer("/location/directory")
@@ -126,7 +122,9 @@ fn summary(
         .get("archived")
         .and_then(Value::as_bool)
         .unwrap_or(false)
-        || value.pointer("/time/archived").is_some_and(|value| !value.is_null());
+        || value
+            .pointer("/time/archived")
+            .is_some_and(|value| !value.is_null());
     let is_running = value
         .get("status")
         .and_then(Value::as_str)

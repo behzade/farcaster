@@ -108,6 +108,7 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             output: String::new(),
             reasoning_started: false,
             compacting: false,
+            manual_compaction: false,
             pending: HashMap::new(),
             pending_inputs: HashMap::new(),
             events: VecDeque::from([WorkerEvent::SessionChanged { locator: thread_id }]),
@@ -236,6 +237,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         output: String::new(),
         reasoning_started: false,
         compacting: false,
+        manual_compaction: false,
         pending: HashMap::new(),
         pending_inputs: HashMap::new(),
         events: VecDeque::new(),
@@ -425,12 +427,14 @@ fn load_main_metadata(
             }))
         })
         .collect();
-    Ok(crate::modules::agents::adapter::main_session::MainSessionMetadata {
-        models,
-        efforts,
-        commands: Vec::new(),
-        modes,
-    })
+    Ok(
+        crate::modules::agents::adapter::main_session::MainSessionMetadata {
+            models,
+            efforts,
+            commands: Vec::new(),
+            modes,
+        },
+    )
 }
 
 #[derive(Clone, Copy)]
@@ -456,6 +460,7 @@ struct CodexWorkerSession {
     output: String,
     reasoning_started: bool,
     compacting: bool,
+    manual_compaction: bool,
     pending: HashMap<CodexRequestId, PendingRequest>,
     pending_inputs: HashMap<String, CodexRequestId>,
     events: VecDeque<WorkerEvent>,
@@ -511,10 +516,8 @@ impl WorkerSession for CodexWorkerSession {
     }
 
     fn compact(&mut self) -> Result<(), String> {
-        let id = self.request(
-            "thread/compact/start",
-            json!({"threadId": self.thread_id}),
-        )?;
+        let id = self.request("thread/compact/start", json!({"threadId": self.thread_id}))?;
+        self.manual_compaction = true;
         self.pending.insert(id, PendingRequest::Ignore);
         Ok(())
     }
@@ -644,6 +647,7 @@ impl WorkerSession for CodexWorkerSession {
                             if params.pointer("/item/type").and_then(Value::as_str)
                                 == Some("contextCompaction")
                             {
+                                self.compacting = false;
                                 return Some(WorkerEvent::Activity(
                                     WorkerActivity::CompactionFinished {
                                         aborted: false,
@@ -681,17 +685,24 @@ impl WorkerSession for CodexWorkerSession {
                         "turn/completed" => {
                             self.current_turn = None;
                             let failed = params["turn"]["status"].as_str() == Some("failed");
-                            if self.compacting {
-                                self.compacting = false;
-                                if failed {
+                            if self.manual_compaction {
+                                self.manual_compaction = false;
+                                if self.compacting || failed {
+                                    self.compacting = false;
+                                    self.events.push_back(WorkerEvent::Settled {
+                                        output: String::new(),
+                                    });
                                     return Some(WorkerEvent::Activity(
                                         WorkerActivity::CompactionFinished {
                                             aborted: false,
-                                            error: Some("Codex compaction failed".into()),
+                                            error: failed
+                                                .then(|| "Codex compaction failed".into()),
                                         },
                                     ));
                                 }
-                                continue;
+                                return Some(WorkerEvent::Settled {
+                                    output: String::new(),
+                                });
                             }
                             if failed {
                                 return Some(WorkerEvent::Failed(
@@ -852,23 +863,28 @@ fn codex_agent_message_text(item: &Value) -> Option<String> {
 }
 
 fn codex_usage(value: &Value) -> TokenUsage {
+    let input = value
+        .get("inputTokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let cache_read = value
+        .get("cachedInputTokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let cache_write = value
+        .get("cacheWriteInputTokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
     TokenUsage {
-        input: value
-            .get("inputTokens")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
+        // Codex reports cached tokens as part of inputTokens. The shared
+        // contract keeps input, cache reads, and cache writes disjoint.
+        input: input.saturating_sub(cache_read.saturating_add(cache_write)),
         output: value
             .get("outputTokens")
             .and_then(Value::as_u64)
             .unwrap_or(0),
-        cache_read: value
-            .get("cachedInputTokens")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
-        cache_write: value
-            .get("cacheWriteInputTokens")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
+        cache_read,
+        cache_write,
     }
 }
 
@@ -1060,6 +1076,24 @@ mod tests {
                 result: json!([{"type":"text", "text":"Codex app-server protocol"}]),
                 is_error: false,
             })
+        );
+    }
+
+    #[test]
+    fn codex_usage_separates_cached_tokens_from_reported_input() {
+        assert_eq!(
+            codex_usage(&json!({
+                "inputTokens": 1_000,
+                "outputTokens": 50,
+                "cachedInputTokens": 950,
+                "cacheWriteInputTokens": 0
+            })),
+            TokenUsage {
+                input: 50,
+                output: 50,
+                cache_read: 950,
+                cache_write: 0,
+            }
         );
     }
 
