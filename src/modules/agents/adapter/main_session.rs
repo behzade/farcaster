@@ -28,6 +28,7 @@ pub(super) struct WorkerSessionTransport {
     next_id: u64,
     running: bool,
     assistant_message: AssistantMessage,
+    observed_text: String,
     model: Option<(String, String)>,
     effort: String,
     metadata: MainSessionMetadata,
@@ -71,6 +72,7 @@ impl WorkerSessionTransport {
             next_id: 0,
             running: false,
             assistant_message: AssistantMessage::default(),
+            observed_text: String::new(),
             model,
             effort: metadata
                 .efforts
@@ -126,43 +128,20 @@ impl WorkerSessionTransport {
             WorkerEvent::Started => {
                 self.running = true;
                 self.assistant_message.clear();
+                self.observed_text.clear();
                 self.usage.turn = TokenUsage::default();
                 self.pending
                     .push_back(SessionEvent::Activity(json!({"type": "agent_start"})));
             }
             WorkerEvent::Settled { output } => {
                 self.running = false;
-                if !self.assistant_message.started {
-                    self.assistant_message.started = true;
-                    self.pending.push_back(SessionEvent::Activity(json!({
-                        "type": "message_start",
-                        "message": {"role": "assistant", "content": []}
-                    })));
-                }
-                if self.assistant_message.text().is_none() && !output.is_empty() {
-                    let content_index = self.assistant_message.push_text(output.clone());
-                    self.pending.push_back(SessionEvent::Activity(json!({
-                        "type": "message_update",
-                        "assistantMessageEvent": {
-                            "type": "text_delta",
-                            "contentIndex": content_index,
-                            "delta": output,
-                        }
-                    })));
-                } else {
-                    self.assistant_message.replace_text(&output);
-                }
-                self.pending.push_back(SessionEvent::Activity(json!({
-                    "type": "message_end",
-                    "message": {
-                        "role": "assistant",
-                        "content": self.assistant_message.content(),
-                        "usage": usage_json(self.usage.turn),
-                    }
-                })));
+                self.reconcile_completed_output(&output);
+                self.start_assistant_message();
+                self.finish_assistant_message(Some(self.usage.turn));
                 self.pending
                     .push_back(SessionEvent::Activity(json!({"type": "agent_settled"})));
                 self.assistant_message.clear();
+                self.observed_text.clear();
             }
             WorkerEvent::SessionChanged { locator } => {
                 self.locator = locator;
@@ -188,6 +167,7 @@ impl WorkerSessionTransport {
                 self.start_assistant_message();
                 self.assistant_message
                     .append_delta(content_index, "text", "text", &delta);
+                self.observed_text.push_str(&delta);
                 json!({
                     "type": "message_update",
                     "assistantMessageEvent": {
@@ -213,12 +193,15 @@ impl WorkerSessionTransport {
                     }
                 })
             }
-            WorkerActivity::ToolStarted { id, name, args } => json!({
-                "type": "tool_execution_start",
-                "toolCallId": id,
-                "toolName": name,
-                "args": args,
-            }),
+            WorkerActivity::ToolStarted { id, name, args } => {
+                self.finish_assistant_message(None);
+                json!({
+                    "type": "tool_execution_start",
+                    "toolCallId": id,
+                    "toolName": name,
+                    "args": args,
+                })
+            }
             WorkerActivity::ToolUpdated { id, content } => json!({
                 "type": "tool_execution_update",
                 "toolCallId": id,
@@ -265,6 +248,55 @@ impl WorkerSessionTransport {
             "type": "message_start",
             "message": {"role": "assistant", "content": []}
         })));
+    }
+
+    fn finish_assistant_message(&mut self, usage: Option<TokenUsage>) {
+        if !self.assistant_message.started {
+            return;
+        }
+        let mut message = json!({
+            "role": "assistant",
+            "content": self.assistant_message.content(),
+        });
+        if let Some(usage) = usage {
+            message["usage"] = usage_json(usage);
+        }
+        self.pending.push_back(SessionEvent::Activity(json!({
+            "type": "message_end",
+            "message": message,
+        })));
+        self.assistant_message.clear();
+    }
+
+    fn reconcile_completed_output(&mut self, output: &str) {
+        let current_text = self.assistant_message.text().unwrap_or_default();
+        if output.is_empty() || output == self.observed_text || output == current_text {
+            return;
+        }
+        if let Some(suffix) = output.strip_prefix(&self.observed_text) {
+            self.append_completed_text(suffix);
+        } else if current_text.is_empty() {
+            self.append_completed_text(output);
+        } else {
+            self.assistant_message.replace_text(output);
+        }
+    }
+
+    fn append_completed_text(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        self.start_assistant_message();
+        let content_index = self.assistant_message.append_text(text);
+        self.pending.push_back(SessionEvent::Activity(json!({
+            "type": "message_update",
+            "assistantMessageEvent": {
+                "type": "text_delta",
+                "contentIndex": content_index,
+                "delta": text,
+            }
+        })));
+        self.observed_text.push_str(text);
     }
 }
 
@@ -442,7 +474,16 @@ impl AssistantMessage {
         })
     }
 
-    fn push_text(&mut self, text: String) -> usize {
+    fn append_text(&mut self, text: &str) -> usize {
+        if let Some((index, part)) = self
+            .content
+            .iter_mut()
+            .rev()
+            .find(|(_, part)| part.get("type").and_then(Value::as_str) == Some("text"))
+        {
+            append_content_text(part, "text", text);
+            return *index;
+        }
         let index = self
             .content
             .last_key_value()
@@ -573,6 +614,30 @@ const fn hex(byte: u8) -> Option<u8> {
 mod tests {
     use super::*;
 
+    struct IdleWorker;
+
+    impl WorkerSession for IdleWorker {
+        fn send(&mut self, _: String, _: WorkerSendMode) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn respond(&mut self, _: WorkerInputResponse) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn abort(&mut self) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn poll(&mut self) -> Option<WorkerEvent> {
+            None
+        }
+
+        fn close(&mut self) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
     #[test]
     fn resume_locator_comes_from_the_external_session_path_when_the_runtime_has_no_id() {
         let path = external_session_path(
@@ -592,6 +657,64 @@ mod tests {
             launch_session_locator(&launch).as_deref(),
             Some("session/one")
         );
+    }
+
+    #[test]
+    fn text_around_tools_is_emitted_as_chronological_messages() {
+        let mut transport = WorkerSessionTransport::new(
+            std::path::Path::new("/locators"),
+            "codex-cli",
+            "thread-1".into(),
+            Box::new(IdleWorker),
+            MainSessionMetadata::default(),
+        )
+        .expect("transport");
+
+        transport.enqueue_worker_event(WorkerEvent::Started);
+        transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::TextDelta {
+            content_index: 0,
+            delta: "before".into(),
+        }));
+        transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::ToolStarted {
+            id: "tool-1".into(),
+            name: "command".into(),
+            args: json!({}),
+        }));
+        transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::TextDelta {
+            content_index: 0,
+            delta: "after".into(),
+        }));
+        transport.enqueue_worker_event(WorkerEvent::Settled {
+            output: "beforeafter".into(),
+        });
+
+        let activities = transport
+            .pending
+            .into_iter()
+            .filter_map(|event| match event {
+                SessionEvent::Activity(activity) => Some(activity),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            activities
+                .iter()
+                .map(|activity| activity["type"].as_str().unwrap_or_default())
+                .collect::<Vec<_>>(),
+            [
+                "agent_start",
+                "message_start",
+                "message_update",
+                "message_end",
+                "tool_execution_start",
+                "message_start",
+                "message_update",
+                "message_end",
+                "agent_settled",
+            ]
+        );
+        assert_eq!(activities[3]["message"]["content"][0]["text"], "before");
+        assert_eq!(activities[7]["message"]["content"][0]["text"], "after");
     }
 
     #[test]
