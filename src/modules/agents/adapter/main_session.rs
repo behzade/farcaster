@@ -531,6 +531,17 @@ pub(in crate::modules::agents::adapter) fn external_session_locator(
         .flatten()
 }
 
+pub(in crate::modules::agents::adapter) fn launch_session_locator(
+    launch: &crate::agents::SessionLaunch,
+) -> Option<String> {
+    match &launch.start {
+        crate::agents::SessionStart::New => launch.session_id.clone(),
+        crate::agents::SessionStart::Resume(path) | crate::agents::SessionStart::Fork(path) => {
+            external_session_locator(&launch.harness, path).or_else(|| launch.session_id.clone())
+        }
+    }
+}
+
 fn percent_decode(value: &str) -> Option<String> {
     let bytes = value.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
@@ -561,6 +572,27 @@ const fn hex(byte: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resume_locator_comes_from_the_external_session_path_when_the_runtime_has_no_id() {
+        let path = external_session_path(
+            std::path::Path::new("/locators"),
+            "opencode2",
+            "session/one",
+        );
+        let launch = crate::agents::SessionLaunch {
+            harness: "opencode2".into(),
+            session_id: None,
+            project: "/project".into(),
+            start: crate::agents::SessionStart::Resume(path),
+            wake: None,
+        };
+
+        assert_eq!(
+            launch_session_locator(&launch).as_deref(),
+            Some("session/one")
+        );
+    }
 
     #[test]
     fn completion_is_an_authoritative_message_before_settling() {

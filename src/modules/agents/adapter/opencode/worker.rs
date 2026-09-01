@@ -16,7 +16,7 @@ use crate::{
         WorkerInputResponse, WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory,
         WorkerUsage,
     },
-    modules::agents::adapter::{child_stderr, farcaster_mcp},
+    modules::agents::adapter::{child_stderr, farcaster_mcp, main_session},
 };
 
 #[derive(Clone)]
@@ -144,19 +144,16 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
             None,
             None,
         )?,
-        crate::agents::SessionStart::Resume(_) => client.get_session(
-            launch
-                .session_id
-                .as_deref()
-                .ok_or_else(|| "OpenCode resume requires a session id".to_owned())?,
-        )?,
-        crate::agents::SessionStart::Fork(_) => client.fork_session(
-            launch
-                .session_id
-                .as_deref()
-                .ok_or_else(|| "OpenCode fork requires a session id".to_owned())?,
-            None,
-        )?,
+        crate::agents::SessionStart::Resume(_) => {
+            let session_id = main_session::launch_session_locator(launch)
+                .ok_or_else(|| "OpenCode resume requires a session id".to_owned())?;
+            client.get_session(&session_id)?
+        }
+        crate::agents::SessionStart::Fork(_) => {
+            let session_id = main_session::launch_session_locator(launch)
+                .ok_or_else(|| "OpenCode fork requires a session id".to_owned())?;
+            client.fork_session(&session_id, None)?
+        }
     };
     let session_id = session.id;
     let incoming = start_event_reader(&server, &session_id, launch.wake.clone())?;

@@ -20,7 +20,7 @@ use crate::{
         WorkerInputResponse, WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory,
         WorkerUsage,
     },
-    modules::agents::adapter::{child_stderr, farcaster_mcp},
+    modules::agents::adapter::{child_stderr, farcaster_mcp, main_session},
 };
 
 const CODEX_CA_ENVIRONMENT: &str = "CODEX_CA_CERTIFICATE";
@@ -294,21 +294,16 @@ fn setup_main_connection(
     let cwd = launch.project.to_string_lossy();
     let thread = match &launch.start {
         crate::agents::SessionStart::New => connection.start_thread(&cwd, None, None)?,
-        crate::agents::SessionStart::Resume(_) => connection.resume_thread(
-            launch
-                .session_id
-                .as_deref()
-                .ok_or_else(|| "Codex resume requires a thread id".to_owned())?,
-        )?,
-        crate::agents::SessionStart::Fork(_) => connection.fork_thread(
-            launch
-                .session_id
-                .as_deref()
-                .ok_or_else(|| "Codex fork requires a thread id".to_owned())?,
-            &cwd,
-            None,
-            None,
-        )?,
+        crate::agents::SessionStart::Resume(_) => {
+            let thread_id = main_session::launch_session_locator(launch)
+                .ok_or_else(|| "Codex resume requires a thread id".to_owned())?;
+            connection.resume_thread(&thread_id)?
+        }
+        crate::agents::SessionStart::Fork(_) => {
+            let thread_id = main_session::launch_session_locator(launch)
+                .ok_or_else(|| "Codex fork requires a thread id".to_owned())?;
+            connection.fork_thread(&thread_id, &cwd, None, None)?
+        }
     };
     let (reader, writer, queued, next_id) = connection.into_parts();
     Ok(((reader, writer, queued, next_id, thread), metadata))
