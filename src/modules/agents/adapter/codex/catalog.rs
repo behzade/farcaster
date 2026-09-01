@@ -8,7 +8,7 @@ use std::{
 use serde_json::{Value, json};
 
 use super::{connection::CodexConnection, contract::CodexClientInfo};
-use crate::agents::{DiscoveredHistory, DiscoveredSession, DiscoveredUsage};
+use crate::agents::{CommonTool, DiscoveredHistory, DiscoveredSession, DiscoveredUsage};
 
 use super::super::{
     child_stderr,
@@ -109,9 +109,7 @@ pub(in crate::modules::agents::adapter) fn load_history(
                 .into_iter()
                 .flatten()
             {
-                if let Some(message) = history_message(item) {
-                    messages.push(message);
-                }
+                messages.extend(history_messages(item));
             }
         }
         let model = string(thread, &["model"]).map(|model| ("openai".to_owned(), model.to_owned()));
@@ -258,22 +256,150 @@ fn codex_usage(thread: &Value) -> DiscoveredUsage {
     }
 }
 
-fn history_message(item: &Value) -> Option<Value> {
-    match item.get("type").and_then(Value::as_str)? {
-        "userMessage" => Some(json!({
+fn history_messages(item: &Value) -> Vec<Value> {
+    match item.get("type").and_then(Value::as_str) {
+        Some("userMessage") => vec![json!({
             "role": "user",
             "content": text_content(item.get("content")),
-        })),
-        "agentMessage" => Some(json!({
+        })],
+        Some("agentMessage") => vec![json!({
             "role": "assistant",
             "content": [{"type": "text", "text": string(item, &["text"]).unwrap_or_default()}],
-        })),
-        "reasoning" => Some(json!({
+        })],
+        Some("reasoning") => vec![json!({
             "role": "assistant",
             "content": [{"type": "thinking", "thinking": reasoning_text(item)}],
-        })),
-        _ => None,
+        })],
+        Some(kind @ ("commandExecution" | "mcpToolCall" | "fileChange" | "webSearch")) => {
+            history_tool_messages(item, kind)
+        }
+        _ => Vec::new(),
     }
+}
+
+fn history_tool_messages(item: &Value, kind: &str) -> Vec<Value> {
+    let Some(id) = item.get("id").and_then(Value::as_str) else {
+        return Vec::new();
+    };
+    let (name, arguments) = history_tool_call(item, kind);
+    let is_error = item
+        .get("status")
+        .and_then(Value::as_str)
+        .is_some_and(|status| matches!(status, "failed" | "declined"));
+    vec![
+        json!({
+            "role": "assistant",
+            "content": [{
+                "type": "toolCall",
+                "id": id,
+                "name": name,
+                "arguments": arguments,
+            }],
+        }),
+        json!({
+            "role": "toolResult",
+            "toolCallId": id,
+            "toolName": name,
+            "content": history_tool_output(item, kind, is_error),
+            "isError": is_error,
+        }),
+    ]
+}
+
+fn history_tool_call(item: &Value, kind: &str) -> (String, Value) {
+    match kind {
+        "fileChange" => {
+            let changes = item.get("changes").cloned().unwrap_or_else(|| json!([]));
+            let path = changes
+                .as_array()
+                .and_then(|changes| changes.first())
+                .and_then(|change| change.get("path"))
+                .cloned()
+                .unwrap_or(Value::String(String::new()));
+            (
+                CommonTool::Edit.name().into(),
+                json!({"path": path, "changes": changes}),
+            )
+        }
+        "commandExecution" => {
+            let read = item
+                .get("commandActions")
+                .and_then(Value::as_array)
+                .filter(|actions| actions.len() == 1)
+                .and_then(|actions| actions.first())
+                .filter(|action| action.get("type").and_then(Value::as_str) == Some("read"));
+            if let Some(action) = read {
+                (
+                    CommonTool::Read.name().into(),
+                    json!({"path": action.get("path").cloned().unwrap_or(Value::Null)}),
+                )
+            } else {
+                (
+                    CommonTool::Bash.name().into(),
+                    json!({"command": item.get("command").cloned().unwrap_or(Value::Null)}),
+                )
+            }
+        }
+        "webSearch" => (
+            "web_search".into(),
+            json!({"query": history_web_search_query(item)}),
+        ),
+        _ => {
+            let name = item
+                .get("tool")
+                .and_then(Value::as_str)
+                .or_else(|| item.get("name").and_then(Value::as_str))
+                .or_else(|| item.get("server").and_then(Value::as_str))
+                .unwrap_or(kind);
+            let arguments = item.get("arguments").cloned().unwrap_or_else(|| json!({}));
+            (name.to_owned(), arguments)
+        }
+    }
+}
+
+fn history_tool_output(item: &Value, kind: &str, is_error: bool) -> Vec<Value> {
+    if kind == "mcpToolCall" {
+        if is_error {
+            return item
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .map(|text| vec![json!({"type": "text", "text": text})])
+                .unwrap_or_default();
+        }
+        return item
+            .pointer("/result/content")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+    }
+    let output = item
+        .get("aggregatedOutput")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            (kind == "webSearch")
+                .then(|| history_web_search_query(item))
+                .flatten()
+        })
+        .unwrap_or_else(|| {
+            if kind == "fileChange" && !is_error {
+                "Applied patch"
+            } else {
+                ""
+            }
+        });
+    vec![json!({"type": "text", "text": output})]
+}
+
+fn history_web_search_query(item: &Value) -> Option<&str> {
+    item.get("query")
+        .and_then(Value::as_str)
+        .filter(|query| !query.is_empty())
+        .or_else(|| {
+            let action = item.get("action")?;
+            ["query", "url", "pattern"]
+                .into_iter()
+                .find_map(|field| action.get(field).and_then(Value::as_str))
+        })
 }
 
 fn text_content(content: Option<&Value>) -> Vec<Value> {
@@ -374,17 +500,103 @@ mod tests {
     #[test]
     fn translates_thread_messages() {
         assert_eq!(
-            history_message(&json!({
+            history_messages(&json!({
                 "type": "userMessage",
                 "content": [{"type": "text", "text": "hello"}],
-            }))
-            .expect("user message")["role"],
+            }))[0]["role"],
             "user"
         );
         assert_eq!(
-            history_message(&json!({"type": "agentMessage", "text": "done"}))
-                .expect("agent message")["role"],
+            history_messages(&json!({"type": "agentMessage", "text": "done"}))[0]["role"],
             "assistant"
+        );
+    }
+
+    #[test]
+    fn translates_historical_command_calls_and_output() {
+        let messages = history_messages(&json!({
+            "type": "commandExecution",
+            "id": "command-1",
+            "command": "cargo test",
+            "commandActions": [],
+            "status": "completed",
+            "aggregatedOutput": "ok",
+        }));
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(
+            messages[0].pointer("/content/0/type"),
+            Some(&json!("toolCall"))
+        );
+        assert_eq!(messages[0].pointer("/content/0/name"), Some(&json!("bash")));
+        assert_eq!(
+            messages[0].pointer("/content/0/arguments/command"),
+            Some(&json!("cargo test"))
+        );
+        assert_eq!(messages[1]["role"], "toolResult");
+        assert_eq!(messages[1].pointer("/content/0/text"), Some(&json!("ok")));
+        assert_eq!(messages[1]["isError"], false);
+    }
+
+    #[test]
+    fn translates_historical_mcp_failures() {
+        let messages = history_messages(&json!({
+            "type": "mcpToolCall",
+            "id": "mcp-1",
+            "server": "github",
+            "tool": "get_pull_request",
+            "arguments": {"number": 42},
+            "status": "failed",
+            "result": null,
+            "error": {"message": "not found"},
+        }));
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(
+            messages[0].pointer("/content/0/name"),
+            Some(&json!("get_pull_request"))
+        );
+        assert_eq!(
+            messages[0].pointer("/content/0/arguments/number"),
+            Some(&json!(42))
+        );
+        assert_eq!(
+            messages[1].pointer("/content/0/text"),
+            Some(&json!("not found"))
+        );
+        assert_eq!(messages[1]["isError"], true);
+    }
+
+    #[test]
+    fn translates_historical_file_changes_and_web_searches() {
+        let file = history_messages(&json!({
+            "type": "fileChange",
+            "id": "change-1",
+            "changes": [{"path": "src/main.rs", "diff": "+fn main() {}"}],
+            "status": "completed",
+        }));
+        assert_eq!(file[0].pointer("/content/0/name"), Some(&json!("edit")));
+        assert_eq!(
+            file[0].pointer("/content/0/arguments/path"),
+            Some(&json!("src/main.rs"))
+        );
+        assert_eq!(
+            file[1].pointer("/content/0/text"),
+            Some(&json!("Applied patch"))
+        );
+
+        let search = history_messages(&json!({
+            "type": "webSearch",
+            "id": "search-1",
+            "query": "Codex app-server",
+        }));
+        assert_eq!(
+            search[0].pointer("/content/0/name"),
+            Some(&json!("web_search"))
+        );
+        assert_eq!(
+            search[0].pointer("/content/0/arguments/query"),
+            Some(&json!("Codex app-server"))
         );
     }
 }
