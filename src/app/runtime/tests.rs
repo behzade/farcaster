@@ -978,6 +978,45 @@ fn reload_restarts_the_idle_session_process() -> Result<(), Box<dyn std::error::
 }
 
 #[test]
+fn initial_prompt_is_not_duplicated_when_starting_its_process()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let script = temp.path().join("fake-pi.sh");
+    fs::write(&script, include_str!("../../../tests/fixtures/fake-pi.sh"))?;
+    let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
+    owner.process_command = AgentLaunchConfig::test_script(&script, vec!["quiet".into()]);
+    owner.state = Some(StateStore::open_at(&temp.path().join("gui-state.sqlite3"))?);
+
+    owner.send_prompt(
+        "draft:a".into(),
+        PromptMode::Normal,
+        "hello".into(),
+        Vec::new(),
+        false,
+    );
+
+    assert!(owner.deferred_prompt.is_some());
+    assert_eq!(owner.snapshot.conversation.items.len(), 1);
+    owner.active_session = Some(temp.path().join("session.jsonl"));
+    owner.startup_state_loaded = true;
+    owner.startup_history_loaded = true;
+    owner.maybe_send_deferred_prompt();
+
+    let user_messages = owner
+        .snapshot
+        .conversation
+        .items
+        .iter()
+        .filter(|item| item.kind == TranscriptKind::User && item.text == "hello")
+        .count();
+    assert_eq!(user_messages, 1);
+    if let Some(mut process) = owner.process.take() {
+        process.close()?;
+    }
+    Ok(())
+}
+
+#[test]
 fn deferred_prompt_is_rejected_when_startup_state_has_no_session_path()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;

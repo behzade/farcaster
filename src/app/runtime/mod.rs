@@ -545,6 +545,9 @@ impl RuntimeOwner {
         let keep_preview = preserve_transcript && self.snapshot.history_preview;
         let preserved_conversation =
             (preserve_transcript && !keep_preview).then(|| self.snapshot.conversation.clone());
+        let preserved_prompt_item = preserved_conversation
+            .as_ref()
+            .and(self.pending_prompt_item.clone());
         self.reset_process_runtime();
         self.active_session = session.clone();
         self.process_command.permission_level = self
@@ -574,6 +577,7 @@ impl RuntimeOwner {
             );
             if let Some(conversation) = preserved_conversation {
                 self.snapshot.conversation = conversation;
+                self.pending_prompt_item = preserved_prompt_item;
             }
         }
         let _ = self.event_tx.send(RuntimeEvent::SessionReset {
