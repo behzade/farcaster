@@ -1,4 +1,5 @@
 use super::*;
+use crate::sessions::activity::ActivityBuilder;
 
 #[cfg(test)]
 use crate::sessions::RUNNING_ACTIVITY_TIMEOUT;
@@ -96,7 +97,7 @@ impl RuntimeOwner {
         let event = match result.result {
             Ok(discovery) => {
                 let discovered = discovery.sessions;
-                let activities = discovery.activities;
+                let mut activities = discovery.activities;
                 let (sessions, all_sessions) = if let Some(state) = self.state.as_mut() {
                     match crate::sessions::index_sessions(state, &discovered, discovery.exhaustive)
                         .and_then(|()| crate::sessions::cached_sessions(state, ""))
@@ -127,6 +128,7 @@ impl RuntimeOwner {
                     );
                     (sessions, discovered)
                 };
+                add_limited_activity_fallbacks(&mut activities, &all_sessions);
                 RuntimeEvent::Sessions {
                     generation: result.generation,
                     sessions,
@@ -161,6 +163,27 @@ impl RuntimeOwner {
         }
         self.session_refresh_due = None;
         self.refresh_sessions();
+    }
+}
+
+fn add_limited_activity_fallbacks(
+    activities: &mut HashMap<String, AgentActivity>,
+    sessions: &[SessionSummary],
+) {
+    for session in sessions {
+        activities.entry(session.id.clone()).or_insert_with(|| {
+            ActivityBuilder::default().finish(
+                session.id.clone(),
+                session.path.clone(),
+                &session.title,
+                &session.first_user_message,
+                session.usage,
+                session.modified,
+                session.modified,
+                session.is_running,
+                true,
+            )
+        });
     }
 }
 
@@ -251,5 +274,50 @@ mod tests {
 
         assert!(!activity.take_expired(now + RUNNING_ACTIVITY_TIMEOUT - Duration::from_secs(6)));
         assert!(activity.take_expired(now + RUNNING_ACTIVITY_TIMEOUT - Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn cached_sessions_get_truthful_limited_activity_fallbacks() {
+        let session = summary(
+            Path::new("/sessions/external.jsonl"),
+            SystemTime::now(),
+            false,
+        );
+        let mut activities = HashMap::new();
+
+        add_limited_activity_fallbacks(&mut activities, &[session]);
+
+        let activity = activities.get("external").expect("fallback activity");
+        assert!(activity.limited);
+        assert_eq!(
+            activity.lifecycle,
+            crate::agent_activity::AgentLifecycle::Unknown
+        );
+        assert_eq!(activity.role, "External");
+    }
+
+    #[test]
+    fn parsed_activity_wins_over_a_limited_fallback() {
+        let session = summary(
+            Path::new("/sessions/external.jsonl"),
+            SystemTime::now(),
+            true,
+        );
+        let parsed = ActivityBuilder::default().finish(
+            session.id.clone(),
+            session.path.clone(),
+            &session.title,
+            "Working now",
+            session.usage,
+            session.modified,
+            session.modified,
+            true,
+            false,
+        );
+        let mut activities = HashMap::from([(session.id.clone(), parsed.clone())]);
+
+        add_limited_activity_fallbacks(&mut activities, &[session]);
+
+        assert_eq!(activities.get("external"), Some(&parsed));
     }
 }
