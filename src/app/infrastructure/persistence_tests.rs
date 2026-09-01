@@ -53,6 +53,7 @@ fn configuration_catalogs_survive_reopen() -> Result<(), Box<dyn std::error::Err
                 provider: "provider".into(),
                 context_window: 200_000,
                 reasoning: true,
+                efforts: Some(vec!["low".into(), "high".into()]),
             }],
             efforts: vec!["high".into()],
         },

@@ -29,6 +29,28 @@ impl RuntimeSnapshot {
             effort,
         }
     }
+
+    pub(crate) fn available_thinking_levels(&self) -> &[String] {
+        let Some(selected) = self
+            .session_identity()
+            .model
+            .or_else(|| self.models.first())
+        else {
+            return &self.thinking_levels;
+        };
+        let model = self
+            .models
+            .iter()
+            .find(|model| model.id == selected.id && model.provider == selected.provider)
+            .unwrap_or(selected);
+        if !model.reasoning {
+            return &[];
+        }
+        match model.efforts.as_deref() {
+            Some(efforts) => efforts,
+            None => &self.thinking_levels,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -116,7 +138,81 @@ impl SessionControlDefaults {
                     provider: provider.clone(),
                     context_window: 0,
                     reasoning: false,
+                    efforts: None,
                 })
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn model(id: &str, reasoning: bool, efforts: Option<&[&str]>) -> Model {
+        Model {
+            id: id.into(),
+            name: id.into(),
+            provider: "provider".into(),
+            context_window: 0,
+            reasoning,
+            efforts: efforts.map(|efforts| efforts.iter().map(|effort| (*effort).into()).collect()),
+        }
+    }
+
+    #[test]
+    fn available_thinking_levels_follow_the_selected_model() {
+        let selected = model("selected", true, Some(&["low", "medium"]));
+        let snapshot = RuntimeSnapshot {
+            prefill_model: Some(selected.clone()),
+            models: vec![selected, model("other", true, Some(&["high", "xhigh"]))],
+            thinking_levels: vec!["low".into(), "medium".into(), "high".into(), "xhigh".into()],
+            ..RuntimeSnapshot::default()
+        };
+
+        assert_eq!(snapshot.available_thinking_levels(), ["low", "medium"]);
+    }
+
+    #[test]
+    fn available_thinking_levels_use_the_first_model_for_a_new_draft() {
+        let snapshot = RuntimeSnapshot {
+            models: vec![model("default", true, Some(&["minimal", "low"]))],
+            thinking_levels: vec!["minimal".into(), "low".into(), "high".into()],
+            ..RuntimeSnapshot::default()
+        };
+
+        assert_eq!(snapshot.available_thinking_levels(), ["minimal", "low"]);
+    }
+
+    #[test]
+    fn available_thinking_levels_keep_legacy_global_catalogs() {
+        let snapshot = RuntimeSnapshot {
+            prefill_model: Some(model("legacy", true, None)),
+            thinking_levels: vec!["off".into(), "high".into()],
+            ..RuntimeSnapshot::default()
+        };
+
+        assert_eq!(snapshot.available_thinking_levels(), ["off", "high"]);
+    }
+
+    #[test]
+    fn known_empty_model_efforts_do_not_fall_back_to_other_models() {
+        let snapshot = RuntimeSnapshot {
+            prefill_model: Some(model("fixed", true, Some(&[]))),
+            thinking_levels: vec!["low".into(), "high".into()],
+            ..RuntimeSnapshot::default()
+        };
+
+        assert!(snapshot.available_thinking_levels().is_empty());
+    }
+
+    #[test]
+    fn non_reasoning_models_have_no_effort_choices() {
+        let snapshot = RuntimeSnapshot {
+            prefill_model: Some(model("plain", false, None)),
+            thinking_levels: vec!["off".into(), "high".into()],
+            ..RuntimeSnapshot::default()
+        };
+
+        assert!(snapshot.available_thinking_levels().is_empty());
     }
 }

@@ -291,23 +291,27 @@ pub(in crate::app::views) fn render_runtime_picker(
                         .items_center()
                         .gap(px(6.0))
                         .child(picker_label("Effort"))
-                        .children(app.snapshot.thinking_levels.iter().enumerate().map(
-                            |(index, effort)| {
-                                let target = effort.clone();
-                                let selected = effort == selected_effort;
-                                let entity = entity.clone();
-                                runtime_option(
-                                    ("runtime-effort", index),
-                                    effort_label(effort),
-                                    selected,
-                                    move |cx| {
-                                        let _ = entity.update(cx, |this, cx| {
-                                            this.set_thinking_level(target.clone(), cx);
-                                        });
-                                    },
-                                )
-                            },
-                        )),
+                        .children(
+                            app.snapshot
+                                .available_thinking_levels()
+                                .iter()
+                                .enumerate()
+                                .map(|(index, effort)| {
+                                    let target = effort.clone();
+                                    let selected = effort == selected_effort;
+                                    let entity = entity.clone();
+                                    runtime_option(
+                                        ("runtime-effort", index),
+                                        effort_label(effort),
+                                        selected,
+                                        move |cx| {
+                                            let _ = entity.update(cx, |this, cx| {
+                                                this.set_thinking_level(target.clone(), cx);
+                                            });
+                                        },
+                                    )
+                                }),
+                        ),
                 )
                 .when(!app.snapshot.modes.is_empty(), |picker| {
                     picker.child(

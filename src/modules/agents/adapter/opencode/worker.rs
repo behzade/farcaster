@@ -235,17 +235,9 @@ fn load_main_metadata(
                 .get("providerID")
                 .and_then(Value::as_str)
                 .unwrap_or("opencode");
-            for effort in model
-                .get("variants")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(|variant| {
-                    variant
-                        .as_str()
-                        .or_else(|| variant.get("id")?.as_str())
-                })
-            {
+            let model_efforts = model_variant_efforts(model);
+            let efforts_known = model.get("variants").is_some();
+            for effort in &model_efforts {
                 if !efforts.iter().any(|known| known == effort) {
                     efforts.push(effort.to_owned());
                 }
@@ -256,6 +248,7 @@ fn load_main_metadata(
                 "provider": provider,
                 "contextWindow": model.pointer("/limit/context").and_then(Value::as_u64).unwrap_or(0),
                 "reasoning": true,
+                "efforts": efforts_known.then_some(model_efforts),
             }))
         })
         .collect();
@@ -307,6 +300,17 @@ fn load_main_metadata(
             modes,
         },
     )
+}
+
+fn model_variant_efforts(model: &Value) -> Vec<String> {
+    model
+        .get("variants")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|variant| variant.as_str().or_else(|| variant.get("id")?.as_str()))
+        .map(str::to_owned)
+        .collect()
 }
 
 enum PendingOpenCodeInput {
@@ -939,6 +943,16 @@ fn worker_password() -> Result<String, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn opencode_model_efforts_accept_current_and_legacy_shapes() {
+        assert_eq!(
+            model_variant_efforts(&json!({
+                "variants": ["low", {"id": "high"}]
+            })),
+            ["low", "high"]
+        );
+    }
 
     #[test]
     fn common_tools_use_shared_names_and_arguments() {

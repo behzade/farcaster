@@ -368,18 +368,10 @@ fn load_main_metadata(
         .flatten()
         .filter_map(|model| {
             let id = model.get("id")?.as_str()?;
-            for effort in model
-                .get("supportedReasoningEfforts")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-            {
-                let effort = effort
-                    .as_str()
-                    .or_else(|| effort.get("reasoningEffort")?.as_str());
-                if let Some(effort) = effort
-                    && !efforts.iter().any(|known| known == effort)
-                {
+            let model_efforts = supported_model_efforts(model);
+            let efforts_known = model.get("supportedReasoningEfforts").is_some();
+            for effort in &model_efforts {
+                if !efforts.iter().any(|known| known == effort) {
                     efforts.push(effort.to_owned());
                 }
             }
@@ -398,6 +390,7 @@ fn load_main_metadata(
                     .and_then(Value::as_u64)
                     .unwrap_or(0),
                 "reasoning": model.get("supportedReasoningEfforts").is_some(),
+                "efforts": efforts_known.then_some(model_efforts),
             }))
         })
         .collect();
@@ -443,6 +436,21 @@ fn load_main_metadata(
             modes,
         },
     )
+}
+
+fn supported_model_efforts(model: &Value) -> Vec<String> {
+    model
+        .get("supportedReasoningEfforts")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|effort| {
+            effort
+                .as_str()
+                .or_else(|| effort.get("reasoningEffort")?.as_str())
+        })
+        .map(str::to_owned)
+        .collect()
 }
 
 #[derive(Clone, Copy)]
@@ -1061,6 +1069,19 @@ fn approval_prompt(method: &str, params: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_model_efforts_accept_current_and_legacy_shapes() {
+        assert_eq!(
+            supported_model_efforts(&json!({
+                "supportedReasoningEfforts": [
+                    {"reasoningEffort": "low"},
+                    "high"
+                ]
+            })),
+            ["low", "high"]
+        );
+    }
 
     #[test]
     fn extracts_completed_agent_message_text() {

@@ -49,6 +49,8 @@ pub(crate) struct Model {
     pub context_window: u64,
     #[serde(default)]
     pub reasoning: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub efforts: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -213,6 +215,28 @@ pub(crate) enum ExtensionUiResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_efforts_distinguish_unknown_from_known_empty() {
+        let legacy = serde_json::from_value::<Model>(json!({
+            "id": "legacy",
+            "name": "Legacy",
+            "provider": "provider",
+            "reasoning": true
+        }))
+        .expect("legacy model");
+        let known = serde_json::from_value::<Model>(json!({
+            "id": "known",
+            "name": "Known",
+            "provider": "provider",
+            "reasoning": true,
+            "efforts": []
+        }))
+        .expect("known model");
+
+        assert_eq!(legacy.efforts, None);
+        assert_eq!(known.efforts, Some(Vec::new()));
+    }
 
     #[test]
     fn gpui_notification_transport_separates_title_and_body() {
