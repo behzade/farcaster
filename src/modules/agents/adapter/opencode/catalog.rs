@@ -6,7 +6,7 @@ use std::{
 
 use serde_json::{Value, json};
 
-use super::server::OpenCodeServerProcess;
+use super::{contract::OpenCodeModelSelection, server::OpenCodeServerProcess};
 use crate::agents::{DiscoveredHistory, DiscoveredSession, DiscoveredUsage};
 
 use super::super::{
@@ -48,20 +48,35 @@ pub(in crate::modules::agents::adapter) fn load_history(
     let locator = external_session_locator("opencode2", path)
         .ok_or_else(|| format!("invalid OpenCode session locator: {}", path.display()))?;
     with_server(|server| {
-        let messages = server.client().session_messages(&locator)?;
-        let messages = messages
+        let response = server.client().session_messages(&locator)?;
+        let rows = response
             .as_array()
-            .or_else(|| messages.get("data").and_then(Value::as_array))
-            .into_iter()
-            .flatten()
-            .flat_map(history_messages)
-            .collect();
-        let _session = server.client().get_session(&locator)?;
+            .or_else(|| response.get("data").and_then(Value::as_array))
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let session = server.client().get_session(&locator)?;
+        let identity = latest_identity(rows, session.model.as_ref());
+        let messages = rows.iter().flat_map(history_messages).collect();
+        let (model, thinking_level) = identity.map_or((None, None), |identity| {
+            (Some((identity.provider_id, identity.id)), identity.variant)
+        });
         Ok(DiscoveredHistory {
             messages,
-            model: None,
-            thinking_level: None,
+            model,
+            thinking_level,
         })
+    })
+}
+
+fn latest_identity(
+    messages: &[Value],
+    session: Option<&OpenCodeModelSelection>,
+) -> Option<OpenCodeModelSelection> {
+    session.cloned().or_else(|| {
+        messages
+            .iter()
+            .filter_map(|message| serde_json::from_value(message.get("model")?.clone()).ok())
+            .last()
     })
 }
 
@@ -319,6 +334,31 @@ fn millis(value: Option<u64>) -> SystemTime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restores_the_latest_opencode_session_identity() {
+        let messages = vec![
+            json!({
+                "type": "assistant",
+                "model": {"id": "old", "providerID": "provider"}
+            }),
+            json!({
+                "type": "model-switched",
+                "model": {"id": "latest", "providerID": "provider", "variant": "high"}
+            }),
+        ];
+
+        let historical = latest_identity(&messages, None).expect("message identity");
+        assert_eq!(historical.id, "latest");
+        assert_eq!(historical.variant.as_deref(), Some("high"));
+
+        let saved = OpenCodeModelSelection {
+            id: "saved".into(),
+            provider_id: "provider".into(),
+            variant: Some("max".into()),
+        };
+        assert_eq!(latest_identity(&messages, Some(&saved)), Some(saved));
+    }
 
     #[test]
     fn translates_session_metadata() -> Result<(), String> {

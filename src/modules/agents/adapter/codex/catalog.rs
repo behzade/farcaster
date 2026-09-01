@@ -5,6 +5,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use serde_json::{Value, json};
 
 use super::{connection::CodexConnection, contract::CodexClientInfo};
@@ -28,7 +29,7 @@ pub(in crate::modules::agents::adapter) fn discover(
     locator_root: &Path,
     query: &str,
 ) -> Result<Vec<DiscoveredSession>, String> {
-    with_connection(|connection| {
+    with_connection(|connection, _| {
         let mut sessions = Vec::new();
         for archived in [false, true] {
             for source_kinds in [INTERACTIVE_SOURCE_KINDS, AGENT_SOURCE_KINDS] {
@@ -68,7 +69,7 @@ pub(in crate::modules::agents::adapter) fn rename_session(
     session_id: &str,
     name: &str,
 ) -> Result<(), String> {
-    with_connection(|connection| {
+    with_connection(|connection, _| {
         let id = connection.send_request(
             "thread/name/set",
             json!({"threadId": session_id, "name": name}),
@@ -78,7 +79,7 @@ pub(in crate::modules::agents::adapter) fn rename_session(
 }
 
 pub(in crate::modules::agents::adapter) fn delete_session(session_id: &str) -> Result<(), String> {
-    with_connection(|connection| {
+    with_connection(|connection, _| {
         let id = connection.send_request("thread/delete", json!({"threadId": session_id}))?;
         connection.wait_response::<Value>(&id).map(|_| ())
     })
@@ -89,7 +90,7 @@ pub(in crate::modules::agents::adapter) fn load_history(
 ) -> Result<DiscoveredHistory, String> {
     let locator = external_session_locator("codex-cli", path)
         .ok_or_else(|| format!("invalid Codex session locator: {}", path.display()))?;
-    with_connection(|connection| {
+    with_connection(|connection, codex_home| {
         let id = connection.send_request(
             "thread/read",
             json!({"threadId": locator, "includeTurns": true}),
@@ -112,8 +113,13 @@ pub(in crate::modules::agents::adapter) fn load_history(
                 messages.extend(history_messages(item));
             }
         }
-        let model = string(thread, &["model"]).map(|model| ("openai".to_owned(), model.to_owned()));
-        let thinking_level = string(thread, &["effort", "reasoningEffort"]).map(str::to_owned);
+        let identity = match thread_identity(thread) {
+            Some(identity) => Some(identity),
+            None => stored_identity(codex_home, &locator)?,
+        };
+        let (model, thinking_level) = identity.map_or((None, None), |identity| {
+            (Some((identity.provider, identity.model)), identity.effort)
+        });
         Ok(DiscoveredHistory {
             messages,
             model,
@@ -125,6 +131,7 @@ pub(in crate::modules::agents::adapter) fn load_history(
 fn with_connection<T>(
     operation: impl FnOnce(
         &mut CodexConnection<BufReader<ChildStdout>, ChildStdin>,
+        &Path,
     ) -> Result<T, String>,
 ) -> Result<T, String> {
     let program = std::env::var_os("FARCASTER_CODEX_PATH")
@@ -139,7 +146,8 @@ fn with_connection<T>(
         .spawn()
         .map_err(|error| format!("start Codex catalog app-server: {error}"))?;
     child_stderr::capture(&mut child, "codex-catalog")?;
-    let result = connect(&mut child).and_then(|mut connection| operation(&mut connection));
+    let result = connect(&mut child)
+        .and_then(|(mut connection, codex_home)| operation(&mut connection, &codex_home));
     let _ = child.kill();
     let _ = child.wait();
     result
@@ -147,7 +155,7 @@ fn with_connection<T>(
 
 fn connect(
     child: &mut Child,
-) -> Result<CodexConnection<BufReader<ChildStdout>, ChildStdin>, String> {
+) -> Result<(CodexConnection<BufReader<ChildStdout>, ChildStdin>, PathBuf), String> {
     let stdin = child
         .stdin
         .take()
@@ -157,12 +165,59 @@ fn connect(
         .take()
         .ok_or_else(|| "Codex catalog stdout must be piped".to_owned())?;
     let mut connection = CodexConnection::new(BufReader::new(stdout), stdin);
-    connection.initialize(CodexClientInfo {
+    let initialized = connection.initialize(CodexClientInfo {
         name: "farcaster-catalog".into(),
         title: Some("Farcaster".into()),
         version: env!("CARGO_PKG_VERSION").into(),
     })?;
-    Ok(connection)
+    Ok((connection, PathBuf::from(initialized.codex_home)))
+}
+
+struct StoredIdentity {
+    provider: String,
+    model: String,
+    effort: Option<String>,
+}
+
+fn thread_identity(thread: &Value) -> Option<StoredIdentity> {
+    Some(StoredIdentity {
+        provider: string(thread, &["modelProvider", "model_provider"])
+            .unwrap_or("openai")
+            .to_owned(),
+        model: string(thread, &["model"])?.to_owned(),
+        effort: string(thread, &["effort", "reasoningEffort", "reasoning_effort"])
+            .map(str::to_owned),
+    })
+}
+
+fn stored_identity(codex_home: &Path, thread_id: &str) -> Result<Option<StoredIdentity>, String> {
+    let database = codex_home.join("state_5.sqlite");
+    if !database.is_file() {
+        return Ok(None);
+    }
+    let connection = Connection::open_with_flags(
+        &database,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|error| format!("open Codex state database {}: {error}", database.display()))?;
+    connection
+        .query_row(
+            "SELECT model_provider, model, reasoning_effort FROM threads WHERE id = ?1",
+            params![thread_id],
+            |row| {
+                let provider = row.get(0)?;
+                let model = row.get::<_, Option<String>>(1)?;
+                let effort = row.get(2)?;
+                Ok(model.map(|model| StoredIdentity {
+                    provider,
+                    model,
+                    effort,
+                }))
+            },
+        )
+        .optional()
+        .map(|identity| identity.flatten())
+        .map_err(|error| format!("read Codex session identity for {thread_id}: {error}"))
 }
 
 fn summary(
@@ -454,6 +509,33 @@ fn timestamp(value: &Value, keys: &[&str]) -> SystemTime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn loads_the_saved_codex_session_identity() -> Result<(), Box<dyn std::error::Error>> {
+        let home = tempdir()?;
+        let connection = Connection::open(home.path().join("state_5.sqlite"))?;
+        connection.execute_batch(
+            "CREATE TABLE threads (
+                id TEXT PRIMARY KEY,
+                model_provider TEXT NOT NULL,
+                model TEXT,
+                reasoning_effort TEXT
+            );",
+        )?;
+        connection.execute(
+            "INSERT INTO threads (id, model_provider, model, reasoning_effort)
+             VALUES (?1, ?2, ?3, ?4)",
+            params!["thread-1", "openai", "gpt-5.6-luna", "high"],
+        )?;
+
+        let identity = stored_identity(home.path(), "thread-1")?.ok_or("identity")?;
+
+        assert_eq!(identity.provider, "openai");
+        assert_eq!(identity.model, "gpt-5.6-luna");
+        assert_eq!(identity.effort.as_deref(), Some("high"));
+        Ok(())
+    }
 
     #[test]
     fn translates_thread_metadata() -> Result<(), String> {
