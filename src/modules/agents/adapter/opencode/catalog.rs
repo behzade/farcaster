@@ -54,7 +54,7 @@ pub(in crate::modules::agents::adapter) fn load_history(
             .or_else(|| messages.get("data").and_then(Value::as_array))
             .into_iter()
             .flatten()
-            .filter_map(history_message)
+            .flat_map(history_messages)
             .collect();
         let _session = server.client().get_session(&locator)?;
         Ok(DiscoveredHistory {
@@ -155,33 +155,123 @@ fn summary(locator_root: &Path, value: &Value) -> Option<Result<DiscoveredSessio
     }))
 }
 
-fn history_message(value: &Value) -> Option<Value> {
+fn history_messages(value: &Value) -> Vec<Value> {
     let role = value.get("role").and_then(Value::as_str).or_else(|| {
         match value.get("type").and_then(Value::as_str)? {
             "user" => Some("user"),
             "assistant" => Some("assistant"),
             _ => None,
         }
-    })?;
-    let content = if let Some(content) = value.get("content").and_then(Value::as_array) {
-        content.clone()
-    } else if let Some(text) = value.get("text").and_then(Value::as_str) {
-        vec![json!({"type": "text", "text": text})]
-    } else {
-        Vec::new()
-    };
-    let mut message = json!({"role": role, "content": content});
-    if role == "assistant" {
-        let usage = opencode_usage(value);
-        message["usage"] = json!({
+    });
+    match role {
+        Some("user") => vec![json!({
+            "role": "user",
+            "content": value
+                .get("text")
+                .and_then(Value::as_str)
+                .map(|text| vec![json!({"type": "text", "text": text})])
+                .or_else(|| value.get("content").and_then(Value::as_array).cloned())
+                .unwrap_or_default(),
+        })],
+        Some("assistant") => assistant_history_messages(value),
+        Some(_) if value.get("role").is_some() => vec![value.clone()],
+        _ => Vec::new(),
+    }
+}
+
+fn assistant_history_messages(value: &Value) -> Vec<Value> {
+    let mut content = Vec::new();
+    let mut results = Vec::new();
+    for block in value
+        .get("content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        match block.get("type").and_then(Value::as_str) {
+            Some("text" | "thinking" | "toolCall") => content.push(block.clone()),
+            Some("reasoning") => content.push(json!({
+                "type": "thinking",
+                "thinking": block.get("text").and_then(Value::as_str).unwrap_or_default(),
+            })),
+            Some("tool") => {
+                let Some(id) = block.get("id").and_then(Value::as_str) else {
+                    continue;
+                };
+                let state = block.get("state").unwrap_or(&Value::Null);
+                let reported_name = block.get("name").and_then(Value::as_str).unwrap_or("tool");
+                let (name, arguments) = super::tool::normalize_opencode_tool(
+                    reported_name,
+                    state.get("input").unwrap_or(&Value::Null),
+                );
+                let is_error = opencode_tool_failed(state);
+                content.push(json!({
+                    "type": "toolCall",
+                    "id": id,
+                    "name": name,
+                    "arguments": arguments,
+                }));
+                results.push(json!({
+                    "role": "toolResult",
+                    "toolCallId": id,
+                    "toolName": name,
+                    "content": opencode_tool_result_content(state, is_error),
+                    "isError": is_error,
+                }));
+            }
+            _ => {}
+        }
+    }
+    if content.is_empty()
+        && let Some(text) = value.get("text").and_then(Value::as_str)
+    {
+        content.push(json!({"type": "text", "text": text}));
+    }
+    let usage = opencode_usage(value);
+    let mut messages = vec![json!({
+        "role": "assistant",
+        "content": content,
+        "usage": {
             "input": usage.input,
             "output": usage.output,
             "cacheRead": usage.cache_read,
             "cacheWrite": usage.cache_write,
             "totalTokens": usage.total,
-        });
+        },
+    })];
+    messages.append(&mut results);
+    messages
+}
+
+fn opencode_tool_failed(state: &Value) -> bool {
+    state
+        .get("status")
+        .and_then(Value::as_str)
+        .is_some_and(|status| matches!(status, "error" | "failed"))
+}
+
+fn opencode_tool_result_content(state: &Value, is_error: bool) -> Vec<Value> {
+    if is_error {
+        return state
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .or_else(|| state.get("error").and_then(Value::as_str))
+            .map(|text| vec![json!({"type": "text", "text": text})])
+            .unwrap_or_default();
     }
-    Some(message)
+    if let Some(content) = state.get("content").and_then(Value::as_array) {
+        return content.clone();
+    }
+    state
+        .get("output")
+        .map(|output| {
+            let text = output
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| output.to_string());
+            vec![json!({"type": "text", "text": text})]
+        })
+        .unwrap_or_default()
 }
 
 fn opencode_usage(value: &Value) -> DiscoveredUsage {
@@ -249,5 +339,79 @@ mod tests {
         assert_eq!(session.usage.output, 25);
         assert_eq!(session.usage.cache_read, 80);
         Ok(())
+    }
+
+    #[test]
+    fn translates_ordered_reasoning_tool_results_and_text() {
+        let messages = history_messages(&json!({
+            "type": "assistant",
+            "content": [
+                {"type": "reasoning", "text": "Inspect the file"},
+                {
+                    "type": "tool",
+                    "id": "tool-1",
+                    "name": "read_file",
+                    "state": {
+                        "status": "completed",
+                        "input": {"filePath": "src/main.rs"},
+                        "content": [{"type": "text", "text": "fn main() {}"}]
+                    }
+                },
+                {"type": "text", "text": "Done"}
+            ],
+            "tokens": {"input": 10, "output": 2, "cache": {"read": 8, "write": 0}},
+        }));
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(
+            messages[0].pointer("/content/0/type"),
+            Some(&json!("thinking"))
+        );
+        assert_eq!(
+            messages[0].pointer("/content/1/type"),
+            Some(&json!("toolCall"))
+        );
+        assert_eq!(messages[0].pointer("/content/1/name"), Some(&json!("read")));
+        assert_eq!(
+            messages[0].pointer("/content/1/arguments/path"),
+            Some(&json!("src/main.rs"))
+        );
+        assert_eq!(messages[0].pointer("/content/2/text"), Some(&json!("Done")));
+        assert_eq!(messages[0].pointer("/usage/input"), Some(&json!(10)));
+        assert_eq!(messages[1]["role"], "toolResult");
+        assert_eq!(
+            messages[1].pointer("/content/0/text"),
+            Some(&json!("fn main() {}"))
+        );
+        assert_eq!(messages[1]["isError"], false);
+    }
+
+    #[test]
+    fn translates_failed_tool_results() {
+        let messages = history_messages(&json!({
+            "type": "assistant",
+            "content": [{
+                "type": "tool",
+                "id": "tool-1",
+                "name": "shell",
+                "state": {
+                    "status": "error",
+                    "input": {"cmd": "false"},
+                    "error": {"type": "Unknown", "message": "command failed"}
+                }
+            }]
+        }));
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].pointer("/content/0/name"), Some(&json!("bash")));
+        assert_eq!(
+            messages[0].pointer("/content/0/arguments/command"),
+            Some(&json!("false"))
+        );
+        assert_eq!(
+            messages[1].pointer("/content/0/text"),
+            Some(&json!("command failed"))
+        );
+        assert_eq!(messages[1]["isError"], true);
     }
 }

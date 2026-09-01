@@ -5,6 +5,7 @@ mod client_tests;
 mod contract;
 mod event;
 mod server;
+mod tool;
 mod transport;
 mod worker;
 
