@@ -3,7 +3,7 @@ use std::rc::Rc;
 use gpui::{
     AnyElement, App, CursorStyle, ElementId, Focusable as _, InteractiveElement as _,
     IntoElement as _, ParentElement as _, Role, StatefulInteractiveElement as _, Styled as _,
-    WeakEntity, div, prelude::FluentBuilder as _, px,
+    WeakEntity, deferred, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{input::Input, tooltip::Tooltip};
 
@@ -24,15 +24,12 @@ pub(in crate::app::views) fn render(
 ) -> AnyElement {
     let identity = app.snapshot.session_identity();
     let selected_model = identity.model;
-    let selected_provider = identity
-        .provider
-        .map(str::to_owned)
-        .or_else(|| {
-            app.snapshot
-                .models
-                .first()
-                .map(|model| model.provider.clone())
-        });
+    let selected_provider = identity.provider.map(str::to_owned).or_else(|| {
+        app.snapshot
+            .models
+            .first()
+            .map(|model| model.provider.clone())
+    });
     let catalog_loading = selected_provider.is_none() && !app.snapshot.connected;
     let provider_label = selected_provider.unwrap_or_else(|| "Provider".into());
     let model_label = selected_model.map_or_else(
@@ -132,201 +129,207 @@ pub(in crate::app::views) fn render_runtime_picker(
     let close = entity.clone();
 
     Some(
-        div()
-            .id("runtime-picker")
-            .absolute()
-            .left(px(8.0))
-            .bottom(px(43.0))
-            .w(px(520.0))
-            .max_w(gpui::relative(0.95))
-            .p(px(10.0))
-            .rounded(px(5.0))
-            .border(THEME.border)
-            .border_color(THEME.colors.border)
-            .bg(THEME.colors.surface.alpha(1.0))
-            .occlude()
-            .shadow_lg()
-            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                div()
-                    .h(px(28.0))
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .text_size(THEME.type_scale.caption)
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(THEME.colors.text)
-                            .child("Runtime"),
-                    )
-                    .child(icon_button(
-                        "close-runtime-picker",
-                        AppIcon::X,
-                        "Close runtime picker",
-                        ButtonTone::Quiet,
-                        move |_, cx| {
-                            let _ = close.update(cx, |this, cx| {
-                                this.runtime_picker_open = false;
-                                this.notify_composer(cx);
-                            });
-                        },
-                    )),
-            )
-            .child(
-                div()
-                    .h(px(300.0))
-                    .flex()
-                    .border(THEME.border)
-                    .border_color(THEME.colors.hover)
-                    .bg(THEME.colors.panel)
-                    .child(
-                        div()
-                            .w(px(138.0))
-                            .min_h_0()
-                            .flex_none()
-                            .flex()
-                            .flex_col()
-                            .p(px(6.0))
-                            .border_r(THEME.border)
-                            .border_color(THEME.colors.hover)
-                            .child(picker_label("Provider"))
-                            .child(
-                                div()
-                                    .id("runtime-provider-list")
-                                    .min_h_0()
-                                    .flex_1()
-                                    .overflow_y_scroll()
-                                    .children(providers.into_iter().enumerate().map(
-                                        |(index, provider)| {
-                                            let selected = provider == selected_provider;
-                                            let target = provider.clone();
-                                            let entity = entity.clone();
-                                            runtime_option(
-                                                ("runtime-provider", index),
-                                                provider,
-                                                selected,
-                                                move |cx| {
-                                                    let _ = entity.update(cx, |this, cx| {
-                                                        this.select_provider(&target, cx);
-                                                    });
-                                                },
-                                            )
-                                        },
-                                    )),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .min_w_0()
-                            .min_h_0()
-                            .flex_1()
-                            .flex()
-                            .flex_col()
-                            .p(px(6.0))
-                            .child(picker_label("Model"))
-                            .child(
-                                div()
-                                    .h(px(28.0))
-                                    .flex_none()
-                                    .mb(px(5.0))
-                                    .px(px(8.0))
-                                    .rounded(px(3.0))
-                                    .border(THEME.border)
-                                    .border_color(THEME.colors.hover)
-                                    .child(
-                                        Input::new(&app.runtime_model_search)
-                                            .w_full()
-                                            .appearance(false),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .id("runtime-model-list")
-                                    .min_h_0()
-                                    .flex_1()
-                                    .overflow_y_scroll()
-                                    .when(models_pending_first_start, |list| {
-                                        list.child(
-                                            div()
-                                                .p(px(8.0))
-                                                .text_size(THEME.type_scale.caption)
-                                                .text_color(THEME.colors.subtle)
-                                                .child("Refreshing models in the background…"),
-                                        )
-                                    })
-                                    .children(models.into_iter().enumerate().map(
-                                        |(index, model)| {
-                                            let selected =
-                                                selected_model == Some(model.id.as_str());
-                                            let label = model.name.clone();
-                                            let entity = entity.clone();
-                                            runtime_option(
-                                                ("runtime-model", index),
-                                                label,
-                                                selected,
-                                                move |cx| {
-                                                    let _ = entity.update(cx, |this, cx| {
-                                                        this.select_model(&model, cx);
-                                                    });
-                                                },
-                                            )
-                                        },
-                                    )),
-                            ),
-                    ),
-            )
-            .child(
-                div()
-                    .pt(px(9.0))
-                    .flex()
-                    .items_center()
-                    .gap(px(6.0))
-                    .child(picker_label("Effort"))
-                    .children(app.snapshot.thinking_levels.iter().enumerate().map(
-                        |(index, effort)| {
-                            let target = effort.clone();
-                            let selected = effort == selected_effort;
-                            let entity = entity.clone();
-                            runtime_option(
-                                ("runtime-effort", index),
-                                effort_label(effort),
-                                selected,
-                                move |cx| {
-                                    let _ = entity.update(cx, |this, cx| {
-                                        this.set_thinking_level(target.clone(), cx);
-                                    });
-                                },
-                            )
-                        },
-                    )),
-            )
-            .when(!app.snapshot.modes.is_empty(), |picker| {
-                picker.child(
+        deferred(
+            div()
+                .id("runtime-picker")
+                .absolute()
+                .left(px(8.0))
+                .bottom(px(43.0))
+                .w(px(520.0))
+                .max_w(gpui::relative(0.95))
+                .p(px(10.0))
+                .rounded(px(5.0))
+                .border(THEME.border)
+                .border_color(THEME.colors.border)
+                .bg(THEME.colors.surface)
+                .occlude()
+                .shadow_lg()
+                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .child(
                     div()
-                        .pt(px(7.0))
+                        .h(px(28.0))
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            div()
+                                .text_size(THEME.type_scale.caption)
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .text_color(THEME.colors.text)
+                                .child("Runtime"),
+                        )
+                        .child(icon_button(
+                            "close-runtime-picker",
+                            AppIcon::X,
+                            "Close runtime picker",
+                            ButtonTone::Quiet,
+                            move |_, cx| {
+                                let _ = close.update(cx, |this, cx| {
+                                    this.runtime_picker_open = false;
+                                    this.notify_composer(cx);
+                                });
+                            },
+                        )),
+                )
+                .child(
+                    div()
+                        .h(px(300.0))
+                        .flex()
+                        .border(THEME.border)
+                        .border_color(THEME.colors.hover)
+                        .bg(THEME.colors.panel)
+                        .child(
+                            div()
+                                .w(px(138.0))
+                                .min_h_0()
+                                .flex_none()
+                                .flex()
+                                .flex_col()
+                                .p(px(6.0))
+                                .border_r(THEME.border)
+                                .border_color(THEME.colors.hover)
+                                .child(picker_label("Provider"))
+                                .child(
+                                    div()
+                                        .id("runtime-provider-list")
+                                        .min_h_0()
+                                        .flex_1()
+                                        .overflow_y_scroll()
+                                        .children(providers.into_iter().enumerate().map(
+                                            |(index, provider)| {
+                                                let selected = provider == selected_provider;
+                                                let target = provider.clone();
+                                                let entity = entity.clone();
+                                                runtime_option(
+                                                    ("runtime-provider", index),
+                                                    provider,
+                                                    selected,
+                                                    move |cx| {
+                                                        let _ = entity.update(cx, |this, cx| {
+                                                            this.select_provider(&target, cx);
+                                                        });
+                                                    },
+                                                )
+                                            },
+                                        )),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .min_w_0()
+                                .min_h_0()
+                                .flex_1()
+                                .flex()
+                                .flex_col()
+                                .p(px(6.0))
+                                .child(picker_label("Model"))
+                                .child(
+                                    div()
+                                        .h(px(28.0))
+                                        .flex_none()
+                                        .mb(px(5.0))
+                                        .px(px(8.0))
+                                        .rounded(px(3.0))
+                                        .border(THEME.border)
+                                        .border_color(THEME.colors.hover)
+                                        .child(
+                                            Input::new(&app.runtime_model_search)
+                                                .w_full()
+                                                .appearance(false),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .id("runtime-model-list")
+                                        .min_h_0()
+                                        .flex_1()
+                                        .overflow_y_scroll()
+                                        .when(models_pending_first_start, |list| {
+                                            list.child(
+                                                div()
+                                                    .p(px(8.0))
+                                                    .text_size(THEME.type_scale.caption)
+                                                    .text_color(THEME.colors.subtle)
+                                                    .child("Refreshing models in the background…"),
+                                            )
+                                        })
+                                        .children(models.into_iter().enumerate().map(
+                                            |(index, model)| {
+                                                let selected =
+                                                    selected_model == Some(model.id.as_str());
+                                                let label = model.name.clone();
+                                                let entity = entity.clone();
+                                                runtime_option(
+                                                    ("runtime-model", index),
+                                                    label,
+                                                    selected,
+                                                    move |cx| {
+                                                        let _ = entity.update(cx, |this, cx| {
+                                                            this.select_model(&model, cx);
+                                                        });
+                                                    },
+                                                )
+                                            },
+                                        )),
+                                ),
+                        ),
+                )
+                .child(
+                    div()
+                        .pt(px(9.0))
                         .flex()
                         .items_center()
                         .gap(px(6.0))
-                        .child(picker_label("Mode"))
-                        .children(app.snapshot.modes.iter().enumerate().map(|(index, mode)| {
-                            let target = mode.id.clone();
-                            let selected = app.snapshot.selected_mode.as_deref() == Some(&mode.id);
-                            let entity = entity.clone();
-                            runtime_option(
-                                ("runtime-mode", index),
-                                mode.name.clone(),
-                                selected,
-                                move |cx| {
-                                    let _ = entity.update(cx, |this, cx| {
-                                        this.set_agent_mode(target.clone(), cx);
-                                    });
-                                },
-                            )
-                        })),
+                        .child(picker_label("Effort"))
+                        .children(app.snapshot.thinking_levels.iter().enumerate().map(
+                            |(index, effort)| {
+                                let target = effort.clone();
+                                let selected = effort == selected_effort;
+                                let entity = entity.clone();
+                                runtime_option(
+                                    ("runtime-effort", index),
+                                    effort_label(effort),
+                                    selected,
+                                    move |cx| {
+                                        let _ = entity.update(cx, |this, cx| {
+                                            this.set_thinking_level(target.clone(), cx);
+                                        });
+                                    },
+                                )
+                            },
+                        )),
                 )
-            })
-            .into_any_element(),
+                .when(!app.snapshot.modes.is_empty(), |picker| {
+                    picker.child(
+                        div()
+                            .pt(px(7.0))
+                            .flex()
+                            .items_center()
+                            .gap(px(6.0))
+                            .child(picker_label("Mode"))
+                            .children(app.snapshot.modes.iter().enumerate().map(
+                                |(index, mode)| {
+                                    let target = mode.id.clone();
+                                    let selected =
+                                        app.snapshot.selected_mode.as_deref() == Some(&mode.id);
+                                    let entity = entity.clone();
+                                    runtime_option(
+                                        ("runtime-mode", index),
+                                        mode.name.clone(),
+                                        selected,
+                                        move |cx| {
+                                            let _ = entity.update(cx, |this, cx| {
+                                                this.set_agent_mode(target.clone(), cx);
+                                            });
+                                        },
+                                    )
+                                },
+                            )),
+                    )
+                }),
+        )
+        .with_priority(100)
+        .into_any_element(),
     )
 }
 
@@ -372,7 +375,7 @@ fn runtime_option(
         } else {
             THEME.colors.muted
         })
-        .when(selected, |option| option.bg(THEME.colors.selection))
+        .when(selected, |option| option.bg(THEME.colors.hover))
         .hover(|option| option.bg(THEME.colors.hover))
         .on_click(move |_, _, cx| click(cx))
         .on_key_down(move |event, _, cx| {
