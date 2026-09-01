@@ -53,6 +53,93 @@ pub(crate) fn worker_factories(
     (factories, default_backend)
 }
 
+pub(crate) fn load_configuration_catalog(
+    config: &crate::agents::AgentLaunchConfig,
+    harness: &str,
+    project: &std::path::Path,
+) -> Result<crate::agents::ConfigurationCatalog, String> {
+    match harness {
+        "codex-cli" => {
+            let mut command = config.clone();
+            command.program = std::env::var_os("FARCASTER_CODEX_PATH")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| "codex".into());
+            codex::load_configuration(&command, project).and_then(configuration_catalog)
+        }
+        "opencode2" => {
+            let mut command = config.clone();
+            command.program = std::env::var_os("FARCASTER_OPENCODE_PATH")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| "opencode2".into());
+            opencode::load_configuration(&command, project).and_then(configuration_catalog)
+        }
+        "pi" => load_pi_configuration(config, project),
+        _ => Err(format!("unsupported main-session harness: {harness}")),
+    }
+}
+
+fn configuration_catalog(
+    metadata: main_session::MainSessionMetadata,
+) -> Result<crate::agents::ConfigurationCatalog, String> {
+    let models = metadata
+        .models
+        .into_iter()
+        .map(serde_json::from_value)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("decode model catalog: {error}"))?;
+    Ok(crate::agents::ConfigurationCatalog {
+        models,
+        efforts: metadata.efforts,
+    })
+}
+
+fn load_pi_configuration(
+    config: &crate::agents::AgentLaunchConfig,
+    project: &std::path::Path,
+) -> Result<crate::agents::ConfigurationCatalog, String> {
+    use crate::agents::SessionTransport as _;
+
+    let mut process = pi::PiRpcProcess::spawn_catalog(config, project)?;
+    process.send(crate::agents::SessionCommand::ListModels)?;
+    process.send(crate::agents::SessionCommand::ListReasoningLevels)?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let mut catalog = crate::agents::ConfigurationCatalog::default();
+    let mut models_loaded = false;
+    let mut efforts_loaded = false;
+    while std::time::Instant::now() < deadline && !(models_loaded && efforts_loaded) {
+        match process.poll() {
+            Some(crate::agents::SessionEvent::Response(response)) if response.success => {
+                match response.command.as_str() {
+                    "get_available_models" => {
+                        catalog.models = serde_json::from_value(
+                            response.data.get("models").cloned().unwrap_or_default(),
+                        )
+                        .map_err(|error| format!("decode Pi model catalog: {error}"))?;
+                        models_loaded = true;
+                    }
+                    "get_available_thinking_levels" => {
+                        catalog.efforts = serde_json::from_value(
+                            response.data.get("levels").cloned().unwrap_or_default(),
+                        )
+                        .map_err(|error| format!("decode Pi effort catalog: {error}"))?;
+                        efforts_loaded = true;
+                    }
+                    _ => {}
+                }
+            }
+            Some(crate::agents::SessionEvent::Failure(error)) => return Err(error),
+            Some(_) => {}
+            None => std::thread::sleep(std::time::Duration::from_millis(5)),
+        }
+    }
+    let _ = process.close();
+    if models_loaded && efforts_loaded {
+        Ok(catalog)
+    } else {
+        Err("timed out loading Pi configuration catalog".into())
+    }
+}
+
 pub(crate) fn spawn_session(
     config: &crate::agents::AgentLaunchConfig,
     launch: crate::agents::SessionLaunch,

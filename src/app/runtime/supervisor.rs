@@ -55,14 +55,31 @@ impl RuntimeHandle {
                 .map(|root| root.join("session-locators")),
             ..AgentLaunchConfig::default()
         };
-        Self::spawn_with(project, draft_id, initial_session, command)
+        Self::spawn_with_configuration_refresh(project, draft_id, initial_session, command, true)
     }
 
+    #[cfg(test)]
     pub(crate) fn spawn_with(
         project: PathBuf,
         draft_id: String,
         initial_session: Option<PathBuf>,
         process_command: AgentLaunchConfig,
+    ) -> Self {
+        Self::spawn_with_configuration_refresh(
+            project,
+            draft_id,
+            initial_session,
+            process_command,
+            false,
+        )
+    }
+
+    fn spawn_with_configuration_refresh(
+        project: PathBuf,
+        draft_id: String,
+        initial_session: Option<PathBuf>,
+        process_command: AgentLaunchConfig,
+        refresh_configuration: bool,
     ) -> Self {
         let (commands, command_rx) = mpsc::channel();
         let (events_tx, events) = mpsc::channel();
@@ -81,6 +98,7 @@ impl RuntimeHandle {
                     process_command,
                     command_rx,
                     event_tx,
+                    refresh_configuration,
                 );
             })
             .expect("start Pi supervisor");
@@ -235,6 +253,62 @@ pub(super) fn changed_external_documents(
         .collect()
 }
 
+fn cache_configuration_catalog(
+    entries: &mut Vec<crate::app::infrastructure::persistence::CachedConfigurationCatalog>,
+    harness: String,
+    project: PathBuf,
+    catalog: crate::agents::ConfigurationCatalog,
+) -> bool {
+    if let Some(entry) = entries
+        .iter_mut()
+        .find(|entry| entry.harness == harness && entry.project == project)
+    {
+        if entry.catalog == catalog {
+            return false;
+        }
+        entry.catalog = catalog;
+        return true;
+    }
+    entries.push(
+        crate::app::infrastructure::persistence::CachedConfigurationCatalog {
+            harness,
+            project,
+            catalog,
+        },
+    );
+    true
+}
+
+fn refresh_configuration_catalogs(
+    project: PathBuf,
+    process_command: AgentLaunchConfig,
+    supervisor: thread::Thread,
+    sender: mpsc::Sender<(
+        String,
+        PathBuf,
+        Result<crate::agents::ConfigurationCatalog, String>,
+    )>,
+) {
+    for backend in agents::backend_statuses()
+        .into_iter()
+        .filter(|backend| backend.available)
+    {
+        let project = project.clone();
+        let process_command = process_command.clone();
+        let supervisor = supervisor.clone();
+        let sender = sender.clone();
+        let harness = backend.id;
+        let _ = thread::Builder::new()
+            .name(format!("farcaster-{harness}-catalog"))
+            .spawn(move || {
+                let result =
+                    agents::load_configuration_catalog(&process_command, &harness, &project);
+                let _ = sender.send((harness, project, result));
+                supervisor.unpark();
+            });
+    }
+}
+
 fn run_supervisor(
     project: PathBuf,
     draft_id: String,
@@ -242,6 +316,7 @@ fn run_supervisor(
     mut process_command: AgentLaunchConfig,
     command_rx: mpsc::Receiver<RuntimeCommand>,
     event_tx: UiEventSender,
+    refresh_configuration: bool,
 ) {
     let supervisor_thread = thread::current();
     let initial_key = format!("draft:{draft_id}");
@@ -284,7 +359,7 @@ fn run_supervisor(
         latest.insert(
             initial_key.clone(),
             Arc::new(RuntimeSnapshot {
-                project: initial_project,
+                project: initial_project.clone(),
                 selected_session: Some(path),
                 history_preview: true,
                 ..RuntimeSnapshot::default()
@@ -302,6 +377,27 @@ fn run_supervisor(
     let mut clock = 0_u64;
     let mut last_touch = HashMap::from([(initial_key.clone(), clock)]);
     let mut session_controls = SessionControlDefaults::default();
+    let catalog_state = StateStore::open().ok();
+    let mut configuration_catalogs = catalog_state
+        .as_ref()
+        .and_then(|state| state.load_configuration_catalogs().ok())
+        .unwrap_or_default();
+    for entry in &configuration_catalogs {
+        session_controls.set_catalog(
+            entry.harness.clone(),
+            entry.project.clone(),
+            entry.catalog.clone(),
+        );
+    }
+    let (configuration_tx, configuration_rx) = mpsc::channel();
+    if refresh_configuration {
+        refresh_configuration_catalogs(
+            initial_project.clone(),
+            process_command.clone(),
+            supervisor_thread.clone(),
+            configuration_tx,
+        );
+    }
     let mut published_statuses = HashMap::<String, (Option<PathBuf>, String)>::new();
     if let Ok(state) = StateStore::open()
         && let Ok(prompts) = agents::queued_prompts(&state)
@@ -321,6 +417,39 @@ fn run_supervisor(
     }
     let mut running = true;
     while running {
+        while let Ok((harness, project, result)) = configuration_rx.try_recv() {
+            match result {
+                Ok(catalog) => {
+                    session_controls.set_catalog(harness.clone(), project.clone(), catalog.clone());
+                    if cache_configuration_catalog(
+                        &mut configuration_catalogs,
+                        harness.clone(),
+                        project.clone(),
+                        catalog.clone(),
+                    ) && let Some(state) = catalog_state.as_ref()
+                    {
+                        let _ = state.save_configuration_catalogs(&configuration_catalogs);
+                    }
+                    if let Some(snapshot) = latest.get(&selected)
+                        && snapshot.harness == harness
+                        && snapshot.project == project
+                    {
+                        let mut updated = snapshot.clone();
+                        let snapshot = Arc::make_mut(&mut updated);
+                        snapshot.models.clone_from(&catalog.models);
+                        snapshot.thinking_levels.clone_from(&catalog.efforts);
+                        latest.insert(selected.clone(), updated.clone());
+                        let _ = event_tx.send(RuntimeEvent::Snapshot {
+                            generation,
+                            snapshot: updated,
+                        });
+                    }
+                }
+                Err(error) => {
+                    zlog::warn!("Failed to refresh {harness} catalog: {error}");
+                }
+            }
+        }
         let owned_sessions = rpc_owned_session_paths(&latest);
         activity_tracker.remove_owned(&owned_sessions);
         if activity_tracker.take_expired(Instant::now())
@@ -342,6 +471,20 @@ fn run_supervisor(
                 match event {
                     RuntimeEvent::Snapshot { snapshot, .. } => {
                         let mut snapshot = snapshot;
+                        if !snapshot.models.is_empty()
+                            && cache_configuration_catalog(
+                                &mut configuration_catalogs,
+                                snapshot.harness.clone(),
+                                snapshot.project.clone(),
+                                crate::agents::ConfigurationCatalog {
+                                    models: snapshot.models.clone(),
+                                    efforts: snapshot.thinking_levels.clone(),
+                                },
+                            )
+                            && let Some(state) = catalog_state.as_ref()
+                        {
+                            let _ = state.save_configuration_catalogs(&configuration_catalogs);
+                        }
                         let session_path = snapshot
                             .live_session
                             .clone()

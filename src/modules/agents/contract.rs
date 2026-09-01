@@ -45,6 +45,12 @@ pub(crate) struct DiscoveredHistory {
     pub(crate) thinking_level: Option<String>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct ConfigurationCatalog {
+    pub(crate) models: Vec<extensions::Model>,
+    pub(crate) efforts: Vec<String>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct QueuedPrompt {
     pub(crate) id: i64,

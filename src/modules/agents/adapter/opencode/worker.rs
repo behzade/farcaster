@@ -102,6 +102,28 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
     }
 }
 
+pub(in crate::modules::agents::adapter) fn load_configuration(
+    command: &AgentLaunchConfig,
+    project: &std::path::Path,
+) -> Result<crate::modules::agents::adapter::main_session::MainSessionMetadata, String> {
+    let mut sandbox = command.command(project)?;
+    let password = worker_password()?;
+    let mut child = sandbox
+        .command
+        .args(["serve", "--stdio", "--print-logs"])
+        .env("OPENCODE_SERVER_PASSWORD", &password)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("start OpenCode catalog server: {error}"))?;
+    child_stderr::capture(&mut child, "opencode-catalog")?;
+    let mut server = OpenCodeServerProcess::attach(child, "opencode", password)?;
+    let result = load_main_metadata(&mut server.client(), &project.to_string_lossy());
+    let _ = server.terminate();
+    result
+}
+
 pub(in crate::modules::agents::adapter) fn spawn_main(
     command: &AgentLaunchConfig,
     launch: &crate::agents::SessionLaunch,

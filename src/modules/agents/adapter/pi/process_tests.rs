@@ -38,6 +38,27 @@ fn process_starts_directly_in_the_project_directory() -> TestResult {
 }
 
 #[test]
+fn catalog_process_disables_session_persistence() -> TestResult {
+    let project = tempdir()?;
+    let process = rpc_command(
+        &AgentLaunchConfig {
+            sandbox: crate::access::test_sandbox_bypass(),
+            ..AgentLaunchConfig::default()
+        },
+        project.path(),
+        SessionLaunch::Catalog,
+        Path::new("/dev/fd/9"),
+    )?;
+    assert!(
+        process
+            .command
+            .get_args()
+            .any(|argument| argument == "--no-session")
+    );
+    Ok(())
+}
+
+#[test]
 fn fork_process_passes_the_source_session_to_pi() -> TestResult {
     let project = tempdir()?;
     let source = Path::new("/sessions/source session.jsonl");

@@ -10,7 +10,7 @@ mod worker;
 
 pub(crate) use worker::OpenCodeWorkerFactory;
 pub(super) use catalog::{delete_session, discover, load_history, rename_session};
-pub(super) use worker::spawn_main;
+pub(super) use worker::{load_configuration, spawn_main};
 
 use super::super::contract::{
     AgentBackendDescriptor, AgentBackendId, AgentCapabilities, CapabilitySupport,

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, path::PathBuf};
 
 use crate::protocol::Model;
 
@@ -33,7 +33,7 @@ impl RuntimeSnapshot {
 
 #[derive(Default)]
 pub(super) struct SessionControlDefaults {
-    by_harness: HashMap<String, HarnessDefaults>,
+    by_target: HashMap<(String, PathBuf), HarnessDefaults>,
 }
 
 #[derive(Default)]
@@ -50,8 +50,22 @@ struct OwnedSessionIdentity {
 }
 
 impl SessionControlDefaults {
+    pub fn set_catalog(
+        &mut self,
+        harness: String,
+        project: PathBuf,
+        catalog: crate::agents::ConfigurationCatalog,
+    ) {
+        let defaults = self.by_target.entry((harness, project)).or_default();
+        defaults.models = catalog.models;
+        defaults.efforts = catalog.efforts;
+    }
+
     pub fn apply(&mut self, snapshot: &mut RuntimeSnapshot, adopt_identity: bool) {
-        let defaults = self.by_harness.entry(snapshot.harness.clone()).or_default();
+        let defaults = self
+            .by_target
+            .entry((snapshot.harness.clone(), snapshot.project.clone()))
+            .or_default();
         if snapshot.models.is_empty() {
             snapshot.models.clone_from(&defaults.models);
         } else {

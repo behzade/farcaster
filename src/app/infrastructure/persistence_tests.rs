@@ -10,9 +10,12 @@ use rusqlite::{Connection, params};
 use tempfile::tempdir;
 
 use crate::{
-    app::infrastructure::persistence::{ComposerRecord, StateStore, WindowPlacement, WindowState},
+    agents::ConfigurationCatalog,
+    app::infrastructure::persistence::{
+        CachedConfigurationCatalog, ComposerRecord, StateStore, WindowPlacement, WindowState,
+    },
     projects::{self, DraftSession, Registry},
-    protocol::{PromptImage, PromptMode},
+    protocol::{Model, PromptImage, PromptMode},
     sessions::{SessionSummary, UsageSummary},
 };
 
@@ -32,6 +35,34 @@ fn window_placement_survives_reopen() -> Result<(), Box<dyn std::error::Error>> 
     assert_eq!(
         StateStore::open_at(&database)?.load_window_placement()?,
         Some(placement)
+    );
+    Ok(())
+}
+
+#[test]
+fn configuration_catalogs_survive_reopen() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let database = temp.path().join("gui.sqlite3");
+    let cached = CachedConfigurationCatalog {
+        harness: "codex-cli".into(),
+        project: temp.path().to_path_buf(),
+        catalog: ConfigurationCatalog {
+            models: vec![Model {
+                id: "model".into(),
+                name: "Model".into(),
+                provider: "provider".into(),
+                context_window: 200_000,
+                reasoning: true,
+            }],
+            efforts: vec!["high".into()],
+        },
+    };
+
+    StateStore::open_at(&database)?.save_configuration_catalogs(&[cached.clone()])?;
+
+    assert_eq!(
+        StateStore::open_at(&database)?.load_configuration_catalogs()?,
+        vec![cached]
     );
     Ok(())
 }

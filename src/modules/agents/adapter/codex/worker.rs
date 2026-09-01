@@ -115,6 +115,42 @@ impl WorkerSessionFactory for CodexWorkerFactory {
     }
 }
 
+pub(in crate::modules::agents::adapter) fn load_configuration(
+    command: &AgentLaunchConfig,
+    project: &std::path::Path,
+) -> Result<crate::modules::agents::adapter::main_session::MainSessionMetadata, String> {
+    let mut sandbox = command.command_with_tls_ca_environment(project, CODEX_CA_ENVIRONMENT)?;
+    configure_codex_app_server(&mut sandbox.command);
+    let mut child = sandbox
+        .command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("start Codex catalog app-server: {error}"))?;
+    child_stderr::capture(&mut child, "codex-catalog")?;
+    let result = (|| {
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "Codex catalog stdin must be piped".to_owned())?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "Codex catalog stdout must be piped".to_owned())?;
+        let mut connection = CodexConnection::new(BufReader::new(stdout), stdin);
+        connection.initialize_experimental(CodexClientInfo {
+            name: "farcaster".into(),
+            title: Some("Farcaster".into()),
+            version: env!("CARGO_PKG_VERSION").into(),
+        })?;
+        load_main_metadata(&mut connection)
+    })();
+    let _ = child.kill();
+    let _ = child.wait();
+    result
+}
+
 pub(in crate::modules::agents::adapter) fn spawn_main(
     command: &AgentLaunchConfig,
     launch: &crate::agents::SessionLaunch,

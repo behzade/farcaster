@@ -32,12 +32,19 @@ pub(in crate::app::views) fn render(
                 .models
                 .first()
                 .map(|model| model.provider.clone())
-        })
-        .unwrap_or_else(|| "Provider".into());
-    let provider_label = selected_provider;
-    let model_label = selected_model
-        .map(|model| model.name.clone())
-        .unwrap_or_else(|| "Model".into());
+        });
+    let catalog_loading = selected_provider.is_none() && !app.snapshot.connected;
+    let provider_label = selected_provider.unwrap_or_else(|| "Provider".into());
+    let model_label = selected_model.map_or_else(
+        || {
+            if catalog_loading {
+                "Loading models…".into()
+            } else {
+                "Model".into()
+            }
+        },
+        |model| model.name.clone(),
+    );
     let effort = identity.effort.unwrap_or("off");
     let runtime_content = div()
         .flex()
@@ -245,7 +252,7 @@ pub(in crate::app::views) fn render_runtime_picker(
                                                 .p(px(8.0))
                                                 .text_size(THEME.type_scale.caption)
                                                 .text_color(THEME.colors.subtle)
-                                                .child("Models load when the first message starts this harness."),
+                                                .child("Refreshing models in the background…"),
                                         )
                                     })
                                     .children(models.into_iter().enumerate().map(

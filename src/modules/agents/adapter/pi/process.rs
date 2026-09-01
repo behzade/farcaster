@@ -70,6 +70,7 @@ enum ReaderItem {
 }
 
 enum SessionLaunch<'a> {
+    Catalog,
     New,
     Resume(&'a Path),
     Fork(&'a Path),
@@ -95,6 +96,9 @@ fn rpc_command(
         // Compatibility with existing Pi notification extensions.
         .env("PI_GPUI_NATIVE_NOTIFICATIONS", "1");
     match launch {
+        SessionLaunch::Catalog => {
+            prepared.command.arg("--no-session");
+        }
         SessionLaunch::New => {}
         SessionLaunch::Resume(session) => {
             prepared.command.arg("--session").arg(session);
@@ -120,6 +124,13 @@ pub(crate) struct PiRpcProcess {
 }
 
 impl PiRpcProcess {
+    pub(in crate::modules::agents::adapter) fn spawn_catalog(
+        command: &AgentLaunchConfig,
+        project: &Path,
+    ) -> Result<Self, String> {
+        Self::spawn_inner(command, project, SessionLaunch::Catalog, None)
+    }
+
     pub(crate) fn spawn(
         command: &AgentLaunchConfig,
         project: &Path,

@@ -21,6 +21,7 @@ const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 const ACTIVE_IMPORT_WINDOW: Duration = Duration::from_secs(3 * 60 * 60);
 const REPOSITORY_BACKEND_PREFERENCES_KEY: &str = "repository_backend_preferences";
 const NETWORK_PROXY_KEY: &str = "network_proxy";
+const CONFIGURATION_CATALOGS_KEY: &str = "configuration_catalogs";
 const LEGACY_PI_GPUI_IMPORT_KEY: &str = "legacy_pi_gpui_state_imported";
 const REPOSITORY_BACKENDS: [&str; 3] = ["auto", "git", "jj"];
 
@@ -41,6 +42,13 @@ pub(crate) enum WindowState {
     Windowed,
     Maximized,
     Fullscreen,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+pub(crate) struct CachedConfigurationCatalog {
+    pub harness: String,
+    pub project: PathBuf,
+    pub catalog: crate::agents::ConfigurationCatalog,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -488,6 +496,43 @@ impl StateStore {
                 .map(|_| ())
                 .map_err(|error| format!("clear network proxy: {error}"))
         }
+    }
+
+    pub(crate) fn load_configuration_catalogs(
+        &self,
+    ) -> Result<Vec<CachedConfigurationCatalog>, String> {
+        let stored = self
+            .connection
+            .query_row(
+                "SELECT value FROM meta WHERE key=?1",
+                [CONFIGURATION_CATALOGS_KEY],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| format!("load configuration catalogs: {error}"))?;
+        stored.map_or_else(
+            || Ok(Vec::new()),
+            |value| {
+                serde_json::from_str(&value)
+                    .map_err(|error| format!("decode configuration catalogs: {error}"))
+            },
+        )
+    }
+
+    pub(crate) fn save_configuration_catalogs(
+        &self,
+        catalogs: &[CachedConfigurationCatalog],
+    ) -> Result<(), String> {
+        let value = serde_json::to_string(catalogs)
+            .map_err(|error| format!("encode configuration catalogs: {error}"))?;
+        self.connection
+            .execute(
+                "INSERT INTO meta(key, value) VALUES(?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                params![CONFIGURATION_CATALOGS_KEY, value],
+            )
+            .map(|_| ())
+            .map_err(|error| format!("save configuration catalogs: {error}"))
     }
 
     pub(crate) fn load_repository_backend_preferences(
