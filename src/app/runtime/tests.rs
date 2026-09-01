@@ -1157,12 +1157,8 @@ fn cold_draft_model_selection_is_deferred_without_starting_the_harness() {
         harness: "pi".into(),
         project,
     });
-    owner.snapshot.models.push(model.clone());
 
-    owner.apply_command(RuntimeCommand::SetModel {
-        provider: model.provider.clone(),
-        model_id: model.id.clone(),
-    });
+    owner.apply_command(RuntimeCommand::SetModel(model.clone()));
 
     assert!(owner.process.is_none());
     assert!(!owner.pending_session_controls.is_empty());
@@ -1741,10 +1737,13 @@ fn model_change_from_history_reconnects_without_hiding_history() -> Result<(), S
     owner.process_command = AgentLaunchConfig::test_script(&script, vec!["history-control".into()]);
     preview_history(&mut owner, session.clone(), "preserved history");
 
-    owner.apply_command(RuntimeCommand::SetModel {
+    owner.apply_command(RuntimeCommand::SetModel(Model {
+        id: "new-model".into(),
+        name: "New Model".into(),
         provider: "new-provider".into(),
-        model_id: "new-model".into(),
-    });
+        context_window: 0,
+        reasoning: true,
+    }));
 
     assert!(owner.process.is_some());
     assert!(owner.snapshot.history_preview);
@@ -1809,10 +1808,13 @@ fn failed_model_reconnect_keeps_the_loaded_history() {
     };
     preview_history(&mut owner, session.clone(), "keep this history");
 
-    owner.apply_command(RuntimeCommand::SetModel {
+    owner.apply_command(RuntimeCommand::SetModel(Model {
+        id: "model".into(),
+        name: "Model".into(),
         provider: "provider".into(),
-        model_id: "model".into(),
-    });
+        context_window: 0,
+        reasoning: true,
+    }));
 
     assert!(owner.process.is_none());
     assert!(owner.snapshot.history_preview);

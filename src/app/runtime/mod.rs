@@ -718,7 +718,7 @@ impl RuntimeOwner {
             RuntimeCommand::RefreshSessionDocument { path, project } => {
                 self.refresh_session_document(path, project)
             }
-            RuntimeCommand::SetModel { provider, model_id } => self.set_model(provider, model_id),
+            RuntimeCommand::SetModel(model) => self.set_model(model),
             RuntimeCommand::SetThinking(level) => self.set_thinking(level),
             RuntimeCommand::SetMode(mode) => self.send(SessionCommand::SelectMode { mode }),
             RuntimeCommand::SetPermissionLevel(level) => self.set_permission_level(level),

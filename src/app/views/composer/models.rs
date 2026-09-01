@@ -100,7 +100,13 @@ pub(in crate::app::views) fn render_runtime_picker(
         return None;
     }
     let identity = app.snapshot.session_identity();
-    let selected_provider = identity.provider.unwrap_or_default();
+    let selected_provider = selected_provider(
+        identity.provider,
+        app.snapshot
+            .models
+            .first()
+            .map(|model| model.provider.as_str()),
+    );
     let selected_model = identity.model.map(|model| model.id.as_str());
     let selected_effort = identity.effort.unwrap_or("off");
     let query = app
@@ -339,6 +345,13 @@ fn model_matches_query(name: &str, id: &str, query: &str) -> bool {
         || id.to_ascii_lowercase().contains(query)
 }
 
+fn selected_provider<'a>(
+    identity_provider: Option<&'a str>,
+    catalog_provider: Option<&'a str>,
+) -> &'a str {
+    identity_provider.or(catalog_provider).unwrap_or_default()
+}
+
 fn picker_label(label: &'static str) -> AnyElement {
     div()
         .px(px(6.0))
@@ -565,6 +578,15 @@ mod tests {
         assert!(model_matches_query("GPT-5 Codex", "gpt-5-codex", "codex"));
         assert!(model_matches_query("GPT-5 Codex", "gpt-5-codex", "gpt-5"));
         assert!(!model_matches_query("GPT-5 Codex", "gpt-5-codex", "claude"));
+    }
+
+    #[test]
+    fn runtime_picker_uses_catalog_provider_before_session_start() {
+        assert_eq!(selected_provider(None, Some("openai")), "openai");
+        assert_eq!(
+            selected_provider(Some("session-provider"), Some("catalog-provider")),
+            "session-provider"
+        );
     }
 
     #[test]

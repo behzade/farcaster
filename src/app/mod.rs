@@ -1973,10 +1973,7 @@ impl FarcasterApp {
     }
 
     fn select_model(&mut self, model: &Model, cx: &mut Context<Self>) {
-        self.send(RuntimeCommand::SetModel {
-            provider: model.provider.clone(),
-            model_id: model.id.clone(),
-        });
+        self.send(RuntimeCommand::SetModel(model.clone()));
         cx.notify();
     }
 

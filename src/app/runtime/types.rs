@@ -69,10 +69,7 @@ pub(crate) enum RuntimeCommand {
         path: PathBuf,
         project: PathBuf,
     },
-    SetModel {
-        provider: String,
-        model_id: String,
-    },
+    SetModel(Model),
     SetThinking(String),
     SetMode(String),
     SetPermissionLevel(PermissionLevel),
