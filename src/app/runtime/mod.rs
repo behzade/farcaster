@@ -508,24 +508,13 @@ impl RuntimeOwner {
         self.start_process_from(None, Some(source), false);
     }
 
-    fn start_process_from(
-        &mut self,
-        session: Option<PathBuf>,
-        fork: Option<PathBuf>,
-        preserve_transcript: bool,
-    ) {
+    fn reset_process_runtime(&mut self) {
         self.invalidate_history_loads();
         self.process_generation = self.process_generation.saturating_add(1);
-        let preserve_transcript = preserve_transcript
-            || self.deferred_prompt.is_some()
-            || (!self.pending_session_controls.is_empty() && self.snapshot.history_preview);
-        let keep_preview = preserve_transcript && self.snapshot.history_preview;
-        let preserved_conversation =
-            (preserve_transcript && !keep_preview).then(|| self.snapshot.conversation.clone());
-        if let Some(mut old) = self.process.take() {
-            let _ = old.close();
+        if let Some(mut process) = self.process.take() {
+            let _ = process.close();
         }
-        self.active_session = session.clone();
+        self.active_session = None;
         self.parked_snapshot = None;
         self.startup_state_loaded = false;
         self.startup_history_loaded = false;
@@ -533,10 +522,26 @@ impl RuntimeOwner {
         self.pending_prompt_item = None;
         self.sandbox_grant_handoff = None;
         self.active_tool_calls.clear();
+        self.transcript_changed_from = Some(0);
+    }
+
+    fn start_process_from(
+        &mut self,
+        session: Option<PathBuf>,
+        fork: Option<PathBuf>,
+        preserve_transcript: bool,
+    ) {
+        let preserve_transcript = preserve_transcript
+            || self.deferred_prompt.is_some()
+            || (!self.pending_session_controls.is_empty() && self.snapshot.history_preview);
+        let keep_preview = preserve_transcript && self.snapshot.history_preview;
+        let preserved_conversation =
+            (preserve_transcript && !keep_preview).then(|| self.snapshot.conversation.clone());
+        self.reset_process_runtime();
+        self.active_session = session.clone();
         self.process_command.permission_level = self
             .permission_changes
             .take_requested_level(self.process_command.permission_level);
-        self.transcript_changed_from = Some(0);
         let status = if fork.is_some() {
             "Forking session".into()
         } else {
@@ -662,12 +667,7 @@ impl RuntimeOwner {
             | RuntimeCommand::DeleteSessionFamily { .. } => {}
             RuntimeCommand::NewSession {
                 harness, project, ..
-            } => {
-                self.project = project;
-                self.harness = harness;
-                self.session_id = None;
-                self.start_process(None);
-            }
+            } => self.stage_draft(harness, project),
             RuntimeCommand::ForkSession {
                 path,
                 harness,
@@ -681,11 +681,7 @@ impl RuntimeOwner {
             }
             RuntimeCommand::ResumeDraft {
                 harness, project, ..
-            } => {
-                self.harness = harness;
-                self.session_id = None;
-                self.resume_draft(project);
-            }
+            } => self.stage_draft(harness, project),
             RuntimeCommand::SelectSession {
                 path,
                 harness,
@@ -994,32 +990,28 @@ impl RuntimeOwner {
         self.pending_document_refresh = None;
     }
 
-    fn resume_draft(&mut self, project: PathBuf) {
-        let already_active = self.process.is_some()
+    /// Configure an unsubmitted draft without starting its backend.
+    fn stage_draft(&mut self, harness: String, project: PathBuf) {
+        let unchanged = self.process.is_none()
             && self.parked_snapshot.is_none()
             && !self.snapshot.history_preview
+            && self.harness == harness
             && self.project == project;
-        if already_active {
+        if unchanged {
             self.publish();
             return;
         }
-        let can_restore = self.active_session.is_none()
-            && self
-                .parked_snapshot
-                .as_ref()
-                .is_some_and(|snapshot| snapshot.project == project);
-        if can_restore && let Some(snapshot) = self.parked_snapshot.take() {
-            self.invalidate_history_loads();
-            self.snapshot = snapshot;
-            self.project = project;
-            let _ = self.event_tx.send(RuntimeEvent::HistoryReset {
-                generation: self.process_generation,
-            });
-            self.publish();
-            return;
-        }
-        self.project = project;
-        self.start_process(None);
+
+        self.reset_process_runtime();
+        self.harness = harness;
+        self.project = project.clone();
+        self.session_id = None;
+        self.pending_prompt_target = None;
+        self.pending_outbox_id = None;
+        self.deferred_prompt = None;
+        self.pending_session_controls = PendingSessionControls::default();
+        reset_snapshot_for_process(&mut self.snapshot, project, None, "Ready".into());
+        self.publish();
     }
 
     fn apply_history(&mut self, result: HistoryResult) {
@@ -1321,8 +1313,8 @@ impl RuntimeOwner {
             _ => {}
         }
         if matches!(response_command.as_str(), "get_state" | "get_entries") {
-            self.maybe_send_deferred_prompt();
             self.maybe_send_pending_session_controls();
+            self.maybe_send_deferred_prompt();
         }
         if self.parked_snapshot.is_none() {
             self.publish();
@@ -1398,6 +1390,7 @@ impl RuntimeOwner {
         conversation_mut(self.active_snapshot_mut()).flush_live_projection();
         let active_snapshot = self.active_snapshot();
         let mut snapshot = self.snapshot.clone();
+        snapshot.harness.clone_from(&self.harness);
         snapshot.live_session = self
             .active_session
             .clone()

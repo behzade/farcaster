@@ -121,6 +121,7 @@ pub(in crate::app::views) fn render_runtime_picker(
         .filter(|model| model_matches_query(&model.name, &model.id, &query))
         .cloned()
         .collect::<Vec<_>>();
+    let models_pending_first_start = app.snapshot.models.is_empty() && !app.snapshot.connected;
     let close = entity.clone();
 
     Some(
@@ -238,6 +239,15 @@ pub(in crate::app::views) fn render_runtime_picker(
                                     .min_h_0()
                                     .flex_1()
                                     .overflow_y_scroll()
+                                    .when(models_pending_first_start, |list| {
+                                        list.child(
+                                            div()
+                                                .p(px(8.0))
+                                                .text_size(THEME.type_scale.caption)
+                                                .text_color(THEME.colors.subtle)
+                                                .child("Models load when the first message starts this harness."),
+                                        )
+                                    })
                                     .children(models.into_iter().enumerate().map(
                                         |(index, model)| {
                                             let selected =

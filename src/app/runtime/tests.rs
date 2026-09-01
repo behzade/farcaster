@@ -84,6 +84,7 @@ fn dropping_runtime_waits_for_owned_pi_processes_to_handle_exit() -> Result<(), 
             vec!["term-marker".into(), marker.to_string_lossy().into_owned()],
         ),
     );
+    runtime.send(RuntimeCommand::Reload)?;
     // The session adapter permits up to 15 seconds for its readiness handshake. The
     // full test suite can also delay this supervisor under build-machine load.
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -1064,13 +1065,16 @@ fn accepted_prompt_result_has_the_normalized_active_session_path()
 }
 
 #[test]
-fn new_session_starts_pi_before_the_first_prompt() -> Result<(), Box<dyn std::error::Error>> {
+fn new_session_stays_cold_until_the_first_prompt() -> Result<(), Box<dyn std::error::Error>> {
     let old_project = tempdir()?;
     let new_project = tempdir()?;
     let script = old_project.path().join("fake-pi.sh");
     fs::write(&script, include_str!("../../../tests/fixtures/fake-pi.sh"))?;
     let (mut owner, _events, _discovery) = owner_without_process(old_project.path().to_path_buf());
     owner.process_command = AgentLaunchConfig::test_script(&script, vec!["quiet".into()]);
+    owner.state = Some(StateStore::open_at(
+        &old_project.path().join("state.sqlite3"),
+    )?);
 
     owner.apply_command(RuntimeCommand::NewSession {
         id: "draft-new".into(),
@@ -1079,15 +1083,52 @@ fn new_session_starts_pi_before_the_first_prompt() -> Result<(), Box<dyn std::er
     });
 
     assert_eq!(owner.project, new_project.path());
-    assert_eq!(owner.snapshot.project, new_project.path());
-    assert_eq!(owner.active_session, None);
-    assert_eq!(owner.process_generation, 2);
+    assert!(owner.process.is_none());
+    assert!(!owner.snapshot.connected);
+
+    owner.send_prompt(
+        "draft:draft-new".into(),
+        PromptMode::Normal,
+        "start".into(),
+        Vec::new(),
+        false,
+    );
+
     assert!(owner.process.is_some());
+    assert!(owner.deferred_prompt.is_some());
     assert!(owner.snapshot.connected);
     if let Some(mut process) = owner.process.take() {
         process.close()?;
     }
     Ok(())
+}
+
+#[test]
+fn cold_draft_model_selection_is_deferred_without_starting_the_harness() {
+    let project = std::env::temp_dir().join("cold-model-project");
+    let (mut owner, _events, _discovery) = owner_without_process(project.clone());
+    let model = Model {
+        id: "model".into(),
+        name: "Model".into(),
+        provider: "provider".into(),
+        context_window: 1,
+        reasoning: true,
+    };
+    owner.apply_command(RuntimeCommand::NewSession {
+        id: "draft-cold".into(),
+        harness: "pi".into(),
+        project,
+    });
+    owner.snapshot.models.push(model.clone());
+
+    owner.apply_command(RuntimeCommand::SetModel {
+        provider: model.provider.clone(),
+        model_id: model.id.clone(),
+    });
+
+    assert!(owner.process.is_none());
+    assert!(!owner.pending_session_controls.is_empty());
+    assert_eq!(owner.snapshot.prefill_model, Some(model));
 }
 
 #[test]
@@ -1391,33 +1432,6 @@ fn get_state_canonicalizes_a_symlinked_session_path() -> Result<(), Box<dyn std:
 }
 
 #[test]
-fn draft_can_restore_its_parked_blank_run_without_restarting_pi() {
-    let project = std::env::temp_dir().join("draft-project");
-    let (mut owner, _events, _discovery) = owner_without_process(project.clone());
-    owner.snapshot = RuntimeSnapshot {
-        history_preview: true,
-        project: PathBuf::from("/other"),
-        selected_session: Some(PathBuf::from("/other/session.jsonl")),
-        ..RuntimeSnapshot::default()
-    };
-    owner.parked_snapshot = Some(RuntimeSnapshot {
-        connected: true,
-        status: "Idle".into(),
-        project: project.clone(),
-        ..RuntimeSnapshot::default()
-    });
-    let generation = owner.process_generation;
-
-    owner.resume_draft(project.clone());
-
-    assert_eq!(owner.project, project);
-    assert_eq!(owner.snapshot.project, owner.project);
-    assert!(!owner.snapshot.history_preview);
-    assert!(owner.parked_snapshot.is_none());
-    assert_eq!(owner.process_generation, generation);
-}
-
-#[test]
 fn starting_session_prefills_controls_from_the_last_ready_session() {
     let model = Model {
         id: "model-1".into(),
@@ -1572,6 +1586,41 @@ fn viewing_a_subagent_does_not_change_new_session_defaults() {
     let identity = new_draft.session_identity();
     assert_eq!(identity.model, Some(&sol));
     assert_eq!(identity.effort, Some("high"));
+}
+
+#[test]
+fn cold_drafts_reuse_only_their_own_harness_catalog() {
+    let pi_model = Model {
+        id: "pi-model".into(),
+        name: "Pi Model".into(),
+        provider: "pi-provider".into(),
+        context_window: 1,
+        reasoning: false,
+    };
+    let mut defaults = SessionControlDefaults::default();
+    let mut pi = RuntimeSnapshot {
+        harness: "pi".into(),
+        models: vec![pi_model.clone()],
+        thinking_levels: vec!["high".into()],
+        ..RuntimeSnapshot::default()
+    };
+    defaults.apply(&mut pi, true);
+
+    let mut codex = RuntimeSnapshot {
+        harness: "codex-cli".into(),
+        ..RuntimeSnapshot::default()
+    };
+    defaults.apply(&mut codex, true);
+    assert!(codex.models.is_empty());
+    assert!(codex.thinking_levels.is_empty());
+
+    let mut next_pi = RuntimeSnapshot {
+        harness: "pi".into(),
+        ..RuntimeSnapshot::default()
+    };
+    defaults.apply(&mut next_pi, true);
+    assert_eq!(next_pi.models, vec![pi_model]);
+    assert_eq!(next_pi.thinking_levels, vec!["high"]);
 }
 
 #[test]

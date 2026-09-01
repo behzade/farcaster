@@ -149,6 +149,8 @@ pub(crate) enum RuntimeEvent {
 pub(crate) struct RuntimeSnapshot {
     pub connected: bool,
     pub status: String,
+    /// Selected backend, including while an unsubmitted draft is cold.
+    pub harness: String,
     pub project: PathBuf,
     pub live_session: Option<PathBuf>,
     pub live_status: String,

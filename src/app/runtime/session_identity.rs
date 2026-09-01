@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::protocol::Model;
 
 use super::RuntimeSnapshot;
@@ -31,6 +33,11 @@ impl RuntimeSnapshot {
 
 #[derive(Default)]
 pub(super) struct SessionControlDefaults {
+    by_harness: HashMap<String, HarnessDefaults>,
+}
+
+#[derive(Default)]
+struct HarnessDefaults {
     identity: OwnedSessionIdentity,
     models: Vec<Model>,
     efforts: Vec<String>,
@@ -44,21 +51,22 @@ struct OwnedSessionIdentity {
 
 impl SessionControlDefaults {
     pub fn apply(&mut self, snapshot: &mut RuntimeSnapshot, adopt_identity: bool) {
+        let defaults = self.by_harness.entry(snapshot.harness.clone()).or_default();
         if snapshot.models.is_empty() {
-            snapshot.models.clone_from(&self.models);
+            snapshot.models.clone_from(&defaults.models);
         } else {
-            self.models.clone_from(&snapshot.models);
+            defaults.models.clone_from(&snapshot.models);
         }
         if snapshot.thinking_levels.is_empty() {
-            snapshot.thinking_levels.clone_from(&self.efforts);
+            snapshot.thinking_levels.clone_from(&defaults.efforts);
         } else {
-            self.efforts.clone_from(&snapshot.thinking_levels);
+            defaults.efforts.clone_from(&snapshot.thinking_levels);
         }
 
         if let Some(session) = &snapshot.session {
             if adopt_identity {
                 if let Some(model) = &session.model {
-                    self.identity.model = self
+                    defaults.identity.model = snapshot
                         .models
                         .iter()
                         .find(|candidate| {
@@ -67,18 +75,18 @@ impl SessionControlDefaults {
                         .cloned()
                         .or_else(|| Some(model.clone()));
                 }
-                self.identity.effort = Some(session.thinking_level.clone());
+                defaults.identity.effort = Some(session.thinking_level.clone());
             }
             return;
         }
 
         if snapshot.prefill_model.is_none() {
-            snapshot.prefill_model.clone_from(&self.identity.model);
+            snapshot.prefill_model.clone_from(&defaults.identity.model);
         }
         if snapshot.prefill_thinking_level.is_none() {
             snapshot
                 .prefill_thinking_level
-                .clone_from(&self.identity.effort);
+                .clone_from(&defaults.identity.effort);
         }
     }
 

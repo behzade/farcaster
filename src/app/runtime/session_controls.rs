@@ -67,6 +67,27 @@ impl RuntimeOwner {
             self.send(control.into_request());
             return;
         }
+        if !self.snapshot.history_preview
+            && self.process.is_none()
+            && self.snapshot.selected_session.is_none()
+        {
+            match &control {
+                SessionControl::Model(provider, model_id) => {
+                    self.snapshot.prefill_model = self
+                        .snapshot
+                        .models
+                        .iter()
+                        .find(|model| model.provider == *provider && model.id == *model_id)
+                        .cloned();
+                }
+                SessionControl::Thinking(level) => {
+                    self.snapshot.prefill_thinking_level = Some(level.clone());
+                }
+            }
+            self.pending_session_controls.set(control);
+            self.publish();
+            return;
+        }
         let Some(session) = self.snapshot.selected_session.clone() else {
             self.command_not_sent(control.command_name(), "No session is selected");
             return;
