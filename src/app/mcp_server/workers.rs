@@ -33,14 +33,14 @@ pub(super) fn send(
         return Ok(serde_json::json!({
             "workerId": worker.id,
             "created": true,
-            "accepted": true,
+            "queued": true,
         }));
     }
     registry.send(token, &params.to, params.message)?;
     Ok(serde_json::json!({
         "workerId": params.to,
         "created": false,
-        "accepted": true,
+        "queued": true,
     }))
 }
 

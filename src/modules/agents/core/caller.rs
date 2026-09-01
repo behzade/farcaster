@@ -8,6 +8,8 @@ use std::{
 
 use serde::Serialize;
 
+use super::worker::WorkerActivityState;
+
 #[derive(Clone, Default)]
 pub(crate) struct CallerRegistry {
     callers: Arc<Mutex<HashMap<String, RegisteredCaller>>>,
@@ -52,7 +54,7 @@ impl PeerMessage {
 pub(crate) struct WorkerPeer {
     pub(crate) id: String,
     pub(crate) backend: String,
-    pub(crate) status: &'static str,
+    pub(crate) status: WorkerActivityState,
 }
 
 struct RegisteredCaller {
@@ -63,6 +65,7 @@ struct RegisteredCaller {
     provider: Option<String>,
     model: Option<String>,
     effort: Option<String>,
+    activity: WorkerActivityState,
     inbox: mpsc::Sender<PeerMessage>,
     wake: Option<thread::Thread>,
 }
@@ -109,6 +112,7 @@ impl CallerRegistry {
                     provider: profile.provider,
                     model: profile.model,
                     effort: profile.effort,
+                    activity: WorkerActivityState::Starting,
                     inbox,
                     wake,
                 },
@@ -164,7 +168,7 @@ impl CallerRegistry {
             .map(|peer| WorkerPeer {
                 id: peer.worker_id.clone(),
                 backend: peer.backend.clone(),
-                status: "active",
+                status: peer.activity,
             })
             .collect::<Vec<_>>();
         workers.sort_by(|left, right| left.id.cmp(&right.id));
@@ -213,6 +217,15 @@ impl CallerIdentity {
             && let Some(context) = callers.get_mut(&self.token)
         {
             context.session = Some(session_locator.into());
+            context.activity = WorkerActivityState::Idle;
+        }
+    }
+
+    pub(crate) fn set_activity(&self, activity: WorkerActivityState) {
+        if let Ok(mut callers) = self.registry.callers.lock()
+            && let Some(context) = callers.get_mut(&self.token)
+        {
+            context.activity = activity;
         }
     }
 
@@ -313,6 +326,7 @@ mod tests {
         let outsider = identity(&registry, Path::new("/other"), "pi");
         first.bind("session-1");
         second.bind("session-2");
+        second.set_activity(WorkerActivityState::Working);
         outsider.bind("session-3");
 
         let first_id = worker_id(&registry, &first);
@@ -321,6 +335,13 @@ mod tests {
         let (self_id, peers) = registry.list(first.token())?;
         assert_eq!(self_id, first_id);
         assert_eq!(peers.len(), 2);
+        assert_eq!(
+            peers
+                .iter()
+                .find(|peer| peer.id == second_id)
+                .map(|peer| peer.status),
+            Some(WorkerActivityState::Working)
+        );
         assert!(!peers.iter().any(|peer| peer.id == outsider_id));
 
         registry.send(first.token(), &second_id, "check this".into())?;

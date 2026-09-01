@@ -15,9 +15,9 @@ use super::{
 };
 use crate::{
     agents::{
-        AgentLaunchConfig, CommonTool, TokenUsage, WorkerActivity, WorkerContext, WorkerEvent,
-        WorkerInput, WorkerInputResponse, WorkerLaunch, WorkerSendMode, WorkerSession,
-        WorkerSessionFactory, WorkerUsage,
+        AgentLaunchConfig, CommonTool, TokenUsage, WorkerActivity, WorkerActivityState,
+        WorkerContext, WorkerEvent, WorkerInput, WorkerInputResponse, WorkerLaunch, WorkerSendMode,
+        WorkerSession, WorkerSessionFactory, WorkerUsage,
     },
     modules::agents::adapter::{child_stderr, farcaster_mcp, main_session},
 };
@@ -113,6 +113,7 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             manual_compaction: false,
             pending: HashMap::new(),
             pending_inputs: HashMap::new(),
+            peer_messages: VecDeque::new(),
             events: VecDeque::from([WorkerEvent::SessionChanged { locator: thread_id }]),
         }))
     }
@@ -246,6 +247,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         manual_compaction: false,
         pending: HashMap::new(),
         pending_inputs: HashMap::new(),
+        peer_messages: VecDeque::new(),
         events: VecDeque::new(),
     };
     Ok((Box::new(session), thread_id, metadata))
@@ -468,6 +470,7 @@ struct CodexWorkerSession {
     manual_compaction: bool,
     pending: HashMap<CodexRequestId, PendingRequest>,
     pending_inputs: HashMap<String, CodexRequestId>,
+    peer_messages: VecDeque<String>,
     events: VecDeque<WorkerEvent>,
 }
 
@@ -563,8 +566,12 @@ impl WorkerSession for CodexWorkerSession {
             return Some(event);
         }
         if let Some(message) = self.caller_identity.try_recv() {
-            let mode = WorkerSendMode::for_peer(self.current_turn.is_some());
-            return Some(match self.send(message.prompt(), mode) {
+            self.peer_messages.push_back(message.prompt());
+        }
+        if let Some(mode) = WorkerSendMode::for_peer(self.activity())
+            && let Some(message) = self.peer_messages.pop_front()
+        {
+            return Some(match self.send(message, mode) {
                 Ok(()) => WorkerEvent::Started,
                 Err(error) => WorkerEvent::Failed(error),
             });
@@ -582,12 +589,16 @@ impl WorkerSession for CodexWorkerSession {
                             }
                         };
                         self.current_turn = Some(turn.id);
+                        self.caller_identity
+                            .set_activity(WorkerActivityState::Working);
                         return Some(WorkerEvent::Started);
                     }
                     Some(PendingRequest::Ignore) | None => {}
                 },
                 Ok(CodexInbound::Error { id, error }) => {
-                    self.pending.remove(&id);
+                    if matches!(self.pending.remove(&id), Some(PendingRequest::StartTurn)) {
+                        self.caller_identity.set_activity(WorkerActivityState::Idle);
+                    }
                     return Some(WorkerEvent::Failed(format!(
                         "Codex app-server error {}: {}",
                         error.code, error.message
@@ -602,6 +613,8 @@ impl WorkerSession for CodexWorkerSession {
                             if let Some(turn_id) = params["turn"]["id"].as_str() {
                                 let new_turn = self.current_turn.as_deref() != Some(turn_id);
                                 self.current_turn = Some(turn_id.to_owned());
+                                self.caller_identity
+                                    .set_activity(WorkerActivityState::Working);
                                 if new_turn {
                                     self.output.clear();
                                     self.reasoning_started = false;
@@ -698,6 +711,7 @@ impl WorkerSession for CodexWorkerSession {
                         }
                         "turn/completed" => {
                             self.current_turn = None;
+                            self.caller_identity.set_activity(WorkerActivityState::Idle);
                             let failed = params["turn"]["status"].as_str() == Some("failed");
                             if self.manual_compaction {
                                 self.manual_compaction = false;
@@ -766,6 +780,20 @@ impl WorkerSession for CodexWorkerSession {
 }
 
 impl CodexWorkerSession {
+    fn activity(&self) -> WorkerActivityState {
+        if self.current_turn.is_some() {
+            WorkerActivityState::Working
+        } else if self
+            .pending
+            .values()
+            .any(|request| matches!(request, PendingRequest::StartTurn))
+        {
+            WorkerActivityState::Starting
+        } else {
+            WorkerActivityState::Idle
+        }
+    }
+
     fn send_input(
         &mut self,
         input: Vec<CodexUserInput>,
@@ -813,6 +841,8 @@ impl CodexWorkerSession {
             }),
         )?;
         self.pending.insert(id, PendingRequest::StartTurn);
+        self.caller_identity
+            .set_activity(WorkerActivityState::Starting);
         Ok(())
     }
 

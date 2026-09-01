@@ -22,7 +22,10 @@ use crate::modules::agents::adapter::farcaster_mcp::INSTRUCTIONS;
 use crate::modules::agents::adapter::process_command::resolve_agent_program;
 use crate::{
     agents::extensions::ExtensionUiResponse,
-    agents::{AgentLaunchConfig, HarnessAccessMode, SessionCommand, SessionEvent, SessionResponse},
+    agents::{
+        AgentLaunchConfig, HarnessAccessMode, SessionCommand, SessionEvent, SessionResponse,
+        WorkerActivityState, WorkerSendMode,
+    },
 };
 
 impl Default for crate::agents::AgentLaunchConfig {
@@ -115,12 +118,18 @@ pub(crate) struct PiRpcProcess {
     incoming: mpsc::Receiver<ReaderItem>,
     queued: VecDeque<SessionEvent>,
     pending: HashMap<String, String>,
+    peer_messages: VecDeque<String>,
     next_id: u64,
-    running: bool,
+    activity: WorkerActivityState,
     stderr: String,
 }
 
 impl PiRpcProcess {
+    #[cfg(test)]
+    fn caller_token(&self) -> &str {
+        self.caller_identity.token()
+    }
+
     pub(in crate::modules::agents::adapter) fn spawn_catalog(
         command: &AgentLaunchConfig,
         project: &Path,
@@ -230,12 +239,18 @@ impl PiRpcProcess {
             incoming,
             queued: VecDeque::new(),
             pending: HashMap::new(),
+            peer_messages: VecDeque::new(),
             next_id: 0,
-            running: false,
+            activity: WorkerActivityState::Idle,
             stderr: String::new(),
         };
         rpc.readiness_handshake(Duration::from_secs(15))?;
         Ok(rpc)
+    }
+
+    fn set_activity(&mut self, activity: WorkerActivityState) {
+        self.activity = activity;
+        self.caller_identity.set_activity(activity);
     }
 
     pub(crate) fn send_request(&mut self, request: SessionCommand) -> Result<String, String> {
@@ -256,7 +271,9 @@ impl PiRpcProcess {
             _ => {}
         }
         let id = self.send_command(super::protocol::encode_request(request))?;
-        self.running |= starts_run;
+        if starts_run {
+            self.set_activity(WorkerActivityState::Starting);
+        }
         Ok(id)
     }
 
@@ -366,18 +383,24 @@ impl PiRpcProcess {
         if let Some(item) = self.queued.pop_front() {
             return Some(item);
         }
-        if let Some(message) = self.caller_identity.try_recv()
-            && let Err(error) = self.send_request(SessionCommand::Prompt {
-                mode: if self.running {
-                    crate::protocol::PromptMode::Steer
-                } else {
-                    crate::protocol::PromptMode::Normal
-                },
-                message: message.prompt(),
-                images: Vec::new(),
-            })
+        if let Some(message) = self.caller_identity.try_recv() {
+            self.peer_messages.push_back(message.prompt());
+        }
+        if let Some(mode) = WorkerSendMode::for_peer(self.activity)
+            && let Some(message) = self.peer_messages.pop_front()
         {
-            return Some(SessionEvent::Failure(error));
+            let mode = match mode {
+                WorkerSendMode::Prompt => crate::protocol::PromptMode::Normal,
+                WorkerSendMode::Steer => crate::protocol::PromptMode::Steer,
+                WorkerSendMode::Queue => unreachable!(),
+            };
+            if let Err(error) = self.send_request(SessionCommand::Prompt {
+                mode,
+                message,
+                images: Vec::new(),
+            }) {
+                return Some(SessionEvent::Failure(error));
+            }
         }
         match self.incoming.try_recv() {
             Ok(ReaderItem::StderrEof) => None,
@@ -514,6 +537,16 @@ impl PiRpcProcess {
                         "response {id} was for {command}, expected {expected_command}"
                     ));
                 }
+                if !response.success
+                    && matches!(
+                        response.operation,
+                        crate::agents::SessionOperation::Prompt(
+                            crate::protocol::PromptMode::Normal
+                        )
+                    )
+                {
+                    self.set_activity(WorkerActivityState::Idle);
+                }
                 if response.success
                     && response.operation == crate::agents::SessionOperation::LoadState
                     && let Some(session) = response.data["sessionFile"].as_str()
@@ -527,8 +560,8 @@ impl PiRpcProcess {
             }
             ReaderItem::Wire(Ok(PiWireMessage::Event(event))) => {
                 match event.get("type").and_then(Value::as_str) {
-                    Some("agent_start") => self.running = true,
-                    Some("agent_settled") => self.running = false,
+                    Some("agent_start") => self.set_activity(WorkerActivityState::Working),
+                    Some("agent_settled") => self.set_activity(WorkerActivityState::Idle),
                     _ => {}
                 }
                 SessionEvent::Activity(event.into())

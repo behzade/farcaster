@@ -17,7 +17,7 @@ pub(crate) use contract::{
 };
 pub(crate) use core::{
     CallerContext, CallerRegistry, CommonTool, PromptStore, TokenUsage, WorkerActivity,
-    WorkerEvent, WorkerLaunch, WorkerPool, WorkerSendMode, WorkerSession, WorkerSessionFactory,
-    WorkerUsage, begin_prompt, complete_prompt, enqueue_prompt, fail_prompt,
+    WorkerActivityState, WorkerEvent, WorkerLaunch, WorkerPool, WorkerSendMode, WorkerSession,
+    WorkerSessionFactory, WorkerUsage, begin_prompt, complete_prompt, enqueue_prompt, fail_prompt,
     has_queued_prompts_for, queued_prompts,
 };

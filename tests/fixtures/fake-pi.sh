@@ -17,6 +17,10 @@ fi
 if [ "$case_name" = "ignore-term" ]; then
   trap '' TERM
 fi
+if [ "$case_name" = "peer-delivery" ]; then
+  : > "$PWD/fake-session.jsonl"
+  : > "$PWD/peer-delivery.log"
+fi
 if [ "$case_name" = "term-marker" ]; then
   marker=$2
   on_term() {
@@ -45,11 +49,18 @@ fi
 if [ "$case_name" = "normal" ]; then
   printf '{"type":"agent_start"}\n'
 fi
-printf '{"type":"response","id":"%s","command":"get_state","success":true,"data":{"model":null,"thinkingLevel":"off","isStreaming":false,"isCompacting":false,"sessionId":"fake","autoCompactionEnabled":true,"messageCount":0,"pendingMessageCount":0}}\n' "$id"
+if [ "$case_name" = "peer-delivery" ]; then
+  printf '{"type":"response","id":"%s","command":"get_state","success":true,"data":{"model":null,"thinkingLevel":"off","isStreaming":false,"isCompacting":false,"sessionId":"fake","sessionFile":"%s/fake-session.jsonl","autoCompactionEnabled":true,"messageCount":0,"pendingMessageCount":0}}\n' "$id" "$PWD"
+else
+  printf '{"type":"response","id":"%s","command":"get_state","success":true,"data":{"model":null,"thinkingLevel":"off","isStreaming":false,"isCompacting":false,"sessionId":"fake","autoCompactionEnabled":true,"messageCount":0,"pendingMessageCount":0}}\n' "$id"
+fi
 model_changed=0
 entries_loaded=0
 
 while IFS= read -r line; do
+  if [ "$case_name" = "peer-delivery" ]; then
+    printf '%s\n' "$line" >> "$PWD/peer-delivery.log"
+  fi
   id=$(read_id "$line")
   type=$(read_type "$line")
   if [ "$case_name" = "eof" ]; then
@@ -106,6 +117,9 @@ while IFS= read -r line; do
       data='{"id":"new-model","name":"New Model","provider":"new-provider","reasoning":true}'
       ;;
     prompt)
+      if [ "$case_name" = "peer-delivery" ]; then
+        printf '{"type":"agent_start"}\n'
+      fi
       data='{}'
       ;;
     *)

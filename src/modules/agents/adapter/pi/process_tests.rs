@@ -212,6 +212,62 @@ fn handshake_routes_async_event_and_correlates_unique_ids() -> TestResult {
 }
 
 #[test]
+fn peer_message_steers_a_busy_session_without_waiting_for_settlement() -> TestResult {
+    let (temp, command) = fake("peer-delivery")?;
+    let mut rpc = PiRpcProcess::spawn(&command, temp.path(), None)?;
+    rpc.send_request(SessionCommand::Prompt {
+        mode: crate::protocol::PromptMode::Normal,
+        message: "keep working".into(),
+        images: Vec::new(),
+    })?;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut started = false;
+    while Instant::now() < deadline {
+        if matches!(
+            rpc.try_next(),
+            Some(SessionEvent::Activity(activity))
+                if activity.kind() == &crate::agents::SessionActivityKind::AgentStarted
+        ) {
+            started = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(started, "fake Pi did not start its turn");
+
+    let registry = crate::modules::agents::core::CallerRegistry::shared();
+    let sender = registry.issue(
+        temp.path(),
+        crate::modules::agents::core::CallerProfile {
+            backend: "pi".into(),
+            provider: None,
+            model: None,
+            effort: None,
+        },
+        None,
+    );
+    sender.bind("sender-session");
+    let recipient = registry.resolve(rpc.caller_token())?;
+    registry.send(sender.token(), &recipient.worker_id, "peer update".into())?;
+
+    let log_path = temp.path().join("peer-delivery.log");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut log = String::new();
+    while Instant::now() < deadline {
+        let _ = rpc.try_next();
+        log = fs::read_to_string(&log_path)?;
+        if log.contains("\"type\":\"steer\"") {
+            break;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(log.contains("\"type\":\"steer\""), "{log}");
+    assert!(log.contains("peer update"), "{log}");
+    rpc.terminate()?;
+    Ok(())
+}
+
+#[test]
 fn eof_with_pending_request_is_failure_and_stderr_is_visible() -> TestResult {
     let (temp, command) = fake("eof")?;
     let mut rpc = PiRpcProcess::spawn(&command, temp.path(), None)?;

@@ -11,9 +11,9 @@ use serde_json::{Value, json};
 use super::server::OpenCodeServerProcess;
 use crate::{
     agents::{
-        AgentLaunchConfig, CommonTool, TokenUsage, WorkerActivity, WorkerContext, WorkerEvent,
-        WorkerInput, WorkerInputResponse, WorkerLaunch, WorkerSendMode, WorkerSession,
-        WorkerSessionFactory, WorkerUsage,
+        AgentLaunchConfig, CommonTool, TokenUsage, WorkerActivity, WorkerActivityState,
+        WorkerContext, WorkerEvent, WorkerInput, WorkerInputResponse, WorkerLaunch, WorkerSendMode,
+        WorkerSession, WorkerSessionFactory, WorkerUsage,
     },
     modules::agents::adapter::{child_stderr, farcaster_mcp, main_session},
 };
@@ -352,6 +352,8 @@ impl OpenCodeWorkerSession {
         self.server
             .client()
             .prompt(&self.session_id, &message, files, delivery)?;
+        self.caller_identity
+            .set_activity(WorkerActivityState::Working);
         if mode != WorkerSendMode::Steer {
             self.reasoning_started = false;
         }
@@ -657,7 +659,12 @@ impl WorkerSession for OpenCodeWorkerSession {
             return Some(event);
         }
         if let Some(message) = self.caller_identity.try_recv() {
-            let mode = WorkerSendMode::for_peer(self.completions.is_some());
+            let activity = if self.completions.is_some() {
+                WorkerActivityState::Working
+            } else {
+                WorkerActivityState::Idle
+            };
+            let mode = WorkerSendMode::for_peer(activity).expect("OpenCode is ready for delivery");
             return Some(match self.send(message.prompt(), mode) {
                 Ok(()) => WorkerEvent::Started,
                 Err(error) => WorkerEvent::Failed(error),
@@ -671,6 +678,7 @@ impl WorkerSession for OpenCodeWorkerSession {
             return None;
         }
         self.completions = None;
+        self.caller_identity.set_activity(WorkerActivityState::Idle);
         Some(match completion.1 {
             Ok(output) => WorkerEvent::Settled { output },
             Err(error) => WorkerEvent::Failed(error),

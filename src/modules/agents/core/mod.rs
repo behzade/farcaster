@@ -13,6 +13,6 @@ pub(crate) use prompt_store::{
     fail as fail_prompt, has_queued_for as has_queued_prompts_for, queued as queued_prompts,
 };
 pub(crate) use worker::{
-    CommonTool, TokenUsage, WorkerActivity, WorkerEvent, WorkerLaunch, WorkerSendMode,
-    WorkerSession, WorkerSessionFactory, WorkerUsage,
+    CommonTool, TokenUsage, WorkerActivity, WorkerActivityState, WorkerEvent, WorkerLaunch,
+    WorkerSendMode, WorkerSession, WorkerSessionFactory, WorkerUsage,
 };

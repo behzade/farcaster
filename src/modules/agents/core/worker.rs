@@ -1,8 +1,17 @@
 use std::path::PathBuf;
 
+use serde::Serialize;
 use serde_json::Value;
 
 use super::super::{WorkerContext, WorkerInput, WorkerInputResponse};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum WorkerActivityState {
+    Starting,
+    Working,
+    Idle,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum WorkerSendMode {
@@ -12,8 +21,12 @@ pub(crate) enum WorkerSendMode {
 }
 
 impl WorkerSendMode {
-    pub(crate) const fn for_peer(running: bool) -> Self {
-        if running { Self::Steer } else { Self::Prompt }
+    pub(crate) const fn for_peer(activity: WorkerActivityState) -> Option<Self> {
+        match activity {
+            WorkerActivityState::Starting => None,
+            WorkerActivityState::Working => Some(Self::Steer),
+            WorkerActivityState::Idle => Some(Self::Prompt),
+        }
     }
 }
 
