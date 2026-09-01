@@ -216,7 +216,9 @@ pub(super) fn draft_session_row(
                                             .flex_1()
                                             .child(project_badge(&draft.project)),
                                     )
-                                    .child(draft_badge())
+                                    .when(shows_draft_badge(status), |metadata| {
+                                        metadata.child(draft_badge())
+                                    })
                                     .child(app_icon(
                                         AppIcon::for_harness(&draft.harness),
                                         AppIconSize::Inline,
@@ -812,6 +814,10 @@ fn draft_badge() -> AnyElement {
         .into_any_element()
 }
 
+fn shows_draft_badge(status: &str) -> bool {
+    status == "Draft"
+}
+
 fn project_badge(project: &Path) -> AnyElement {
     let path = project.display().to_string();
     div()
@@ -859,7 +865,15 @@ fn relative_age(modified: SystemTime) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::draft_can_be_discarded;
+    use super::{draft_can_be_discarded, shows_draft_badge};
+
+    #[test]
+    fn submitted_session_status_replaces_the_draft_badge() {
+        assert!(shows_draft_badge("Draft"));
+        assert!(!shows_draft_badge("Working"));
+        assert!(!shows_draft_badge("Needs input"));
+        assert!(!shows_draft_badge("Done"));
+    }
 
     #[test]
     fn failed_submitted_drafts_can_be_discarded() {
