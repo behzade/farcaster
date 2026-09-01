@@ -125,6 +125,41 @@ fn steer_is_encoded_independently_from_queue() -> Result<(), String> {
 }
 
 #[test]
+fn model_selection_omits_an_unset_variant() -> Result<(), String> {
+    let session = json!({
+        "data": {
+            "id": "session-1",
+            "location": {"directory": "/project"}
+        }
+    });
+    let transport = FakeTransport::with_responses([
+        response(200, session),
+        response(204, Value::Null),
+        response(204, Value::Null),
+    ]);
+    let mut client = OpenCodeClient::new(transport);
+
+    client.create_session("/project", None, Some(("openai", "gpt-5", None)))?;
+    client.select_model("session-1", "openai", "gpt-5", None)?;
+    client.select_model("session-1", "openai", "gpt-5", Some("high"))?;
+
+    let requests = client.into_transport().requests;
+    assert_eq!(
+        body(&requests[0])["model"],
+        json!({"providerID": "openai", "modelID": "gpt-5"})
+    );
+    assert_eq!(
+        body(&requests[1])["model"],
+        json!({"providerID": "openai", "id": "gpt-5"})
+    );
+    assert_eq!(
+        body(&requests[2])["model"],
+        json!({"providerID": "openai", "id": "gpt-5", "variant": "high"})
+    );
+    Ok(())
+}
+
+#[test]
 fn permission_replies_use_requested_session() -> Result<(), String> {
     let transport = FakeTransport::with_responses([response(204, Value::Null)]);
     let mut client = OpenCodeClient::new(transport);

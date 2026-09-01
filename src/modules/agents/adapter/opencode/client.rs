@@ -28,11 +28,9 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
             Some(json!({
                 "location": {"directory": directory},
                 "parentID": parent_id,
-                "model": model.map(|(provider_id, model_id, variant)| json!({
-                    "providerID": provider_id,
-                    "modelID": model_id,
-                    "variant": variant,
-                })),
+                "model": model.map(|(provider_id, model_id, variant)| {
+                    model_selection(provider_id, "modelID", model_id, variant)
+                }),
             })),
         )
     }
@@ -46,11 +44,9 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
             OpenCodeHttpMethod::Post,
             format!("/api/session/{}/fork", path_segment(session_id)),
             Some(json!({
-                "model": model.map(|(provider_id, model_id, variant)| json!({
-                    "providerID": provider_id,
-                    "modelID": model_id,
-                    "variant": variant,
-                })),
+                "model": model.map(|(provider_id, model_id, variant)| {
+                    model_selection(provider_id, "modelID", model_id, variant)
+                }),
             })),
         )
     }
@@ -228,7 +224,7 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
             OpenCodeHttpMethod::Post,
             format!("/api/session/{}/model", path_segment(session_id)),
             Some(json!({
-                "model": {"providerID": provider, "id": model, "variant": variant}
+                "model": model_selection(provider, "id", model, variant)
             })),
         )?;
         ensure_success(&response)
@@ -287,6 +283,17 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
         self.transport
             .execute(OpenCodeHttpRequest { method, path, body })
     }
+}
+
+fn model_selection(provider: &str, id_key: &str, model: &str, variant: Option<&str>) -> Value {
+    let mut selection = serde_json::Map::from_iter([
+        ("providerID".into(), Value::String(provider.into())),
+        (id_key.into(), Value::String(model.into())),
+    ]);
+    if let Some(variant) = variant {
+        selection.insert("variant".into(), Value::String(variant.into()));
+    }
+    Value::Object(selection)
 }
 
 fn decode_data<T: DeserializeOwned>(response: OpenCodeHttpResponse) -> Result<T, String> {
