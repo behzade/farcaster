@@ -651,6 +651,9 @@ impl WorkerSession for CodexWorkerSession {
                             }
                         }
                         "item/started" => {
+                            if let Some(activity) = codex_input_delivery(&params["item"]) {
+                                return Some(WorkerEvent::Activity(activity));
+                            }
                             if params.pointer("/item/type").and_then(Value::as_str)
                                 == Some("contextCompaction")
                             {
@@ -812,11 +815,13 @@ impl CodexWorkerSession {
                 .current_turn
                 .as_deref()
                 .ok_or_else(|| "Codex worker has not reported its active turn".to_owned())?;
+            let client_id = format!("{STEER_CLIENT_ID_PREFIX}{}", self.next_id.saturating_add(1));
             let id = self.request(
                 "turn/steer",
                 json!({
                     "threadId": self.thread_id,
                     "expectedTurnId": turn_id,
+                    "clientUserMessageId": client_id,
                     "input": input,
                 }),
             )?;
@@ -824,7 +829,7 @@ impl CodexWorkerSession {
             return Ok(());
         }
         if mode == WorkerSendMode::Queue && self.native_queue {
-            let client_id = format!("farcaster-queue-{}", self.next_id.saturating_add(1));
+            let client_id = format!("{QUEUE_CLIENT_ID_PREFIX}{}", self.next_id.saturating_add(1));
             let id = self.request(
                 "thread/queue/add",
                 json!({
@@ -896,6 +901,32 @@ fn configure_farcaster_mcp(command: &mut std::process::Command, caller_token: &s
         ))
         .arg("-c")
         .arg("mcp_servers.farcaster.required=true");
+}
+
+const STEER_CLIENT_ID_PREFIX: &str = "farcaster-steer-";
+const QUEUE_CLIENT_ID_PREFIX: &str = "farcaster-queue-";
+
+fn codex_input_delivery(item: &Value) -> Option<WorkerActivity> {
+    if item.get("type").and_then(Value::as_str) != Some("userMessage") {
+        return None;
+    }
+    let client_id = item.get("clientId").and_then(Value::as_str)?;
+    let mode = if client_id.starts_with(STEER_CLIENT_ID_PREFIX) {
+        WorkerSendMode::Steer
+    } else if client_id.starts_with(QUEUE_CLIENT_ID_PREFIX) {
+        WorkerSendMode::Queue
+    } else {
+        return None;
+    };
+    let message = item
+        .get("content")?
+        .as_array()?
+        .iter()
+        .find(|input| input.get("type").and_then(Value::as_str) == Some("text"))?
+        .get("text")?
+        .as_str()?
+        .to_owned();
+    Some(WorkerActivity::InputDelivered { mode, message })
 }
 
 fn codex_agent_message_text(item: &Value) -> Option<String> {

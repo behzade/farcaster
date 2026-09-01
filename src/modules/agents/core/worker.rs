@@ -103,6 +103,10 @@ pub(crate) struct WorkerUsage {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum WorkerActivity {
+    InputDelivered {
+        mode: WorkerSendMode,
+        message: String,
+    },
     TextDelta {
         content_index: usize,
         delta: String,

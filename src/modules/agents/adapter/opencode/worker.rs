@@ -431,6 +431,11 @@ impl OpenCodeWorkerSession {
                 continue;
             }
             match event.event.as_deref()? {
+                "session.next.prompted.1" => {
+                    if let Some(activity) = opencode_input_delivery(&event.data) {
+                        return Some(WorkerEvent::Activity(activity));
+                    }
+                }
                 "session.text.delta" => {
                     let delta = event.data.get("delta").and_then(Value::as_str)?;
                     return Some(WorkerEvent::Activity(WorkerActivity::TextDelta {
@@ -711,6 +716,16 @@ impl WorkerSession for OpenCodeWorkerSession {
     fn close(&mut self) -> Result<(), String> {
         self.server.terminate()
     }
+}
+
+fn opencode_input_delivery(data: &Value) -> Option<WorkerActivity> {
+    let mode = match data.get("delivery").and_then(Value::as_str)? {
+        "steer" => WorkerSendMode::Steer,
+        "queue" => WorkerSendMode::Queue,
+        _ => return None,
+    };
+    let message = data.pointer("/prompt/text")?.as_str()?.to_owned();
+    Some(WorkerActivity::InputDelivered { mode, message })
 }
 
 fn opencode_permission_request(event: &super::contract::OpenCodeEvent) -> Option<(&str, &str)> {

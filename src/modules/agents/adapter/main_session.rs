@@ -133,6 +133,18 @@ impl WorkerSessionTransport {
         self.enqueue_queue_update();
     }
 
+    fn acknowledge_delivery(&mut self, mode: WorkerSendMode, message: &str) {
+        let queue = match mode {
+            WorkerSendMode::Prompt => return,
+            WorkerSendMode::Steer => &mut self.steering,
+            WorkerSendMode::Queue => &mut self.follow_up,
+        };
+        if let Some(index) = queue.iter().position(|queued| queued == message) {
+            queue.remove(index);
+            self.enqueue_queue_update();
+        }
+    }
+
     fn clear_queue(&mut self) {
         if self.steering.is_empty() && self.follow_up.is_empty() {
             return;
@@ -206,6 +218,10 @@ impl WorkerSessionTransport {
 
     fn enqueue_activity(&mut self, worker_activity: WorkerActivity) {
         let event = match worker_activity {
+            WorkerActivity::InputDelivered { mode, message } => {
+                self.acknowledge_delivery(mode, &message);
+                return;
+            }
             WorkerActivity::TextDelta {
                 content_index,
                 delta,
@@ -780,7 +796,7 @@ mod tests {
     }
 
     #[test]
-    fn queued_worker_messages_are_reported_until_the_turn_settles() {
+    fn delivered_worker_messages_leave_the_visible_queue_independently() {
         let mut transport = WorkerSessionTransport::new(
             std::path::Path::new("/locators"),
             "codex-cli",
@@ -805,9 +821,14 @@ mod tests {
                 images: Vec::new(),
             })
             .expect("follow-up");
-        transport.enqueue_worker_event(WorkerEvent::Settled {
-            output: String::new(),
-        });
+        transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            mode: WorkerSendMode::Steer,
+            message: "untracked peer message".into(),
+        }));
+        transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            mode: WorkerSendMode::Steer,
+            message: "redirect".into(),
+        }));
 
         let updates = transport
             .pending
@@ -827,7 +848,7 @@ mod tests {
         assert_eq!(updates[1].value()["steering"], json!(["redirect"]));
         assert_eq!(updates[1].value()["followUp"], json!(["then verify"]));
         assert_eq!(updates[2].value()["steering"], json!([]));
-        assert_eq!(updates[2].value()["followUp"], json!([]));
+        assert_eq!(updates[2].value()["followUp"], json!(["then verify"]));
     }
 
     #[test]
