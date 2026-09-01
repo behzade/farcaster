@@ -28,7 +28,9 @@ use crate::{
         SessionOperation, SessionStart, SessionTransport,
     },
     app::infrastructure::persistence::StateStore,
-    app::views::transcript::conversation::{ConversationState, TranscriptItem, TranscriptKind},
+    app::views::transcript::conversation::{
+        ConversationState, TranscriptItem, TranscriptKind, annotate_prompt_presentations,
+    },
     protocol::{
         AgentMode, ExtensionUiRequest, ExtensionUiResponse, Model, PromptImage, PromptMode,
         SessionState, SlashCommand,
@@ -617,9 +619,24 @@ impl RuntimeOwner {
                 target,
                 mode,
                 message,
+                display_message,
+                invocation,
                 images,
                 allow_while_running,
-            } => self.send_prompt(target, mode, message, images, allow_while_running),
+            } => match (display_message, invocation) {
+                (None, None) => {
+                    self.send_prompt(target, mode, message, images, allow_while_running)
+                }
+                (display_message, invocation) => self.send_prompt_with_presentation(
+                    target,
+                    mode,
+                    message,
+                    display_message,
+                    invocation,
+                    images,
+                    allow_while_running,
+                ),
+            },
             RuntimeCommand::DeliverQueued(prompt) => self.deliver_queued(prompt),
             RuntimeCommand::Abort => self.send(SessionCommand::Abort),
             RuntimeCommand::Reload => self.reload(),
@@ -1002,7 +1019,7 @@ impl RuntimeOwner {
         let refreshing_visible_history = result.kind == HistoryLoadKind::DocumentRefresh
             && self.snapshot.history_preview
             && self.snapshot.selected_session.as_ref() == Some(&result.path);
-        let history = match result.result {
+        let mut history = match result.result {
             Ok(history) => history,
             Err(error) => {
                 self.snapshot.status = "Could not load history".into();
@@ -1012,6 +1029,7 @@ impl RuntimeOwner {
                 return;
             }
         };
+        annotate_history_presentations(self.state.as_ref(), &result.path, &mut history.messages);
         if self.parked_snapshot.is_none() {
             self.parked_snapshot = Some(std::mem::take(&mut self.snapshot));
         }
@@ -1171,7 +1189,12 @@ impl RuntimeOwner {
                         .and_then(Value::as_array)
                         .cloned()
                         .unwrap_or_default();
-                    let messages = project_display_history(&entries);
+                    let mut messages = project_display_history(&entries);
+                    if let (Some(state), Some(session)) =
+                        (self.state.as_ref(), self.active_session.as_deref())
+                    {
+                        annotate_history_presentations(Some(state), session, &mut messages);
+                    }
                     conversation_mut(self.active_snapshot_mut()).replace_history(&messages);
                 }
                 self.startup_history_loaded = true;
@@ -1358,6 +1381,17 @@ impl RuntimeOwner {
             generation: self.process_generation,
             snapshot: Arc::new(snapshot),
         });
+    }
+}
+
+fn annotate_history_presentations(
+    state: Option<&StateStore>,
+    session: &std::path::Path,
+    messages: &mut [Value],
+) {
+    let Some(state) = state else { return };
+    if let Ok(presentations) = state.prompt_presentations(session) {
+        annotate_prompt_presentations(messages, &presentations);
     }
 }
 

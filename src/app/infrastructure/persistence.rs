@@ -10,13 +10,13 @@ use rusqlite::{
 };
 
 use crate::{
-    agents::QueuedPrompt,
+    agents::{PromptPresentation, QueuedPrompt},
     projects::{DraftSession, Registry},
     protocol::{PromptImage, PromptMode},
     sessions::{SessionSummary, UsageSummary},
 };
 
-const SCHEMA_VERSION: i64 = 10;
+const SCHEMA_VERSION: i64 = 11;
 const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 const ACTIVE_IMPORT_WINDOW: Duration = Duration::from_secs(3 * 60 * 60);
 const REPOSITORY_BACKEND_PREFERENCES_KEY: &str = "repository_backend_preferences";
@@ -199,7 +199,7 @@ impl StateStore {
                      UPDATE meta SET value='5' WHERE key='schema_version';",
                 )
                 .map_err(|error| format!("migrate GUI state schema to 5: {error}"))?,
-            5 | 6 | 7 | 8 | 9 | SCHEMA_VERSION => {}
+            5 | 6 | 7 | 8 | 9 | 10 | SCHEMA_VERSION => {}
             _ => {
                 return Err(format!(
                     "GUI state schema {schema_version} is not supported by this build"
@@ -291,6 +291,26 @@ impl StateStore {
                      UPDATE meta SET value='10' WHERE key='schema_version';",
                 )
                 .map_err(|error| format!("migrate GUI state schema to 10: {error}"))?;
+            schema_version = 10;
+        }
+        if schema_version == 10 {
+            migration
+                .execute_batch(
+                    "ALTER TABLE outbox ADD COLUMN display_message TEXT;
+                     ALTER TABLE outbox ADD COLUMN invocation TEXT;
+                     CREATE TABLE prompt_presentations (
+                       id INTEGER PRIMARY KEY AUTOINCREMENT,
+                       session_path TEXT NOT NULL,
+                       resolved_message TEXT NOT NULL,
+                       display_message TEXT NOT NULL,
+                       invocation TEXT NOT NULL,
+                       created_ms INTEGER NOT NULL
+                     );
+                     CREATE INDEX prompt_presentations_session
+                       ON prompt_presentations(session_path, created_ms, id);
+                     UPDATE meta SET value='11' WHERE key='schema_version';",
+                )
+                .map_err(|error| format!("migrate GUI state schema to 11: {error}"))?;
         }
         migration
             .commit()
@@ -942,6 +962,12 @@ impl StateStore {
                 })
                 .and_then(|_| {
                     transaction.execute(
+                        "UPDATE prompt_presentations SET session_path=?2 WHERE session_path=?1",
+                        params![source_text, target_text],
+                    )
+                })
+                .and_then(|_| {
+                    transaction.execute(
                         "UPDATE composer_sessions SET target=?2 WHERE target=?1",
                         params![source_target, target_target],
                     )
@@ -969,6 +995,12 @@ impl StateStore {
             let target = format!("session:{path_text}");
             transaction
                 .execute("DELETE FROM outbox WHERE session_path=?1", [&path_text])
+                .and_then(|_| {
+                    transaction.execute(
+                        "DELETE FROM prompt_presentations WHERE session_path=?1",
+                        [&path_text],
+                    )
+                })
                 .and_then(|_| {
                     transaction.execute("DELETE FROM composer_sessions WHERE target=?1", [&target])
                 })
@@ -1015,13 +1047,32 @@ impl StateStore {
         message: &str,
         images: &[PromptImage],
     ) -> Result<i64, String> {
+        self.enqueue_prompt_with_presentation(
+            target, harness, project, session, mode, message, None, None, images,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn enqueue_prompt_with_presentation(
+        &self,
+        target: &str,
+        harness: &str,
+        project: &Path,
+        session: Option<&Path>,
+        mode: PromptMode,
+        message: &str,
+        display_message: Option<&str>,
+        invocation: Option<&str>,
+        images: &[PromptImage],
+    ) -> Result<i64, String> {
         let images_json = serde_json::to_string(images)
             .map_err(|error| format!("encode prompt images: {error}"))?;
         self.connection
             .execute(
                 "INSERT INTO outbox(
-                   target, harness, project, session_path, mode, message, images_json, created_ms
-                 ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                   target, harness, project, session_path, mode, message, display_message,
+                   invocation, images_json, created_ms
+                 ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     target,
                     harness,
@@ -1029,6 +1080,8 @@ impl StateStore {
                     session.map(|path| path.to_string_lossy()),
                     prompt_mode(mode),
                     message,
+                    display_message,
+                    invocation,
                     images_json,
                     now_ms(),
                 ],
@@ -1041,17 +1094,18 @@ impl StateStore {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT id, target, harness, project, session_path, mode, message, images_json
+                "SELECT id, target, harness, project, session_path, mode, message,
+                        display_message, invocation, images_json
                    FROM outbox WHERE state='queued' ORDER BY id",
             )
             .map_err(|error| format!("prepare prompt queue: {error}"))?;
         statement
             .query_map([], |row| {
                 let mode = row.get::<_, String>(5)?;
-                let images_json = row.get::<_, String>(7)?;
+                let images_json = row.get::<_, String>(9)?;
                 let images = serde_json::from_str(&images_json).map_err(|error| {
                     rusqlite::Error::FromSqlConversionFailure(
-                        7,
+                        9,
                         rusqlite::types::Type::Text,
                         Box::new(error),
                     )
@@ -1064,11 +1118,39 @@ impl StateStore {
                     session: row.get::<_, Option<String>>(4)?.map(PathBuf::from),
                     mode: parse_prompt_mode(&mode),
                     message: row.get(6)?,
+                    display_message: row.get(7)?,
+                    invocation: row.get(8)?,
                     images,
                 })
             })
             .map_err(|error| format!("query prompt queue: {error}"))?
             .map(|row| row.map_err(|error| format!("decode queued prompt: {error}")))
+            .collect()
+    }
+
+    pub(crate) fn prompt_presentations(
+        &self,
+        session: &Path,
+    ) -> Result<Vec<PromptPresentation>, String> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT resolved_message, display_message, invocation
+                   FROM prompt_presentations
+                  WHERE session_path=?1
+                  ORDER BY created_ms, id",
+            )
+            .map_err(|error| format!("prepare prompt presentations: {error}"))?;
+        statement
+            .query_map([session.to_string_lossy()], |row| {
+                Ok(PromptPresentation {
+                    resolved_message: row.get(0)?,
+                    display_message: row.get(1)?,
+                    invocation: row.get(2)?,
+                })
+            })
+            .map_err(|error| format!("query prompt presentations: {error}"))?
+            .map(|row| row.map_err(|error| format!("decode prompt presentation: {error}")))
             .collect()
     }
 
@@ -1107,6 +1189,20 @@ impl StateStore {
                 .map_err(|error| {
                     format!("associate queued prompt {id} with its session: {error}")
                 })?;
+        }
+        if let Some(session) = session {
+            let session = crate::sessions::normalize_session_path(session);
+            transaction
+                .execute(
+                    "INSERT INTO prompt_presentations(
+                       session_path, resolved_message, display_message, invocation, created_ms
+                     )
+                     SELECT ?2, message, display_message, invocation, created_ms
+                       FROM outbox
+                      WHERE id=?1 AND display_message IS NOT NULL AND invocation IS NOT NULL",
+                    params![id, session.to_string_lossy()],
+                )
+                .map_err(|error| format!("save prompt presentation {id}: {error}"))?;
         }
         transaction
             .execute("DELETE FROM outbox WHERE id=?1", [id])
@@ -1252,6 +1348,31 @@ impl crate::agents::PromptStore for StateStore {
         images: &[PromptImage],
     ) -> Result<i64, String> {
         self.enqueue_prompt(target, harness, project, session, mode, message, images)
+    }
+
+    fn enqueue_with_presentation(
+        &self,
+        target: &str,
+        harness: &str,
+        project: &Path,
+        session: Option<&Path>,
+        mode: PromptMode,
+        message: &str,
+        display_message: Option<&str>,
+        invocation: Option<&str>,
+        images: &[PromptImage],
+    ) -> Result<i64, String> {
+        self.enqueue_prompt_with_presentation(
+            target,
+            harness,
+            project,
+            session,
+            mode,
+            message,
+            display_message,
+            invocation,
+            images,
+        )
     }
 
     fn queued(&self) -> Result<Vec<QueuedPrompt>, String> {

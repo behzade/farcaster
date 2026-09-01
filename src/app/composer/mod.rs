@@ -6,6 +6,7 @@ pub(in crate::app) mod completion;
 pub(in crate::app) mod file_mentions;
 pub(in crate::app) mod images;
 pub(in crate::app) mod pastes;
+pub(crate) mod prompt_fragments;
 pub(crate) mod sessions;
 #[cfg(test)]
 mod sessions_tests;

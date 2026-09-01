@@ -9,8 +9,9 @@ mod worker;
 pub(crate) use caller::{CallerContext, CallerIdentity, CallerProfile, CallerRegistry};
 pub(crate) use pool::WorkerPool;
 pub(crate) use prompt_store::{
-    PromptStore, begin as begin_prompt, complete as complete_prompt, enqueue as enqueue_prompt,
-    fail as fail_prompt, has_queued_for as has_queued_prompts_for, queued as queued_prompts,
+    PromptStore, begin as begin_prompt, complete as complete_prompt,
+    enqueue_with_presentation as enqueue_prompt_with_presentation, fail as fail_prompt,
+    has_queued_for as has_queued_prompts_for, queued as queued_prompts,
 };
 pub(crate) use worker::{
     CommonTool, TokenUsage, WorkerActivity, WorkerActivityState, WorkerEvent, WorkerLaunch,

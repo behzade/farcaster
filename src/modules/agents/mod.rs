@@ -11,13 +11,13 @@ pub(crate) use adapter::{
 pub(crate) use contract::extensions;
 pub(crate) use contract::{
     AgentLaunchConfig, ConfigurationCatalog, DiscoveredHistory, DiscoveredSession, DiscoveredUsage,
-    HarnessAccessMode, QueuedPrompt, SessionActivityKind, SessionCommand, SessionEvent,
-    SessionLaunch, SessionOperation, SessionResponse, SessionStart, SessionTransport, StartWorker,
-    WorkerContext, WorkerInput, WorkerInputResponse,
+    HarnessAccessMode, PromptPresentation, QueuedPrompt, SessionActivityKind, SessionCommand,
+    SessionEvent, SessionLaunch, SessionOperation, SessionResponse, SessionStart, SessionTransport,
+    StartWorker, WorkerContext, WorkerInput, WorkerInputResponse,
 };
 pub(crate) use core::{
     CallerContext, CallerRegistry, CommonTool, PromptStore, TokenUsage, WorkerActivity,
     WorkerActivityState, WorkerEvent, WorkerLaunch, WorkerPool, WorkerSendMode, WorkerSession,
-    WorkerSessionFactory, WorkerUsage, begin_prompt, complete_prompt, enqueue_prompt, fail_prompt,
-    has_queued_prompts_for, queued_prompts,
+    WorkerSessionFactory, WorkerUsage, begin_prompt, complete_prompt,
+    enqueue_prompt_with_presentation, fail_prompt, has_queued_prompts_for, queued_prompts,
 };

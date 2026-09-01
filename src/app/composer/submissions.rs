@@ -7,7 +7,8 @@ use std::{
 use gpui::{ClipboardItem, Context, Window};
 
 use super::{
-    ComposerImage, ComposerPaste, FarcasterApp, pastes as composer_pastes, slash_commands,
+    ComposerImage, ComposerPaste, FarcasterApp, pastes as composer_pastes, prompt_fragments,
+    slash_commands,
 };
 use crate::{
     app::composer::sessions::{ComposerSnapshot, session_target},
@@ -65,7 +66,17 @@ impl FarcasterApp {
             .get(&target)
             .cloned()
             .unwrap_or_default();
-        let message = composer_pastes::append_pasted_files(&value, &pastes);
+        let expansion = prompt_fragments::expand(&value);
+        let resolved = expansion
+            .as_ref()
+            .map_or(value.as_str(), |expansion| expansion.message.as_str());
+        let message = composer_pastes::append_pasted_files(resolved, &pastes);
+        let display_message = expansion.as_ref().map(|expansion| {
+            composer_pastes::append_pasted_file_links(&expansion.display, &pastes)
+        });
+        let invocation = expansion
+            .as_ref()
+            .map(|expansion| expansion.resolution.clone());
         let inactive_session = inactive_session_for_target(
             &target,
             self.snapshot.selected_session.as_deref(),
@@ -75,6 +86,8 @@ impl FarcasterApp {
             target: target.clone(),
             mode,
             message: message.clone(),
+            display_message: display_message.clone(),
+            invocation: invocation.clone(),
             images,
             allow_while_running,
         }) {
@@ -104,13 +117,20 @@ impl FarcasterApp {
                 {
                     self.apply_composer_snapshot(ComposerSnapshot::default(), window, cx);
                 }
-                let invocation =
-                    user_invocations::contains_invocation(&value, &self.snapshot.commands);
                 let snapshot = Arc::make_mut(&mut self.snapshot);
                 let index = snapshot.conversation.items.len();
                 let conversation = Arc::make_mut(&mut snapshot.conversation);
                 if show_in_transcript {
-                    conversation.push_local_user(message, image_count, invocation);
+                    match (display_message, invocation) {
+                        (Some(display), Some(invocation)) => {
+                            conversation.push_local_invocation(display, image_count, invocation);
+                        }
+                        _ => {
+                            let invocation =
+                                user_invocations::contains_invocation(&value, &snapshot.commands);
+                            conversation.push_local_user(message, image_count, invocation);
+                        }
+                    }
                 }
                 conversation.running = true;
                 snapshot.status = "Working".into();

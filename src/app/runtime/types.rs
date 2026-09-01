@@ -8,6 +8,8 @@ pub(crate) enum RuntimeCommand {
         target: String,
         mode: PromptMode,
         message: String,
+        display_message: Option<String>,
+        invocation: Option<String>,
         images: Vec<PromptImage>,
         allow_while_running: bool,
     },

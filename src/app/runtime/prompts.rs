@@ -11,6 +11,8 @@ use super::{RuntimeEvent, RuntimeOwner, can_send_prompt, conversation_mut};
 pub(super) struct DeferredPrompt {
     pub(super) mode: PromptMode,
     pub(super) message: String,
+    pub(super) display_message: Option<String>,
+    pub(super) invocation: Option<String>,
     pub(super) images: Vec<PromptImage>,
     pub(super) outbox_id: Option<i64>,
 }
@@ -21,6 +23,27 @@ impl RuntimeOwner {
         target: String,
         mode: PromptMode,
         message: String,
+        images: Vec<PromptImage>,
+        allow_while_running: bool,
+    ) {
+        self.send_prompt_with_presentation(
+            target,
+            mode,
+            message,
+            None,
+            None,
+            images,
+            allow_while_running,
+        );
+    }
+
+    pub(super) fn send_prompt_with_presentation(
+        &mut self,
+        target: String,
+        mode: PromptMode,
+        message: String,
+        display_message: Option<String>,
+        invocation: Option<String>,
         images: Vec<PromptImage>,
         allow_while_running: bool,
     ) {
@@ -37,7 +60,7 @@ impl RuntimeOwner {
             return;
         }
         let outbox_id = match self.state.as_ref() {
-            Some(state) => match agents::enqueue_prompt(
+            Some(state) => match agents::enqueue_prompt_with_presentation(
                 state,
                 &target,
                 &self.harness,
@@ -45,6 +68,8 @@ impl RuntimeOwner {
                 self.snapshot.selected_session.as_deref(),
                 mode,
                 &message,
+                display_message.as_deref(),
+                invocation.as_deref(),
                 &images,
             ) {
                 Ok(id) => Some(id),
@@ -60,18 +85,36 @@ impl RuntimeOwner {
         };
         self.pending_prompt_target = Some(target);
         self.snapshot.pending_question = None;
-        let invocation = crate::app::composer::user_invocations::contains_invocation(
+        let native_invocation = crate::app::composer::user_invocations::contains_invocation(
             &message,
             &self.snapshot.commands,
         );
         let conversation = Arc::make_mut(&mut self.snapshot.conversation);
-        self.pending_prompt_item = (!was_running).then(|| {
-            conversation.push_local_user_with_prompt_images(message.clone(), &images, invocation)
-        });
+        self.pending_prompt_item =
+            (!was_running).then(|| match (display_message.as_ref(), invocation.as_ref()) {
+                (Some(display), Some(invocation)) => conversation
+                    .push_local_invocation_with_prompt_images(
+                        display.clone(),
+                        &images,
+                        invocation.clone(),
+                    ),
+                _ => conversation.push_local_user_with_prompt_images(
+                    message.clone(),
+                    &images,
+                    native_invocation,
+                ),
+            });
         conversation.running = true;
         self.snapshot.status = "Working".into();
         self.publish();
-        self.dispatch_prompt(mode, message, images, outbox_id);
+        self.dispatch_prompt(
+            mode,
+            message,
+            display_message,
+            invocation,
+            images,
+            outbox_id,
+        );
     }
 
     pub(super) fn deliver_queued(&mut self, prompt: QueuedPrompt) {
@@ -79,26 +122,43 @@ impl RuntimeOwner {
         self.snapshot.project = self.project.clone();
         self.snapshot.selected_session = prompt.session.clone();
         self.pending_prompt_target = Some(prompt.target);
-        let invocation = crate::app::composer::user_invocations::contains_invocation(
+        let native_invocation = crate::app::composer::user_invocations::contains_invocation(
             &prompt.message,
             &self.snapshot.commands,
         );
         let conversation = Arc::make_mut(&mut self.snapshot.conversation);
-        self.pending_prompt_item = Some(conversation.push_local_user_with_prompt_images(
-            prompt.message.clone(),
-            &prompt.images,
-            invocation,
-        ));
+        self.pending_prompt_item = Some(match (&prompt.display_message, &prompt.invocation) {
+            (Some(display), Some(invocation)) => conversation
+                .push_local_invocation_with_prompt_images(
+                    display.clone(),
+                    &prompt.images,
+                    invocation.clone(),
+                ),
+            _ => conversation.push_local_user_with_prompt_images(
+                prompt.message.clone(),
+                &prompt.images,
+                native_invocation,
+            ),
+        });
         conversation.running = true;
         self.snapshot.status = "Working".into();
         self.publish();
-        self.dispatch_prompt(prompt.mode, prompt.message, prompt.images, Some(prompt.id));
+        self.dispatch_prompt(
+            prompt.mode,
+            prompt.message,
+            prompt.display_message,
+            prompt.invocation,
+            prompt.images,
+            Some(prompt.id),
+        );
     }
 
     fn dispatch_prompt(
         &mut self,
         mode: PromptMode,
         message: String,
+        display_message: Option<String>,
+        invocation: Option<String>,
         images: Vec<PromptImage>,
         outbox_id: Option<i64>,
     ) {
@@ -108,6 +168,8 @@ impl RuntimeOwner {
             self.deferred_prompt = Some(DeferredPrompt {
                 mode,
                 message,
+                display_message,
+                invocation,
                 images,
                 outbox_id,
             });
@@ -119,6 +181,8 @@ impl RuntimeOwner {
             self.deferred_prompt = Some(DeferredPrompt {
                 mode,
                 message,
+                display_message,
+                invocation,
                 images,
                 outbox_id,
             });
@@ -130,6 +194,8 @@ impl RuntimeOwner {
             self.deferred_prompt = Some(DeferredPrompt {
                 mode,
                 message,
+                display_message,
+                invocation,
                 images,
                 outbox_id,
             });
@@ -205,16 +271,29 @@ impl RuntimeOwner {
         }
         if let Some(prompt) = self.deferred_prompt.take() {
             if self.pending_prompt_item.is_none() {
-                let invocation = crate::app::composer::user_invocations::contains_invocation(
-                    &prompt.message,
-                    &self.active_snapshot().commands,
-                );
-                let optimistic = conversation_mut(self.active_snapshot_mut())
-                    .push_local_user_with_prompt_images(
-                        prompt.message.clone(),
-                        &prompt.images,
-                        invocation,
-                    );
+                let optimistic = match (&prompt.display_message, &prompt.invocation) {
+                    (Some(display), Some(invocation)) => {
+                        conversation_mut(self.active_snapshot_mut())
+                            .push_local_invocation_with_prompt_images(
+                                display.clone(),
+                                &prompt.images,
+                                invocation.clone(),
+                            )
+                    }
+                    _ => {
+                        let invocation =
+                            crate::app::composer::user_invocations::contains_invocation(
+                                &prompt.message,
+                                &self.active_snapshot().commands,
+                            );
+                        conversation_mut(self.active_snapshot_mut())
+                            .push_local_user_with_prompt_images(
+                                prompt.message.clone(),
+                                &prompt.images,
+                                invocation,
+                            )
+                    }
+                };
                 self.pending_prompt_item = Some(optimistic);
             }
             let snapshot = self.active_snapshot_mut();
@@ -225,7 +304,14 @@ impl RuntimeOwner {
             {
                 self.snapshot = snapshot;
             }
-            self.dispatch_prompt(prompt.mode, prompt.message, prompt.images, prompt.outbox_id);
+            self.dispatch_prompt(
+                prompt.mode,
+                prompt.message,
+                prompt.display_message,
+                prompt.invocation,
+                prompt.images,
+                prompt.outbox_id,
+            );
         }
     }
 }

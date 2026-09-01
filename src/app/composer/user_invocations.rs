@@ -1,4 +1,7 @@
-use crate::protocol::{SlashCommand, SlashCommandSource};
+use crate::{
+    app::composer::prompt_fragments,
+    protocol::{SlashCommand, SlashCommandSource},
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ComposerSuggestion {
@@ -40,7 +43,7 @@ pub(crate) fn suggestions(input: &str, commands: &[SlashCommand]) -> Vec<Compose
     ordered
         .into_iter()
         .filter_map(|command| {
-            let name = invocation_alias(command, &invocable);
+            let name = invocation_alias(&command, &invocable);
             name.contains(query).then(|| {
                 let kind = if command.source == SlashCommandSource::Prompt {
                     "Prompt"
@@ -92,24 +95,25 @@ fn invocation_query(input: &str) -> Option<&str> {
         .then_some(name)
 }
 
-fn invocable_commands(commands: &[SlashCommand]) -> Vec<&SlashCommand> {
+fn invocable_commands(commands: &[SlashCommand]) -> Vec<SlashCommand> {
+    let owned = prompt_fragments::commands();
     let mut invocable = Vec::new();
-    for command in commands.iter().filter(|command| {
+    for command in owned.iter().chain(commands).filter(|command| {
         matches!(
             command.source,
             SlashCommandSource::Prompt | SlashCommandSource::Skill
         )
     }) {
-        if !invocable.iter().any(|existing: &&SlashCommand| {
+        if !invocable.iter().any(|existing: &SlashCommand| {
             existing.source == command.source && existing.name == command.name
         }) {
-            invocable.push(command);
+            invocable.push(command.clone());
         }
     }
     invocable
 }
 
-fn invocation_alias(command: &SlashCommand, commands: &[&SlashCommand]) -> String {
+fn invocation_alias(command: &SlashCommand, commands: &[SlashCommand]) -> String {
     let bare_name = invocation_name(command);
     if commands
         .iter()
@@ -154,8 +158,7 @@ mod tests {
     #[test]
     fn dollar_suggestions_compose_prompts_and_skills() {
         let commands = vec![
-            command("simplify", SlashCommandSource::Prompt),
-            command("skill:commit", SlashCommandSource::Skill),
+            command("skill:review", SlashCommandSource::Skill),
             command("reload", SlashCommandSource::Extension),
         ];
 
@@ -164,7 +167,7 @@ mod tests {
                 .into_iter()
                 .map(|suggestion| suggestion.name)
                 .collect::<Vec<_>>(),
-            ["simplify", "commit"]
+            ["commit", "simplify", "review"]
         );
         let suggestion = suggestions("please $com", &commands)
             .into_iter()
@@ -180,13 +183,13 @@ mod tests {
             ),
             ("$simplify $commit later".into(), "$simplify $commit ".len())
         );
-        assert_eq!(suggestions("please $", &commands).len(), 2);
+        assert_eq!(suggestions("please $", &commands).len(), 3);
         assert!(suggestions("please$com", &commands).is_empty());
     }
 
     #[test]
     fn invocation_detection_uses_the_command_catalog() {
-        let commands = vec![command("simplify", SlashCommandSource::Prompt)];
+        let commands = Vec::new();
 
         assert!(contains_invocation("please $simplify this", &commands));
         assert!(!contains_invocation("cost $100", &commands));
@@ -216,7 +219,7 @@ mod tests {
             command("skill:review", SlashCommandSource::Skill),
         ];
         assert_eq!(
-            suggestions("$", &commands)
+            suggestions("$rev", &commands)
                 .into_iter()
                 .map(|suggestion| suggestion.name)
                 .collect::<Vec<_>>(),

@@ -30,6 +30,57 @@ fn invocation_keeps_one_compact_user_item_through_finalization() {
 }
 
 #[test]
+fn farcaster_invocation_keeps_compact_text_without_backend_metadata() {
+    let mut state = ConversationState::default();
+    state.push_local_invocation("$commit".into(), 0, "expanded commit prompt".into());
+    state.start_message(Some(&json!({
+        "role":"user",
+        "content":[{"type":"text","text":"expanded commit prompt"}]
+    })));
+    state.end_message(Some(&json!({
+        "role":"user",
+        "content":[{"type":"text","text":"expanded commit prompt"}]
+    })));
+
+    assert_eq!(state.items.len(), 1);
+    assert_eq!(state.items[0].text, "$commit");
+    assert_eq!(
+        state.items[0].invocation.as_deref(),
+        Some("expanded commit prompt")
+    );
+}
+
+#[test]
+fn saved_presentations_restore_compact_history_in_order() {
+    let mut messages = vec![
+        json!({"role":"user","content":"same expansion"}),
+        json!({"role":"assistant","content":"one"}),
+        json!({"role":"user","content":"same expansion"}),
+    ];
+    annotate_prompt_presentations(
+        &mut messages,
+        &[
+            crate::agents::PromptPresentation {
+                resolved_message: "same expansion".into(),
+                display_message: "$commit first".into(),
+                invocation: "same expansion".into(),
+            },
+            crate::agents::PromptPresentation {
+                resolved_message: "same expansion".into(),
+                display_message: "$commit second".into(),
+                invocation: "same expansion".into(),
+            },
+        ],
+    );
+    let mut state = ConversationState::default();
+    state.replace_history(&messages);
+
+    assert_eq!(state.items[0].text, "$commit first");
+    assert_eq!(state.items[1].text, "$commit second");
+    assert_eq!(state.items[0].invocation.as_deref(), Some("same expansion"));
+}
+
+#[test]
 fn pasted_file_contents_stay_out_of_the_transcript() {
     let prompt = "check this\n\nPasted text files:\n- [pasted.txt](</tmp/pasted.txt>)\n\n--- BEGIN PASTED FILE pasted.txt ---\nsecret\n--- END PASTED FILE pasted.txt ---";
     let display = "check this\n\nPasted text files:\n- [pasted.txt](</tmp/pasted.txt>)";

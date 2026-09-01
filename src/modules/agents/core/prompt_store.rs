@@ -20,6 +20,23 @@ pub(crate) trait PromptStore {
         images: &[PromptImage],
     ) -> Result<i64, String>;
 
+    #[allow(clippy::too_many_arguments)]
+    fn enqueue_with_presentation(
+        &self,
+        target: &str,
+        harness: &str,
+        project: &Path,
+        session: Option<&Path>,
+        mode: PromptMode,
+        message: &str,
+        display_message: Option<&str>,
+        invocation: Option<&str>,
+        images: &[PromptImage],
+    ) -> Result<i64, String> {
+        let _ = (display_message, invocation);
+        self.enqueue(target, harness, project, session, mode, message, images)
+    }
+
     fn queued(&self) -> Result<Vec<QueuedPrompt>, String>;
     fn complete(&mut self, id: i64, target: &str, session: Option<&Path>) -> Result<(), String>;
     fn begin(&self, id: i64) -> Result<(), String>;
@@ -31,7 +48,7 @@ pub(crate) fn has_queued_for(store: &impl PromptStore, paths: &[PathBuf]) -> Res
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn enqueue(
+pub(crate) fn enqueue_with_presentation(
     store: &impl PromptStore,
     target: &str,
     harness: &str,
@@ -39,9 +56,21 @@ pub(crate) fn enqueue(
     session: Option<&Path>,
     mode: PromptMode,
     message: &str,
+    display_message: Option<&str>,
+    invocation: Option<&str>,
     images: &[PromptImage],
 ) -> Result<i64, String> {
-    store.enqueue(target, harness, project, session, mode, message, images)
+    store.enqueue_with_presentation(
+        target,
+        harness,
+        project,
+        session,
+        mode,
+        message,
+        display_message,
+        invocation,
+        images,
+    )
 }
 
 pub(crate) fn queued(store: &impl PromptStore) -> Result<Vec<QueuedPrompt>, String> {

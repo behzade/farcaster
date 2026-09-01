@@ -17,6 +17,13 @@ attribution.
 - Durable drafts, session ordering, workgraphs, and application state
 - Stateless MCP access to workers and workgraphs
 
+## Prompt fragments
+
+Farcaster owns the manual prompt fragments in [`prompts`](prompts) and exposes
+them in every harness. Type `$` to complete a fragment. Multiple fragments such
+as `$simplify $commit` expand in order before Farcaster sends the prompt to Pi,
+Codex, or OpenCode. Harness skills and commands remain owned by their adapters.
+
 Farcaster does not provide a filesystem or network sandbox. The access selector
 configures each harness directly:
 

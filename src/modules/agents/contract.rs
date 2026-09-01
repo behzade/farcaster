@@ -59,7 +59,16 @@ pub(crate) struct QueuedPrompt {
     pub(crate) session: Option<PathBuf>,
     pub(crate) mode: PromptMode,
     pub(crate) message: String,
+    pub(crate) display_message: Option<String>,
+    pub(crate) invocation: Option<String>,
     pub(crate) images: Vec<PromptImage>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PromptPresentation {
+    pub(crate) resolved_message: String,
+    pub(crate) display_message: String,
+    pub(crate) invocation: String,
 }
 
 #[derive(Clone)]

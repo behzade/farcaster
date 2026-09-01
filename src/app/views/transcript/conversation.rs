@@ -184,7 +184,20 @@ impl ConversationState {
         self.push_local_user_with_images(
             user_message_text(&message, image_count),
             Arc::default(),
-            invocation,
+            invocation.then(String::new),
+        )
+    }
+
+    pub(crate) fn push_local_invocation(
+        &mut self,
+        message: String,
+        image_count: usize,
+        resolution: String,
+    ) -> Arc<TranscriptItem> {
+        self.push_local_user_with_images(
+            user_message_text(&message, image_count),
+            Arc::default(),
+            Some(resolution),
         )
     }
 
@@ -197,7 +210,20 @@ impl ConversationState {
         self.push_local_user_with_images(
             pasted_file_summary(&message).to_owned(),
             decode_prompt_images(images),
-            invocation,
+            invocation.then(String::new),
+        )
+    }
+
+    pub(crate) fn push_local_invocation_with_prompt_images(
+        &mut self,
+        message: String,
+        images: &[PromptImage],
+        resolution: String,
+    ) -> Arc<TranscriptItem> {
+        self.push_local_user_with_images(
+            pasted_file_summary(&message).to_owned(),
+            decode_prompt_images(images),
+            Some(resolution),
         )
     }
 
@@ -205,7 +231,7 @@ impl ConversationState {
         &mut self,
         message: String,
         images: Arc<Vec<Arc<Image>>>,
-        invocation: bool,
+        invocation: Option<String>,
     ) -> Arc<TranscriptItem> {
         let item = Arc::new(TranscriptItem {
             kind: TranscriptKind::User,
@@ -218,7 +244,7 @@ impl ConversationState {
             tool_call_id: None,
             tool_output: String::new(),
             tool_presentation: None,
-            invocation: invocation.then(String::new),
+            invocation,
         });
         self.items.push(item.clone());
         self.optimistic_user = Some(item.clone());
@@ -658,13 +684,27 @@ impl ConversationState {
                 return;
             }
         }
-        let final_items = project_message_items(message)
+        let mut final_items = project_message_items(message)
             .into_iter()
             .map(Arc::new)
             .collect::<Vec<_>>();
         let finalizes_user = final_items
             .iter()
             .any(|item| item.kind == TranscriptKind::User);
+        if finalizes_user
+            && let Some(optimistic) = self.optimistic_user.as_ref()
+            && let Some(resolution) = optimistic
+                .invocation
+                .as_deref()
+                .filter(|value| !value.is_empty())
+            && let Some(final_user) = final_items
+                .iter_mut()
+                .find(|item| item.kind == TranscriptKind::User)
+        {
+            let final_user = Arc::make_mut(final_user);
+            final_user.text.clone_from(&optimistic.text);
+            final_user.invocation = Some(resolution.to_owned());
+        }
         if let Some(live) = self.live_message.take() {
             self.items
                 .splice(live.start..live.start + live.len, final_items);
@@ -964,9 +1004,15 @@ fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
     }
     let invocation = if kind == TranscriptKind::User {
         message
-            .get("piUserInvocation")
+            .get("farcasterInvocationResolution")
             .and_then(Value::as_str)
-            .map(|_| message_text(message))
+            .map(str::to_owned)
+            .or_else(|| {
+                message
+                    .get("piUserInvocation")
+                    .and_then(Value::as_str)
+                    .map(|_| message_text(message))
+            })
     } else {
         None
     };
@@ -1029,10 +1075,43 @@ fn message_text(message: &Value) -> String {
 
 fn projected_user_message_text(message: &Value) -> String {
     let text = message
-        .get("piUserInvocation")
+        .get("farcasterUserInvocation")
         .and_then(Value::as_str)
+        .or_else(|| message.get("piUserInvocation").and_then(Value::as_str))
         .map_or_else(|| message_text(message), str::to_owned);
     pasted_file_summary(&text).to_owned()
+}
+
+pub(crate) fn annotate_prompt_presentations(
+    messages: &mut [Value],
+    presentations: &[crate::agents::PromptPresentation],
+) {
+    let mut cursor = 0;
+    for presentation in presentations {
+        let Some((offset, message)) =
+            messages[cursor..]
+                .iter_mut()
+                .enumerate()
+                .find(|(_, message)| {
+                    message.get("role").and_then(Value::as_str) == Some("user")
+                        && message_text(message) == presentation.resolved_message
+                })
+        else {
+            continue;
+        };
+        cursor += offset + 1;
+        let Some(message) = message.as_object_mut() else {
+            continue;
+        };
+        message.insert(
+            "farcasterUserInvocation".into(),
+            presentation.display_message.clone().into(),
+        );
+        message.insert(
+            "farcasterInvocationResolution".into(),
+            presentation.invocation.clone().into(),
+        );
+    }
 }
 
 fn user_message_text(message: &str, image_count: usize) -> String {

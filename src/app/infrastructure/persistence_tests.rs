@@ -253,13 +253,15 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
             drafts: vec![draft.clone()],
         })?;
         store.save_app_session_order(&[7, 3, 1])?;
-        store.enqueue_prompt(
+        store.enqueue_prompt_with_presentation(
             "draft:draft-one",
             "pi",
             &project,
             None,
             PromptMode::Normal,
-            "hello",
+            "expanded prompt",
+            Some("$commit hello"),
+            Some("expanded prompt"),
             &[PromptImage::new("aGVsbG8=".into(), "image/png".into())],
         )?;
         store.save_composer_session(&ComposerRecord {
@@ -306,7 +308,9 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
     let queued = store.queued_prompts()?;
     assert_eq!(queued.len(), 1);
     assert_eq!(queued[0].harness, "pi");
-    assert_eq!(queued[0].message, "hello");
+    assert_eq!(queued[0].message, "expanded prompt");
+    assert_eq!(queued[0].display_message.as_deref(), Some("$commit hello"));
+    assert_eq!(queued[0].invocation.as_deref(), Some("expanded prompt"));
     assert_eq!(
         queued[0].images,
         vec![PromptImage::new("aGVsbG8=".into(), "image/png".into())]
@@ -336,6 +340,14 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
         Some(&session_path.canonicalize()?),
     )?;
     assert!(store.queued_prompts()?.is_empty());
+    assert_eq!(
+        store.prompt_presentations(&session_path.canonicalize()?)?,
+        vec![crate::agents::PromptPresentation {
+            resolved_message: "expanded prompt".into(),
+            display_message: "$commit hello".into(),
+            invocation: "expanded prompt".into(),
+        }]
+    );
     store.delete_composer_session("draft:draft-one")?;
     assert!(store.load_composer_sessions()?.is_empty());
     Ok(())
@@ -597,7 +609,7 @@ fn partial_session_index_updates_do_not_delete_omitted_rows()
 }
 
 #[test]
-fn schema_v1_migrates_to_v10_with_defaults_and_outbox_preserved()
+fn schema_v1_migrates_to_v11_with_defaults_and_outbox_preserved()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
@@ -622,15 +634,17 @@ fn schema_v1_migrates_to_v10_with_defaults_and_outbox_preserved()
     let queued = store.queued_prompts()?;
     assert_eq!(queued.len(), 1);
     assert_eq!(queued[0].message, "legacy prompt");
+    assert_eq!(queued[0].display_message, None);
+    assert_eq!(queued[0].invocation, None);
     assert!(queued[0].images.is_empty());
     drop(store);
 
-    assert_eq!(database_schema_version(&database)?, 10);
+    assert_eq!(database_schema_version(&database)?, 11);
     Ok(())
 }
 
 #[test]
-fn schema_v2_migrates_to_v10_with_defaults_and_outbox_preserved()
+fn schema_v2_migrates_to_v11_with_defaults_and_outbox_preserved()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
@@ -655,18 +669,20 @@ fn schema_v2_migrates_to_v10_with_defaults_and_outbox_preserved()
     let queued = store.queued_prompts()?;
     assert_eq!(queued.len(), 1);
     assert_eq!(queued[0].message, "legacy prompt");
+    assert_eq!(queued[0].display_message, None);
+    assert_eq!(queued[0].invocation, None);
     assert_eq!(
         queued[0].images,
         vec![PromptImage::new("aGVsbG8=".into(), "image/png".into())]
     );
     drop(store);
 
-    assert_eq!(database_schema_version(&database)?, 10);
+    assert_eq!(database_schema_version(&database)?, 11);
     Ok(())
 }
 
 #[test]
-fn schema_v3_migrates_to_v10_with_running_default() -> Result<(), Box<dyn std::error::Error>> {
+fn schema_v3_migrates_to_v11_with_running_default() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
     fs::create_dir(&project)?;
@@ -679,13 +695,13 @@ fn schema_v3_migrates_to_v10_with_running_default() -> Result<(), Box<dyn std::e
     )?;
 
     let store = StateStore::open_at(&database)?;
-    assert_eq!(database_schema_version(&database)?, 10);
+    assert_eq!(database_schema_version(&database)?, 11);
     assert!(store.cached_sessions("")?.is_empty());
     Ok(())
 }
 
 #[test]
-fn schema_v4_migrates_to_v10_with_provisional_title_default()
+fn schema_v4_migrates_to_v11_with_provisional_title_default()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
@@ -700,7 +716,7 @@ fn schema_v4_migrates_to_v10_with_provisional_title_default()
     )?;
 
     let store = StateStore::open_at(&database)?;
-    assert_eq!(database_schema_version(&database)?, 10);
+    assert_eq!(database_schema_version(&database)?, 11);
     assert_eq!(store.load_registry()?.drafts[0].title, None);
     Ok(())
 }
@@ -743,7 +759,7 @@ fn schema_v5_migrates_existing_sessions_and_drafts_to_incremental_ids()
     assert!(session.app_session_id > 0);
     assert_ne!(draft.app_session_id, session.app_session_id);
     assert_eq!(session.harness, "pi");
-    assert_eq!(database_schema_version(&database)?, 10);
+    assert_eq!(database_schema_version(&database)?, 11);
     Ok(())
 }
 
