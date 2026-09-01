@@ -1,7 +1,8 @@
 # Farcaster
 
 Farcaster is a native GPUI desktop client for coding agents. It supports Pi,
-Codex, and OpenCode through backend-specific protocol adapters.
+Codex, Cursor, and OpenCode through backend-specific protocol adapters. Cursor
+uses Farcaster's generic Agent Client Protocol (ACP) adapter.
 
 Farcaster is GPL-3.0-or-later. See [`NOTICE.md`](NOTICE.md) for source and asset
 attribution.
@@ -55,6 +56,13 @@ pi
 Restart Farcaster after login so its Pi process reloads the credentials and
 available models.
 
+Cursor runs through `agent acp`. Install Cursor Agent, authenticate once in a
+terminal, then restart Farcaster:
+
+```sh
+agent login
+```
+
 ## Run
 
 ```sh
@@ -90,6 +98,7 @@ Useful environment variables:
 
 - `FARCASTER_PI_PATH`: Pi executable override
 - `FARCASTER_CODEX_PATH`: Codex executable override
+- `FARCASTER_CURSOR_PATH`: Cursor Agent executable override (default: `agent`)
 - `FARCASTER_OPENCODE_PATH`: OpenCode executable override
 - `FARCASTER_DATA_DIR`: application database, project registry, and logs
 - `FARCASTER_SHELL`: login shell override

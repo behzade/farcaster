@@ -1,6 +1,8 @@
+mod acp;
 mod child_stderr;
 #[allow(dead_code)]
 mod codex;
+mod cursor;
 mod farcaster_mcp;
 #[cfg(test)]
 mod live_tests;
@@ -18,6 +20,7 @@ pub(crate) fn supported_access_modes(harness: &str) -> &'static [crate::agents::
     match harness {
         "pi" => &[Sandboxed, Full],
         "codex-cli" => &[Sandboxed, Auto, Full],
+        "cursor-cli" => &[Sandboxed, Full],
         "opencode2" => &[Sandboxed, Full],
         _ => &[Full],
     }
@@ -52,12 +55,13 @@ pub(crate) fn worker_factories(
     codex_config.program = std::env::var_os("FARCASTER_CODEX_PATH")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| "codex".into());
+    let cursor_config = config.clone();
     let mut opencode_config = config.clone();
     opencode_config.access_mode = crate::agents::HarnessAccessMode::Sandboxed;
     opencode_config.program = std::env::var_os("FARCASTER_OPENCODE_PATH")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| "opencode2".into());
-    let [pi, codex, opencode] = known_backend_descriptors();
+    let [pi, codex, cursor, opencode] = known_backend_descriptors();
     let default_backend = pi.id.as_str().to_owned();
     let factories = std::collections::BTreeMap::from([
         (
@@ -67,6 +71,10 @@ pub(crate) fn worker_factories(
         (
             codex.id.as_str().to_owned(),
             std::sync::Arc::new(codex::CodexWorkerFactory::new(codex_config)) as _,
+        ),
+        (
+            cursor.id.as_str().to_owned(),
+            std::sync::Arc::new(cursor::worker_factory(cursor_config)) as _,
         ),
         (
             opencode.id.as_str().to_owned(),
@@ -89,6 +97,7 @@ pub(crate) fn load_configuration_catalog(
                 .unwrap_or_else(|| "codex".into());
             codex::load_configuration(&command, project).and_then(configuration_catalog)
         }
+        "cursor-cli" => Ok(crate::agents::ConfigurationCatalog::default()),
         "opencode2" => {
             let mut command = config.clone();
             command.program = std::env::var_os("FARCASTER_OPENCODE_PATH")
@@ -200,6 +209,33 @@ pub(crate) fn spawn_session(
         )
         .map(|transport| Box::new(transport) as _);
     }
+    if launch.harness == "cursor-cli" {
+        let history = match &launch.start {
+            crate::agents::SessionStart::New => None,
+            crate::agents::SessionStart::Resume(path) => {
+                Some(cursor::load_history_at(path, &launch.project)?)
+            }
+            crate::agents::SessionStart::Fork(_) => {
+                return Err("Cursor ACP does not expose session fork".into());
+            }
+        };
+        let mut command = config.clone();
+        command.program = cursor::PROFILE.program();
+        let (worker, locator, metadata) = cursor::spawn_main(&command, &launch)?;
+        let locator_root = config
+            .session_locator_root
+            .as_deref()
+            .ok_or_else(|| "agent session locator root is not configured".to_owned())?;
+        return main_session::WorkerSessionTransport::new(
+            locator_root,
+            "cursor-cli",
+            locator,
+            worker,
+            metadata,
+            history,
+        )
+        .map(|transport| Box::new(transport) as _);
+    }
     if launch.harness == "opencode2" {
         let history = launch_history(&launch, opencode::load_history)?;
         let mut command = config.clone();
@@ -262,6 +298,7 @@ pub(crate) fn rename_session(
     match harness {
         "pi" => pi::PiRpcProcess::rename_session(config, project, session, name),
         "codex-cli" => codex::rename_session(session_id, name),
+        "cursor-cli" => Err("Cursor ACP does not expose session naming".into()),
         "opencode2" => opencode::rename_session(session_id, name),
         _ => Err(format!("unsupported session harness: {harness}")),
     }
@@ -270,6 +307,9 @@ pub(crate) fn rename_session(
 pub(crate) fn external_session_identity(path: &std::path::Path) -> Option<(&'static str, String)> {
     if let Some(locator) = main_session::external_session_locator("codex-cli", path) {
         return Some(("codex-cli", locator));
+    }
+    if let Some(locator) = main_session::external_session_locator("cursor-cli", path) {
+        return Some(("cursor-cli", locator));
     }
     main_session::external_session_locator("opencode2", path).map(|locator| ("opencode2", locator))
 }
@@ -281,6 +321,7 @@ pub(crate) fn is_external_session(path: &std::path::Path) -> bool {
 pub(crate) fn delete_external_session(path: &std::path::Path) -> Option<Result<(), String>> {
     external_session_identity(path).map(|(harness, locator)| match harness {
         "codex-cli" => codex::delete_session(&locator),
+        "cursor-cli" => Err("Cursor ACP session deletion is not enabled".into()),
         "opencode2" => opencode::delete_session(&locator),
         _ => unreachable!("external session identity returned an unknown backend"),
     })
@@ -307,6 +348,15 @@ pub(crate) fn discover_external_sessions(
     }
     if statuses
         .iter()
+        .any(|backend| backend.id == "cursor-cli" && backend.available)
+    {
+        match cursor::discover(locator_root, query) {
+            Ok(mut discovered) => sessions.append(&mut discovered),
+            Err(_) => exhaustive = false,
+        }
+    }
+    if statuses
+        .iter()
         .any(|backend| backend.id == "opencode2" && backend.available)
     {
         match opencode::discover(locator_root, query) {
@@ -322,6 +372,7 @@ pub(crate) fn load_external_history(
 ) -> Option<Result<crate::agents::DiscoveredHistory, String>> {
     external_session_identity(path).map(|(harness, _)| match harness {
         "codex-cli" => codex::load_history(path),
+        "cursor-cli" => cursor::load_history(path),
         "opencode2" => opencode::load_history(path),
         _ => unreachable!("external session identity returned an unknown backend"),
     })
@@ -355,12 +406,13 @@ pub(crate) fn backend_statuses() -> Vec<super::contract::AgentBackendStatus> {
     let codex_program = std::env::var_os("FARCASTER_CODEX_PATH")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| "codex".into());
+    let cursor_program = cursor::PROFILE.program();
     let opencode_program = std::env::var_os("FARCASTER_OPENCODE_PATH")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| "opencode2".into());
     known_backend_descriptors()
         .into_iter()
-        .zip([pi_program, codex_program, opencode_program])
+        .zip([pi_program, codex_program, cursor_program, opencode_program])
         .map(
             |(descriptor, program)| super::contract::AgentBackendStatus {
                 id: descriptor.id.as_str().to_owned(),
@@ -387,10 +439,11 @@ fn program_available(program: &std::path::Path) -> bool {
     })
 }
 
-pub(super) fn known_backend_descriptors() -> [super::contract::AgentBackendDescriptor; 3] {
+pub(super) fn known_backend_descriptors() -> [super::contract::AgentBackendDescriptor; 4] {
     [
         pi::descriptor(),
         codex::descriptor(),
+        cursor::descriptor(),
         opencode::descriptor(),
     ]
 }
@@ -415,6 +468,7 @@ mod tests {
             supported_access_modes("codex-cli"),
             &[Sandboxed, Auto, Full]
         );
+        assert_eq!(supported_access_modes("cursor-cli"), &[Sandboxed, Full]);
         assert_eq!(supported_access_modes("opencode2"), &[Sandboxed, Full]);
         assert_eq!(normalize_access_mode("opencode2", Auto), Sandboxed);
     }

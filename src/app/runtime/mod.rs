@@ -486,6 +486,7 @@ impl RuntimeOwner {
         match self.harness.as_str() {
             "pi" => "Pi",
             "codex-cli" => "Codex",
+            "cursor-cli" => "Cursor",
             "opencode2" => "OpenCode",
             other => other,
         }
