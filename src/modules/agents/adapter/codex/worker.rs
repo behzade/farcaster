@@ -651,6 +651,14 @@ impl WorkerSession for CodexWorkerSession {
                                     },
                                 ));
                             }
+                            if params.pointer("/item/type").and_then(Value::as_str)
+                                == Some("webSearch")
+                                && let Some(started) = codex_tool_start(&params)
+                                && let Some(finished) = codex_tool_end(&params)
+                            {
+                                self.events.push_back(WorkerEvent::Activity(finished));
+                                return Some(WorkerEvent::Activity(started));
+                            }
                             if let Some(event) = codex_tool_end(&params) {
                                 return Some(WorkerEvent::Activity(event));
                             }
@@ -806,6 +814,7 @@ impl Drop for CodexWorkerSession {
 
 fn configure_codex_app_server(command: &mut std::process::Command) {
     command.args(["app-server", "--stdio", "--enable", "mcp_2026_07_28"]);
+    super::configure_permissions(command);
 }
 
 fn configure_farcaster_mcp(command: &mut std::process::Command, caller_token: &str) {
@@ -915,6 +924,10 @@ fn codex_tool_call(item: &Value, kind: &str) -> (String, Value) {
                 )
             }
         }
+        "webSearch" => (
+            "web_search".into(),
+            json!({"query": codex_web_search_query(item)}),
+        ),
         _ => {
             let name = item
                 .get("name")
@@ -925,6 +938,18 @@ fn codex_tool_call(item: &Value, kind: &str) -> (String, Value) {
             (name.to_owned(), args)
         }
     }
+}
+
+fn codex_web_search_query(item: &Value) -> Option<&str> {
+    item.get("query")
+        .and_then(Value::as_str)
+        .filter(|query| !query.is_empty())
+        .or_else(|| {
+            let action = item.get("action")?;
+            ["query", "url", "pattern"]
+                .into_iter()
+                .find_map(|field| action.get(field).and_then(Value::as_str))
+        })
 }
 
 fn codex_tool_end(params: &Value) -> Option<WorkerActivity> {
@@ -945,6 +970,11 @@ fn codex_tool_end(params: &Value) -> Option<WorkerActivity> {
         .get("aggregatedOutput")
         .and_then(Value::as_str)
         .or_else(|| item.get("result").and_then(Value::as_str))
+        .or_else(|| {
+            (kind == "webSearch")
+                .then(|| codex_web_search_query(item))
+                .flatten()
+        })
         .unwrap_or_else(|| {
             if kind == "fileChange" && !failed {
                 "Applied patch"
@@ -1004,6 +1034,32 @@ mod tests {
         assert_eq!(
             codex_tool_call(&json!({"command":"cargo test"}), "commandExecution"),
             ("bash".into(), json!({"command":"cargo test"}))
+        );
+        assert_eq!(
+            codex_tool_call(&json!({"query":"Codex app-server protocol"}), "webSearch"),
+            (
+                "web_search".into(),
+                json!({"query":"Codex app-server protocol"})
+            )
+        );
+    }
+
+    #[test]
+    fn completed_web_search_exposes_its_query_as_output() {
+        let event = codex_tool_end(&json!({
+            "item": {
+                "id": "search-1",
+                "type": "webSearch",
+                "query": "Codex app-server protocol"
+            }
+        }));
+        assert_eq!(
+            event,
+            Some(WorkerActivity::ToolFinished {
+                id: "search-1".into(),
+                result: json!([{"type":"text", "text":"Codex app-server protocol"}]),
+                is_error: false,
+            })
         );
     }
 

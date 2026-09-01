@@ -73,8 +73,10 @@ fn with_server<T>(
         .map(PathBuf::from)
         .unwrap_or_else(|| "opencode2".into());
     let password = format!("farcaster-catalog-{}", std::process::id());
-    let mut child = Command::new(program)
-        .args(["serve", "--stdio", "--print-logs"])
+    let mut command = Command::new(program);
+    command.args(["serve", "--stdio", "--print-logs"]);
+    super::configure_permissions(&mut command);
+    let mut child = command
         .env("OPENCODE_SERVER_PASSWORD", &password)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

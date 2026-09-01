@@ -42,9 +42,10 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
             configure_farcaster_mcp(&mut sandbox.command, caller_identity.token())?;
         }
         let password = worker_password()?;
+        sandbox.command.args(["serve", "--stdio", "--print-logs"]);
+        super::configure_permissions(&mut sandbox.command);
         let mut child = sandbox
             .command
-            .args(["serve", "--stdio", "--print-logs"])
             .env("OPENCODE_SERVER_PASSWORD", &password)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -108,9 +109,10 @@ pub(in crate::modules::agents::adapter) fn load_configuration(
 ) -> Result<crate::modules::agents::adapter::main_session::MainSessionMetadata, String> {
     let mut sandbox = command.command(project)?;
     let password = worker_password()?;
+    sandbox.command.args(["serve", "--stdio", "--print-logs"]);
+    super::configure_permissions(&mut sandbox.command);
     let mut child = sandbox
         .command
-        .args(["serve", "--stdio", "--print-logs"])
         .env("OPENCODE_SERVER_PASSWORD", &password)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -142,9 +144,10 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         configure_farcaster_mcp(&mut sandbox.command, caller_identity.token())?;
     }
     let password = worker_password()?;
+    sandbox.command.args(["serve", "--stdio", "--print-logs"]);
+    super::configure_permissions(&mut sandbox.command);
     let mut child = sandbox
         .command
-        .args(["serve", "--stdio", "--print-logs"])
         .env("OPENCODE_SERVER_PASSWORD", &password)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

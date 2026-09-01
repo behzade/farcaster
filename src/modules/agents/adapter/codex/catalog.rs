@@ -118,8 +118,10 @@ fn with_connection<T>(
     let program = std::env::var_os("FARCASTER_CODEX_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|| "codex".into());
-    let mut child = Command::new(program)
-        .args(["app-server", "--stdio"])
+    let mut command = Command::new(program);
+    command.args(["app-server", "--stdio"]);
+    super::configure_permissions(&mut command);
+    let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

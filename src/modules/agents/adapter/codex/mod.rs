@@ -10,6 +10,14 @@ pub(crate) use worker::CodexWorkerFactory;
 pub(super) use catalog::{delete_session, discover, load_history, rename_session};
 pub(super) use worker::{load_configuration, spawn_main};
 
+fn configure_permissions(command: &mut std::process::Command) {
+    // Farcaster's nono profile is the process boundary. Codex must not try to
+    // start a second macOS sandbox or request a second layer of approvals.
+    command
+        .args(["-c", r#"approval_policy="never""#])
+        .args(["-c", r#"sandbox_mode="danger-full-access""#]);
+}
+
 use super::super::contract::{
     AgentBackendDescriptor, AgentBackendId, AgentCapabilities, CapabilitySupport,
     ConfigurationCapabilities, InteractionCapabilities, ObservationCapabilities,
@@ -69,6 +77,25 @@ pub(crate) fn descriptor() -> AgentBackendDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_process_skips_inner_permissions() {
+        let mut command = std::process::Command::new("codex");
+        configure_permissions(&mut command);
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            arguments,
+            [
+                "-c",
+                r#"approval_policy="never""#,
+                "-c",
+                r#"sandbox_mode="danger-full-access""#,
+            ]
+        );
+    }
 
     #[test]
     fn descriptor_keeps_codex_specific_features_independent() {
