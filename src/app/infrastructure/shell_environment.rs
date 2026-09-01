@@ -3,12 +3,11 @@ use std::{ffi::OsString, path::Path, process::Command};
 type Environment = Vec<(OsString, OsString)>;
 
 const APP_ENV_IMPORTED: &str = "FARCASTER_SHELL_ENV_IMPORTED";
-const LAUNCH_ENVIRONMENT: [&str; 12] = [
+const LAUNCH_ENVIRONMENT: [&str; 11] = [
     "FARCASTER_CODEX_PATH",
     "FARCASTER_DATA_DIR",
     "FARCASTER_GIT",
     "FARCASTER_JJ",
-    "FARCASTER_NONO_PATH",
     "FARCASTER_NVIM",
     "FARCASTER_OPENCODE_PATH",
     "FARCASTER_PI_PATH",
@@ -83,13 +82,13 @@ mod tests {
         let environment = preserve_launch_environment(
             vec![
                 ("PATH".into(), "/login/bin".into()),
-                ("FARCASTER_NONO_PATH".into(), "/login/nono".into()),
+                ("FARCASTER_PI_PATH".into(), "/login/pi".into()),
             ],
-            |name| (name == "FARCASTER_NONO_PATH").then(|| "/nix/store/nono".into()),
+            |name| (name == "FARCASTER_PI_PATH").then(|| "/nix/store/pi".into()),
         );
 
         assert!(environment.contains(&("PATH".into(), "/login/bin".into())));
-        assert!(environment.contains(&("FARCASTER_NONO_PATH".into(), "/nix/store/nono".into())));
-        assert!(!environment.contains(&("FARCASTER_NONO_PATH".into(), "/login/nono".into())));
+        assert!(environment.contains(&("FARCASTER_PI_PATH".into(), "/nix/store/pi".into())));
+        assert!(!environment.contains(&("FARCASTER_PI_PATH".into(), "/login/pi".into())));
     }
 }

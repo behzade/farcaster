@@ -15,7 +15,7 @@ use crate::{
         AppIconSize, ButtonTone, activates_button, app_icon, dropdown_content_button, icon_button,
     },
     app::ui::theme::{MONO_FONT_FAMILY, THEME},
-    runtime::{FileAccessMode, NetworkAccessMode, PermissionLevel},
+    runtime::HarnessAccessMode,
 };
 
 pub(in crate::app::views) fn render(
@@ -87,7 +87,11 @@ pub(in crate::app::views) fn render(
         .items_center()
         .child(runtime)
         .child(separator())
-        .child(permission_selector(app.snapshot.permission_level, entity))
+        .child(access_selector(
+            app.snapshot.access_mode,
+            &app.snapshot.harness,
+            entity,
+        ))
         .into_any_element()
 }
 
@@ -429,54 +433,36 @@ fn effort_label(level: &str) -> String {
     }
 }
 
-fn permission_selector(selected: PermissionLevel, entity: WeakEntity<FarcasterApp>) -> AnyElement {
-    let next_files = next_file_access(selected.files);
-    let file_entity = entity.clone();
-    let next_network = next_network_access(selected.network);
-    let file_label = cycle_label(
-        "Files",
-        file_access_label(selected.files),
-        file_access_label(next_files),
-    );
-    let network_label = cycle_label(
-        "Network",
-        network_access_label(selected.network),
-        network_access_label(next_network),
+fn access_selector(
+    selected: HarnessAccessMode,
+    harness: &str,
+    entity: WeakEntity<FarcasterApp>,
+) -> AnyElement {
+    let supported = crate::agents::supported_access_modes(harness);
+    let selected = crate::agents::normalize_access_mode(harness, selected);
+    let next = next_access_mode(selected, supported);
+    let label = cycle_label(
+        "Access",
+        access_mode_label(selected),
+        access_mode_label(next),
     );
 
     div()
-        .id("sandbox-access")
+        .id("harness-access")
         .flex_none()
-        .flex()
-        .items_center()
-        .gap(px(7.0))
-        .child(permission_cycle_button(
-            "cycle-file-access",
+        .child(access_cycle_button(
+            "cycle-harness-access",
             AppIcon::Folder,
-            file_access_color(selected.files),
-            file_label,
+            access_mode_color(selected),
+            label,
             move |cx| {
-                let _ = file_entity.update(cx, |this, cx| {
-                    this.set_permission_level(selected.with_files(next_files), cx);
-                });
-            },
-        ))
-        .child(div().text_color(THEME.colors.subtle).child("/"))
-        .child(permission_cycle_button(
-            "cycle-network-access",
-            AppIcon::Globe,
-            network_access_color(selected.network),
-            network_label,
-            move |cx| {
-                let _ = entity.update(cx, |this, cx| {
-                    this.set_permission_level(selected.with_network(next_network), cx);
-                });
+                let _ = entity.update(cx, |this, cx| this.set_access_mode(next, cx));
             },
         ))
         .into_any_element()
 }
 
-fn permission_cycle_button(
+fn access_cycle_button(
     id: impl Into<ElementId>,
     resource: AppIcon,
     color: gpui::Rgba,
@@ -524,48 +510,35 @@ fn cycle_label(capability: &str, current: &str, next: &str) -> String {
     format!("{capability}: {current}. Click to change to {next}")
 }
 
-fn next_file_access(mode: FileAccessMode) -> FileAccessMode {
+fn next_access_mode(
+    selected: HarnessAccessMode,
+    supported: &[HarnessAccessMode],
+) -> HarnessAccessMode {
+    let Some(index) = supported.iter().position(|mode| *mode == selected) else {
+        return supported
+            .first()
+            .copied()
+            .unwrap_or(HarnessAccessMode::Full);
+    };
+    supported
+        .get((index + 1) % supported.len().max(1))
+        .copied()
+        .unwrap_or(HarnessAccessMode::Full)
+}
+
+const fn access_mode_label(mode: HarnessAccessMode) -> &'static str {
     match mode {
-        FileAccessMode::ReadOnly => FileAccessMode::Sandboxed,
-        FileAccessMode::Sandboxed => FileAccessMode::Full,
-        FileAccessMode::Full => FileAccessMode::ReadOnly,
+        HarnessAccessMode::Full => "Full access",
+        HarnessAccessMode::Sandboxed => "Sandboxed",
+        HarnessAccessMode::Auto => "Auto",
     }
 }
 
-fn next_network_access(mode: NetworkAccessMode) -> NetworkAccessMode {
+fn access_mode_color(mode: HarnessAccessMode) -> gpui::Rgba {
     match mode {
-        NetworkAccessMode::Sandboxed => NetworkAccessMode::Full,
-        NetworkAccessMode::Full => NetworkAccessMode::Sandboxed,
-    }
-}
-
-const fn file_access_label(mode: FileAccessMode) -> &'static str {
-    match mode {
-        FileAccessMode::ReadOnly => "Read-only",
-        FileAccessMode::Sandboxed => "Sandboxed",
-        FileAccessMode::Full => "Full",
-    }
-}
-
-const fn network_access_label(mode: NetworkAccessMode) -> &'static str {
-    match mode {
-        NetworkAccessMode::Sandboxed => "Sandboxed",
-        NetworkAccessMode::Full => "Full",
-    }
-}
-
-fn file_access_color(mode: FileAccessMode) -> gpui::Rgba {
-    match mode {
-        FileAccessMode::ReadOnly => THEME.colors.link,
-        FileAccessMode::Sandboxed => THEME.colors.warning,
-        FileAccessMode::Full => THEME.colors.error,
-    }
-}
-
-fn network_access_color(mode: NetworkAccessMode) -> gpui::Rgba {
-    match mode {
-        NetworkAccessMode::Sandboxed => THEME.colors.warning,
-        NetworkAccessMode::Full => THEME.colors.error,
+        HarnessAccessMode::Sandboxed => THEME.colors.warning,
+        HarnessAccessMode::Auto => THEME.colors.accent,
+        HarnessAccessMode::Full => THEME.colors.error,
     }
 }
 
@@ -590,42 +563,11 @@ mod tests {
     }
 
     #[test]
-    fn permission_controls_cycle_independently_and_wrap() {
-        assert_eq!(
-            next_file_access(FileAccessMode::ReadOnly),
-            FileAccessMode::Sandboxed
-        );
-        assert_eq!(
-            next_file_access(FileAccessMode::Sandboxed),
-            FileAccessMode::Full
-        );
-        assert_eq!(
-            next_file_access(FileAccessMode::Full),
-            FileAccessMode::ReadOnly
-        );
-        assert_eq!(
-            next_network_access(NetworkAccessMode::Sandboxed),
-            NetworkAccessMode::Full
-        );
-        assert_eq!(
-            next_network_access(NetworkAccessMode::Full),
-            NetworkAccessMode::Sandboxed
-        );
-    }
-
-    #[test]
-    fn permission_modes_have_distinct_compact_colors() {
-        assert_ne!(
-            file_access_color(FileAccessMode::ReadOnly),
-            file_access_color(FileAccessMode::Sandboxed)
-        );
-        assert_ne!(
-            file_access_color(FileAccessMode::Sandboxed),
-            file_access_color(FileAccessMode::Full)
-        );
-        assert_ne!(
-            network_access_color(NetworkAccessMode::Sandboxed),
-            network_access_color(NetworkAccessMode::Full)
-        );
+    fn access_controls_cycle_only_supported_modes() {
+        use HarnessAccessMode::{Auto, Full, Sandboxed};
+        assert_eq!(next_access_mode(Sandboxed, &[Sandboxed, Full]), Full);
+        assert_eq!(next_access_mode(Full, &[Sandboxed, Full]), Sandboxed);
+        assert_eq!(next_access_mode(Sandboxed, &[Sandboxed, Auto, Full]), Auto);
+        assert_eq!(next_access_mode(Sandboxed, &[Auto, Full]), Auto);
     }
 }

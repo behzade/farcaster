@@ -1,28 +1,9 @@
 #!/bin/sh
 set -eu
 
-NONO_VERSION=0.74.0
-NONO_AARCH64_SHA256=88e6f716f2bb334973105799b774e0fce6d6d69e005e1a58f12753c42acf0b9f
-NONO_X86_64_SHA256=f1f9ae8615f0a60cdb2568429453d3d73207e70a12aed061bd8eae4ce9264e2e
-
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 target_dir=${CARGO_TARGET_DIR:-"$root/target"}
 bundle=${FARCASTER_BUNDLE_PATH:-"$target_dir/release/Farcaster.app"}
-
-case $(uname -m) in
-    arm64|aarch64)
-        target=aarch64-apple-darwin
-        expected_sha256=$NONO_AARCH64_SHA256
-        ;;
-    x86_64)
-        target=x86_64-apple-darwin
-        expected_sha256=$NONO_X86_64_SHA256
-        ;;
-    *)
-        echo "unsupported macOS architecture: $(uname -m)" >&2
-        exit 1
-        ;;
-esac
 
 case $bundle in
     *.app) ;;
@@ -34,35 +15,11 @@ esac
 
 cargo build --manifest-path "$root/Cargo.toml" --release
 
-temporary=$(mktemp -d "${TMPDIR:-/tmp}/farcaster-bundle.XXXXXX")
-trap 'rm -rf "$temporary"' EXIT HUP INT TERM
-archive="$target_dir/release/nono-v$NONO_VERSION-$target.tar.gz"
-url="https://github.com/nolabs-ai/nono/releases/download/v$NONO_VERSION/nono-v$NONO_VERSION-$target.tar.gz"
-
-archive_is_valid() {
-    [ -f "$1" ] && [ "$(shasum -a 256 "$1" | awk '{print $1}')" = "$expected_sha256" ]
-}
-
-if ! archive_is_valid "$archive"; then
-    download="$temporary/nono.tar.gz"
-    curl --fail --location --silent --show-error --output "$download" "$url"
-    if ! archive_is_valid "$download"; then
-        actual_sha256=$(shasum -a 256 "$download" | awk '{print $1}')
-        echo "nono archive checksum mismatch: expected $expected_sha256, got $actual_sha256" >&2
-        exit 1
-    fi
-    mv "$download" "$archive"
-fi
-
-tar -xzf "$archive" -C "$temporary" nono
 rm -rf "$bundle"
-mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources/licenses"
+mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
 cp "$target_dir/release/farcaster" "$bundle/Contents/MacOS/farcaster"
-cp "$temporary/nono" "$bundle/Contents/MacOS/nono"
 cp "$root/packaging/macos/Info.plist" "$bundle/Contents/Info.plist"
 cp "$root/NOTICE.md" "$bundle/Contents/Resources/NOTICE.md"
-cp "$root/THIRD_PARTY_LICENSES/NONO-APACHE-2.0.txt" \
-    "$bundle/Contents/Resources/licenses/NONO-APACHE-2.0.txt"
 
 identity=${CODESIGN_IDENTITY:--}
 sign() {
@@ -72,7 +29,6 @@ sign() {
         codesign --force --options runtime --timestamp --sign "$identity" "$1"
     fi
 }
-sign "$bundle/Contents/MacOS/nono"
 sign "$bundle/Contents/MacOS/farcaster"
 sign "$bundle"
 codesign --verify --deep --strict "$bundle"

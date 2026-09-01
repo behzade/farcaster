@@ -40,15 +40,13 @@ impl UiEventSender {
 }
 
 impl RuntimeHandle {
-    pub(crate) fn spawn_with_grants(
+    pub(crate) fn spawn(
         project: PathBuf,
         draft_id: String,
         initial_session: Option<PathBuf>,
-        grants: crate::access::GrantStore,
         app_proxy: Option<String>,
     ) -> Self {
         let command = AgentLaunchConfig {
-            grants: Some(grants),
             app_proxy,
             session_locator_root: crate::app::paths::data_dir()
                 .ok()
@@ -983,12 +981,6 @@ fn run_supervisor(
                 }
                 if let RuntimeCommand::SetAppProxy(proxy) = &command {
                     process_command.app_proxy = proxy.clone();
-                    for actor in actors.values() {
-                        actor.send(command.clone());
-                    }
-                    continue;
-                }
-                if matches!(command, RuntimeCommand::ReloadSandboxGrants) {
                     for actor in actors.values() {
                         actor.send(command.clone());
                     }

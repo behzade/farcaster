@@ -730,21 +730,6 @@ fn history_follows_the_current_branch_and_projects_display_entries() {
 }
 
 #[test]
-fn display_history_hides_internal_sandbox_continuations() {
-    let entries = vec![
-        serde_json::json!({"type":"message","id":"one","parentId":null,"message":{"role":"user","content":"visible"}}),
-        serde_json::json!({"type":"message","id":"two","parentId":"one","message":{"role":"user","content":"<farcaster-internal kind=\"sandbox-grant-activated\">hidden</farcaster-internal>"}}),
-        serde_json::json!({"type":"message","id":"three","parentId":"two","message":{"role":"assistant","content":[{"type":"text","text":"continued"}]}}),
-    ];
-
-    let history = project_display_history(&entries);
-
-    assert_eq!(history.len(), 2);
-    assert_eq!(history[0]["content"], "visible");
-    assert_eq!(history[1]["content"][0]["text"], "continued");
-}
-
-#[test]
 fn display_history_keeps_messages_before_compaction() {
     let entries = vec![
         serde_json::json!({"type":"message","id":"one","parentId":null,"message":{"role":"user","content":"summarized"}}),

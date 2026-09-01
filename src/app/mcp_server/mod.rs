@@ -28,7 +28,6 @@ pub(crate) struct McpServer {
 
 pub(crate) fn start(
     database: PathBuf,
-    approvals: crate::access::approval::ApprovalService,
     worker_pool: crate::agents::WorkerPool,
     workgraph_updates: async_channel::Sender<()>,
 ) -> Result<McpServer, String> {
@@ -40,13 +39,7 @@ pub(crate) fn start(
     let thread = std::thread::Builder::new()
         .name("farcaster-mcp".into())
         .spawn(move || {
-            if let Err(error) = serve(
-                listener,
-                database,
-                approvals,
-                worker_pool,
-                workgraph_updates,
-            ) {
+            if let Err(error) = serve(listener, database, worker_pool, workgraph_updates) {
                 zlog::error!("MCP server stopped: {error}");
             }
         })
@@ -57,7 +50,6 @@ pub(crate) fn start(
 fn serve(
     listener: TcpListener,
     database: PathBuf,
-    approvals: crate::access::approval::ApprovalService,
     worker_pool: crate::agents::WorkerPool,
     workgraph_updates: async_channel::Sender<()>,
 ) -> Result<(), String> {
@@ -73,7 +65,6 @@ fn serve(
             move || {
                 Ok(FarcasterMcp::new(
                     database.clone(),
-                    approvals.clone(),
                     worker_pool.clone(),
                     workgraph_updates.clone(),
                 ))
@@ -98,7 +89,6 @@ fn server_config() -> StreamableHttpServerConfig {
 #[derive(Clone)]
 struct FarcasterMcp {
     database: PathBuf,
-    approvals: crate::access::approval::ApprovalService,
     workers: crate::agents::WorkerPool,
     workgraph_updates: async_channel::Sender<()>,
 }
@@ -106,13 +96,11 @@ struct FarcasterMcp {
 impl FarcasterMcp {
     fn new(
         database: PathBuf,
-        approvals: crate::access::approval::ApprovalService,
         workers: crate::agents::WorkerPool,
         workgraph_updates: async_channel::Sender<()>,
     ) -> Self {
         Self {
             database,
-            approvals,
             workers,
             workgraph_updates,
         }
@@ -122,137 +110,35 @@ impl FarcasterMcp {
 #[tool_router]
 impl FarcasterMcp {
     #[tool(
-        name = "request_access",
-        description = "Ask the user to grant exact filesystem or network rights to Farcaster's outer sandbox. If accepted, Farcaster interrupts and resumes the current task with the grant active; do not retry before this call completes"
-    )]
-    async fn request_access(
-        &self,
-        Parameters(params): Parameters<crate::access::approval::RequestAccessParams>,
-        Extension(parts): Extension<axum::http::request::Parts>,
-    ) -> Result<String, String> {
-        let caller_token = parts
-            .headers
-            .get(CALLER_HEADER)
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_owned);
-        let caller_session = tokio::task::spawn_blocking(move || {
-            caller_token
-                .as_deref()
-                .map(|token| {
-                    crate::agents::CallerRegistry::shared()
-                        .resolve(token)
-                        .map(|context| context.session)
-                })
-                .transpose()
-        })
-        .await
-        .map_err(|error| format!("access caller task failed: {error}"))??;
-        self.approvals
-            .request_access_for_session(params, caller_session)
-            .await
-    }
-
-    #[tool(
-        name = "worker_backends",
-        description = "List worker backends available from this Farcaster instance"
-    )]
-    async fn worker_backends(
-        &self,
-        Parameters(_params): Parameters<workers::ListParams>,
-    ) -> Json<serde_json::Value> {
-        Json(workers::backends(&self.workers))
-    }
-
-    #[tool(
-        name = "worker_start",
-        description = "Start a child worker attached to the calling session in Farcaster's bounded backend-neutral pool"
-    )]
-    async fn worker_start(
-        &self,
-        Parameters(params): Parameters<workers::StartParams>,
-        Extension(parts): Extension<axum::http::request::Parts>,
-    ) -> Result<Json<serde_json::Value>, String> {
-        let caller_token = parts
-            .headers
-            .get(CALLER_HEADER)
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_owned);
-        let pool = self.workers.clone();
-        let value = tokio::task::spawn_blocking(move || {
-            let caller = caller_token
-                .as_deref()
-                .map(|token| crate::agents::CallerRegistry::shared().resolve(token))
-                .transpose()?;
-            workers::start(&pool, params, caller)
-        })
-        .await
-        .map_err(|error| format!("worker start task failed: {error}"))??;
-        Ok(Json(value))
-    }
-
-    #[tool(
         name = "worker_send",
-        description = "Prompt or steer an existing Farcaster worker"
+        description = "Send a message to an existing top-level peer. Set `to` to `new` to create a fresh top-level agent using your current harness and model. New workers are independent, visible Farcaster sessions—not subagents—and should only be created for substantial independent work. Use the harness's native subagent facilities for delegated subtasks."
     )]
     async fn worker_send(
         &self,
         Parameters(params): Parameters<workers::SendParams>,
+        Extension(parts): Extension<axum::http::request::Parts>,
     ) -> Result<Json<serde_json::Value>, String> {
+        let caller_token = caller_token(&parts);
         let pool = self.workers.clone();
-        let value = tokio::task::spawn_blocking(move || workers::send(&pool, params))
+        let value = tokio::task::spawn_blocking(move || workers::send(&pool, params, caller_token))
             .await
             .map_err(|error| format!("worker send task failed: {error}"))??;
         Ok(Json(value))
     }
 
     #[tool(
-        name = "worker_respond",
-        description = "Answer or cancel an interactive request from a Farcaster worker"
+        name = "worker_list",
+        description = "List active top-level Farcaster peers in this project"
     )]
-    async fn worker_respond(
-        &self,
-        Parameters(params): Parameters<workers::RespondParams>,
-    ) -> Result<Json<serde_json::Value>, String> {
-        let pool = self.workers.clone();
-        let value = tokio::task::spawn_blocking(move || workers::respond(&pool, params))
-            .await
-            .map_err(|error| format!("worker response task failed: {error}"))??;
-        Ok(Json(value))
-    }
-
-    #[tool(name = "worker_list", description = "List Farcaster workers")]
     async fn worker_list(
         &self,
         Parameters(_params): Parameters<workers::ListParams>,
+        Extension(parts): Extension<axum::http::request::Parts>,
     ) -> Result<Json<serde_json::Value>, String> {
-        let pool = self.workers.clone();
-        let value = tokio::task::spawn_blocking(move || workers::list(&pool))
+        let caller_token = caller_token(&parts);
+        let value = tokio::task::spawn_blocking(move || workers::list(caller_token))
             .await
             .map_err(|error| format!("worker list task failed: {error}"))??;
-        Ok(Json(value))
-    }
-
-    #[tool(name = "worker_status", description = "Inspect one Farcaster worker")]
-    async fn worker_status(
-        &self,
-        Parameters(params): Parameters<workers::WorkerParams>,
-    ) -> Result<Json<serde_json::Value>, String> {
-        let pool = self.workers.clone();
-        let value = tokio::task::spawn_blocking(move || workers::status(&pool, params))
-            .await
-            .map_err(|error| format!("worker status task failed: {error}"))??;
-        Ok(Json(value))
-    }
-
-    #[tool(name = "worker_stop", description = "Stop one Farcaster worker")]
-    async fn worker_stop(
-        &self,
-        Parameters(params): Parameters<workers::WorkerParams>,
-    ) -> Result<Json<serde_json::Value>, String> {
-        let pool = self.workers.clone();
-        let value = tokio::task::spawn_blocking(move || workers::stop(&pool, params))
-            .await
-            .map_err(|error| format!("worker stop task failed: {error}"))??;
         Ok(Json(value))
     }
 
@@ -303,6 +189,14 @@ impl FarcasterMcp {
     }
 }
 
+fn caller_token(parts: &axum::http::request::Parts) -> Option<String> {
+    parts
+        .headers
+        .get(CALLER_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned)
+}
+
 fn notify_workgraph_changed(updates: &async_channel::Sender<()>) {
     let _ = updates.try_send(());
 }
@@ -310,7 +204,7 @@ fn notify_workgraph_changed(updates: &async_channel::Sender<()>) {
 #[tool_handler(
     name = "farcaster",
     version = "0.1.0",
-    instructions = "Farcaster provides sandbox access requests, bounded child workers, and durable work graphs; use request_access, worker_*, and workgraph_* when relevant."
+    instructions = "Farcaster provides communication between top-level peer workers and durable work graphs. Use worker_send with `to: new` only for substantial independent work; use the harness's native subagents for delegated subtasks."
 )]
 impl ServerHandler for FarcasterMcp {
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
@@ -340,14 +234,8 @@ mod tests {
         assert_eq!(
             names,
             [
-                "request_access",
-                "worker_backends",
                 "worker_list",
-                "worker_respond",
                 "worker_send",
-                "worker_start",
-                "worker_status",
-                "worker_stop",
                 "workgraph_complete",
                 "workgraph_patch",
                 "workgraph_search"
@@ -365,24 +253,10 @@ mod tests {
     fn accepts_only_modern_stateless_requests() {
         let temp = tempfile::tempdir().expect("temp directory");
         let project = temp.path().join("project");
-        let home = temp.path().join("home");
         std::fs::create_dir(&project).expect("project directory");
-        std::fs::create_dir_all(home.join(".pi/agent")).expect("agent state");
-        let temporary = temp.path().join("tmp");
-        std::fs::create_dir(&temporary).expect("temporary directory");
-        let (approvals, _) = crate::access::approval::channel(
-            &project,
-            &home,
-            temp.path(),
-            &home.join(".pi/agent"),
-            &temporary,
-            crate::access::test_sandbox_bypass(),
-        )
-        .expect("approval channel");
         let (workgraph_updates, _) = async_channel::bounded(1);
         let server = FarcasterMcp::new(
             PathBuf::from("unused"),
-            approvals,
             worker_pool(&project),
             workgraph_updates,
         );
@@ -391,9 +265,9 @@ mod tests {
             [ProtocolVersion::V_2026_07_28]
         );
         let instructions = server.get_info().instructions.expect("server instructions");
-        assert!(instructions.contains("request_access"));
-        assert!(instructions.contains("worker_*"));
-        assert!(instructions.contains("workgraph_*"));
+        assert!(instructions.contains("top-level peer workers"));
+        assert!(instructions.contains("worker_send"));
+        assert!(instructions.contains("native subagents"));
         let config = server_config();
         assert!(!config.legacy_session_mode);
         assert!(config.stateless_protocol_metadata_required);

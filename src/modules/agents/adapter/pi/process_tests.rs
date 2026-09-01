@@ -1,5 +1,5 @@
 use super::*;
-use crate::agents::{FileAccessMode, NetworkAccessMode, PermissionLevel};
+use crate::agents::HarnessAccessMode;
 use std::{error::Error, fs};
 use tempfile::tempdir;
 
@@ -42,7 +42,6 @@ fn catalog_process_disables_session_persistence() -> TestResult {
     let project = tempdir()?;
     let process = rpc_command(
         &AgentLaunchConfig {
-            sandbox: crate::access::test_sandbox_bypass(),
             ..AgentLaunchConfig::default()
         },
         project.path(),
@@ -51,7 +50,6 @@ fn catalog_process_disables_session_persistence() -> TestResult {
     )?;
     assert!(
         process
-            .command
             .get_args()
             .any(|argument| argument == "--no-session")
     );
@@ -64,14 +62,13 @@ fn fork_process_passes_the_source_session_to_pi() -> TestResult {
     let source = Path::new("/sessions/source session.jsonl");
     let process = rpc_command(
         &AgentLaunchConfig {
-            sandbox: crate::access::test_sandbox_bypass(),
             ..AgentLaunchConfig::default()
         },
         project.path(),
         SessionLaunch::Fork(source),
         Path::new("/dev/fd/9"),
     )?;
-    let arguments = process.command.get_args().collect::<Vec<_>>();
+    let arguments = process.get_args().collect::<Vec<_>>();
     assert!(arguments.windows(2).any(|pair| pair == ["--mode", "rpc"]));
     assert!(
         arguments
@@ -120,15 +117,8 @@ fn resolves_agent_symlink_to_a_fixed_executable() -> TestResult {
 }
 
 #[test]
-fn pi_disables_its_inner_sandbox_inside_farcaster() -> TestResult {
+fn pi_delegates_sandboxing_to_the_harness() -> TestResult {
     let project = tempdir()?;
-    let nono = project.path().join("nono");
-    fs::write(&nono, b"#!/bin/sh\nexit 0\n")?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        fs::set_permissions(&nono, fs::Permissions::from_mode(0o700))?;
-    }
     let pi = project.path().join("pi");
     fs::write(&pi, b"#!/bin/sh\nexit 0\n")?;
     #[cfg(unix)]
@@ -136,30 +126,29 @@ fn pi_disables_its_inner_sandbox_inside_farcaster() -> TestResult {
         use std::os::unix::fs::PermissionsExt as _;
         fs::set_permissions(&pi, fs::Permissions::from_mode(0o700))?;
     }
-    let command = AgentLaunchConfig {
-        program: pi,
-        permission_level: PermissionLevel {
-            files: FileAccessMode::ReadOnly,
-            network: NetworkAccessMode::Sandboxed,
-        },
-        sandbox: crate::access::SandboxRuntime::fixed(nono.clone()),
-        ..AgentLaunchConfig::default()
-    };
-    let prepared = rpc_command(
-        &command,
-        project.path(),
-        SessionLaunch::New,
-        Path::new("/dev/fd/9"),
-    )?;
-    assert_eq!(prepared.command.get_program(), nono.as_os_str());
-    let arguments = prepared.command.get_args().collect::<Vec<_>>();
-    assert!(!arguments.iter().any(|argument| {
-        matches!(
-            argument.to_str(),
-            Some("--sandbox-files" | "--sandbox-network")
+    let prepare = |access_mode| {
+        rpc_command(
+            &AgentLaunchConfig {
+                program: pi.clone(),
+                access_mode,
+                ..AgentLaunchConfig::default()
+            },
+            project.path(),
+            SessionLaunch::New,
+            Path::new("/dev/fd/9"),
         )
-    }));
-    assert!(prepared.command.get_envs().any(|(name, value)| {
+    };
+
+    let sandboxed = prepare(HarnessAccessMode::Sandboxed)?;
+    assert_eq!(sandboxed.get_program(), pi.canonicalize()?);
+    assert!(
+        !sandboxed
+            .get_envs()
+            .any(|(name, _)| name == "PI_NONO_DISABLED")
+    );
+
+    let full = prepare(HarnessAccessMode::Full)?;
+    assert!(full.get_envs().any(|(name, value)| {
         name == "PI_NONO_DISABLED" && value == Some(std::ffi::OsStr::new("1"))
     }));
     Ok(())

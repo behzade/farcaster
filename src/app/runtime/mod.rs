@@ -1,14 +1,14 @@
 //! UI-neutral application runtime and active-session ownership.
 
+mod access_mode;
 mod catalog;
 mod documents;
-mod permission_level;
 mod prompts;
 mod session_controls;
 mod session_identity;
 
-pub(crate) use crate::agents::{FileAccessMode, NetworkAccessMode, PermissionLevel};
-use permission_level::PermissionChangeState;
+pub(crate) use crate::agents::HarnessAccessMode;
+use access_mode::AccessModeChangeState;
 use prompts::DeferredPrompt;
 
 use std::{
@@ -211,12 +211,6 @@ enum SnapshotChange {
     Immediate,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SandboxGrantHandoff {
-    WaitingForSiblingTools,
-    Interrupting,
-}
-
 struct RuntimeOwner {
     project: PathBuf,
     harness: String,
@@ -246,9 +240,7 @@ struct RuntimeOwner {
     parked_snapshot: Option<RuntimeSnapshot>,
     deferred_prompt: Option<DeferredPrompt>,
     pending_session_controls: PendingSessionControls,
-    permission_changes: PermissionChangeState,
-    sandbox_grant_handoff: Option<SandboxGrantHandoff>,
-    active_tool_calls: HashMap<String, String>,
+    access_mode_changes: AccessModeChangeState,
     startup_state_loaded: bool,
     startup_history_loaded: bool,
     state: Option<StateStore>,
@@ -391,9 +383,7 @@ fn run(
         parked_snapshot: None,
         deferred_prompt: None,
         pending_session_controls: PendingSessionControls::default(),
-        permission_changes: PermissionChangeState::default(),
-        sandbox_grant_handoff: None,
-        active_tool_calls: HashMap::new(),
+        access_mode_changes: AccessModeChangeState::default(),
         startup_state_loaded: false,
         startup_history_loaded: false,
         state,
@@ -453,7 +443,7 @@ fn run(
                 SnapshotChange::Immediate => immediate_snapshot_change = true,
             }
         }
-        owner.apply_queued_permission_change();
+        owner.apply_queued_access_mode_change();
         if immediate_snapshot_change
             || stream_publish_due.is_some_and(|deadline| Instant::now() >= deadline)
         {
@@ -461,14 +451,14 @@ fn run(
             stream_publish_due = None;
         }
         let now = Instant::now();
-        let permission_change_due = owner
-            .permission_change_ready()
-            .then(|| owner.permission_changes.next_deadline())
+        let access_mode_change_due = owner
+            .access_mode_change_ready()
+            .then(|| owner.access_mode_changes.next_deadline())
             .flatten();
         let next_deadline = [
             stream_publish_due,
             owner.session_refresh_due,
-            permission_change_due,
+            access_mode_change_due,
         ]
         .into_iter()
         .flatten()
@@ -528,8 +518,6 @@ impl RuntimeOwner {
         self.startup_history_loaded = false;
         self.pending_prompt_id = None;
         self.pending_prompt_item = None;
-        self.sandbox_grant_handoff = None;
-        self.active_tool_calls.clear();
         self.transcript_changed_from = Some(0);
     }
 
@@ -550,9 +538,9 @@ impl RuntimeOwner {
             .and(self.pending_prompt_item.clone());
         self.reset_process_runtime();
         self.active_session = session.clone();
-        self.process_command.permission_level = self
-            .permission_changes
-            .take_requested_level(self.process_command.permission_level);
+        self.process_command.access_mode = self
+            .access_mode_changes
+            .take_requested_mode(self.process_command.access_mode);
         let status = if fork.is_some() {
             "Forking session".into()
         } else {
@@ -592,6 +580,8 @@ impl RuntimeOwner {
         } else {
             SessionStart::New
         };
+        self.process_command.access_mode =
+            crate::agents::normalize_access_mode(&self.harness, self.process_command.access_mode);
         let process = crate::agents::spawn_session(
             &self.process_command,
             SessionLaunch {
@@ -718,10 +708,8 @@ impl RuntimeOwner {
             RuntimeCommand::SetModel(model) => self.set_model(model),
             RuntimeCommand::SetThinking(level) => self.set_thinking(level),
             RuntimeCommand::SetMode(mode) => self.send(SessionCommand::SelectMode { mode }),
-            RuntimeCommand::SetPermissionLevel(level) => self.set_permission_level(level),
+            RuntimeCommand::SetAccessMode(mode) => self.set_access_mode(mode),
             RuntimeCommand::SetAppProxy(proxy) => self.set_app_proxy(proxy),
-            RuntimeCommand::ReloadSandboxGrants => self.reload_sandbox_grants(),
-            RuntimeCommand::ActivateSandboxGrant => self.activate_sandbox_grant(),
             RuntimeCommand::ExtensionResponse(response) => {
                 if let Some(process) = self.process.as_mut()
                     && let Err(error) = process.respond(response)
@@ -785,10 +773,6 @@ impl RuntimeOwner {
                 SnapshotChange::None
             }
             SessionEvent::Interaction(request) => {
-                if let Some(result) = request.sandbox_mode_result() {
-                    self.apply_sandbox_mode_result(result);
-                    return SnapshotChange::None;
-                }
                 let _ = self.event_tx.send(RuntimeEvent::ExtensionUi {
                     generation: self.process_generation,
                     request,
@@ -798,20 +782,6 @@ impl RuntimeOwner {
             }
             SessionEvent::Activity(event) => {
                 let settled = event.kind() == &SessionActivityKind::AgentSettled;
-                let tool_finished = event.kind() == &SessionActivityKind::ToolFinished;
-                if event.kind() == &SessionActivityKind::ToolStarted
-                    && let (Some(id), Some(name)) = (
-                        event.value().get("toolCallId").and_then(Value::as_str),
-                        event.value().get("toolName").and_then(Value::as_str),
-                    )
-                {
-                    self.active_tool_calls
-                        .insert(id.to_owned(), name.to_owned());
-                } else if tool_finished
-                    && let Some(id) = event.value().get("toolCallId").and_then(Value::as_str)
-                {
-                    self.active_tool_calls.remove(id);
-                }
                 let session_starting = event.kind() == &SessionActivityKind::AgentStarted
                     && self.active_session.is_none()
                     && self.parked_snapshot.is_none();
@@ -860,9 +830,6 @@ impl RuntimeOwner {
                     self.send(SessionCommand::LoadState);
                     self.send(SessionCommand::LoadUsage);
                     self.refresh_sessions();
-                    self.finish_sandbox_grant_handoff();
-                } else if tool_finished {
-                    self.maybe_interrupt_for_sandbox_grant();
                 }
                 if !should_publish {
                     SnapshotChange::None
@@ -1097,9 +1064,6 @@ impl RuntimeOwner {
     }
 
     fn apply_response(&mut self, response: crate::agents::SessionResponse) {
-        if self.apply_permission_command_response(&response) {
-            return;
-        }
         let operation = response.operation;
         let is_prompt_response = matches!(operation, SessionOperation::Prompt(_))
             && response.id.as_ref() == self.pending_prompt_id.as_ref();
@@ -1332,11 +1296,9 @@ impl RuntimeOwner {
         self.mark_outbox_failed(&details);
         self.pending_prompt_id = None;
         self.deferred_prompt = None;
-        self.sandbox_grant_handoff = None;
-        self.active_tool_calls.clear();
-        self.process_command.permission_level = self
-            .permission_changes
-            .take_requested_level(self.process_command.permission_level);
+        self.process_command.access_mode = self
+            .access_mode_changes
+            .take_requested_mode(self.process_command.access_mode);
         self.rollback_pending_prompt();
         if let Some(target) = self.pending_prompt_target.take() {
             self.emit_prompt_result(&target, false);
@@ -1379,9 +1341,9 @@ impl RuntimeOwner {
 
     fn publish(&mut self) {
         crate::app::infrastructure::performance::count_snapshot();
-        self.snapshot.permission_level = self
-            .permission_changes
-            .requested_level(self.process_command.permission_level);
+        self.snapshot.access_mode = self
+            .access_mode_changes
+            .requested_mode(self.process_command.access_mode);
         conversation_mut(self.active_snapshot_mut()).flush_live_projection();
         let active_snapshot = self.active_snapshot();
         let mut snapshot = self.snapshot.clone();

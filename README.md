@@ -1,8 +1,7 @@
 # Farcaster
 
-Farcaster is a native GPUI desktop client for coding agents. The current
-implementation starts Pi through its public JSONL RPC mode. Additional agent
-backends are not implemented yet.
+Farcaster is a native GPUI desktop client for coding agents. It supports Pi,
+Codex, and OpenCode through backend-specific protocol adapters.
 
 Farcaster is GPL-3.0-or-later. See [`NOTICE.md`](NOTICE.md) for source and asset
 attribution.
@@ -11,19 +10,28 @@ attribution.
 
 - Multiple live and historical sessions across projects
 - Streaming text, thinking, tool calls, retries, queues, and compaction
-- Model, thinking-level, and whole-agent sandbox controls
+- Harness-native access modes
 - Extension questions and permission prompts
 - Git and Jujutsu working-copy views
 - Embedded Neovim and project terminal surfaces
 - Durable drafts, session ordering, workgraphs, and application state
-- Stateless MCP access to workers, workgraphs, and sandbox grants
+- Stateless MCP access to workers and workgraphs
+
+Farcaster does not provide a filesystem or network sandbox. The access selector
+configures each harness directly:
+
+- **Full access** disables the harness sandbox.
+- **Sandboxed** uses the harness's sandbox integration.
+- **Auto** uses the harness's native automatic mode when available.
+
+Unsupported modes are omitted. For Pi, sandboxed mode leaves user-installed
+sandbox extensions such as `pi-nono` active; full access sets
+`PI_NONO_DISABLED=1`. Codex supports all three modes. OpenCode supports full and
+auto modes.
 
 Pi settings, context files, extensions, skills, and authentication load in the
-selected project directory. Farcaster owns the outer nono sandbox and runs Pi's
-inner sandbox unrestricted. Farcaster does not modify Pi. The `pi` executable
-must be available on `PATH`. Packaged builds use the pinned `nono` CLI sidecar
-next to the Farcaster executable. Development builds otherwise resolve `nono`
-from `PATH`.
+selected project directory. Farcaster does not modify Pi. The `pi` executable
+must be available on `PATH` unless `FARCASTER_PI_PATH` is set.
 
 ## Provider authentication
 
@@ -55,29 +63,24 @@ make bundle-macos
 open target/release/Farcaster.app
 ```
 
-The bundle script downloads the architecture-specific upstream `nono` v0.74.0
-release when its verified archive is not already in `target/release`, verifies
-its pinned SHA-256 digest, places it in `Contents/MacOS`, and signs the complete
-bundle. Signing is ad hoc by default; set
-`CODESIGN_IDENTITY` to use a Developer ID identity. The packaged application
-does not require `PATH` or `FARCASTER_NONO_PATH` to locate `nono`.
+Signing is ad hoc by default; set `CODESIGN_IDENTITY` to use a Developer ID
+identity.
 
 Farcaster serves stateless Streamable HTTP MCP at
-`http://127.0.0.1:8765/mcp`. It exposes `worker_backends`, `worker_start`,
-`worker_send`, `worker_respond`, `worker_list`, `worker_status`, `worker_stop`,
-`request_access`, and the `workgraph_*` tools. It accepts MCP `2026-07-28` only.
-Approved session grants last until Farcaster exits; project grants are stored in
-Farcaster application data and bound to the workspace identity. On approval,
-Farcaster interrupts the pending access call, restarts the harness with the grant,
-and resumes the task with an internal continuation hidden from the UI
-transcript. Farcaster passes
-the endpoint to each launched agent through its native transient configuration;
-it does not create or modify a project MCP file.
+`http://127.0.0.1:8765/mcp`. It exposes `worker_list`, `worker_send`, and the
+`workgraph_*` tools. Workers are active top-level peer agents in the same
+project. `worker_send` addresses an existing peer or uses `to: "new"` to create
+a fresh top-level peer with the caller's harness, model, and effort. Fresh peers
+are intended only for substantial independent work; harness-native subagents
+should handle delegated subtasks. Farcaster accepts MCP `2026-07-28` only and
+passes the endpoint to each launched agent through its native transient
+configuration; it does not create or modify a project MCP file.
 
 Useful environment variables:
 
 - `FARCASTER_PI_PATH`: Pi executable override
-- `FARCASTER_NONO_PATH`: fixed nono executable override
+- `FARCASTER_CODEX_PATH`: Codex executable override
+- `FARCASTER_OPENCODE_PATH`: OpenCode executable override
 - `FARCASTER_DATA_DIR`: application database, project registry, and logs
 - `FARCASTER_SHELL`: login shell override
 - `FARCASTER_GIT`, `FARCASTER_JJ`, `FARCASTER_NVIM`: executable overrides

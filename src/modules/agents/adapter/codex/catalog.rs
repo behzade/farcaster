@@ -118,7 +118,6 @@ fn with_connection<T>(
         .unwrap_or_else(|| "codex".into());
     let mut command = Command::new(program);
     command.args(["app-server", "--stdio"]);
-    super::configure_permissions(&mut command);
     let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

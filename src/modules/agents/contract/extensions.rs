@@ -2,9 +2,6 @@ use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use serde_json::json;
 
-const SANDBOX_MODE_STATUS_KEY: &str = "\u{1f}farcaster-sandbox-mode\u{1f}";
-const LEGACY_SANDBOX_MODE_STATUS_KEY: &str = "\u{1f}pi-gpui-sandbox-mode\u{1f}";
-
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum BackgroundJobState {
@@ -23,18 +20,6 @@ pub(crate) struct BackgroundJob {
     pub state: BackgroundJobState,
     #[serde(default)]
     pub exit_code: Option<i32>,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct SandboxModeResult {
-    pub version: u8,
-    pub request_id: String,
-    pub files: String,
-    pub network: String,
-    pub success: bool,
-    #[serde(default)]
-    pub error: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -184,23 +169,6 @@ impl ExtensionUiRequest {
         payload.split_once('\u{1f}')
     }
 
-    pub(crate) fn sandbox_mode_result(&self) -> Option<Result<SandboxModeResult, String>> {
-        let Self::SetStatus { key, text, .. } = self else {
-            return None;
-        };
-        matches!(
-            key.as_str(),
-            SANDBOX_MODE_STATUS_KEY | LEGACY_SANDBOX_MODE_STATUS_KEY
-        )
-        .then(|| {
-            let text = text
-                .as_deref()
-                .ok_or_else(|| "sandbox mode acknowledgement is empty".to_owned())?;
-            serde_json::from_str(text)
-                .map_err(|error| format!("invalid sandbox mode acknowledgement: {error}"))
-        })
-    }
-
     pub(crate) fn dialog_id(&self) -> Option<&str> {
         match self {
             Self::Select { id, .. }
@@ -266,35 +234,6 @@ mod tests {
             legacy.gpui_system_notification(),
             Some(("Pi finished", "Done"))
         );
-    }
-
-    #[test]
-    fn sandbox_mode_status_decodes_only_the_private_typed_acknowledgement() {
-        let request = ExtensionUiRequest::SetStatus {
-            id: "sandbox-mode".into(),
-            key: SANDBOX_MODE_STATUS_KEY.into(),
-            text: Some(
-                r#"{"version":1,"requestId":"gpui-permission-3","files":"full","network":"sandboxed","success":true}"#
-                    .into(),
-            ),
-        };
-        assert_eq!(
-            request.sandbox_mode_result(),
-            Some(Ok(SandboxModeResult {
-                version: 1,
-                request_id: "gpui-permission-3".into(),
-                files: "full".into(),
-                network: "sandboxed".into(),
-                success: true,
-                error: None,
-            }))
-        );
-        let malformed = ExtensionUiRequest::SetStatus {
-            id: "sandbox-mode".into(),
-            key: SANDBOX_MODE_STATUS_KEY.into(),
-            text: Some("{}".into()),
-        };
-        assert!(matches!(malformed.sandbox_mode_result(), Some(Err(_))));
     }
 
     #[test]

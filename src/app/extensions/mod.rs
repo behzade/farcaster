@@ -156,17 +156,6 @@ impl ExtensionUiState {
             })
     }
 
-    pub(crate) fn remove_dialog(&mut self, id: &str) -> bool {
-        if self.dialog.as_ref().and_then(ExtensionUiRequest::dialog_id) == Some(id) {
-            self.dialog = self.queued_dialogs.pop_front();
-            return true;
-        }
-        let before = self.queued_dialogs.len();
-        self.queued_dialogs
-            .retain(|request| request.dialog_id() != Some(id));
-        self.queued_dialogs.len() != before
-    }
-
     fn take_dialog(&mut self, id: &str) -> Option<ExtensionUiRequest> {
         if self.dialog.as_ref().and_then(ExtensionUiRequest::dialog_id) != Some(id) {
             return None;
@@ -297,24 +286,6 @@ mod tests {
         assert!(state.respond_value("first", "late".into()).is_none());
         assert!(state.cancel("second").is_some());
         assert!(state.dialog.is_none());
-    }
-
-    #[test]
-    fn dialogs_can_be_parked_without_cancelling_their_request() {
-        let mut state = ExtensionUiState::default();
-        state.apply(input("first"));
-        state.apply(input("parked"));
-        state.apply(input("last"));
-
-        assert!(state.remove_dialog("parked"));
-        assert!(state.respond_value("first", "x".into()).is_some());
-        assert_eq!(
-            state
-                .dialog
-                .as_ref()
-                .and_then(ExtensionUiRequest::dialog_id),
-            Some("last")
-        );
     }
 
     #[test]

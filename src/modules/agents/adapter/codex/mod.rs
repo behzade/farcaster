@@ -10,12 +10,28 @@ pub(super) use catalog::{delete_session, discover, load_history, rename_session}
 pub(crate) use worker::CodexWorkerFactory;
 pub(super) use worker::{load_configuration, spawn_main};
 
-fn configure_permissions(command: &mut std::process::Command) {
-    // Farcaster's nono profile is the process boundary. Codex must not try to
-    // start a second macOS sandbox or request a second layer of approvals.
-    command
-        .args(["-c", r#"approval_policy="never""#])
-        .args(["-c", r#"sandbox_mode="danger-full-access""#]);
+fn configure_permissions(
+    command: &mut std::process::Command,
+    mode: crate::agents::HarnessAccessMode,
+) {
+    use crate::agents::HarnessAccessMode;
+
+    match mode {
+        HarnessAccessMode::Full => {
+            command.arg("--dangerously-bypass-approvals-and-sandbox");
+        }
+        HarnessAccessMode::Sandboxed => {
+            command.args([
+                "--sandbox",
+                "workspace-write",
+                "--ask-for-approval",
+                "on-request",
+            ]);
+        }
+        HarnessAccessMode::Auto => {
+            command.arg("--approve-for-me");
+        }
+    }
 }
 
 use super::super::contract::{
@@ -79,22 +95,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn native_process_skips_inner_permissions() {
-        let mut command = std::process::Command::new("codex");
-        configure_permissions(&mut command);
-        let arguments = command
-            .get_args()
-            .map(|argument| argument.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
+    fn native_process_uses_selected_harness_permissions() {
+        let arguments = |mode| {
+            let mut command = std::process::Command::new("codex");
+            configure_permissions(&mut command, mode);
+            command
+                .get_args()
+                .map(|argument| argument.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+        };
+        use crate::agents::HarnessAccessMode::{Auto, Full, Sandboxed};
         assert_eq!(
-            arguments,
+            arguments(Full),
+            ["--dangerously-bypass-approvals-and-sandbox"]
+        );
+        assert_eq!(
+            arguments(Sandboxed),
             [
-                "-c",
-                r#"approval_policy="never""#,
-                "-c",
-                r#"sandbox_mode="danger-full-access""#,
+                "--sandbox",
+                "workspace-write",
+                "--ask-for-approval",
+                "on-request"
             ]
         );
+        assert_eq!(arguments(Auto), ["--approve-for-me"]);
     }
 
     #[test]

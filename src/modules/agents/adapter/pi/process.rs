@@ -21,9 +21,8 @@ use crate::modules::agents::adapter::farcaster_mcp::INSTRUCTIONS;
 #[cfg(test)]
 use crate::modules::agents::adapter::process_command::resolve_agent_program;
 use crate::{
-    access,
     agents::extensions::ExtensionUiResponse,
-    agents::{AgentLaunchConfig, SessionCommand, SessionEvent, SessionResponse},
+    agents::{AgentLaunchConfig, HarnessAccessMode, SessionCommand, SessionEvent, SessionResponse},
 };
 
 impl Default for crate::agents::AgentLaunchConfig {
@@ -31,9 +30,7 @@ impl Default for crate::agents::AgentLaunchConfig {
         Self {
             program: pi_program(std::env::var_os("FARCASTER_PI_PATH")),
             prefix_args: Vec::new(),
-            permission_level: crate::agents::PermissionLevel::default(),
-            sandbox: access::configured_sandbox_runtime(std::env::var_os("FARCASTER_NONO_PATH")),
-            grants: None,
+            access_mode: HarnessAccessMode::default(),
             app_proxy: None,
             session_locator_root: None,
         }
@@ -81,30 +78,30 @@ fn rpc_command(
     project: &Path,
     launch: SessionLaunch<'_>,
     mcp_config: &Path,
-) -> Result<access::SandboxedCommand, String> {
+) -> Result<std::process::Command, String> {
     let mut prepared = command.command(project)?;
     prepared
-        .command
         .args(["--mode", "rpc"])
         .arg("--mcp-config")
         .arg(mcp_config)
         .arg("--append-system-prompt")
         .arg(INSTRUCTIONS)
-        // Farcaster owns the complete outer sandbox and access-request boundary.
-        .env("PI_NONO_DISABLED", "1")
         .env("FARCASTER_NATIVE_NOTIFICATIONS", "1")
         // Compatibility with existing Pi notification extensions.
         .env("PI_GPUI_NATIVE_NOTIFICATIONS", "1");
+    if matches!(command.access_mode, HarnessAccessMode::Full) {
+        prepared.env("PI_NONO_DISABLED", "1");
+    }
     match launch {
         SessionLaunch::Catalog => {
-            prepared.command.arg("--no-session");
+            prepared.arg("--no-session");
         }
         SessionLaunch::New => {}
         SessionLaunch::Resume(session) => {
-            prepared.command.arg("--session").arg(session);
+            prepared.arg("--session").arg(session);
         }
         SessionLaunch::Fork(source) => {
-            prepared.command.arg("--fork").arg(source);
+            prepared.arg("--fork").arg(source);
         }
     }
     Ok(prepared)
@@ -113,7 +110,6 @@ fn rpc_command(
 pub(crate) struct PiRpcProcess {
     caller_identity: crate::modules::agents::core::CallerIdentity,
     _mcp_config: TransientMcpConfig,
-    _sandbox: access::SandboxedCommand,
     child: Arc<Mutex<Child>>,
     stdin: Arc<Mutex<ChildStdin>>,
     incoming: mpsc::Receiver<ReaderItem>,
@@ -128,7 +124,7 @@ impl PiRpcProcess {
         command: &AgentLaunchConfig,
         project: &Path,
     ) -> Result<Self, String> {
-        Self::spawn_inner(command, project, SessionLaunch::Catalog, None)
+        Self::spawn_inner(command, project, SessionLaunch::Catalog, None, None)
     }
 
     pub(crate) fn spawn(
@@ -137,7 +133,7 @@ impl PiRpcProcess {
         session: Option<&Path>,
     ) -> Result<Self, String> {
         let launch = session.map_or(SessionLaunch::New, SessionLaunch::Resume);
-        Self::spawn_inner(command, project, launch, None)
+        Self::spawn_inner(command, project, launch, None, None)
     }
 
     pub(in crate::modules::agents::adapter) fn spawn_with_optional_waker(
@@ -147,7 +143,7 @@ impl PiRpcProcess {
         wake: Option<thread::Thread>,
     ) -> Result<Self, String> {
         let launch = session.map_or(SessionLaunch::New, SessionLaunch::Resume);
-        Self::spawn_inner(command, project, launch, wake)
+        Self::spawn_inner(command, project, launch, wake, None)
     }
 
     pub(crate) fn spawn_fork(
@@ -155,7 +151,7 @@ impl PiRpcProcess {
         project: &Path,
         source: &Path,
     ) -> Result<Self, String> {
-        Self::spawn_inner(command, project, SessionLaunch::Fork(source), None)
+        Self::spawn_inner(command, project, SessionLaunch::Fork(source), None, None)
     }
 
     pub(in crate::modules::agents::adapter) fn spawn_fork_with_optional_waker(
@@ -164,7 +160,15 @@ impl PiRpcProcess {
         source: &Path,
         wake: Option<thread::Thread>,
     ) -> Result<Self, String> {
-        Self::spawn_inner(command, project, SessionLaunch::Fork(source), wake)
+        Self::spawn_inner(command, project, SessionLaunch::Fork(source), wake, None)
+    }
+
+    pub(crate) fn spawn_worker(
+        command: &AgentLaunchConfig,
+        project: &Path,
+        worker_id: String,
+    ) -> Result<Self, String> {
+        Self::spawn_inner(command, project, SessionLaunch::New, None, Some(worker_id))
     }
 
     fn spawn_inner(
@@ -172,12 +176,23 @@ impl PiRpcProcess {
         project: &Path,
         launch: SessionLaunch<'_>,
         wake: Option<thread::Thread>,
+        worker_id: Option<String>,
     ) -> Result<Self, String> {
-        let caller_identity = crate::modules::agents::core::CallerRegistry::shared().issue(project);
+        let registry = crate::modules::agents::core::CallerRegistry::shared();
+        let profile = crate::modules::agents::core::CallerProfile {
+            backend: "pi".into(),
+            provider: None,
+            model: None,
+            effort: None,
+        };
+        let caller_identity = if let Some(worker_id) = worker_id {
+            registry.issue_as(project, profile, wake.clone(), worker_id)
+        } else {
+            registry.issue(project, profile, wake.clone())
+        };
         let mcp_config = TransientMcpConfig::create(caller_identity.token())?;
         let mut prepared = rpc_command(command, project, launch, mcp_config.path())?;
         let mut child = prepared
-            .command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -209,7 +224,6 @@ impl PiRpcProcess {
         let mut rpc = Self {
             caller_identity,
             _mcp_config: mcp_config,
-            _sandbox: prepared,
             child,
             stdin: Arc::new(Mutex::new(stdin)),
             incoming,
@@ -223,6 +237,15 @@ impl PiRpcProcess {
     }
 
     pub(crate) fn send_request(&mut self, request: SessionCommand) -> Result<String, String> {
+        match &request {
+            SessionCommand::SelectModel { provider, model_id } => {
+                self.caller_identity.select_model(provider, model_id);
+            }
+            SessionCommand::SelectReasoning { level } => {
+                self.caller_identity.select_effort(level);
+            }
+            _ => {}
+        }
         self.send_command(super::protocol::encode_request(request))
     }
 
@@ -331,6 +354,15 @@ impl PiRpcProcess {
     pub(crate) fn try_next(&mut self) -> Option<SessionEvent> {
         if let Some(item) = self.queued.pop_front() {
             return Some(item);
+        }
+        if let Some(message) = self.caller_identity.try_recv()
+            && let Err(error) = self.send_request(SessionCommand::Prompt {
+                mode: crate::protocol::PromptMode::FollowUp,
+                message: message.prompt(),
+                images: Vec::new(),
+            })
+        {
+            return Some(SessionEvent::Failure(error));
         }
         match self.incoming.try_recv() {
             Ok(ReaderItem::StderrEof) => None,

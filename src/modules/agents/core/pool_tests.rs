@@ -1,27 +1,17 @@
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex, mpsc},
-    time::{Duration, Instant},
 };
 
 use super::*;
 use crate::agents::{
-    WorkerEvent, WorkerInput, WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory,
+    WorkerEvent, WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory,
 };
-use crate::modules::agents::contract::{
-    StartWorker, WorkerContext, WorkerInputResponse, WorkerMessageMode, WorkerSnapshot,
-    WorkerStatus,
-};
+use crate::modules::agents::contract::{StartWorker, WorkerContext, WorkerInputResponse};
 
 #[derive(Default)]
 struct FakeFactory {
-    sessions: Mutex<Vec<FakeHandle>>,
-}
-
-#[derive(Clone)]
-struct FakeHandle {
-    events: mpsc::Sender<WorkerEvent>,
-    sent: Arc<Mutex<Vec<WorkerSendMode>>>,
+    sends: Mutex<Vec<Arc<Mutex<Vec<WorkerSendMode>>>>>,
 }
 
 struct FakeSession {
@@ -31,15 +21,12 @@ struct FakeSession {
 
 impl WorkerSessionFactory for FakeFactory {
     fn create(&self, _launch: WorkerLaunch) -> Result<Box<dyn WorkerSession>, String> {
-        let (events, receiver) = mpsc::channel();
+        let (_events, receiver) = mpsc::channel();
         let sent = Arc::new(Mutex::new(Vec::new()));
-        self.sessions
+        self.sends
             .lock()
             .map_err(|_| "fake sessions unavailable".to_owned())?
-            .push(FakeHandle {
-                events,
-                sent: sent.clone(),
-            });
+            .push(sent.clone());
         Ok(Box::new(FakeSession {
             events: receiver,
             sent,
@@ -100,139 +87,22 @@ fn request(project: &std::path::Path) -> StartWorker {
     }
 }
 
-fn wait_for(pool: &WorkerPool, id: &str, status: WorkerStatus) -> WorkerSnapshot {
-    let deadline = Instant::now() + Duration::from_secs(2);
-    loop {
-        let snapshot = pool.status(id).expect("worker status");
-        if snapshot.status == status {
-            return snapshot;
-        }
-        assert!(Instant::now() < deadline, "worker did not reach {status:?}");
-        std::thread::sleep(Duration::from_millis(5));
-    }
-}
-
 #[test]
-fn workers_settle_and_can_be_prompted_again() -> Result<(), String> {
-    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
-    let factory = Arc::new(FakeFactory::default());
-    let pool = pool(factory.clone(), project.path(), 2)?;
-    assert_eq!(pool.default_backend(), "pi");
-    assert_eq!(pool.backends(), ["pi"]);
-    let started = pool.start(request(project.path()))?;
-    let handle = factory
-        .sessions
-        .lock()
-        .map_err(|_| "fake sessions unavailable".to_owned())?[0]
-        .clone();
-    assert_eq!(
-        handle
-            .sent
-            .lock()
-            .map_err(|_| "fake sends unavailable".to_owned())?
-            .as_slice(),
-        [WorkerSendMode::Prompt]
-    );
-
-    handle
-        .events
-        .send(WorkerEvent::SessionChanged {
-            locator: "backend://worker-1".into(),
-        })
-        .map_err(|error| error.to_string())?;
-    handle
-        .events
-        .send(WorkerEvent::Settled {
-            output: "done".into(),
-        })
-        .map_err(|error| error.to_string())?;
-    let idle = wait_for(&pool, &started.id, WorkerStatus::Idle);
-    assert_eq!(idle.output.as_deref(), Some("done"));
-    assert_eq!(idle.session_locator.as_deref(), Some("backend://worker-1"));
-
-    let running = pool.send(&started.id, "more".into(), WorkerMessageMode::Auto)?;
-    assert_eq!(running.status, WorkerStatus::Running);
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while handle
-        .sent
-        .lock()
-        .map_err(|_| "fake sends unavailable".to_owned())?
-        .len()
-        < 2
-    {
-        if Instant::now() >= deadline {
-            return Err("worker did not receive second prompt".into());
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    assert_eq!(
-        handle
-            .sent
-            .lock()
-            .map_err(|_| "fake sends unavailable".to_owned())?[1],
-        WorkerSendMode::Prompt
-    );
-    handle
-        .events
-        .send(WorkerEvent::NeedsInput(WorkerInput {
-            id: "question-1".into(),
-            prompt: "Choose".into(),
-            options: vec!["A".into(), "B".into()],
-            secret: false,
-        }))
-        .map_err(|error| error.to_string())?;
-    let pending = wait_for(&pool, &started.id, WorkerStatus::NeedsInput);
-    assert_eq!(
-        pending
-            .pending_input
-            .as_ref()
-            .map(|input| input.id.as_str()),
-        Some("question-1")
-    );
-    assert_eq!(
-        pool.respond(&started.id, Some("A".into()), false)?.status,
-        WorkerStatus::Running
-    );
-    Ok(())
-}
-
-#[test]
-fn running_workers_are_steered_and_capacity_is_bounded() -> Result<(), String> {
+fn starts_with_an_initial_prompt_and_enforces_capacity() -> Result<(), String> {
     let project = tempfile::tempdir().map_err(|error| error.to_string())?;
     let factory = Arc::new(FakeFactory::default());
     let pool = pool(factory.clone(), project.path(), 1)?;
-    let started = pool.start(request(project.path()))?;
-    assert!(pool.start(request(project.path())).is_err());
-    let other = tempfile::tempdir().map_err(|error| error.to_string())?;
-    assert!(pool.start(request(other.path())).is_err());
 
-    pool.send(&started.id, "redirect".into(), WorkerMessageMode::Auto)?;
-    let handle = factory
-        .sessions
-        .lock()
-        .map_err(|_| "fake sessions unavailable".to_owned())?[0]
-        .clone();
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while handle
-        .sent
-        .lock()
-        .map_err(|_| "fake sends unavailable".to_owned())?
-        .len()
-        < 2
-    {
-        if Instant::now() >= deadline {
-            return Err("worker did not receive steering message".into());
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    let started = pool.start(request(project.path()))?;
+    assert_eq!(started.backend, "pi");
     assert_eq!(
-        handle
-            .sent
+        factory.sends.lock().map_err(|_| "fake sends unavailable")?[0]
             .lock()
-            .map_err(|_| "fake sends unavailable".to_owned())?[1],
-        WorkerSendMode::Steer
+            .map_err(|_| "fake sends unavailable")?
+            .as_slice(),
+        [WorkerSendMode::Prompt]
     );
-    assert_eq!(pool.stop(&started.id)?.status, WorkerStatus::Stopped);
+    assert!(pool.start(request(project.path())).is_err());
     Ok(())
 }
 

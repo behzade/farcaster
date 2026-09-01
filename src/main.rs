@@ -25,34 +25,11 @@ fn main() -> std::process::ExitCode {
         Ok(project) => project,
         Err(error) => return fail(error),
     };
-    let home = match std::env::var_os("HOME") {
-        Some(home) => std::path::PathBuf::from(home),
-        None => return fail("HOME is required to initialize sandbox approvals"),
-    };
     let data_root = match app::paths::data_dir() {
         Ok(path) => path,
         Err(error) => return fail(error),
     };
-    let agent_state = std::env::var_os("PI_CODING_AGENT_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| home.join(".pi/agent"));
-    let temporary = std::env::var_os("TMPDIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
-    let nono = access::configured_sandbox_runtime(std::env::var_os("FARCASTER_NONO_PATH"));
-    let (approvals, approval_ui) = match access::approval::channel(
-        &project,
-        &home,
-        &data_root,
-        &agent_state,
-        &temporary,
-        nono,
-    ) {
-        Ok(channel) => channel,
-        Err(error) => return fail(format!("initialize sandbox approvals: {error}")),
-    };
     let worker_command = agents::AgentLaunchConfig {
-        grants: Some(approval_ui.grants()),
         session_locator_root: Some(data_root.join("session-locators")),
         ..agents::AgentLaunchConfig::default()
     };
@@ -63,14 +40,14 @@ fn main() -> std::process::ExitCode {
         Err(error) => return fail(format!("initialize worker pool: {error}")),
     };
     let (workgraph_updates, workgraph_update_receiver) = async_channel::bounded(1);
-    let _mcp_server = match app::persistence::state_path().and_then(|database| {
-        app::mcp_server::start(database, approvals, worker_pool, workgraph_updates)
-    }) {
+    let _mcp_server = match app::persistence::state_path()
+        .and_then(|database| app::mcp_server::start(database, worker_pool, workgraph_updates))
+    {
         Ok(server) => server,
         Err(error) => return fail(format!("start MCP server: {error}")),
     };
 
-    match app::launch::run(project, approval_ui, workgraph_update_receiver) {
+    match app::launch::run(project, workgraph_update_receiver) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => fail(error),
     }

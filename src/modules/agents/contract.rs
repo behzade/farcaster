@@ -5,9 +5,8 @@ use serde::{Deserialize, Serialize};
 pub(crate) mod extensions;
 mod workers;
 
-pub(crate) use workers::{StartWorker, WorkerMessageMode, WorkerSnapshot, WorkerStatus};
+pub(crate) use workers::{StartWorker, WorkerSnapshot, WorkerStatus};
 
-use crate::access::{GrantStore, SandboxRuntime};
 use extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptImage, PromptMode};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -67,9 +66,7 @@ pub(crate) struct QueuedPrompt {
 pub(crate) struct AgentLaunchConfig {
     pub(crate) program: PathBuf,
     pub(crate) prefix_args: Vec<String>,
-    pub(crate) permission_level: PermissionLevel,
-    pub(crate) sandbox: SandboxRuntime,
-    pub(crate) grants: Option<GrantStore>,
+    pub(crate) access_mode: HarnessAccessMode,
     pub(crate) app_proxy: Option<String>,
     pub(crate) session_locator_root: Option<PathBuf>,
 }
@@ -432,35 +429,12 @@ pub(crate) struct WorkerInputResponse {
     pub(crate) cancel: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) enum FileAccessMode {
-    ReadOnly,
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub(crate) enum HarnessAccessMode {
+    Full,
     #[default]
     Sandboxed,
-    Full,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) enum NetworkAccessMode {
-    #[default]
-    Sandboxed,
-    Full,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct PermissionLevel {
-    pub(crate) files: FileAccessMode,
-    pub(crate) network: NetworkAccessMode,
-}
-
-impl PermissionLevel {
-    pub(crate) fn with_files(self, files: FileAccessMode) -> Self {
-        Self { files, ..self }
-    }
-
-    pub(crate) fn with_network(self, network: NetworkAccessMode) -> Self {
-        Self { network, ..self }
-    }
+    Auto,
 }
 
 #[cfg(test)]

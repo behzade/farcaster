@@ -1,17 +1,8 @@
 use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use super::{WorkerContext, WorkerInput};
-
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum WorkerMessageMode {
-    #[default]
-    Auto,
-    Prompt,
-    Steer,
-}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct StartWorker {
@@ -29,7 +20,6 @@ pub(crate) struct StartWorker {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum WorkerStatus {
     Running,
-    Stopping,
     Idle,
     NeedsInput,
     Failed,

@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     fs::File,
-    io::{BufRead as _, BufReader, Write as _},
+    io::{BufRead as _, BufReader},
     path::{Path, PathBuf},
 };
 
@@ -33,19 +33,14 @@ impl WorkerSessionFactory for PiWorkerFactory {
         if launch.provider.is_some() != launch.model.is_some() {
             return Err("Pi worker provider and model must be supplied together".into());
         }
-        let parent = canonical_session(&launch.parent_session, "parent")?;
         let mut process = match &launch.context {
-            WorkerContext::Fresh => {
-                let child = create_blank_child_session(&parent, &launch.project)?;
-                match PiRpcProcess::spawn(&self.command, &launch.project, Some(&child)) {
-                    Ok(process) => process,
-                    Err(error) => {
-                        let _ = std::fs::remove_file(child);
-                        return Err(error);
-                    }
-                }
-            }
+            WorkerContext::Fresh => PiRpcProcess::spawn_worker(
+                &self.command,
+                &launch.project,
+                launch.worker_id.clone(),
+            )?,
             WorkerContext::Session { session_locator } => {
+                let parent = canonical_session(&launch.parent_session, "parent")?;
                 let source = canonical_session(session_locator, "source")?;
                 if source != parent {
                     return Err(
@@ -245,39 +240,6 @@ fn canonical_session(locator: &str, role: &str) -> Result<PathBuf, String> {
     Ok(session)
 }
 
-fn create_blank_child_session(parent: &Path, project: &Path) -> Result<PathBuf, String> {
-    let directory = parent
-        .parent()
-        .ok_or_else(|| "Pi worker parent session has no directory".to_owned())?;
-    let now = time::OffsetDateTime::now_utc();
-    let id = format!("farcaster-worker-{}", now.unix_timestamp_nanos());
-    let path = directory.join(format!("{id}.jsonl"));
-    let timestamp = now
-        .format(&time::format_description::well_known::Rfc3339)
-        .map_err(|error| format!("format Pi worker timestamp: {error}"))?;
-    let mut file = tempfile::NamedTempFile::new_in(directory)
-        .map_err(|error| format!("create blank Pi worker session: {error}"))?;
-    let header = serde_json::json!({
-        "type": "session",
-        "version": 3,
-        "id": id,
-        "timestamp": timestamp,
-        "cwd": project,
-        "parentSession": parent,
-    });
-    serde_json::to_writer(&mut file, &header)
-        .map_err(|error| format!("encode blank Pi worker session: {error}"))?;
-    file.write_all(b"\n")
-        .map_err(|error| format!("write blank Pi worker session: {error}"))?;
-    file.persist_noclobber(&path).map_err(|error| {
-        format!(
-            "persist blank Pi worker session {}: {error}",
-            path.display()
-        )
-    })?;
-    Ok(path)
-}
-
 fn parent_before_worker_call(path: &Path) -> Result<Option<String>, String> {
     let file = File::open(path)
         .map_err(|error| format!("open Pi worker source session {}: {error}", path.display()))?;
@@ -406,22 +368,6 @@ mod tests {
             final_assistant_text(Some(&json!({"role":"user","content":"no"}))),
             None
         );
-    }
-
-    #[test]
-    fn blank_worker_session_records_native_parent_lineage() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let temp = tempfile::tempdir()?;
-        let parent = temp.path().join("parent.jsonl");
-        std::fs::write(
-            &parent,
-            "{\"type\":\"session\",\"version\":3,\"id\":\"parent\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"cwd\":\"/project\"}\n",
-        )?;
-        let child = create_blank_child_session(&parent, Path::new("/project"))?;
-        let header: Value = serde_json::from_str(&std::fs::read_to_string(child)?)?;
-        assert_eq!(header["parentSession"], parent.to_string_lossy().as_ref());
-        assert_eq!(header["cwd"], "/project");
-        Ok(())
     }
 
     #[test]

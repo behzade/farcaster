@@ -55,7 +55,7 @@ module/
 - `contract.rs`: commands, results, and DTOs crossing the module boundary.
 - `domain/`: internal domain objects; do not export them.
 - `core/`: core logic and the adapter interfaces it requires.
-- `adapter/`: external integrations such as databases, processes, connections, Git, Jujutsu, Pi, or nono.
+- `adapter/`: external integrations such as databases, processes, connections, Git, Jujutsu, or coding-agent harnesses.
 - Core must depend on its own adapter interfaces and never import adapter implementations directly.
 - Adapters implement interfaces owned by core.
 - Do not require every module to contain every listed layer.

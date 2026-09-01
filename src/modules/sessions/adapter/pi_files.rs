@@ -377,10 +377,7 @@ fn active_branch_entries(entries: &[Value]) -> Vec<&Value> {
 
 fn entry_message(entry: &Value) -> Option<Value> {
     match entry.get("type").and_then(Value::as_str)? {
-        "message" => entry
-            .get("message")
-            .filter(|message| !is_private_application_message(message))
-            .cloned(),
+        "message" => entry.get("message").cloned(),
         "custom_message" => Some(json_object([
             ("role", Value::String("custom".into())),
             (
@@ -683,10 +680,6 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
             }
             Some("message") => {
                 if let Some(message) = entry.get("message") {
-                    if is_private_application_message(message) {
-                        activity_entries.push(entry);
-                        continue;
-                    }
                     message_count = message_count.saturating_add(1);
                     usage.add(message_usage(message));
                     is_running = message_keeps_session_running(message);
@@ -914,22 +907,6 @@ fn parent_session_from_path(path: &Path) -> Option<String> {
         }
     }
     None
-}
-
-fn is_private_application_message(message: &Value) -> bool {
-    message.get("role").and_then(Value::as_str) == Some("user")
-        && first_message_text(message)
-            .is_some_and(|text| text.starts_with("<farcaster-internal "))
-}
-
-fn first_message_text(message: &Value) -> Option<&str> {
-    let content = message.get("content")?;
-    content.as_str().or_else(|| {
-        content
-            .as_array()?
-            .iter()
-            .find_map(|block| block.get("text").and_then(Value::as_str))
-    })
 }
 
 fn visible_user_text(message: &Value) -> String {

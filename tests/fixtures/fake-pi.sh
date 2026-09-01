@@ -2,13 +2,6 @@
 set -eu
 case_name=$1
 
-if [ "$case_name" = "preconnect-permission" ]; then
-  case " $* " in
-    *" --sandbox-files full --sandbox-network full "*) ;;
-    *) exit 13 ;;
-  esac
-fi
-
 if [ "$case_name" = "project-directory" ]; then
   printf '%s' "$PWD" > "$PWD/process-project"
   previous=''
@@ -39,10 +32,6 @@ read_id() {
 read_type() {
   printf '%s' "$1" | sed -n 's/.*"type":"\([^"]*\)".*/\1/p'
 }
-emit_sandbox_mode_result() {
-  printf '{"type":"extension_ui_request","id":"sandbox-mode-result","method":"setStatus","statusKey":"\\u001fpi-gpui-sandbox-mode\\u001f","statusText":"{\\"version\\":1,\\"requestId\\":\\"%s\\",\\"files\\":\\"%s\\",\\"network\\":\\"%s\\",\\"success\\":true}"}\n' "$1" "$2" "$3"
-}
-
 IFS= read -r line || exit 2
 id=$(read_id "$line")
 if [ "$case_name" = "bad-handshake" ]; then
@@ -82,7 +71,7 @@ while IFS= read -r line; do
       data='{"messages":[]}'
       ;;
     get_entries)
-      if [ "$case_name" = "history-control" ] || [ "$case_name" = "sandbox-mode" ]; then
+      if [ "$case_name" = "history-control" ]; then
         entries_loaded=1
         data='{"entries":[{"type":"message","id":"one","parentId":null,"message":{"role":"user","content":"preserved history"}}],"leafId":"one"}'
       else
@@ -117,18 +106,6 @@ while IFS= read -r line; do
       data='{"id":"new-model","name":"New Model","provider":"new-provider","reasoning":true}'
       ;;
     prompt)
-      if [ "$case_name" = "sandbox-mode" ]; then
-        [ "$entries_loaded" -eq 1 ] || exit 11
-        case "$line" in
-          *'gpui-permission-1'*'\"files\":\"full\"'*'\"network\":\"full\"'*)
-            emit_sandbox_mode_result gpui-permission-1 full full
-            ;;
-          *'gpui-permission-2'*'\"files\":\"read-only\"'*'\"network\":\"full\"'*)
-            emit_sandbox_mode_result gpui-permission-2 read-only full
-            ;;
-          *) exit 12 ;;
-        esac
-      fi
       data='{}'
       ;;
     *)

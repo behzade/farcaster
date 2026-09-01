@@ -13,6 +13,28 @@ mod shell_environment;
 
 pub(crate) use shell_environment::{app_shell_environment, default_login_shell};
 
+pub(crate) fn supported_access_modes(harness: &str) -> &'static [crate::agents::HarnessAccessMode] {
+    use crate::agents::HarnessAccessMode::{Auto, Full, Sandboxed};
+    match harness {
+        "pi" => &[Sandboxed, Full],
+        "codex-cli" => &[Sandboxed, Auto, Full],
+        "opencode2" => &[Auto, Full],
+        _ => &[Full],
+    }
+}
+
+pub(crate) fn normalize_access_mode(
+    harness: &str,
+    mode: crate::agents::HarnessAccessMode,
+) -> crate::agents::HarnessAccessMode {
+    let supported = supported_access_modes(harness);
+    if supported.contains(&mode) {
+        mode
+    } else {
+        supported[0]
+    }
+}
+
 pub(crate) fn validate_launch(
     config: &crate::agents::AgentLaunchConfig,
     project: &std::path::Path,
@@ -31,6 +53,7 @@ pub(crate) fn worker_factories(
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| "codex".into());
     let mut opencode_config = config.clone();
+    opencode_config.access_mode = crate::agents::HarnessAccessMode::Auto;
     opencode_config.program = std::env::var_os("FARCASTER_OPENCODE_PATH")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| "opencode2".into());

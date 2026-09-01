@@ -40,6 +40,7 @@ impl CommonTool {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct WorkerLaunch {
+    pub(crate) worker_id: String,
     pub(crate) project: PathBuf,
     pub(crate) parent_session: String,
     pub(crate) context: WorkerContext,

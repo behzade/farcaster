@@ -10,59 +10,34 @@ const PROXY_ENVIRONMENT_NAMES: [&str; 4] =
 pub(crate) fn configuration(
     environment: Option<&[(OsString, OsString)]>,
     app_proxy: Option<&str>,
-    sandboxed: bool,
-) -> Result<NetworkConfiguration, String> {
-    let environment_proxies = environment
-        .into_iter()
-        .flatten()
-        .filter(|(name, value)| {
-            PROXY_ENVIRONMENT_NAMES
-                .iter()
-                .any(|candidate| name == candidate)
-                && !value.is_empty()
-        })
-        .map(|(_, value)| {
-            value
-                .to_str()
-                .ok_or_else(|| "proxy environment value is not valid UTF-8".to_owned())
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let app_proxy = if environment_proxies.is_empty() {
-        app_proxy.map(str::trim).filter(|value| !value.is_empty())
-    } else {
-        None
-    };
-    let proxies = if environment_proxies.is_empty() {
-        app_proxy.into_iter().collect::<Vec<_>>()
-    } else {
-        environment_proxies
-    };
-
-    let mut configuration = NetworkConfiguration {
-        app_proxy: app_proxy.map(str::to_owned),
-        ..Default::default()
-    };
-    if !sandboxed {
-        return Ok(configuration);
+) -> NetworkConfiguration {
+    let inherited = environment.into_iter().flatten().any(|(name, value)| {
+        PROXY_ENVIRONMENT_NAMES
+            .iter()
+            .any(|candidate| name == candidate)
+            && !value.is_empty()
+    });
+    NetworkConfiguration {
+        app_proxy: (!inherited)
+            .then_some(app_proxy)
+            .flatten()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned),
     }
-    for value in proxies {
-        let destination = proxy_destination(value)?;
-        match destination {
-            ProxyDestination::Host(host) => configuration.proxy_hosts.push(host),
-            ProxyDestination::Loopback(port) => {
-                configuration.proxy_loopback_ports.push(port);
-            }
-        }
-    }
-    configuration.proxy_hosts.sort();
-    configuration.proxy_hosts.dedup();
-    configuration.proxy_loopback_ports.sort_unstable();
-    configuration.proxy_loopback_ports.dedup();
-    Ok(configuration)
 }
 
 pub(crate) fn validate_app_proxy(value: &str) -> Result<(), String> {
-    proxy_destination(value.trim()).map(|_| ())
+    let url = url::Url::parse(value.trim()).map_err(|_| "proxy URL is invalid".to_owned())?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err("proxy URL scheme must be http or https".into());
+    }
+    if url.host().is_none() {
+        return Err("proxy URL must include a host".into());
+    }
+    url.port_or_known_default()
+        .ok_or_else(|| "proxy URL must include a valid port".to_owned())?;
+    Ok(())
 }
 
 pub(crate) fn append_app_proxy_environment(
@@ -74,34 +49,6 @@ pub(crate) fn append_app_proxy_environment(
     };
     environment.push((OsString::from("http_proxy"), OsString::from(proxy)));
     environment.push((OsString::from("https_proxy"), OsString::from(proxy)));
-}
-
-enum ProxyDestination {
-    Host(String),
-    Loopback(u16),
-}
-
-fn proxy_destination(value: &str) -> Result<ProxyDestination, String> {
-    let url = url::Url::parse(value).map_err(|_| "proxy URL is invalid".to_owned())?;
-    if !matches!(url.scheme(), "http" | "https") {
-        return Err("proxy URL scheme must be http or https".into());
-    }
-    let host = url
-        .host()
-        .ok_or_else(|| "proxy URL must include a host".to_owned())?;
-    let (host, loopback) = match host {
-        url::Host::Domain(host) => (host.to_ascii_lowercase(), host == "localhost"),
-        url::Host::Ipv4(address) => (address.to_string(), address.is_loopback()),
-        url::Host::Ipv6(address) => (address.to_string(), address.is_loopback()),
-    };
-    let port = url
-        .port_or_known_default()
-        .ok_or_else(|| "proxy URL must include a valid port".to_owned())?;
-    if loopback {
-        Ok(ProxyDestination::Loopback(port))
-    } else {
-        Ok(ProxyDestination::Host(host))
-    }
 }
 
 #[cfg(test)]
@@ -116,18 +63,17 @@ mod tests {
     }
 
     #[test]
-    fn environment_proxy_takes_precedence_without_rewriting_environment() -> Result<(), String> {
+    fn environment_proxy_takes_precedence_without_rewriting_environment() {
         let values = environment(&[("HTTPS_PROXY", "http://proxy.example:8080")]);
-        let configuration = configuration(Some(&values), Some("http://app.example:3128"), true)?;
-        assert_eq!(configuration.proxy_hosts, ["proxy.example"]);
-        assert_eq!(configuration.app_proxy, None);
-        Ok(())
+        assert_eq!(
+            configuration(Some(&values), Some("http://app.example:3128")),
+            NetworkConfiguration::default()
+        );
     }
 
     #[test]
-    fn app_proxy_is_used_only_when_environment_has_none() -> Result<(), String> {
-        let configuration = configuration(None, Some("http://127.0.0.1:8080"), true)?;
-        assert_eq!(configuration.proxy_loopback_ports, [8080]);
+    fn app_proxy_is_used_only_when_environment_has_none() {
+        let configuration = configuration(None, Some("http://127.0.0.1:8080"));
         assert_eq!(
             configuration.app_proxy.as_deref(),
             Some("http://127.0.0.1:8080")
@@ -147,43 +93,16 @@ mod tests {
                 ),
             ]
         );
-        Ok(())
     }
 
     #[test]
-    fn ipv6_loopback_proxy_uses_its_exact_port() -> Result<(), String> {
-        let configuration = configuration(None, Some("http://[::1]:3128"), true)?;
-        assert_eq!(configuration.proxy_loopback_ports, [3128]);
-        Ok(())
-    }
-
-    #[test]
-    fn proxy_credentials_are_redacted() -> Result<(), String> {
+    fn proxy_credentials_are_redacted() {
         let secret = "secret-value";
-        let resolved = configuration(
-            None,
-            Some(&format!("http://user:{secret}@proxy.example")),
-            true,
-        )?;
+        let resolved = configuration(None, Some(&format!("http://user:{secret}@proxy.example")));
         assert!(!format!("{resolved:?}").contains(secret));
-        let error = configuration(
-            None,
-            Some(&format!("ftp://user:{secret}@proxy.example")),
-            true,
-        )
-        .expect_err("unsupported proxy must fail");
+        let error = validate_app_proxy(&format!("ftp://user:{secret}@proxy.example"))
+            .expect_err("unsupported proxy must fail");
         assert!(!error.contains(secret));
-        Ok(())
-    }
-
-    #[test]
-    fn full_network_does_not_validate_inherited_proxy_syntax() -> Result<(), String> {
-        let values = environment(&[("https_proxy", "harness-specific-proxy")]);
-        assert_eq!(
-            configuration(Some(&values), Some("http://app.example"), false)?,
-            NetworkConfiguration::default()
-        );
-        Ok(())
     }
 
     #[test]

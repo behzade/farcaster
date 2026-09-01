@@ -4,17 +4,12 @@ use std::{
     time::Duration,
 };
 
-use super::worker::{WorkerEvent, WorkerSendMode, WorkerSession};
-use crate::modules::agents::contract::{WorkerInputResponse, WorkerSnapshot, WorkerStatus};
+use super::worker::{WorkerEvent, WorkerSession};
+use crate::modules::agents::contract::{WorkerSnapshot, WorkerStatus};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 pub(super) enum RunCommand {
-    Send {
-        message: String,
-        mode: WorkerSendMode,
-    },
-    Respond(WorkerInputResponse),
     Stop,
 }
 
@@ -38,18 +33,6 @@ fn run(
 ) {
     loop {
         match commands.recv_timeout(POLL_INTERVAL) {
-            Ok(RunCommand::Send { message, mode }) => {
-                if let Err(error) = session.send(message, mode) {
-                    close_failed(&mut *session, &snapshot, error);
-                    return;
-                }
-            }
-            Ok(RunCommand::Respond(response)) => {
-                if let Err(error) = session.respond(response) {
-                    close_failed(&mut *session, &snapshot, error);
-                    return;
-                }
-            }
             Ok(RunCommand::Stop) => {
                 let _ = session.abort();
                 let close_error = session.close().err();

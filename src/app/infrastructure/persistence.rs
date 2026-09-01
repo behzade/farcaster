@@ -815,7 +815,7 @@ impl StateStore {
                     })?;
                 let settled_ms = (session.archived
                     || classify_import && imported_session_is_archived(session, SystemTime::now()))
-                .then(|| now_ms());
+                .then(now_ms);
                 let size = std::fs::metadata(&session.path)
                     .map(|metadata| metadata.len())
                     .unwrap_or(0);

@@ -14,7 +14,6 @@ use super::{
     wire::{encode_request, encode_response},
 };
 use crate::{
-    access::SandboxedCommand,
     agents::{
         AgentLaunchConfig, CommonTool, TokenUsage, WorkerActivity, WorkerContext, WorkerEvent,
         WorkerInput, WorkerInputResponse, WorkerLaunch, WorkerSendMode, WorkerSession,
@@ -22,8 +21,6 @@ use crate::{
     },
     modules::agents::adapter::{child_stderr, farcaster_mcp, main_session},
 };
-
-const CODEX_CA_ENVIRONMENT: &str = "CODEX_CA_CERTIFICATE";
 
 #[derive(Clone)]
 pub(crate) struct CodexWorkerFactory {
@@ -41,17 +38,23 @@ impl WorkerSessionFactory for CodexWorkerFactory {
         if launch.provider.is_some() != launch.model.is_some() {
             return Err("Codex worker provider and model must be supplied together".into());
         }
-        let mut sandbox = self
-            .command
-            .command_with_tls_ca_environment(&launch.project, CODEX_CA_ENVIRONMENT)?;
-        let caller_identity =
-            crate::modules::agents::core::CallerRegistry::shared().issue(&launch.project);
-        configure_codex_app_server(&mut sandbox.command);
+        let mut prepared = self.command.command(&launch.project)?;
+        let caller_identity = crate::modules::agents::core::CallerRegistry::shared().issue_as(
+            &launch.project,
+            crate::modules::agents::core::CallerProfile {
+                backend: "codex-cli".into(),
+                provider: launch.provider.clone(),
+                model: launch.model.clone(),
+                effort: launch.effort.clone(),
+            },
+            None,
+            launch.worker_id.clone(),
+        );
+        configure_codex_app_server(&mut prepared, self.command.access_mode);
         if farcaster_mcp::enabled() {
-            configure_farcaster_mcp(&mut sandbox.command, caller_identity.token());
+            configure_farcaster_mcp(&mut prepared, caller_identity.token());
         }
-        let mut child = sandbox
-            .command
+        let mut child = prepared
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -92,8 +95,7 @@ impl WorkerSessionFactory for CodexWorkerFactory {
         let thread_id = thread.id;
         caller_identity.bind(thread_id.clone());
         Ok(Box::new(CodexWorkerSession {
-            _caller_identity: caller_identity,
-            _sandbox: sandbox,
+            caller_identity,
             child,
             writer,
             incoming,
@@ -120,10 +122,9 @@ pub(in crate::modules::agents::adapter) fn load_configuration(
     command: &AgentLaunchConfig,
     project: &std::path::Path,
 ) -> Result<crate::modules::agents::adapter::main_session::MainSessionMetadata, String> {
-    let mut sandbox = command.command_with_tls_ca_environment(project, CODEX_CA_ENVIRONMENT)?;
-    configure_codex_app_server(&mut sandbox.command);
-    let mut child = sandbox
-        .command
+    let mut prepared = command.command(project)?;
+    configure_codex_app_server(&mut prepared, command.access_mode);
+    let mut child = prepared
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -163,16 +164,22 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
     ),
     String,
 > {
-    let mut sandbox =
-        command.command_with_tls_ca_environment(&launch.project, CODEX_CA_ENVIRONMENT)?;
-    let caller_identity =
-        crate::modules::agents::core::CallerRegistry::shared().issue(&launch.project);
-    configure_codex_app_server(&mut sandbox.command);
+    let mut prepared = command.command(&launch.project)?;
+    let caller_identity = crate::modules::agents::core::CallerRegistry::shared().issue(
+        &launch.project,
+        crate::modules::agents::core::CallerProfile {
+            backend: "codex-cli".into(),
+            provider: None,
+            model: None,
+            effort: None,
+        },
+        launch.wake.clone(),
+    );
+    configure_codex_app_server(&mut prepared, command.access_mode);
     if farcaster_mcp::enabled() {
-        configure_farcaster_mcp(&mut sandbox.command, caller_identity.token());
+        configure_farcaster_mcp(&mut prepared, caller_identity.token());
     }
-    let mut child = sandbox
-        .command
+    let mut child = prepared
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -221,8 +228,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         })
         .collect();
     let session = CodexWorkerSession {
-        _caller_identity: caller_identity,
-        _sandbox: sandbox,
+        caller_identity,
         child,
         writer,
         incoming,
@@ -444,8 +450,7 @@ enum PendingRequest {
 }
 
 struct CodexWorkerSession {
-    _caller_identity: crate::modules::agents::core::CallerIdentity,
-    _sandbox: SandboxedCommand,
+    caller_identity: crate::modules::agents::core::CallerIdentity,
     child: Child,
     writer: ChildStdin,
     incoming: mpsc::Receiver<Result<CodexInbound, String>>,
@@ -531,12 +536,14 @@ impl WorkerSession for CodexWorkerSession {
         Ok(())
     }
 
-    fn select_model(&mut self, _provider: &str, model: &str) -> Result<(), String> {
+    fn select_model(&mut self, provider: &str, model: &str) -> Result<(), String> {
+        self.caller_identity.select_model(provider, model);
         self.model = Some(model.to_owned());
         Ok(())
     }
 
     fn select_effort(&mut self, effort: &str) -> Result<(), String> {
+        self.caller_identity.select_effort(effort);
         self.effort = Some(effort.to_owned());
         Ok(())
     }
@@ -554,6 +561,12 @@ impl WorkerSession for CodexWorkerSession {
     fn poll(&mut self) -> Option<WorkerEvent> {
         if let Some(event) = self.events.pop_front() {
             return Some(event);
+        }
+        if let Some(message) = self.caller_identity.try_recv() {
+            return Some(match self.send(message.prompt(), WorkerSendMode::Queue) {
+                Ok(()) => WorkerEvent::Started,
+                Err(error) => WorkerEvent::Failed(error),
+            });
         }
         loop {
             match self.incoming.try_recv().ok()? {
@@ -695,8 +708,7 @@ impl WorkerSession for CodexWorkerSession {
                                     return Some(WorkerEvent::Activity(
                                         WorkerActivity::CompactionFinished {
                                             aborted: false,
-                                            error: failed
-                                                .then(|| "Codex compaction failed".into()),
+                                            error: failed.then(|| "Codex compaction failed".into()),
                                         },
                                     ));
                                 }
@@ -823,9 +835,12 @@ impl Drop for CodexWorkerSession {
     }
 }
 
-fn configure_codex_app_server(command: &mut std::process::Command) {
+fn configure_codex_app_server(
+    command: &mut std::process::Command,
+    mode: crate::agents::HarnessAccessMode,
+) {
+    super::configure_permissions(command, mode);
     command.args(["app-server", "--stdio", "--enable", "mcp_2026_07_28"]);
-    super::configure_permissions(command);
 }
 
 fn configure_farcaster_mcp(command: &mut std::process::Command, caller_token: &str) {
@@ -1100,15 +1115,21 @@ mod tests {
     #[test]
     fn native_startup_configures_required_farcaster_mcp() {
         let mut command = std::process::Command::new("codex");
-        configure_codex_app_server(&mut command);
+        configure_codex_app_server(&mut command, crate::agents::HarnessAccessMode::Full);
         configure_farcaster_mcp(&mut command, "caller-1");
         let arguments = command
             .get_args()
             .map(|argument| argument.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         assert_eq!(
-            &arguments[..4],
-            ["app-server", "--stdio", "--enable", "mcp_2026_07_28"]
+            &arguments[..5],
+            [
+                "--dangerously-bypass-approvals-and-sandbox",
+                "app-server",
+                "--stdio",
+                "--enable",
+                "mcp_2026_07_28",
+            ]
         );
         assert!(arguments.contains(&format!(
             "mcp_servers.farcaster.url=\"{}\"",

@@ -9,8 +9,8 @@ use serde_json::{Value, json};
 
 use crate::{
     agents::{
-        AgentLaunchConfig, FileAccessMode, NetworkAccessMode, PermissionLevel, SessionCommand,
-        SessionEvent, SessionLaunch, SessionStart, SessionTransport,
+        AgentLaunchConfig, HarnessAccessMode, SessionCommand, SessionEvent, SessionLaunch,
+        SessionStart, SessionTransport,
         extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptMode},
     },
     app::views::transcript::conversation::{ConversationState, TranscriptKind},
@@ -66,12 +66,7 @@ fn exercise_live_harness(harness: &str) -> Result<(), String> {
     let config = AgentLaunchConfig {
         program: PathBuf::from(harness),
         prefix_args: Vec::new(),
-        permission_level: PermissionLevel {
-            files: FileAccessMode::Full,
-            network: NetworkAccessMode::Full,
-        },
-        sandbox: crate::access::test_sandbox_bypass(),
-        grants: None,
+        access_mode: HarnessAccessMode::Full,
         app_proxy: None,
         session_locator_root: Some(locator_root),
     };

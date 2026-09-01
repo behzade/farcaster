@@ -1,9 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::{
-    access,
-    agents::{AgentLaunchConfig, FileAccessMode, NetworkAccessMode, PermissionLevel},
-};
+use crate::agents::AgentLaunchConfig;
 
 impl AgentLaunchConfig {
     #[cfg(test)]
@@ -14,9 +11,7 @@ impl AgentLaunchConfig {
         Self {
             program: PathBuf::from("sh"),
             prefix_args,
-            permission_level: PermissionLevel::default(),
-            sandbox: access::test_sandbox_bypass(),
-            grants: None,
+            access_mode: crate::agents::HarnessAccessMode::default(),
             app_proxy: None,
             session_locator_root: None,
         }
@@ -25,27 +20,11 @@ impl AgentLaunchConfig {
     pub(in crate::modules::agents) fn command(
         &self,
         project: &Path,
-    ) -> Result<access::SandboxedCommand, String> {
-        self.command_with_tls_ca_environments(project, &[])
-    }
-
-    pub(in crate::modules::agents) fn command_with_tls_ca_environment(
-        &self,
-        project: &Path,
-        environment_variable: &str,
-    ) -> Result<access::SandboxedCommand, String> {
-        self.command_with_tls_ca_environments(project, &[environment_variable])
-    }
-
-    fn command_with_tls_ca_environments(
-        &self,
-        project: &Path,
-        tls_ca_environment: &[&str],
-    ) -> Result<access::SandboxedCommand, String> {
+    ) -> Result<std::process::Command, String> {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
-        let mut environment = super::shell_environment::project_shell_environment(project)?;
+        let environment = super::shell_environment::project_shell_environment(project)?;
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-        let mut environment: Option<Vec<(std::ffi::OsString, std::ffi::OsString)>> = None;
+        let environment: Option<Vec<(std::ffi::OsString, std::ffi::OsString)>> = None;
         let environment_value = |name: &str| {
             environment
                 .as_ref()
@@ -53,67 +32,20 @@ impl AgentLaunchConfig {
                 .map(|(_, value)| value.clone())
                 .or_else(|| std::env::var_os(name))
         };
-        let environment_path = |name: &str| environment_value(name).map(PathBuf::from);
-        let home = environment_path("HOME")
-            .ok_or_else(|| "HOME is required to compile the Farcaster sandbox policy".to_owned())?;
-        let agent_state =
-            environment_path("PI_CODING_AGENT_DIR").unwrap_or_else(|| home.join(".pi/agent"));
-        let temporary = environment_path("TMPDIR").unwrap_or_else(std::env::temp_dir);
-        let access = sandbox_access(self.permission_level);
-        if let Some(grants) = &self.grants {
-            grants.set_access(access.filesystem, access.network);
-        }
         let program =
             resolve_agent_program(&self.program, project, environment_value("PATH").as_deref())?;
-        let mut network = access::network_configuration(
-            environment.as_deref(),
-            self.app_proxy.as_deref(),
-            matches!(access.network, access::NetworkAccess::Sandboxed),
-        )?;
-        if matches!(access.network, access::NetworkAccess::Sandboxed) {
-            network.tls_ca_env_vars = tls_ca_environment
-                .iter()
-                .map(|name| (*name).to_owned())
-                .collect();
-        }
+        let network =
+            crate::access::network_configuration(environment.as_deref(), self.app_proxy.as_deref());
+        let mut environment = environment;
         if let Some(environment) = environment.as_mut() {
-            access::append_app_proxy_environment(environment, &network);
+            crate::access::append_app_proxy_environment(environment, &network);
         }
-        let mut prepared = access::prepare_sandboxed_command(
-            &self.sandbox,
-            &program,
-            &self.prefix_args,
-            access::SandboxPaths {
-                project,
-                home: &home,
-                agent_state: &agent_state,
-                temporary: &temporary,
-            },
-            access,
-            self.grants.as_ref(),
-            &network,
-        )?;
-        prepared.command.current_dir(project);
+        let mut command = std::process::Command::new(program);
+        command.args(&self.prefix_args).current_dir(project);
         if let Some(environment) = environment {
-            prepared.command.env_clear().envs(environment);
+            command.env_clear().envs(environment);
         }
-        Ok(prepared)
-    }
-}
-
-fn sandbox_access(level: PermissionLevel) -> access::AccessPolicy {
-    let filesystem = match level.files {
-        FileAccessMode::ReadOnly => access::FilesystemAccess::ReadOnly,
-        FileAccessMode::Sandboxed => access::FilesystemAccess::Sandboxed,
-        FileAccessMode::Full => access::FilesystemAccess::Full,
-    };
-    let network = match level.network {
-        NetworkAccessMode::Sandboxed => access::NetworkAccess::Sandboxed,
-        NetworkAccessMode::Full => access::NetworkAccess::Full,
-    };
-    access::AccessPolicy {
-        filesystem,
-        network,
+        Ok(command)
     }
 }
 

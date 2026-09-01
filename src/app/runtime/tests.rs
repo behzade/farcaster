@@ -128,9 +128,7 @@ fn owner_without_process(
             process_command: AgentLaunchConfig {
                 program: PathBuf::from("/definitely/missing/farcaster-test-command"),
                 prefix_args: Vec::new(),
-                permission_level: PermissionLevel::default(),
-                sandbox: crate::access::test_sandbox_bypass(),
-                grants: None,
+                access_mode: HarnessAccessMode::default(),
                 app_proxy: None,
                 session_locator_root: None,
             },
@@ -163,9 +161,7 @@ fn owner_without_process(
             parked_snapshot: None,
             deferred_prompt: None,
             pending_session_controls: PendingSessionControls::default(),
-            permission_changes: PermissionChangeState::default(),
-            sandbox_grant_handoff: None,
-            active_tool_calls: HashMap::new(),
+            access_mode_changes: AccessModeChangeState::default(),
             startup_state_loaded: false,
             startup_history_loaded: false,
             state: None,
@@ -201,23 +197,20 @@ fn drive_process_until(owner: &mut RuntimeOwner, ready: impl Fn(&RuntimeOwner) -
 }
 
 #[test]
-fn permission_level_before_connection_configures_the_first_process() -> Result<(), String> {
+fn access_mode_before_connection_configures_the_first_process() -> Result<(), String> {
     let temp = tempdir().map_err(|error| error.to_string())?;
     let script = temp.path().join("fake-pi.sh");
     fs::write(&script, include_str!("../../../tests/fixtures/fake-pi.sh"))
         .map_err(|error| error.to_string())?;
     let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
     owner.process_command = AgentLaunchConfig::test_script(&script, vec!["quiet".into()]);
-    let target = PermissionLevel {
-        files: FileAccessMode::Full,
-        network: NetworkAccessMode::Full,
-    };
+    let target = HarnessAccessMode::Full;
 
-    owner.apply_command(RuntimeCommand::SetPermissionLevel(target));
+    owner.apply_command(RuntimeCommand::SetAccessMode(target));
 
     assert!(owner.process.is_none());
-    assert_eq!(owner.process_command.permission_level, target);
-    assert_eq!(owner.snapshot.permission_level, target);
+    assert_eq!(owner.process_command.access_mode, target);
+    assert_eq!(owner.snapshot.access_mode, target);
     assert!(owner.snapshot.conversation.items.is_empty());
 
     owner.start_process(None);
@@ -229,7 +222,7 @@ fn permission_level_before_connection_configures_the_first_process() -> Result<(
         "{:?}",
         owner.snapshot.conversation.diagnostics
     );
-    assert_eq!(owner.snapshot.permission_level, target);
+    assert_eq!(owner.snapshot.access_mode, target);
     Ok(())
 }
 
@@ -241,48 +234,40 @@ fn app_proxy_change_waits_for_a_running_turn() {
 
     owner.apply_command(RuntimeCommand::SetAppProxy(proxy.clone()));
     assert_eq!(owner.process_command.app_proxy, proxy);
-    assert!(!owner.permission_changes.is_idle());
+    assert!(!owner.access_mode_changes.is_idle());
 
     conversation_mut(owner.active_snapshot_mut()).running = false;
-    owner.apply_queued_permission_change();
-    assert!(owner.permission_changes.is_idle());
+    owner.apply_queued_access_mode_change();
+    assert!(owner.access_mode_changes.is_idle());
 }
 
 #[test]
-fn permission_changes_during_a_response_keep_latest_and_allow_cancel() {
+fn access_mode_changes_during_a_response_keep_latest_and_allow_cancel() {
     let (mut owner, _events, _discovery) = owner_without_process(std::env::temp_dir());
     conversation_mut(owner.active_snapshot_mut()).running = true;
-    let full = PermissionLevel {
-        files: FileAccessMode::Full,
-        network: NetworkAccessMode::Full,
-    };
-    let read_only = full.with_files(FileAccessMode::ReadOnly);
+    let full = HarnessAccessMode::Full;
 
-    owner.apply_command(RuntimeCommand::SetPermissionLevel(full));
-    assert_eq!(owner.snapshot.permission_level, full);
-    owner.apply_command(RuntimeCommand::SetPermissionLevel(read_only));
-    assert_eq!(owner.snapshot.permission_level, read_only);
-    owner.apply_command(RuntimeCommand::SetPermissionLevel(
-        PermissionLevel::default(),
-    ));
-    assert_eq!(owner.snapshot.permission_level, PermissionLevel::default());
-    assert!(owner.permission_changes.is_idle());
+    owner.apply_command(RuntimeCommand::SetAccessMode(full));
+    assert_eq!(owner.snapshot.access_mode, full);
+    owner.apply_command(RuntimeCommand::SetAccessMode(HarnessAccessMode::default()));
+    assert_eq!(owner.snapshot.access_mode, HarnessAccessMode::default());
+    assert!(owner.access_mode_changes.is_idle());
     assert_eq!(
-        owner.process_command.permission_level,
-        PermissionLevel::default()
+        owner.process_command.access_mode,
+        HarnessAccessMode::default()
     );
     assert!(owner.snapshot.conversation.items.is_empty());
 }
 
 #[test]
-fn permission_level_change_restarts_and_resumes_the_idle_session() -> Result<(), String> {
+fn access_mode_change_restarts_and_resumes_the_idle_session() -> Result<(), String> {
     let temp = tempdir().map_err(|error| error.to_string())?;
     let script = temp.path().join("fake-pi.sh");
     fs::write(&script, include_str!("../../../tests/fixtures/fake-pi.sh"))
         .map_err(|error| error.to_string())?;
     let session = temp.path().join("session.jsonl");
     let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
-    owner.process_command = AgentLaunchConfig::test_script(&script, vec!["sandbox-mode".into()]);
+    owner.process_command = AgentLaunchConfig::test_script(&script, vec!["history-control".into()]);
     owner.start_process(Some(session));
     drive_process_until(&mut owner, |owner| {
         owner.startup_state_loaded && owner.startup_history_loaded
@@ -295,127 +280,30 @@ fn permission_level_change_restarts_and_resumes_the_idle_session() -> Result<(),
 
     let generation = owner.process_generation;
     let transcript = owner.snapshot.conversation.items.clone();
-    let target = PermissionLevel {
-        files: FileAccessMode::Full,
-        network: NetworkAccessMode::Full,
-    };
-    owner.apply_command(RuntimeCommand::SetPermissionLevel(target));
+    let target = HarnessAccessMode::Full;
+    owner.apply_command(RuntimeCommand::SetAccessMode(target));
 
     assert_eq!(owner.process_generation, generation);
     assert_eq!(
-        owner.process_command.permission_level,
-        PermissionLevel::default()
+        owner.process_command.access_mode,
+        HarnessAccessMode::default()
     );
-    assert_eq!(owner.snapshot.permission_level, target);
-    assert!(!owner.permission_changes.is_idle());
+    assert_eq!(owner.snapshot.access_mode, target);
+    assert!(!owner.access_mode_changes.is_idle());
 
-    owner.permission_changes.make_due();
-    owner.apply_queued_permission_change();
+    owner.access_mode_changes.make_due();
+    owner.apply_queued_access_mode_change();
     assert_eq!(owner.snapshot.conversation.items, transcript);
     drive_process_until(&mut owner, |owner| {
         owner.startup_state_loaded && owner.startup_history_loaded
     });
 
-    assert!(owner.permission_changes.is_idle());
+    assert!(owner.access_mode_changes.is_idle());
     assert_eq!(owner.process_generation, generation + 1);
     assert!(owner.process.is_some());
-    assert_eq!(owner.process_command.permission_level, target);
-    assert_eq!(owner.snapshot.permission_level, target);
+    assert_eq!(owner.process_command.access_mode, target);
+    assert_eq!(owner.snapshot.access_mode, target);
     assert_eq!(owner.snapshot.conversation.items, transcript);
-    Ok(())
-}
-
-#[test]
-fn sandbox_grant_reload_waits_for_idle_then_restarts_and_resumes() -> Result<(), String> {
-    let temp = tempdir().map_err(|error| error.to_string())?;
-    let script = temp.path().join("fake-pi.sh");
-    fs::write(&script, include_str!("../../../tests/fixtures/fake-pi.sh"))
-        .map_err(|error| error.to_string())?;
-    let session = temp.path().join("session.jsonl");
-    let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
-    owner.process_command = AgentLaunchConfig::test_script(&script, vec!["sandbox-mode".into()]);
-    owner.start_process(Some(session));
-    drive_process_until(&mut owner, |owner| {
-        owner.startup_state_loaded && owner.startup_history_loaded
-    });
-    let generation = owner.process_generation;
-    let transcript = owner.snapshot.conversation.items.clone();
-
-    conversation_mut(owner.active_snapshot_mut()).running = true;
-    owner.apply_command(RuntimeCommand::ReloadSandboxGrants);
-    assert_eq!(owner.process_generation, generation);
-    assert!(!owner.permission_changes.is_idle());
-
-    conversation_mut(owner.active_snapshot_mut()).running = false;
-    owner.apply_queued_permission_change();
-    drive_process_until(&mut owner, |owner| {
-        owner.startup_state_loaded && owner.startup_history_loaded
-    });
-    assert!(owner.permission_changes.is_idle());
-    assert_eq!(owner.process_generation, generation + 1);
-    assert_eq!(owner.snapshot.conversation.items, transcript);
-    Ok(())
-}
-
-#[test]
-fn accepted_sandbox_grant_interrupts_restarts_and_continues_without_visible_user_message()
--> Result<(), String> {
-    let temp = tempdir().map_err(|error| error.to_string())?;
-    let script = temp.path().join("fake-pi.sh");
-    fs::write(&script, include_str!("../../../tests/fixtures/fake-pi.sh"))
-        .map_err(|error| error.to_string())?;
-    let session = temp.path().join("session.jsonl");
-    let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
-    owner.process_command = AgentLaunchConfig::test_script(&script, vec!["history-control".into()]);
-    owner.start_process(Some(session));
-    drive_process_until(&mut owner, |owner| {
-        owner.startup_state_loaded && owner.startup_history_loaded
-    });
-    let generation = owner.process_generation;
-    conversation_mut(owner.active_snapshot_mut()).running = true;
-    owner
-        .active_tool_calls
-        .insert("access-call".into(), "farcaster_request_access".into());
-    owner
-        .active_tool_calls
-        .insert("sibling-call".into(), "read".into());
-
-    owner.apply_command(RuntimeCommand::ActivateSandboxGrant);
-
-    assert_eq!(
-        owner.sandbox_grant_handoff,
-        Some(SandboxGrantHandoff::WaitingForSiblingTools)
-    );
-    owner.apply_process_item(SessionEvent::Activity(
-        json!({
-            "type":"tool_execution_end",
-            "toolCallId":"sibling-call",
-            "toolName":"read",
-            "result":{"content":[]},
-            "isError":false
-        })
-        .into(),
-    ));
-    assert_eq!(
-        owner.sandbox_grant_handoff,
-        Some(SandboxGrantHandoff::Interrupting)
-    );
-    assert_eq!(owner.process_generation, generation);
-
-    owner.apply_process_item(SessionEvent::Activity(
-        json!({"type":"agent_settled"}).into(),
-    ));
-
-    assert_eq!(owner.process_generation, generation + 1);
-    drive_process_until(&mut owner, |owner| {
-        owner.startup_state_loaded
-            && owner.startup_history_loaded
-            && owner.deferred_prompt.is_none()
-    });
-    assert!(owner.sandbox_grant_handoff.is_none());
-    assert!(owner.snapshot.conversation.items.iter().all(|item| {
-        item.kind != TranscriptKind::User || !item.text.contains("sandbox-grant-activated")
-    }));
     Ok(())
 }
 
@@ -1816,9 +1704,7 @@ fn failed_model_reconnect_keeps_the_loaded_history() {
     owner.process_command = AgentLaunchConfig {
         program: PathBuf::from("/definitely/missing/farcaster-test-command"),
         prefix_args: Vec::new(),
-        permission_level: PermissionLevel::default(),
-        sandbox: crate::access::test_sandbox_bypass(),
-        grants: None,
+        access_mode: HarnessAccessMode::default(),
         app_proxy: None,
         session_locator_root: None,
     };
@@ -1858,9 +1744,7 @@ fn failed_resume_publishes_no_state_from_the_previous_process() {
         process_command: AgentLaunchConfig {
             program: PathBuf::from("/definitely/missing/farcaster-test-command"),
             prefix_args: Vec::new(),
-            permission_level: PermissionLevel::default(),
-            sandbox: crate::access::test_sandbox_bypass(),
-            grants: None,
+            access_mode: HarnessAccessMode::default(),
             app_proxy: None,
             session_locator_root: None,
         },
@@ -1909,9 +1793,7 @@ fn failed_resume_publishes_no_state_from_the_previous_process() {
         parked_snapshot: None,
         deferred_prompt: None,
         pending_session_controls: PendingSessionControls::default(),
-        permission_changes: PermissionChangeState::default(),
-        sandbox_grant_handoff: None,
-        active_tool_calls: HashMap::new(),
+        access_mode_changes: AccessModeChangeState::default(),
         startup_state_loaded: false,
         startup_history_loaded: false,
         state: None,
@@ -1988,9 +1870,7 @@ fn failed_start_marks_the_deferred_prompt_failed() -> Result<(), Box<dyn std::er
     owner.process_command = AgentLaunchConfig {
         program: PathBuf::from("/definitely/missing/farcaster-test-command"),
         prefix_args: Vec::new(),
-        permission_level: PermissionLevel::default(),
-        sandbox: crate::access::test_sandbox_bypass(),
-        grants: None,
+        access_mode: HarnessAccessMode::default(),
         app_proxy: None,
         session_locator_root: None,
     };
@@ -2107,9 +1987,7 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
         parked_snapshot: None,
         deferred_prompt: None,
         pending_session_controls: PendingSessionControls::default(),
-        permission_changes: PermissionChangeState::default(),
-        sandbox_grant_handoff: None,
-        active_tool_calls: HashMap::new(),
+        access_mode_changes: AccessModeChangeState::default(),
         startup_state_loaded: false,
         startup_history_loaded: false,
         state: Some(StateStore::open_at(&temp.path().join("gui-state.sqlite3"))?),
@@ -2289,9 +2167,7 @@ fn active_session_events_stay_parked_while_other_history_is_visible() -> Result<
         parked_snapshot: None,
         deferred_prompt: None,
         pending_session_controls: PendingSessionControls::default(),
-        permission_changes: PermissionChangeState::default(),
-        sandbox_grant_handoff: None,
-        active_tool_calls: HashMap::new(),
+        access_mode_changes: AccessModeChangeState::default(),
         startup_state_loaded: true,
         startup_history_loaded: true,
         state: None,

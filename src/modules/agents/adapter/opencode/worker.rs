@@ -10,7 +10,6 @@ use serde_json::{Value, json};
 
 use super::server::OpenCodeServerProcess;
 use crate::{
-    access::SandboxedCommand,
     agents::{
         AgentLaunchConfig, CommonTool, TokenUsage, WorkerActivity, WorkerContext, WorkerEvent,
         WorkerInput, WorkerInputResponse, WorkerLaunch, WorkerSendMode, WorkerSession,
@@ -35,16 +34,24 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
         if launch.provider.is_some() != launch.model.is_some() {
             return Err("OpenCode worker provider and model must be supplied together".into());
         }
-        let mut sandbox = self.command.command(&launch.project)?;
-        let caller_identity =
-            crate::modules::agents::core::CallerRegistry::shared().issue(&launch.project);
+        let mut prepared = self.command.command(&launch.project)?;
+        let caller_identity = crate::modules::agents::core::CallerRegistry::shared().issue_as(
+            &launch.project,
+            crate::modules::agents::core::CallerProfile {
+                backend: "opencode2".into(),
+                provider: launch.provider.clone(),
+                model: launch.model.clone(),
+                effort: launch.effort.clone(),
+            },
+            None,
+            launch.worker_id.clone(),
+        );
         if farcaster_mcp::enabled() {
-            configure_farcaster_mcp(&mut sandbox.command, caller_identity.token())?;
+            configure_farcaster_mcp(&mut prepared, caller_identity.token())?;
         }
         let password = worker_password()?;
-        let mut child = sandbox
-            .command
-            .args(["serve", "--stdio", "--print-logs"])
+        configure_opencode_server(&mut prepared, self.command.access_mode);
+        let mut child = prepared
             .env("OPENCODE_SERVER_PASSWORD", &password)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -60,11 +67,9 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
             .zip(launch.model.as_deref())
             .map(|(provider, model)| (provider, model, launch.effort.as_deref()));
         let session = match launch.context {
-            WorkerContext::Fresh => client.create_session(
-                &launch.project.to_string_lossy(),
-                Some(&launch.parent_session),
-                selected_model,
-            )?,
+            WorkerContext::Fresh => {
+                client.create_session(&launch.project.to_string_lossy(), None, selected_model)?
+            }
             WorkerContext::Session { session_locator } => {
                 if session_locator != launch.parent_session {
                     return Err(
@@ -79,13 +84,13 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
         let incoming = start_event_reader(&server, &session_id, None)?;
         caller_identity.bind(session_id.clone());
         Ok(Box::new(OpenCodeWorkerSession {
-            _caller_identity: caller_identity,
-            _sandbox: sandbox,
+            caller_identity,
             server,
             session_id: session_id.clone(),
             provider: launch.provider,
             model: launch.model,
             effort: launch.effort,
+            access_mode: self.command.access_mode,
             incoming,
             reasoning_started: false,
             session_usage: TokenUsage::default(),
@@ -106,11 +111,10 @@ pub(in crate::modules::agents::adapter) fn load_configuration(
     command: &AgentLaunchConfig,
     project: &std::path::Path,
 ) -> Result<crate::modules::agents::adapter::main_session::MainSessionMetadata, String> {
-    let mut sandbox = command.command(project)?;
+    let mut prepared = command.command(project)?;
     let password = worker_password()?;
-    let mut child = sandbox
-        .command
-        .args(["serve", "--stdio", "--print-logs"])
+    configure_opencode_server(&mut prepared, command.access_mode);
+    let mut child = prepared
         .env("OPENCODE_SERVER_PASSWORD", &password)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -135,16 +139,23 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
     ),
     String,
 > {
-    let mut sandbox = command.command(&launch.project)?;
-    let caller_identity =
-        crate::modules::agents::core::CallerRegistry::shared().issue(&launch.project);
+    let mut prepared = command.command(&launch.project)?;
+    let caller_identity = crate::modules::agents::core::CallerRegistry::shared().issue(
+        &launch.project,
+        crate::modules::agents::core::CallerProfile {
+            backend: "opencode2".into(),
+            provider: None,
+            model: None,
+            effort: None,
+        },
+        launch.wake.clone(),
+    );
     if farcaster_mcp::enabled() {
-        configure_farcaster_mcp(&mut sandbox.command, caller_identity.token())?;
+        configure_farcaster_mcp(&mut prepared, caller_identity.token())?;
     }
     let password = worker_password()?;
-    let mut child = sandbox
-        .command
-        .args(["serve", "--stdio", "--print-logs"])
+    configure_opencode_server(&mut prepared, command.access_mode);
+    let mut child = prepared
         .env("OPENCODE_SERVER_PASSWORD", &password)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -181,13 +192,13 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
     caller_identity.bind(session_id.clone());
     Ok((
         Box::new(OpenCodeWorkerSession {
-            _caller_identity: caller_identity,
-            _sandbox: sandbox,
+            caller_identity,
             server,
             session_id: session_id.clone(),
             provider: None,
             model: None,
             effort: None,
+            access_mode: command.access_mode,
             incoming,
             reasoning_started: false,
             session_usage: TokenUsage::default(),
@@ -306,13 +317,13 @@ enum PendingOpenCodeInput {
 }
 
 struct OpenCodeWorkerSession {
-    _caller_identity: crate::modules::agents::core::CallerIdentity,
-    _sandbox: SandboxedCommand,
+    caller_identity: crate::modules::agents::core::CallerIdentity,
     server: OpenCodeServerProcess,
     session_id: String,
     provider: Option<String>,
     model: Option<String>,
     effort: Option<String>,
+    access_mode: crate::agents::HarnessAccessMode,
     incoming: mpsc::Receiver<Result<super::contract::OpenCodeEvent, String>>,
     reasoning_started: bool,
     session_usage: TokenUsage,
@@ -371,9 +382,9 @@ impl OpenCodeWorkerSession {
                 Ok(event) => event,
                 Err(error) => return Some(WorkerEvent::Failed(error)),
             };
-            // Farcaster's nono process sandbox owns runtime enforcement. Reply
-            // once instead of persisting a project-wide OpenCode rule.
-            if let Some((session_id, request_id)) = opencode_permission_request(&event) {
+            if matches!(self.access_mode, crate::agents::HarnessAccessMode::Full)
+                && let Some((session_id, request_id)) = opencode_permission_request(&event)
+            {
                 if let Err(error) = self
                     .server
                     .client()
@@ -614,6 +625,7 @@ impl WorkerSession for OpenCodeWorkerSession {
     }
 
     fn select_model(&mut self, provider: &str, model: &str) -> Result<(), String> {
+        self.caller_identity.select_model(provider, model);
         self.server.client().select_model(
             &self.session_id,
             provider,
@@ -626,6 +638,7 @@ impl WorkerSession for OpenCodeWorkerSession {
     }
 
     fn select_effort(&mut self, effort: &str) -> Result<(), String> {
+        self.caller_identity.select_effort(effort);
         self.effort = Some(effort.to_owned());
         if let (Some(provider), Some(model)) = (self.provider.as_deref(), self.model.as_deref()) {
             self.server
@@ -642,6 +655,12 @@ impl WorkerSession for OpenCodeWorkerSession {
     fn poll(&mut self) -> Option<WorkerEvent> {
         if let Some(event) = self.pending.pop_front() {
             return Some(event);
+        }
+        if let Some(message) = self.caller_identity.try_recv() {
+            return Some(match self.send(message.prompt(), WorkerSendMode::Queue) {
+                Ok(()) => WorkerEvent::Started,
+                Err(error) => WorkerEvent::Failed(error),
+            });
         }
         if let Some(event) = self.poll_native_event() {
             return Some(event);
@@ -685,14 +704,13 @@ fn opencode_tool_name(data: &Value) -> Option<&str> {
 
 fn normalize_opencode_tool(name: &str, arguments: &Value) -> (String, Value) {
     let normalized_name = name.trim().to_ascii_lowercase();
-    let common =
-        CommonTool::from_name(&normalized_name).or_else(|| match normalized_name.as_str() {
-            "read_file" => Some(CommonTool::Read),
-            "write_file" => Some(CommonTool::Write),
-            "edit_file" | "apply_patch" | "patch" => Some(CommonTool::Edit),
-            "shell" | "command" | "terminal" => Some(CommonTool::Bash),
-            _ => None,
-        });
+    let common = CommonTool::from_name(&normalized_name).or(match normalized_name.as_str() {
+        "read_file" => Some(CommonTool::Read),
+        "write_file" => Some(CommonTool::Write),
+        "edit_file" | "apply_patch" | "patch" => Some(CommonTool::Edit),
+        "shell" | "command" | "terminal" => Some(CommonTool::Bash),
+        _ => None,
+    });
     let Some(common) = common else {
         return (name.to_owned(), arguments.clone());
     };
@@ -760,6 +778,16 @@ fn send_and_wake<T>(
         wake.unpark();
     }
     Ok(())
+}
+
+fn configure_opencode_server(
+    command: &mut std::process::Command,
+    mode: crate::agents::HarnessAccessMode,
+) {
+    if matches!(mode, crate::agents::HarnessAccessMode::Auto) {
+        command.arg("--auto");
+    }
+    command.args(["serve", "--stdio", "--print-logs"]);
 }
 
 fn configure_farcaster_mcp(
@@ -879,6 +907,23 @@ mod tests {
         assert_eq!(
             opencode_permission_request(&event),
             Some(("child-1", "permission-1"))
+        );
+    }
+
+    #[test]
+    fn auto_mode_uses_the_native_opencode_flag() {
+        let mut auto = std::process::Command::new("opencode2");
+        configure_opencode_server(&mut auto, crate::agents::HarnessAccessMode::Auto);
+        assert_eq!(
+            auto.get_args().collect::<Vec<_>>(),
+            ["--auto", "serve", "--stdio", "--print-logs"]
+        );
+
+        let mut full = std::process::Command::new("opencode2");
+        configure_opencode_server(&mut full, crate::agents::HarnessAccessMode::Full);
+        assert_eq!(
+            full.get_args().collect::<Vec<_>>(),
+            ["serve", "--stdio", "--print-logs"]
         );
     }
 

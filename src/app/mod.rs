@@ -269,8 +269,6 @@ pub(crate) struct FarcasterApp {
     _performance_task: Option<Task<()>>,
     pending_session_switch: Option<(PathBuf, crate::app::infrastructure::performance::Timing)>,
     extension: ExtensionUiState,
-    sandbox_approval_ui: crate::access::approval::ApprovalUi,
-    sandbox_approval_prompts: HashMap<String, Vec<crate::access::approval::ApprovalPrompt>>,
     parked_extension: Option<ExtensionUiState>,
     restored_dialog_id: Option<String>,
     dismissed_restored_dialog_id: Option<String>,
@@ -302,7 +300,6 @@ pub(crate) struct FarcasterApp {
     _window_activation_subscription: Subscription,
     _window_placement_subscription: Subscription,
     _event_task: Task<()>,
-    _sandbox_approval_task: Task<()>,
     _workgraph_update_task: Task<()>,
 }
 
@@ -314,7 +311,6 @@ impl FarcasterApp {
     pub(crate) fn new(
         project: PathBuf,
         repository_execution_allowed: bool,
-        sandbox_approval_ui: crate::access::approval::ApprovalUi,
         workgraph_updates: async_channel::Receiver<()>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -367,15 +363,13 @@ impl FarcasterApp {
             project_registry_error = composer_error;
         }
         let submitted_drafts = drafts::submitted_draft_associations(&registry.drafts);
-        sandbox_approval_ui.set_project_trusted(repository_execution_allowed);
         let saved_proxy = crate::app::infrastructure::persistence::StateStore::open()
             .and_then(|store| crate::access::load_proxy(&store))
             .unwrap_or(None);
-        let runtime = RuntimeHandle::spawn_with_grants(
+        let runtime = RuntimeHandle::spawn(
             project.clone(),
             selected_draft.clone(),
             None,
-            sandbox_approval_ui.grants(),
             saved_proxy.clone(),
         );
         let composer = cx.new(|cx| {
@@ -498,19 +492,6 @@ impl FarcasterApp {
         let event_task = cx.spawn(async move |weak, cx| {
             while runtime_wake.recv().await.is_ok() {
                 if weak.update(cx, |this, cx| this.drain_runtime(cx)).is_err() {
-                    break;
-                }
-            }
-        });
-        let approval_receiver = sandbox_approval_ui.receiver();
-        let sandbox_approval_task = cx.spawn(async move |weak, cx| {
-            while let Ok(prompt) = approval_receiver.recv().await {
-                if weak
-                    .update(cx, |this, cx| {
-                        this.apply_sandbox_approval_prompt(prompt, cx)
-                    })
-                    .is_err()
-                {
                     break;
                 }
             }
@@ -717,8 +698,6 @@ impl FarcasterApp {
             _performance_task: performance_task,
             pending_session_switch: None,
             extension: ExtensionUiState::default(),
-            sandbox_approval_ui,
-            sandbox_approval_prompts: HashMap::new(),
             parked_extension: None,
             restored_dialog_id: None,
             dismissed_restored_dialog_id: None,
@@ -750,7 +729,6 @@ impl FarcasterApp {
             _window_activation_subscription: window_activation_subscription,
             _window_placement_subscription: window_placement_subscription,
             _event_task: event_task,
-            _sandbox_approval_task: sandbox_approval_task,
             _workgraph_update_task: workgraph_update_task,
         };
         this.request_repository_refresh(cx);
@@ -1301,7 +1279,6 @@ impl FarcasterApp {
         if !preserve_submission {
             self.reset_transcript_ui();
         }
-        self.sync_sandbox_approval_dialogs();
     }
 
     fn sync_restored_dialog(&mut self) {
@@ -1335,75 +1312,11 @@ impl FarcasterApp {
         }
     }
 
-    fn sync_sandbox_approval_dialogs(&mut self) {
-        let approval_ui = self.sandbox_approval_ui.clone();
-        self.sandbox_approval_prompts.retain(|_, prompts| {
-            prompts.retain(|prompt| approval_ui.is_pending(&prompt.id));
-            !prompts.is_empty()
-        });
-        let ids = self
-            .sandbox_approval_prompts
-            .values()
-            .flat_map(|prompts| prompts.iter().map(|prompt| prompt.id.clone()))
-            .collect::<Vec<_>>();
-        for id in ids {
-            let _ = self.extension.remove_dialog(&id);
-        }
-        let target = self.composer_sessions.current_target();
-        let prompts = self
-            .sandbox_approval_prompts
-            .get(target)
-            .cloned()
-            .unwrap_or_default();
-        for prompt in prompts {
-            if matches!(
-                self.extension.apply(ExtensionUiRequest::Select {
-                    id: prompt.id,
-                    title: prompt.title,
-                    options: prompt.options,
-                    timeout: None,
-                }),
-                ExtensionEffect::DialogOpened
-            ) {
-                self.pending_dialog_setup = true;
-            }
-        }
-    }
-
-    fn remove_sandbox_approval_prompt(&mut self, id: &str) {
-        self.sandbox_approval_prompts.retain(|_, prompts| {
-            prompts.retain(|prompt| prompt.id != id);
-            !prompts.is_empty()
-        });
-    }
-
-    fn apply_sandbox_approval_prompt(
-        &mut self,
-        prompt: crate::access::approval::ApprovalPrompt,
-        cx: &mut Context<Self>,
-    ) {
-        if !self.sandbox_approval_ui.is_pending(&prompt.id) {
-            return;
-        }
-        let target = prompt
-            .caller_session
-            .as_deref()
-            .map(Path::new)
-            .map(session_target)
-            .unwrap_or_else(|| self.composer_sessions.current_target().to_owned());
-        self.sandbox_approval_prompts
-            .entry(target)
-            .or_default()
-            .push(prompt);
-        self.sync_sandbox_approval_dialogs();
-        cx.notify();
-    }
-
     fn apply_extension_request(
         &mut self,
         request: ExtensionUiRequest,
         generation: u64,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) {
         match self.extension.apply(request) {
             ExtensionEffect::DialogOpened => self.pending_dialog_setup = true,
@@ -1920,7 +1833,6 @@ impl FarcasterApp {
             self.composer_sessions.switch_to(target, current)
         };
         self.apply_composer_snapshot(snapshot, window, cx);
-        self.sync_sandbox_approval_dialogs();
     }
 
     fn capture_composer_session(&mut self, cx: &mut Context<Self>) {
@@ -1987,12 +1899,12 @@ impl FarcasterApp {
         cx.notify();
     }
 
-    fn set_permission_level(
+    fn set_access_mode(
         &mut self,
-        level: crate::runtime::PermissionLevel,
+        level: crate::runtime::HarnessAccessMode,
         cx: &mut Context<Self>,
     ) {
-        self.send(RuntimeCommand::SetPermissionLevel(level));
+        self.send(RuntimeCommand::SetAccessMode(level));
         cx.notify();
     }
 }
@@ -2215,7 +2127,7 @@ fn composer_snapshot_changed(previous: &RuntimeSnapshot, next: &RuntimeSnapshot)
         || previous.session_identity() != next.session_identity()
         || previous.models != next.models
         || previous.thinking_levels != next.thinking_levels
-        || previous.permission_level != next.permission_level
+        || previous.access_mode != next.access_mode
 }
 
 fn run_panel_snapshot_changed(previous: &RuntimeSnapshot, next: &RuntimeSnapshot) -> bool {

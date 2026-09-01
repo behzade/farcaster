@@ -860,9 +860,6 @@ fn cache_usage(message: &Value) -> Option<(u64, u64)> {
 }
 
 fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
-    if crate::agents::is_hidden_user_message(message) {
-        return Vec::new();
-    }
     let Some(role) = message.get("role").and_then(Value::as_str) else {
         return Vec::new();
     };
