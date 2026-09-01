@@ -1405,8 +1405,7 @@ fn ensure_session_app_session(
 }
 
 fn imported_session_is_archived(session: &SessionSummary, now: SystemTime) -> bool {
-    !session.is_running
-        || now.duration_since(session.modified).unwrap_or_default() > ACTIVE_IMPORT_WINDOW
+    now.duration_since(session.modified).unwrap_or_default() > ACTIVE_IMPORT_WINDOW
 }
 
 fn associate_app_session(

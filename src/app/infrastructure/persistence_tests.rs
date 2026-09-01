@@ -355,7 +355,7 @@ fn session_harness_survives_the_cache() -> Result<(), Box<dyn std::error::Error>
 }
 
 #[test]
-fn imported_sessions_are_active_only_while_recent_and_not_done()
+fn imported_sessions_are_active_while_recent_even_without_running_status()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
@@ -401,7 +401,7 @@ fn imported_sessions_are_active_only_while_recent_and_not_done()
         .map(|session| (session.id.as_str(), session.archived))
         .collect::<std::collections::HashMap<_, _>>();
     assert!(!archived["recent-running"]);
-    assert!(archived["recent-done"]);
+    assert!(!archived["recent-done"]);
     assert!(archived["old-running"]);
     Ok(())
 }
