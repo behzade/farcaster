@@ -299,7 +299,6 @@ fn permission_level_change_restarts_and_resumes_the_idle_session() -> Result<(),
         files: FileAccessMode::Full,
         network: NetworkAccessMode::Full,
     };
-    conversation_mut(owner.active_snapshot_mut()).running = true;
     owner.apply_command(RuntimeCommand::SetPermissionLevel(target));
 
     assert_eq!(owner.process_generation, generation);
@@ -310,7 +309,7 @@ fn permission_level_change_restarts_and_resumes_the_idle_session() -> Result<(),
     assert_eq!(owner.snapshot.permission_level, target);
     assert!(!owner.permission_changes.is_idle());
 
-    conversation_mut(owner.active_snapshot_mut()).running = false;
+    owner.permission_changes.make_due();
     owner.apply_queued_permission_change();
     assert_eq!(owner.snapshot.conversation.items, transcript);
     drive_process_until(&mut owner, |owner| {

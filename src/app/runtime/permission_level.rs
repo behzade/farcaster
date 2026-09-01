@@ -2,9 +2,12 @@
 
 use super::*;
 
+const PERMISSION_CHANGE_DEBOUNCE: Duration = Duration::from_millis(500);
+
 #[derive(Default)]
 pub(super) struct PermissionChangeState {
     queued: Option<PermissionLevel>,
+    apply_due: Option<Instant>,
     reload_sandbox: bool,
 }
 
@@ -16,10 +19,27 @@ impl PermissionChangeState {
 
     fn queue(&mut self, requested: PermissionLevel, effective: PermissionLevel) {
         self.queued = (requested != effective).then_some(requested);
+        self.apply_due = self
+            .queued
+            .is_some()
+            .then(|| Instant::now() + PERMISSION_CHANGE_DEBOUNCE);
     }
 
-    fn take_queued(&mut self) -> Option<PermissionLevel> {
+    fn take_queued_if_due(&mut self, now: Instant) -> Option<PermissionLevel> {
+        if !self.apply_due.is_some_and(|due| now >= due) {
+            return None;
+        }
+        self.apply_due = None;
         self.queued.take()
+    }
+
+    pub(super) fn next_deadline(&self) -> Option<Instant> {
+        self.apply_due
+    }
+
+    #[cfg(test)]
+    pub(super) fn make_due(&mut self) {
+        self.apply_due = self.queued.is_some().then(Instant::now);
     }
 
     fn queue_reload(&mut self) {
@@ -35,33 +55,36 @@ impl PermissionChangeState {
     }
 
     pub(super) fn take_requested_level(&mut self, effective: PermissionLevel) -> PermissionLevel {
+        self.apply_due = None;
         self.queued.take().unwrap_or(effective)
     }
 }
 
 impl RuntimeOwner {
-    fn permission_change_ready(&self) -> bool {
+    pub(super) fn permission_change_ready(&self) -> bool {
         let conversation = &self.active_snapshot().conversation;
         !conversation.running && !conversation.compacting
     }
 
     pub(super) fn set_permission_level(&mut self, level: PermissionLevel) {
-        if !self.permission_change_ready() {
-            self.permission_changes
-                .queue(level, self.process_command.permission_level);
+        if self.process.is_none() && self.permission_change_ready() {
+            self.permission_changes.queued = None;
+            self.permission_changes.apply_due = None;
+            self.process_command.permission_level = level;
             self.publish();
             return;
         }
+        self.permission_changes
+            .queue(level, self.process_command.permission_level);
+        self.publish();
+    }
+
+    fn apply_permission_level(&mut self, level: PermissionLevel) {
         if self.process_command.permission_level == level {
             return;
         }
         let mut next_command = self.process_command.clone();
         next_command.permission_level = level;
-        if self.process.is_none() {
-            self.process_command = next_command;
-            self.publish();
-            return;
-        }
         if let Err(error) = crate::agents::validate_launch(&next_command, &self.project) {
             let snapshot = self.active_snapshot_mut();
             snapshot.status = "Permissions unchanged".into();
@@ -171,10 +194,11 @@ impl RuntimeOwner {
         if !self.permission_change_ready() {
             return;
         }
-        if let Some(level) = self.permission_changes.take_queued() {
+        if let Some(level) = self.permission_changes.take_queued_if_due(Instant::now()) {
             let _ = self.permission_changes.take_reload();
-            self.set_permission_level(level);
-        } else if self.permission_changes.take_reload() {
+            self.apply_permission_level(level);
+        } else if self.permission_changes.queued.is_none() && self.permission_changes.take_reload()
+        {
             self.reload_sandbox_grants();
         }
     }

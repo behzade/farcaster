@@ -461,10 +461,18 @@ fn run(
             stream_publish_due = None;
         }
         let now = Instant::now();
-        let next_deadline = [stream_publish_due, owner.session_refresh_due]
-            .into_iter()
-            .flatten()
-            .min();
+        let permission_change_due = owner
+            .permission_change_ready()
+            .then(|| owner.permission_changes.next_deadline())
+            .flatten();
+        let next_deadline = [
+            stream_publish_due,
+            owner.session_refresh_due,
+            permission_change_due,
+        ]
+        .into_iter()
+        .flatten()
+        .min();
         match command_rx.try_recv() {
             Ok(RuntimeCommand::Shutdown) => running = false,
             Ok(command) => owner.apply_command(command),
