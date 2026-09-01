@@ -26,6 +26,8 @@ fn configure_permissions(
                 "workspace-write",
                 "--ask-for-approval",
                 "on-request",
+                "-c",
+                "approvals_reviewer=\"user\"",
             ]);
         }
         HarnessAccessMode::Auto => {
@@ -115,7 +117,9 @@ mod tests {
                 "--sandbox",
                 "workspace-write",
                 "--ask-for-approval",
-                "on-request"
+                "on-request",
+                "-c",
+                "approvals_reviewer=\"user\""
             ]
         );
         assert_eq!(arguments(Auto), ["--approve-for-me"]);
