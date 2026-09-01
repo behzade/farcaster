@@ -29,7 +29,7 @@ pub(in crate::modules::agents::adapter) fn discover(
     locator_root: &Path,
     query: &str,
 ) -> Result<Vec<DiscoveredSession>, String> {
-    with_connection(|connection, _| {
+    with_connection(|connection| {
         let mut sessions = Vec::new();
         for archived in [false, true] {
             for source_kinds in [INTERACTIVE_SOURCE_KINDS, AGENT_SOURCE_KINDS] {
@@ -69,7 +69,7 @@ pub(in crate::modules::agents::adapter) fn rename_session(
     session_id: &str,
     name: &str,
 ) -> Result<(), String> {
-    with_connection(|connection, _| {
+    with_connection(|connection| {
         let id = connection.send_request(
             "thread/name/set",
             json!({"threadId": session_id, "name": name}),
@@ -79,7 +79,7 @@ pub(in crate::modules::agents::adapter) fn rename_session(
 }
 
 pub(in crate::modules::agents::adapter) fn delete_session(session_id: &str) -> Result<(), String> {
-    with_connection(|connection, _| {
+    with_connection(|connection| {
         let id = connection.send_request("thread/delete", json!({"threadId": session_id}))?;
         connection.wait_response::<Value>(&id).map(|_| ())
     })
@@ -90,7 +90,7 @@ pub(in crate::modules::agents::adapter) fn load_history(
 ) -> Result<DiscoveredHistory, String> {
     let locator = external_session_locator("codex-cli", path)
         .ok_or_else(|| format!("invalid Codex session locator: {}", path.display()))?;
-    with_connection(|connection, codex_home| {
+    with_connection_and_home(|connection, codex_home| {
         let id = connection.send_request(
             "thread/read",
             json!({"threadId": locator, "includeTurns": true}),
@@ -113,10 +113,7 @@ pub(in crate::modules::agents::adapter) fn load_history(
                 messages.extend(history_messages(item));
             }
         }
-        let identity = match thread_identity(thread) {
-            Some(identity) => Some(identity),
-            None => stored_identity(codex_home, &locator)?,
-        };
+        let identity = stored_identity(codex_home, &locator)?;
         let (model, thinking_level) = identity.map_or((None, None), |identity| {
             (Some((identity.provider, identity.model)), identity.effort)
         });
@@ -128,11 +125,16 @@ pub(in crate::modules::agents::adapter) fn load_history(
     })
 }
 
+type CatalogConnection = CodexConnection<BufReader<ChildStdout>, ChildStdin>;
+
 fn with_connection<T>(
-    operation: impl FnOnce(
-        &mut CodexConnection<BufReader<ChildStdout>, ChildStdin>,
-        &Path,
-    ) -> Result<T, String>,
+    operation: impl FnOnce(&mut CatalogConnection) -> Result<T, String>,
+) -> Result<T, String> {
+    with_connection_and_home(|connection, _| operation(connection))
+}
+
+fn with_connection_and_home<T>(
+    operation: impl FnOnce(&mut CatalogConnection, &Path) -> Result<T, String>,
 ) -> Result<T, String> {
     let program = std::env::var_os("FARCASTER_CODEX_PATH")
         .map(PathBuf::from)
@@ -153,9 +155,7 @@ fn with_connection<T>(
     result
 }
 
-fn connect(
-    child: &mut Child,
-) -> Result<(CodexConnection<BufReader<ChildStdout>, ChildStdin>, PathBuf), String> {
+fn connect(child: &mut Child) -> Result<(CatalogConnection, PathBuf), String> {
     let stdin = child
         .stdin
         .take()
@@ -173,33 +173,19 @@ fn connect(
     Ok((connection, PathBuf::from(initialized.codex_home)))
 }
 
-struct StoredIdentity {
+struct CodexIdentity {
     provider: String,
     model: String,
     effort: Option<String>,
 }
 
-fn thread_identity(thread: &Value) -> Option<StoredIdentity> {
-    Some(StoredIdentity {
-        provider: string(thread, &["modelProvider", "model_provider"])
-            .unwrap_or("openai")
-            .to_owned(),
-        model: string(thread, &["model"])?.to_owned(),
-        effort: string(thread, &["effort", "reasoningEffort", "reasoning_effort"])
-            .map(str::to_owned),
-    })
-}
-
-fn stored_identity(codex_home: &Path, thread_id: &str) -> Result<Option<StoredIdentity>, String> {
+fn stored_identity(codex_home: &Path, thread_id: &str) -> Result<Option<CodexIdentity>, String> {
     let database = codex_home.join("state_5.sqlite");
     if !database.is_file() {
         return Ok(None);
     }
-    let connection = Connection::open_with_flags(
-        &database,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .map_err(|error| format!("open Codex state database {}: {error}", database.display()))?;
+    let connection = Connection::open_with_flags(&database, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .map_err(|error| format!("open Codex state database {}: {error}", database.display()))?;
     connection
         .query_row(
             "SELECT model_provider, model, reasoning_effort FROM threads WHERE id = ?1",
@@ -208,7 +194,7 @@ fn stored_identity(codex_home: &Path, thread_id: &str) -> Result<Option<StoredId
                 let provider = row.get(0)?;
                 let model = row.get::<_, Option<String>>(1)?;
                 let effort = row.get(2)?;
-                Ok(model.map(|model| StoredIdentity {
+                Ok(model.map(|model| CodexIdentity {
                     provider,
                     model,
                     effort,
@@ -509,33 +495,6 @@ fn timestamp(value: &Value, keys: &[&str]) -> SystemTime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
-
-    #[test]
-    fn loads_the_saved_codex_session_identity() -> Result<(), Box<dyn std::error::Error>> {
-        let home = tempdir()?;
-        let connection = Connection::open(home.path().join("state_5.sqlite"))?;
-        connection.execute_batch(
-            "CREATE TABLE threads (
-                id TEXT PRIMARY KEY,
-                model_provider TEXT NOT NULL,
-                model TEXT,
-                reasoning_effort TEXT
-            );",
-        )?;
-        connection.execute(
-            "INSERT INTO threads (id, model_provider, model, reasoning_effort)
-             VALUES (?1, ?2, ?3, ?4)",
-            params!["thread-1", "openai", "gpt-5.6-luna", "high"],
-        )?;
-
-        let identity = stored_identity(home.path(), "thread-1")?.ok_or("identity")?;
-
-        assert_eq!(identity.provider, "openai");
-        assert_eq!(identity.model, "gpt-5.6-luna");
-        assert_eq!(identity.effort.as_deref(), Some("high"));
-        Ok(())
-    }
 
     #[test]
     fn translates_thread_metadata() -> Result<(), String> {

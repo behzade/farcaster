@@ -75,8 +75,8 @@ fn latest_identity(
     session.cloned().or_else(|| {
         messages
             .iter()
-            .filter_map(|message| serde_json::from_value(message.get("model")?.clone()).ok())
-            .last()
+            .rev()
+            .find_map(|message| serde_json::from_value(message.get("model")?.clone()).ok())
     })
 }
 
