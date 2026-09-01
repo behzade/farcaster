@@ -83,12 +83,19 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.pending_project_trust_command.is_some() {
-            return;
+        if cancel_pending_command(&mut self.pending_project_trust_command)
+            && let Some((_, timing)) = self.pending_session_switch.take()
+        {
+            timing.cancel();
         }
+        self.project_trust_error = None;
         self.project_trust_project = None;
         self.close_sheet(window, cx);
     }
+}
+
+fn cancel_pending_command(pending: &mut Option<RuntimeCommand>) -> bool {
+    pending.take().is_some()
 }
 
 fn restart_session_after_trust(command: RuntimeCommand) -> RuntimeCommand {
@@ -113,6 +120,13 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+
+    #[test]
+    fn dismissing_trust_cancels_the_pending_project_command() {
+        let mut pending = Some(RuntimeCommand::Shutdown);
+        assert!(cancel_pending_command(&mut pending));
+        assert!(pending.is_none());
+    }
 
     #[test]
     fn selecting_after_a_new_trust_decision_restarts_the_project_process() {

@@ -103,7 +103,7 @@ pub(in crate::app::views) fn render(
                             .text_size(THEME.type_scale.caption)
                             .text_color(THEME.colors.subtle)
                             .child(if app.pending_project_trust_command.is_some() {
-                                "Choose a decision to continue opening this project."
+                                "Choose a decision to continue opening this project, or close to cancel."
                             } else {
                                 "Restart Farcaster after changing this decision."
                             }),
