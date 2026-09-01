@@ -76,11 +76,13 @@ identity.
 
 Farcaster serves stateless Streamable HTTP MCP at
 `http://127.0.0.1:8765/mcp`. It exposes `worker_list`, `worker_send`, and the
-`workgraph_*` tools. Workers are active top-level peer agents in the same
-project. `worker_send` addresses an existing peer or uses `to: "new"` to create
-a fresh top-level peer with the caller's harness, model, and effort. Fresh peers
-are intended only for substantial independent work; harness-native subagents
-should handle delegated subtasks. Farcaster accepts MCP `2026-07-28` only and
+`workgraph_*` tools. `worker_list` returns other active top-level peer agents in
+the caller's project, and `worker_send` can only address that project-scoped
+set. Using `to: "new"` creates a fresh top-level peer in the caller's project
+with the caller's harness, model, and effort. Fresh peers are intended only for
+substantial independent work; harness-native subagents should handle delegated
+subtasks. Farcaster
+accepts MCP `2026-07-28` only and
 passes the endpoint to each launched agent through its native transient
 configuration; it does not create or modify a project MCP file.
 

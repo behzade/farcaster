@@ -100,6 +100,7 @@ impl CallerRegistry {
         worker_id: String,
     ) -> CallerIdentity {
         let token = new_identity("caller");
+        let project = canonical_project(project);
         let (inbox, receiver) = mpsc::channel();
         if let Ok(mut callers) = self.callers.lock() {
             callers.insert(
@@ -164,7 +165,11 @@ impl CallerRegistry {
             .ok_or_else(|| "unknown Farcaster caller".to_owned())?;
         let mut workers = callers
             .values()
-            .filter(|peer| peer.project == caller.project && peer.session.is_some())
+            .filter(|peer| {
+                peer.worker_id != caller.worker_id
+                    && peer.project == caller.project
+                    && peer.session.is_some()
+            })
             .map(|peer| WorkerPeer {
                 id: peer.worker_id.clone(),
                 backend: peer.backend.clone(),
@@ -191,7 +196,9 @@ impl CallerRegistry {
         }
         let recipient = callers
             .values()
-            .find(|peer| peer.worker_id == to && peer.project == caller.project)
+            .find(|peer| {
+                peer.worker_id == to && peer.project == caller.project && peer.session.is_some()
+            })
             .ok_or_else(|| format!("unknown worker in this project: {to}"))?;
         recipient
             .inbox
@@ -257,6 +264,12 @@ impl Drop for CallerIdentity {
             callers.remove(&self.token);
         }
     }
+}
+
+fn canonical_project(project: &Path) -> PathBuf {
+    project
+        .canonicalize()
+        .unwrap_or_else(|_| project.to_path_buf())
 }
 
 fn new_worker_id() -> String {
@@ -334,7 +347,8 @@ mod tests {
         let outsider_id = worker_id(&registry, &outsider);
         let (self_id, peers) = registry.list(first.token())?;
         assert_eq!(self_id, first_id);
-        assert_eq!(peers.len(), 2);
+        assert_eq!(peers.len(), 1);
+        assert!(!peers.iter().any(|peer| peer.id == self_id));
         assert_eq!(
             peers
                 .iter()
@@ -357,6 +371,40 @@ mod tests {
                 .send(first.token(), &outsider_id, "no".into())
                 .is_err()
         );
+
+        let starting = registry.issue_as(
+            Path::new("/project"),
+            CallerProfile {
+                backend: "pi".into(),
+                provider: None,
+                model: None,
+                effort: None,
+            },
+            None,
+            "starting-worker".into(),
+        );
+        assert!(
+            registry
+                .send(first.token(), "starting-worker", "no".into())
+                .is_err()
+        );
+        drop(starting);
+        Ok(())
+    }
+
+    #[test]
+    fn canonical_project_paths_share_one_peer_scope() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let project = root.path().join("project");
+        std::fs::create_dir(&project)?;
+        let aliased = project.join("..").join("project");
+        let registry = CallerRegistry::default();
+        let first = identity(&registry, &project, "pi");
+        let second = identity(&registry, &aliased, "pi");
+        first.bind("session-1");
+        second.bind("session-2");
+
+        assert_eq!(registry.list(first.token())?.1.len(), 1);
         Ok(())
     }
 }

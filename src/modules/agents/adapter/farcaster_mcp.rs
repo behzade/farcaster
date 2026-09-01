@@ -15,4 +15,4 @@ pub(super) fn enabled() -> bool {
 pub(super) fn set_enabled(enabled: bool) {
     ENABLED.store(enabled, std::sync::atomic::Ordering::Relaxed);
 }
-pub(crate) const INSTRUCTIONS: &str = "Farcaster provides communication between top-level peer workers and durable work graphs. Use worker_send with `to: new` only for substantial independent work; it creates an independent top-level agent using this harness and model. Use the harness's native subagents for delegated subtasks.";
+pub(crate) const INSTRUCTIONS: &str = "Farcaster provides project-scoped communication between top-level peer workers and durable work graphs. worker_list returns other agents in this project, and worker_send can only address that set. Use worker_send with `to: new` only for substantial independent work; it creates an independent top-level agent in this project using this harness and model. Use the harness's native subagents for delegated subtasks.";

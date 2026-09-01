@@ -90,6 +90,7 @@ mod tests {
             "check the migration".into(),
         );
 
+        assert_eq!(request.project, std::path::PathBuf::from("/caller/project"));
         assert_eq!(request.backend, "codex-cli");
         assert_eq!(request.context, WorkerContext::Fresh);
         assert_eq!(request.provider.as_deref(), Some("openai"));
