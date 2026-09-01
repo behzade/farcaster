@@ -50,9 +50,24 @@ impl FarcasterApp {
                 TerminalConfiguration::Custom(crate::app::ui::theme::terminal_theme());
             match Terminal::spawn(options, window, cx) {
                 Ok(terminal) => {
-                    self.terminal = Some(terminal);
+                    self.terminal = Some(terminal.clone());
                     self.terminal_project = Some(project);
                     self.terminal_error = None;
+                    self.monitor_native_process(window, cx, move |this, window, cx| {
+                        if this.terminal.as_ref() != Some(&terminal) {
+                            return false;
+                        }
+                        if terminal.read(cx).is_alive() {
+                            return true;
+                        }
+                        if this.surface == AppSurface::Terminal {
+                            this.close_terminal(window, cx);
+                        } else {
+                            this.clear_terminal_process();
+                            this.terminal_error = None;
+                        }
+                        false
+                    });
                 }
                 Err(error) => self.terminal_error = Some(error),
             }

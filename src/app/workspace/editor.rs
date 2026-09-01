@@ -115,8 +115,26 @@ impl FarcasterApp {
     fn spawn_editor(&mut self, options: NvimOptions, window: &mut Window, cx: &mut Context<Self>) {
         match NvimEditor::spawn(options, window, cx) {
             Ok(editor) => {
-                self.editor = Some(cx.new(|_| editor));
+                let editor = cx.new(|_| editor);
+                self.editor = Some(editor.clone());
                 self.editor_error = None;
+                self.monitor_native_process(window, cx, move |this, _window, cx| {
+                    if this.editor.as_ref() != Some(&editor) {
+                        return false;
+                    }
+                    if editor.read(cx).is_alive(cx) {
+                        return true;
+                    }
+                    if this.surface == AppSurface::Editor {
+                        this.close_editor(cx);
+                    } else {
+                        this.editor = None;
+                        this.editor_error = None;
+                        this.editor_return_focus = None;
+                        this.request_repository_refresh(cx);
+                    }
+                    false
+                });
             }
             Err(error) => {
                 self.editor = None;
