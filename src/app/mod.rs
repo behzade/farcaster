@@ -191,6 +191,7 @@ pub(crate) struct FarcasterApp {
     drafts: Vec<projects::DraftSession>,
     draft_session_ids: HashMap<String, i64>,
     selected_draft: Option<String>,
+    preferred_harness: String,
     submitted_drafts: HashMap<String, Option<PathBuf>>,
     sessions_error: Option<String>,
     session_project_filter: Option<PathBuf>,
@@ -336,7 +337,7 @@ impl FarcasterApp {
                 Vec::new()
             }
         };
-        let initial_draft = match project_registry::new_draft(project.clone()) {
+        let initial_draft = match project_registry::new_draft(project.clone(), "pi") {
             Ok(draft) => draft,
             Err(error) => {
                 if project_registry_error.is_none() {
@@ -632,6 +633,7 @@ impl FarcasterApp {
             drafts: registry.drafts,
             draft_session_ids,
             selected_draft: Some(selected_draft),
+            preferred_harness: "pi".into(),
             submitted_drafts,
             sessions_error: project_registry_error,
             session_project_filter: None,
@@ -1058,14 +1060,16 @@ impl FarcasterApp {
                     }
                     if selected_was_deleted && generation >= self.runtime_generation {
                         let current_target = self.composer_sessions.current_target().to_owned();
-                        let (next_target, next_draft) =
-                            match project_registry::new_draft(self.project.clone()) {
-                                Ok(draft) => (draft_target(&draft.id), Some(draft)),
-                                Err(error) => {
-                                    self.sessions_error = Some(error);
-                                    (project_target(&self.project), None)
-                                }
-                            };
+                        let (next_target, next_draft) = match project_registry::new_draft(
+                            self.project.clone(),
+                            &self.preferred_harness,
+                        ) {
+                            Ok(draft) => (draft_target(&draft.id), Some(draft)),
+                            Err(error) => {
+                                self.sessions_error = Some(error);
+                                (project_target(&self.project), None)
+                            }
+                        };
                         let composer = self
                             .composer_sessions
                             .discard_and_switch(&current_target, next_target.clone());
@@ -1544,7 +1548,7 @@ impl FarcasterApp {
             return;
         }
         self.run_panel_scroll.set_offset(point(px(0.0), px(0.0)));
-        let draft = match project_registry::new_draft(project.clone()) {
+        let draft = match project_registry::new_draft(project.clone(), &self.preferred_harness) {
             Ok(draft) => draft,
             Err(error) => {
                 self.sessions_error = Some(error);

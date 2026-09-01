@@ -91,6 +91,7 @@ impl FarcasterApp {
             .iter_mut()
             .find(|draft| draft.id == id)
             .expect("selected draft was materialized");
+        self.preferred_harness.clone_from(&harness);
         if !draft.change_harness(harness.clone()) {
             return;
         }
