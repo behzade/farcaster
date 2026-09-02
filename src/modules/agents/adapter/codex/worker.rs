@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use super::{
     connection::{CodexConnection, read_message},
     contract::{CodexClientInfo, CodexInbound, CodexRequestId, CodexUserInput, TurnResponse},
-    wire::{encode_request, encode_response},
+    wire::{encode_error_response, encode_request, encode_response},
 };
 use crate::{
     agents::{
@@ -822,9 +822,6 @@ impl WorkerSession for CodexWorkerSession {
                         | "serverRequest/resolved"
                         | "item/reasoning/summaryPartAdded"
                         | "item/fileChange/outputDelta" => {}
-                        "warning" | "configWarning" => {
-                            zlog::warn!("Codex app-server {method}: {params}");
-                        }
                         _ => log_bad_codex_notification(
                             &method,
                             &params,
@@ -837,9 +834,20 @@ impl WorkerSession for CodexWorkerSession {
                         zlog::warn!(
                             "Unsupported Codex server request was not mapped: id={id:?} method={method} params={params}"
                         );
-                        return Some(WorkerEvent::Failed(format!(
-                            "unsupported Codex server request: {method}"
-                        )));
+                        let message = format!("unsupported Codex server request: {method}");
+                        let rejected =
+                            encode_error_response(&id, -32601, &message).and_then(|encoded| {
+                                self.writer
+                                    .write_all(&encoded)
+                                    .and_then(|()| self.writer.flush())
+                                    .map_err(|error| error.to_string())
+                            });
+                        if let Err(error) = rejected {
+                            return Some(WorkerEvent::Failed(format!(
+                                "reject unsupported Codex server request: {error}"
+                            )));
+                        }
+                        continue;
                     }
                     let input_id = match &id {
                         CodexRequestId::Number(value) => value.to_string(),
@@ -1187,6 +1195,25 @@ fn codex_tool_call(item: &Value, kind: &str) -> (String, Value) {
             "image_generation".into(),
             item.get("arguments").cloned().unwrap_or_else(|| json!({})),
         ),
+        "collabAgentToolCall" => {
+            let args = [
+                "prompt",
+                "model",
+                "senderThreadId",
+                "receiverThreadIds",
+                "agentsStates",
+            ]
+            .into_iter()
+            .filter_map(|field| Some((field.into(), item.get(field)?.clone())))
+            .collect();
+            (
+                item.get("tool")
+                    .and_then(Value::as_str)
+                    .unwrap_or("collabAgent")
+                    .to_owned(),
+                Value::Object(args),
+            )
+        }
         _ => {
             let name = item
                 .get("tool")
@@ -1247,6 +1274,14 @@ fn codex_tool_end(params: &Value) -> Option<WorkerActivity> {
         json!([{
             "type": "text",
             "text": item.get("path").and_then(Value::as_str).unwrap_or_default(),
+        }])
+    } else if kind == "collabAgentToolCall" {
+        json!([{
+            "type": "text",
+            "text": item
+                .get("agentsStates")
+                .map(Value::to_string)
+                .unwrap_or_else(|| item.get("status").map(Value::to_string).unwrap_or_default()),
         }])
     } else {
         zlog::warn!("Codex tool completion had no mappable result: {item}");
@@ -1331,6 +1366,25 @@ mod tests {
                 "mcpToolCall"
             ),
             ("get_issue".into(), json!({"id":7}))
+        );
+        assert_eq!(
+            codex_tool_call(
+                &json!({
+                    "tool":"spawnAgent",
+                    "prompt":"review this",
+                    "senderThreadId":"parent",
+                    "receiverThreadIds":["child"]
+                }),
+                "collabAgentToolCall"
+            ),
+            (
+                "spawnAgent".into(),
+                json!({
+                    "prompt":"review this",
+                    "senderThreadId":"parent",
+                    "receiverThreadIds":["child"]
+                })
+            )
         );
     }
 

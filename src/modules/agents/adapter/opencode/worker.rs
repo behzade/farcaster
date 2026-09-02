@@ -467,16 +467,11 @@ impl OpenCodeWorkerSession {
                         log_bad_opencode_event(&event, "tool input start is missing call id");
                         continue;
                     };
-                    let (name, args) = normalize_opencode_tool(
+                    let (name, _) = normalize_opencode_tool(
                         opencode_tool_name(&event.data).unwrap_or("tool"),
-                        event.data.get("input").unwrap_or(&Value::Null),
+                        &Value::Null,
                     );
-                    self.active_tools.insert(id.clone(), name.clone());
-                    return Some(WorkerEvent::Activity(WorkerActivity::ToolStarted {
-                        id,
-                        name,
-                        args,
-                    }));
+                    self.active_tools.insert(id, name);
                 }
                 "session.tool.called" | "session.next.tool.called" => {
                     let Some(id) = opencode_tool_id(&event.data).map(str::to_owned) else {

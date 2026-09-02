@@ -29,6 +29,20 @@ pub(super) fn encode_response(id: &CodexRequestId, result: Value) -> Result<Vec<
     ]))
 }
 
+pub(super) fn encode_error_response(
+    id: &CodexRequestId,
+    code: i64,
+    message: &str,
+) -> Result<Vec<u8>, String> {
+    encode_message(Map::from_iter([
+        ("id".into(), serde_json::to_value(id).map_err(json_error)?),
+        (
+            "error".into(),
+            serde_json::json!({"code": code, "message": message}),
+        ),
+    ]))
+}
+
 fn encode_message(value: Map<String, Value>) -> Result<Vec<u8>, String> {
     let mut encoded = serde_json::to_vec(&Value::Object(value)).map_err(json_error)?;
     encoded.push(b'\n');
@@ -88,6 +102,11 @@ mod tests {
         assert_eq!(
             String::from_utf8(encoded).map_err(|error| error.to_string())?,
             "{\"id\":7,\"method\":\"turn/interrupt\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-1\"}}\n"
+        );
+        let error = encode_error_response(&CodexRequestId::Number(7), -32601, "unsupported")?;
+        assert_eq!(
+            String::from_utf8(error).map_err(|error| error.to_string())?,
+            "{\"id\":7,\"error\":{\"code\":-32601,\"message\":\"unsupported\"}}\n"
         );
         Ok(())
     }
