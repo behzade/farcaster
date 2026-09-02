@@ -6,14 +6,11 @@ use crate::agents::{CallerContext, CallerRegistry, StartWorker, WorkerContext, W
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct SendParams {
-    /// Direct child name. A top-level worker creates the child on first use; a child always sends to its parent and ignores this field.
-    pub(super) to: String,
+    /// Direct child name. Required for top-level workers and omitted by children.
+    pub(super) to: Option<String>,
     /// Message or delegated task for the worker.
     pub(super) message: String,
 }
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub(super) struct ListParams {}
 
 pub(super) fn send(
     pool: &WorkerPool,
@@ -28,7 +25,7 @@ pub(super) fn send(
 
     if caller.parent_worker_id.is_some() {
         let worker = registry
-            .send(token, &params.to, params.message)?
+            .send(token, "", params.message)?
             .ok_or_else(|| "parent worker is unavailable".to_owned())?;
         return Ok(serde_json::json!({
             "worker": worker,
@@ -37,10 +34,13 @@ pub(super) fn send(
         }));
     }
 
-    if !crate::agents::valid_worker_name(&params.to) {
+    let to = params
+        .to
+        .ok_or_else(|| "top-level workers must provide a child name in `to`".to_owned())?;
+    if !crate::agents::valid_worker_name(&to) {
         return Err("child name must be 1-48 ASCII letters, numbers, '-' or '_' and cannot start with punctuation".into());
     }
-    if let Some(worker) = registry.send(token, &params.to, params.message.clone())? {
+    if let Some(worker) = registry.send(token, &to, params.message.clone())? {
         return Ok(serde_json::json!({
             "worker": worker,
             "created": false,
@@ -49,23 +49,12 @@ pub(super) fn send(
     }
 
     pool.allow_project(&caller.project)?;
-    let name = params.to;
+    let name = to;
     pool.start(new_worker(caller, name.clone(), params.message))?;
     Ok(serde_json::json!({
         "worker": name,
         "created": true,
         "queued": true,
-    }))
-}
-
-pub(super) fn list(caller_token: Option<String>) -> Result<serde_json::Value, String> {
-    let token = caller_token
-        .as_deref()
-        .ok_or_else(|| "worker list requires a registered Farcaster caller".to_owned())?;
-    let (self_name, workers) = CallerRegistry::shared().list(token)?;
-    Ok(serde_json::json!({
-        "self": self_name,
-        "workers": workers,
     }))
 }
 
