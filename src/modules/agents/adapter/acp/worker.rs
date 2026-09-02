@@ -20,8 +20,8 @@ use super::{
 };
 use crate::{
     agents::{
-        AgentLaunchConfig, HarnessAccessMode, WorkerActivity, WorkerActivityState, WorkerEvent,
-        WorkerInput, WorkerInputResponse, WorkerLaunch, WorkerSendMode, WorkerSession,
+        AgentLaunchConfig, HarnessAccessMode, PeerMessage, WorkerActivity, WorkerActivityState,
+        WorkerEvent, WorkerInput, WorkerInputResponse, WorkerLaunch, WorkerSendMode, WorkerSession,
         WorkerSessionFactory,
     },
     modules::agents::adapter::{child_stderr, farcaster_mcp, main_session},
@@ -70,8 +70,9 @@ impl WorkerSessionFactory for AcpWorkerFactory {
             },
             None,
             launch.worker_id.clone(),
+            launch.worker_name.clone(),
             launch.parent_worker_id.clone(),
-        );
+        )?;
         if matches!(launch.context, crate::agents::WorkerContext::Session { .. }) {
             return Err(format!(
                 "{} does not advertise ACP session fork for inherited workers",
@@ -364,7 +365,7 @@ struct AcpWorkerSession {
     thought_started: bool,
     pending_inputs: HashMap<String, PendingInput>,
     tool_states: HashMap<String, ToolState>,
-    peer_messages: VecDeque<String>,
+    peer_messages: VecDeque<PeerMessage>,
     events: VecDeque<WorkerEvent>,
     config_ids: ConfigIds,
     caller_identity: Option<crate::modules::agents::core::CallerIdentity>,
@@ -717,13 +718,14 @@ impl WorkerSession for AcpWorkerSession {
         if let Some(identity) = &self.caller_identity
             && let Some(message) = identity.try_recv()
         {
-            self.peer_messages.push_back(message.prompt());
+            self.peer_messages.push_back(message);
         }
         if self.current_prompt.is_none()
             && let Some(message) = self.peer_messages.pop_front()
         {
-            return Some(match self.send(message, WorkerSendMode::Prompt) {
-                Ok(()) => self.events.pop_front().unwrap_or(WorkerEvent::Started),
+            let mode = WorkerSendMode::Prompt;
+            return Some(match self.send_peer_message(&message, mode) {
+                Ok(()) => WorkerEvent::Activity(WorkerActivity::PeerInputDelivered { message }),
                 Err(error) => WorkerEvent::Failed(error),
             });
         }

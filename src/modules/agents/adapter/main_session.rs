@@ -222,6 +222,11 @@ impl WorkerSessionTransport {
                 self.acknowledge_delivery(mode, &message);
                 return;
             }
+            WorkerActivity::PeerInputDelivered { message } => json!({
+                "type": "peer_message",
+                "from": message.from,
+                "message": message.message,
+            }),
             WorkerActivity::TextDelta {
                 content_index,
                 delta,
@@ -859,6 +864,34 @@ mod tests {
         assert_eq!(updates[1].value()["followUp"], json!(["then verify"]));
         assert_eq!(updates[2].value()["steering"], json!([]));
         assert_eq!(updates[2].value()["followUp"], json!(["then verify"]));
+    }
+
+    #[test]
+    fn peer_delivery_is_a_first_class_activity_instead_of_a_user_message() {
+        let mut transport = WorkerSessionTransport::new(
+            std::path::Path::new("/locators"),
+            "codex-cli",
+            "thread-1".into(),
+            Box::new(IdleWorker),
+            MainSessionMetadata::default(),
+            None,
+        )
+        .expect("transport");
+
+        transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::PeerInputDelivered {
+            message: crate::agents::PeerMessage {
+                from: "worker-7".into(),
+                message: "review complete".into(),
+            },
+        }));
+
+        let event = transport.pending.pop_front().expect("peer event");
+        let SessionEvent::Activity(activity) = event else {
+            panic!("expected activity");
+        };
+        assert_eq!(activity.value()["type"], "peer_message");
+        assert_eq!(activity.value()["from"], "worker-7");
+        assert_eq!(activity.value()["message"], "review complete");
     }
 
     #[test]

@@ -8,7 +8,7 @@ use std::{
 
 use serde::Serialize;
 
-use super::worker::WorkerActivityState;
+use super::{super::contract::PeerMessage, names, worker::WorkerActivityState};
 
 #[derive(Clone, Default)]
 pub(crate) struct CallerRegistry {
@@ -26,6 +26,7 @@ pub(crate) struct CallerProfile {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CallerContext {
     pub(crate) worker_id: String,
+    pub(crate) worker_name: String,
     pub(crate) project: PathBuf,
     pub(crate) session: String,
     pub(crate) backend: String,
@@ -35,31 +36,17 @@ pub(crate) struct CallerContext {
     pub(crate) parent_worker_id: Option<String>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct PeerMessage {
-    pub(crate) from: String,
-    pub(crate) message: String,
-}
-
-impl PeerMessage {
-    pub(crate) fn prompt(&self) -> String {
-        format!(
-            "Message from Farcaster peer {}:\n\n{}",
-            self.from, self.message
-        )
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct WorkerPeer {
-    pub(crate) id: String,
+    pub(crate) name: String,
     pub(crate) backend: String,
     pub(crate) status: WorkerActivityState,
 }
 
 struct RegisteredCaller {
     worker_id: String,
+    worker_name: String,
     project: PathBuf,
     session: Option<String>,
     backend: String,
@@ -90,33 +77,30 @@ impl CallerRegistry {
         profile: CallerProfile,
         wake: Option<thread::Thread>,
     ) -> CallerIdentity {
-        let worker_id = new_worker_id();
-        self.issue_as(project, profile, wake, worker_id, None)
-    }
-
-    pub(crate) fn issue_as(
-        &self,
-        project: &Path,
-        profile: CallerProfile,
-        wake: Option<thread::Thread>,
-        worker_id: String,
-        parent_worker_id: Option<String>,
-    ) -> CallerIdentity {
         let token = new_identity("caller");
+        let worker_id = new_worker_id();
         let project = canonical_project(project);
         let (inbox, receiver) = mpsc::channel();
         if let Ok(mut callers) = self.callers.lock() {
+            let worker_name = names::generated_name(|candidate| {
+                callers.values().any(|caller| {
+                    caller.project == project
+                        && caller.parent_worker_id.is_none()
+                        && caller.worker_name.eq_ignore_ascii_case(candidate)
+                })
+            });
             callers.insert(
                 token.clone(),
                 RegisteredCaller {
-                    worker_id: worker_id.clone(),
-                    project: project.to_owned(),
+                    worker_id,
+                    worker_name,
+                    project,
                     session: None,
                     backend: profile.backend,
                     provider: profile.provider,
                     model: profile.model,
                     effort: profile.effort,
-                    parent_worker_id,
+                    parent_worker_id: None,
                     activity: WorkerActivityState::Starting,
                     inbox,
                     wake,
@@ -130,6 +114,58 @@ impl CallerRegistry {
         }
     }
 
+    pub(crate) fn issue_as(
+        &self,
+        project: &Path,
+        profile: CallerProfile,
+        wake: Option<thread::Thread>,
+        worker_id: String,
+        worker_name: String,
+        parent_worker_id: Option<String>,
+    ) -> Result<CallerIdentity, String> {
+        if !crate::agents::valid_worker_name(&worker_name) {
+            return Err("worker name must be 1-48 ASCII letters, numbers, '-' or '_' and cannot start with punctuation".into());
+        }
+        let token = new_identity("caller");
+        let project = canonical_project(project);
+        let (inbox, receiver) = mpsc::channel();
+        let mut callers = self
+            .callers
+            .lock()
+            .map_err(|_| "worker caller registry is unavailable".to_owned())?;
+        let duplicate = callers.values().any(|caller| {
+            caller.project == project
+                && caller.parent_worker_id == parent_worker_id
+                && caller.worker_name.eq_ignore_ascii_case(&worker_name)
+        });
+        if duplicate {
+            return Err(format!("worker name is already in use: {worker_name}"));
+        }
+        callers.insert(
+            token.clone(),
+            RegisteredCaller {
+                worker_id,
+                worker_name,
+                project,
+                session: None,
+                backend: profile.backend,
+                provider: profile.provider,
+                model: profile.model,
+                effort: profile.effort,
+                parent_worker_id,
+                activity: WorkerActivityState::Starting,
+                inbox,
+                wake,
+            },
+        );
+        drop(callers);
+        Ok(CallerIdentity {
+            token,
+            inbox: receiver,
+            registry: self.clone(),
+        })
+    }
+
     pub(crate) fn resolve(&self, token: &str) -> Result<CallerContext, String> {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         loop {
@@ -141,6 +177,7 @@ impl CallerRegistry {
                 .and_then(|caller| {
                     Some(CallerContext {
                         worker_id: caller.worker_id.clone(),
+                        worker_name: caller.worker_name.clone(),
                         project: caller.project.clone(),
                         session: caller.session.clone()?,
                         backend: caller.backend.clone(),
@@ -172,13 +209,13 @@ impl CallerRegistry {
             .values()
             .filter(|peer| visible_to(caller, peer))
             .map(|peer| WorkerPeer {
-                id: peer.worker_id.clone(),
+                name: peer.worker_name.clone(),
                 backend: peer.backend.clone(),
                 status: peer.activity,
             })
             .collect::<Vec<_>>();
-        workers.sort_by(|left, right| left.id.cmp(&right.id));
-        Ok((caller.worker_id.clone(), workers))
+        workers.sort_by(|left, right| left.name.cmp(&right.name));
+        Ok((caller.worker_name.clone(), workers))
     }
 
     pub(crate) fn session_parent(&self, backend: &str, session: &str) -> Option<String> {
@@ -198,7 +235,12 @@ impl CallerRegistry {
             .clone()
     }
 
-    pub(crate) fn send(&self, token: &str, to: &str, message: String) -> Result<String, String> {
+    pub(crate) fn send(
+        &self,
+        token: &str,
+        to: &str,
+        message: String,
+    ) -> Result<Option<String>, String> {
         if message.trim().is_empty() {
             return Err("worker message must not be empty".into());
         }
@@ -209,36 +251,39 @@ impl CallerRegistry {
         let caller = callers
             .get(token)
             .ok_or_else(|| "unknown Farcaster caller".to_owned())?;
-        if caller.worker_id == to {
-            return Err("cannot send a worker message to yourself".into());
-        }
-        let recipient = callers
-            .values()
-            .find(|peer| {
-                peer.worker_id == to && peer.project == caller.project && peer.session.is_some()
-            })
-            .ok_or_else(|| format!("unknown worker in this project: {to}"))?;
-        allow_send(caller, recipient)?;
-        let worker_id = recipient.worker_id.clone();
+        let recipient = match caller.parent_worker_id.as_deref() {
+            Some(parent_id) => callers.values().find(|candidate| {
+                candidate.worker_id == parent_id
+                    && candidate.project == caller.project
+                    && candidate.session.is_some()
+            }),
+            None => callers.values().find(|candidate| {
+                candidate.parent_worker_id.as_deref() == Some(caller.worker_id.as_str())
+                    && candidate.project == caller.project
+                    && candidate.worker_name.eq_ignore_ascii_case(to)
+            }),
+        };
+        let Some(recipient) = recipient else {
+            if caller.parent_worker_id.is_some() {
+                return Err("parent worker is unavailable".into());
+            }
+            return Ok(None);
+        };
+        let recipient_name = recipient.worker_name.clone();
         recipient
             .inbox
             .send(PeerMessage {
-                from: caller.worker_id.clone(),
+                from: caller.worker_name.clone(),
                 message,
             })
-            .map_err(|_| format!("worker {worker_id} is unavailable"))?;
+            .map_err(|_| format!("worker {recipient_name} is unavailable"))?;
         if let Some(wake) = &recipient.wake {
             wake.unpark();
         }
-        Ok(worker_id)
+        Ok(Some(recipient_name))
     }
 
-    pub(crate) fn send_from_worker(
-        &self,
-        from: &str,
-        to: &str,
-        message: String,
-    ) -> Result<String, String> {
+    pub(crate) fn report_from_worker(&self, from: &str, message: String) -> Result<String, String> {
         let token = self
             .callers
             .lock()
@@ -247,7 +292,8 @@ impl CallerRegistry {
             .find(|(_, caller)| caller.worker_id == from && caller.session.is_some())
             .map(|(token, _)| token.clone())
             .ok_or_else(|| format!("unknown Farcaster worker: {from}"))?;
-        self.send(&token, to, message)
+        self.send(&token, "", message)?
+            .ok_or_else(|| "parent worker is unavailable".to_owned())
     }
 }
 
@@ -304,28 +350,12 @@ impl Drop for CallerIdentity {
 }
 
 fn visible_to(caller: &RegisteredCaller, peer: &RegisteredCaller) -> bool {
-    if peer.worker_id == caller.worker_id
-        || peer.project != caller.project
-        || peer.session.is_none()
-    {
+    if peer.worker_id == caller.worker_id || peer.project != caller.project {
         return false;
     }
     match caller.parent_worker_id.as_deref() {
         Some(parent) => peer.worker_id == parent,
-        None => peer.parent_worker_id.is_none(),
-    }
-}
-
-fn allow_send(caller: &RegisteredCaller, recipient: &RegisteredCaller) -> Result<(), String> {
-    match (
-        caller.parent_worker_id.as_deref(),
-        recipient.parent_worker_id.as_deref(),
-    ) {
-        (Some(parent), _) if parent == recipient.worker_id => Ok(()),
-        (Some(_), _) => Err("child workers can only message their parent".into()),
-        (_, Some(parent)) if parent == caller.worker_id => Ok(()),
-        (_, Some(_)) => Err("only the parent can message a child worker".into()),
-        (None, None) => Ok(()),
+        None => peer.parent_worker_id.as_deref() == Some(caller.worker_id.as_str()),
     }
 }
 
@@ -365,11 +395,45 @@ mod tests {
         )
     }
 
-    fn worker_id(registry: &CallerRegistry, identity: &CallerIdentity) -> String {
+    fn context(registry: &CallerRegistry, identity: &CallerIdentity) -> CallerContext {
         registry
             .resolve(identity.token())
             .expect("registered caller")
-            .worker_id
+    }
+
+    fn child(
+        registry: &CallerRegistry,
+        parent: &CallerContext,
+        name: &str,
+    ) -> Result<CallerIdentity, String> {
+        registry.issue_as(
+            &parent.project,
+            CallerProfile {
+                backend: parent.backend.clone(),
+                provider: None,
+                model: None,
+                effort: None,
+            },
+            None,
+            new_worker_id(),
+            name.into(),
+            Some(parent.worker_id.clone()),
+        )
+    }
+
+    #[test]
+    fn top_level_workers_receive_distinct_human_names() {
+        let registry = CallerRegistry::default();
+        let first = identity(&registry, Path::new("/project"), "pi");
+        let second = identity(&registry, Path::new("/project"), "pi");
+        first.bind("session-1");
+        second.bind("session-2");
+
+        let first = context(&registry, &first);
+        let second = context(&registry, &second);
+        assert_ne!(first.worker_name, second.worker_name);
+        assert!(crate::agents::valid_worker_name(&first.worker_name));
+        assert!(!first.worker_name.starts_with("worker-"));
     }
 
     #[test]
@@ -380,156 +444,98 @@ mod tests {
         identity.select_model("anthropic", "sonnet");
         identity.select_effort("high");
 
-        assert_eq!(
-            registry.resolve(identity.token()),
-            Ok(CallerContext {
-                worker_id: worker_id(&registry, &identity),
-                project: PathBuf::from("/project/two"),
-                session: "session-2".into(),
-                backend: "pi".into(),
-                provider: Some("anthropic".into()),
-                model: Some("sonnet".into()),
-                effort: Some("high".into()),
-                parent_worker_id: None,
-            })
-        );
+        let resolved = registry.resolve(identity.token()).expect("context");
+        assert_eq!(resolved.project, PathBuf::from("/project/two"));
+        assert_eq!(resolved.session, "session-2");
+        assert_eq!(resolved.backend, "pi");
+        assert_eq!(resolved.provider.as_deref(), Some("anthropic"));
+        assert_eq!(resolved.model.as_deref(), Some("sonnet"));
+        assert_eq!(resolved.effort.as_deref(), Some("high"));
+        assert_eq!(resolved.parent_worker_id, None);
     }
 
     #[test]
-    fn peers_can_list_and_message_each_other_within_a_project() -> Result<(), String> {
+    fn top_level_workers_only_list_and_message_their_named_children() -> Result<(), String> {
         let registry = CallerRegistry::default();
-        let first = identity(&registry, Path::new("/project"), "pi");
-        let second = identity(&registry, Path::new("/project"), "codex-cli");
-        let outsider = identity(&registry, Path::new("/other"), "pi");
-        first.bind("session-1");
-        second.bind("session-2");
-        second.set_activity(WorkerActivityState::Working);
-        outsider.bind("session-3");
+        let parent = identity(&registry, Path::new("/project"), "pi");
+        let unrelated = identity(&registry, Path::new("/project"), "codex-cli");
+        parent.bind("parent-session");
+        unrelated.bind("unrelated-session");
+        let parent_context = context(&registry, &parent);
+        let child = child(&registry, &parent_context, "diff-review")?;
+        child.bind("child-session");
+        child.set_activity(WorkerActivityState::Working);
 
-        let first_id = worker_id(&registry, &first);
-        let second_id = worker_id(&registry, &second);
-        let outsider_id = worker_id(&registry, &outsider);
-        let (self_id, peers) = registry.list(first.token())?;
-        assert_eq!(self_id, first_id);
-        assert_eq!(peers.len(), 1);
-        assert!(!peers.iter().any(|peer| peer.id == self_id));
+        let (self_name, listed) = registry.list(parent.token())?;
+        assert_eq!(self_name, parent_context.worker_name);
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].name, "diff-review");
+        assert_eq!(listed[0].status, WorkerActivityState::Working);
         assert_eq!(
-            peers
-                .iter()
-                .find(|peer| peer.id == second_id)
-                .map(|peer| peer.status),
-            Some(WorkerActivityState::Working)
+            registry.send(parent.token(), "missing", "work".into())?,
+            None
         );
-        assert!(!peers.iter().any(|peer| peer.id == outsider_id));
-
-        registry.send(first.token(), &second_id, "check this".into())?;
         assert_eq!(
-            second.try_recv(),
+            registry.send(parent.token(), "DIFF-review", "check this".into())?,
+            Some("diff-review".into())
+        );
+        assert_eq!(
+            child.try_recv(),
             Some(PeerMessage {
-                from: first_id,
+                from: parent_context.worker_name,
                 message: "check this".into(),
             })
         );
-        assert!(
-            registry
-                .send(first.token(), &outsider_id, "no".into())
-                .is_err()
-        );
-
-        let starting = registry.issue_as(
-            Path::new("/project"),
-            CallerProfile {
-                backend: "pi".into(),
-                provider: None,
-                model: None,
-                effort: None,
-            },
-            None,
-            "starting-worker".into(),
-            None,
-        );
-        assert!(
-            registry
-                .send(first.token(), "starting-worker", "no".into())
-                .is_err()
-        );
-        drop(starting);
+        assert!(unrelated.try_recv().is_none());
         Ok(())
     }
 
     #[test]
-    fn canonical_project_paths_share_one_peer_scope() -> Result<(), Box<dyn std::error::Error>> {
-        let root = tempfile::tempdir()?;
-        let project = root.path().join("project");
-        std::fs::create_dir(&project)?;
-        let aliased = project.join("..").join("project");
-        let registry = CallerRegistry::default();
-        let first = identity(&registry, &project, "pi");
-        let second = identity(&registry, &aliased, "pi");
-        first.bind("session-1");
-        second.bind("session-2");
-
-        assert_eq!(registry.list(first.token())?.1.len(), 1);
-        Ok(())
-    }
-
-    #[test]
-    fn children_only_list_and_message_their_parent() -> Result<(), String> {
+    fn children_only_see_and_report_to_their_parent() -> Result<(), String> {
         let registry = CallerRegistry::default();
         let parent = identity(&registry, Path::new("/project"), "pi");
-        let peer = identity(&registry, Path::new("/project"), "codex-cli");
         parent.bind("parent-session");
-        peer.bind("peer-session");
-        let parent_id = worker_id(&registry, &parent);
-        let peer_id = worker_id(&registry, &peer);
-
-        let child = registry.issue_as(
-            Path::new("/project"),
-            CallerProfile {
-                backend: "pi".into(),
-                provider: None,
-                model: None,
-                effort: None,
-            },
-            None,
-            "child-1".into(),
-            Some(parent_id.clone()),
-        );
+        let parent_context = context(&registry, &parent);
+        let child = child(&registry, &parent_context, "review")?;
         child.bind("child-session");
 
-        let (self_id, listed) = registry.list(child.token())?;
-        assert_eq!(self_id, "child-1");
+        let (self_name, listed) = registry.list(child.token())?;
+        assert_eq!(self_name, "review");
         assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].id, parent_id);
+        assert_eq!(listed[0].name, parent_context.worker_name);
 
-        let (_, parent_list) = registry.list(parent.token())?;
-        assert!(parent_list.iter().any(|peer| peer.id == peer_id));
-        assert!(!parent_list.iter().any(|peer| peer.id == "child-1"));
-
-        registry.send(child.token(), &parent_id, "review done".into())?;
+        assert_eq!(
+            registry.send(child.token(), "ignored", "review done".into())?,
+            Some(parent_context.worker_name.clone())
+        );
         assert_eq!(
             parent.try_recv(),
             Some(PeerMessage {
-                from: "child-1".into(),
+                from: "review".into(),
                 message: "review done".into(),
             })
         );
-        assert!(registry.send(child.token(), &peer_id, "no".into()).is_err());
-        assert!(registry.send(peer.token(), "child-1", "no".into()).is_err());
-
         assert_eq!(
             registry.session_parent("pi", "child-session").as_deref(),
             Some("parent-session")
         );
+        Ok(())
+    }
 
-        registry.send(parent.token(), "child-1", "look at this".into())?;
-        assert_eq!(
-            child.try_recv(),
-            Some(PeerMessage {
-                from: parent_id,
-                message: "look at this".into(),
-            })
-        );
+    #[test]
+    fn child_names_are_valid_and_unique_within_the_parent() -> Result<(), String> {
+        let registry = CallerRegistry::default();
+        let first_parent = identity(&registry, Path::new("/project"), "pi");
+        let second_parent = identity(&registry, Path::new("/project"), "pi");
+        first_parent.bind("first-parent");
+        second_parent.bind("second-parent");
+        let first = context(&registry, &first_parent);
+        let second = context(&registry, &second_parent);
+
+        let _first_child = child(&registry, &first, "review")?;
+        assert!(child(&registry, &first, "REVIEW").is_err());
+        assert!(child(&registry, &first, "bad name").is_err());
+        assert!(child(&registry, &second, "review").is_ok());
         Ok(())
     }
 }

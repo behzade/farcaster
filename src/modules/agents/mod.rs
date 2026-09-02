@@ -12,9 +12,10 @@ pub(crate) use adapter::{
 pub(crate) use contract::extensions;
 pub(crate) use contract::{
     AgentLaunchConfig, ConfigurationCatalog, DiscoveredHistory, DiscoveredSession, DiscoveredUsage,
-    HarnessAccessMode, PromptPresentation, QueuedPrompt, SessionActivityKind, SessionCommand,
-    SessionEvent, SessionLaunch, SessionOperation, SessionResponse, SessionStart, SessionTransport,
-    StartWorker, WorkerContext, WorkerInput, WorkerInputResponse,
+    HarnessAccessMode, PeerMessage, PromptPresentation, QueuedPrompt, SessionActivityKind,
+    SessionCommand, SessionEvent, SessionLaunch, SessionOperation, SessionResponse, SessionStart,
+    SessionTransport, StartWorker, WorkerContext, WorkerInput, WorkerInputResponse,
+    valid_worker_name,
 };
 pub(crate) use core::{
     CallerContext, CallerRegistry, CommonTool, PromptStore, TokenUsage, ToolReviewState,

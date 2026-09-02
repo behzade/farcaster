@@ -3,16 +3,12 @@ use serde::Deserialize;
 
 use crate::agents::{CallerContext, CallerRegistry, StartWorker, WorkerContext, WorkerPool};
 
-pub(super) const NEW_WORKER: &str = "new";
-pub(super) const CHILD_WORKER: &str = "child";
-pub(super) const PARENT_WORKER: &str = "parent";
-
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct SendParams {
-    /// Existing worker id, `new` for a top-level peer, `child` for a nested worker, or `parent` to message the parent.
+    /// Direct child name. A top-level worker creates the child on first use; a child always sends to its parent and ignores this field.
     pub(super) to: String,
-    /// Message or independent task for the worker.
+    /// Message or delegated task for the worker.
     pub(super) message: String,
 }
 
@@ -28,37 +24,36 @@ pub(super) fn send(
         .as_deref()
         .ok_or_else(|| "worker send requires a registered Farcaster caller".to_owned())?;
     let registry = CallerRegistry::shared();
-    let child = match params.to.as_str() {
-        NEW_WORKER => Some(false),
-        CHILD_WORKER => Some(true),
-        _ => None,
-    };
-    if let Some(child) = child {
-        let caller = registry.resolve(token)?;
-        if caller.parent_worker_id.is_some() {
-            return Err("child workers cannot create workers".to_owned());
-        }
-        pool.allow_project(&caller.project)?;
-        let worker = pool.start(new_worker(caller, params.message, child))?;
+    let caller = registry.resolve(token)?;
+
+    if caller.parent_worker_id.is_some() {
+        let worker = registry
+            .send(token, &params.to, params.message)?
+            .ok_or_else(|| "parent worker is unavailable".to_owned())?;
         return Ok(serde_json::json!({
-            "workerId": worker.id,
-            "created": true,
+            "worker": worker,
+            "created": false,
             "queued": true,
-            "child": child,
         }));
     }
-    let to = if params.to == PARENT_WORKER {
-        registry
-            .resolve(token)?
-            .parent_worker_id
-            .ok_or_else(|| "only child workers can message their parent".to_owned())?
-    } else {
-        params.to
-    };
-    let worker_id = registry.send(token, &to, params.message)?;
+
+    if !crate::agents::valid_worker_name(&params.to) {
+        return Err("child name must be 1-48 ASCII letters, numbers, '-' or '_' and cannot start with punctuation".into());
+    }
+    if let Some(worker) = registry.send(token, &params.to, params.message.clone())? {
+        return Ok(serde_json::json!({
+            "worker": worker,
+            "created": false,
+            "queued": true,
+        }));
+    }
+
+    pool.allow_project(&caller.project)?;
+    let name = params.to;
+    pool.start(new_worker(caller, name.clone(), params.message))?;
     Ok(serde_json::json!({
-        "workerId": worker_id,
-        "created": false,
+        "worker": name,
+        "created": true,
         "queued": true,
     }))
 }
@@ -67,28 +62,24 @@ pub(super) fn list(caller_token: Option<String>) -> Result<serde_json::Value, St
     let token = caller_token
         .as_deref()
         .ok_or_else(|| "worker list requires a registered Farcaster caller".to_owned())?;
-    let (self_id, workers) = CallerRegistry::shared().list(token)?;
+    let (self_name, workers) = CallerRegistry::shared().list(token)?;
     Ok(serde_json::json!({
-        "self": self_id,
+        "self": self_name,
         "workers": workers,
     }))
 }
 
-fn new_worker(caller: CallerContext, message: String, child: bool) -> StartWorker {
-    let (label, parent_worker_id) = if child {
-        ("parent", Some(caller.worker_id.clone()))
-    } else {
-        ("peer", None)
-    };
+fn new_worker(caller: CallerContext, name: String, message: String) -> StartWorker {
     StartWorker {
         project: caller.project,
+        name: name.clone(),
         prompt: format!(
-            "Task delegated by Farcaster {label} {}:\n\n{}",
-            caller.worker_id, message
+            "Task delegated by Farcaster parent {} to child {name}:\n\n{message}",
+            caller.worker_name
         ),
         backend: caller.backend,
         parent_session: caller.session,
-        parent_worker_id,
+        parent_worker_id: Some(caller.worker_id),
         context: WorkerContext::Fresh,
         provider: caller.provider,
         model: caller.model,
@@ -103,6 +94,7 @@ mod tests {
     fn caller() -> CallerContext {
         CallerContext {
             worker_id: "worker-1".into(),
+            worker_name: "OrangeCoyote".into(),
             project: "/caller/project".into(),
             session: "caller-session".into(),
             backend: "codex-cli".into(),
@@ -114,27 +106,20 @@ mod tests {
     }
 
     #[test]
-    fn new_worker_is_fresh_but_inherits_the_callers_execution_profile() {
-        let request = new_worker(caller(), "check the migration".into(), false);
+    fn named_child_is_fresh_and_inherits_the_parent_execution_profile() {
+        let request = new_worker(caller(), "diff-review".into(), "review the diff".into());
 
         assert_eq!(request.project, std::path::PathBuf::from("/caller/project"));
+        assert_eq!(request.name, "diff-review");
         assert_eq!(request.backend, "codex-cli");
-        assert_eq!(request.context, WorkerContext::Fresh);
-        assert_eq!(request.parent_worker_id, None);
-        assert_eq!(request.provider.as_deref(), Some("openai"));
-        assert_eq!(request.model.as_deref(), Some("gpt-5"));
-        assert_eq!(request.effort.as_deref(), Some("high"));
-        assert!(request.prompt.contains("peer"));
-        assert!(request.prompt.contains("worker-1"));
-        assert!(request.prompt.contains("check the migration"));
-    }
-
-    #[test]
-    fn child_worker_nests_under_the_caller_without_forking() {
-        let request = new_worker(caller(), "review the diff".into(), true);
         assert_eq!(request.context, WorkerContext::Fresh);
         assert_eq!(request.parent_session, "caller-session");
         assert_eq!(request.parent_worker_id.as_deref(), Some("worker-1"));
-        assert!(request.prompt.contains("parent"));
+        assert_eq!(request.provider.as_deref(), Some("openai"));
+        assert_eq!(request.model.as_deref(), Some("gpt-5"));
+        assert_eq!(request.effort.as_deref(), Some("high"));
+        assert!(request.prompt.contains("OrangeCoyote"));
+        assert!(request.prompt.contains("diff-review"));
+        assert!(request.prompt.contains("review the diff"));
     }
 }

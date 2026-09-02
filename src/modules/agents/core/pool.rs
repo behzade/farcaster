@@ -143,6 +143,7 @@ impl WorkerPool {
         let prepared = (|| {
             let mut session = factory.create(WorkerLaunch {
                 worker_id: id.clone(),
+                worker_name: request.name,
                 project: project.clone(),
                 parent_session: request.parent_session,
                 parent_worker_id: request.parent_worker_id,
@@ -240,6 +241,9 @@ fn snapshot(record: &WorkerRecord) -> Result<WorkerSnapshot, String> {
 }
 
 fn validate_start(request: &StartWorker) -> Result<(), String> {
+    if !crate::agents::valid_worker_name(&request.name) {
+        return Err("worker name must be 1-48 ASCII letters, numbers, '-' or '_' and cannot start with punctuation".into());
+    }
     if request.prompt.trim().is_empty() {
         return Err("worker prompt must not be empty".into());
     }

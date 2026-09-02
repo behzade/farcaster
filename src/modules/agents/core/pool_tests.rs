@@ -4,8 +4,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use super::caller::PeerMessage;
 use super::*;
+use crate::agents::PeerMessage;
 use crate::agents::{
     WorkerEvent, WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory,
 };
@@ -86,6 +86,7 @@ fn pool(
 fn request(project: &std::path::Path) -> StartWorker {
     StartWorker {
         project: project.to_owned(),
+        name: "implementation".into(),
         prompt: "work".into(),
         backend: "pi".into(),
         parent_session: "backend://parent".into(),
@@ -166,8 +167,9 @@ fn child_result_notifies_the_ui_and_parent() -> Result<(), String> {
         },
         None,
         child.id.clone(),
+        "implementation".into(),
         Some(parent_id),
-    );
+    )?;
     child_identity.bind("pi-child");
     wait_for_update(&updates)?;
     factory
@@ -181,7 +183,7 @@ fn child_result_notifies_the_ui_and_parent() -> Result<(), String> {
 
     wait_for_update(&updates)?;
     let message = wait_for_message(&parent)?;
-    assert_eq!(message.from, child.id);
+    assert_eq!(message.from, "implementation");
     assert_eq!(message.message, "done");
     Ok(())
 }

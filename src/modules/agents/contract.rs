@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 pub(crate) mod extensions;
 mod workers;
 
-pub(crate) use workers::{StartWorker, WorkerSnapshot, WorkerStatus};
+pub(crate) use workers::{
+    PeerMessage, StartWorker, WorkerSnapshot, WorkerStatus, valid_worker_name,
+};
 
 use extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptImage, PromptMode};
 
@@ -89,6 +91,7 @@ pub(crate) enum SessionActivityKind {
     MessageStarted,
     MessageUpdated,
     MessageEnded,
+    PeerMessage,
     ToolStarted,
     ToolUpdated,
     ToolFinished,
@@ -110,6 +113,7 @@ impl SessionActivityKind {
             "message_start" => Self::MessageStarted,
             "message_update" => Self::MessageUpdated,
             "message_end" => Self::MessageEnded,
+            "peer_message" => Self::PeerMessage,
             "tool_execution_start" => Self::ToolStarted,
             "tool_execution_update" => Self::ToolUpdated,
             "tool_execution_end" => Self::ToolFinished,
