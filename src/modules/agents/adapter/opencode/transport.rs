@@ -54,6 +54,10 @@ impl OpenCodeTcpTransport {
         if !(200..300).contains(&status) {
             return Err(format!("OpenCode event stream returned HTTP {status}"));
         }
+        reader
+            .get_mut()
+            .set_read_timeout(None)
+            .map_err(|error| format!("configure OpenCode event stream: {error}"))?;
         if is_chunked(&headers) {
             Ok(Box::new(BufReader::new(ChunkedReader::new(reader))))
         } else {

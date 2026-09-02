@@ -105,16 +105,6 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
         decode_empty(response)
     }
 
-    pub(crate) fn config(&mut self, directory: &str) -> Result<Value, String> {
-        let directory =
-            url::form_urlencoded::byte_serialize(directory.as_bytes()).collect::<String>();
-        self.json_prefix(
-            OpenCodeHttpMethod::Get,
-            format!("/api/config?directory={directory}"),
-            None,
-        )
-    }
-
     pub(crate) fn models(&mut self, directory: &str) -> Result<Value, String> {
         let directory =
             url::form_urlencoded::byte_serialize(directory.as_bytes()).collect::<String>();
@@ -281,23 +271,6 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
         let response = self.execute(method, path, body)?;
         ensure_success(&response)?;
         decode_data(response).map_err(|error| format!("{operation}: {error}"))
-    }
-
-    fn json_prefix<R: DeserializeOwned>(
-        &mut self,
-        method: OpenCodeHttpMethod,
-        path: String,
-        body: Option<Value>,
-    ) -> Result<R, String> {
-        let operation = format!("{method:?} {path}");
-        let response = self.execute(method, path, body)?;
-        ensure_success(&response)?;
-        serde_json::Deserializer::from_slice(&response.body)
-            .into_iter::<DataEnvelope<R>>()
-            .next()
-            .ok_or_else(|| format!("{operation}: OpenCode response was empty"))?
-            .map(|response| response.data)
-            .map_err(|error| format!("{operation}: decode OpenCode response: {error}"))
     }
 
     fn execute(
