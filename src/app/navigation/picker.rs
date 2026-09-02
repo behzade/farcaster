@@ -69,6 +69,7 @@ enum PickerCommand {
     OpenSessions,
     AddProject(Option<ProjectPickerIntent>),
     OpenWorkGraph,
+    OpenSettings,
     NewSession(PathBuf),
     ChangeDraftProject(PathBuf),
     MoveSession { path: PathBuf, project: PathBuf },
@@ -255,6 +256,10 @@ impl FarcasterApp {
                 self.close_picker(window, cx);
                 self.open_workgraph_surface(window, cx);
             }
+            PickerCommand::OpenSettings => {
+                self.close_picker(window, cx);
+                self.open_settings(window, cx);
+            }
             PickerCommand::NewSession(project) => {
                 self.close_picker(window, cx);
                 self.new_session(project, window, cx);
@@ -322,6 +327,16 @@ impl FarcasterApp {
                     None,
                     None,
                     "issues tasks",
+                ),
+                picker_row(
+                    &mut commands,
+                    "action:settings",
+                    PickerCommand::OpenSettings,
+                    AppIcon::Key,
+                    "Settings",
+                    None,
+                    None,
+                    "configuration preferences keybindings modifier",
                 ),
             ],
             PickerScope::Projects(intent) => {

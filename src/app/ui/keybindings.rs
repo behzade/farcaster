@@ -1,4 +1,4 @@
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::app::ui::keyboard::CopySelection;
 use crate::app::{APP_SHORTCUT_CONTEXT, TRANSCRIPT_SELECTION_KEY_CONTEXT};
@@ -37,6 +37,24 @@ impl ApplicationModifier {
     fn key(self, suffix: &str) -> String {
         format!("{}-{suffix}", self.prefix())
     }
+
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Command => "Cmd",
+            Self::Super => "Super",
+            Self::Control => "Ctrl",
+            Self::Alt if cfg!(target_os = "macos") => "Option",
+            Self::Alt => "Alt",
+        }
+    }
+
+    pub(crate) const fn platform_choices() -> [Self; 3] {
+        if cfg!(target_os = "macos") {
+            [Self::Command, Self::Control, Self::Alt]
+        } else {
+            [Self::Super, Self::Control, Self::Alt]
+        }
+    }
 }
 
 fn parse_application_modifier(value: Option<&str>) -> ApplicationModifier {
@@ -50,21 +68,43 @@ fn parse_application_modifier(value: Option<&str>) -> ApplicationModifier {
     }
 }
 
-/// Returns the process-wide application modifier. Override the platform default
-/// with `FARCASTER_APP_MODIFIER=cmd|super|ctrl|alt` before launch.
+const DEFAULT_APPLICATION_MODIFIER: ApplicationModifier = if cfg!(target_os = "macos") {
+    ApplicationModifier::Command
+} else {
+    ApplicationModifier::Super
+};
+
+static APPLICATION_MODIFIER: AtomicU8 = AtomicU8::new(DEFAULT_APPLICATION_MODIFIER as u8);
+
+/// Sets the initial modifier before application key bindings are registered.
+/// A saved choice takes priority over the legacy environment override.
+pub(crate) fn initialize_application_modifier(saved: Option<&str>) {
+    let environment = std::env::var("FARCASTER_APP_MODIFIER")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    let configured = saved.or(environment.as_deref());
+    APPLICATION_MODIFIER.store(
+        parse_application_modifier(configured) as u8,
+        Ordering::Relaxed,
+    );
+}
+
+/// Returns the process-wide application modifier.
 pub(crate) fn application_modifier() -> ApplicationModifier {
-    static MODIFIER: OnceLock<ApplicationModifier> = OnceLock::new();
-    *MODIFIER.get_or_init(|| {
-        parse_application_modifier(std::env::var("FARCASTER_APP_MODIFIER").ok().as_deref())
-    })
+    match APPLICATION_MODIFIER.load(Ordering::Relaxed) {
+        value if value == ApplicationModifier::Command as u8 => ApplicationModifier::Command,
+        value if value == ApplicationModifier::Control as u8 => ApplicationModifier::Control,
+        value if value == ApplicationModifier::Alt as u8 => ApplicationModifier::Alt,
+        _ => ApplicationModifier::Super,
+    }
 }
 
 pub(crate) fn application_key(suffix: &str) -> String {
     application_modifier().key(suffix)
 }
 
-fn application_context() -> Option<&'static str> {
-    match application_modifier() {
+fn application_context(modifier: ApplicationModifier) -> Option<&'static str> {
+    match modifier {
         ApplicationModifier::Command | ApplicationModifier::Super => None,
         ApplicationModifier::Control | ApplicationModifier::Alt => Some(APP_SHORTCUT_CONTEXT),
     }
@@ -108,15 +148,22 @@ macro_rules! shortcut {
     }};
 }
 
-macro_rules! application_shortcut {
-    ($section:literal, $label:literal, $key:literal, $action:expr) => {
-        shortcut!(
-            $section,
-            $label,
-            application_key($key),
-            $action,
-            application_context()
-        )
+macro_rules! shortcut_with_modifier {
+    ($modifier:expr, $section:literal, $label:literal, $key:literal, $action:expr) => {
+        shortcut_with_modifier!($modifier, $section, $label, $key, $action, true)
+    };
+    ($modifier:expr, $section:literal, $label:literal, $key:literal, $action:expr, $show:expr) => {
+        Shortcut {
+            section: $section,
+            label: $label,
+            keystroke: $modifier.key($key),
+            show_in_help: $show,
+            binding: KeyBinding::new(
+                &$modifier.key($key),
+                $action,
+                application_context($modifier),
+            ),
+        }
     };
 }
 
@@ -132,7 +179,42 @@ pub(crate) fn bindings() -> Vec<KeyBinding> {
     bindings
 }
 
+pub(crate) fn set_application_modifier(modifier: ApplicationModifier, cx: &mut gpui::App) {
+    let previous = application_modifier();
+    if previous == modifier {
+        return;
+    }
+
+    let changed = registry_for_modifier(previous)
+        .into_iter()
+        .zip(registry_for_modifier(modifier))
+        .filter(|(old, new)| old.keystroke != new.keystroke);
+    let mut bindings = Vec::new();
+    for (old, new) in changed {
+        bindings.push(KeyBinding::new(
+            &old.keystroke,
+            Unbind(old.binding.action().name().into()),
+            application_context(previous),
+        ));
+        bindings.push(new.binding);
+    }
+    APPLICATION_MODIFIER.store(modifier as u8, Ordering::Relaxed);
+    cx.bind_keys(bindings);
+}
+
 pub(crate) fn registry() -> Vec<Shortcut> {
+    registry_for_modifier(application_modifier())
+}
+
+fn registry_for_modifier(modifier: ApplicationModifier) -> Vec<Shortcut> {
+    macro_rules! application_shortcut {
+        ($section:literal, $label:literal, $key:literal, $action:expr) => {
+            shortcut_with_modifier!(modifier, $section, $label, $key, $action)
+        };
+        ($section:literal, $label:literal, $key:literal, $action:expr, $show:expr) => {
+            shortcut_with_modifier!(modifier, $section, $label, $key, $action, $show)
+        };
+    }
     vec![
         application_shortcut!(
             "Sessions",
@@ -317,12 +399,11 @@ pub(crate) fn registry() -> Vec<Shortcut> {
             false
         ),
         application_shortcut!("Application", "Keyboard shortcuts", "/", ShowKeybindings),
-        shortcut!(
+        application_shortcut!(
             "Application",
             "Keyboard shortcuts",
-            application_key("?"),
+            "?",
             ShowKeybindings,
-            application_context(),
             false
         ),
         shortcut!(

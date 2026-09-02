@@ -22,6 +22,7 @@ const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 const ACTIVE_IMPORT_WINDOW: Duration = Duration::from_secs(3 * 60 * 60);
 const REPOSITORY_BACKEND_PREFERENCES_KEY: &str = "repository_backend_preferences";
 const NETWORK_PROXY_KEY: &str = "network_proxy";
+const APPLICATION_MODIFIER_KEY: &str = "application_modifier";
 const CONFIGURATION_CATALOGS_KEY: &str = "configuration_catalogs";
 const SESSION_CONTROL_DEFAULTS_KEY: &str = "session_control_defaults";
 const LEGACY_PI_GPUI_IMPORT_KEY: &str = "legacy_pi_gpui_state_imported";
@@ -539,6 +540,52 @@ impl StateStore {
                 .map(|_| ())
                 .map_err(|error| format!("clear network proxy: {error}"))
         }
+    }
+
+    pub(crate) fn load_application_modifier(&self) -> Result<Option<String>, String> {
+        self.connection
+            .query_row(
+                "SELECT value FROM meta WHERE key=?1",
+                [APPLICATION_MODIFIER_KEY],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| format!("load application modifier: {error}"))
+    }
+
+    pub(crate) fn save_application_settings(
+        &self,
+        modifier: &str,
+        proxy: Option<&str>,
+    ) -> Result<(), String> {
+        if let Some(proxy) = proxy {
+            crate::access::validate_app_proxy(proxy)?;
+        }
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .map_err(|error| format!("start application settings save: {error}"))?;
+        let save = |key, value, subject| {
+            transaction
+                .execute(
+                    "INSERT INTO meta(key, value) VALUES(?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    params![key, value],
+                )
+                .map(|_| ())
+                .map_err(|error| format!("save {subject}: {error}"))
+        };
+        save(APPLICATION_MODIFIER_KEY, modifier, "application modifier")?;
+        if let Some(proxy) = proxy {
+            save(NETWORK_PROXY_KEY, proxy, "network proxy")?;
+        } else {
+            transaction
+                .execute("DELETE FROM meta WHERE key=?1", [NETWORK_PROXY_KEY])
+                .map_err(|error| format!("clear network proxy: {error}"))?;
+        }
+        transaction
+            .commit()
+            .map_err(|error| format!("commit application settings: {error}"))
     }
 
     pub(crate) fn load_configuration_catalogs(
