@@ -123,6 +123,9 @@ pub(crate) enum WorkerActivity {
         content_index: usize,
         delta: String,
     },
+    ThinkingStarted {
+        content_index: usize,
+    },
     ThinkingDelta {
         content_index: usize,
         delta: String,
