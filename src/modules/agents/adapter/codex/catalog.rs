@@ -218,7 +218,7 @@ fn summary(
         return Ok(None);
     };
     let project = PathBuf::from(cwd);
-    if !project.is_dir() {
+    if !project.is_dir() || crate::projects::is_temporary_project(&project) {
         return Ok(None);
     }
     let title = string(thread, &["name", "title", "preview"])

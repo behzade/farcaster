@@ -112,7 +112,7 @@ fn summary(locator_root: &Path, value: &Value) -> Option<Result<DiscoveredSessio
         .pointer("/location/directory")
         .and_then(Value::as_str)?;
     let project = PathBuf::from(directory);
-    if !project.is_dir() {
+    if !project.is_dir() || crate::projects::is_temporary_project(&project) {
         return None;
     }
     let title = value
