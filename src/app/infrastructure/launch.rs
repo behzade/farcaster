@@ -67,18 +67,24 @@ pub(crate) fn run(
     const FONT_FAILURE: u8 = 1;
     const WINDOW_FAILURE: u8 = 2;
 
+    let trust_timing =
+        crate::app::infrastructure::performance::StartupTiming::new("launch.project_trust");
     let startup_trust = projects::startup_trust(&project).map_err(LaunchError::ProjectTrust)?;
+    drop(trust_timing);
     let failure = Arc::new(AtomicU8::new(0));
     let failure_in_app = failure.clone();
     gpui_platform::application()
         .with_assets(AppAssets)
         .run(move |cx: &mut App| {
             gpui_component::init(cx);
+            let fonts_timing =
+                crate::app::infrastructure::performance::StartupTiming::new("launch.load_fonts");
             if AppAssets.load_fonts(cx).is_err() {
                 failure_in_app.store(FONT_FAILURE, Ordering::Release);
                 cx.quit();
                 return;
             }
+            drop(fonts_timing);
             install_component_theme(cx);
             let notification_app: Rc<RefCell<Option<WeakEntity<FarcasterApp>>>> =
                 Rc::new(RefCell::new(None));
@@ -120,6 +126,9 @@ pub(crate) fn run(
                 }
             })
             .detach();
+            let placement_timing = crate::app::infrastructure::performance::StartupTiming::new(
+                "launch.restore_window",
+            );
             let (window_bounds, display_id) = restored_window(cx).unwrap_or_else(|| {
                 (
                     WindowBounds::Windowed(Bounds::centered(
@@ -130,6 +139,7 @@ pub(crate) fn run(
                     None,
                 )
             });
+            drop(placement_timing);
             let mut window_options = WindowOptions {
                 window_bounds: Some(window_bounds),
                 display_id,
@@ -149,6 +159,8 @@ pub(crate) fn run(
                 .map(image::DynamicImage::into_rgba8)
                 .map(Arc::new);
             }
+            let open_window_timing =
+                crate::app::infrastructure::performance::StartupTiming::new("launch.open_window");
             let result = cx.open_window(window_options, move |window, cx| {
                 let launch = cx.new(|cx| {
                     ProjectTrustView::new(
@@ -163,6 +175,7 @@ pub(crate) fn run(
                 });
                 cx.new(|cx| gpui_component::Root::new(launch, window, cx))
             });
+            drop(open_window_timing);
             if result.is_err() {
                 failure_in_app.store(WINDOW_FAILURE, Ordering::Release);
                 cx.quit();

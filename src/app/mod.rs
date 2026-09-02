@@ -316,15 +316,22 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let _startup_timing =
+            crate::app::infrastructure::performance::StartupTiming::new("app.start");
+        let registry_timing =
+            crate::app::infrastructure::performance::StartupTiming::new("app.load_registry");
         let (mut registry, mut project_registry_error) = match project_registry::load() {
             Ok(registry) => (registry, None),
             Err(error) => (projects::Registry::default(), Some(error)),
         };
+        drop(registry_timing);
         projects::select(
             &mut registry.projects,
             &registry.excluded_projects,
             project.clone(),
         );
+        let session_order_timing =
+            crate::app::infrastructure::performance::StartupTiming::new("app.load_session_order");
         let session_order = match project_registry::load_app_session_order() {
             Ok(order) => order,
             Err(error) => {
@@ -334,6 +341,9 @@ impl FarcasterApp {
                 Vec::new()
             }
         };
+        drop(session_order_timing);
+        let draft_timing =
+            crate::app::infrastructure::performance::StartupTiming::new("app.create_draft");
         let initial_draft = match project_registry::new_draft(project.clone(), "pi") {
             Ok(draft) => draft,
             Err(error) => {
@@ -346,6 +356,7 @@ impl FarcasterApp {
                 )
             }
         };
+        drop(draft_timing);
         let selected_draft = initial_draft.id.clone();
         let mut draft_session_ids = registry
             .drafts
@@ -353,26 +364,39 @@ impl FarcasterApp {
             .map(|draft| (draft.id.clone(), draft.app_session_id))
             .collect::<HashMap<_, _>>();
         draft_session_ids.insert(initial_draft.id, initial_draft.app_session_id);
+        let save_registry_timing =
+            crate::app::infrastructure::performance::StartupTiming::new("app.save_registry");
         if project_registry_error.is_none()
             && let Err(error) = project_registry::save(&registry)
         {
             project_registry_error = Some(error);
         }
+        drop(save_registry_timing);
+        let composer_timing = crate::app::infrastructure::performance::StartupTiming::new(
+            "app.load_composer_sessions",
+        );
         let (composer_sessions, composer_error) =
             ComposerSessions::load(draft_target(&selected_draft));
+        drop(composer_timing);
         if project_registry_error.is_none() {
             project_registry_error = composer_error;
         }
         let submitted_drafts = drafts::submitted_draft_associations(&registry.drafts);
+        let proxy_timing =
+            crate::app::infrastructure::performance::StartupTiming::new("app.load_proxy");
         let saved_proxy = crate::app::infrastructure::persistence::StateStore::open()
             .and_then(|store| crate::access::load_proxy(&store))
             .unwrap_or(None);
+        drop(proxy_timing);
+        let runtime_timing =
+            crate::app::infrastructure::performance::StartupTiming::new("app.spawn_runtime");
         let runtime = RuntimeHandle::spawn(
             project.clone(),
             selected_draft.clone(),
             None,
             saved_proxy.clone(),
         );
+        drop(runtime_timing);
         let composer = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .auto_grow(3, 8)
@@ -599,6 +623,12 @@ impl FarcasterApp {
                 });
             });
         });
+        let repository_timing = crate::app::infrastructure::performance::StartupTiming::new(
+            "app.load_repository_state",
+        );
+        let repository =
+            repository::RepositoryState::load(project.clone(), repository_execution_allowed);
+        drop(repository_timing);
         let mut this = Self {
             project: project.clone(),
             runtime,
@@ -612,10 +642,7 @@ impl FarcasterApp {
             agent_activities: HashMap::new(),
             agent_row_focus: HashMap::new(),
             background_jobs: Vec::new(),
-            repository: repository::RepositoryState::load(
-                project.clone(),
-                repository_execution_allowed,
-            ),
+            repository,
             session_order,
             session_drop_target: None,
             run_statuses: HashMap::new(),

@@ -72,6 +72,8 @@ pub(crate) struct ComposerRecord {
 
 impl StateStore {
     pub(crate) fn open() -> Result<Self, String> {
+        let _startup_timing =
+            crate::app::infrastructure::performance::StartupTiming::new("db.open_total");
         let path = state_path()?;
         let mut store = Self::open_at(&path)?;
         if let Some(legacy) = legacy_pi_gpui_state_path()
@@ -84,6 +86,8 @@ impl StateStore {
     }
 
     pub(crate) fn open_at(path: &Path) -> Result<Self, String> {
+        let _startup_timing =
+            crate::app::infrastructure::performance::StartupTiming::new("db.open_at");
         let _timing = crate::app::infrastructure::performance::OperationTiming::new(
             crate::app::infrastructure::performance::OperationKind::StateDatabase,
             1,
@@ -98,10 +102,16 @@ impl StateStore {
         connection
             .busy_timeout(DATABASE_BUSY_TIMEOUT)
             .map_err(|error| format!("configure database lock wait: {error}"))?;
-        enable_wal(&connection)?;
+        {
+            let _timing =
+                crate::app::infrastructure::performance::StartupTiming::new("db.enable_wal");
+            enable_wal(&connection)?;
+        }
         connection
             .pragma_update(None, "foreign_keys", true)
             .map_err(|error| format!("enable foreign keys: {error}"))?;
+        let schema_timing =
+            crate::app::infrastructure::performance::StartupTiming::new("db.ensure_schema");
         connection
             .execute_batch(
                 "BEGIN IMMEDIATE;
@@ -165,6 +175,9 @@ impl StateStore {
                  COMMIT;",
             )
             .map_err(|error| format!("create GUI state schema: {error}"))?;
+        drop(schema_timing);
+        let migration_timing =
+            crate::app::infrastructure::performance::StartupTiming::new("db.migrate");
         let migration = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| format!("start GUI state schema migration: {error}"))?;
@@ -324,6 +337,7 @@ impl StateStore {
         migration
             .commit()
             .map_err(|error| format!("commit GUI state schema migration: {error}"))?;
+        drop(migration_timing);
         Ok(Self { connection })
     }
 
@@ -808,6 +822,8 @@ impl StateStore {
     }
 
     pub(crate) fn cached_sessions(&self, query: &str) -> Result<Vec<SessionSummary>, String> {
+        let _startup_timing =
+            crate::app::infrastructure::performance::StartupTiming::new("db.cached_sessions");
         let mut statement = self
             .connection
             .prepare(
