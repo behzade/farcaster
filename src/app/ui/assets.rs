@@ -4,7 +4,7 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 49] = [
+const ICON_PATHS: [&str; 50] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrows-clockwise.svg",
     "icons/phosphor/arrows-out.svg",
@@ -50,6 +50,7 @@ const ICON_PATHS: [&str; 49] = [
     "icons/phosphor/x.svg",
     "icons/phosphor/x-circle.svg",
     "icons/workbench/codex.svg",
+    "icons/workbench/cursor.svg",
     "icons/workbench/ghostty.svg",
     "icons/workbench/neovim.svg",
     "icons/workbench/opencode.svg",
@@ -223,6 +224,9 @@ impl AssetSource for AppAssets {
             "icons/workbench/codex.svg" => {
                 Some(include_bytes!("../../../assets/workbench-icons/codex.svg"))
             }
+            "icons/workbench/cursor.svg" => {
+                Some(include_bytes!("../../../assets/workbench-icons/cursor.svg"))
+            }
             "icons/workbench/ghostty.svg" => Some(include_bytes!(
                 "../../../assets/workbench-icons/ghostty.svg"
             )),
@@ -265,6 +269,7 @@ pub(crate) enum AppIcon {
     CheckCircle,
     Code,
     Codex,
+    Cursor,
     Eye,
     Folder,
     FolderPlus,
@@ -295,6 +300,7 @@ impl AppIcon {
         match harness {
             "pi" => Self::Pi,
             "codex-cli" => Self::Codex,
+            "cursor-cli" => Self::Cursor,
             "opencode2" => Self::OpenCode,
             _ => Self::Code,
         }
@@ -318,6 +324,7 @@ impl IconNamed for AppIcon {
             Self::CheckCircle => "check-circle",
             Self::Code => "code",
             Self::Codex => return "icons/workbench/codex.svg".into(),
+            Self::Cursor => return "icons/workbench/cursor.svg".into(),
             Self::Eye => "eye",
             Self::Folder => "folder",
             Self::FolderPlus => "folder-plus",
@@ -373,6 +380,7 @@ mod tests {
     fn harnesses_use_their_brand_icons() {
         assert_eq!(AppIcon::for_harness("pi"), AppIcon::Pi);
         assert_eq!(AppIcon::for_harness("codex-cli"), AppIcon::Codex);
+        assert_eq!(AppIcon::for_harness("cursor-cli"), AppIcon::Cursor);
         assert_eq!(AppIcon::for_harness("opencode2"), AppIcon::OpenCode);
         assert_eq!(AppIcon::for_harness("unknown"), AppIcon::Code);
     }
@@ -401,6 +409,7 @@ mod tests {
             AppIcon::CheckCircle,
             AppIcon::Code,
             AppIcon::Codex,
+            AppIcon::Cursor,
             AppIcon::Eye,
             AppIcon::Folder,
             AppIcon::FolderPlus,
