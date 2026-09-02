@@ -52,6 +52,7 @@ Both are distributed under MIT. Their exact upstream licenses are included at
 `THIRD_PARTY_LICENSES/PI-WEBSITE-MIT.txt` and
 `THIRD_PARTY_LICENSES/OPENCODE-MIT.txt`.
 
-The Codex application icon is adapted from Lobe Icons and distributed under
-MIT. Its upstream source is <https://github.com/lobehub/lobe-icons>, and the
-exact license is included at `THIRD_PARTY_LICENSES/LOBE-ICONS-MIT.txt`.
+The Codex and Cursor application icons are adapted from Lobe Icons and
+distributed under MIT. Their upstream source is
+<https://github.com/lobehub/lobe-icons>, and the exact license is included at
+`THIRD_PARTY_LICENSES/LOBE-ICONS-MIT.txt`.
