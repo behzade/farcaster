@@ -129,31 +129,38 @@ pub(crate) fn run(
                     None,
                 )
             });
-            let result = cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(window_bounds),
-                    display_id,
-                    titlebar: Some(TitlebarOptions {
-                        title: Some("Farcaster".into()),
-                        ..TitlebarOptions::default()
-                    }),
-                    app_id: Some("local.farcaster.desktop".into()),
-                    ..WindowOptions::default()
-                },
-                move |window, cx| {
-                    let launch = cx.new(|cx| {
-                        ProjectTrustView::new(
-                            project.clone(),
-                            startup_trust,
-                            notification_app.clone(),
-                            workgraph_updates.clone(),
-                            window,
-                            cx,
-                        )
-                    });
-                    cx.new(|cx| gpui_component::Root::new(launch, window, cx))
-                },
-            );
+            let mut window_options = WindowOptions {
+                window_bounds: Some(window_bounds),
+                display_id,
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Farcaster".into()),
+                    ..TitlebarOptions::default()
+                }),
+                app_id: Some("io.github.behzade.farcaster".into()),
+                ..WindowOptions::default()
+            };
+            #[cfg(target_os = "linux")]
+            {
+                window_options.icon = image::load_from_memory(include_bytes!(
+                    "../../../assets/icons/app/icon_256x256.png"
+                ))
+                .ok()
+                .map(image::DynamicImage::into_rgba8)
+                .map(Arc::new);
+            }
+            let result = cx.open_window(window_options, move |window, cx| {
+                let launch = cx.new(|cx| {
+                    ProjectTrustView::new(
+                        project.clone(),
+                        startup_trust,
+                        notification_app.clone(),
+                        workgraph_updates.clone(),
+                        window,
+                        cx,
+                    )
+                });
+                cx.new(|cx| gpui_component::Root::new(launch, window, cx))
+            });
             if result.is_err() {
                 failure_in_app.store(WINDOW_FAILURE, Ordering::Release);
                 cx.quit();

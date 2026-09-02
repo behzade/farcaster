@@ -82,6 +82,18 @@ open target/release/Farcaster.app
 Signing is ad hoc by default; set `CODESIGN_IDENTITY` to use a Developer ID
 identity.
 
+## Linux packages
+
+Install Cargo Packager, then build all supported Linux package formats:
+
+```sh
+cargo install cargo-packager --locked
+make package-linux
+```
+
+Use `make package FORMAT=deb` to build one format. The package and Linux window
+both use the bundled Farcaster icon and the `io.github.behzade.farcaster` app ID.
+
 Farcaster serves stateless Streamable HTTP MCP at
 `http://127.0.0.1:8765/mcp`. It exposes `worker_list`, `worker_send`, and the
 `workgraph_*` tools. `worker_list` returns other active top-level peer agents in

@@ -6,6 +6,23 @@ rust-version = "1.95"
 license = "GPL-3.0-or-later"
 description = "Native desktop client for coding agents"
 
+[package.metadata.packager]
+product-name = "Farcaster"
+identifier = "io.github.behzade.farcaster"
+category = "DeveloperTool"
+formats = ["appimage", "deb", "pacman"]
+icons = [
+    "assets/icons/app/Farcaster.icns",
+    "assets/icons/app/icon_16x16.png",
+    "assets/icons/app/icon_32x32.png",
+    "assets/icons/app/icon_128x128.png",
+    "assets/icons/app/icon_256x256.png",
+    "assets/icons/app/icon_512x512.png",
+    "assets/icons/app/icon_512x512@2x.png",
+]
+binaries = [{ path = "farcaster", main = true }]
+before-packaging-command = "cargo build --release --locked --bin farcaster"
+
 [dependencies]
 async-channel = "2.5.0"
 axum = "0.8.8"
@@ -33,6 +50,7 @@ workgraph = { path = "workgraph" }
 zlog = { path = "third_party/zed-gpui-cc053a4/crates/zlog" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+image = { version = "0.25.10", default-features = false, features = ["png"] }
 uzers = { version = "0.12.2", default-features = false }
 
 [dev-dependencies]

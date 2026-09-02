@@ -1802,6 +1802,7 @@ dependencies = [
  "gpui-libghostty",
  "gpui-neovim",
  "gpui_platform",
+ "image",
  "notify",
  "nucleo-matcher",
  "path-clean",

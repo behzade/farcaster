@@ -19,6 +19,7 @@ rm -rf "$bundle"
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
 cp "$target_dir/release/farcaster" "$bundle/Contents/MacOS/farcaster"
 cp "$root/packaging/macos/Info.plist" "$bundle/Contents/Info.plist"
+cp "$root/assets/icons/app/Farcaster.icns" "$bundle/Contents/Resources/Farcaster.icns"
 cp "$root/NOTICE.md" "$bundle/Contents/Resources/NOTICE.md"
 
 identity=${CODESIGN_IDENTITY:--}
