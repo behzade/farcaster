@@ -101,6 +101,8 @@ pub(crate) enum SessionActivityKind {
     RetryStarted,
     TurnEnded,
     SessionChanged,
+    ServiceStatusChanged,
+    RateLimitsChanged,
     Other(String),
 }
 
@@ -125,6 +127,8 @@ impl SessionActivityKind {
             | "summarization_retry_attempt_start" => Self::RetryStarted,
             "turn_end" => Self::TurnEnded,
             "session_info_changed" => Self::SessionChanged,
+            "service_status_changed" => Self::ServiceStatusChanged,
+            "rate_limits_changed" => Self::RateLimitsChanged,
             other => Self::Other(other.to_owned()),
         }
     }

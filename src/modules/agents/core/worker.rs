@@ -147,6 +147,15 @@ pub(crate) enum WorkerActivity {
         detail: Option<String>,
     },
     Usage(WorkerUsage),
+    ServiceStatusChanged {
+        name: String,
+        status: String,
+        error: Option<Value>,
+        failure_reason: Option<Value>,
+    },
+    RateLimitsChanged {
+        limits: Value,
+    },
     CompactionStarted,
     CompactionFinished {
         aborted: bool,
