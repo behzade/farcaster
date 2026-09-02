@@ -277,10 +277,7 @@ fn cache_configuration_catalog(
     true
 }
 
-fn adopts_session_control_defaults(
-    snapshot: &RuntimeSnapshot,
-    sessions: &[SessionSummary],
-) -> bool {
+fn adopts_selected_configuration(snapshot: &RuntimeSnapshot, sessions: &[SessionSummary]) -> bool {
     let session_path = snapshot
         .live_session
         .as_ref()
@@ -288,23 +285,50 @@ fn adopts_session_control_defaults(
     !session_path.is_some_and(|path| crate::sessions::is_subagent_path(sessions, path))
 }
 
-fn update_session_control_defaults(
-    defaults: &mut SessionControlDefaults,
+fn update_selected_configuration(
+    configurations: &mut HarnessConfigurationStore,
     snapshot: &RuntimeSnapshot,
     command: &RuntimeCommand,
 ) -> bool {
     match command {
-        RuntimeCommand::SetModel(model) => defaults.select_model(&snapshot.harness, model.clone()),
+        RuntimeCommand::SetModel(model) => {
+            configurations.set_model(&snapshot.harness, model.clone())
+        }
         RuntimeCommand::SetThinking(effort) => {
-            defaults.select_effort(&snapshot.harness, effort.clone())
+            configurations.set_effort(&snapshot.harness, effort.clone())
         }
         _ => false,
     }
 }
 
-fn persist_session_control_defaults(state: Option<&StateStore>, defaults: &SessionControlDefaults) {
+fn persist_configurations(state: Option<&StateStore>, configurations: &HarnessConfigurationStore) {
     if let Some(state) = state {
-        let _ = state.save_session_control_defaults(&defaults.cached());
+        let _ = state.save_session_control_defaults(&configurations.cached());
+    }
+}
+
+fn send_configured_command(
+    actor: &SessionRuntimeHandle,
+    command: RuntimeCommand,
+    configurations: &HarnessConfigurationStore,
+) {
+    let selection = match &command {
+        RuntimeCommand::NewSession { harness, .. }
+        | RuntimeCommand::ResumeDraft { harness, .. } => Some((
+            configurations.model(harness),
+            configurations.effort(harness),
+        )),
+        _ => None,
+    };
+    actor.send(command);
+    let Some((model, effort)) = selection else {
+        return;
+    };
+    if let Some(model) = model {
+        actor.send(RuntimeCommand::SetModel(model.clone()));
+    }
+    if let Some(effort) = effort {
+        actor.send(RuntimeCommand::SetThinking(effort.to_owned()));
     }
 }
 
@@ -371,13 +395,8 @@ fn run_supervisor(
             ),
         ),
     ]);
-    if let Some(actor) = actors.get(&initial_key) {
-        actor.send(initial_draft_command(
-            draft_id,
-            initial_project.clone(),
-            initial_session.clone(),
-        ));
-    }
+    let initial_command =
+        initial_draft_command(draft_id, initial_project.clone(), initial_session.clone());
     let mut selected = initial_key.clone();
     let mut generation = 0_u64;
     let mut latest = HashMap::<String, Arc<RuntimeSnapshot>>::new();
@@ -405,14 +424,14 @@ fn run_supervisor(
     let mut needs_input = HashSet::<String>::new();
     let mut clock = 0_u64;
     let mut last_touch = HashMap::from([(initial_key.clone(), clock)]);
-    let mut session_controls = SessionControlDefaults::default();
+    let mut configurations = HarnessConfigurationStore::default();
     let catalog_state = StateStore::open().ok();
     let mut configuration_catalogs = catalog_state
         .as_ref()
         .and_then(|state| state.load_configuration_catalogs().ok())
         .unwrap_or_default();
     for entry in &configuration_catalogs {
-        session_controls.set_catalog(
+        configurations.set_catalog(
             entry.harness.clone(),
             entry.project.clone(),
             entry.catalog.clone(),
@@ -421,7 +440,10 @@ fn run_supervisor(
     if let Some(state) = catalog_state.as_ref()
         && let Ok(defaults) = state.load_session_control_defaults()
     {
-        session_controls.restore(defaults);
+        configurations.restore(defaults);
+    }
+    if let Some(actor) = actors.get(&initial_key) {
+        send_configured_command(actor, initial_command, &configurations);
     }
     let (configuration_tx, configuration_rx) = mpsc::channel();
     if refresh_configuration {
@@ -454,7 +476,7 @@ fn run_supervisor(
         while let Ok((harness, project, result)) = configuration_rx.try_recv() {
             match result {
                 Ok(catalog) => {
-                    session_controls.set_catalog(harness.clone(), project.clone(), catalog.clone());
+                    configurations.set_catalog(harness.clone(), project.clone(), catalog.clone());
                     if cache_configuration_catalog(
                         &mut configuration_catalogs,
                         harness.clone(),
@@ -482,7 +504,7 @@ fn run_supervisor(
                 }
                 Err(error) => {
                     zlog::warn!("Failed to refresh {harness} catalog: {error}");
-                    session_controls.set_catalog_error(
+                    configurations.set_catalog_error(
                         harness.clone(),
                         project.clone(),
                         error.clone(),
@@ -539,14 +561,11 @@ fn run_supervisor(
                             let _ = state.save_configuration_catalogs(&configuration_catalogs);
                         }
                         let adopts_identity = key == selected
-                            && adopts_session_control_defaults(&snapshot, &catalog_sessions);
-                        let identity_changed =
-                            session_controls.apply(Arc::make_mut(&mut snapshot), adopts_identity);
+                            && adopts_selected_configuration(&snapshot, &catalog_sessions);
+                        let identity_changed = configurations
+                            .reconcile_snapshot(Arc::make_mut(&mut snapshot), adopts_identity);
                         if identity_changed {
-                            persist_session_control_defaults(
-                                catalog_state.as_ref(),
-                                &session_controls,
-                            );
+                            persist_configurations(catalog_state.as_ref(), &configurations);
                         }
                         if snapshot.conversation.settled {
                             needs_input.remove(&key);
@@ -1043,15 +1062,11 @@ fn run_supervisor(
                     continue;
                 }
                 let identity_changed = latest.get(&selected).is_some_and(|snapshot| {
-                    adopts_session_control_defaults(snapshot, &catalog_sessions)
-                        && update_session_control_defaults(
-                            &mut session_controls,
-                            snapshot,
-                            &command,
-                        )
+                    adopts_selected_configuration(snapshot, &catalog_sessions)
+                        && update_selected_configuration(&mut configurations, snapshot, &command)
                 });
                 if identity_changed {
-                    persist_session_control_defaults(catalog_state.as_ref(), &session_controls);
+                    persist_configurations(catalog_state.as_ref(), &configurations);
                 }
                 if let RuntimeCommand::RenameSession { path, name, .. } = &command
                     && let Some((key, actor)) = actors.iter().find(|(key, _)| {
@@ -1110,7 +1125,7 @@ fn run_supervisor(
                         )
                     });
                     if target_command_needs_actor_message(view_only, resident_snapshot.as_deref()) {
-                        actor.send(command);
+                        send_configured_command(actor, command, &configurations);
                     }
                     if let Some(mut snapshot) = resident_snapshot {
                         if view_only {

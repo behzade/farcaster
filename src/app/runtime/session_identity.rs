@@ -83,7 +83,7 @@ impl RuntimeSnapshot {
 }
 
 #[derive(Default)]
-pub(super) struct SessionControlDefaults {
+pub(super) struct HarnessConfigurationStore {
     identities: HashMap<String, OwnedSessionIdentity>,
     catalogs: HashMap<(String, PathBuf), HarnessCatalog>,
 }
@@ -101,7 +101,7 @@ struct OwnedSessionIdentity {
     effort: Option<String>,
 }
 
-impl SessionControlDefaults {
+impl HarnessConfigurationStore {
     pub fn restore(
         &mut self,
         entries: Vec<crate::app::infrastructure::persistence::CachedSessionControlDefaults>,
@@ -136,7 +136,19 @@ impl SessionControlDefaults {
         entries
     }
 
-    pub fn select_model(&mut self, harness: &str, model: Model) -> bool {
+    pub fn model(&self, harness: &str) -> Option<&Model> {
+        self.identities
+            .get(harness)
+            .and_then(|identity| identity.model.as_ref())
+    }
+
+    pub fn effort(&self, harness: &str) -> Option<&str> {
+        self.identities
+            .get(harness)
+            .and_then(|identity| identity.effort.as_deref())
+    }
+
+    pub fn set_model(&mut self, harness: &str, model: Model) -> bool {
         let identity = self.identities.entry(harness.to_owned()).or_default();
         let replacement = replacement_effort(&model, identity.effort.as_deref());
         let changed = identity.model.as_ref() != Some(&model) || replacement.is_some();
@@ -147,7 +159,7 @@ impl SessionControlDefaults {
         changed
     }
 
-    pub fn select_effort(&mut self, harness: &str, effort: String) -> bool {
+    pub fn set_effort(&mut self, harness: &str, effort: String) -> bool {
         let identity = self.identities.entry(harness.to_owned()).or_default();
         if identity.effort.as_ref() == Some(&effort) {
             return false;
@@ -173,7 +185,11 @@ impl SessionControlDefaults {
             ConfigurationStatus::Failed(error);
     }
 
-    pub fn apply(&mut self, snapshot: &mut RuntimeSnapshot, adopt_identity: bool) -> bool {
+    pub fn reconcile_snapshot(
+        &mut self,
+        snapshot: &mut RuntimeSnapshot,
+        adopt_identity: bool,
+    ) -> bool {
         let catalog = self
             .catalogs
             .entry((snapshot.harness.clone(), snapshot.project.clone()))
@@ -317,9 +333,9 @@ mod tests {
 
     #[test]
     fn selecting_model_replaces_an_unsupported_cached_effort_with_the_nearest_level() {
-        let mut defaults = SessionControlDefaults::default();
-        assert!(defaults.select_effort("pi", "high".into()));
-        assert!(defaults.select_model(
+        let mut defaults = HarnessConfigurationStore::default();
+        assert!(defaults.set_effort("pi", "high".into()));
+        assert!(defaults.set_model(
             "pi",
             model("limited", true, Some(&["off", "low", "medium"])),
         ));
@@ -328,7 +344,7 @@ mod tests {
             harness: "pi".into(),
             ..RuntimeSnapshot::default()
         };
-        defaults.apply(&mut draft, true);
+        defaults.reconcile_snapshot(&mut draft, true);
 
         assert_eq!(draft.prefill_thinking_level.as_deref(), Some("medium"));
     }
@@ -336,18 +352,18 @@ mod tests {
     #[test]
     fn cached_defaults_restore_across_projects_per_harness() {
         let selected = model("selected", true, Some(&["low", "high"]));
-        let mut defaults = SessionControlDefaults::default();
-        assert!(defaults.select_model("codex-cli", selected.clone()));
-        assert!(defaults.select_effort("codex-cli", "high".into()));
+        let mut defaults = HarnessConfigurationStore::default();
+        assert!(defaults.set_model("codex-cli", selected.clone()));
+        assert!(defaults.set_effort("codex-cli", "high".into()));
 
-        let mut restarted = SessionControlDefaults::default();
+        let mut restarted = HarnessConfigurationStore::default();
         restarted.restore(defaults.cached());
         let mut draft = RuntimeSnapshot {
             harness: "codex-cli".into(),
             project: PathBuf::from("/another-project"),
             ..RuntimeSnapshot::default()
         };
-        restarted.apply(&mut draft, true);
+        restarted.reconcile_snapshot(&mut draft, true);
 
         assert_eq!(draft.prefill_model, Some(selected));
         assert_eq!(draft.prefill_thinking_level.as_deref(), Some("high"));
@@ -357,7 +373,7 @@ mod tests {
             project: PathBuf::from("/another-project"),
             ..RuntimeSnapshot::default()
         };
-        restarted.apply(&mut other_harness, true);
+        restarted.reconcile_snapshot(&mut other_harness, true);
         assert_eq!(other_harness.prefill_model, None);
         assert_eq!(other_harness.prefill_thinking_level, None);
     }

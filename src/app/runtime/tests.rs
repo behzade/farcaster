@@ -312,7 +312,7 @@ fn history_model_identity_survives_an_unavailable_catalog_entry() {
     let identity = ("opencode-go".into(), "kimi-k3".into());
 
     assert_eq!(
-        SessionControlDefaults::history_model(&[], Some(&identity)),
+        HarnessConfigurationStore::history_model(&[], Some(&identity)),
         Some(Model {
             id: "kimi-k3".into(),
             name: "kimi-k3".into(),
@@ -1429,7 +1429,7 @@ fn starting_session_prefills_controls_from_the_last_ready_session() {
         reasoning: true,
         efforts: None,
     };
-    let mut controls = SessionControlDefaults::default();
+    let mut controls = HarnessConfigurationStore::default();
     let mut ready = RuntimeSnapshot {
         session: serde_json::from_value(json!({
             "model": {
@@ -1452,10 +1452,10 @@ fn starting_session_prefills_controls_from_the_last_ready_session() {
         thinking_levels: vec!["off".into(), "high".into()],
         ..RuntimeSnapshot::default()
     };
-    controls.apply(&mut ready, true);
+    controls.reconcile_snapshot(&mut ready, true);
 
     let mut starting = RuntimeSnapshot::default();
-    controls.apply(&mut starting, true);
+    controls.reconcile_snapshot(&mut starting, true);
 
     assert_eq!(starting.prefill_model, Some(model.clone()));
     assert_eq!(starting.prefill_thinking_level.as_deref(), Some("high"));
@@ -1482,7 +1482,7 @@ fn history_identity_overrides_draft_defaults_without_changing_them() {
         reasoning: true,
         efforts: None,
     };
-    let mut defaults = SessionControlDefaults::default();
+    let mut defaults = HarnessConfigurationStore::default();
     let mut live_sol = RuntimeSnapshot {
         session: serde_json::from_value(json!({
             "model": sol,
@@ -1500,7 +1500,7 @@ fn history_identity_overrides_draft_defaults_without_changing_them() {
         thinking_levels: vec!["medium".into(), "high".into()],
         ..RuntimeSnapshot::default()
     };
-    defaults.apply(&mut live_sol, true);
+    defaults.reconcile_snapshot(&mut live_sol, true);
 
     let mut luna_history = RuntimeSnapshot {
         prefill_model: Some(luna.clone()),
@@ -1508,7 +1508,7 @@ fn history_identity_overrides_draft_defaults_without_changing_them() {
         history_preview: true,
         ..RuntimeSnapshot::default()
     };
-    defaults.apply(&mut luna_history, false);
+    defaults.reconcile_snapshot(&mut luna_history, false);
 
     let history_identity = luna_history.session_identity();
     assert_eq!(history_identity.provider, Some("openai-codex"));
@@ -1516,7 +1516,7 @@ fn history_identity_overrides_draft_defaults_without_changing_them() {
     assert_eq!(history_identity.effort, Some("medium"));
 
     let mut empty_draft = RuntimeSnapshot::default();
-    defaults.apply(&mut empty_draft, true);
+    defaults.reconcile_snapshot(&mut empty_draft, true);
     let draft_identity = empty_draft.session_identity();
     assert_eq!(draft_identity.model, Some(&sol));
     assert_eq!(draft_identity.effort, Some("high"));
@@ -1554,14 +1554,14 @@ fn viewing_a_subagent_does_not_change_new_session_defaults() {
         }))
         .ok()
     };
-    let mut defaults = SessionControlDefaults::default();
+    let mut defaults = HarnessConfigurationStore::default();
     let mut root = RuntimeSnapshot {
         session: session_state("/sessions/root.jsonl", sol.clone()),
         models: vec![sol.clone(), luna.clone()],
         thinking_levels: vec!["medium".into(), "high".into()],
         ..RuntimeSnapshot::default()
     };
-    defaults.apply(&mut root, true);
+    defaults.reconcile_snapshot(&mut root, true);
 
     // The user views a subagent running a different model; the supervisor passes
     // adopt_identity=false for descendant sessions.
@@ -1572,10 +1572,10 @@ fn viewing_a_subagent_does_not_change_new_session_defaults() {
         thinking_levels: vec!["medium".into(), "high".into()],
         ..RuntimeSnapshot::default()
     };
-    defaults.apply(&mut subagent, false);
+    defaults.reconcile_snapshot(&mut subagent, false);
 
     let mut new_draft = RuntimeSnapshot::default();
-    defaults.apply(&mut new_draft, true);
+    defaults.reconcile_snapshot(&mut new_draft, true);
     let identity = new_draft.session_identity();
     assert_eq!(identity.model, Some(&sol));
     assert_eq!(identity.effort, Some("high"));
@@ -1591,20 +1591,20 @@ fn cold_drafts_reuse_only_their_own_harness_catalog() {
         reasoning: false,
         efforts: None,
     };
-    let mut defaults = SessionControlDefaults::default();
+    let mut defaults = HarnessConfigurationStore::default();
     let mut pi = RuntimeSnapshot {
         harness: "pi".into(),
         models: vec![pi_model.clone()],
         thinking_levels: vec!["high".into()],
         ..RuntimeSnapshot::default()
     };
-    defaults.apply(&mut pi, true);
+    defaults.reconcile_snapshot(&mut pi, true);
 
     let mut codex = RuntimeSnapshot {
         harness: "codex-cli".into(),
         ..RuntimeSnapshot::default()
     };
-    defaults.apply(&mut codex, true);
+    defaults.reconcile_snapshot(&mut codex, true);
     assert!(codex.models.is_empty());
     assert!(codex.thinking_levels.is_empty());
 
@@ -1612,7 +1612,7 @@ fn cold_drafts_reuse_only_their_own_harness_catalog() {
         harness: "pi".into(),
         ..RuntimeSnapshot::default()
     };
-    defaults.apply(&mut next_pi, true);
+    defaults.reconcile_snapshot(&mut next_pi, true);
     assert_eq!(next_pi.models, vec![pi_model]);
     assert_eq!(next_pi.thinking_levels, vec!["high"]);
 }
