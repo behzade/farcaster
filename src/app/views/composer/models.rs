@@ -15,7 +15,7 @@ use crate::{
         AppIconSize, ButtonTone, activates_button, app_icon, dropdown_content_button, icon_button,
     },
     app::ui::theme::{MONO_FONT_FAMILY, THEME},
-    runtime::HarnessAccessMode,
+    runtime::{ConfigurationStatus, HarnessAccessMode},
 };
 
 pub(in crate::app::views) fn render(
@@ -32,7 +32,7 @@ pub(in crate::app::views) fn render(
     });
     let catalog_loading = selected_provider.is_none()
         && !app.snapshot.connected
-        && !app.snapshot.configuration_loaded;
+        && app.snapshot.configuration_status == ConfigurationStatus::Loading;
     let provider_label = selected_provider.unwrap_or_else(|| "Provider".into());
     let model_label = selected_model.map_or_else(
         || {
@@ -45,6 +45,7 @@ pub(in crate::app::views) fn render(
         |model| model.name.clone(),
     );
     let effort = identity.effort.unwrap_or("off");
+    let shows_effort = !app.snapshot.available_thinking_levels().is_empty() || effort != "off";
     let runtime_content = div()
         .flex()
         .items_center()
@@ -53,16 +54,13 @@ pub(in crate::app::views) fn render(
         .child(div().text_color(THEME.colors.muted).child(provider_label))
         .child(runtime_slash())
         .child(div().text_color(THEME.colors.text).child(model_label))
-        .when(
-            !app.snapshot.available_thinking_levels().is_empty() || effort != "off",
-            |content| {
-                content.child(runtime_slash()).child(
-                    div()
-                        .text_color(effort_color(effort))
-                        .child(effort_label(effort)),
-                )
-            },
-        );
+        .when(shows_effort, |content| {
+            content.child(runtime_slash()).child(
+                div()
+                    .text_color(effort_color(effort))
+                    .child(effort_label(effort)),
+            )
+        });
     let runtime_entity = entity.clone();
     let runtime = dropdown_content_button(
         "select-runtime",
@@ -119,6 +117,7 @@ pub(in crate::app::views) fn render_runtime_picker(
     );
     let selected_model = identity.model.map(|model| model.id.as_str());
     let selected_effort = identity.effort.unwrap_or("off");
+    let efforts = app.snapshot.available_thinking_levels();
     let query = app
         .runtime_model_search
         .read(cx)
@@ -141,15 +140,19 @@ pub(in crate::app::views) fn render_runtime_picker(
         .filter(|model| model_matches_query(&model.name, &model.id, &query))
         .cloned()
         .collect::<Vec<_>>();
-    let models_pending_first_start = app.snapshot.models.is_empty()
-        && !app.snapshot.connected
-        && !app.snapshot.configuration_loaded;
-    let empty_models_message = app.snapshot.models.is_empty().then(|| {
-        app.snapshot.configuration_error.as_ref().map_or_else(
-            || "No models were advertised by this harness.".to_owned(),
-            |error| format!("Models unavailable: {error}"),
-        )
-    });
+    let model_feedback =
+        app.snapshot
+            .models
+            .is_empty()
+            .then(|| match &app.snapshot.configuration_status {
+                ConfigurationStatus::Loading if !app.snapshot.connected => {
+                    "Refreshing models in the background…".to_owned()
+                }
+                ConfigurationStatus::Failed(error) => format!("Models unavailable: {error}"),
+                ConfigurationStatus::Loading | ConfigurationStatus::Loaded => {
+                    "No models were advertised by this harness.".to_owned()
+                }
+            });
     let close = entity.clone();
 
     Some(
@@ -268,29 +271,9 @@ pub(in crate::app::views) fn render_runtime_picker(
                                         .min_h_0()
                                         .flex_1()
                                         .overflow_y_scroll()
-                                        .when(models_pending_first_start, |list| {
-                                            list.child(
-                                                div()
-                                                    .p(px(8.0))
-                                                    .text_size(THEME.type_scale.caption)
-                                                    .text_color(THEME.colors.subtle)
-                                                    .child("Refreshing models in the background…"),
-                                            )
+                                        .when_some(model_feedback, |list, message| {
+                                            list.child(picker_feedback(message))
                                         })
-                                        .when_some(
-                                            (!models_pending_first_start)
-                                                .then_some(empty_models_message)
-                                                .flatten(),
-                                            |list, message| {
-                                                list.child(
-                                                    div()
-                                                        .p(px(8.0))
-                                                        .text_size(THEME.type_scale.caption)
-                                                        .text_color(THEME.colors.subtle)
-                                                        .child(message),
-                                                )
-                                            },
-                                        )
                                         .children(models.into_iter().enumerate().map(
                                             |(index, model)| {
                                                 let selected =
@@ -312,40 +295,31 @@ pub(in crate::app::views) fn render_runtime_picker(
                                 ),
                         ),
                 )
-                .when(
-                    !app.snapshot.available_thinking_levels().is_empty(),
-                    |picker| {
-                        picker.child(
-                            div()
-                                .pt(px(9.0))
-                                .flex()
-                                .items_center()
-                                .gap(px(6.0))
-                                .child(picker_label("Effort"))
-                                .children(
-                                    app.snapshot
-                                        .available_thinking_levels()
-                                        .iter()
-                                        .enumerate()
-                                        .map(|(index, effort)| {
-                                            let target = effort.clone();
-                                            let selected = effort == selected_effort;
-                                            let entity = entity.clone();
-                                            runtime_option(
-                                                ("runtime-effort", index),
-                                                effort_label(effort),
-                                                selected,
-                                                move |cx| {
-                                                    let _ = entity.update(cx, |this, cx| {
-                                                        this.set_thinking_level(target.clone(), cx);
-                                                    });
-                                                },
-                                            )
-                                        }),
-                                ),
-                        )
-                    },
-                )
+                .when(!efforts.is_empty(), |picker| {
+                    picker.child(
+                        div()
+                            .pt(px(9.0))
+                            .flex()
+                            .items_center()
+                            .gap(px(6.0))
+                            .child(picker_label("Effort"))
+                            .children(efforts.iter().enumerate().map(|(index, effort)| {
+                                let target = effort.clone();
+                                let selected = effort == selected_effort;
+                                let entity = entity.clone();
+                                runtime_option(
+                                    ("runtime-effort", index),
+                                    effort_label(effort),
+                                    selected,
+                                    move |cx| {
+                                        let _ = entity.update(cx, |this, cx| {
+                                            this.set_thinking_level(target.clone(), cx);
+                                        });
+                                    },
+                                )
+                            })),
+                    )
+                })
                 .when(!app.snapshot.modes.is_empty(), |picker| {
                     picker.child(
                         div()
@@ -391,6 +365,15 @@ fn selected_provider<'a>(
     catalog_provider: Option<&'a str>,
 ) -> &'a str {
     identity_provider.or(catalog_provider).unwrap_or_default()
+}
+
+fn picker_feedback(message: String) -> AnyElement {
+    div()
+        .p(px(8.0))
+        .text_size(THEME.type_scale.caption)
+        .text_color(THEME.colors.subtle)
+        .child(message)
+        .into_any_element()
 }
 
 fn picker_label(label: &'static str) -> AnyElement {

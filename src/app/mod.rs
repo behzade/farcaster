@@ -2142,8 +2142,7 @@ fn composer_snapshot_changed(previous: &RuntimeSnapshot, next: &RuntimeSnapshot)
         || previous.session_identity() != next.session_identity()
         || previous.models != next.models
         || previous.thinking_levels != next.thinking_levels
-        || previous.configuration_loaded != next.configuration_loaded
-        || previous.configuration_error != next.configuration_error
+        || previous.configuration_status != next.configuration_status
         || previous.access_mode != next.access_mode
 }
 
