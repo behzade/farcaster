@@ -5,6 +5,7 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 target_dir=${CARGO_TARGET_DIR:-"$root/target"}
 project=${PROJECT:-"$root"}
 action=${1:-bundle}
+cd "$root"
 
 case $action in
     bundle|--relaunch) ;;
@@ -17,7 +18,7 @@ esac
 platform=$(uname -s)
 case $platform in
     Darwin)
-        formats=app
+        formats=${BUNDLE_FORMATS:-app}
         ;;
     Linux)
         formats=${BUNDLE_FORMATS:-appimage}
@@ -39,8 +40,25 @@ if [ "$platform" = "Linux" ] && [ "$action" = "--relaunch" ]; then
 fi
 
 mkdir -p "$target_dir/release"
-CARGO_TARGET_DIR="$target_dir" cargo packager --release --formats "$formats" \
-    --out-dir "$target_dir/release"
+if [ "$platform" = "Linux" ]; then
+    # cargo-packager names Linux desktop entries after the main executable. Use
+    # a tiny launcher named after our canonical app ID so Wayland shells can
+    # resolve io.github.behzade.farcaster.desktop and its matching icon, while
+    # keeping the application process and command named `farcaster`.
+    CARGO_TARGET_DIR="$target_dir" cargo build --release --locked --bin farcaster
+    launcher="$target_dir/release/io.github.behzade.farcaster"
+    cat >"$launcher" <<'EOF'
+#!/bin/sh
+exec "$(dirname "$0")/farcaster" "$@"
+EOF
+    chmod 755 "$launcher"
+    cp "$launcher" "$launcher."
+    cargo packager --config "$root/packaging/linux.toml" --formats "$formats" \
+        --out-dir "$target_dir/release" --binaries-dir "$target_dir/release"
+else
+    CARGO_TARGET_DIR="$target_dir" cargo packager --release --formats "$formats" \
+        --out-dir "$target_dir/release"
+fi
 
 production_bundle_identifier=io.github.behzade.farcaster
 bundle_identifier=$production_bundle_identifier

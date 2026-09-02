@@ -35,7 +35,7 @@ bundle-relaunch:
 
 package:
 	@test -n "$(FORMAT)" || (echo "usage: make package FORMAT=app|dmg|appimage|deb|pacman" >&2; exit 1)
-	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo packager --release --formats "$(FORMAT)"
+	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" BUNDLE_FORMATS="$(FORMAT)" ./scripts/bundle.sh
 
 # Override LOG_LINES, TAIL_ARGS (for example, "-n 100 -f"), or LOG_FILE.
 logs:
