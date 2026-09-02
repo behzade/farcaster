@@ -105,6 +105,26 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
         decode_empty(response)
     }
 
+    pub(crate) fn config(&mut self, directory: &str) -> Result<Value, String> {
+        let directory =
+            url::form_urlencoded::byte_serialize(directory.as_bytes()).collect::<String>();
+        self.json(
+            OpenCodeHttpMethod::Get,
+            format!("/api/config?directory={directory}"),
+            None,
+        )
+    }
+
+    pub(crate) fn providers(&mut self, directory: &str) -> Result<Value, String> {
+        let directory =
+            url::form_urlencoded::byte_serialize(directory.as_bytes()).collect::<String>();
+        self.json(
+            OpenCodeHttpMethod::Get,
+            format!("/api/provider?directory={directory}"),
+            None,
+        )
+    }
+
     pub(crate) fn models(&mut self, directory: &str) -> Result<Value, String> {
         let directory =
             url::form_urlencoded::byte_serialize(directory.as_bytes()).collect::<String>();

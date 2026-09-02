@@ -230,13 +230,16 @@ fn load_main_metadata(
     directory: &str,
 ) -> Result<crate::modules::agents::adapter::main_session::MainSessionMetadata, String> {
     let model_response = client.models(directory)?;
-    let model_rows = model_response
+    let mut model_rows = model_response
         .as_array()
         .or_else(|| model_response.get("data").and_then(Value::as_array))
         .cloned()
         .unwrap_or_default();
+    if model_rows.is_empty() {
+        model_rows = provider_model_rows(&client.providers(directory)?);
+    }
     let mut efforts = Vec::new();
-    let models = model_rows
+    let mut models = model_rows
         .iter()
         .filter(|model| model.get("enabled").and_then(Value::as_bool) != Some(false))
         .filter_map(|model| {
@@ -261,7 +264,19 @@ fn load_main_metadata(
                 "efforts": efforts_known.then_some(model_efforts),
             }))
         })
-        .collect();
+        .collect::<Vec<_>>();
+    if models.is_empty() {
+        let config = client.config(directory)?;
+        if let Some((provider, id)) = configured_model(&config) {
+            models.push(json!({
+                "id": id,
+                "name": id,
+                "provider": provider,
+                "contextWindow": 0,
+                "reasoning": true,
+            }));
+        }
+    }
     let agent_response = client.agents(directory)?;
     let agent_rows = agent_response
         .as_array()
@@ -310,6 +325,58 @@ fn load_main_metadata(
             modes,
         },
     )
+}
+
+fn provider_model_rows(response: &Value) -> Vec<Value> {
+    let data = response.get("data").unwrap_or(response);
+    let providers = data
+        .as_array()
+        .or_else(|| data.get("all").and_then(Value::as_array))
+        .into_iter()
+        .flatten();
+    let connected = data.get("connected").and_then(Value::as_array);
+    let mut rows = Vec::new();
+    for provider in providers {
+        let Some(provider_id) = provider.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        if connected
+            .is_some_and(|connected| !connected.iter().any(|id| id.as_str() == Some(provider_id)))
+        {
+            continue;
+        }
+        if let Some(models) = provider.get("models").and_then(Value::as_object) {
+            rows.extend(models.iter().filter_map(|(id, model)| {
+                let mut model = model.as_object()?.clone();
+                model.insert("id".into(), Value::String(id.clone()));
+                model.insert("providerID".into(), Value::String(provider_id.to_owned()));
+                Some(Value::Object(model))
+            }));
+        } else if let Some(models) = provider.get("models").and_then(Value::as_array) {
+            rows.extend(models.iter().filter_map(|model| {
+                let mut model = model.as_object()?.clone();
+                model.insert("providerID".into(), Value::String(provider_id.to_owned()));
+                Some(Value::Object(model))
+            }));
+        }
+    }
+    rows
+}
+
+fn configured_model(config: &Value) -> Option<(&str, &str)> {
+    let model = config
+        .get("model")
+        .or_else(|| config.pointer("/data/model"))?;
+    if let Some(reference) = model.as_str() {
+        return reference.split_once('/');
+    }
+    Some((
+        model.get("providerID")?.as_str()?,
+        model
+            .get("modelID")
+            .or_else(|| model.get("model"))?
+            .as_str()?,
+    ))
 }
 
 fn model_variant_efforts(model: &Value) -> Vec<String> {
@@ -1049,6 +1116,39 @@ fn worker_password() -> Result<String, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn provider_catalog_fallback_keeps_connected_models() {
+        let rows = provider_model_rows(&json!({
+            "data": {
+                "connected": ["anthropic"],
+                "all": [
+                    {"id": "anthropic", "models": {"claude": {
+                        "name": "Claude", "limit": {"context": 200000}
+                    }}},
+                    {"id": "openai", "models": {"gpt": {"name": "GPT"}}}
+                ]
+            }
+        }));
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["id"], "claude");
+        assert_eq!(rows[0]["providerID"], "anthropic");
+        assert_eq!(rows[0]["limit"]["context"], 200000);
+    }
+
+    #[test]
+    fn configured_models_accept_string_and_expanded_shapes() {
+        assert_eq!(
+            configured_model(&json!({"model": "openai/gpt-5"})),
+            Some(("openai", "gpt-5"))
+        );
+        assert_eq!(
+            configured_model(&json!({
+                "data": {"model": {"providerID": "anthropic", "model": "claude"}}
+            })),
+            Some(("anthropic", "claude"))
+        );
+    }
 
     #[test]
     fn current_opencode_events_and_tool_results_are_normalized() {
