@@ -49,14 +49,14 @@ pub(super) struct Params {
     pub(super) paths: Vec<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
-struct Response {
+pub(super) struct Response {
     posted: bool,
     notices: Vec<NoticeView>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 struct NoticeView {
     from: String,
@@ -70,65 +70,50 @@ impl NoticeBoard {
         &self,
         caller: &CallerContext,
         params: Params,
-    ) -> Result<serde_json::Value, String> {
+    ) -> Result<Response, String> {
         if caller.parent_worker_id.is_some() {
             return Err("worker notices are available only to top-level workers".into());
         }
-        let now = Instant::now();
+        let action = params.action;
         let paths = normalize_paths(params.paths)?;
-        let (posted, filter) = match params.action {
-            Action::Read => {
-                if params.message.is_some() {
-                    return Err(
-                        "worker notice `message` is valid only when action is `post`".into(),
-                    );
-                }
-                (false, paths)
+        let message = match (action, params.message) {
+            (Action::Read, None) => None,
+            (Action::Read, Some(_)) => {
+                return Err("worker notice `message` is valid only when action is `post`".into());
             }
-            Action::Post => {
-                let message = params
-                    .message
-                    .as_deref()
-                    .ok_or_else(|| "worker notice posts require `message`".to_owned())?
-                    .trim();
-                if message.is_empty() {
-                    return Err("worker notice must not be empty".into());
-                }
+            (Action::Post, Some(message)) if !message.trim().is_empty() => {
                 if message.len() > MAX_MESSAGE_BYTES {
                     return Err(format!(
                         "worker notice must be at most {MAX_MESSAGE_BYTES} bytes"
                     ));
                 }
-                let mut boards = self
-                    .entries
-                    .lock()
-                    .map_err(|_| "worker notice board is unavailable".to_owned())?;
-                let board = boards.entry(caller.project.clone()).or_default();
-                prune(board, now);
-                board.push(Notice {
-                    from_id: caller.worker_id.clone(),
-                    from_name: caller.worker_name.clone(),
-                    message: message.to_owned(),
-                    paths: paths.clone(),
-                    created_at: now,
-                });
-                if board.len() > MAX_PROJECT_NOTICES {
-                    board.drain(..board.len().saturating_sub(MAX_PROJECT_NOTICES));
-                }
-                (true, paths)
+                Some(message.trim().to_owned())
             }
+            (Action::Post, _) => return Err("worker notice posts require `message`".into()),
         };
 
+        let now = Instant::now();
         let mut boards = self
             .entries
             .lock()
             .map_err(|_| "worker notice board is unavailable".to_owned())?;
         let board = boards.entry(caller.project.clone()).or_default();
         prune(board, now);
+        if let Some(message) = message {
+            board.push(Notice {
+                from_id: caller.worker_id.clone(),
+                from_name: caller.worker_name.clone(),
+                message,
+                paths: paths.clone(),
+                created_at: now,
+            });
+            let excess = board.len().saturating_sub(MAX_PROJECT_NOTICES);
+            board.drain(..excess);
+        }
         let notices = board
             .iter()
             .filter(|notice| notice.from_id != caller.worker_id)
-            .filter(|notice| relevant(&notice.paths, &filter))
+            .filter(|notice| relevant(&notice.paths, &paths))
             .map(|notice| NoticeView {
                 from: notice.from_name.clone(),
                 message: notice.message.clone(),
@@ -140,8 +125,10 @@ impl NoticeBoard {
                 age_seconds: now.duration_since(notice.created_at).as_secs(),
             })
             .collect();
-        serde_json::to_value(Response { posted, notices })
-            .map_err(|error| format!("serialize worker notices: {error}"))
+        Ok(Response {
+            posted: matches!(action, Action::Post),
+            notices,
+        })
     }
 }
 
@@ -226,10 +213,14 @@ mod tests {
             },
         )?;
 
-        assert_eq!(response["posted"], true);
-        assert_eq!(response["notices"][0]["from"], "OrangeCoyote");
-        assert_eq!(response["notices"][0]["message"], "editing parser");
-        assert!(!response.to_string().contains("internal-1"));
+        assert!(response.posted);
+        assert_eq!(response.notices[0].from, "OrangeCoyote");
+        assert_eq!(response.notices[0].message, "editing parser");
+        assert!(
+            !serde_json::to_string(&response)
+                .map_err(|error| error.to_string())?
+                .contains("internal-1")
+        );
         Ok(())
     }
 
@@ -254,7 +245,7 @@ mod tests {
                 paths: vec!["src/ui".into()],
             },
         )?;
-        assert_eq!(response["notices"].as_array().map(Vec::len), Some(0));
+        assert!(response.notices.is_empty());
         Ok(())
     }
 

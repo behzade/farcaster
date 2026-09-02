@@ -140,14 +140,16 @@ impl FarcasterMcp {
         &self,
         Parameters(params): Parameters<notices::Params>,
         Extension(parts): Extension<axum::http::request::Parts>,
-    ) -> Result<Json<serde_json::Value>, String> {
+    ) -> Result<Json<notices::Response>, String> {
         let token = caller_token(&parts)
             .ok_or_else(|| "worker notices require a registered Farcaster caller".to_owned())?;
-        let caller = crate::agents::CallerRegistry::shared().resolve(&token)?;
         let board = self.notices.clone();
-        let value = tokio::task::spawn_blocking(move || board.access(&caller, params))
-            .await
-            .map_err(|error| format!("worker notice task failed: {error}"))??;
+        let value = tokio::task::spawn_blocking(move || {
+            let caller = crate::agents::CallerRegistry::shared().resolve(&token)?;
+            board.access(&caller, params)
+        })
+        .await
+        .map_err(|error| format!("worker notice task failed: {error}"))??;
         Ok(Json(value))
     }
 
