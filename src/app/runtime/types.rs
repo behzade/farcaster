@@ -158,6 +158,8 @@ pub(crate) struct RuntimeSnapshot {
     pub conversation: Arc<ConversationState>,
     pub models: Vec<Model>,
     pub thinking_levels: Vec<String>,
+    pub configuration_loaded: bool,
+    pub configuration_error: Option<String>,
     pub modes: Vec<AgentMode>,
     pub selected_mode: Option<String>,
     pub stats: Value,
