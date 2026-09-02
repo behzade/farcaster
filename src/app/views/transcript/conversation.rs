@@ -982,7 +982,7 @@ fn cache_usage(message: &Value) -> Option<(u64, u64)> {
 fn peer_transcript_item(peer: PeerMessage) -> TranscriptItem {
     TranscriptItem {
         kind: TranscriptKind::PeerMessage,
-        label: format!("Peer · {}", peer.from),
+        label: format!("Worker · {}", peer.from),
         text: peer.message,
         images: Arc::default(),
         stream_chunks: Arc::default(),

@@ -690,7 +690,7 @@ pub(super) enum QueuedMessageKind {
 impl QueuedMessageKind {
     pub(super) fn label(self) -> &'static str {
         match self {
-            Self::Peer => "Peer messages",
+            Self::Peer => "Worker messages",
             Self::Steer => "Steer next",
             Self::FollowUp => "Follow-ups",
         }

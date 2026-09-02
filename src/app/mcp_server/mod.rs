@@ -228,7 +228,7 @@ fn tools_for_role(child: bool) -> Vec<rmcp::model::Tool> {
             }
             schema.insert("required".into(), serde_json::json!(["message"]));
             tool.description = Some(Cow::Borrowed(
-                "Send a message to your parent worker. The parent is implicit.",
+                "Send an interim update or question to your parent worker. The parent is implicit. Your final assistant response is delivered automatically; do not send final results with this tool.",
             ));
         } else {
             schema.insert("required".into(), serde_json::json!(["to", "message"]));
@@ -244,7 +244,7 @@ fn tools_for_role(child: bool) -> Vec<rmcp::model::Tool> {
 #[tool_handler(
     name = "farcaster",
     version = "0.1.0",
-    instructions = "Farcaster provides named parent-child workers, a non-intrusive notice board for top-level coordination, and durable work graphs. A top-level worker uses worker_send with a concise child name such as `diff-review`; first use creates that child and later uses message it. A child worker's worker_send schema omits `to` because messages always go to its parent. Top-level workers may use worker_notices only when shared-worktree changes overlap or may conflict with their work, or when change ownership is unclear; do not consult or post for unrelated changes. Notice-board access never pushes messages into another agent's workflow. Use the harness's native subagents when the harness provides them."
+    instructions = "Farcaster provides worker coordination and durable work graphs."
 )]
 impl ServerHandler for FarcasterMcp {
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
@@ -358,10 +358,6 @@ mod tests {
             server.supported_protocol_versions().as_ref(),
             [ProtocolVersion::V_2026_07_28]
         );
-        let instructions = server.get_info().instructions.expect("server instructions");
-        assert!(instructions.contains("named parent-child workers"));
-        assert!(instructions.contains("worker_send"));
-        assert!(instructions.contains("native subagents"));
         let config = server_config();
         assert!(!config.legacy_session_mode);
         assert!(config.stateless_protocol_metadata_required);
