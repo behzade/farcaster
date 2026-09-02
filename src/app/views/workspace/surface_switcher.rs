@@ -94,7 +94,10 @@ impl FarcasterApp {
             .gap(gpui::px(2.0))
             .child(surface_control(
                 "show-chat-surface",
-                "Chat (F1)",
+                format!(
+                    "Chat ({})",
+                    crate::app::ui::keybindings::application_key("l")
+                ),
                 harness_icon,
                 self.surface == AppSurface::Chat,
                 entity.clone(),
@@ -102,7 +105,10 @@ impl FarcasterApp {
             ))
             .child(surface_control(
                 "show-editor-surface",
-                "Neovim (F2)",
+                format!(
+                    "Neovim ({})",
+                    crate::app::ui::keybindings::application_key("e")
+                ),
                 AppIcon::Neovim,
                 self.surface == AppSurface::Editor,
                 entity.clone(),
@@ -110,7 +116,10 @@ impl FarcasterApp {
             ))
             .child(surface_control(
                 "show-terminal-surface",
-                "Terminal (F3)",
+                format!(
+                    "Terminal ({})",
+                    crate::app::ui::keybindings::application_key("j")
+                ),
                 AppIcon::Ghostty,
                 self.surface == AppSurface::Terminal,
                 entity,
@@ -123,7 +132,7 @@ type SurfaceAction = fn(&mut FarcasterApp, &mut Window, &mut Context<FarcasterAp
 
 fn surface_control(
     id: &'static str,
-    label: &'static str,
+    label: impl Into<gpui::SharedString>,
     icon: AppIcon,
     active: bool,
     entity: WeakEntity<FarcasterApp>,

@@ -3,9 +3,9 @@ use std::{path::PathBuf, time::SystemTime};
 use super::{
     ARCHIVED_LEADING_GAP, ActiveSessionItem, SessionRailItem, SessionRailKind,
     clamped_session_rail_width, collapsed_inactive_rail_height, first_unsubmitted_draft,
-    hover::session_tooltip_lines, minimal_row_splice, roots_waiting_for_descendants,
-    session_accessible_label, session_badge, status_visual, subagent_counts,
-    visible_session_shortcuts,
+    hover::session_tooltip_lines, minimal_row_splice, replacement_index_after_close,
+    roots_waiting_for_descendants, session_accessible_label, session_badge, status_visual,
+    subagent_counts, visible_session_shortcuts,
 };
 use crate::{
     app::ui::assets::AppIcon,
@@ -13,6 +13,13 @@ use crate::{
     projects::DraftSession,
     sessions::{SessionSummary, UsageSummary},
 };
+
+#[test]
+fn closing_a_session_keeps_its_visual_slot_when_possible() {
+    assert_eq!(replacement_index_after_close(4, 1), Some(2));
+    assert_eq!(replacement_index_after_close(4, 3), Some(2));
+    assert_eq!(replacement_index_after_close(1, 0), None);
+}
 
 #[test]
 fn shortcuts_reserve_zero_for_the_first_unsubmitted_draft() {

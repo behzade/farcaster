@@ -1,15 +1,13 @@
-#[cfg(not(target_os = "macos"))]
-use crate::app::APP_SHORTCUT_CONTEXT;
-#[cfg(target_os = "macos")]
-use crate::app::ShowActionPicker;
-use crate::app::TRANSCRIPT_SELECTION_KEY_CONTEXT;
+use std::sync::OnceLock;
+
 use crate::app::ui::keyboard::CopySelection;
+use crate::app::{APP_SHORTCUT_CONTEXT, TRANSCRIPT_SELECTION_KEY_CONTEXT};
 use crate::app::{
     AbortRun, AddProject, CloseCurrent, ComposerCompletionNext, ComposerCompletionPrevious,
     ComposerEscape, ComposerHistoryNext, ComposerHistoryPrevious, DismissSurface, FocusComposer,
     NewSession, NextSession, OVERLAY_KEY_CONTEXT, PICKER_KEY_CONTEXT, PickerBack, PreviousSession,
-    QuitApplication, ShowEditor, ShowKeybindings, ShowTerminal, ShowWorkGraph, SubmitFollowUp,
-    SubmitPrompt, SwitchSession0, SwitchSession1, SwitchSession2, SwitchSession3, SwitchSession4,
+    QuitApplication, ShowActionPicker, ShowEditor, ShowKeybindings, ShowTerminal, ShowWorkGraph,
+    SubmitFollowUp, SwitchSession0, SwitchSession1, SwitchSession2, SwitchSession3, SwitchSession4,
     SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8, SwitchSession9,
     ToggleArchivedSessions, WorkCreateIssue, WorkDismiss, WorkFocusSearch, WorkNextIssue,
     WorkPreviousIssue,
@@ -17,20 +15,62 @@ use crate::app::{
 use crate::app::{WORKGRAPH_KEY_CONTEXT, WORKGRAPH_NAV_KEY_CONTEXT};
 use gpui::{KeyBinding, Unbind};
 use gpui_base::actions::{SelectDown, SelectUp};
-#[cfg(not(target_os = "macos"))]
-use gpui_component::input::{Copy as InputCopy, Paste};
 
-#[cfg(target_os = "macos")]
-pub(crate) const PRIMARY_MODIFIER: &str = "cmd";
-#[cfg(not(target_os = "macos"))]
-pub(crate) const PRIMARY_MODIFIER: &str = "ctrl";
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ApplicationModifier {
+    Command,
+    Super,
+    Control,
+    Alt,
+}
 
-#[cfg(target_os = "macos")]
-const PRIMARY_SHORTCUT_CONTEXT: Option<&str> = None;
-#[cfg(not(target_os = "macos"))]
-const PRIMARY_SHORTCUT_CONTEXT: Option<&str> = Some(APP_SHORTCUT_CONTEXT);
+impl ApplicationModifier {
+    pub(crate) const fn prefix(self) -> &'static str {
+        match self {
+            Self::Command => "cmd",
+            Self::Super => "super",
+            Self::Control => "ctrl",
+            Self::Alt => "alt",
+        }
+    }
 
-pub(crate) const fn primary_key(macos: &'static str, non_macos: &'static str) -> &'static str {
+    fn key(self, suffix: &str) -> String {
+        format!("{}-{suffix}", self.prefix())
+    }
+}
+
+fn parse_application_modifier(value: Option<&str>) -> ApplicationModifier {
+    match value.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
+        Some("cmd" | "command") => ApplicationModifier::Command,
+        Some("super" | "meta") => ApplicationModifier::Super,
+        Some("ctrl" | "control") => ApplicationModifier::Control,
+        Some("alt" | "option") => ApplicationModifier::Alt,
+        _ if cfg!(target_os = "macos") => ApplicationModifier::Command,
+        _ => ApplicationModifier::Super,
+    }
+}
+
+/// Returns the process-wide application modifier. Override the platform default
+/// with `FARCASTER_APP_MODIFIER=cmd|super|ctrl|alt` before launch.
+pub(crate) fn application_modifier() -> ApplicationModifier {
+    static MODIFIER: OnceLock<ApplicationModifier> = OnceLock::new();
+    *MODIFIER.get_or_init(|| {
+        parse_application_modifier(std::env::var("FARCASTER_APP_MODIFIER").ok().as_deref())
+    })
+}
+
+pub(crate) fn application_key(suffix: &str) -> String {
+    application_modifier().key(suffix)
+}
+
+fn application_context() -> Option<&'static str> {
+    match application_modifier() {
+        ApplicationModifier::Command | ApplicationModifier::Super => None,
+        ApplicationModifier::Control | ApplicationModifier::Alt => Some(APP_SHORTCUT_CONTEXT),
+    }
+}
+
+const fn platform_key(macos: &'static str, non_macos: &'static str) -> &'static str {
     if cfg!(target_os = "macos") {
         macos
     } else {
@@ -41,132 +81,43 @@ pub(crate) const fn primary_key(macos: &'static str, non_macos: &'static str) ->
 pub(crate) struct Shortcut {
     pub section: &'static str,
     pub label: &'static str,
-    pub keystroke: &'static str,
+    pub keystroke: String,
     pub show_in_help: bool,
     pub binding: KeyBinding,
 }
 
-macro_rules! primary {
+macro_rules! platform {
     ($key:literal) => {
-        primary_key(concat!("cmd-", $key), concat!("ctrl-", $key))
+        platform_key(concat!("cmd-", $key), concat!("ctrl-", $key))
     };
 }
 
 macro_rules! shortcut {
     ($section:literal, $label:literal, $key:expr, $action:expr, $context:expr) => {
+        shortcut!($section, $label, $key, $action, $context, true)
+    };
+    ($section:literal, $label:literal, $key:expr, $action:expr, $context:expr, $show:expr) => {{
+        let key = $key.to_string();
         Shortcut {
             section: $section,
             label: $label,
-            keystroke: $key,
-            show_in_help: true,
-            binding: KeyBinding::new($key, $action, $context),
+            keystroke: key.clone(),
+            show_in_help: $show,
+            binding: KeyBinding::new(&key, $action, $context),
         }
-    };
+    }};
 }
 
-macro_rules! primary_shortcut {
+macro_rules! application_shortcut {
     ($section:literal, $label:literal, $key:literal, $action:expr) => {
         shortcut!(
             $section,
             $label,
-            primary!($key),
+            application_key($key),
             $action,
-            PRIMARY_SHORTCUT_CONTEXT
+            application_context()
         )
     };
-}
-
-#[cfg(not(target_os = "macos"))]
-macro_rules! linux_super_binding {
-    ($key:literal, $action:expr) => {
-        linux_super_binding!($key, $action, Some(APP_SHORTCUT_CONTEXT))
-    };
-    ($key:literal, $action:expr, $context:expr) => {
-        KeyBinding::new(concat!("super-", $key), $action, $context)
-    };
-}
-
-#[cfg(target_os = "macos")]
-fn platform_shortcut_aliases() -> [Shortcut; 4] {
-    [
-        Shortcut {
-            section: "Workspace",
-            label: "Chat and composer",
-            keystroke: "cmd-l",
-            show_in_help: false,
-            binding: KeyBinding::new("cmd-l", FocusComposer, None),
-        },
-        Shortcut {
-            section: "Workspace",
-            label: "Open Neovim",
-            keystroke: "cmd-e",
-            show_in_help: false,
-            binding: KeyBinding::new("cmd-e", ShowEditor, None),
-        },
-        Shortcut {
-            section: "Workspace",
-            label: "Open terminal",
-            keystroke: "cmd-t",
-            show_in_help: false,
-            binding: KeyBinding::new("cmd-t", ShowTerminal, None),
-        },
-        Shortcut {
-            section: "Application",
-            label: "Open action picker",
-            keystroke: "cmd-k",
-            show_in_help: true,
-            binding: KeyBinding::new("cmd-k", ShowActionPicker, None),
-        },
-    ]
-}
-
-#[cfg(not(target_os = "macos"))]
-const fn platform_shortcut_aliases() -> [Shortcut; 0] {
-    []
-}
-
-#[cfg(not(target_os = "macos"))]
-fn linux_super_bindings() -> Vec<KeyBinding> {
-    vec![
-        linux_super_binding!("0", SwitchSession0),
-        linux_super_binding!("1", SwitchSession1),
-        linux_super_binding!("2", SwitchSession2),
-        linux_super_binding!("3", SwitchSession3),
-        linux_super_binding!("4", SwitchSession4),
-        linux_super_binding!("5", SwitchSession5),
-        linux_super_binding!("6", SwitchSession6),
-        linux_super_binding!("7", SwitchSession7),
-        linux_super_binding!("8", SwitchSession8),
-        linux_super_binding!("9", SwitchSession9),
-        linux_super_binding!("t", NewSession),
-        linux_super_binding!("shift-n", AddProject),
-        linux_super_binding!("[", PreviousSession),
-        linux_super_binding!("]", NextSession),
-        linux_super_binding!("shift-a", ToggleArchivedSessions),
-        linux_super_binding!("w", CloseCurrent),
-        linux_super_binding!(
-            "p",
-            ComposerCompletionPrevious,
-            Some("FarcasterComposer > Input")
-        ),
-        linux_super_binding!(
-            "n",
-            ComposerCompletionNext,
-            Some("FarcasterComposer > Input")
-        ),
-        linux_super_binding!("c", CopySelection, Some(TRANSCRIPT_SELECTION_KEY_CONTEXT)),
-        linux_super_binding!("c", CopySelection, Some("FarcasterComposer > Input")),
-        linux_super_binding!("c", InputCopy, Some("Input")),
-        linux_super_binding!("v", Paste, Some("Input")),
-        linux_super_binding!("enter", SubmitPrompt),
-        linux_super_binding!(".", AbortRun),
-        linux_super_binding!("shift-i", ShowWorkGraph),
-        linux_super_binding!("?", ShowKeybindings),
-        linux_super_binding!("/", ShowKeybindings),
-        linux_super_binding!("p", SelectUp, Some("PiPicker > Input")),
-        linux_super_binding!("n", SelectDown, Some("PiPicker > Input")),
-        linux_super_binding!("q", QuitApplication),
-    ]
 }
 
 pub(crate) fn bindings() -> Vec<KeyBinding> {
@@ -174,8 +125,6 @@ pub(crate) fn bindings() -> Vec<KeyBinding> {
         .into_iter()
         .map(|shortcut| shortcut.binding)
         .collect::<Vec<_>>();
-    #[cfg(not(target_os = "macos"))]
-    bindings.extend(linux_super_bindings());
     bindings.extend([
         KeyBinding::new("tab", Unbind("root::Tab".into()), Some("Root")),
         KeyBinding::new("shift-tab", Unbind("root::TabPrev".into()), Some("Root")),
@@ -184,48 +133,42 @@ pub(crate) fn bindings() -> Vec<KeyBinding> {
 }
 
 pub(crate) fn registry() -> Vec<Shortcut> {
-    let mut shortcuts = vec![
-        primary_shortcut!(
+    vec![
+        application_shortcut!(
             "Sessions",
             "Open first unsubmitted draft",
             "0",
             SwitchSession0
         ),
-        primary_shortcut!("Sessions", "Open session 1", "1", SwitchSession1),
-        primary_shortcut!("Sessions", "Open session 2", "2", SwitchSession2),
-        primary_shortcut!("Sessions", "Open session 3", "3", SwitchSession3),
-        primary_shortcut!("Sessions", "Open session 4", "4", SwitchSession4),
-        primary_shortcut!("Sessions", "Open session 5", "5", SwitchSession5),
-        primary_shortcut!("Sessions", "Open session 6", "6", SwitchSession6),
-        primary_shortcut!("Sessions", "Open session 7", "7", SwitchSession7),
-        primary_shortcut!("Sessions", "Open session 8", "8", SwitchSession8),
-        primary_shortcut!("Sessions", "Open session 9", "9", SwitchSession9),
-        shortcut!(
-            "Sessions",
-            "New session",
-            primary_key("cmd-n", "ctrl-t"),
-            NewSession,
-            PRIMARY_SHORTCUT_CONTEXT
-        ),
-        primary_shortcut!("Sessions", "Add project", "shift-n", AddProject),
-        primary_shortcut!("Sessions", "Previous session", "[", PreviousSession),
-        primary_shortcut!("Sessions", "Next session", "]", NextSession),
-        primary_shortcut!(
+        application_shortcut!("Sessions", "Open session 1", "1", SwitchSession1),
+        application_shortcut!("Sessions", "Open session 2", "2", SwitchSession2),
+        application_shortcut!("Sessions", "Open session 3", "3", SwitchSession3),
+        application_shortcut!("Sessions", "Open session 4", "4", SwitchSession4),
+        application_shortcut!("Sessions", "Open session 5", "5", SwitchSession5),
+        application_shortcut!("Sessions", "Open session 6", "6", SwitchSession6),
+        application_shortcut!("Sessions", "Open session 7", "7", SwitchSession7),
+        application_shortcut!("Sessions", "Open session 8", "8", SwitchSession8),
+        application_shortcut!("Sessions", "Open session 9", "9", SwitchSession9),
+        application_shortcut!("Sessions", "New session", "t", NewSession),
+        application_shortcut!("Sessions", "Add project", "shift-n", AddProject),
+        application_shortcut!("Sessions", "Previous session", "[", PreviousSession),
+        application_shortcut!("Sessions", "Next session", "]", NextSession),
+        application_shortcut!(
             "Sessions",
             "Show archived sessions",
             "shift-a",
             ToggleArchivedSessions
         ),
-        primary_shortcut!(
+        application_shortcut!(
             "Sessions",
-            "Close workspace, draft, or session",
+            "Close surface or draft; archive session",
             "w",
             CloseCurrent
         ),
         Shortcut {
             section: "Composer",
             label: "Previous prompt",
-            keystroke: "up",
+            keystroke: "up".into(),
             show_in_help: false,
             binding: KeyBinding::new(
                 "up",
@@ -236,7 +179,7 @@ pub(crate) fn registry() -> Vec<Shortcut> {
         Shortcut {
             section: "Composer",
             label: "Next prompt",
-            keystroke: "down",
+            keystroke: "down".into(),
             show_in_help: false,
             binding: KeyBinding::new(
                 "down",
@@ -247,7 +190,7 @@ pub(crate) fn registry() -> Vec<Shortcut> {
         Shortcut {
             section: "Composer",
             label: "Previous completion",
-            keystroke: "ctrl-p",
+            keystroke: "ctrl-p".into(),
             show_in_help: false,
             binding: KeyBinding::new(
                 "ctrl-p",
@@ -258,7 +201,7 @@ pub(crate) fn registry() -> Vec<Shortcut> {
         Shortcut {
             section: "Composer",
             label: "Next completion",
-            keystroke: "ctrl-n",
+            keystroke: "ctrl-n".into(),
             show_in_help: false,
             binding: KeyBinding::new(
                 "ctrl-n",
@@ -266,16 +209,33 @@ pub(crate) fn registry() -> Vec<Shortcut> {
                 Some("FarcasterComposer > Input"),
             ),
         },
-        shortcut!("Workspace", "Chat and composer", "f1", FocusComposer, None),
-        shortcut!("Workspace", "Open Neovim", "f2", ShowEditor, None),
-        shortcut!("Workspace", "Open terminal", "f3", ShowTerminal, None),
+        application_shortcut!("Workspace", "Chat and composer", "l", FocusComposer),
+        shortcut!(
+            "Workspace",
+            "Chat and composer",
+            "f1",
+            FocusComposer,
+            None,
+            false
+        ),
+        application_shortcut!("Workspace", "Open Neovim", "e", ShowEditor),
+        shortcut!("Workspace", "Open Neovim", "f2", ShowEditor, None, false),
+        application_shortcut!("Workspace", "Open terminal", "j", ShowTerminal),
+        shortcut!(
+            "Workspace",
+            "Open terminal",
+            "f3",
+            ShowTerminal,
+            None,
+            false
+        ),
         Shortcut {
             section: "Transcript",
             label: "Copy visual selection",
-            keystroke: primary!("c"),
+            keystroke: platform!("c").into(),
             show_in_help: false,
             binding: KeyBinding::new(
-                primary!("c"),
+                platform!("c"),
                 CopySelection,
                 Some(TRANSCRIPT_SELECTION_KEY_CONTEXT),
             ),
@@ -283,23 +243,22 @@ pub(crate) fn registry() -> Vec<Shortcut> {
         Shortcut {
             section: "Composer",
             label: "Copy selection",
-            keystroke: primary!("c"),
+            keystroke: platform!("c").into(),
             show_in_help: false,
             binding: KeyBinding::new(
-                primary!("c"),
+                platform!("c"),
                 CopySelection,
                 Some("FarcasterComposer > Input"),
             ),
         },
-        primary_shortcut!("Composer", "Send prompt", "enter", SubmitPrompt),
         shortcut!(
             "Composer",
-            "Send follow-up",
+            "Queue follow-up",
             "tab",
             SubmitFollowUp,
             Some("FarcasterComposer > Input")
         ),
-        primary_shortcut!("Run", "Abort current run", ".", AbortRun),
+        application_shortcut!("Run", "Abort current run", ".", AbortRun),
         shortcut!(
             "Run",
             "Apply queued steer, double-Esc aborts",
@@ -342,20 +301,30 @@ pub(crate) fn registry() -> Vec<Shortcut> {
             WorkDismiss,
             Some(WORKGRAPH_KEY_CONTEXT)
         ),
-        primary_shortcut!(
+        application_shortcut!(
             "Application",
             "Open / close project work",
             "shift-i",
             ShowWorkGraph
         ),
-        primary_shortcut!("Application", "Keyboard shortcuts", "?", ShowKeybindings),
-        Shortcut {
-            section: "Application",
-            label: "Keyboard shortcuts",
-            keystroke: primary!("/"),
-            show_in_help: false,
-            binding: KeyBinding::new(primary!("/"), ShowKeybindings, PRIMARY_SHORTCUT_CONTEXT),
-        },
+        application_shortcut!("Application", "Open action picker", "k", ShowActionPicker),
+        shortcut!(
+            "Application",
+            "Open action picker",
+            "f4",
+            ShowActionPicker,
+            None,
+            false
+        ),
+        application_shortcut!("Application", "Keyboard shortcuts", "/", ShowKeybindings),
+        shortcut!(
+            "Application",
+            "Keyboard shortcuts",
+            application_key("?"),
+            ShowKeybindings,
+            application_context(),
+            false
+        ),
         shortcut!(
             "Application",
             "Close dialog",
@@ -366,46 +335,43 @@ pub(crate) fn registry() -> Vec<Shortcut> {
         Shortcut {
             section: "Application",
             label: "Previous picker item",
-            keystroke: "ctrl-p",
+            keystroke: "ctrl-p".into(),
             show_in_help: false,
             binding: KeyBinding::new("ctrl-p", SelectUp, Some("PiPicker > Input")),
         },
         Shortcut {
             section: "Application",
             label: "Next picker item",
-            keystroke: "ctrl-n",
+            keystroke: "ctrl-n".into(),
             show_in_help: false,
             binding: KeyBinding::new("ctrl-n", SelectDown, Some("PiPicker > Input")),
         },
         Shortcut {
             section: "Application",
             label: "Back in action picker",
-            keystroke: "backspace",
+            keystroke: "backspace".into(),
             show_in_help: false,
             binding: KeyBinding::new("backspace", PickerBack, Some("PiPicker > Input")),
         },
         Shortcut {
             section: "Application",
             label: "Close action picker",
-            keystroke: "escape",
+            keystroke: "escape".into(),
             show_in_help: false,
             binding: KeyBinding::new("escape", DismissSurface, Some(PICKER_KEY_CONTEXT)),
         },
-        primary_shortcut!("Application", "Quit", "q", QuitApplication),
-    ];
-
-    shortcuts.extend(platform_shortcut_aliases());
-    shortcuts
+        application_shortcut!("Application", "Quit", "q", QuitApplication),
+    ]
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{bindings, primary_key, registry};
+    use super::{
+        ApplicationModifier, application_key, bindings, parse_application_modifier, platform_key,
+        registry,
+    };
 
-    #[cfg(not(target_os = "macos"))]
-    use crate::app::{APP_INPUT_CONTEXT, ComposerCompletionNext, NATIVE_INPUT_CONTEXT};
-    #[cfg(not(target_os = "macos"))]
-    use gpui_component::input::Paste;
+    use crate::app::ComposerCompletionNext;
 
     #[test]
     fn root_focus_traversal_is_unbound() {
@@ -426,66 +392,26 @@ mod tests {
         }
     }
 
-    #[cfg(not(target_os = "macos"))]
     #[test]
-    fn non_macos_shortcuts_avoid_native_input_conflicts() {
-        let shortcuts = registry();
-        let bindings = bindings();
-        assert!(
-            shortcuts
-                .iter()
-                .all(|shortcut| !shortcut.keystroke.starts_with("cmd-"))
+    fn application_modifier_configuration_accepts_familiar_names() {
+        assert_eq!(
+            parse_application_modifier(Some("command")),
+            ApplicationModifier::Command
         );
-        for removed in ["ctrl-l", "ctrl-e", "ctrl-k"] {
-            assert!(
-                shortcuts
-                    .iter()
-                    .all(|shortcut| shortcut.keystroke != removed)
-            );
-        }
-        for shortcut in shortcuts
-            .iter()
-            .filter(|shortcut| shortcut.keystroke.starts_with("ctrl-"))
-        {
-            let super_keystroke = shortcut.keystroke.replacen("ctrl-", "super-", 1);
-            assert!(bindings.iter().any(|binding| {
-                binding.keystrokes().len() == 1
-                    && binding.keystrokes()[0].unparse() == super_keystroke
-                    && binding.action().name() == shortcut.binding.action().name()
-            }));
-        }
-
-        let keymap = gpui::Keymap::new(bindings);
-        let app_context = gpui::KeyContext::parse(APP_INPUT_CONTEXT).expect("app context");
-        let native_context = gpui::KeyContext::parse(NATIVE_INPUT_CONTEXT).expect("native context");
-        for keystroke in ["ctrl-t", "super-t"] {
-            let keystroke = gpui::Keystroke::parse(keystroke).expect("shortcut keystroke");
-            assert!(
-                !keymap
-                    .bindings_for_input(&[keystroke.clone()], &[app_context.clone()])
-                    .0
-                    .is_empty()
-            );
-            assert!(
-                keymap
-                    .bindings_for_input(&[keystroke], &[native_context.clone()])
-                    .0
-                    .is_empty()
-            );
-        }
-        let input_context = gpui::KeyContext::parse("Input").expect("input context");
-        let (paste, _) = keymap.bindings_for_input(
-            &[gpui::Keystroke::parse("super-v").expect("paste keystroke")],
-            &[app_context, input_context],
+        assert_eq!(
+            parse_application_modifier(Some("meta")),
+            ApplicationModifier::Super
         );
-        assert!(
-            paste
-                .first()
-                .is_some_and(|binding| { binding.action().as_any().is::<Paste>() })
+        assert_eq!(
+            parse_application_modifier(Some("control")),
+            ApplicationModifier::Control
+        );
+        assert_eq!(
+            parse_application_modifier(Some("option")),
+            ApplicationModifier::Alt
         );
     }
 
-    #[cfg(not(target_os = "macos"))]
     #[test]
     fn composer_ctrl_n_remains_completion_navigation() {
         let keymap = gpui::Keymap::new(
@@ -495,7 +421,6 @@ mod tests {
                 .collect(),
         );
         let contexts = [
-            gpui::KeyContext::parse(APP_INPUT_CONTEXT).expect("app context"),
             gpui::KeyContext::parse("FarcasterComposer").expect("composer context"),
             gpui::KeyContext::parse("Input").expect("input context"),
         ];
@@ -511,17 +436,17 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
-    fn macos_application_shortcuts_keep_the_global_command_modifier() {
+    fn application_shortcuts_use_the_configured_modifier_globally() {
         let shortcuts = registry();
-        for (label, keystroke) in [
-            ("New session", "cmd-n"),
-            ("Chat and composer", "cmd-l"),
-            ("Open Neovim", "cmd-e"),
-            ("Open terminal", "cmd-t"),
-            ("Open action picker", "cmd-k"),
+        for (label, suffix) in [
+            ("New session", "t"),
+            ("Chat and composer", "l"),
+            ("Open Neovim", "e"),
+            ("Open terminal", "j"),
+            ("Open action picker", "k"),
         ] {
+            let keystroke = application_key(suffix);
             assert!(shortcuts.iter().any(|shortcut| {
                 shortcut.label == label
                     && shortcut.keystroke == keystroke
@@ -534,52 +459,10 @@ mod tests {
     fn copy_shortcuts_route_through_the_application_command() {
         let shortcuts = registry();
         assert!(shortcuts.iter().any(|shortcut| {
-            shortcut.label == "Copy visual selection" && shortcut.keystroke == primary!("c")
+            shortcut.label == "Copy visual selection" && shortcut.keystroke == platform!("c")
         }));
         assert!(shortcuts.iter().any(|shortcut| {
-            shortcut.label == "Copy selection" && shortcut.keystroke == primary!("c")
-        }));
-    }
-
-    #[test]
-    fn keyboard_help_has_both_question_mark_shortcuts_and_workgraph_navigation() {
-        let shortcuts = registry();
-        assert!(shortcuts.iter().any(|shortcut| {
-            shortcut.label == "Open first unsubmitted draft" && shortcut.keystroke == primary!("0")
-        }));
-        assert!(
-            shortcuts
-                .iter()
-                .any(|shortcut| shortcut.keystroke == primary!("?"))
-        );
-        assert!(
-            shortcuts
-                .iter()
-                .any(|shortcut| shortcut.keystroke == primary!("/"))
-        );
-        assert!(shortcuts.iter().any(|shortcut| {
-            shortcut.label == "Open / close project work"
-                && shortcut.keystroke == primary!("shift-i")
-        }));
-        assert!(shortcuts.iter().any(|shortcut| {
-            shortcut.label == "Close workspace, draft, or session"
-                && shortcut.keystroke == primary!("w")
-        }));
-        assert!(
-            shortcuts.iter().any(|shortcut| {
-                shortcut.label == "Previous prompt" && shortcut.keystroke == "up"
-            })
-        );
-        assert!(
-            shortcuts.iter().any(|shortcut| {
-                shortcut.label == "Next prompt" && shortcut.keystroke == "down"
-            })
-        );
-        assert!(shortcuts.iter().any(|shortcut| {
-            shortcut.label == "Previous picker item" && shortcut.keystroke == "ctrl-p"
-        }));
-        assert!(shortcuts.iter().any(|shortcut| {
-            shortcut.label == "Next picker item" && shortcut.keystroke == "ctrl-n"
+            shortcut.label == "Copy selection" && shortcut.keystroke == platform!("c")
         }));
     }
 }

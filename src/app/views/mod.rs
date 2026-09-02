@@ -338,12 +338,7 @@ impl Render for FarcasterApp {
                 ) {
                     CurrentCloseTarget::Draft(id) => this.discard_draft(&id, window, cx),
                     CurrentCloseTarget::Session(path) => {
-                        let archived = this
-                            .sessions
-                            .iter()
-                            .find(|session| session.path == path)
-                            .is_some_and(|session| session.archived);
-                        this.request_session_archive(path, !archived, window, cx);
+                        this.archive_selected_session_and_advance(path, window, cx);
                     }
                     CurrentCloseTarget::None => {}
                 }
@@ -831,7 +826,7 @@ fn render_keybindings_help() -> impl IntoElement {
                     div()
                         .text_size(THEME.type_scale.body_small)
                         .text_color(THEME.colors.muted)
-                        .child("Navigate Pi without leaving the keyboard."),
+                        .child("Navigate Farcaster without leaving the keyboard."),
                 ),
         );
     let mut current_section = "";
@@ -854,21 +849,14 @@ fn render_keybindings_help() -> impl IntoElement {
             );
         }
 
-        let mut keys = div().flex().items_center().gap(THEME.space.xs);
-        for binding in shortcuts.iter().filter(|candidate| {
-            candidate.section == shortcut.section && candidate.label == shortcut.label
-        }) {
-            keys = keys.child(Kbd::new(
-                gpui::Keystroke::parse(binding.keystroke).expect("registered shortcut must parse"),
+        let keys = div()
+            .flex()
+            .items_center()
+            .gap(THEME.space.xs)
+            .child(Kbd::new(
+                gpui::Keystroke::parse(&shortcut.keystroke)
+                    .expect("registered shortcut must parse"),
             ));
-            #[cfg(not(target_os = "macos"))]
-            if let Some(key) = binding.keystroke.strip_prefix("ctrl-") {
-                keys = keys.child(Kbd::new(
-                    gpui::Keystroke::parse(&format!("super-{key}"))
-                        .expect("generated Super shortcut must parse"),
-                ));
-            }
-        }
         section = section.map(|section| {
             section.child(
                 div()

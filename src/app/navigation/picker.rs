@@ -19,7 +19,7 @@ use gpui_component::{
 use super::FarcasterApp;
 use crate::{
     app::ui::assets::AppIcon,
-    app::ui::keybindings::primary_key,
+    app::ui::keybindings::application_key,
     app::ui::primitives::{PickerDelegate, PickerRow, modal},
     app::ui::theme::THEME,
     sessions::SessionSummary,
@@ -290,7 +290,7 @@ impl FarcasterApp {
                     AppIcon::Plus,
                     "New session…",
                     None,
-                    Some(primary_key("cmd-n", "ctrl-n")),
+                    Some(application_key("t")),
                     "project thread",
                 ),
                 picker_row(
@@ -310,7 +310,7 @@ impl FarcasterApp {
                     AppIcon::FolderPlus,
                     "Add project",
                     None,
-                    Some(primary_key("cmd-shift-n", "ctrl-shift-n")),
+                    Some(application_key("shift-n")),
                     "folder checkout",
                 ),
                 picker_row(
@@ -456,7 +456,7 @@ fn picker_row(
     icon: AppIcon,
     label: &str,
     detail: Option<String>,
-    shortcut: Option<&'static str>,
+    shortcut: Option<String>,
     keywords: &str,
 ) -> PickerRow {
     commands.insert(id.to_owned(), command);

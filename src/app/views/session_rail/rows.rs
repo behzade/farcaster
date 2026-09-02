@@ -22,7 +22,7 @@ use super::{
 };
 use crate::{
     app::ui::assets::AppIcon,
-    app::ui::keybindings::PRIMARY_MODIFIER,
+    app::ui::keybindings::application_modifier,
     app::ui::primitives::{
         AppIconSize, ContextMenuTrigger, ReorderPosition, ReorderTargetExt as _, app_icon,
         icon_control,
@@ -232,7 +232,8 @@ pub(super) fn draft_session_row(
                                     .when_some(shortcut, |metadata, number| {
                                         metadata.child(Kbd::new(
                                             gpui::Keystroke::parse(&format!(
-                                                "{PRIMARY_MODIFIER}-{number}"
+                                                "{}-{number}",
+                                                application_modifier().prefix()
                                             ))
                                             .expect("fixed session shortcut must parse"),
                                         ))
@@ -659,7 +660,8 @@ pub(super) fn session_row_with_height(
                                 .when_some(shortcut, |metadata, number| {
                                     metadata.child(Kbd::new(
                                         gpui::Keystroke::parse(&format!(
-                                            "{PRIMARY_MODIFIER}-{number}"
+                                            "{}-{number}",
+                                            application_modifier().prefix()
                                         ))
                                         .expect("fixed session shortcut must parse"),
                                     ))
