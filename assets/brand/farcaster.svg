@@ -1,39 +1,42 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
-  <title id="title">Farcaster portal</title>
-  <desc id="desc">A thin pale portal opens from a dark field onto a warm sky, distant moon, and open ground.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Farcaster</title>
+  <desc id="desc">A glowing portal opens from a dark field onto a warm sky, distant moon, and open ground.</desc>
   <defs>
-    <linearGradient id="sky" x1="512" y1="120" x2="512" y2="610" gradientUnits="userSpaceOnUse">
+    <linearGradient id="sky" x1="128" y1="42" x2="128" y2="174" gradientUnits="userSpaceOnUse">
       <stop stop-color="#d66d35"/>
       <stop offset="1" stop-color="#efa45b"/>
     </linearGradient>
-    <linearGradient id="ground" x1="512" y1="535" x2="512" y2="850" gradientUnits="userSpaceOnUse">
+    <linearGradient id="ground" x1="128" y1="151" x2="128" y2="256" gradientUnits="userSpaceOnUse">
       <stop stop-color="#70513b"/>
       <stop offset="1" stop-color="#29352f"/>
     </linearGradient>
-    <radialGradient id="moon" cx="35%" cy="30%" r="72%">
-      <stop stop-color="#f6d6a6"/>
-      <stop offset="1" stop-color="#b56d50"/>
-    </radialGradient>
     <filter id="grain" x="-10%" y="-10%" width="120%" height="120%">
-      <feTurbulence type="fractalNoise" baseFrequency=".72" numOctaves="3" seed="23"/>
-      <feColorMatrix type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 .55 0"/>
+      <feTurbulence type="fractalNoise" baseFrequency=".72" numOctaves="2" seed="23"/>
+      <feColorMatrix type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 .45 0"/>
+    </filter>
+    <filter id="portal-glow" x="0" y="0" width="256" height="256" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2.2" result="blur"/>
+      <feFlood flood-color="#effdff" flood-opacity=".82" result="glow-color"/>
+      <feComposite in="glow-color" in2="blur" operator="in" result="glow"/>
+      <feMerge>
+        <feMergeNode in="glow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
     </filter>
     <clipPath id="window">
-      <circle cx="512" cy="468" r="354"/>
+      <path d="M23 198C23 125 48 77 81 58C96 48 111 42 128 42C145 42 160 48 175 58C208 77 233 125 233 198Z"/>
     </clipPath>
   </defs>
 
-  <rect width="1024" height="1024" rx="224" fill="#202322"/>
+  <rect width="256" height="256" rx="56" fill="#202322"/>
 
   <g clip-path="url(#window)">
-    <rect x="158" y="114" width="708" height="708" fill="url(#sky)"/>
-    <circle cx="676" cy="302" r="47" fill="url(#moon)"/>
-    <circle cx="693" cy="285" r="7" fill="#9c5c4b" opacity=".48"/>
-    <path d="M158 579C267 548 369 555 461 576C559 598 648 543 742 559C788 567 829 580 866 600V822H158Z" fill="url(#ground)"/>
-    <path d="M158 672C282 622 377 650 478 675C584 701 695 626 866 671V822H158Z" fill="#25342d" opacity=".72"/>
-    <rect x="158" y="114" width="708" height="708" filter="url(#grain)" opacity=".2"/>
+    <rect x="23" y="42" width="210" height="156" fill="url(#sky)"/>
+    <circle cx="178" cy="92" r="12" fill="#e8bd87"/>
+    <path d="M23 148C65 136 101 142 133 150C169 158 200 137 233 151V198H23Z" fill="url(#ground)"/>
+    <path d="M23 178C65 162 101 171 135 180C173 189 204 167 233 176V198H23Z" fill="#25342d" opacity=".72"/>
+    <rect x="23" y="42" width="210" height="156" filter="url(#grain)" opacity=".18"/>
   </g>
 
-  <circle cx="512" cy="468" r="361" fill="none" stroke="#111514" stroke-width="11"/>
-  <circle cx="512" cy="468" r="358" fill="none" stroke="#e7e2d7" stroke-width="7"/>
+  <path d="M23 198C23 125 48 77 81 58C96 48 111 42 128 42C145 42 160 48 175 58C208 77 233 125 233 198Z" fill="none" stroke="#f8ffff" stroke-width="1.5" stroke-linejoin="round" filter="url(#portal-glow)"/>
 </svg>
