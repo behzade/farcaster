@@ -765,6 +765,7 @@ fn session_context_menu(
             menu
         })
         .mouse_button(MouseButton::Right)
+        .anchor_to_cursor()
         .into_any_element()
 }
 

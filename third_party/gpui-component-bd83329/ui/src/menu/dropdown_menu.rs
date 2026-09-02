@@ -3,6 +3,7 @@ use std::rc::Rc;
 use gpui::{
     Anchor, Context, DismissEvent, ElementId, Entity, Focusable, InteractiveElement, IntoElement,
     MouseButton, RenderOnce, SharedString, StyleRefinement, Styled, Window,
+    prelude::FluentBuilder as _,
 };
 
 use crate::{Selectable, button::Button, menu::PopupMenu, popover::Popover};
@@ -39,6 +40,7 @@ pub struct DropdownMenuPopover<T: Selectable + IntoElement + 'static> {
     anchor: Anchor,
     trigger: T,
     mouse_button: MouseButton,
+    anchor_to_cursor: bool,
     builder: Rc<dyn Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu>,
 }
 
@@ -58,6 +60,7 @@ where
             anchor: anchor.into(),
             trigger,
             mouse_button: MouseButton::Left,
+            anchor_to_cursor: false,
             builder: Rc::new(builder),
         }
     }
@@ -71,6 +74,13 @@ where
     /// Set the mouse button that opens the menu.
     pub fn mouse_button(mut self, mouse_button: MouseButton) -> Self {
         self.mouse_button = mouse_button;
+        self
+    }
+
+    /// Place the configured menu anchor corner at the pointer position that opens it.
+    /// Programmatic openings continue to use the trigger as their anchor.
+    pub fn anchor_to_cursor(mut self) -> Self {
+        self.anchor_to_cursor = true;
         self
     }
 
@@ -99,6 +109,7 @@ where
             .appearance(false)
             .overlay_closable(false)
             .mouse_button(self.mouse_button)
+            .when(self.anchor_to_cursor, |popover| popover.anchor_to_cursor())
             .trigger(self.trigger)
             .trigger_style(self.style)
             .anchor(self.anchor)

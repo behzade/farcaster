@@ -972,6 +972,7 @@ fn transcript_context_menu(
             )
         })
         .mouse_button(MouseButton::Right)
+        .anchor_to_cursor()
         .into_any_element()
 }
 

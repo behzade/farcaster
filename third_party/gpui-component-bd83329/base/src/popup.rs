@@ -31,6 +31,7 @@ pub struct Popup {
     base: gpui::Stateful<Div>,
     style: StyleRefinement,
     anchor: Anchor,
+    anchor_position: Option<Point<Pixels>>,
     trigger: AnyElement,
     content: Option<AnyElement>,
 }
@@ -43,6 +44,7 @@ impl Popup {
             id,
             style: StyleRefinement::default(),
             anchor: Anchor::TopLeft,
+            anchor_position: None,
             trigger: trigger.into_any_element(),
             content: None,
         }
@@ -50,6 +52,12 @@ impl Popup {
 
     pub fn anchor(mut self, anchor: impl Into<Anchor>) -> Self {
         self.anchor = anchor.into();
+        self
+    }
+
+    /// Position the popup at a window-relative point instead of at the trigger.
+    pub fn position(mut self, position: Point<Pixels>) -> Self {
+        self.anchor_position = Some(position);
         self
     }
 
@@ -99,10 +107,11 @@ impl RenderOnce for Popup {
         let state =
             window.use_keyed_state((self.id, "anchor"), cx, |_, _| PopupAnchorState::default());
         let anchor = self.anchor;
-        let position = Rc::new(Cell::new(Self::resolved_corner(
-            anchor,
-            state.read(cx).bounds,
-        )));
+        let anchor_position = self.anchor_position;
+        let position =
+            Rc::new(Cell::new(anchor_position.unwrap_or_else(|| {
+                Self::resolved_corner(anchor, state.read(cx).bounds)
+            })));
 
         let root = self
             .base
@@ -111,7 +120,9 @@ impl RenderOnce for Popup {
                 let state = state.clone();
                 let position = position.clone();
                 move |bounds, window, cx| {
-                    position.set(Self::resolved_corner(anchor, bounds));
+                    if anchor_position.is_none() {
+                        position.set(Self::resolved_corner(anchor, bounds));
+                    }
                     let first = state.update(cx, |state, _| {
                         let first = !state.captured;
                         state.bounds = bounds;
