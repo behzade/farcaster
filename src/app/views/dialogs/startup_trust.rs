@@ -85,9 +85,11 @@ impl ProjectTrustView {
                 cx,
             )
         });
+        let focus = app.read(cx).composer_focus.clone();
         *self.notification_app.borrow_mut() = Some(app.downgrade());
         self.app = Some(app);
         cx.notify();
+        cx.defer_in(window, move |_, window, cx| focus.focus(window, cx));
     }
 }
 
