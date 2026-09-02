@@ -1407,11 +1407,9 @@ fn tool_starts_worker(kind: &SessionActivityKind, event: &Value) -> bool {
         .unwrap_or_default()
         .to_ascii_lowercase();
     if normalized == "worker_send" {
-        return event
-            .get("args")
-            .and_then(|args| args.get("to"))
-            .and_then(Value::as_str)
-            .is_some_and(|to| matches!(to, "child" | "new"));
+        // A top-level caller creates a child when the requested name is new.
+        // Refreshing after an existing-child or child-to-parent send is harmless.
+        return true;
     }
     matches!(
         normalized.as_str(),

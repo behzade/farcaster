@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use serde::Serialize;
 use serde_json::Value;
 
-use super::super::{WorkerContext, WorkerInput, WorkerInputResponse};
+use super::super::{PeerMessage, WorkerContext, WorkerInput, WorkerInputResponse};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -60,6 +60,7 @@ impl CommonTool {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct WorkerLaunch {
     pub(crate) worker_id: String,
+    pub(crate) worker_name: String,
     pub(crate) project: PathBuf,
     pub(crate) parent_session: String,
     pub(crate) parent_worker_id: Option<String>,
@@ -115,6 +116,9 @@ pub(crate) enum WorkerActivity {
         mode: WorkerSendMode,
         message: String,
     },
+    PeerInputDelivered {
+        message: PeerMessage,
+    },
     TextDelta {
         content_index: usize,
         delta: String,
@@ -162,6 +166,13 @@ pub(crate) enum WorkerEvent {
 
 pub(crate) trait WorkerSession: Send {
     fn send(&mut self, message: String, mode: WorkerSendMode) -> Result<(), String>;
+    fn send_peer_message(
+        &mut self,
+        message: &PeerMessage,
+        mode: WorkerSendMode,
+    ) -> Result<(), String> {
+        self.send(message.prompt(), mode)
+    }
     fn send_with_images(
         &mut self,
         message: String,

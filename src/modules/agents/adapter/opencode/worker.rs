@@ -45,8 +45,9 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
             },
             None,
             launch.worker_id.clone(),
+            launch.worker_name.clone(),
             launch.parent_worker_id.clone(),
-        );
+        )?;
         if farcaster_mcp::enabled() {
             configure_farcaster_mcp(&mut prepared, caller_identity.token())?;
         }
@@ -733,8 +734,11 @@ impl WorkerSession for OpenCodeWorkerSession {
                 WorkerActivityState::Idle
             };
             let mode = WorkerSendMode::for_peer(activity).expect("OpenCode is ready for delivery");
-            return Some(match self.send(message.prompt(), mode) {
-                Ok(()) => WorkerEvent::Started,
+            return Some(match self.send_peer_message(&message, mode) {
+                Ok(()) => {
+                    self.pending.push_back(WorkerEvent::Started);
+                    WorkerEvent::Activity(WorkerActivity::PeerInputDelivered { message })
+                }
                 Err(error) => WorkerEvent::Failed(error),
             });
         }

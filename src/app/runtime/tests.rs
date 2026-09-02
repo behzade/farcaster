@@ -1194,11 +1194,11 @@ fn worker_start_tools_request_catalog_refresh() {
     }
     assert!(tool_starts_worker(
         &SessionActivityKind::ToolStarted,
-        &json!({"toolName": "mcp__farcaster__worker_send", "args": {"to": "child"}}),
+        &json!({"toolName": "mcp__farcaster__worker_send", "args": {"to": "diff-review"}}),
     ));
-    assert!(!tool_starts_worker(
+    assert!(tool_starts_worker(
         &SessionActivityKind::ToolStarted,
-        &json!({"toolName": "mcp__farcaster__worker_send", "args": {"to": "parent"}}),
+        &json!({"toolName": "mcp__farcaster__worker_send", "args": {"to": "ignored-by-child"}}),
     ));
     assert!(!tool_starts_worker(
         &SessionActivityKind::ToolStarted,

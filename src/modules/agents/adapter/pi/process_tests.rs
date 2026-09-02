@@ -214,7 +214,26 @@ fn handshake_routes_async_event_and_correlates_unique_ids() -> TestResult {
 #[test]
 fn peer_message_steers_a_busy_session_without_waiting_for_settlement() -> TestResult {
     let (temp, command) = fake("peer-delivery")?;
-    let mut rpc = PiRpcProcess::spawn(&command, temp.path(), None)?;
+    let registry = crate::modules::agents::core::CallerRegistry::shared();
+    let sender = registry.issue(
+        temp.path(),
+        crate::modules::agents::core::CallerProfile {
+            backend: "pi".into(),
+            provider: None,
+            model: None,
+            effort: None,
+        },
+        None,
+    );
+    sender.bind("sender-session");
+    let parent_id = registry.resolve(sender.token())?.worker_id;
+    let mut rpc = PiRpcProcess::spawn_worker(
+        &command,
+        temp.path(),
+        "recipient-worker".into(),
+        "recipient".into(),
+        Some((parent_id, "sender-session".into())),
+    )?;
     rpc.send_request(SessionCommand::Prompt {
         mode: crate::protocol::PromptMode::Normal,
         message: "keep working".into(),
@@ -235,20 +254,10 @@ fn peer_message_steers_a_busy_session_without_waiting_for_settlement() -> TestRe
     }
     assert!(started, "fake Pi did not start its turn");
 
-    let registry = crate::modules::agents::core::CallerRegistry::shared();
-    let sender = registry.issue(
-        temp.path(),
-        crate::modules::agents::core::CallerProfile {
-            backend: "pi".into(),
-            provider: None,
-            model: None,
-            effort: None,
-        },
-        None,
+    assert_eq!(
+        registry.send(sender.token(), "recipient", "peer update".into())?,
+        Some("recipient".into())
     );
-    sender.bind("sender-session");
-    let recipient = registry.resolve(rpc.caller_token())?;
-    registry.send(sender.token(), &recipient.worker_id, "peer update".into())?;
 
     let log_path = temp.path().join("peer-delivery.log");
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -393,6 +402,7 @@ fn child_parent_stamp_retries_after_pi_reports_an_uncreated_session_file() -> Te
         &command,
         temp.path(),
         "child-worker".into(),
+        "review".into(),
         Some(("parent-worker".into(), "/sessions/parent.jsonl".into())),
     )?;
     assert!(!path.exists());

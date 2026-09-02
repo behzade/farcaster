@@ -24,8 +24,8 @@ use crate::modules::agents::adapter::process_command::resolve_agent_program;
 use crate::{
     agents::extensions::ExtensionUiResponse,
     agents::{
-        AgentLaunchConfig, HarnessAccessMode, SessionCommand, SessionEvent, SessionResponse,
-        WorkerActivityState, WorkerSendMode,
+        AgentLaunchConfig, HarnessAccessMode, PeerMessage, SessionCommand, SessionEvent,
+        SessionResponse, WorkerActivityState, WorkerSendMode,
     },
 };
 
@@ -119,7 +119,7 @@ pub(crate) struct PiRpcProcess {
     incoming: mpsc::Receiver<ReaderItem>,
     queued: VecDeque<SessionEvent>,
     pending: HashMap<String, String>,
-    peer_messages: VecDeque<String>,
+    peer_messages: VecDeque<PeerMessage>,
     next_id: u64,
     activity: WorkerActivityState,
     stderr: String,
@@ -194,6 +194,7 @@ impl PiRpcProcess {
         command: &AgentLaunchConfig,
         project: &Path,
         worker_id: String,
+        worker_name: String,
         parent: Option<(String, String)>,
     ) -> Result<Self, String> {
         Self::spawn_inner(
@@ -201,7 +202,7 @@ impl PiRpcProcess {
             project,
             SessionLaunch::New,
             None,
-            Some(worker_id),
+            Some((worker_id, worker_name)),
             parent,
         )
     }
@@ -211,7 +212,7 @@ impl PiRpcProcess {
         project: &Path,
         launch: SessionLaunch<'_>,
         wake: Option<thread::Thread>,
-        worker_id: Option<String>,
+        worker: Option<(String, String)>,
         parent: Option<(String, String)>,
     ) -> Result<Self, String> {
         let registry = crate::modules::agents::core::CallerRegistry::shared();
@@ -223,8 +224,15 @@ impl PiRpcProcess {
         };
         let parent_worker_id = parent.as_ref().map(|(id, _)| id.clone());
         let parent_session = parent.map(|(_, session)| session);
-        let caller_identity = if let Some(worker_id) = worker_id {
-            registry.issue_as(project, profile, wake.clone(), worker_id, parent_worker_id)
+        let caller_identity = if let Some((worker_id, worker_name)) = worker {
+            registry.issue_as(
+                project,
+                profile,
+                wake.clone(),
+                worker_id,
+                worker_name,
+                parent_worker_id,
+            )?
         } else {
             registry.issue(project, profile, wake.clone())
         };
@@ -414,7 +422,7 @@ impl PiRpcProcess {
             return Some(item);
         }
         if let Some(message) = self.caller_identity.try_recv() {
-            self.peer_messages.push_back(message.prompt());
+            self.peer_messages.push_back(message);
         }
         if let Some(mode) = WorkerSendMode::for_peer(self.activity)
             && let Some(message) = self.peer_messages.pop_front()
@@ -426,7 +434,7 @@ impl PiRpcProcess {
             };
             if let Err(error) = self.send_request(SessionCommand::Prompt {
                 mode,
-                message,
+                message: message.prompt(),
                 images: Vec::new(),
             }) {
                 return Some(SessionEvent::Failure(error));

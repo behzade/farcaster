@@ -15,7 +15,7 @@ use super::{
 };
 use crate::{
     agents::{
-        AgentLaunchConfig, CommonTool, TokenUsage, ToolReviewState, WorkerActivity,
+        AgentLaunchConfig, CommonTool, PeerMessage, TokenUsage, ToolReviewState, WorkerActivity,
         WorkerActivityState, WorkerContext, WorkerEvent, WorkerInput, WorkerInputResponse,
         WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory, WorkerUsage,
     },
@@ -49,8 +49,9 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             },
             None,
             launch.worker_id.clone(),
+            launch.worker_name.clone(),
             launch.parent_worker_id.clone(),
-        );
+        )?;
         configure_codex_app_server(&mut prepared, self.command.access_mode);
         if farcaster_mcp::enabled() {
             configure_farcaster_mcp(&mut prepared, caller_identity.token());
@@ -479,7 +480,7 @@ struct CodexWorkerSession {
     manual_compaction: bool,
     pending: HashMap<CodexRequestId, PendingRequest>,
     pending_inputs: HashMap<String, CodexRequestId>,
-    peer_messages: VecDeque<String>,
+    peer_messages: VecDeque<PeerMessage>,
     events: VecDeque<WorkerEvent>,
 }
 
@@ -575,13 +576,16 @@ impl WorkerSession for CodexWorkerSession {
             return Some(event);
         }
         if let Some(message) = self.caller_identity.try_recv() {
-            self.peer_messages.push_back(message.prompt());
+            self.peer_messages.push_back(message);
         }
         if let Some(mode) = WorkerSendMode::for_peer(self.activity())
             && let Some(message) = self.peer_messages.pop_front()
         {
-            return Some(match self.send(message, mode) {
-                Ok(()) => WorkerEvent::Started,
+            return Some(match self.send_peer_message(&message, mode) {
+                Ok(()) => {
+                    self.events.push_back(WorkerEvent::Started);
+                    WorkerEvent::Activity(WorkerActivity::PeerInputDelivered { message })
+                }
                 Err(error) => WorkerEvent::Failed(error),
             });
         }

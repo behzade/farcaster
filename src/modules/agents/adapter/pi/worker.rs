@@ -38,6 +38,7 @@ impl WorkerSessionFactory for PiWorkerFactory {
                 &self.command,
                 &launch.project,
                 launch.worker_id.clone(),
+                launch.worker_name.clone(),
                 launch
                     .parent_worker_id
                     .clone()

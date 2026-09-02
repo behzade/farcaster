@@ -118,11 +118,9 @@ fn report_to_parent(worker_id: &str, parent_worker_id: Option<&str>, output: Str
     } else {
         output
     };
-    if let Err(error) = crate::modules::agents::core::CallerRegistry::shared().send_from_worker(
-        worker_id,
-        parent_worker_id,
-        message,
-    ) {
+    if let Err(error) = crate::modules::agents::core::CallerRegistry::shared()
+        .report_from_worker(worker_id, message)
+    {
         zlog::warn!("Failed to deliver child worker {worker_id} result: {error}");
     }
 }
