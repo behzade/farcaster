@@ -302,6 +302,22 @@ impl WorkerSessionTransport {
                     "usage": usage_json(usage.turn),
                 })
             }
+            WorkerActivity::ServiceStatusChanged {
+                name,
+                status,
+                error,
+                failure_reason,
+            } => json!({
+                "type": "service_status_changed",
+                "name": name,
+                "status": status,
+                "error": error,
+                "failureReason": failure_reason,
+            }),
+            WorkerActivity::RateLimitsChanged { limits } => json!({
+                "type": "rate_limits_changed",
+                "limits": limits,
+            }),
             WorkerActivity::CompactionStarted => json!({
                 "type": "compaction_start",
                 "reason": "manual",

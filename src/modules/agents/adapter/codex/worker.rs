@@ -618,7 +618,21 @@ impl WorkerSession for CodexWorkerSession {
                     )));
                 }
                 Ok(CodexInbound::Notification { method, params }) => {
-                    if !codex_notification_is_for_thread(&method, &params, &self.thread_id) {
+                    let global = method == "account/rateLimits/updated";
+                    if !global
+                        && !codex_notification_is_for_thread(&method, &params, &self.thread_id)
+                    {
+                        continue;
+                    }
+                    if let Some(activity) = codex_telemetry(&method, &params) {
+                        return Some(WorkerEvent::Activity(activity));
+                    }
+                    if global || method == "mcpServer/startupStatus/updated" {
+                        log_bad_codex_notification(
+                            &method,
+                            &params,
+                            "telemetry update is missing required fields",
+                        );
                         continue;
                     }
                     match method.as_str() {
@@ -1101,6 +1115,27 @@ fn codex_usage(value: &Value) -> TokenUsage {
     }
 }
 
+fn codex_telemetry(method: &str, params: &Value) -> Option<WorkerActivity> {
+    match method {
+        "mcpServer/startupStatus/updated" => Some(WorkerActivity::ServiceStatusChanged {
+            name: params.get("name")?.as_str()?.to_owned(),
+            status: params.get("status")?.as_str()?.to_owned(),
+            error: params
+                .get("error")
+                .filter(|value| !value.is_null())
+                .cloned(),
+            failure_reason: params
+                .get("failureReason")
+                .filter(|value| !value.is_null())
+                .cloned(),
+        }),
+        "account/rateLimits/updated" => Some(WorkerActivity::RateLimitsChanged {
+            limits: params.get("rateLimits")?.clone(),
+        }),
+        _ => None,
+    }
+}
+
 fn codex_notification_is_for_thread(method: &str, params: &Value, thread_id: &str) -> bool {
     match params.get("threadId").and_then(Value::as_str) {
         Some(reported) => reported == thread_id,
@@ -1400,6 +1435,31 @@ fn approval_prompt(method: &str, params: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn maps_codex_telemetry() {
+        assert_eq!(
+            codex_telemetry(
+                "mcpServer/startupStatus/updated",
+                &json!({"name": "farcaster", "status": "ready"}),
+            ),
+            Some(WorkerActivity::ServiceStatusChanged {
+                name: "farcaster".into(),
+                status: "ready".into(),
+                error: None,
+                failure_reason: None,
+            })
+        );
+
+        let limits = json!({"primary": {"usedPercent": 40}});
+        assert_eq!(
+            codex_telemetry(
+                "account/rateLimits/updated",
+                &json!({"rateLimits": limits.clone()}),
+            ),
+            Some(WorkerActivity::RateLimitsChanged { limits })
+        );
+    }
 
     #[test]
     fn codex_model_efforts_accept_current_and_legacy_shapes() {
