@@ -277,8 +277,10 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
         path: String,
         body: Option<Value>,
     ) -> Result<R, String> {
+        let operation = format!("{method:?} {path}");
         let response = self.execute(method, path, body)?;
-        decode_data(response)
+        ensure_success(&response)?;
+        decode_data(response).map_err(|error| format!("{operation}: {error}"))
     }
 
     fn execute(
