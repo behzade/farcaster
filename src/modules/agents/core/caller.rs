@@ -6,8 +6,6 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use serde::Serialize;
-
 use super::{super::contract::PeerMessage, names, worker::WorkerActivityState};
 
 #[derive(Clone, Default)]
@@ -34,14 +32,6 @@ pub(crate) struct CallerContext {
     pub(crate) model: Option<String>,
     pub(crate) effort: Option<String>,
     pub(crate) parent_worker_id: Option<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct WorkerPeer {
-    pub(crate) name: String,
-    pub(crate) backend: String,
-    pub(crate) status: WorkerActivityState,
 }
 
 struct RegisteredCaller {
@@ -197,25 +187,13 @@ impl CallerRegistry {
         }
     }
 
-    pub(crate) fn list(&self, token: &str) -> Result<(String, Vec<WorkerPeer>), String> {
-        let callers = self
-            .callers
+    pub(crate) fn is_child(&self, token: &str) -> Result<bool, String> {
+        self.callers
             .lock()
-            .map_err(|_| "worker caller registry is unavailable".to_owned())?;
-        let caller = callers
+            .map_err(|_| "worker caller registry is unavailable".to_owned())?
             .get(token)
-            .ok_or_else(|| "unknown Farcaster caller".to_owned())?;
-        let mut workers = callers
-            .values()
-            .filter(|peer| visible_to(caller, peer))
-            .map(|peer| WorkerPeer {
-                name: peer.worker_name.clone(),
-                backend: peer.backend.clone(),
-                status: peer.activity,
-            })
-            .collect::<Vec<_>>();
-        workers.sort_by(|left, right| left.name.cmp(&right.name));
-        Ok((caller.worker_name.clone(), workers))
+            .map(|caller| caller.parent_worker_id.is_some())
+            .ok_or_else(|| "unknown Farcaster caller".to_owned())
     }
 
     pub(crate) fn session_parent(&self, backend: &str, session: &str) -> Option<String> {
@@ -349,16 +327,6 @@ impl Drop for CallerIdentity {
     }
 }
 
-fn visible_to(caller: &RegisteredCaller, peer: &RegisteredCaller) -> bool {
-    if peer.worker_id == caller.worker_id || peer.project != caller.project {
-        return false;
-    }
-    match caller.parent_worker_id.as_deref() {
-        Some(parent) => peer.worker_id == parent,
-        None => peer.parent_worker_id.as_deref() == Some(caller.worker_id.as_str()),
-    }
-}
-
 fn canonical_project(project: &Path) -> PathBuf {
     project
         .canonicalize()
@@ -455,7 +423,7 @@ mod tests {
     }
 
     #[test]
-    fn top_level_workers_only_list_and_message_their_named_children() -> Result<(), String> {
+    fn top_level_workers_only_message_their_named_children() -> Result<(), String> {
         let registry = CallerRegistry::default();
         let parent = identity(&registry, Path::new("/project"), "pi");
         let unrelated = identity(&registry, Path::new("/project"), "codex-cli");
@@ -465,12 +433,9 @@ mod tests {
         let child = child(&registry, &parent_context, "diff-review")?;
         child.bind("child-session");
         child.set_activity(WorkerActivityState::Working);
+        assert!(!registry.is_child(parent.token())?);
+        assert!(registry.is_child(child.token())?);
 
-        let (self_name, listed) = registry.list(parent.token())?;
-        assert_eq!(self_name, parent_context.worker_name);
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].name, "diff-review");
-        assert_eq!(listed[0].status, WorkerActivityState::Working);
         assert_eq!(
             registry.send(parent.token(), "missing", "work".into())?,
             None
@@ -491,18 +456,13 @@ mod tests {
     }
 
     #[test]
-    fn children_only_see_and_report_to_their_parent() -> Result<(), String> {
+    fn children_only_report_to_their_parent() -> Result<(), String> {
         let registry = CallerRegistry::default();
         let parent = identity(&registry, Path::new("/project"), "pi");
         parent.bind("parent-session");
         let parent_context = context(&registry, &parent);
         let child = child(&registry, &parent_context, "review")?;
         child.bind("child-session");
-
-        let (self_name, listed) = registry.list(child.token())?;
-        assert_eq!(self_name, "review");
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].name, parent_context.worker_name);
 
         assert_eq!(
             registry.send(child.token(), "ignored", "review done".into())?,

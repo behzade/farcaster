@@ -110,9 +110,9 @@ fn notify(updates: &async_channel::Sender<()>) {
 }
 
 fn report_to_parent(worker_id: &str, parent_worker_id: Option<&str>, output: String) {
-    let Some(parent_worker_id) = parent_worker_id else {
+    if parent_worker_id.is_none() {
         return;
-    };
+    }
     let message = if output.trim().is_empty() {
         "Worker completed without output.".to_owned()
     } else {

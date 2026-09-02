@@ -128,11 +128,6 @@ pub(crate) struct PiRpcProcess {
 }
 
 impl PiRpcProcess {
-    #[cfg(test)]
-    fn caller_token(&self) -> &str {
-        self.caller_identity.token()
-    }
-
     pub(in crate::modules::agents::adapter) fn spawn_catalog(
         command: &AgentLaunchConfig,
         project: &Path,

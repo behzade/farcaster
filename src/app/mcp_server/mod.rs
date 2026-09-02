@@ -1,5 +1,6 @@
 //! Stateless MCP delivery adapter for Farcaster-owned capabilities.
 
+mod notices;
 mod workers;
 mod workgraph;
 
@@ -58,6 +59,7 @@ fn serve(
         .build()
         .map_err(|error| format!("create MCP runtime: {error}"))?;
     runtime.block_on(async move {
+        let notices = notices::NoticeBoard::default();
         let listener = tokio::net::TcpListener::from_std(listener)
             .map_err(|error| format!("open MCP listener: {error}"))?;
         let config = server_config();
@@ -67,6 +69,7 @@ fn serve(
                     database.clone(),
                     worker_pool.clone(),
                     workgraph_updates.clone(),
+                    notices.clone(),
                 ))
             },
             LocalSessionManager::default().into(),
@@ -91,6 +94,7 @@ struct FarcasterMcp {
     database: PathBuf,
     workers: crate::agents::WorkerPool,
     workgraph_updates: async_channel::Sender<()>,
+    notices: notices::NoticeBoard,
 }
 
 impl FarcasterMcp {
@@ -98,11 +102,13 @@ impl FarcasterMcp {
         database: PathBuf,
         workers: crate::agents::WorkerPool,
         workgraph_updates: async_channel::Sender<()>,
+        notices: notices::NoticeBoard,
     ) -> Self {
         Self {
             database,
             workers,
             workgraph_updates,
+            notices,
         }
     }
 }
@@ -111,7 +117,7 @@ impl FarcasterMcp {
 impl FarcasterMcp {
     #[tool(
         name = "worker_send",
-        description = "Send work within your worker family. For a top-level worker, `to` is a direct child name: the child is created on first use and subsequent messages reuse it. For a child worker, every message goes to its parent and `to` is ignored. Unrelated top-level sessions cannot message each other. Use concise stable child names such as `diff-review` or `auth-tests`."
+        description = "Send work within your worker family. Top-level workers provide a direct child name in `to`; first use creates the child and subsequent messages reuse it. Children omit `to` and always send to their parent."
     )]
     async fn worker_send(
         &self,
@@ -127,18 +133,21 @@ impl FarcasterMcp {
     }
 
     #[tool(
-        name = "worker_list",
-        description = "List the caller's worker family by stable names. Top-level workers see their direct children; child workers see only their parent."
+        name = "worker_notices",
+        description = "Read or post a non-intrusive project notice board for top-level worker coordination. Use only when shared-worktree changes overlap or may conflict with your work, or when change ownership is unclear. Do not use it for unrelated changes. Posting also returns matching notices."
     )]
-    async fn worker_list(
+    async fn worker_notices(
         &self,
-        Parameters(_params): Parameters<workers::ListParams>,
+        Parameters(params): Parameters<notices::Params>,
         Extension(parts): Extension<axum::http::request::Parts>,
     ) -> Result<Json<serde_json::Value>, String> {
-        let caller_token = caller_token(&parts);
-        let value = tokio::task::spawn_blocking(move || workers::list(caller_token))
+        let token = caller_token(&parts)
+            .ok_or_else(|| "worker notices require a registered Farcaster caller".to_owned())?;
+        let caller = crate::agents::CallerRegistry::shared().resolve(&token)?;
+        let board = self.notices.clone();
+        let value = tokio::task::spawn_blocking(move || board.access(&caller, params))
             .await
-            .map_err(|error| format!("worker list task failed: {error}"))??;
+            .map_err(|error| format!("worker notice task failed: {error}"))??;
         Ok(Json(value))
     }
 
@@ -201,14 +210,66 @@ fn notify_workgraph_changed(updates: &async_channel::Sender<()>) {
     let _ = updates.try_send(());
 }
 
+fn tools_for_role(child: bool) -> Vec<rmcp::model::Tool> {
+    let mut tools = FarcasterMcp::tool_router().list_all();
+    if child {
+        tools.retain(|tool| tool.name != "worker_notices");
+    }
+    if let Some(tool) = tools.iter_mut().find(|tool| tool.name == "worker_send") {
+        let mut schema = (*tool.input_schema).clone();
+        if child {
+            if let Some(properties) = schema
+                .get_mut("properties")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                properties.remove("to");
+            }
+            schema.insert("required".into(), serde_json::json!(["message"]));
+            tool.description = Some(Cow::Borrowed(
+                "Send a message to your parent worker. The parent is implicit.",
+            ));
+        } else {
+            schema.insert("required".into(), serde_json::json!(["to", "message"]));
+            tool.description = Some(Cow::Borrowed(
+                "Send a message or delegated task to a named direct child. First use creates the child; later uses reuse it.",
+            ));
+        }
+        tool.input_schema = std::sync::Arc::new(schema);
+    }
+    tools
+}
+
 #[tool_handler(
     name = "farcaster",
     version = "0.1.0",
-    instructions = "Farcaster provides named parent-child workers and durable work graphs. A top-level worker uses worker_send with a concise child name such as `diff-review`; first use creates that child and later uses message it. A child worker's worker_send messages always go to its parent, regardless of `to`. worker_list shows only direct family members by name. Unrelated top-level sessions cannot message each other. Use the harness's native subagents when the harness provides them."
+    instructions = "Farcaster provides named parent-child workers, a non-intrusive notice board for top-level coordination, and durable work graphs. A top-level worker uses worker_send with a concise child name such as `diff-review`; first use creates that child and later uses message it. A child worker's worker_send schema omits `to` because messages always go to its parent. Top-level workers may use worker_notices only when shared-worktree changes overlap or may conflict with their work, or when change ownership is unclear; do not consult or post for unrelated changes. Notice-board access never pushes messages into another agent's workflow. Use the harness's native subagents when the harness provides them."
 )]
 impl ServerHandler for FarcasterMcp {
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
         Cow::Borrowed(&[ProtocolVersion::V_2026_07_28])
+    }
+
+    async fn list_tools(
+        &self,
+        _request: Option<rmcp::model::PaginatedRequestParams>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<rmcp::model::ListToolsResult, rmcp::ErrorData> {
+        let token = context
+            .extensions
+            .get::<axum::http::request::Parts>()
+            .and_then(caller_token)
+            .ok_or_else(|| rmcp::ErrorData::internal_error("missing Farcaster caller", None))?;
+        let child = crate::agents::CallerRegistry::shared()
+            .is_child(&token)
+            .map_err(|error| rmcp::ErrorData::internal_error(error, None))?;
+        Ok(rmcp::model::ListToolsResult {
+            result_type: Some(rmcp::model::ResultType::COMPLETE),
+            tools: tools_for_role(child),
+            meta: None,
+            next_cursor: None,
+            ttl_ms: Some(0),
+            cache_scope: Some(rmcp::model::CacheScope::Private),
+        })
     }
 }
 
@@ -234,7 +295,7 @@ mod tests {
         assert_eq!(
             names,
             [
-                "worker_list",
+                "worker_notices",
                 "worker_send",
                 "workgraph_complete",
                 "workgraph_patch",
@@ -250,6 +311,36 @@ mod tests {
     }
 
     #[test]
+    fn tool_schemas_follow_the_caller_role() {
+        let parent = tools_for_role(false);
+        let parent_send = parent
+            .iter()
+            .find(|tool| tool.name == "worker_send")
+            .expect("parent worker_send");
+        assert!(parent.iter().any(|tool| tool.name == "worker_notices"));
+        assert_eq!(
+            parent_send.input_schema.get("required"),
+            Some(&serde_json::json!(["to", "message"]))
+        );
+
+        let child = tools_for_role(true);
+        let child_send = child
+            .iter()
+            .find(|tool| tool.name == "worker_send")
+            .expect("child worker_send");
+        assert!(!child.iter().any(|tool| tool.name == "worker_notices"));
+        assert_eq!(
+            child_send.input_schema.get("required"),
+            Some(&serde_json::json!(["message"]))
+        );
+        assert!(
+            child_send.input_schema["properties"]
+                .as_object()
+                .is_some_and(|properties| !properties.contains_key("to"))
+        );
+    }
+
+    #[test]
     fn accepts_only_modern_stateless_requests() {
         let temp = tempfile::tempdir().expect("temp directory");
         let project = temp.path().join("project");
@@ -259,6 +350,7 @@ mod tests {
             PathBuf::from("unused"),
             worker_pool(&project),
             workgraph_updates,
+            notices::NoticeBoard::default(),
         );
         assert_eq!(
             server.supported_protocol_versions().as_ref(),
