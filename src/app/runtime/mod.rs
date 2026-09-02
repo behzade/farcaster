@@ -62,7 +62,7 @@ use supervisor::{
     initial_draft_command, is_view_only_selection, publish_session_status_if_changed,
     route_session_discovery, rpc_owned_session_paths, target_command_needs_actor_message,
 };
-pub(crate) use types::{RuntimeCommand, RuntimeEvent, RuntimeSnapshot};
+pub(crate) use types::{ConfigurationStatus, RuntimeCommand, RuntimeEvent, RuntimeSnapshot};
 
 fn stable_session_stats(previous: &Value, next: Value, running: bool) -> Value {
     if !running || context_usage_is_meaningful(&next) {

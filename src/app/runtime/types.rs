@@ -143,6 +143,14 @@ pub(crate) enum RuntimeEvent {
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) enum ConfigurationStatus {
+    #[default]
+    Loading,
+    Loaded,
+    Failed(String),
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct RuntimeSnapshot {
     pub connected: bool,
     pub status: String,
@@ -158,8 +166,7 @@ pub(crate) struct RuntimeSnapshot {
     pub conversation: Arc<ConversationState>,
     pub models: Vec<Model>,
     pub thinking_levels: Vec<String>,
-    pub configuration_loaded: bool,
-    pub configuration_error: Option<String>,
+    pub configuration_status: ConfigurationStatus,
     pub modes: Vec<AgentMode>,
     pub selected_mode: Option<String>,
     pub stats: Value,

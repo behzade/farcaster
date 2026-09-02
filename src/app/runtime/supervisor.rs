@@ -472,8 +472,7 @@ fn run_supervisor(
                         let snapshot = Arc::make_mut(&mut updated);
                         snapshot.models.clone_from(&catalog.models);
                         snapshot.thinking_levels.clone_from(&catalog.efforts);
-                        snapshot.configuration_loaded = true;
-                        snapshot.configuration_error = None;
+                        snapshot.configuration_status = ConfigurationStatus::Loaded;
                         latest.insert(selected.clone(), updated.clone());
                         let _ = event_tx.send(RuntimeEvent::Snapshot {
                             generation,
@@ -494,8 +493,7 @@ fn run_supervisor(
                     {
                         let mut updated = snapshot.clone();
                         let snapshot = Arc::make_mut(&mut updated);
-                        snapshot.configuration_loaded = true;
-                        snapshot.configuration_error = Some(error);
+                        snapshot.configuration_status = ConfigurationStatus::Failed(error);
                         latest.insert(selected.clone(), updated.clone());
                         let _ = event_tx.send(RuntimeEvent::Snapshot {
                             generation,

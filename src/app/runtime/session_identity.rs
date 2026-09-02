@@ -2,7 +2,7 @@ use std::{collections::HashMap, path::PathBuf};
 
 use crate::protocol::Model;
 
-use super::RuntimeSnapshot;
+use super::{ConfigurationStatus, RuntimeSnapshot};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SessionIdentity<'a> {
@@ -92,8 +92,7 @@ pub(super) struct SessionControlDefaults {
 struct HarnessCatalog {
     models: Vec<Model>,
     efforts: Vec<String>,
-    loaded: bool,
-    error: Option<String>,
+    status: ConfigurationStatus,
 }
 
 #[derive(Default)]
@@ -166,14 +165,12 @@ impl SessionControlDefaults {
         let cached = self.catalogs.entry((harness, project)).or_default();
         cached.models = catalog.models;
         cached.efforts = catalog.efforts;
-        cached.loaded = true;
-        cached.error = None;
+        cached.status = ConfigurationStatus::Loaded;
     }
 
     pub fn set_catalog_error(&mut self, harness: String, project: PathBuf, error: String) {
-        let cached = self.catalogs.entry((harness, project)).or_default();
-        cached.loaded = true;
-        cached.error = Some(error);
+        self.catalogs.entry((harness, project)).or_default().status =
+            ConfigurationStatus::Failed(error);
     }
 
     pub fn apply(&mut self, snapshot: &mut RuntimeSnapshot, adopt_identity: bool) -> bool {
@@ -191,10 +188,7 @@ impl SessionControlDefaults {
         } else {
             catalog.efforts.clone_from(&snapshot.thinking_levels);
         }
-        if catalog.loaded {
-            snapshot.configuration_loaded = true;
-            snapshot.configuration_error.clone_from(&catalog.error);
-        }
+        snapshot.configuration_status.clone_from(&catalog.status);
         let identity = self.identities.entry(snapshot.harness.clone()).or_default();
 
         if let Some(session) = &snapshot.session {
@@ -319,36 +313,6 @@ mod tests {
         };
 
         assert!(snapshot.available_thinking_levels().is_empty());
-    }
-
-    #[test]
-    fn completed_empty_and_failed_catalogs_stop_loading() {
-        let project = PathBuf::from("/project");
-        let mut defaults = SessionControlDefaults::default();
-        defaults.set_catalog(
-            "cursor-cli".into(),
-            project.clone(),
-            crate::agents::ConfigurationCatalog::default(),
-        );
-        defaults.set_catalog_error("opencode2".into(), project.clone(), "timed out".into());
-
-        let mut cursor = RuntimeSnapshot {
-            harness: "cursor-cli".into(),
-            project: project.clone(),
-            ..RuntimeSnapshot::default()
-        };
-        defaults.apply(&mut cursor, true);
-        assert!(cursor.configuration_loaded);
-        assert_eq!(cursor.configuration_error, None);
-
-        let mut opencode = RuntimeSnapshot {
-            harness: "opencode2".into(),
-            project,
-            ..RuntimeSnapshot::default()
-        };
-        defaults.apply(&mut opencode, true);
-        assert!(opencode.configuration_loaded);
-        assert_eq!(opencode.configuration_error.as_deref(), Some("timed out"));
     }
 
     #[test]
