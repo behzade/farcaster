@@ -614,7 +614,7 @@ impl WorkerSession for CodexWorkerSession {
                     )));
                 }
                 Ok(CodexInbound::Notification { method, params }) => {
-                    if params["threadId"].as_str() != Some(&self.thread_id) {
+                    if !codex_notification_is_for_thread(&method, &params, &self.thread_id) {
                         continue;
                     }
                     match method.as_str() {
@@ -629,6 +629,12 @@ impl WorkerSession for CodexWorkerSession {
                                     self.reasoning_started = false;
                                     return Some(WorkerEvent::Started);
                                 }
+                            } else {
+                                log_bad_codex_notification(
+                                    &method,
+                                    &params,
+                                    "turn start is missing turn id",
+                                );
                             }
                         }
                         "item/agentMessage/delta" => {
@@ -639,6 +645,27 @@ impl WorkerSession for CodexWorkerSession {
                                     delta: delta.to_owned(),
                                 }));
                             }
+                            log_bad_codex_notification(
+                                &method,
+                                &params,
+                                "agent delta is missing delta",
+                            );
+                        }
+                        "item/plan/delta" => {
+                            if let Some(delta) = params["delta"].as_str() {
+                                self.reasoning_started = true;
+                                return Some(WorkerEvent::Activity(
+                                    WorkerActivity::ThinkingDelta {
+                                        content_index: 0,
+                                        delta: delta.to_owned(),
+                                    },
+                                ));
+                            }
+                            log_bad_codex_notification(
+                                &method,
+                                &params,
+                                "plan delta is missing delta",
+                            );
                         }
                         "item/reasoning/summaryTextDelta" | "item/reasoning/textDelta" => {
                             if let Some(delta) = params["delta"].as_str() {
@@ -650,6 +677,11 @@ impl WorkerSession for CodexWorkerSession {
                                     },
                                 ));
                             }
+                            log_bad_codex_notification(
+                                &method,
+                                &params,
+                                "reasoning delta is missing delta",
+                            );
                         }
                         "item/started" => {
                             if let Some(activity) = codex_input_delivery(&params["item"]) {
@@ -666,6 +698,9 @@ impl WorkerSession for CodexWorkerSession {
                             if let Some(event) = codex_tool_start(&params) {
                                 return Some(WorkerEvent::Activity(event));
                             }
+                            if !codex_passive_item(&params["item"]) {
+                                log_bad_codex_notification(&method, &params, "unmapped item start");
+                            }
                         }
                         "item/commandExecution/outputDelta" => {
                             if let (Some(id), Some(delta)) =
@@ -676,6 +711,11 @@ impl WorkerSession for CodexWorkerSession {
                                     content: json!([{"type": "text", "text": delta}]),
                                 }));
                             }
+                            log_bad_codex_notification(
+                                &method,
+                                &params,
+                                "command output delta is missing itemId or delta",
+                            );
                         }
                         "item/completed" => {
                             if self.output.is_empty()
@@ -705,10 +745,32 @@ impl WorkerSession for CodexWorkerSession {
                             if let Some(event) = codex_tool_end(&params) {
                                 return Some(WorkerEvent::Activity(event));
                             }
+                            if !codex_passive_item(&params["item"]) {
+                                log_bad_codex_notification(
+                                    &method,
+                                    &params,
+                                    "unmapped item completion",
+                                );
+                            }
                         }
                         "thread/tokenUsage/updated" => {
-                            let usage = params.get("tokenUsage")?;
-                            let session = codex_usage(usage.get("total")?);
+                            let Some(usage) = params.get("tokenUsage") else {
+                                log_bad_codex_notification(
+                                    &method,
+                                    &params,
+                                    "token update is missing tokenUsage",
+                                );
+                                continue;
+                            };
+                            let Some(total) = usage.get("total") else {
+                                log_bad_codex_notification(
+                                    &method,
+                                    &params,
+                                    "token update is missing total",
+                                );
+                                continue;
+                            };
+                            let session = codex_usage(total);
                             let turn = usage.get("last").map(codex_usage).unwrap_or(session);
                             return Some(WorkerEvent::Activity(WorkerActivity::Usage(
                                 WorkerUsage {
@@ -752,10 +814,33 @@ impl WorkerSession for CodexWorkerSession {
                                 output: self.output.clone(),
                             });
                         }
-                        _ => {}
+                        // These notifications update state that the backend-neutral worker
+                        // contract does not expose independently.
+                        "thread/status/changed"
+                        | "turn/diff/updated"
+                        | "turn/plan/updated"
+                        | "serverRequest/resolved"
+                        | "item/reasoning/summaryPartAdded"
+                        | "item/fileChange/outputDelta" => {}
+                        "warning" | "configWarning" => {
+                            zlog::warn!("Codex app-server {method}: {params}");
+                        }
+                        _ => log_bad_codex_notification(
+                            &method,
+                            &params,
+                            "unmapped same-thread notification",
+                        ),
                     }
                 }
                 Ok(CodexInbound::ServerRequest { id, method, params }) => {
+                    if !is_codex_approval_request(&method) {
+                        zlog::warn!(
+                            "Unsupported Codex server request was not mapped: id={id:?} method={method} params={params}"
+                        );
+                        return Some(WorkerEvent::Failed(format!(
+                            "unsupported Codex server request: {method}"
+                        )));
+                    }
                     let input_id = match &id {
                         CodexRequestId::Number(value) => value.to_string(),
                         CodexRequestId::String(value) => value.clone(),
@@ -974,13 +1059,77 @@ fn codex_usage(value: &Value) -> TokenUsage {
     }
 }
 
+fn codex_notification_is_for_thread(method: &str, params: &Value, thread_id: &str) -> bool {
+    match params.get("threadId").and_then(Value::as_str) {
+        Some(reported) => reported == thread_id,
+        None if matches!(method, "warning" | "configWarning") => {
+            zlog::warn!("Codex app-server {method}: {params}");
+            false
+        }
+        // `thread/started` carries the id inside the thread object and has no worker activity
+        // of its own; turn events establish the active state.
+        None if method == "thread/started" => false,
+        None => {
+            log_bad_codex_notification(method, params, "notification is missing threadId");
+            false
+        }
+    }
+}
+
+fn log_bad_codex_notification(method: &str, params: &Value, reason: &str) {
+    zlog::warn!(
+        "Codex notification was not mapped correctly ({reason}): method={method} params={params}"
+    );
+}
+
+fn is_codex_approval_request(method: &str) -> bool {
+    matches!(
+        method,
+        "item/commandExecution/requestApproval"
+            | "item/fileChange/requestApproval"
+            | "item/permissions/requestApproval"
+            | "execCommandApproval"
+            | "applyPatchApproval"
+    )
+}
+
+fn codex_passive_item(item: &Value) -> bool {
+    item.get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| {
+            matches!(
+                kind,
+                "userMessage"
+                    | "agentMessage"
+                    | "plan"
+                    | "reasoning"
+                    | "contextCompaction"
+                    | "compacted"
+                    | "enteredReviewMode"
+                    | "exitedReviewMode"
+                    | "hookPrompt"
+            )
+        })
+}
+
+fn codex_tool_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "commandExecution"
+            | "mcpToolCall"
+            | "fileChange"
+            | "webSearch"
+            | "dynamicToolCall"
+            | "collabAgentToolCall"
+            | "imageView"
+            | "imageGeneration"
+    )
+}
+
 fn codex_tool_start(params: &Value) -> Option<WorkerActivity> {
     let item = params.get("item")?;
     let kind = item.get("type")?.as_str()?;
-    if !matches!(
-        kind,
-        "commandExecution" | "mcpToolCall" | "fileChange" | "webSearch"
-    ) {
+    if !codex_tool_kind(kind) {
         return None;
     }
     let id = item.get("id")?.as_str()?;
@@ -1030,10 +1179,19 @@ fn codex_tool_call(item: &Value, kind: &str) -> (String, Value) {
             "web_search".into(),
             json!({"query": codex_web_search_query(item)}),
         ),
+        "imageView" => (
+            "view_image".into(),
+            json!({"path": item.get("path").cloned().unwrap_or(Value::Null)}),
+        ),
+        "imageGeneration" => (
+            "image_generation".into(),
+            item.get("arguments").cloned().unwrap_or_else(|| json!({})),
+        ),
         _ => {
             let name = item
-                .get("name")
+                .get("tool")
                 .and_then(Value::as_str)
+                .or_else(|| item.get("name").and_then(Value::as_str))
                 .or_else(|| item.get("server").and_then(Value::as_str))
                 .unwrap_or(kind);
             let args = item.get("arguments").cloned().unwrap_or_else(|| json!({}));
@@ -1057,10 +1215,7 @@ fn codex_web_search_query(item: &Value) -> Option<&str> {
 fn codex_tool_end(params: &Value) -> Option<WorkerActivity> {
     let item = params.get("item")?;
     let kind = item.get("type")?.as_str()?;
-    if !matches!(
-        kind,
-        "commandExecution" | "mcpToolCall" | "fileChange" | "webSearch"
-    ) {
+    if !codex_tool_kind(kind) {
         return None;
     }
     let id = item.get("id")?.as_str()?;
@@ -1068,25 +1223,38 @@ fn codex_tool_end(params: &Value) -> Option<WorkerActivity> {
         .get("status")
         .and_then(Value::as_str)
         .is_some_and(|status| matches!(status, "failed" | "declined"));
-    let output = item
-        .get("aggregatedOutput")
-        .and_then(Value::as_str)
-        .or_else(|| item.get("result").and_then(Value::as_str))
-        .or_else(|| {
-            (kind == "webSearch")
-                .then(|| codex_web_search_query(item))
-                .flatten()
-        })
-        .unwrap_or_else(|| {
-            if kind == "fileChange" && !failed {
-                "Applied patch"
-            } else {
-                ""
-            }
-        });
+    let result = if let Some(content) = item.pointer("/result/content").and_then(Value::as_array) {
+        Value::Array(content.clone())
+    } else if failed
+        && let Some(error) = item
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .or_else(|| item.get("error").and_then(Value::as_str))
+    {
+        json!([{"type": "text", "text": error}])
+    } else if let Some(output) = item.get("aggregatedOutput").and_then(Value::as_str) {
+        json!([{"type": "text", "text": output}])
+    } else if let Some(output) = item.get("result").or_else(|| item.get("output")) {
+        json!([{
+            "type": "text",
+            "text": output.as_str().map(str::to_owned).unwrap_or_else(|| output.to_string()),
+        }])
+    } else if kind == "webSearch" {
+        json!([{"type": "text", "text": codex_web_search_query(item).unwrap_or_default()}])
+    } else if kind == "fileChange" && !failed {
+        json!([{"type": "text", "text": "Applied patch"}])
+    } else if kind == "imageView" {
+        json!([{
+            "type": "text",
+            "text": item.get("path").and_then(Value::as_str).unwrap_or_default(),
+        }])
+    } else {
+        zlog::warn!("Codex tool completion had no mappable result: {item}");
+        json!([])
+    };
     Some(WorkerActivity::ToolFinished {
         id: id.to_owned(),
-        result: json!([{"type": "text", "text": output}]),
+        result,
         is_error: failed,
     })
 }
@@ -1156,6 +1324,32 @@ mod tests {
                 "web_search".into(),
                 json!({"query":"Codex app-server protocol"})
             )
+        );
+        assert_eq!(
+            codex_tool_call(
+                &json!({"server":"github", "tool":"get_issue", "arguments":{"id":7}}),
+                "mcpToolCall"
+            ),
+            ("get_issue".into(), json!({"id":7}))
+        );
+    }
+
+    #[test]
+    fn completed_mcp_call_preserves_structured_content() {
+        assert_eq!(
+            codex_tool_end(&json!({
+                "item": {
+                    "id": "tool-1",
+                    "type": "mcpToolCall",
+                    "status": "completed",
+                    "result": {"content": [{"type":"text", "text":"done"}]}
+                }
+            })),
+            Some(WorkerActivity::ToolFinished {
+                id: "tool-1".into(),
+                result: json!([{"type":"text", "text":"done"}]),
+                is_error: false,
+            })
         );
     }
 

@@ -426,34 +426,36 @@ impl OpenCodeWorkerSession {
                     secret: false,
                 }));
             }
-            let event_session = event
-                .data
-                .get("sessionID")
-                .and_then(Value::as_str)
-                .or_else(|| {
-                    event
-                        .data
-                        .pointer("/form/sessionID")
-                        .and_then(Value::as_str)
-                });
-            if event_session != Some(self.session_id.as_str()) {
+            let Some(reported_event_type) = event.event.as_deref() else {
+                log_bad_opencode_event(&event, "missing event type");
+                continue;
+            };
+            if !opencode_event_is_for_session(&event, reported_event_type, &self.session_id) {
                 continue;
             }
-            match event.event.as_deref()? {
-                "session.next.prompted.1" => {
+            let event_type = unversioned_opencode_event_type(reported_event_type);
+            match event_type {
+                "session.next.prompted" => {
                     if let Some(activity) = opencode_input_delivery(&event.data) {
                         return Some(WorkerEvent::Activity(activity));
                     }
+                    log_bad_opencode_event(&event, "prompted event has invalid delivery or prompt");
                 }
-                "session.text.delta" => {
-                    let delta = event.data.get("delta").and_then(Value::as_str)?;
+                "session.text.delta" | "session.next.text.delta" => {
+                    let Some(delta) = event.data.get("delta").and_then(Value::as_str) else {
+                        log_bad_opencode_event(&event, "text delta is missing delta");
+                        continue;
+                    };
                     return Some(WorkerEvent::Activity(WorkerActivity::TextDelta {
                         content_index: usize::from(self.reasoning_started),
                         delta: delta.to_owned(),
                     }));
                 }
-                "session.reasoning.delta" => {
-                    let delta = event.data.get("delta").and_then(Value::as_str)?;
+                "session.reasoning.delta" | "session.next.reasoning.delta" => {
+                    let Some(delta) = event.data.get("delta").and_then(Value::as_str) else {
+                        log_bad_opencode_event(&event, "reasoning delta is missing delta");
+                        continue;
+                    };
                     self.reasoning_started = true;
                     return Some(WorkerEvent::Activity(WorkerActivity::ThinkingDelta {
                         content_index: 0,
@@ -461,7 +463,10 @@ impl OpenCodeWorkerSession {
                     }));
                 }
                 "session.tool.input.started" | "session.next.tool.input.started" => {
-                    let id = opencode_tool_id(&event.data)?.to_owned();
+                    let Some(id) = opencode_tool_id(&event.data).map(str::to_owned) else {
+                        log_bad_opencode_event(&event, "tool input start is missing call id");
+                        continue;
+                    };
                     let (name, args) = normalize_opencode_tool(
                         opencode_tool_name(&event.data).unwrap_or("tool"),
                         event.data.get("input").unwrap_or(&Value::Null),
@@ -474,7 +479,10 @@ impl OpenCodeWorkerSession {
                     }));
                 }
                 "session.tool.called" | "session.next.tool.called" => {
-                    let id = opencode_tool_id(&event.data)?.to_owned();
+                    let Some(id) = opencode_tool_id(&event.data).map(str::to_owned) else {
+                        log_bad_opencode_event(&event, "tool call is missing call id");
+                        continue;
+                    };
                     let reported_name = opencode_tool_name(&event.data)
                         .or_else(|| self.active_tools.get(&id).map(String::as_str))
                         .unwrap_or("tool");
@@ -490,30 +498,29 @@ impl OpenCodeWorkerSession {
                     }));
                 }
                 "session.tool.progress" | "session.next.tool.progress" => {
+                    let Some(id) = opencode_tool_id(&event.data).map(str::to_owned) else {
+                        log_bad_opencode_event(&event, "tool progress is missing call id");
+                        continue;
+                    };
                     return Some(WorkerEvent::Activity(WorkerActivity::ToolUpdated {
-                        id: opencode_tool_id(&event.data)?.to_owned(),
+                        id,
                         content: json!([{
                             "type": "text",
                             "text": event.data.get("metadata").map(Value::to_string).unwrap_or_default(),
                         }]),
                     }));
                 }
-                "session.step.ended" => {
-                    let usage = event
-                        .data
-                        .get("tokens")
-                        .or_else(|| event.data.get("usage"))?;
-                    let input = usage.get("input").and_then(Value::as_u64).unwrap_or(0);
-                    let output = usage.get("output").and_then(Value::as_u64).unwrap_or(0);
-                    let reasoning = usage.get("reasoning").and_then(Value::as_u64).unwrap_or(0);
-                    let cache_read = usage
-                        .pointer("/cache/read")
-                        .and_then(Value::as_u64)
-                        .unwrap_or(0);
-                    let cache_write = usage
-                        .pointer("/cache/write")
-                        .and_then(Value::as_u64)
-                        .unwrap_or(0);
+                "session.step.ended" | "session.next.step.ended" => {
+                    let Some(usage) = event.data.get("tokens").or_else(|| event.data.get("usage"))
+                    else {
+                        log_bad_opencode_event(&event, "step end is missing token usage");
+                        continue;
+                    };
+                    let input = opencode_token(usage.get("input"));
+                    let output = opencode_token(usage.get("output"));
+                    let reasoning = opencode_token(usage.get("reasoning"));
+                    let cache_read = opencode_token(usage.pointer("/cache/read"));
+                    let cache_write = opencode_token(usage.pointer("/cache/write"));
                     let turn = TokenUsage {
                         input,
                         output: output.saturating_add(reasoning),
@@ -531,25 +538,22 @@ impl OpenCodeWorkerSession {
                 | "session.tool.failed"
                 | "session.next.tool.success"
                 | "session.next.tool.failed" => {
-                    let id = opencode_tool_id(&event.data)?.to_owned();
+                    let Some(id) = opencode_tool_id(&event.data).map(str::to_owned) else {
+                        log_bad_opencode_event(&event, "tool completion is missing call id");
+                        continue;
+                    };
                     self.active_tools.remove(&id);
+                    let failed = event_type.ends_with("tool.failed");
                     return Some(WorkerEvent::Activity(WorkerActivity::ToolFinished {
                         id,
-                        result: event
-                            .data
-                            .get("content")
-                            .cloned()
-                            .unwrap_or_else(|| json!([])),
-                        is_error: event
-                            .event
-                            .as_deref()
-                            .is_some_and(|event| event.ends_with("tool.failed")),
+                        result: opencode_tool_result(&event.data, failed),
+                        is_error: failed,
                     }));
                 }
-                "session.compaction.started" | "session.next.compaction.started.1" => {
+                "session.compaction.started" | "session.next.compaction.started" => {
                     return Some(WorkerEvent::Activity(WorkerActivity::CompactionStarted));
                 }
-                "session.compaction.ended" | "session.next.compaction.ended.1" => {
+                "session.compaction.ended" | "session.next.compaction.ended" => {
                     return Some(WorkerEvent::Activity(WorkerActivity::CompactionFinished {
                         aborted: event
                             .data
@@ -564,15 +568,35 @@ impl OpenCodeWorkerSession {
                     }));
                 }
                 "form.created" => {
-                    let form = event.data.get("form")?;
-                    let id = form.get("id").and_then(Value::as_str)?.to_owned();
+                    let Some(form) = event.data.get("form") else {
+                        log_bad_opencode_event(&event, "form event is missing form");
+                        continue;
+                    };
+                    let Some(id) = form.get("id").and_then(Value::as_str).map(str::to_owned) else {
+                        log_bad_opencode_event(&event, "form is missing id");
+                        continue;
+                    };
                     let title = form
                         .get("title")
                         .and_then(Value::as_str)
                         .unwrap_or("OpenCode question")
                         .to_owned();
-                    let field = form.get("fields").and_then(Value::as_array)?.first()?;
-                    let key = field.get("key").and_then(Value::as_str)?.to_owned();
+                    let Some(fields) = form.get("fields").and_then(Value::as_array) else {
+                        log_bad_opencode_event(&event, "form has no fields");
+                        continue;
+                    };
+                    let Some(field) = fields.first() else {
+                        log_bad_opencode_event(&event, "form has no fields");
+                        continue;
+                    };
+                    if fields.len() > 1 {
+                        log_bad_opencode_event(&event, "only the first form field can be mapped");
+                    }
+                    let Some(key) = field.get("key").and_then(Value::as_str).map(str::to_owned)
+                    else {
+                        log_bad_opencode_event(&event, "form field is missing key");
+                        continue;
+                    };
                     let mut values = HashMap::new();
                     let options = field
                         .get("options")
@@ -599,7 +623,19 @@ impl OpenCodeWorkerSession {
                         secret: false,
                     }));
                 }
-                _ => {}
+                // These events carry lifecycle or partial-input state for which the shared
+                // worker contract has no distinct event. Their useful payload is represented by
+                // the matching delta, called, terminal, or completion event.
+                "session.next.prompt.admitted"
+                | "session.next.step.started"
+                | "session.next.text.started"
+                | "session.next.text.ended"
+                | "session.next.reasoning.started"
+                | "session.next.reasoning.ended"
+                | "session.next.tool.input.delta"
+                | "session.next.tool.input.ended"
+                | "session.next.compaction.delta" => {}
+                _ => log_bad_opencode_event(&event, "unmapped same-session event"),
             }
         }
     }
@@ -725,6 +761,92 @@ impl WorkerSession for OpenCodeWorkerSession {
     fn close(&mut self) -> Result<(), String> {
         self.server.terminate()
     }
+}
+
+fn opencode_event_is_for_session(
+    event: &super::contract::OpenCodeEvent,
+    event_type: &str,
+    session_id: &str,
+) -> bool {
+    let reported = event
+        .data
+        .get("sessionID")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            event
+                .data
+                .pointer("/form/sessionID")
+                .and_then(Value::as_str)
+        });
+    match reported {
+        Some(reported) => reported == session_id,
+        None => {
+            if event_type.starts_with("session.") || event_type == "form.created" {
+                log_bad_opencode_event(event, "session event is missing sessionID");
+            }
+            false
+        }
+    }
+}
+
+fn unversioned_opencode_event_type(event_type: &str) -> &str {
+    let Some((base, version)) = event_type.rsplit_once('.') else {
+        return event_type;
+    };
+    if version.bytes().all(|byte| byte.is_ascii_digit()) {
+        base
+    } else {
+        event_type
+    }
+}
+
+fn opencode_token(value: Option<&Value>) -> u64 {
+    value
+        .and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_f64().map(|value| value.max(0.0) as u64))
+        })
+        .unwrap_or(0)
+}
+
+fn opencode_tool_result(data: &Value, failed: bool) -> Value {
+    if failed {
+        let error = data
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .or_else(|| data.get("error").and_then(Value::as_str));
+        if error.is_none() {
+            zlog::warn!("OpenCode failed tool event is missing its error: {data}");
+        }
+        return json!([{"type": "text", "text": error.unwrap_or("OpenCode tool failed")}]);
+    }
+    if let Some(content) = data.get("content").and_then(Value::as_array) {
+        return Value::Array(content.clone());
+    }
+    if let Some(content) = data.pointer("/result/content").and_then(Value::as_array) {
+        return Value::Array(content.clone());
+    }
+    let output = data
+        .get("result")
+        .or_else(|| data.get("structured"))
+        .or_else(|| data.get("output"));
+    output.map_or_else(
+        || {
+            zlog::warn!("OpenCode successful tool event has no mappable result: {data}");
+            json!([])
+        },
+        |output| {
+            json!([{
+                "type": "text",
+                "text": output.as_str().map(str::to_owned).unwrap_or_else(|| output.to_string()),
+            }])
+        },
+    )
+}
+
+fn log_bad_opencode_event(event: &super::contract::OpenCodeEvent, reason: &str) {
+    zlog::warn!("OpenCode event was not mapped correctly ({reason}): {event:?}");
 }
 
 fn opencode_input_delivery(data: &Value) -> Option<WorkerActivity> {
@@ -928,6 +1050,22 @@ fn worker_password() -> Result<String, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn current_opencode_events_and_tool_results_are_normalized() {
+        assert_eq!(
+            unversioned_opencode_event_type("session.next.step.ended.2"),
+            "session.next.step.ended"
+        );
+        assert_eq!(
+            opencode_tool_result(&json!({"result": {"answer": 42}}), false),
+            json!([{"type":"text", "text":"{\"answer\":42}"}])
+        );
+        assert_eq!(
+            opencode_tool_result(&json!({"error": {"message": "denied"}}), true),
+            json!([{"type":"text", "text":"denied"}])
+        );
+    }
 
     #[test]
     fn opencode_model_efforts_accept_current_and_legacy_shapes() {
