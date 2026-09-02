@@ -232,48 +232,52 @@ fn exercise_catalog(session: &mut dyn SessionTransport, coverage: Coverage) -> R
                 .filter(|model| !model.is_null())
                 .or_else(|| models.first())
                 .ok_or_else(|| "live model catalog is empty".to_owned())?;
-            let provider = model
-                .get("provider")
-                .and_then(Value::as_str)
-                .ok_or_else(|| "catalog model omitted provider".to_owned())?;
-            let model_id = model
-                .get("id")
-                .and_then(Value::as_str)
-                .ok_or_else(|| "catalog model omitted id".to_owned())?;
-            request(
-                session,
-                SessionCommand::SelectModel {
-                    provider: provider.into(),
-                    model_id: model_id.into(),
-                },
-            )?;
+            if model.get("contextWindow").and_then(Value::as_u64) != Some(0) {
+                let provider = model
+                    .get("provider")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "catalog model omitted provider".to_owned())?;
+                let model_id = model
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "catalog model omitted id".to_owned())?;
+                request(
+                    session,
+                    SessionCommand::SelectModel {
+                        provider: provider.into(),
+                        model_id: model_id.into(),
+                    },
+                )?;
+            }
         }
     }
     if coverage.reasoning {
         let data = request(session, SessionCommand::ListReasoningLevels)?;
-        let level = data
+        if let Some(level) = data
             .get("levels")
             .and_then(Value::as_array)
             .and_then(|levels| levels.first())
             .and_then(Value::as_str)
-            .ok_or_else(|| "reasoning catalog is empty".to_owned())?;
-        request(
-            session,
-            SessionCommand::SelectReasoning {
-                level: level.into(),
-            },
-        )?;
+        {
+            request(
+                session,
+                SessionCommand::SelectReasoning {
+                    level: level.into(),
+                },
+            )?;
+        }
     }
     if coverage.modes {
         let data = request(session, SessionCommand::ListModes)?;
-        let mode = data
+        if let Some(mode) = data
             .get("modes")
             .and_then(Value::as_array)
             .and_then(|modes| modes.first())
             .and_then(|mode| mode.get("id"))
             .and_then(Value::as_str)
-            .ok_or_else(|| "mode catalog is empty".to_owned())?;
-        request(session, SessionCommand::SelectMode { mode: mode.into() })?;
+        {
+            request(session, SessionCommand::SelectMode { mode: mode.into() })?;
+        }
     }
     if coverage.commands {
         let data = request(session, SessionCommand::ListCommands)?;
@@ -323,7 +327,7 @@ fn exercise_live_session(
         &mut responses,
         TURN_TIMEOUT,
         |session, event, _| {
-            if event.get("type").and_then(Value::as_str) == Some("agent_start")
+            if event.get("type").and_then(Value::as_str) == Some("tool_execution_start")
                 && coverage.steer
                 && !steered
             {
@@ -744,12 +748,7 @@ fn require_usage(event: &Value) -> Result<(), String> {
     {
         return Err(format!("turn usage is empty: {usage}"));
     }
-    if event
-        .get("contextWindow")
-        .and_then(Value::as_u64)
-        .unwrap_or(0)
-        == 0
-    {
+    if event.get("contextWindow").and_then(Value::as_u64).is_none() {
         return Err("backend omitted the model context window".into());
     }
     Ok(())

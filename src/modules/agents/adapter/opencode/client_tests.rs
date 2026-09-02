@@ -47,18 +47,6 @@ fn body(request: &OpenCodeHttpRequest) -> Value {
 }
 
 #[test]
-fn config_accepts_opencode_trailing_frames() -> Result<(), String> {
-    let transport = FakeTransport::with_responses([OpenCodeHttpResponse {
-        status: 200,
-        body: br#"{"data":{"model":"openai/gpt-5"}}{"event":"config.loaded"}"#.to_vec(),
-    }]);
-    let mut client = OpenCodeClient::new(transport);
-
-    assert_eq!(client.config("/project")?["model"], "openai/gpt-5");
-    Ok(())
-}
-
-#[test]
 fn native_vertical_slice_preserves_session_and_prompt_features() -> Result<(), String> {
     let session = json!({
         "data": {

@@ -133,7 +133,8 @@ pub(in crate::modules::agents::adapter) fn load_configuration(
         .map_err(|error| format!("start OpenCode catalog server: {error}"))?;
     child_stderr::capture(&mut child, "opencode-catalog")?;
     let mut server = OpenCodeServerProcess::attach(child, "opencode", password)?;
-    let result = load_main_metadata(&mut server.client(), &project.to_string_lossy());
+    let result = load_main_metadata(&mut server.client(), &project.to_string_lossy())
+        .and_then(|metadata| complete_model_catalog(command, project, metadata));
     let _ = server.terminate();
     result
 }
@@ -176,6 +177,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
     let server = OpenCodeServerProcess::attach(child, "opencode", password)?;
     let mut client = server.client();
     let metadata = load_main_metadata(&mut client, &launch.project.to_string_lossy())?;
+    let metadata = complete_model_catalog(command, &launch.project, metadata)?;
     let context_window = metadata
         .models
         .first()
@@ -225,6 +227,51 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
     ))
 }
 
+fn complete_model_catalog(
+    command: &AgentLaunchConfig,
+    project: &std::path::Path,
+    mut metadata: crate::modules::agents::adapter::main_session::MainSessionMetadata,
+) -> Result<crate::modules::agents::adapter::main_session::MainSessionMetadata, String> {
+    if !metadata.models.is_empty() {
+        return Ok(metadata);
+    }
+    let mut prepared = command.command(project)?;
+    let output = prepared
+        .arg("models")
+        .output()
+        .map_err(|error| format!("run OpenCode model catalog fallback: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "OpenCode model API and CLI fallback were unavailable (exit {})",
+            output.status.code().unwrap_or(-1)
+        ));
+    }
+    metadata.models = models_from_cli(&String::from_utf8_lossy(&output.stdout));
+    if metadata.models.is_empty() {
+        Err("OpenCode model API and CLI fallback returned no models".into())
+    } else {
+        Ok(metadata)
+    }
+}
+
+fn models_from_cli(output: &str) -> Vec<Value> {
+    output
+        .lines()
+        .filter_map(|reference| {
+            let (provider, id) = reference.trim().split_once('/')?;
+            (!provider.is_empty() && !id.is_empty()).then(|| {
+                json!({
+                    "id": id,
+                    "name": id,
+                    "provider": provider,
+                    "contextWindow": 0,
+                    "reasoning": true,
+                })
+            })
+        })
+        .collect()
+}
+
 fn load_main_metadata(
     client: &mut super::client::OpenCodeClient<super::transport::OpenCodeTcpTransport>,
     directory: &str,
@@ -236,7 +283,7 @@ fn load_main_metadata(
         .cloned()
         .unwrap_or_default();
     let mut efforts = Vec::new();
-    let mut models = model_rows
+    let models = model_rows
         .iter()
         .filter(|model| model.get("enabled").and_then(Value::as_bool) != Some(false))
         .filter_map(|model| {
@@ -262,18 +309,6 @@ fn load_main_metadata(
             }))
         })
         .collect::<Vec<_>>();
-    if models.is_empty() {
-        let config = client.config(directory)?;
-        if let Some((provider, id)) = configured_model(&config) {
-            models.push(json!({
-                "id": id,
-                "name": id,
-                "provider": provider,
-                "contextWindow": 0,
-                "reasoning": true,
-            }));
-        }
-    }
     let agent_response = client.agents(directory)?;
     let agent_rows = agent_response
         .as_array()
@@ -322,22 +357,6 @@ fn load_main_metadata(
             modes,
         },
     )
-}
-
-fn configured_model(config: &Value) -> Option<(&str, &str)> {
-    let model = config
-        .get("model")
-        .or_else(|| config.pointer("/data/model"))?;
-    if let Some(reference) = model.as_str() {
-        return reference.split_once('/');
-    }
-    Some((
-        model.get("providerID")?.as_str()?,
-        model
-            .get("modelID")
-            .or_else(|| model.get("model"))?
-            .as_str()?,
-    ))
 }
 
 fn model_variant_efforts(model: &Value) -> Vec<String> {
@@ -711,8 +730,15 @@ impl WorkerSession for OpenCodeWorkerSession {
     }
 
     fn abort(&mut self) -> Result<(), String> {
+        self.server.client().interrupt(&self.session_id)?;
         self.generation = self.generation.saturating_add(1);
-        self.server.client().interrupt(&self.session_id)
+        self.completions = None;
+        self.active_tools.clear();
+        self.caller_identity.set_activity(WorkerActivityState::Idle);
+        self.pending.push_back(WorkerEvent::Settled {
+            output: String::new(),
+        });
+        Ok(())
     }
 
     fn compact(&mut self) -> Result<(), String> {
@@ -1079,16 +1105,13 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn configured_models_accept_string_and_expanded_shapes() {
+    fn cli_model_fallback_preserves_provider_and_nested_model_ids() {
         assert_eq!(
-            configured_model(&json!({"model": "openai/gpt-5"})),
-            Some(("openai", "gpt-5"))
-        );
-        assert_eq!(
-            configured_model(&json!({
-                "data": {"model": {"providerID": "anthropic", "model": "claude"}}
-            })),
-            Some(("anthropic", "claude"))
+            models_from_cli("openai/gpt-5\nopenrouter/anthropic/claude\nnoise\n"),
+            vec![
+                json!({"id":"gpt-5","name":"gpt-5","provider":"openai","contextWindow":0,"reasoning":true}),
+                json!({"id":"anthropic/claude","name":"anthropic/claude","provider":"openrouter","contextWindow":0,"reasoning":true}),
+            ]
         );
     }
 
