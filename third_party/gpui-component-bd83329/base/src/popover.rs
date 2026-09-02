@@ -26,6 +26,7 @@ pub struct PopoverState {
     focus_handle: FocusHandle,
     tracked_focus_handle: Option<FocusHandle>,
     previous_focus_handle: Option<FocusHandle>,
+    anchor_position: Option<gpui::Point<gpui::Pixels>>,
     open: bool,
     on_open_change: Option<OpenChangeHandler>,
     dismiss_subscription: Option<Subscription>,
@@ -37,6 +38,7 @@ impl PopoverState {
             focus_handle: cx.focus_handle(),
             tracked_focus_handle: None,
             previous_focus_handle: None,
+            anchor_position: None,
             open: default_open,
             on_open_change: None,
             dismiss_subscription: None,
@@ -62,6 +64,9 @@ impl PopoverState {
     #[doc(hidden)]
     pub fn set_open(&mut self, open: bool, cx: &mut Context<Self>) {
         self.open = open;
+        if !open {
+            self.anchor_position = None;
+        }
         if open {
             GlobalState::register_deferred_popover(&self.focus_handle, cx);
         } else {
@@ -104,6 +109,11 @@ impl PopoverState {
             callback(&self.open, window, cx);
         }
         cx.notify();
+    }
+
+    #[doc(hidden)]
+    pub fn set_anchor_position(&mut self, position: gpui::Point<gpui::Pixels>) {
+        self.anchor_position = Some(position);
     }
 
     #[doc(hidden)]
@@ -151,6 +161,7 @@ pub struct Popover {
     trigger: Option<TriggerBuilder>,
     content: Option<ContentBuilder>,
     mouse_button: MouseButton,
+    anchor_to_cursor: bool,
     overlay_closable: bool,
     on_open_change: Option<OpenChangeHandler>,
 }
@@ -166,6 +177,7 @@ impl Popover {
             trigger: None,
             content: None,
             mouse_button: MouseButton::Left,
+            anchor_to_cursor: false,
             overlay_closable: true,
             on_open_change: None,
         }
@@ -178,6 +190,13 @@ impl Popover {
 
     pub fn mouse_button(mut self, mouse_button: MouseButton) -> Self {
         self.mouse_button = mouse_button;
+        self
+    }
+
+    /// Place the configured popup anchor corner at the pointer position that opens it.
+    /// Programmatic openings continue to use the trigger as their anchor.
+    pub fn anchor_to_cursor(mut self) -> Self {
+        self.anchor_to_cursor = true;
         self
     }
 
@@ -261,19 +280,26 @@ impl RenderOnce for Popover {
             return div().id("empty").into_any_element();
         };
         let parent_view_id = window.current_view();
-        let popup = Popup::new(self.id, trigger(open, window, cx))
+        let anchor_position = state.read(cx).anchor_position;
+        let mut popup = Popup::new(self.id, trigger(open, window, cx))
             .anchor(self.anchor)
             .on_mouse_down(self.mouse_button, {
                 let state = state.clone();
-                move |_, window, cx| {
+                move |event, window, cx| {
                     cx.stop_propagation();
                     state.update(cx, |state, cx| {
                         state.set_open(open, cx);
+                        state.set_anchor_position(event.position);
                         state.toggle_open(window, cx);
                     });
                     cx.notify(parent_view_id);
                 }
             });
+        if self.anchor_to_cursor {
+            if let Some(position) = anchor_position {
+                popup = popup.position(position);
+            }
+        }
         if !open {
             return popup.into_any_element();
         }
@@ -380,5 +406,45 @@ mod tests {
         cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.update(|window, cx| window.draw(cx).clear(cx));
         assert!(cx.debug_bounds("base-popover-content").is_some());
+    }
+
+    struct CursorAnchorHarness;
+
+    impl Render for CursorAnchorHarness {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            Popover::new("cursor-anchor-popover")
+                .anchor_to_cursor()
+                .trigger_with(|_, _, _| div().size(px(100.)).into_any_element())
+                .content(|_, _, _| {
+                    div()
+                        .debug_selector(|| "cursor-anchor-content".into())
+                        .size(px(20.))
+                })
+        }
+    }
+
+    #[gpui::test]
+    fn cursor_anchor_uses_the_opening_pointer_position(cx: &mut gpui::TestAppContext) {
+        cx.update(crate::init);
+        let (_, cx) = cx.add_window_view(|_, _| CursorAnchorHarness);
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        let first_click = point(px(70.), px(60.));
+        cx.simulate_click(first_click, Default::default());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert_eq!(
+            cx.debug_bounds("cursor-anchor-content").unwrap().origin,
+            first_click
+        );
+
+        cx.simulate_click(point(px(200.), px(200.)), Default::default());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let second_click = point(px(30.), px(40.));
+        cx.simulate_click(second_click, Default::default());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert_eq!(
+            cx.debug_bounds("cursor-anchor-content").unwrap().origin,
+            second_click
+        );
     }
 }

@@ -33,6 +33,7 @@ pub struct Popover {
     /// This is used for hotfix the trigger element style to support w_full.
     trigger_style: Option<StyleRefinement>,
     mouse_button: MouseButton,
+    anchor_to_cursor: bool,
     appearance: bool,
     overlay_closable: bool,
     on_open_change: Option<Rc<dyn Fn(&bool, &mut Window, &mut App)>>,
@@ -51,6 +52,7 @@ impl Popover {
             tracked_focus_handle: None,
             children: vec![],
             mouse_button: MouseButton::Left,
+            anchor_to_cursor: false,
             appearance: true,
             overlay_closable: true,
             default_open: false,
@@ -73,6 +75,13 @@ impl Popover {
     /// Set the mouse button to trigger the popover, default is `MouseButton::Left`.
     pub fn mouse_button(mut self, mouse_button: MouseButton) -> Self {
         self.mouse_button = mouse_button;
+        self
+    }
+
+    /// Place the configured popover anchor corner at the pointer position that opens it.
+    /// Programmatic openings continue to use the trigger as their anchor.
+    pub fn anchor_to_cursor(mut self) -> Self {
+        self.anchor_to_cursor = true;
         self
     }
 
@@ -212,6 +221,7 @@ impl RenderOnce for Popover {
         BasePopover::new(self.id)
             .anchor(self.anchor)
             .mouse_button(self.mouse_button)
+            .when(self.anchor_to_cursor, |this| this.anchor_to_cursor())
             .default_open(self.default_open)
             .overlay_closable(self.overlay_closable)
             .content(move |state, window, cx| {
