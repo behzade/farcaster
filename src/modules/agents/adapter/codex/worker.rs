@@ -601,10 +601,9 @@ impl WorkerSession for CodexWorkerSession {
                                 )));
                             }
                         };
-                        self.current_turn = Some(turn.id);
-                        self.caller_identity
-                            .set_activity(WorkerActivityState::Working);
-                        return Some(WorkerEvent::Started);
+                        if self.begin_turn(&turn.id) {
+                            return Some(WorkerEvent::Started);
+                        }
                     }
                     Some(PendingRequest::Ignore) | None => {}
                 },
@@ -618,16 +617,15 @@ impl WorkerSession for CodexWorkerSession {
                     )));
                 }
                 Ok(CodexInbound::Notification { method, params }) => {
-                    let global = method == "account/rateLimits/updated";
-                    if !global
-                        && !codex_notification_is_for_thread(&method, &params, &self.thread_id)
-                    {
-                        continue;
-                    }
+                    // App-scoped telemetry does not carry a threadId, so it must be decoded
+                    // before applying the per-thread notification filter.
                     if let Some(activity) = codex_telemetry(&method, &params) {
                         return Some(WorkerEvent::Activity(activity));
                     }
-                    if global || method == "mcpServer/startupStatus/updated" {
+                    if matches!(
+                        method.as_str(),
+                        "account/rateLimits/updated" | "mcpServer/startupStatus/updated"
+                    ) {
                         log_bad_codex_notification(
                             &method,
                             &params,
@@ -635,16 +633,13 @@ impl WorkerSession for CodexWorkerSession {
                         );
                         continue;
                     }
+                    if !codex_notification_is_for_thread(&method, &params, &self.thread_id) {
+                        continue;
+                    }
                     match method.as_str() {
                         "turn/started" => {
                             if let Some(turn_id) = params["turn"]["id"].as_str() {
-                                let new_turn = self.current_turn.as_deref() != Some(turn_id);
-                                self.current_turn = Some(turn_id.to_owned());
-                                self.caller_identity
-                                    .set_activity(WorkerActivityState::Working);
-                                if new_turn {
-                                    self.output.clear();
-                                    self.reasoning_started = false;
+                                if self.begin_turn(turn_id) {
                                     return Some(WorkerEvent::Started);
                                 }
                             } else {
@@ -705,9 +700,11 @@ impl WorkerSession for CodexWorkerSession {
                             if let Some(activity) = codex_input_delivery(&params["item"]) {
                                 return Some(WorkerEvent::Activity(activity));
                             }
-                            if params.pointer("/item/type").and_then(Value::as_str)
-                                == Some("contextCompaction")
-                            {
+                            let item_type = params.pointer("/item/type").and_then(Value::as_str);
+                            if item_type == Some("reasoning") {
+                                self.reasoning_started = true;
+                            }
+                            if item_type == Some("contextCompaction") {
                                 self.compacting = true;
                                 return Some(WorkerEvent::Activity(
                                     WorkerActivity::CompactionStarted,
@@ -862,13 +859,15 @@ impl WorkerSession for CodexWorkerSession {
                                 output: self.output.clone(),
                             });
                         }
+                        "item/reasoning/summaryPartAdded" => {
+                            self.reasoning_started = true;
+                        }
                         // These notifications update state that the backend-neutral worker
                         // contract does not expose independently.
                         "thread/status/changed"
                         | "turn/diff/updated"
                         | "turn/plan/updated"
                         | "serverRequest/resolved"
-                        | "item/reasoning/summaryPartAdded"
                         | "item/fileChange/outputDelta" => {}
                         _ => log_bad_codex_notification(
                             &method,
@@ -933,6 +932,24 @@ impl WorkerSession for CodexWorkerSession {
 }
 
 impl CodexWorkerSession {
+    fn begin_turn(&mut self, turn_id: &str) -> bool {
+        let is_new = self.current_turn.as_deref() != Some(turn_id);
+        self.current_turn = Some(turn_id.to_owned());
+        self.caller_identity
+            .set_activity(WorkerActivityState::Working);
+        if is_new {
+            self.output.clear();
+            self.reasoning_started = false;
+            if !self.manual_compaction {
+                self.events
+                    .push_back(WorkerEvent::Activity(WorkerActivity::ThinkingStarted {
+                        content_index: 0,
+                    }));
+            }
+        }
+        is_new
+    }
+
     fn activity(&self) -> WorkerActivityState {
         if self.current_turn.is_some() {
             WorkerActivityState::Working

@@ -244,6 +244,16 @@ impl WorkerSessionTransport {
                     }
                 })
             }
+            WorkerActivity::ThinkingStarted { content_index } => {
+                self.start_assistant_message();
+                json!({
+                    "type": "message_update",
+                    "assistantMessageEvent": {
+                        "type": "thinking_start",
+                        "contentIndex": content_index,
+                    }
+                })
+            }
             WorkerActivity::ThinkingDelta {
                 content_index,
                 delta,
