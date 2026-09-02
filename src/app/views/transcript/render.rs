@@ -17,16 +17,18 @@ use gpui_component::{
 };
 
 use crate::{
+    app::ui::assets::AppIcon,
     app::ui::persistent_vec::{Indexed, PersistentVec},
     app::ui::primitives::{
-        ButtonTone, ContextMenuTrigger, button, disclosure_detail, disclosure_title_row,
+        AppIconSize, ButtonTone, ContextMenuTrigger, app_icon, button, disclosure_detail,
+        disclosure_title_row,
     },
     app::ui::theme::{MONO_FONT_FAMILY, THEME},
     app::{
         FarcasterApp,
         views::transcript::{
             attachments::{ATTACHMENT_ROW_HEIGHT, render_attachments},
-            conversation::{self, TranscriptItem, TranscriptKind},
+            conversation::{self, ToolReviewState, TranscriptItem, TranscriptKind},
             list::{self, TranscriptListState, transcript_list_grouped},
             markdown::{MarkdownStateKey, TranscriptMarkdownCache},
         },
@@ -1719,9 +1721,14 @@ fn render_tool(
     } else {
         format!("{} tool call details", item.label)
     };
+    let review_label = item
+        .tool_review
+        .as_ref()
+        .map(|review| format!("Approval review {}", review.state.label()));
     let disclosure_label = format!(
-        "{detail_label}. {}",
-        state.map_or("No result", |state| state.label)
+        "{detail_label}. {}{}",
+        state.map_or("No result", |state| state.label),
+        review_label.map_or_else(String::new, |label| format!(". {label}")),
     );
     if let Some(presentation) = presentation {
         let source = presentation.clone();
@@ -1731,6 +1738,7 @@ fn render_tool(
             presentation,
             key,
             state.map(|state| state.glyph),
+            tool_review_indicator(item),
             expanded,
             disclosure_label,
             toggle_transcript_item(entity.clone(), key, expanded),
@@ -1778,6 +1786,7 @@ fn render_tool(
                         .text_color(THEME.colors.text),
                 )
             })
+            .children(tool_review_indicator(item))
             .children(state.map(|state| {
                 div()
                     .flex_none()
@@ -1792,6 +1801,22 @@ fn render_tool(
         .into_any_element()
 }
 
+fn tool_review_indicator(item: &TranscriptItem) -> Option<AnyElement> {
+    let review = item.tool_review.as_ref()?;
+    let (icon, color) = match review.state {
+        ToolReviewState::Reviewing => (AppIcon::Shield, THEME.colors.warning),
+        ToolReviewState::Approved => (AppIcon::CheckCircle, THEME.colors.success),
+        ToolReviewState::Blocked => (AppIcon::XCircle, THEME.colors.error),
+    };
+    Some(
+        div()
+            .flex_none()
+            .text_color(color)
+            .child(app_icon(icon, AppIconSize::Inline))
+            .into_any_element(),
+    )
+}
+
 fn expanded_tool_body(id: impl Into<gpui::ElementId>, item: &TranscriptItem) -> AnyElement {
     let mut detail = String::new();
     if !item.text.is_empty() {
@@ -1802,6 +1827,17 @@ fn expanded_tool_body(id: impl Into<gpui::ElementId>, item: &TranscriptItem) -> 
             detail.push_str("\n\n");
         }
         detail.push_str(&item.tool_output);
+    }
+    if let Some(review) = &item.tool_review {
+        if !detail.is_empty() {
+            detail.push_str("\n\n");
+        }
+        detail.push_str("Approval review: ");
+        detail.push_str(review.state.label());
+        if let Some(review_detail) = &review.detail {
+            detail.push('\n');
+            detail.push_str(review_detail);
+        }
     }
     selectable_text(id, fenced_text(&detail))
         .font_family(MONO_FONT_FAMILY)

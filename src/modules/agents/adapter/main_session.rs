@@ -7,8 +7,8 @@ use serde_json::{Value, json};
 
 use crate::agents::{
     SessionCommand, SessionEvent, SessionOperation, SessionResponse, SessionTransport, TokenUsage,
-    WorkerActivity, WorkerEvent, WorkerInput, WorkerInputResponse, WorkerSendMode, WorkerSession,
-    WorkerUsage,
+    ToolReviewState, WorkerActivity, WorkerEvent, WorkerInput, WorkerInputResponse, WorkerSendMode,
+    WorkerSession, WorkerUsage,
     extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptMode},
 };
 
@@ -278,6 +278,16 @@ impl WorkerSessionTransport {
                 "toolCallId": id,
                 "result": {"content": result},
                 "isError": is_error,
+            }),
+            WorkerActivity::ToolReviewChanged { id, state, detail } => json!({
+                "type": "tool_review_changed",
+                "toolCallId": id,
+                "state": match state {
+                    ToolReviewState::Reviewing => "reviewing",
+                    ToolReviewState::Approved => "approved",
+                    ToolReviewState::Blocked => "blocked",
+                },
+                "detail": detail,
             }),
             WorkerActivity::Usage(usage) => {
                 self.usage = usage;

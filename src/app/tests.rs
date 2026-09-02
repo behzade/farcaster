@@ -40,6 +40,7 @@ fn item(text: &str) -> TranscriptItem {
         tool_call_id: None,
         tool_output: String::new(),
         tool_presentation: None,
+        tool_review: None,
         invocation: None,
     }
 }

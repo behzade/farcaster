@@ -80,6 +80,29 @@ fn change_counts(diff: &str) -> (usize, usize) {
     })
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ToolReviewState {
+    Reviewing,
+    Approved,
+    Blocked,
+}
+
+impl ToolReviewState {
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Reviewing => "in progress",
+            Self::Approved => "approved",
+            Self::Blocked => "blocked",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ToolReview {
+    pub state: ToolReviewState,
+    pub detail: Option<String>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TranscriptItem {
     pub kind: TranscriptKind,
@@ -92,6 +115,7 @@ pub(crate) struct TranscriptItem {
     pub tool_call_id: Option<String>,
     pub tool_output: String,
     pub tool_presentation: Option<ToolPresentation>,
+    pub tool_review: Option<ToolReview>,
     pub invocation: Option<String>,
 }
 
@@ -244,6 +268,7 @@ impl ConversationState {
             tool_call_id: None,
             tool_output: String::new(),
             tool_presentation: None,
+            tool_review: None,
             invocation,
         });
         self.items.push(item.clone());
@@ -377,6 +402,7 @@ impl ConversationState {
             "tool_execution_start" => self.start_tool(event),
             "tool_execution_update" => incremental_content_changed = self.update_tool(event),
             "tool_execution_end" => self.end_tool(event),
+            "tool_review_changed" => self.review_tool(event),
             "queue_update" => {
                 self.queue.steering = strings(event.get("steering"));
                 self.queue.follow_up = strings(event.get("followUp"));
@@ -421,7 +447,10 @@ impl ConversationState {
                 previous_live_start.map(|start| start.min(previous_len.saturating_sub(1)))
             }
             "tool_execution_update" if !incremental_content_changed => None,
-            "tool_execution_start" | "tool_execution_update" | "tool_execution_end" => event
+            "tool_execution_start"
+            | "tool_execution_update"
+            | "tool_execution_end"
+            | "tool_review_changed" => event
                 .get("toolCallId")
                 .and_then(Value::as_str)
                 .and_then(|id| self.tools.get(id).copied())
@@ -451,6 +480,7 @@ impl ConversationState {
             tool_call_id: None,
             tool_output: String::new(),
             tool_presentation: None,
+            tool_review: None,
             invocation: None,
         }));
     }
@@ -467,6 +497,7 @@ impl ConversationState {
             tool_call_id: None,
             tool_output: String::new(),
             tool_presentation: None,
+            tool_review: None,
             invocation: None,
         }));
     }
@@ -492,6 +523,7 @@ impl ConversationState {
             tool_call_id: None,
             tool_output: details,
             tool_presentation: None,
+            tool_review: None,
             invocation: None,
         }));
     }
@@ -648,6 +680,7 @@ impl ConversationState {
             tool_call_id: None,
             tool_output: String::new(),
             tool_presentation: None,
+            tool_review: None,
             invocation: None,
         });
         if content_existed {
@@ -764,6 +797,7 @@ impl ConversationState {
             tool_call_id: Some(id.clone()),
             tool_output: String::new(),
             tool_presentation: presentation,
+            tool_review: None,
             invocation: None,
         }));
         self.tools.insert(id, self.items.len() - 1);
@@ -810,6 +844,37 @@ impl ConversationState {
         }
     }
 
+    fn review_tool(&mut self, event: &Value) {
+        let id = text_field(event, "toolCallId");
+        let state = match event.get("state").and_then(Value::as_str) {
+            Some("reviewing") => ToolReviewState::Reviewing,
+            Some("approved") => ToolReviewState::Approved,
+            Some("blocked") => ToolReviewState::Blocked,
+            _ => return,
+        };
+        let index = self.tools.get(&id).copied().or_else(|| {
+            self.items.rposition(|item| {
+                item.kind == TranscriptKind::Tool
+                    && item.tool_call_id.as_deref() == Some(id.as_str())
+            })
+        });
+        let Some(index) = index else {
+            return;
+        };
+        let Some(item) = self.items.get(index) else {
+            return;
+        };
+        let mut item = item.clone();
+        Arc::make_mut(&mut item).tool_review = Some(ToolReview {
+            state,
+            detail: event
+                .get("detail")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+        });
+        self.items.set(index, item);
+    }
+
     fn notice(&mut self, text: String) {
         self.items.push(Arc::new(TranscriptItem {
             kind: TranscriptKind::Notice,
@@ -822,6 +887,7 @@ impl ConversationState {
             tool_call_id: None,
             tool_output: String::new(),
             tool_presentation: None,
+            tool_review: None,
             invocation: None,
         }));
     }
@@ -956,6 +1022,7 @@ fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
                                     .get("arguments")
                                     .and_then(|arguments| tool_presentation(name, arguments))
                             }),
+                            tool_review: None,
                             invocation: None,
                         })
                     })
@@ -1042,6 +1109,7 @@ fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
             .map(str::to_owned),
         tool_output: String::new(),
         tool_presentation: None,
+        tool_review: None,
         invocation,
     }]
 }
@@ -1479,6 +1547,7 @@ fn model_error_item(text: String) -> TranscriptItem {
         tool_call_id: None,
         tool_output: String::new(),
         tool_presentation: None,
+        tool_review: None,
         invocation: None,
     }
 }

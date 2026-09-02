@@ -102,6 +102,13 @@ pub(crate) struct WorkerUsage {
     pub(crate) context_window: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ToolReviewState {
+    Reviewing,
+    Approved,
+    Blocked,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum WorkerActivity {
     InputDelivered {
@@ -129,6 +136,11 @@ pub(crate) enum WorkerActivity {
         id: String,
         result: Value,
         is_error: bool,
+    },
+    ToolReviewChanged {
+        id: String,
+        state: ToolReviewState,
+        detail: Option<String>,
     },
     Usage(WorkerUsage),
     CompactionStarted,

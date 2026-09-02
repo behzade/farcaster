@@ -491,6 +491,43 @@ fn tool_updates_replace_snapshots_and_correlate() {
 }
 
 #[test]
+fn tool_review_updates_the_target_tool() {
+    let mut state = ConversationState::default();
+    state.reduce(&json!({
+        "type":"tool_execution_start",
+        "toolCallId":"command-1",
+        "toolName":"bash",
+        "args":{"command":"git add logo.svg"}
+    }));
+    state.reduce(&json!({
+        "type":"tool_review_changed",
+        "toolCallId":"command-1",
+        "state":"reviewing"
+    }));
+    assert_eq!(
+        state.items[0].tool_review,
+        Some(ToolReview {
+            state: ToolReviewState::Reviewing,
+            detail: None,
+        })
+    );
+
+    state.reduce(&json!({
+        "type":"tool_review_changed",
+        "toolCallId":"command-1",
+        "state":"approved",
+        "detail":"Risk: low"
+    }));
+    assert_eq!(
+        state.items[0].tool_review,
+        Some(ToolReview {
+            state: ToolReviewState::Approved,
+            detail: Some("Risk: low".into()),
+        })
+    );
+}
+
+#[test]
 fn duplicate_tool_updates_preserve_item_identity() {
     let mut state = ConversationState::default();
     state.reduce(

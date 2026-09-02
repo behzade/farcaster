@@ -15,6 +15,7 @@ pub(crate) fn render(
     presentation: &ToolPresentation,
     key: usize,
     status_glyph: Option<&'static str>,
+    review_indicator: Option<AnyElement>,
     expanded: bool,
     disclosure_label: String,
     on_toggle: impl Fn(&mut Window, &mut App) + 'static,
@@ -69,6 +70,7 @@ pub(crate) fn render(
                     on_open(window, cx);
                 },
             ))
+            .children(review_indicator)
             .children(status_glyph.map(|glyph| {
                 div()
                     .flex_none()

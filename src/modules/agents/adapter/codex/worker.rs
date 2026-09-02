@@ -15,9 +15,9 @@ use super::{
 };
 use crate::{
     agents::{
-        AgentLaunchConfig, CommonTool, TokenUsage, WorkerActivity, WorkerActivityState,
-        WorkerContext, WorkerEvent, WorkerInput, WorkerInputResponse, WorkerLaunch, WorkerSendMode,
-        WorkerSession, WorkerSessionFactory, WorkerUsage,
+        AgentLaunchConfig, CommonTool, TokenUsage, ToolReviewState, WorkerActivity,
+        WorkerActivityState, WorkerContext, WorkerEvent, WorkerInput, WorkerInputResponse,
+        WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory, WorkerUsage,
     },
     modules::agents::adapter::{child_stderr, farcaster_mcp, main_session},
 };
@@ -753,6 +753,36 @@ impl WorkerSession for CodexWorkerSession {
                                 );
                             }
                         }
+                        "item/autoApprovalReview/started" => {
+                            let Some((started, review)) = codex_tool_review_started(&params) else {
+                                log_bad_codex_notification(
+                                    &method,
+                                    &params,
+                                    "approval review start is not a tool review",
+                                );
+                                continue;
+                            };
+                            self.events.push_back(WorkerEvent::Activity(review));
+                            return Some(WorkerEvent::Activity(started));
+                        }
+                        "item/autoApprovalReview/completed" => {
+                            let Some((review, finished)) = codex_tool_review_completed(&params)
+                            else {
+                                log_bad_codex_notification(
+                                    &method,
+                                    &params,
+                                    "approval review completion is missing targetItemId",
+                                );
+                                continue;
+                            };
+                            if let Some(finished) = finished {
+                                self.events.push_back(WorkerEvent::Activity(finished));
+                            }
+                            return Some(WorkerEvent::Activity(review));
+                        }
+                        // This repeats the completed automatic-review rationale and has no
+                        // target item to correlate safely.
+                        "guardianWarning" => {}
                         "thread/tokenUsage/updated" => {
                             let Some(usage) = params.get("tokenUsage") else {
                                 log_bad_codex_notification(
@@ -1134,6 +1164,68 @@ fn codex_tool_kind(kind: &str) -> bool {
     )
 }
 
+fn codex_tool_review_started(params: &Value) -> Option<(WorkerActivity, WorkerActivity)> {
+    let id = params.get("targetItemId")?.as_str()?;
+    let action = params.get("action")?;
+    let kind = action.get("type")?.as_str()?;
+    let (name, args) = match kind {
+        "command" => (
+            CommonTool::Bash.name().to_owned(),
+            json!({
+                "command": action.get("command").cloned().unwrap_or(Value::Null),
+                "cwd": action.get("cwd").cloned().unwrap_or(Value::Null),
+            }),
+        ),
+        _ => (kind.to_owned(), action.clone()),
+    };
+    Some((
+        WorkerActivity::ToolStarted {
+            id: id.to_owned(),
+            name,
+            args,
+        },
+        WorkerActivity::ToolReviewChanged {
+            id: id.to_owned(),
+            state: ToolReviewState::Reviewing,
+            detail: None,
+        },
+    ))
+}
+
+fn codex_tool_review_completed(params: &Value) -> Option<(WorkerActivity, Option<WorkerActivity>)> {
+    let review = params.get("review")?;
+    let approved = review.get("status").and_then(Value::as_str) == Some("approved");
+    let mut summary = Vec::new();
+    if let Some(risk) = review.get("riskLevel").and_then(Value::as_str) {
+        summary.push(format!("Risk: {risk}"));
+    }
+    if let Some(authorization) = review.get("userAuthorization").and_then(Value::as_str) {
+        summary.push(format!("Authorization: {authorization}"));
+    }
+    if let Some(rationale) = review.get("rationale").and_then(Value::as_str) {
+        summary.push(rationale.to_owned());
+    }
+    let id = params.get("targetItemId")?.as_str()?.to_owned();
+    let state = if approved {
+        ToolReviewState::Approved
+    } else {
+        ToolReviewState::Blocked
+    };
+    let finished = (!approved).then(|| WorkerActivity::ToolFinished {
+        id: id.clone(),
+        result: json!([]),
+        is_error: true,
+    });
+    Some((
+        WorkerActivity::ToolReviewChanged {
+            id,
+            state,
+            detail: (!summary.is_empty()).then(|| summary.join("\n")),
+        },
+        finished,
+    ))
+}
+
 fn codex_tool_start(params: &Value) -> Option<WorkerActivity> {
     let item = params.get("item")?;
     let kind = item.get("type")?.as_str()?;
@@ -1385,6 +1477,79 @@ mod tests {
                     "receiverThreadIds":["child"]
                 })
             )
+        );
+    }
+
+    #[test]
+    fn automatic_approval_review_targets_the_reviewed_tool() {
+        let started = json!({
+            "targetItemId":"exec-1",
+            "action": {
+                "type":"command",
+                "command":"git add logo.svg",
+                "cwd":"/project"
+            }
+        });
+        assert_eq!(
+            codex_tool_review_started(&started),
+            Some((
+                WorkerActivity::ToolStarted {
+                    id: "exec-1".into(),
+                    name: "bash".into(),
+                    args: json!({"command":"git add logo.svg", "cwd":"/project"}),
+                },
+                WorkerActivity::ToolReviewChanged {
+                    id: "exec-1".into(),
+                    state: ToolReviewState::Reviewing,
+                    detail: None,
+                },
+            ))
+        );
+
+        let completed = json!({
+            "targetItemId":"exec-1",
+            "review": {
+                "status":"approved",
+                "riskLevel":"low",
+                "userAuthorization":"high",
+                "rationale":"The command only stages the requested file."
+            }
+        });
+        assert_eq!(
+            codex_tool_review_completed(&completed),
+            Some((
+                WorkerActivity::ToolReviewChanged {
+                    id: "exec-1".into(),
+                    state: ToolReviewState::Approved,
+                    detail: Some(
+                        "Risk: low\nAuthorization: high\nThe command only stages the requested file."
+                            .into()
+                    ),
+                },
+                None,
+            ))
+        );
+    }
+
+    #[test]
+    fn denied_automatic_approval_review_ends_the_pending_tool() {
+        assert_eq!(
+            codex_tool_review_completed(&json!({
+                "targetItemId":"exec-1",
+                "review":{"status":"denied", "rationale":"Too broad"}
+            })),
+            Some((
+                WorkerActivity::ToolReviewChanged {
+                    id: "exec-1".into(),
+                    state: ToolReviewState::Blocked,
+                    detail: Some("Too broad".into()),
+                },
+                Some(WorkerActivity::ToolFinished {
+                    id: "exec-1".into(),
+                    result: json!([]),
+                    is_error: true,
+                }),
+            ))
         );
     }
 
