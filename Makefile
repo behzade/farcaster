@@ -5,13 +5,18 @@ DEFAULT_FARCASTER_DATA_DIR := $(if $(XDG_DATA_HOME),$(XDG_DATA_HOME),$(HOME)/.lo
 LOG_FILE ?= $(if $(FARCASTER_DATA_DIR),$(FARCASTER_DATA_DIR),$(DEFAULT_FARCASTER_DATA_DIR))/logs/farcaster.log
 TAIL_ARGS ?= -n $(LOG_LINES)
 
-.PHONY: run test debug release release-debug bundle bundle-relaunch package logs check check-flake
+.PHONY: run test e2e debug release release-debug bundle bundle-relaunch package logs check check-flake
 
 run:
 	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo run -- "$(PROJECT)"
 
 test:
 	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo test
+
+# Runs live agent conformance. Set HARNESS to pi, codex-cli, cursor-cli, or opencode2.
+e2e:
+	$(if $(HARNESS),FARCASTER_E2E_HARNESS="$(HARNESS)" )CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" \
+		cargo test live_harnesses_conform_to_session_outcomes -- --ignored --nocapture
 
 debug:
 	DEBUG=true CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo run -- "$(PROJECT)"
