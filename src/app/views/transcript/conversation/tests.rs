@@ -631,7 +631,7 @@ fn live_peer_activity_renders_without_a_user_message() {
 
     assert_eq!(state.items.len(), 1);
     assert_eq!(state.items[0].kind, TranscriptKind::PeerMessage);
-    assert_eq!(state.items[0].label, "Peer · worker-7");
+    assert_eq!(state.items[0].label, "Worker · worker-7");
     assert_eq!(state.items[0].text, "review complete");
 }
 
@@ -645,7 +645,7 @@ fn peer_prompts_render_with_sender_identity_instead_of_as_the_user() {
 
     assert_eq!(state.items.len(), 1);
     assert_eq!(state.items[0].kind, TranscriptKind::PeerMessage);
-    assert_eq!(state.items[0].label, "Peer · worker-7");
+    assert_eq!(state.items[0].label, "Worker · worker-7");
     assert_eq!(state.items[0].text, "review complete\nwith details");
 }
 
