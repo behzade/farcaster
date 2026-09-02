@@ -472,6 +472,8 @@ fn run_supervisor(
                         let snapshot = Arc::make_mut(&mut updated);
                         snapshot.models.clone_from(&catalog.models);
                         snapshot.thinking_levels.clone_from(&catalog.efforts);
+                        snapshot.configuration_loaded = true;
+                        snapshot.configuration_error = None;
                         latest.insert(selected.clone(), updated.clone());
                         let _ = event_tx.send(RuntimeEvent::Snapshot {
                             generation,
@@ -481,6 +483,25 @@ fn run_supervisor(
                 }
                 Err(error) => {
                     zlog::warn!("Failed to refresh {harness} catalog: {error}");
+                    session_controls.set_catalog_error(
+                        harness.clone(),
+                        project.clone(),
+                        error.clone(),
+                    );
+                    if let Some(snapshot) = latest.get(&selected)
+                        && snapshot.harness == harness
+                        && snapshot.project == project
+                    {
+                        let mut updated = snapshot.clone();
+                        let snapshot = Arc::make_mut(&mut updated);
+                        snapshot.configuration_loaded = true;
+                        snapshot.configuration_error = Some(error);
+                        latest.insert(selected.clone(), updated.clone());
+                        let _ = event_tx.send(RuntimeEvent::Snapshot {
+                            generation,
+                            snapshot: updated,
+                        });
+                    }
                 }
             }
         }

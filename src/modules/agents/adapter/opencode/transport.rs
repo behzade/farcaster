@@ -2,6 +2,7 @@ use std::{
     collections::BTreeMap,
     io::{self, BufRead, BufReader, Read, Write},
     net::TcpStream,
+    time::Duration,
 };
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -76,6 +77,11 @@ impl OpenCodeTcpTransport {
             .ok_or_else(|| "OpenCode endpoint has no port".to_owned())?;
         let mut stream = TcpStream::connect((host, port))
             .map_err(|error| format!("connect to OpenCode server: {error}"))?;
+        let timeout = Some(Duration::from_secs(15));
+        stream
+            .set_read_timeout(timeout)
+            .and_then(|()| stream.set_write_timeout(timeout))
+            .map_err(|error| format!("configure OpenCode connection timeout: {error}"))?;
         stream
             .write_all(&encode_request(
                 host,

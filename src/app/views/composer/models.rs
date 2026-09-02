@@ -30,7 +30,9 @@ pub(in crate::app::views) fn render(
             .first()
             .map(|model| model.provider.clone())
     });
-    let catalog_loading = selected_provider.is_none() && !app.snapshot.connected;
+    let catalog_loading = selected_provider.is_none()
+        && !app.snapshot.connected
+        && !app.snapshot.configuration_loaded;
     let provider_label = selected_provider.unwrap_or_else(|| "Provider".into());
     let model_label = selected_model.map_or_else(
         || {
@@ -51,11 +53,15 @@ pub(in crate::app::views) fn render(
         .child(div().text_color(THEME.colors.muted).child(provider_label))
         .child(runtime_slash())
         .child(div().text_color(THEME.colors.text).child(model_label))
-        .child(runtime_slash())
-        .child(
-            div()
-                .text_color(effort_color(effort))
-                .child(effort_label(effort)),
+        .when(
+            !app.snapshot.available_thinking_levels().is_empty() || effort != "off",
+            |content| {
+                content.child(runtime_slash()).child(
+                    div()
+                        .text_color(effort_color(effort))
+                        .child(effort_label(effort)),
+                )
+            },
         );
     let runtime_entity = entity.clone();
     let runtime = dropdown_content_button(
@@ -135,7 +141,15 @@ pub(in crate::app::views) fn render_runtime_picker(
         .filter(|model| model_matches_query(&model.name, &model.id, &query))
         .cloned()
         .collect::<Vec<_>>();
-    let models_pending_first_start = app.snapshot.models.is_empty() && !app.snapshot.connected;
+    let models_pending_first_start = app.snapshot.models.is_empty()
+        && !app.snapshot.connected
+        && !app.snapshot.configuration_loaded;
+    let empty_models_message = app.snapshot.models.is_empty().then(|| {
+        app.snapshot.configuration_error.as_ref().map_or_else(
+            || "No models were advertised by this harness.".to_owned(),
+            |error| format!("Models unavailable: {error}"),
+        )
+    });
     let close = entity.clone();
 
     Some(
@@ -263,6 +277,20 @@ pub(in crate::app::views) fn render_runtime_picker(
                                                     .child("Refreshing models in the background…"),
                                             )
                                         })
+                                        .when_some(
+                                            (!models_pending_first_start)
+                                                .then_some(empty_models_message)
+                                                .flatten(),
+                                            |list, message| {
+                                                list.child(
+                                                    div()
+                                                        .p(px(8.0))
+                                                        .text_size(THEME.type_scale.caption)
+                                                        .text_color(THEME.colors.subtle)
+                                                        .child(message),
+                                                )
+                                            },
+                                        )
                                         .children(models.into_iter().enumerate().map(
                                             |(index, model)| {
                                                 let selected =
@@ -284,34 +312,39 @@ pub(in crate::app::views) fn render_runtime_picker(
                                 ),
                         ),
                 )
-                .child(
-                    div()
-                        .pt(px(9.0))
-                        .flex()
-                        .items_center()
-                        .gap(px(6.0))
-                        .child(picker_label("Effort"))
-                        .children(
-                            app.snapshot
-                                .available_thinking_levels()
-                                .iter()
-                                .enumerate()
-                                .map(|(index, effort)| {
-                                    let target = effort.clone();
-                                    let selected = effort == selected_effort;
-                                    let entity = entity.clone();
-                                    runtime_option(
-                                        ("runtime-effort", index),
-                                        effort_label(effort),
-                                        selected,
-                                        move |cx| {
-                                            let _ = entity.update(cx, |this, cx| {
-                                                this.set_thinking_level(target.clone(), cx);
-                                            });
-                                        },
-                                    )
-                                }),
-                        ),
+                .when(
+                    !app.snapshot.available_thinking_levels().is_empty(),
+                    |picker| {
+                        picker.child(
+                            div()
+                                .pt(px(9.0))
+                                .flex()
+                                .items_center()
+                                .gap(px(6.0))
+                                .child(picker_label("Effort"))
+                                .children(
+                                    app.snapshot
+                                        .available_thinking_levels()
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(index, effort)| {
+                                            let target = effort.clone();
+                                            let selected = effort == selected_effort;
+                                            let entity = entity.clone();
+                                            runtime_option(
+                                                ("runtime-effort", index),
+                                                effort_label(effort),
+                                                selected,
+                                                move |cx| {
+                                                    let _ = entity.update(cx, |this, cx| {
+                                                        this.set_thinking_level(target.clone(), cx);
+                                                    });
+                                                },
+                                            )
+                                        }),
+                                ),
+                        )
+                    },
                 )
                 .when(!app.snapshot.modes.is_empty(), |picker| {
                     picker.child(
