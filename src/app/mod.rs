@@ -66,7 +66,6 @@ use crate::{
 
 const SYSTEM_NOTIFICATION_TAG: &str = "farcaster-agent";
 pub(crate) const COMPOSER_KEY_CONTEXT: &str = "FarcasterComposer";
-#[cfg(not(target_os = "macos"))]
 pub(crate) const APP_SHORTCUT_CONTEXT: &str = "FarcasterApp && input == app";
 pub(crate) const APP_INPUT_CONTEXT: &str = "FarcasterApp input=app";
 pub(crate) const NATIVE_INPUT_CONTEXT: &str = "FarcasterApp input=native";

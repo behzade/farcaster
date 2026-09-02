@@ -632,6 +632,12 @@ fn minimal_row_splice<T: Eq>(current: &[T], next: &[T]) -> Option<(std::ops::Ran
     (prefix != old_end || replacement_count != 0).then_some((prefix..old_end, replacement_count))
 }
 
+fn replacement_index_after_close(len: usize, current: usize) -> Option<usize> {
+    (current + 1 < len)
+        .then_some(current + 1)
+        .or_else(|| current.checked_sub(1))
+}
+
 fn first_unsubmitted_draft(rows: &[ActiveSessionItem]) -> Option<&DraftSession> {
     rows.iter().find_map(|row| match row {
         ActiveSessionItem::Draft(draft) if !draft.submitted => Some(draft),
@@ -692,6 +698,28 @@ impl FarcasterApp {
         }
     }
 
+    pub(super) fn archive_selected_session_and_advance(
+        &mut self,
+        path: std::path::PathBuf,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let sessions = self.visible_session_targets();
+        let selected_id = root_session_for_path(&self.sessions, Some(&path))
+            .map(|session| session.app_session_id);
+        let replacement = selected_id
+            .and_then(|id| {
+                sessions
+                    .iter()
+                    .position(|session| session.app_session_id() == id)
+            })
+            .and_then(|index| replacement_index_after_close(sessions.len(), index))
+            .and_then(|index| sessions.get(index))
+            .map(VisibleSessionTarget::app_session_id);
+
+        self.request_session_archive_and_advance(path, replacement, window, cx);
+    }
+
     pub(super) fn switch_relative_session(
         &mut self,
         direction: isize,
@@ -717,6 +745,21 @@ impl FarcasterApp {
         let next = current as isize + direction;
         if next >= 0
             && let Some(target) = sessions.get(next as usize).cloned()
+        {
+            self.select_visible_session(target, window, cx);
+        }
+    }
+
+    pub(in crate::app) fn select_visible_app_session(
+        &mut self,
+        app_session_id: i64,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if let Some(target) = self
+            .visible_session_targets()
+            .into_iter()
+            .find(|target| target.app_session_id() == app_session_id)
         {
             self.select_visible_session(target, window, cx);
         }

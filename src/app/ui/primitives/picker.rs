@@ -23,7 +23,7 @@ pub(crate) struct PickerRow {
     pub(crate) icon: AppIcon,
     pub(crate) label: String,
     pub(crate) detail: Option<String>,
-    pub(crate) shortcut: Option<&'static str>,
+    pub(crate) shortcut: Option<String>,
     removable_project: Option<std::path::PathBuf>,
     search: String,
 }
@@ -34,7 +34,7 @@ impl PickerRow {
         icon: AppIcon,
         label: impl Into<String>,
         detail: Option<String>,
-        shortcut: Option<&'static str>,
+        shortcut: Option<String>,
         keywords: &str,
     ) -> Self {
         let label = label.into();
@@ -170,7 +170,7 @@ impl ListDelegate for PickerDelegate {
                         )
                         .children(row.shortcut.map(|shortcut| {
                             Kbd::new(
-                                Keystroke::parse(shortcut)
+                                Keystroke::parse(&shortcut)
                                     .expect("static picker shortcut must parse"),
                             )
                             .outline()
