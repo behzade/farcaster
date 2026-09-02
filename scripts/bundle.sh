@@ -53,6 +53,9 @@ exec "$(dirname "$0")/farcaster" "$@"
 EOF
     chmod 755 "$launcher"
     cp "$launcher" "$launcher."
+    # appimagetool passes explicit timestamp flags to mksquashfs. Recent
+    # mksquashfs rejects those flags when SOURCE_DATE_EPOCH is also inherited.
+    unset SOURCE_DATE_EPOCH
     cargo packager --config "$root/packaging/linux.toml" --formats "$formats" \
         --out-dir "$target_dir/release" --binaries-dir "$target_dir/release"
 else
