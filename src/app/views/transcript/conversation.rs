@@ -7,7 +7,11 @@ use base64::Engine as _;
 use gpui::{Image, ImageFormat};
 use serde_json::Value;
 
-use crate::{agents::CommonTool, app::ui::persistent_vec::PersistentVec, protocol::PromptImage};
+use crate::{
+    agents::{CommonTool, PeerMessage},
+    app::ui::persistent_vec::PersistentVec,
+    protocol::PromptImage,
+};
 
 const MAX_DIAGNOSTICS: usize = 32;
 const STREAM_CHUNK_BYTES: usize = 2 * 1024;
@@ -23,6 +27,7 @@ pub(crate) enum TranscriptKind {
     Notice,
     Custom,
     AgentResult,
+    PeerMessage,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -399,6 +404,7 @@ impl ConversationState {
                     self.update_message(event.get("assistantMessageEvent"), project_live);
             }
             "message_end" => self.end_message(event.get("message")),
+            "peer_message" => self.peer_message(event),
             "tool_execution_start" => self.start_tool(event),
             "tool_execution_update" => incremental_content_changed = self.update_tool(event),
             "tool_execution_end" => self.end_tool(event),
@@ -446,6 +452,7 @@ impl ConversationState {
             "message_end" => {
                 previous_live_start.map(|start| start.min(previous_len.saturating_sub(1)))
             }
+            "peer_message" => Some(previous_len),
             "tool_execution_update" if !incremental_content_changed => None,
             "tool_execution_start"
             | "tool_execution_update"
@@ -875,6 +882,13 @@ impl ConversationState {
         self.items.set(index, item);
     }
 
+    fn peer_message(&mut self, event: &Value) {
+        self.items.push(Arc::new(peer_transcript_item(PeerMessage {
+            from: text_field(event, "from"),
+            message: text_field(event, "message"),
+        })));
+    }
+
     fn notice(&mut self, text: String) {
         self.items.push(Arc::new(TranscriptItem {
             kind: TranscriptKind::Notice,
@@ -965,6 +979,23 @@ fn cache_usage(message: &Value) -> Option<(u64, u64)> {
     (prompt_tokens > 0).then_some((cache_read, prompt_tokens))
 }
 
+fn peer_transcript_item(peer: PeerMessage) -> TranscriptItem {
+    TranscriptItem {
+        kind: TranscriptKind::PeerMessage,
+        label: format!("Peer · {}", peer.from),
+        text: peer.message,
+        images: Arc::default(),
+        stream_chunks: Arc::default(),
+        streaming: false,
+        is_error: false,
+        tool_call_id: None,
+        tool_output: String::new(),
+        tool_presentation: None,
+        tool_review: None,
+        invocation: None,
+    }
+}
+
 fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
     let Some(role) = message.get("role").and_then(Value::as_str) else {
         return Vec::new();
@@ -1034,6 +1065,10 @@ fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
         }
         return items;
     }
+    let projected_user = (role == "user").then(|| projected_user_message_text(message));
+    if let Some(peer) = projected_user.as_deref().and_then(PeerMessage::from_prompt) {
+        return vec![peer_transcript_item(peer)];
+    }
     let (kind, label, display) = match role {
         "user" => (TranscriptKind::User, String::new(), true),
         "toolResult" => (
@@ -1090,8 +1125,8 @@ fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
             kind
         },
         label,
-        text: if kind == TranscriptKind::User {
-            projected_user_message_text(message)
+        text: if let Some(projected_user) = projected_user {
+            projected_user
         } else {
             message_text(message)
         },

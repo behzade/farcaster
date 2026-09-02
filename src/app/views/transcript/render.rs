@@ -62,7 +62,10 @@ pub(crate) fn estimated_row_height(
         TranscriptRow::Item { index, .. }
             if matches!(
                 item(index).kind,
-                TranscriptKind::User | TranscriptKind::Assistant | TranscriptKind::Custom
+                TranscriptKind::User
+                    | TranscriptKind::Assistant
+                    | TranscriptKind::Custom
+                    | TranscriptKind::PeerMessage
             ) && item(index).invocation.is_none() =>
         {
             Some(item(index).text.as_str())
@@ -487,8 +490,10 @@ fn project_rows_from(
                     last: chunk + 1 == chunk_count,
                 }
             }));
-        } else if matches!(item.kind, TranscriptKind::User | TranscriptKind::Assistant)
-            && item.invocation.is_none()
+        } else if matches!(
+            item.kind,
+            TranscriptKind::User | TranscriptKind::Assistant | TranscriptKind::PeerMessage
+        ) && item.invocation.is_none()
             && (markdown_needs_chunks(&item.text)
                 || (item.streaming && item.text.len() > MARKDOWN_CHUNK_TARGET_BYTES))
         {
@@ -1102,7 +1107,7 @@ fn render_row(
         TranscriptRow::Item { index, revision } => {
             let markdown_state = matches!(
                 items[index].kind,
-                TranscriptKind::User | TranscriptKind::Assistant
+                TranscriptKind::User | TranscriptKind::Assistant | TranscriptKind::PeerMessage
             )
             .then(|| {
                 markdown_cache.state(
@@ -1312,7 +1317,7 @@ fn render_message(
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
     let user = item.kind == TranscriptKind::User;
-    let role = message_role_label(item.kind, assistant_label);
+    let role = item_role_label(item, assistant_label);
     div()
         .id(("transcript-row", key))
         .w_full()
@@ -1374,7 +1379,7 @@ fn render_message_chunk(
         .when(last, |row| row.pb(THEME.space.md))
         .when(first, |row| {
             row.children(
-                message_role_label(item.kind, assistant_label).map(|role| message_role(role, user)),
+                item_role_label(item, assistant_label).map(|role| message_role(role, user)),
             )
         })
         .when(first && user && !item.images.is_empty(), |row| {
@@ -1515,7 +1520,16 @@ pub(super) fn message_role_label<'a>(
         | TranscriptKind::Error
         | TranscriptKind::Notice
         | TranscriptKind::Custom
-        | TranscriptKind::AgentResult => None,
+        | TranscriptKind::AgentResult
+        | TranscriptKind::PeerMessage => None,
+    }
+}
+
+fn item_role_label<'a>(item: &'a TranscriptItem, assistant_label: &'a str) -> Option<&'a str> {
+    if item.kind == TranscriptKind::PeerMessage {
+        Some(item.label.as_str())
+    } else {
+        message_role_label(item.kind, assistant_label)
     }
 }
 
@@ -2004,7 +2018,9 @@ fn item_color(item: &TranscriptItem) -> gpui::Rgba {
         TranscriptKind::Notice | TranscriptKind::Custom | TranscriptKind::AgentResult => {
             THEME.colors.muted
         }
-        TranscriptKind::User | TranscriptKind::Assistant => THEME.colors.text,
+        TranscriptKind::User | TranscriptKind::Assistant | TranscriptKind::PeerMessage => {
+            THEME.colors.text
+        }
         TranscriptKind::Thinking | TranscriptKind::Tool => THEME.colors.subtle,
     }
 }
