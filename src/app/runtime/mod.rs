@@ -846,6 +846,9 @@ impl RuntimeOwner {
                     self.send(SessionCommand::LoadState);
                     self.refresh_sessions();
                 }
+                if tool_starts_worker(event.kind(), event.value()) {
+                    self.schedule_session_refresh();
+                }
                 if settled {
                     self.send(SessionCommand::LoadState);
                     self.send(SessionCommand::LoadUsage);
@@ -1385,6 +1388,35 @@ impl RuntimeOwner {
             snapshot: Arc::new(snapshot),
         });
     }
+}
+
+fn tool_starts_worker(kind: &SessionActivityKind, event: &Value) -> bool {
+    if kind != &SessionActivityKind::ToolStarted {
+        return false;
+    }
+    let Some(name) = event.get("toolName").and_then(Value::as_str) else {
+        return false;
+    };
+    let normalized = name
+        .trim()
+        .rsplit(['.', ':', '/'])
+        .next()
+        .unwrap_or_default()
+        .rsplit("__")
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if normalized == "worker_send" {
+        return event
+            .get("args")
+            .and_then(|args| args.get("to"))
+            .and_then(Value::as_str)
+            .is_some_and(|to| matches!(to, "child" | "new"));
+    }
+    matches!(
+        normalized.as_str(),
+        "spawn_agent" | "spawnagent" | "worker_start"
+    )
 }
 
 fn annotate_history_presentations(

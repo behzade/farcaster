@@ -301,6 +301,7 @@ pub(crate) struct FarcasterApp {
     _window_placement_subscription: Subscription,
     _event_task: Task<()>,
     _workgraph_update_task: Task<()>,
+    _worker_update_task: Task<()>,
 }
 
 fn session_shortcuts_visible_for_window(current: bool, window_active: bool) -> bool {
@@ -312,6 +313,7 @@ impl FarcasterApp {
         project: PathBuf,
         repository_execution_allowed: bool,
         workgraph_updates: async_channel::Receiver<()>,
+        worker_updates: async_channel::Receiver<()>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -500,6 +502,18 @@ impl FarcasterApp {
             while workgraph_updates.recv().await.is_ok() {
                 if weak
                     .update(cx, |this, cx| this.refresh_workgraph_sidebar(cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        let worker_update_task = cx.spawn(async move |weak, cx| {
+            while worker_updates.recv().await.is_ok() {
+                if weak
+                    .update(cx, |this, _| {
+                        this.send(RuntimeCommand::RefreshSessions);
+                    })
                     .is_err()
                 {
                     break;
@@ -730,6 +744,7 @@ impl FarcasterApp {
             _window_placement_subscription: window_placement_subscription,
             _event_task: event_task,
             _workgraph_update_task: workgraph_update_task,
+            _worker_update_task: worker_update_task,
         };
         this.request_repository_refresh(cx);
         this

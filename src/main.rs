@@ -39,6 +39,7 @@ fn main() -> std::process::ExitCode {
         Ok(pool) => pool,
         Err(error) => return fail(format!("initialize worker pool: {error}")),
     };
+    let worker_updates = worker_pool.updates();
     let (workgraph_updates, workgraph_update_receiver) = async_channel::bounded(1);
     let _mcp_server = match app::persistence::state_path()
         .and_then(|database| app::mcp_server::start(database, worker_pool, workgraph_updates))
@@ -47,7 +48,7 @@ fn main() -> std::process::ExitCode {
         Err(error) => return fail(format!("start MCP server: {error}")),
     };
 
-    match app::launch::run(project, workgraph_update_receiver) {
+    match app::launch::run(project, workgraph_update_receiver, worker_updates) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => fail(error),
     }
