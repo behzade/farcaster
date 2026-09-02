@@ -1073,6 +1073,27 @@ fn cold_draft_model_selection_is_deferred_without_starting_the_harness() {
 }
 
 #[test]
+fn cold_model_selection_replaces_an_unsupported_effort() {
+    let (mut owner, _events, _discovery) = owner_without_process(std::env::temp_dir());
+    owner.snapshot.prefill_thinking_level = Some("high".into());
+
+    owner.apply_command(RuntimeCommand::SetModel(Model {
+        id: "limited".into(),
+        name: "Limited".into(),
+        provider: "provider".into(),
+        context_window: 0,
+        reasoning: true,
+        efforts: Some(vec!["low".into(), "medium".into()]),
+    }));
+
+    assert_eq!(
+        owner.snapshot.prefill_thinking_level.as_deref(),
+        Some("medium")
+    );
+    assert!(!owner.pending_session_controls.is_empty());
+}
+
+#[test]
 fn background_catalog_refresh_preserves_search_until_user_clears_it()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
