@@ -11,6 +11,35 @@ pub(crate) struct SessionIdentity<'a> {
     pub effort: Option<&'a str>,
 }
 
+pub(super) fn replacement_effort(model: &Model, current: Option<&str>) -> Option<String> {
+    let current = current?;
+    let efforts = model.efforts.as_deref()?;
+    if efforts.iter().any(|effort| effort == current) {
+        return None;
+    }
+    let current_rank = effort_rank(current);
+    efforts
+        .iter()
+        .min_by_key(|effort| match (current_rank, effort_rank(effort)) {
+            (Some(current), Some(candidate)) => current.abs_diff(candidate),
+            _ => u8::MAX,
+        })
+        .cloned()
+}
+
+fn effort_rank(effort: &str) -> Option<u8> {
+    match effort {
+        "off" | "none" => Some(0),
+        "minimal" => Some(1),
+        "low" => Some(2),
+        "medium" => Some(3),
+        "high" => Some(4),
+        "xhigh" => Some(5),
+        "max" => Some(6),
+        _ => None,
+    }
+}
+
 impl RuntimeSnapshot {
     pub(crate) fn session_identity(&self) -> SessionIdentity<'_> {
         let model = self
@@ -108,11 +137,13 @@ impl SessionControlDefaults {
 
     pub fn select_model(&mut self, harness: &str, model: Model) -> bool {
         let identity = self.identities.entry(harness.to_owned()).or_default();
-        if identity.model.as_ref() == Some(&model) {
-            return false;
-        }
+        let replacement = replacement_effort(&model, identity.effort.as_deref());
+        let changed = identity.model.as_ref() != Some(&model) || replacement.is_some();
         identity.model = Some(model);
-        true
+        if let Some(effort) = replacement {
+            identity.effort = Some(effort);
+        }
+        changed
     }
 
     pub fn select_effort(&mut self, harness: &str, effort: String) -> bool {
@@ -274,6 +305,24 @@ mod tests {
         };
 
         assert!(snapshot.available_thinking_levels().is_empty());
+    }
+
+    #[test]
+    fn selecting_model_replaces_an_unsupported_cached_effort_with_the_nearest_level() {
+        let mut defaults = SessionControlDefaults::default();
+        assert!(defaults.select_effort("pi", "high".into()));
+        assert!(defaults.select_model(
+            "pi",
+            model("limited", true, Some(&["off", "low", "medium"])),
+        ));
+
+        let mut draft = RuntimeSnapshot {
+            harness: "pi".into(),
+            ..RuntimeSnapshot::default()
+        };
+        defaults.apply(&mut draft, true);
+
+        assert_eq!(draft.prefill_thinking_level.as_deref(), Some("medium"));
     }
 
     #[test]

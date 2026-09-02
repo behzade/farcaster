@@ -55,6 +55,10 @@ impl SessionControl {
 
 impl RuntimeOwner {
     pub(super) fn set_model(&mut self, model: Model) {
+        let replacement_effort = super::session_identity::replacement_effort(
+            &model,
+            self.snapshot.session_identity().effort,
+        );
         let control = SessionControl::Model(model.provider.clone(), model.id.clone());
         if !self.snapshot.history_preview
             && self.process.is_none()
@@ -62,10 +66,18 @@ impl RuntimeOwner {
         {
             self.snapshot.prefill_model = Some(model);
             self.pending_session_controls.set(control);
+            if let Some(effort) = replacement_effort {
+                self.snapshot.prefill_thinking_level = Some(effort.clone());
+                self.pending_session_controls
+                    .set(SessionControl::Thinking(effort));
+            }
             self.publish();
             return;
         }
         self.send_session_control(control);
+        if let Some(effort) = replacement_effort {
+            self.send_session_control(SessionControl::Thinking(effort));
+        }
     }
 
     pub(super) fn set_thinking(&mut self, level: String) {
