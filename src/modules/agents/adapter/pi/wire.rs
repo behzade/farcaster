@@ -45,6 +45,9 @@ pub(crate) fn parse_frame(frame: &[u8]) -> Result<PiWireMessage, String> {
             if response.success && response.command == "get_available_models" {
                 add_model_efforts(&mut response.data);
             }
+            if response.success && response.command == "get_session_stats" {
+                add_usage_total(response.data.get_mut("tokens"));
+            }
             let operation = response_operation(&response.command);
             Ok(PiWireMessage::Response {
                 command: response.command,
@@ -58,11 +61,32 @@ pub(crate) fn parse_frame(frame: &[u8]) -> Result<PiWireMessage, String> {
             })
         }
         "extension_ui_request" => parse_extension_request(value).map(PiWireMessage::ExtensionUi),
-        _ => Ok(PiWireMessage::Event(value)),
+        _ => {
+            let is_turn_end = kind == "turn_end";
+            let mut value = value;
+            if is_turn_end {
+                add_usage_total(value.get_mut("usage"));
+            }
+            Ok(PiWireMessage::Event(value))
+        }
     }
 }
 
 const PI_THINKING_LEVELS: [&str; 7] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+fn add_usage_total(usage: Option<&mut Value>) {
+    let Some(usage) = usage.and_then(Value::as_object_mut) else {
+        return;
+    };
+    if usage.get("totalTokens").and_then(Value::as_u64).is_some() {
+        return;
+    }
+    let total = ["input", "output", "cacheRead", "cacheWrite"]
+        .into_iter()
+        .filter_map(|field| usage.get(field).and_then(Value::as_u64))
+        .fold(0_u64, u64::saturating_add);
+    usage.insert("totalTokens".into(), Value::from(total));
+}
 
 fn add_model_efforts(data: &mut Value) {
     let models = data
@@ -167,6 +191,26 @@ mod tests {
                 serde_json::json!({"type":"agent_start"})
             ))
         );
+    }
+
+    #[test]
+    fn normalizes_missing_usage_totals() {
+        let PiWireMessage::Event(event) = parse_frame(
+            br#"{"type":"turn_end","usage":{"input":10,"output":2,"cacheRead":3,"cacheWrite":1}}"#,
+        )
+        .expect("turn event") else {
+            panic!("expected event");
+        };
+        assert_eq!(event["usage"]["totalTokens"], 16);
+
+        let PiWireMessage::Response { response, .. } = parse_frame(
+            br#"{"type":"response","command":"get_session_stats","success":true,"data":{"tokens":{"input":5,"output":1,"cacheRead":2,"cacheWrite":0}}}"#,
+        )
+        .expect("usage response")
+        else {
+            panic!("expected response");
+        };
+        assert_eq!(response.data["tokens"]["totalTokens"], 8);
     }
 
     #[test]
