@@ -156,7 +156,7 @@ fn summary(
     let id = value.get("sessionId")?.as_str()?;
     let cwd = value.get("cwd")?.as_str()?;
     let project = PathBuf::from(cwd);
-    if !project.is_dir() {
+    if !project.is_dir() || crate::projects::is_temporary_project(&project) {
         return None;
     }
     let title = value

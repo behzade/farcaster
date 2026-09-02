@@ -2,6 +2,16 @@ use std::{collections::HashSet, fs, path::Path};
 
 use super::Registry;
 
+pub(crate) fn is_temporary_project(path: &Path) -> bool {
+    path_is_within(path, &std::env::temp_dir())
+}
+
+fn path_is_within(path: &Path, root: &Path) -> bool {
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    path.starts_with(root)
+}
+
 pub(crate) fn load_legacy(path: &Path) -> Result<Registry, String> {
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
@@ -59,4 +69,23 @@ pub(super) fn save_to(path: &Path, registry: &Registry) -> Result<(), String> {
             temporary.display()
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn temporary_path_filter_is_scoped_to_the_configured_root() -> Result<(), std::io::Error> {
+        let root = tempfile::tempdir()?;
+        let project = root.path().join("project");
+        fs::create_dir(&project)?;
+
+        assert!(path_is_within(&project, root.path()));
+        assert!(!path_is_within(
+            root.path().parent().unwrap_or(root.path()),
+            root.path()
+        ));
+        Ok(())
+    }
 }

@@ -168,7 +168,19 @@ pub(crate) fn discover(query: &str) -> Result<SessionDiscovery, String> {
     let mut cache = cache
         .lock()
         .map_err(|_| "session discovery cache is unavailable".to_owned())?;
-    discover_in_cached(&root, query, &mut cache)
+    let mut discovery = discover_in_cached(&root, query, &mut cache)?;
+    discovery
+        .sessions
+        .retain(|session| !crate::projects::is_temporary_project(&session.project));
+    let visible = discovery
+        .sessions
+        .iter()
+        .map(|session| session.id.as_str())
+        .collect::<HashSet<_>>();
+    discovery
+        .activities
+        .retain(|session_id, _| visible.contains(session_id.as_str()));
+    Ok(discovery)
 }
 
 pub(crate) fn load_history(path: &Path) -> Result<LoadedHistory, String> {

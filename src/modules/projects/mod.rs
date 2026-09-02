@@ -3,7 +3,7 @@ mod contract;
 mod core;
 mod trust;
 
-pub(crate) use adapter::load_legacy;
+pub(crate) use adapter::{is_temporary_project, load_legacy};
 pub(crate) use contract::{
     AppliedTrust, DraftSession, Registry, StartupTrust, TrustChoice, TrustOption,
 };
