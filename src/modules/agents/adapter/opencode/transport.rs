@@ -123,9 +123,22 @@ fn encode_request(
     if request.body.is_some() {
         encoded.extend_from_slice(b"Content-Type: application/json\r\n");
     }
+    if let Some(directory) = request_directory(&request.path) {
+        encoded.extend_from_slice(b"x-opencode-directory: ");
+        encoded.extend_from_slice(directory.as_bytes());
+        encoded.extend_from_slice(b"\r\n");
+    }
     encoded.extend_from_slice(b"\r\n");
     encoded.extend_from_slice(body);
     encoded
+}
+
+fn request_directory(path: &str) -> Option<String> {
+    let query = path.split_once('?')?.1;
+    url::form_urlencoded::parse(query.as_bytes()).find_map(|(key, value)| {
+        (key == "directory" && !value.bytes().any(|byte| matches!(byte, b'\r' | b'\n' | 0)))
+            .then(|| value.into_owned())
+    })
 }
 
 fn method_name(method: OpenCodeHttpMethod) -> &'static str {
@@ -319,6 +332,25 @@ mod tests {
         assert!(encoded.contains("Authorization: Basic secret\r\n"));
         assert!(encoded.contains("Content-Type: application/json\r\n"));
         assert!(encoded.ends_with(r#"{"title":"Review"}"#));
+    }
+
+    #[test]
+    fn directory_queries_also_set_the_runtime_context_header() {
+        let request = OpenCodeHttpRequest {
+            method: OpenCodeHttpMethod::Get,
+            path: "/api/model?directory=%2Ftmp%2Fproject+one".into(),
+            body: None,
+        };
+        let encoded = String::from_utf8(encode_request(
+            "127.0.0.1",
+            4096,
+            "Basic secret",
+            &request,
+            "application/json",
+            "close",
+        ))
+        .expect("HTTP request is UTF-8");
+        assert!(encoded.contains("x-opencode-directory: /tmp/project one\r\n"));
     }
 
     #[test]
