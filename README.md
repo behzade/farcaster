@@ -98,15 +98,18 @@ Linux formats. Packages and Linux windows use the bundled Farcaster icon and
 the `io.github.behzade.farcaster` app ID.
 
 Farcaster serves stateless Streamable HTTP MCP at
-`http://127.0.0.1:8765/mcp`. It exposes `worker_list`, `worker_send`, and the
-`workgraph_*` tools. `worker_list` returns other active top-level peer agents in
-the caller's project; child workers see only their parent. `worker_send` uses
-`to: "new"` for a fresh top-level peer, `to: "child"` for a nested worker under
-the caller, `to: "parent"` for a child to message its parent, or a worker id.
-New workers inherit the caller's project, harness, model, and effort. Fresh
-peers are intended only for substantial independent work. Nested children are
-for delegated subtasks such as review. Farcaster's live worker graph keeps
-children from every backend off the session rail; Pi and OpenCode additionally
+`http://127.0.0.1:8765/mcp`. It exposes `worker_send`, `worker_notices`, and the
+`workgraph_*` tools. Workers have stable human-readable names while opaque IDs
+remain internal. Top-level names are generated from a namespace of more than
+16,000 adjective-animal combinations; top-level models choose concise names for
+their own children. A top-level worker calls `worker_send` with a child name:
+the first call creates that child and later calls reuse it. A child worker sees
+a role-specific `worker_send` schema without `to`; its messages always go to its
+parent. Top-level workers can read or post `worker_notices` when overlapping
+shared-worktree changes require coordination or ownership is unclear. It is a
+pull-only, expiring project notice board and never interrupts another agent;
+unrelated changes do not warrant consulting it. Children inherit the parent's
+project, harness, model, and effort and remain off the session rail. Pi and OpenCode additionally
 persist the parent relationship in their native session metadata. Use
 harness-native subagents when the harness provides them. Farcaster
 accepts MCP `2026-07-28` only and

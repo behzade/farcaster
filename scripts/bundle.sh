@@ -42,6 +42,8 @@ mkdir -p "$target_dir/release"
 CARGO_TARGET_DIR="$target_dir" cargo packager --release --formats "$formats" \
     --out-dir "$target_dir/release"
 
+production_bundle_identifier=io.github.behzade.farcaster
+bundle_identifier=$production_bundle_identifier
 if [ "$platform" = "Darwin" ]; then
     bundle="$target_dir/release/Farcaster.app"
     if [ ! -d "$bundle" ]; then
@@ -50,8 +52,15 @@ if [ "$platform" = "Darwin" ]; then
     fi
     identity=${CODESIGN_IDENTITY:--}
     if [ "$identity" = "-" ]; then
+        # The default designated requirement for an ad-hoc signature contains
+        # the binary hash. Give local builds a stable, separate identity so
+        # macOS privacy grants survive rebuilds.
+        bundle_identifier=$bundle_identifier.dev
+        /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $bundle_identifier" \
+            "$bundle/Contents/Info.plist"
         codesign --force --sign - "$bundle/Contents/MacOS/farcaster"
-        codesign --force --sign - "$bundle"
+        codesign --force --sign - \
+            --requirements "=designated => identifier \"$bundle_identifier\"" "$bundle"
     else
         codesign --force --options runtime --timestamp --sign "$identity" \
             "$bundle/Contents/MacOS/farcaster"
@@ -78,11 +87,16 @@ wait_for_linux_exit() {
 
 case $platform in
     Darwin)
-        osascript -e 'if application id "io.github.behzade.farcaster" is running then tell application id "io.github.behzade.farcaster" to quit' \
-            >/dev/null 2>&1 || true
+        for identifier in "$production_bundle_identifier" "$bundle_identifier"; do
+            osascript -e "if application id \"$identifier\" is running then tell application id \"$identifier\" to quit" \
+                >/dev/null 2>&1 || true
+        done
+        app_is_running() {
+            osascript -e "application id \"$1\" is running" 2>/dev/null | grep -q true
+        }
         attempts=0
-        while osascript -e 'application id "io.github.behzade.farcaster" is running' \
-            2>/dev/null | grep -q true; do
+        while app_is_running "$production_bundle_identifier" \
+            || app_is_running "$bundle_identifier"; do
             if [ "$attempts" -ge 50 ]; then
                 echo "Farcaster did not stop within five seconds" >&2
                 exit 1

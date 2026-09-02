@@ -275,6 +275,36 @@ impl Drop for OperationTiming {
     }
 }
 
+/// Diagnostic wall-clock timing for startup work that happens before the
+/// performance monitor is installed. Enabled by `DEBUG=true`.
+#[must_use]
+pub(crate) struct StartupTiming {
+    name: &'static str,
+    started_at: Option<Instant>,
+}
+
+impl StartupTiming {
+    pub(crate) fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            started_at: (std::env::var("DEBUG").ok().as_deref() == Some("true")).then(Instant::now),
+        }
+    }
+}
+
+impl Drop for StartupTiming {
+    fn drop(&mut self) {
+        let Some(started_at) = self.started_at else {
+            return;
+        };
+        zlog::info!(
+            "STARTUP operation={} elapsed_ms={:.2}",
+            self.name,
+            started_at.elapsed().as_secs_f64() * 1_000.0
+        );
+    }
+}
+
 #[must_use]
 pub(crate) struct Timing {
     name: &'static str,
