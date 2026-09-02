@@ -3,11 +3,13 @@ use gpui::{
     prelude::FluentBuilder as _,
 };
 use gpui_component::input::Input;
+use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
 
 use super::super::FarcasterApp;
 use crate::{
     app::OVERLAY_KEY_CONTEXT,
-    app::ui::primitives::{ButtonTone, FeedbackTone, button, feedback, modal},
+    app::ui::keybindings::ApplicationModifier,
+    app::ui::primitives::{ButtonTone, FeedbackTone, button, dropdown_button, feedback, modal},
     app::ui::theme::THEME,
 };
 
@@ -27,13 +29,17 @@ pub(in crate::app::views) fn render(
         |surface| {
             let cancel = entity.clone();
             let clear = entity.clone();
-            let save = entity;
+            let save = entity.clone();
             surface.w(gpui::px(520.0)).max_w_full().child(
                 div()
                     .flex()
                     .flex_col()
                     .gap(THEME.space.md)
                     .p(THEME.space.md)
+                    .child(modifier_setting(
+                        app.settings_application_modifier,
+                        entity.clone(),
+                    ))
                     .child(
                         div()
                             .flex()
@@ -90,7 +96,7 @@ pub(in crate::app::views) fn render(
                                 true,
                                 move |window, cx| {
                                     let _ = save.update(cx, |this, cx| {
-                                        this.save_network_proxy(window, cx)
+                                        this.save_settings(window, cx)
                                     });
                                 },
                             )),
@@ -99,4 +105,57 @@ pub(in crate::app::views) fn render(
         },
     )
     .into_any_element()
+}
+
+fn modifier_setting(selected: ApplicationModifier, entity: WeakEntity<FarcasterApp>) -> AnyElement {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(THEME.space.md)
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(THEME.space.xs)
+                .child(
+                    div()
+                        .text_size(THEME.type_scale.body)
+                        .text_color(THEME.colors.text)
+                        .child("Keybinding modifier"),
+                )
+                .child(
+                    div()
+                        .text_size(THEME.type_scale.body_small)
+                        .text_color(THEME.colors.subtle)
+                        .child("Used for application shortcuts."),
+                ),
+        )
+        .child(
+            dropdown_button(
+                "keybinding-modifier",
+                selected.label(),
+                ButtonTone::Neutral,
+                true,
+            )
+            .flex_none()
+            .dropdown_menu_with_anchor(gpui::Anchor::TopRight, move |menu, _, _| {
+                ApplicationModifier::platform_choices().into_iter().fold(
+                    menu.min_w(gpui::px(150.0)),
+                    |menu, modifier| {
+                        let entity = entity.clone();
+                        menu.item(
+                            PopupMenuItem::new(modifier.label())
+                                .checked(modifier == selected)
+                                .on_click(move |_, _, cx| {
+                                    let _ = entity.update(cx, |this, cx| {
+                                        this.select_settings_application_modifier(modifier, cx);
+                                    });
+                                }),
+                        )
+                    },
+                )
+            }),
+        )
+        .into_any_element()
 }

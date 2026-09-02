@@ -121,6 +121,29 @@ fn network_proxy_round_trips_and_clears() -> Result<(), Box<dyn std::error::Erro
 }
 
 #[test]
+fn application_settings_survive_reopen() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let database = temp.path().join("gui.sqlite3");
+    let store = StateStore::open_at(&database)?;
+    assert_eq!(store.load_application_modifier()?, None);
+
+    store.save_application_settings("ctrl", Some("http://proxy.example:8080"))?;
+    assert_eq!(
+        StateStore::open_at(&database)?
+            .load_application_modifier()?
+            .as_deref(),
+        Some("ctrl")
+    );
+    assert_eq!(
+        StateStore::open_at(&database)?
+            .load_network_proxy()?
+            .as_deref(),
+        Some("http://proxy.example:8080")
+    );
+    Ok(())
+}
+
+#[test]
 fn repository_backend_preferences_default_to_empty() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;

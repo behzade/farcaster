@@ -506,6 +506,7 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.settings_application_modifier = crate::app::ui::keybindings::application_modifier();
         match crate::app::infrastructure::persistence::StateStore::open()
             .and_then(|store| crate::access::load_proxy(&store))
         {
@@ -528,13 +529,41 @@ impl FarcasterApp {
         self.persist_network_proxy(None, window, cx);
     }
 
-    pub(in crate::app) fn save_network_proxy(
+    pub(in crate::app) fn save_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let value = self.network_proxy_input.read(cx).value().trim().to_owned();
+        self.persist_settings((!value.is_empty()).then_some(value), window, cx);
+    }
+
+    pub(in crate::app) fn select_settings_application_modifier(
         &mut self,
+        modifier: crate::app::ui::keybindings::ApplicationModifier,
+        cx: &mut Context<Self>,
+    ) {
+        self.settings_application_modifier = modifier;
+        cx.notify();
+    }
+
+    fn persist_settings(
+        &mut self,
+        proxy: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let value = self.network_proxy_input.read(cx).value().trim().to_owned();
-        self.persist_network_proxy((!value.is_empty()).then_some(value), window, cx);
+        let modifier = self.settings_application_modifier;
+        let result = crate::app::infrastructure::persistence::StateStore::open()
+            .and_then(|store| store.save_application_settings(modifier.prefix(), proxy.as_deref()));
+        match result {
+            Ok(()) => {
+                self.network_proxy_error = None;
+                crate::app::ui::keybindings::set_application_modifier(modifier, cx);
+                self.send(RuntimeCommand::SetAppProxy(proxy));
+                self.close_sheet(window, cx);
+            }
+            Err(error) => {
+                self.network_proxy_error = Some(error);
+                cx.notify();
+            }
+        }
     }
 
     fn persist_network_proxy(
