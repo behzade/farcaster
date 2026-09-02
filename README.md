@@ -72,27 +72,30 @@ cargo run -- /path/to/project
 The project argument is optional. Farcaster otherwise opens the most recent
 project or the current directory.
 
-## macOS bundle
+## App bundle
 
 ```sh
-make bundle-macos
-open target/release/Farcaster.app
+make bundle
+make bundle-relaunch
 ```
 
-Signing is ad hoc by default; set `CODESIGN_IDENTITY` to use a Developer ID
-identity.
+`make bundle` creates a macOS app or Linux AppImage. `make bundle-relaunch`
+builds the same bundle, stops Farcaster, and starts the new build with the
+selected project. macOS signing is ad hoc by default; set `CODESIGN_IDENTITY`
+to use a Developer ID identity.
 
 ## Linux packages
 
-Install Cargo Packager, then build all supported Linux package formats:
+Install Cargo Packager, then build any supported package format:
 
 ```sh
 cargo install cargo-packager --locked
-make package-linux
+make package FORMAT=deb
 ```
 
-Use `make package FORMAT=deb` to build one format. The package and Linux window
-both use the bundled Farcaster icon and the `io.github.behzade.farcaster` app ID.
+Set `BUNDLE_FORMATS=appimage,deb,pacman` when calling `make bundle` to create all
+Linux formats. Packages and Linux windows use the bundled Farcaster icon and
+the `io.github.behzade.farcaster` app ID.
 
 Farcaster serves stateless Streamable HTTP MCP at
 `http://127.0.0.1:8765/mcp`. It exposes `worker_list`, `worker_send`, and the

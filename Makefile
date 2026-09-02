@@ -5,7 +5,7 @@ DEFAULT_FARCASTER_DATA_DIR := $(if $(XDG_DATA_HOME),$(XDG_DATA_HOME),$(HOME)/.lo
 LOG_FILE ?= $(if $(FARCASTER_DATA_DIR),$(FARCASTER_DATA_DIR),$(DEFAULT_FARCASTER_DATA_DIR))/logs/farcaster.log
 TAIL_ARGS ?= -n $(LOG_LINES)
 
-.PHONY: run test debug release release-debug bundle-macos package package-linux logs check check-flake
+.PHONY: run test debug release release-debug bundle bundle-relaunch package logs check check-flake
 
 run:
 	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo run -- "$(PROJECT)"
@@ -22,15 +22,15 @@ release:
 release-debug:
 	DEBUG=true CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo run --release -- "$(PROJECT)"
 
-bundle-macos:
-	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" ./scripts/bundle-macos.sh
+bundle:
+	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" BUNDLE_FORMATS="$(BUNDLE_FORMATS)" PROJECT="$(PROJECT)" ./scripts/bundle.sh
+
+bundle-relaunch:
+	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" BUNDLE_FORMATS="$(BUNDLE_FORMATS)" PROJECT="$(PROJECT)" ./scripts/bundle.sh --relaunch
 
 package:
-	@test -n "$(FORMAT)" || (echo "usage: make package FORMAT=appimage|deb|pacman" >&2; exit 1)
+	@test -n "$(FORMAT)" || (echo "usage: make package FORMAT=app|dmg|appimage|deb|pacman" >&2; exit 1)
 	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo packager --release --formats "$(FORMAT)"
-
-package-linux:
-	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo packager --release --formats appimage,deb,pacman
 
 # Override LOG_LINES, TAIL_ARGS (for example, "-n 100 -f"), or LOG_FILE.
 logs:
