@@ -33,14 +33,10 @@ fn queued_messages_are_grouped_by_delivery_behavior() {
 
     let groups = queued_message_groups(&queue);
     assert_eq!(groups.len(), 2);
-    assert_eq!(
-        groups[0],
-        (QueuedMessageKind::Steer, queue.steering.as_slice())
-    );
-    assert_eq!(
-        groups[1],
-        (QueuedMessageKind::FollowUp, queue.follow_up.as_slice())
-    );
+    assert_eq!(groups[0].0, QueuedMessageKind::Steer);
+    assert_eq!(groups[0].1, queue.steering.iter().collect::<Vec<_>>());
+    assert_eq!(groups[1].0, QueuedMessageKind::FollowUp);
+    assert_eq!(groups[1].1, queue.follow_up.iter().collect::<Vec<_>>());
     assert_eq!(groups[0].0.label(), "Steer next");
     assert_eq!(groups[1].0.label(), "Follow-ups");
 }
@@ -51,6 +47,21 @@ fn queued_message_preview_hides_multiline_payloads() {
         queued_message_preview("inspect this\n\nPasted text files:\n- file.txt"),
         "inspect this…"
     );
+}
+
+#[test]
+fn peer_messages_have_their_own_queue_group_and_preview() {
+    let peer = "Message from Farcaster peer worker-7:\n\nreview complete\nwith details".to_owned();
+    let queue = QueueState {
+        steering: vec![peer.clone(), "redirect now".into()],
+        follow_up: Vec::new(),
+    };
+
+    let groups = queued_message_groups(&queue);
+    assert_eq!(groups[0].0, QueuedMessageKind::Peer);
+    assert_eq!(groups[0].1, vec![&peer]);
+    assert_eq!(groups[1].0, QueuedMessageKind::Steer);
+    assert_eq!(queued_message_preview(&peer), "worker-7: review complete…");
 }
 
 #[test]

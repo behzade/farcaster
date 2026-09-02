@@ -621,6 +621,35 @@ fn tool_result_messages_update_the_existing_call_without_a_duplicate() {
 }
 
 #[test]
+fn live_peer_activity_renders_without_a_user_message() {
+    let mut state = ConversationState::default();
+    state.reduce(&json!({
+        "type":"peer_message",
+        "from":"worker-7",
+        "message":"review complete"
+    }));
+
+    assert_eq!(state.items.len(), 1);
+    assert_eq!(state.items[0].kind, TranscriptKind::PeerMessage);
+    assert_eq!(state.items[0].label, "Peer · worker-7");
+    assert_eq!(state.items[0].text, "review complete");
+}
+
+#[test]
+fn peer_prompts_render_with_sender_identity_instead_of_as_the_user() {
+    let mut state = ConversationState::default();
+    state.replace_history(&[json!({
+        "role":"user",
+        "content":"Message from Farcaster peer worker-7:\n\nreview complete\nwith details"
+    })]);
+
+    assert_eq!(state.items.len(), 1);
+    assert_eq!(state.items[0].kind, TranscriptKind::PeerMessage);
+    assert_eq!(state.items[0].label, "Peer · worker-7");
+    assert_eq!(state.items[0].text, "review complete\nwith details");
+}
+
+#[test]
 fn subagent_results_keep_custom_context_but_use_dedicated_transcript_rows() {
     let mut state = ConversationState::default();
     state.replace_history(&[
