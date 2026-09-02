@@ -42,7 +42,7 @@ use crate::{
     },
 };
 use session_controls::PendingSessionControls;
-use session_identity::SessionControlDefaults;
+use session_identity::HarnessConfigurationStore;
 
 const COALESCED_SESSION_REFRESH_DELAY: Duration = Duration::from_millis(100);
 const STREAM_PUBLISH_INTERVAL: Duration = Duration::from_millis(16);
@@ -1046,7 +1046,8 @@ impl RuntimeOwner {
             .map(|snapshot| snapshot.models.clone())
             .unwrap_or_default();
         let stats = historical_context_stats(&history.messages, &models);
-        let prefill_model = SessionControlDefaults::history_model(&models, history.model.as_ref());
+        let prefill_model =
+            HarnessConfigurationStore::history_model(&models, history.model.as_ref());
         let mut conversation = ConversationState::default();
         conversation.replace_history(&history.messages);
         self.transcript_changed_from = Some(0);
