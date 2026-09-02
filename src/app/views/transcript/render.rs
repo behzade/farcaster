@@ -817,6 +817,7 @@ pub(crate) fn render(
     conversation: Arc<conversation::ConversationState>,
     disclosure_states: std::collections::HashMap<usize, bool>,
     markdown_cache: TranscriptMarkdownCache,
+    assistant_label: Arc<str>,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
     if rows.is_empty() {
@@ -858,6 +859,7 @@ pub(crate) fn render(
                             &conversation.items,
                             expanded,
                             &markdown_cache,
+                            &assistant_label,
                             row_entity.clone(),
                             cx,
                         ))),
@@ -989,6 +991,7 @@ fn render_row(
     items: &PersistentVec<Arc<TranscriptItem>>,
     expanded: bool,
     markdown_cache: &TranscriptMarkdownCache,
+    assistant_label: &str,
     entity: WeakEntity<FarcasterApp>,
     cx: &mut gpui::App,
 ) -> AnyElement {
@@ -1022,6 +1025,7 @@ fn render_row(
                     &markdown,
                     cx,
                 ),
+                assistant_label,
                 entity.clone(),
             )
         }
@@ -1048,6 +1052,7 @@ fn render_row(
                     text,
                     cx,
                 ),
+                assistant_label,
                 entity.clone(),
             )
         }
@@ -1067,6 +1072,7 @@ fn render_row(
                 follows_tool,
                 Some(markdown_cache.state(MarkdownStateKey::item(index, revision), &markdown, cx)),
                 Some(invocation_transcript_markdown_style(resolved)),
+                assistant_label,
                 entity.clone(),
             )
         }
@@ -1109,6 +1115,7 @@ fn render_row(
                 follows_tool,
                 markdown_state,
                 None,
+                assistant_label,
                 entity,
             )
         }
@@ -1299,10 +1306,11 @@ fn render_message(
     follows_tool: bool,
     markdown_state: Option<Entity<TextViewState>>,
     markdown_style: Option<TextViewStyle>,
+    assistant_label: &str,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
     let user = item.kind == TranscriptKind::User;
-    let role = message_role_label(item.kind);
+    let role = message_role_label(item.kind, assistant_label);
     div()
         .id(("transcript-row", key))
         .w_full()
@@ -1344,6 +1352,7 @@ fn render_message_chunk(
     last: bool,
     follows_tool: bool,
     markdown_state: Entity<TextViewState>,
+    assistant_label: &str,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
     let user = item.kind == TranscriptKind::User;
@@ -1362,7 +1371,9 @@ fn render_message_chunk(
         .when(!first, |row| row.pt(THEME.space.xs))
         .when(last, |row| row.pb(THEME.space.md))
         .when(first, |row| {
-            row.children(message_role_label(item.kind).map(|role| message_role(role, user)))
+            row.children(
+                message_role_label(item.kind, assistant_label).map(|role| message_role(role, user)),
+            )
         })
         .when(first && user && !item.images.is_empty(), |row| {
             row.child(render_attachments(key, item, entity))
@@ -1490,10 +1501,13 @@ fn render_error(
         .into_any_element()
 }
 
-pub(super) fn message_role_label(kind: TranscriptKind) -> Option<&'static str> {
+pub(super) fn message_role_label<'a>(
+    kind: TranscriptKind,
+    assistant_label: &'a str,
+) -> Option<&'a str> {
     match kind {
         TranscriptKind::User => Some("You"),
-        TranscriptKind::Assistant => Some("Pi"),
+        TranscriptKind::Assistant => Some(assistant_label),
         TranscriptKind::Thinking
         | TranscriptKind::Tool
         | TranscriptKind::Error
@@ -1503,7 +1517,7 @@ pub(super) fn message_role_label(kind: TranscriptKind) -> Option<&'static str> {
     }
 }
 
-fn message_role(label: &'static str, user: bool) -> impl gpui::IntoElement {
+fn message_role(label: &str, user: bool) -> impl gpui::IntoElement {
     div()
         .mb(px(7.0))
         .text_size(THEME.type_scale.caption)
@@ -1513,7 +1527,7 @@ fn message_role(label: &'static str, user: bool) -> impl gpui::IntoElement {
         } else {
             THEME.colors.muted
         })
-        .child(label)
+        .child(label.to_owned())
 }
 
 fn thinking_source(item: &TranscriptItem) -> &str {
@@ -1524,6 +1538,15 @@ fn thinking_source(item: &TranscriptItem) -> &str {
 
 pub(super) fn thinking_preview(item: &TranscriptItem) -> &str {
     thinking_source(item).lines().next().unwrap_or("Thinking…")
+}
+
+pub(super) fn thinking_preview_emphasis(preview: &str) -> (&str, bool) {
+    let trimmed = preview.trim();
+    trimmed
+        .strip_prefix("**")
+        .and_then(|text| text.strip_suffix("**"))
+        .filter(|text| !text.is_empty())
+        .map_or((preview, false), |text| (text, true))
 }
 
 fn thinking_has_non_whitespace(text: &str) -> bool {
@@ -1553,7 +1576,8 @@ fn render_thinking(
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
     let has_details = thinking_has_details(item);
-    let preview = thinking_preview(item).to_owned();
+    let (preview, emphasized) = thinking_preview_emphasis(thinking_preview(item));
+    let preview = preview.to_owned();
     div()
         .id(("thinking-row", key))
         .w_full()
@@ -1577,6 +1601,9 @@ fn render_thinking(
                     .italic()
                     .text_size(THEME.type_scale.body_small)
                     .text_color(THEME.colors.subtle)
+                    .when(emphasized, |preview| {
+                        preview.font_weight(FontWeight::SEMIBOLD)
+                    })
                     .child(preview),
             ),
         )

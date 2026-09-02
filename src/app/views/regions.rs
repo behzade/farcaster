@@ -135,6 +135,7 @@ impl Render for TranscriptView {
             app.snapshot.conversation.clone(),
             app.transcript_disclosure_states.clone(),
             self.markdown_cache.clone(),
+            crate::agents::backend_display_name(&app.snapshot.harness).into(),
             self.app.clone(),
         )
         .into_any_element()

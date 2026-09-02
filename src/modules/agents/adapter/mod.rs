@@ -401,6 +401,13 @@ pub(crate) fn supports_startup_command(
     }
 }
 
+pub(crate) fn backend_display_name(harness: &str) -> String {
+    known_backend_descriptors()
+        .into_iter()
+        .find(|descriptor| descriptor.id.as_str() == harness)
+        .map_or_else(|| harness.to_owned(), |descriptor| descriptor.name)
+}
+
 pub(crate) fn backend_statuses() -> Vec<super::contract::AgentBackendStatus> {
     let pi_program = crate::agents::AgentLaunchConfig::default().program;
     let codex_program = std::env::var_os("FARCASTER_CODEX_PATH")
@@ -455,6 +462,15 @@ mod tests {
         HarnessAccessMode::{Auto, Full, Sandboxed},
         SessionCommand,
     };
+
+    #[test]
+    fn backend_display_names_come_from_descriptors() {
+        assert_eq!(backend_display_name("pi"), "Pi");
+        assert_eq!(backend_display_name("codex-cli"), "Codex");
+        assert_eq!(backend_display_name("cursor-cli"), "Cursor");
+        assert_eq!(backend_display_name("opencode2"), "OpenCode");
+        assert_eq!(backend_display_name("custom"), "custom");
+    }
 
     #[test]
     fn pi_startup_skips_unsupported_mode_query() {
