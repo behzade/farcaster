@@ -90,9 +90,10 @@ the caller's project; child workers see only their parent. `worker_send` uses
 the caller, `to: "parent"` for a child to message its parent, or a worker id.
 New workers inherit the caller's project, harness, model, and effort. Fresh
 peers are intended only for substantial independent work. Nested children are
-for delegated subtasks such as review. Pi and OpenCode persist the parent so
-those children are not rail roots. Use harness-native subagents when the
-harness provides them. Farcaster
+for delegated subtasks such as review. Farcaster's live worker graph keeps
+children from every backend off the session rail; Pi and OpenCode additionally
+persist the parent relationship in their native session metadata. Use
+harness-native subagents when the harness provides them. Farcaster
 accepts MCP `2026-07-28` only and
 passes the endpoint to each launched agent through its native transient
 configuration; it does not create or modify a project MCP file.

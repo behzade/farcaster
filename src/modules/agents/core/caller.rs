@@ -181,6 +181,23 @@ impl CallerRegistry {
         Ok((caller.worker_id.clone(), workers))
     }
 
+    pub(crate) fn session_parent(&self, backend: &str, session: &str) -> Option<String> {
+        let callers = self.callers.lock().ok()?;
+        let child = callers.values().find(|caller| {
+            caller.backend == backend && caller.session.as_deref() == Some(session)
+        })?;
+        let parent_id = child.parent_worker_id.as_deref()?;
+        callers
+            .values()
+            .find(|parent| {
+                parent.worker_id == parent_id
+                    && parent.backend == child.backend
+                    && parent.project == child.project
+            })?
+            .session
+            .clone()
+    }
+
     pub(crate) fn send(&self, token: &str, to: &str, message: String) -> Result<String, String> {
         if message.trim().is_empty() {
             return Err("worker message must not be empty".into());
@@ -482,6 +499,11 @@ mod tests {
         );
         assert!(registry.send(child.token(), &peer_id, "no".into()).is_err());
         assert!(registry.send(peer.token(), "child-1", "no".into()).is_err());
+
+        assert_eq!(
+            registry.session_parent("pi", "child-session").as_deref(),
+            Some("parent-session")
+        );
 
         registry.send(parent.token(), "child-1", "look at this".into())?;
         assert_eq!(

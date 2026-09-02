@@ -233,7 +233,11 @@ fn summary(
     let timestamp = string(thread, &["createdAt", "created_at"])
         .unwrap_or_default()
         .to_owned();
-    let parent_session = string(thread, &["parentThreadId", "parent_thread_id"]).map(str::to_owned);
+    let parent_session = string(thread, &["parentThreadId", "parent_thread_id"])
+        .map(str::to_owned)
+        .or_else(|| {
+            crate::modules::agents::core::CallerRegistry::shared().session_parent("codex-cli", id)
+        });
     let is_running = status(thread).is_some_and(|status| {
         matches!(status, "active" | "running" | "inProgress" | "in_progress")
     });

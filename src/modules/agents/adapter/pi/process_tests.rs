@@ -384,3 +384,38 @@ fn stamp_parent_session_rewrites_the_header_in_place() -> TestResult {
     assert!(contents.contains(r#""id":"m1""#));
     Ok(())
 }
+
+#[test]
+fn child_parent_stamp_retries_after_pi_reports_an_uncreated_session_file() -> TestResult {
+    let (temp, command) = fake("deferred-session")?;
+    let path = temp.path().canonicalize()?.join("fake-session.jsonl");
+    let mut rpc = PiRpcProcess::spawn_worker(
+        &command,
+        temp.path(),
+        "child-worker".into(),
+        Some(("parent-worker".into(), "/sessions/parent.jsonl".into())),
+    )?;
+    assert!(!path.exists());
+    assert_eq!(rpc.pending_parent_stamp.as_deref(), Some(path.as_path()));
+
+    fs::write(
+        &path,
+        r#"{"type":"session","version":3,"id":"child-1","cwd":"/project"}
+"#,
+    )?;
+    let _ = rpc.route(ReaderItem::Stderr(String::new()));
+
+    let header: serde_json::Value = serde_json::from_str(
+        fs::read_to_string(&path)?
+            .lines()
+            .next()
+            .ok_or("missing session header")?,
+    )?;
+    assert_eq!(
+        header["parentSession"].as_str(),
+        Some("/sessions/parent.jsonl")
+    );
+    assert!(rpc.pending_parent_stamp.is_none());
+    rpc.terminate()?;
+    Ok(())
+}

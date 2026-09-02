@@ -49,7 +49,7 @@ fi
 if [ "$case_name" = "normal" ]; then
   printf '{"type":"agent_start"}\n'
 fi
-if [ "$case_name" = "peer-delivery" ]; then
+if [ "$case_name" = "peer-delivery" ] || [ "$case_name" = "deferred-session" ]; then
   printf '{"type":"response","id":"%s","command":"get_state","success":true,"data":{"model":null,"thinkingLevel":"off","isStreaming":false,"isCompacting":false,"sessionId":"fake","sessionFile":"%s/fake-session.jsonl","autoCompactionEnabled":true,"messageCount":0,"pendingMessageCount":0}}\n' "$id" "$PWD"
 else
   printf '{"type":"response","id":"%s","command":"get_state","success":true,"data":{"model":null,"thinkingLevel":"off","isStreaming":false,"isCompacting":false,"sessionId":"fake","autoCompactionEnabled":true,"messageCount":0,"pendingMessageCount":0}}\n' "$id"

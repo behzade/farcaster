@@ -124,6 +124,7 @@ pub(crate) struct PiRpcProcess {
     activity: WorkerActivityState,
     stderr: String,
     parent_session: Option<String>,
+    pending_parent_stamp: Option<PathBuf>,
 }
 
 impl PiRpcProcess {
@@ -271,6 +272,7 @@ impl PiRpcProcess {
             activity: WorkerActivityState::Idle,
             stderr: String::new(),
             parent_session,
+            pending_parent_stamp: None,
         };
         rpc.readiness_handshake(Duration::from_secs(15))?;
         Ok(rpc)
@@ -552,6 +554,7 @@ impl PiRpcProcess {
     }
 
     fn route(&mut self, item: ReaderItem) -> SessionEvent {
+        self.retry_parent_stamp();
         match item {
             ReaderItem::Wire(Ok(PiWireMessage::Response { response, command })) => {
                 let Some(id) = response.id.as_deref() else {
@@ -579,12 +582,11 @@ impl PiRpcProcess {
                     && response.operation == crate::agents::SessionOperation::LoadState
                     && let Some(session) = response.data["sessionFile"].as_str()
                 {
-                    if let Some(parent) = &self.parent_session
-                        && let Err(error) = stamp_parent_session(Path::new(session), parent)
-                    {
-                        zlog::warn!("stamp Pi child parentSession: {error}");
-                    }
                     self.caller_identity.bind(session);
+                    if self.parent_session.is_some() {
+                        self.pending_parent_stamp = Some(PathBuf::from(session));
+                        self.retry_parent_stamp();
+                    }
                 }
                 SessionEvent::Response(response)
             }
@@ -606,6 +608,19 @@ impl PiRpcProcess {
             }
             ReaderItem::Eof => self.finish_after_stdout_eof(),
             ReaderItem::StderrEof => SessionEvent::Stderr(String::new()),
+        }
+    }
+
+    fn retry_parent_stamp(&mut self) {
+        let (Some(path), Some(parent)) = (
+            self.pending_parent_stamp.as_deref(),
+            self.parent_session.as_deref(),
+        ) else {
+            return;
+        };
+        if stamp_parent_session(path, parent).is_ok() {
+            self.pending_parent_stamp = None;
+            self.parent_session = None;
         }
     }
 

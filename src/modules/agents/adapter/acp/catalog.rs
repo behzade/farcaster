@@ -186,7 +186,8 @@ fn summary(
             .and_then(Value::as_str)
             .unwrap_or_default()
             .into(),
-        parent_session: None,
+        parent_session: crate::modules::agents::core::CallerRegistry::shared()
+            .session_parent(profile.backend, id),
         modified: system_time(updated),
         message_count: 0,
         usage: DiscoveredUsage::default(),
