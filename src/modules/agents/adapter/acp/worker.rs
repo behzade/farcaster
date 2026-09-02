@@ -408,11 +408,32 @@ impl AcpWorkerSession {
     }
 
     fn update(&mut self, params: Value) -> Option<WorkerEvent> {
-        if params.get("sessionId").and_then(Value::as_str) != Some(&self.session_id) {
+        let session_id = params.get("sessionId").and_then(Value::as_str);
+        if session_id != Some(&self.session_id) {
+            if session_id.is_none() {
+                log_bad_acp_message(
+                    &self.profile.name,
+                    "session/update",
+                    &params,
+                    "missing sessionId",
+                );
+            }
             return None;
         }
-        let update = params.get("update")?;
-        match update.get("sessionUpdate").and_then(Value::as_str)? {
+        let update = params.get("update");
+        let update_type = update
+            .and_then(|update| update.get("sessionUpdate"))
+            .and_then(Value::as_str);
+        let (Some(update), Some(update_type)) = (update, update_type) else {
+            log_bad_acp_message(
+                &self.profile.name,
+                "session/update",
+                &params,
+                "malformed update",
+            );
+            return None;
+        };
+        match update_type {
             "agent_message_chunk" => {
                 let text = content_text(update.get("content")?)?;
                 self.output.push_str(&text);
@@ -440,7 +461,15 @@ impl AcpWorkerSession {
                 }
                 None
             }
-            _ => None,
+            _ => {
+                log_bad_acp_message(
+                    &self.profile.name,
+                    "session/update",
+                    &params,
+                    "unmapped same-session update",
+                );
+                None
+            }
         }
     }
 
@@ -493,12 +522,12 @@ impl AcpWorkerSession {
             })
     }
 
-    fn permission_request(&mut self, id: AcpRequestId, params: Value) -> Option<WorkerEvent> {
+    fn permission_request(&mut self, id: &AcpRequestId, params: &Value) -> Option<WorkerEvent> {
         if params.get("sessionId").and_then(Value::as_str) != Some(&self.session_id) {
             return None;
         }
         let options = params.get("options")?.as_array()?;
-        let input_id = request_id_string(&id);
+        let input_id = request_id_string(id);
         let choices = options
             .iter()
             .filter_map(|option| {
@@ -524,7 +553,7 @@ impl AcpWorkerSession {
         self.pending_inputs.insert(
             input_id.clone(),
             PendingInput {
-                request: id,
+                request: id.clone(),
                 option_ids,
                 allow_option,
                 reject_option,
@@ -545,6 +574,16 @@ impl AcpWorkerSession {
             },
             secret: false,
         }))
+    }
+
+    fn reject_request(&mut self, id: &AcpRequestId) -> Result<(), String> {
+        self.writer
+            .write_all(&encode_response(
+                id,
+                json!({"outcome": {"outcome": "cancelled"}}),
+            )?)
+            .and_then(|()| self.writer.flush())
+            .map_err(|error| format!("reject {} ACP request: {error}", self.profile.name))
     }
 }
 
@@ -719,33 +758,33 @@ impl WorkerSession for AcpWorkerSession {
                     )));
                 }
                 Ok(AcpInbound::Notification { method, params }) => {
-                    if method == "session/update"
-                        && let Some(event) = self.update(params)
-                    {
+                    if method != "session/update" {
+                        log_bad_acp_message(
+                            &self.profile.name,
+                            &method,
+                            &params,
+                            "unmapped notification",
+                        );
+                        continue;
+                    }
+                    if let Some(event) = self.update(params) {
                         return Some(event);
                     }
                 }
                 Ok(AcpInbound::AgentRequest { id, method, params }) => {
-                    if method == "session/request_permission" {
-                        if let Some(event) = self.permission_request(id, params) {
-                            return Some(event);
-                        }
+                    if method == "session/request_permission"
+                        && let Some(event) = self.permission_request(&id, &params)
+                    {
+                        return Some(event);
+                    }
+                    let reason = if method == "session/request_permission" {
+                        "malformed permission request"
                     } else {
-                        let response = json!({"outcome": {"outcome": "cancelled"}});
-                        let encoded = match encode_response(&id, response) {
-                            Ok(encoded) => encoded,
-                            Err(error) => return Some(WorkerEvent::Failed(error)),
-                        };
-                        if let Err(error) = self
-                            .writer
-                            .write_all(&encoded)
-                            .and_then(|()| self.writer.flush())
-                        {
-                            return Some(WorkerEvent::Failed(format!(
-                                "reject unsupported {} ACP request: {error}",
-                                self.profile.name
-                            )));
-                        }
+                        "unsupported agent request"
+                    };
+                    log_bad_acp_message(&self.profile.name, &method, &params, reason);
+                    if let Err(error) = self.reject_request(&id) {
+                        return Some(WorkerEvent::Failed(error));
                     }
                 }
                 Err(error) => return Some(WorkerEvent::Failed(error)),
@@ -775,6 +814,12 @@ impl Drop for AcpWorkerSession {
     fn drop(&mut self) {
         let _ = self.close();
     }
+}
+
+fn log_bad_acp_message(profile: &str, method: &str, params: &Value, reason: &str) {
+    zlog::warn!(
+        "{profile} ACP message was not mapped correctly ({reason}): method={method} params={params}"
+    );
 }
 
 fn request_id_string(id: &AcpRequestId) -> String {
