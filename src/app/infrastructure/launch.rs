@@ -62,6 +62,7 @@ pub(crate) fn resolve_project(path: Option<PathBuf>) -> Result<PathBuf, LaunchEr
 pub(crate) fn run(
     project: PathBuf,
     workgraph_updates: async_channel::Receiver<()>,
+    worker_updates: async_channel::Receiver<()>,
 ) -> Result<(), LaunchError> {
     const FONT_FAILURE: u8 = 1;
     const WINDOW_FAILURE: u8 = 2;
@@ -155,6 +156,7 @@ pub(crate) fn run(
                         startup_trust,
                         notification_app.clone(),
                         workgraph_updates.clone(),
+                        worker_updates.clone(),
                         window,
                         cx,
                     )

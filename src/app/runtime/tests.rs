@@ -1185,6 +1185,32 @@ fn filesystem_changes_coalesce_into_one_delayed_scan() {
 }
 
 #[test]
+fn worker_start_tools_request_catalog_refresh() {
+    for name in ["collaboration.spawn_agent", "spawnAgent", "worker_start"] {
+        assert!(tool_starts_worker(
+            &SessionActivityKind::ToolStarted,
+            &json!({"toolName": name, "args": {}}),
+        ));
+    }
+    assert!(tool_starts_worker(
+        &SessionActivityKind::ToolStarted,
+        &json!({"toolName": "mcp__farcaster__worker_send", "args": {"to": "child"}}),
+    ));
+    assert!(!tool_starts_worker(
+        &SessionActivityKind::ToolStarted,
+        &json!({"toolName": "mcp__farcaster__worker_send", "args": {"to": "parent"}}),
+    ));
+    assert!(!tool_starts_worker(
+        &SessionActivityKind::ToolStarted,
+        &json!({"toolName": "read", "args": {}}),
+    ));
+    assert!(!tool_starts_worker(
+        &SessionActivityKind::ToolStarted,
+        &json!({"toolName": "todoist.create_task", "args": {}}),
+    ));
+}
+
+#[test]
 fn in_flight_catalog_refreshes_coalesce_into_one_delayed_scan() {
     let (mut owner, _events, _discovery) = owner_without_process(std::env::temp_dir());
     owner.session_discovery_in_flight = true;

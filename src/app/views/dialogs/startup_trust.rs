@@ -20,6 +20,7 @@ pub(crate) struct ProjectTrustView {
     app: Option<Entity<FarcasterApp>>,
     notification_app: Rc<RefCell<Option<WeakEntity<FarcasterApp>>>>,
     workgraph_updates: async_channel::Receiver<()>,
+    worker_updates: async_channel::Receiver<()>,
     focus: FocusHandle,
     error: Option<String>,
 }
@@ -30,6 +31,7 @@ impl ProjectTrustView {
         startup_trust: StartupTrust,
         notification_app: Rc<RefCell<Option<WeakEntity<FarcasterApp>>>>,
         workgraph_updates: async_channel::Receiver<()>,
+        worker_updates: async_channel::Receiver<()>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -39,6 +41,7 @@ impl ProjectTrustView {
             app: None,
             notification_app,
             workgraph_updates,
+            worker_updates,
             focus,
             error: None,
         };
@@ -71,11 +74,13 @@ impl ProjectTrustView {
         let repository_execution_allowed = repository_execution_allowed
             .unwrap_or_else(|| projects::repository_execution_allowed(&project).unwrap_or(false));
         let workgraph_updates = self.workgraph_updates.clone();
+        let worker_updates = self.worker_updates.clone();
         let app = cx.new(|cx| {
             FarcasterApp::new(
                 project,
                 repository_execution_allowed,
                 workgraph_updates,
+                worker_updates,
                 window,
                 cx,
             )

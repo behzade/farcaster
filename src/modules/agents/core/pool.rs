@@ -23,6 +23,8 @@ struct PoolInner {
     factories: BTreeMap<String, Arc<dyn WorkerSessionFactory>>,
     allowed_projects: Mutex<BTreeSet<std::path::PathBuf>>,
     maximum: usize,
+    updates: async_channel::Sender<()>,
+    update_receiver: async_channel::Receiver<()>,
     state: Mutex<PoolState>,
 }
 
@@ -53,14 +55,21 @@ impl WorkerPool {
             return Err(format!("unknown default worker backend: {default_backend}"));
         }
         let allowed_project = canonical_directory(&allowed_project)?;
+        let (updates, update_receiver) = async_channel::unbounded();
         Ok(Self {
             inner: Arc::new(PoolInner {
                 factories,
                 allowed_projects: Mutex::new(BTreeSet::from([allowed_project])),
                 maximum,
+                updates,
+                update_receiver,
                 state: Mutex::new(PoolState::default()),
             }),
         })
+    }
+
+    pub(crate) fn updates(&self) -> async_channel::Receiver<()> {
+        self.inner.update_receiver.clone()
     }
 
     pub(crate) fn allow_project(&self, project: &Path) -> Result<(), String> {
@@ -130,6 +139,7 @@ impl WorkerPool {
         state.starting = state.starting.saturating_add(1);
         drop(state);
 
+        let parent_worker_id = request.parent_worker_id.clone();
         let prepared = (|| {
             let mut session = factory.create(WorkerLaunch {
                 worker_id: id.clone(),
@@ -162,7 +172,13 @@ impl WorkerPool {
             pending_input: None,
         };
         let shared = Arc::new(Mutex::new(initial.clone()));
-        let (commands, handle) = run::spawn(&id, session, shared.clone())?;
+        let (commands, handle) = run::spawn(
+            &id,
+            session,
+            shared.clone(),
+            parent_worker_id,
+            self.inner.updates.clone(),
+        )?;
         state.records.insert(
             id,
             WorkerRecord {
@@ -171,8 +187,13 @@ impl WorkerPool {
                 thread: Some(handle),
             },
         );
+        notify(&self.inner.updates);
         Ok(initial)
     }
+}
+
+fn notify(updates: &async_channel::Sender<()>) {
+    let _ = updates.try_send(());
 }
 
 impl Drop for PoolInner {

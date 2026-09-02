@@ -232,6 +232,23 @@ impl CallerRegistry {
         }
         Ok(worker_id)
     }
+
+    pub(crate) fn send_from_worker(
+        &self,
+        from: &str,
+        to: &str,
+        message: String,
+    ) -> Result<String, String> {
+        let token = self
+            .callers
+            .lock()
+            .map_err(|_| "worker caller registry is unavailable".to_owned())?
+            .iter()
+            .find(|(_, caller)| caller.worker_id == from && caller.session.is_some())
+            .map(|(token, _)| token.clone())
+            .ok_or_else(|| format!("unknown Farcaster worker: {from}"))?;
+        self.send(&token, to, message)
+    }
 }
 
 impl CallerIdentity {
