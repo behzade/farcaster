@@ -531,7 +531,11 @@ fn exercise_abort(session: &mut dyn SessionTransport) -> Result<(), String> {
 }
 
 fn exercise_compaction(session: &mut dyn SessionTransport) -> Result<(), String> {
-    let id = session.send(SessionCommand::Compact { instructions: None })?;
+    let id = match session.send(SessionCommand::Compact { instructions: None }) {
+        Ok(id) => id,
+        Err(error) if compaction_not_needed(&error) => return Ok(()),
+        Err(error) => return Err(error),
+    };
     let deadline = Instant::now() + TURN_TIMEOUT;
     let mut started = false;
     let mut finished = false;
@@ -547,11 +551,17 @@ fn exercise_compaction(session: &mut dyn SessionTransport) -> Result<(), String>
             }
             Some(SessionEvent::Response(item)) if item.id.as_deref() == Some(&id) => {
                 if !item.success {
-                    return Err(item.error.unwrap_or_else(|| "compaction failed".into()));
+                    let error = item.error.unwrap_or_else(|| "compaction failed".into());
+                    return if compaction_not_needed(&error) {
+                        Ok(())
+                    } else {
+                        Err(error)
+                    };
                 }
                 response = item.operation == SessionOperation::Compact;
             }
             Some(SessionEvent::Interaction(request)) => approve(session, request)?,
+            Some(SessionEvent::Failure(error)) if compaction_not_needed(&error) => return Ok(()),
             Some(SessionEvent::Failure(error)) => return Err(error),
             Some(SessionEvent::Response(_) | SessionEvent::Stderr(_)) | None => {
                 thread::sleep(Duration::from_millis(20));
@@ -565,6 +575,17 @@ fn exercise_compaction(session: &mut dyn SessionTransport) -> Result<(), String>
             "compaction lifecycle incomplete: start={started}, end={finished}, response={response}"
         ))
     }
+}
+
+fn compaction_not_needed(error: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    [
+        "nothing to compact",
+        "session too small",
+        "no messages to compact",
+    ]
+    .into_iter()
+    .any(|message| error.contains(message))
 }
 
 fn cleanup_failed_fixture(harness: &str, path: &Path, coverage: Coverage) -> Result<(), String> {
@@ -840,5 +861,13 @@ mod tests {
             assert!(select_harnesses(Some(selected)).is_err());
         }
         Ok(())
+    }
+
+    #[test]
+    fn empty_sessions_do_not_fail_compaction_conformance() {
+        assert!(compaction_not_needed(
+            "Nothing to compact (session too small)"
+        ));
+        assert!(!compaction_not_needed("provider unavailable"));
     }
 }
