@@ -128,9 +128,33 @@ impl<R: BufRead, W: Write> CodexConnection<R, W> {
         provider: Option<&str>,
         model: Option<&str>,
     ) -> Result<CodexThread, String> {
+        self.start_thread_with_persistence(cwd, provider, model, true)
+    }
+
+    pub(crate) fn start_ephemeral_thread(
+        &mut self,
+        cwd: &str,
+        provider: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<CodexThread, String> {
+        self.start_thread_with_persistence(cwd, provider, model, false)
+    }
+
+    fn start_thread_with_persistence(
+        &mut self,
+        cwd: &str,
+        provider: Option<&str>,
+        model: Option<&str>,
+        persist: bool,
+    ) -> Result<CodexThread, String> {
         let id = self.send_request(
             "thread/start",
-            json!({"cwd": cwd, "modelProvider": provider, "model": model}),
+            json!({
+                "cwd": cwd,
+                "modelProvider": provider,
+                "model": model,
+                "ephemeral": !persist,
+            }),
         )?;
         self.wait_response::<ThreadResponse>(&id)
             .map(|response| response.thread)

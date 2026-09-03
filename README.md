@@ -125,6 +125,8 @@ Useful environment variables:
 - `FARCASTER_CODEX_PATH`: Codex executable override
 - `FARCASTER_CURSOR_PATH`: Cursor Agent executable override (default: `agent`)
 - `FARCASTER_OPENCODE_PATH`: OpenCode executable override
+- `FARCASTER_PI_TITLE_MODEL`: Pi model ID (or `provider/model`) for automatic session titles
+- `FARCASTER_CODEX_TITLE_MODEL`: Codex model ID (or `provider/model`) for automatic session titles
 - `FARCASTER_DATA_DIR`: application database, project registry, and logs
 - `FARCASTER_SHELL`: login shell override
 - `FARCASTER_GIT`, `FARCASTER_JJ`, `FARCASTER_NVIM`: executable overrides

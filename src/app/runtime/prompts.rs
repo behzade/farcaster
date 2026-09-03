@@ -85,6 +85,19 @@ impl RuntimeOwner {
         };
         self.pending_prompt_target = Some(target);
         self.snapshot.pending_question = None;
+        let unnamed_fresh_session = self
+            .snapshot
+            .session
+            .as_ref()
+            .is_none_or(|state| state.message_count == 0 && state.session_name.is_none());
+        if mode == PromptMode::Normal
+            && !was_running
+            && unnamed_fresh_session
+            && self.title_generation.pending_prompt.is_none()
+            && agents::supports_auto_title_generation(&self.harness)
+        {
+            self.title_generation.pending_prompt = Some(message.clone());
+        }
         let native_invocation = crate::app::composer::user_invocations::contains_invocation(
             &message,
             &self.snapshot.commands,
@@ -122,6 +135,18 @@ impl RuntimeOwner {
         self.snapshot.project = self.project.clone();
         self.snapshot.selected_session = prompt.session.clone();
         self.pending_prompt_target = Some(prompt.target);
+        let unnamed_fresh_session = self
+            .snapshot
+            .session
+            .as_ref()
+            .is_none_or(|state| state.message_count == 0 && state.session_name.is_none());
+        if prompt.mode == PromptMode::Normal
+            && unnamed_fresh_session
+            && self.title_generation.pending_prompt.is_none()
+            && agents::supports_auto_title_generation(&self.harness)
+        {
+            self.title_generation.pending_prompt = Some(prompt.message.clone());
+        }
         let native_invocation = crate::app::composer::user_invocations::contains_invocation(
             &prompt.message,
             &self.snapshot.commands,

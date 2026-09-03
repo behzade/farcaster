@@ -151,6 +151,7 @@ impl WorkerPool {
                 provider: request.provider,
                 model: request.model,
                 effort: request.effort,
+                ephemeral: false,
             })?;
             session.send(request.prompt, WorkerSendMode::Prompt)?;
             Ok::<_, String>(session)

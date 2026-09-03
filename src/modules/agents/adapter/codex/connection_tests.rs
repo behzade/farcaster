@@ -138,12 +138,27 @@ fn native_vertical_slice_preserves_streaming_events() -> Result<(), String> {
     assert_eq!(sent[0]["method"], "initialize");
     assert_eq!(sent[1], json!({"method":"initialized"}));
     assert_eq!(sent[2]["method"], "thread/start");
+    assert_eq!(sent[2]["params"]["ephemeral"], false);
     assert_eq!(sent[3]["method"], "thread/fork");
     assert_eq!(sent[4]["method"], "thread/resume");
     assert_eq!(sent[5]["method"], "turn/start");
     assert_eq!(sent[5]["params"]["input"][0]["text_elements"], json!([]));
     assert_eq!(sent[5]["params"]["input"][1]["type"], "image");
     assert_eq!(sent[6]["method"], "turn/interrupt");
+    Ok(())
+}
+
+#[test]
+fn auxiliary_threads_are_explicitly_ephemeral() -> Result<(), String> {
+    let input = br#"{"id":1,"result":{"thread":{"id":"thread-1","cwd":"/work"}}}
+"#;
+    let mut connection =
+        CodexConnection::new(BufReader::new(Cursor::new(input.to_vec())), Vec::new());
+    connection.start_ephemeral_thread("/work", Some("openai"), Some("small"))?;
+    let output = String::from_utf8(connection.into_writer()).map_err(|error| error.to_string())?;
+    let request: Value = serde_json::from_str(output.trim()).map_err(|error| error.to_string())?;
+    assert_eq!(request["method"], "thread/start");
+    assert_eq!(request["params"]["ephemeral"], true);
     Ok(())
 }
 

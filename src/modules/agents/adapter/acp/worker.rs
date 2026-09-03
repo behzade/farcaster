@@ -44,6 +44,12 @@ impl AcpWorkerFactory {
 
 impl WorkerSessionFactory for AcpWorkerFactory {
     fn create(&self, launch: WorkerLaunch) -> Result<Box<dyn WorkerSession>, String> {
+        if launch.ephemeral {
+            return Err(format!(
+                "{} does not expose ephemeral inference",
+                self.profile.name
+            ));
+        }
         if launch.provider.is_some() != launch.model.is_some() {
             return Err(format!(
                 "{} worker provider and model must be supplied together",

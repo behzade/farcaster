@@ -292,8 +292,16 @@ fn setup_connection(child: &mut Child, launch: &WorkerLaunch) -> Result<CodexSet
     })?;
     let cwd = launch.project.to_string_lossy();
     let thread = match &launch.context {
+        WorkerContext::Fresh if launch.ephemeral => connection.start_ephemeral_thread(
+            &cwd,
+            launch.provider.as_deref(),
+            launch.model.as_deref(),
+        )?,
         WorkerContext::Fresh => {
             connection.start_thread(&cwd, launch.provider.as_deref(), launch.model.as_deref())?
+        }
+        WorkerContext::Session { .. } if launch.ephemeral => {
+            return Err("Codex cannot combine ephemeral inference with inherited context".into());
         }
         WorkerContext::Session { session_locator } => {
             if session_locator != &launch.parent_session {
