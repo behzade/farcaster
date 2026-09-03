@@ -72,7 +72,6 @@ enum ReaderItem {
 
 enum SessionLaunch<'a> {
     Catalog,
-    Ephemeral,
     New,
     Resume(&'a Path),
     Fork(&'a Path),
@@ -98,7 +97,7 @@ fn rpc_command(
         prepared.env("PI_NONO_DISABLED", "1");
     }
     match launch {
-        SessionLaunch::Catalog | SessionLaunch::Ephemeral => {
+        SessionLaunch::Catalog => {
             prepared.arg("--no-session");
         }
         SessionLaunch::New => {}
@@ -200,22 +199,6 @@ impl PiRpcProcess {
             None,
             Some((worker_id, worker_name)),
             parent,
-        )
-    }
-
-    pub(crate) fn spawn_ephemeral_worker(
-        command: &AgentLaunchConfig,
-        project: &Path,
-        worker_id: String,
-        worker_name: String,
-    ) -> Result<Self, String> {
-        Self::spawn_inner(
-            command,
-            project,
-            SessionLaunch::Ephemeral,
-            None,
-            Some((worker_id, worker_name)),
-            None,
         )
     }
 

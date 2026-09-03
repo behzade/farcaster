@@ -33,13 +33,10 @@ impl WorkerSessionFactory for PiWorkerFactory {
         if launch.provider.is_some() != launch.model.is_some() {
             return Err("Pi worker provider and model must be supplied together".into());
         }
+        if launch.ephemeral {
+            return Err("Pi workers do not expose isolated ephemeral inference".into());
+        }
         let mut process = match &launch.context {
-            WorkerContext::Fresh if launch.ephemeral => PiRpcProcess::spawn_ephemeral_worker(
-                &self.command,
-                &launch.project,
-                launch.worker_id.clone(),
-                launch.worker_name.clone(),
-            )?,
             WorkerContext::Fresh => PiRpcProcess::spawn_worker(
                 &self.command,
                 &launch.project,
@@ -50,9 +47,6 @@ impl WorkerSessionFactory for PiWorkerFactory {
                     .clone()
                     .map(|id| (id, launch.parent_session.clone())),
             )?,
-            WorkerContext::Session { .. } if launch.ephemeral => {
-                return Err("Pi cannot combine ephemeral inference with inherited context".into());
-            }
             WorkerContext::Session { session_locator } => {
                 let parent = canonical_session(&launch.parent_session, "parent")?;
                 let source = canonical_session(session_locator, "source")?;
