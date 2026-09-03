@@ -7,6 +7,7 @@ use gpui::{
 };
 
 use super::{
+    components::render_session_goal,
     contract::{PlanLoadState, PlanRow},
     core::plan_rows,
 };
@@ -26,6 +27,7 @@ pub(crate) struct WorkGraphSidebarView {
     database: PathBuf,
     project: PathBuf,
     session_id: Option<String>,
+    session_goal: Option<crate::agents::SessionGoal>,
     state: PlanLoadState,
     refresh: Option<Task<()>>,
 }
@@ -47,6 +49,7 @@ impl WorkGraphSidebarView {
             database,
             project,
             session_id: None,
+            session_goal: None,
             state,
             refresh: None,
         };
@@ -60,6 +63,7 @@ impl WorkGraphSidebarView {
         &mut self,
         project: PathBuf,
         session_id: Option<String>,
+        session_goal: Option<crate::agents::SessionGoal>,
         cx: &mut gpui::Context<Self>,
     ) {
         if self.project != project || self.session_id != session_id {
@@ -67,7 +71,19 @@ impl WorkGraphSidebarView {
         }
         self.project = project;
         self.session_id = session_id;
+        self.session_goal = session_goal;
         self.refresh(cx);
+    }
+
+    pub(crate) fn set_session_goal(
+        &mut self,
+        goal: Option<crate::agents::SessionGoal>,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.session_goal != goal {
+            self.session_goal = goal;
+            cx.notify();
+        }
     }
 
     pub(crate) fn refresh(&mut self, cx: &mut gpui::Context<Self>) {
@@ -156,6 +172,9 @@ impl Render for WorkGraphSidebarView {
                     .flex_col()
                     .gap(px(11.0))
                     .child(header)
+                    .when_some(self.session_goal.as_ref(), |sidebar, goal| {
+                        sidebar.child(render_session_goal(goal, true))
+                    })
                     .child(match &self.state {
                         PlanLoadState::Loading => feedback(
                             "workgraph-sidebar-loading",

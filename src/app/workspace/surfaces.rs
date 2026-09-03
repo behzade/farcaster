@@ -463,8 +463,9 @@ impl FarcasterApp {
     fn refresh_workgraph_board(&mut self, cx: &mut Context<Self>) {
         let project = self.project.clone();
         let active_session = self.active_workgraph_session();
+        let session_goal = self.snapshot.session_goal.clone();
         self.workgraph_view.update(cx, |view, cx| {
-            view.refresh_for(project, active_session, cx);
+            view.refresh_for(project, active_session, session_goal, cx);
         });
     }
 
@@ -473,9 +474,18 @@ impl FarcasterApp {
         let session_id = self
             .active_workgraph_session()
             .map(|(session_id, _)| session_id);
+        let session_goal = self.snapshot.session_goal.clone();
         self.workgraph_sidebar_view.update(cx, |view, cx| {
-            view.refresh_for(project, session_id, cx);
+            view.refresh_for(project, session_id, session_goal, cx);
         });
+    }
+
+    pub(in crate::app) fn refresh_workgraph_goal(&mut self, cx: &mut Context<Self>) {
+        let goal = self.snapshot.session_goal.clone();
+        self.workgraph_view
+            .update(cx, |view, cx| view.set_session_goal(goal.clone(), cx));
+        self.workgraph_sidebar_view
+            .update(cx, |view, cx| view.set_session_goal(goal, cx));
     }
 
     pub(in crate::app) fn active_workgraph_session(&self) -> Option<(String, String)> {

@@ -13,8 +13,8 @@ pub(crate) use contract::extensions;
 pub(crate) use contract::{
     AgentLaunchConfig, ConfigurationCatalog, DiscoveredHistory, DiscoveredSession, DiscoveredUsage,
     HarnessAccessMode, PeerMessage, PromptPresentation, QueuedPrompt, SessionActivityKind,
-    SessionCommand, SessionEvent, SessionLaunch, SessionOperation, SessionResponse, SessionStart,
-    SessionTransport, StartWorker, WorkerContext, WorkerInput, WorkerInputResponse,
+    SessionCommand, SessionEvent, SessionGoal, SessionLaunch, SessionOperation, SessionResponse,
+    SessionStart, SessionTransport, StartWorker, WorkerContext, WorkerInput, WorkerInputResponse,
     valid_worker_name,
 };
 pub(crate) use core::{
