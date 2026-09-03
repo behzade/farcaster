@@ -38,21 +38,23 @@ fn process_starts_directly_in_the_project_directory() -> TestResult {
 }
 
 #[test]
-fn catalog_process_disables_session_persistence() -> TestResult {
+fn catalog_and_auxiliary_processes_disable_session_persistence() -> TestResult {
     let project = tempdir()?;
-    let process = rpc_command(
-        &AgentLaunchConfig {
-            ..AgentLaunchConfig::default()
-        },
-        project.path(),
-        SessionLaunch::Catalog,
-        Path::new("/dev/fd/9"),
-    )?;
-    assert!(
-        process
-            .get_args()
-            .any(|argument| argument == "--no-session")
-    );
+    for launch in [SessionLaunch::Catalog, SessionLaunch::Ephemeral] {
+        let process = rpc_command(
+            &AgentLaunchConfig {
+                ..AgentLaunchConfig::default()
+            },
+            project.path(),
+            launch,
+            Path::new("/dev/fd/9"),
+        )?;
+        assert!(
+            process
+                .get_args()
+                .any(|argument| argument == "--no-session")
+        );
+    }
     Ok(())
 }
 

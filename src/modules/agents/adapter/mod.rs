@@ -1,4 +1,5 @@
 mod acp;
+mod auxiliary;
 mod child_stderr;
 #[allow(dead_code)]
 mod codex;
@@ -13,6 +14,7 @@ mod pi;
 mod process_command;
 mod shell_environment;
 
+pub(crate) use auxiliary::{generate_session_title, supports_auto_title_generation};
 pub(crate) use shell_environment::{app_shell_environment, default_login_shell};
 
 pub(crate) fn supported_access_modes(harness: &str) -> &'static [crate::agents::HarnessAccessMode] {

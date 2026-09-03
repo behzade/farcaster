@@ -68,6 +68,8 @@ pub(crate) struct WorkerLaunch {
     pub(crate) provider: Option<String>,
     pub(crate) model: Option<String>,
     pub(crate) effort: Option<String>,
+    /// Auxiliary inference must not create a session visible in backend history.
+    pub(crate) ephemeral: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

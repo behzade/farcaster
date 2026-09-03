@@ -31,6 +31,9 @@ impl OpenCodeWorkerFactory {
 
 impl WorkerSessionFactory for OpenCodeWorkerFactory {
     fn create(&self, launch: WorkerLaunch) -> Result<Box<dyn WorkerSession>, String> {
+        if launch.ephemeral {
+            return Err("OpenCode does not expose ephemeral inference".into());
+        }
         if launch.provider.is_some() != launch.model.is_some() {
             return Err("OpenCode worker provider and model must be supplied together".into());
         }

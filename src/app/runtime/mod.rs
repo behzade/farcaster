@@ -230,6 +230,7 @@ struct RuntimeOwner {
     pending_prompt_target: Option<String>,
     pending_prompt_item: Option<Arc<TranscriptItem>>,
     pending_outbox_id: Option<i64>,
+    title_generation: SessionTitleGeneration,
     transcript_changed_from: Option<usize>,
     event_tx: SessionEventSender,
     discovery_tx: mpsc::Sender<DiscoveryResult>,
@@ -327,6 +328,33 @@ struct HistoryResult {
     result: Result<LoadedHistory, String>,
 }
 
+struct SessionTitleResult {
+    generation: u64,
+    revision: u64,
+    result: Result<String, String>,
+}
+
+struct SessionTitleGeneration {
+    pending_prompt: Option<String>,
+    in_flight: bool,
+    revision: u64,
+    sender: mpsc::Sender<SessionTitleResult>,
+    receiver: mpsc::Receiver<SessionTitleResult>,
+}
+
+impl Default for SessionTitleGeneration {
+    fn default() -> Self {
+        let (sender, receiver) = mpsc::channel();
+        Self {
+            pending_prompt: None,
+            in_flight: false,
+            revision: 0,
+            sender,
+            receiver,
+        }
+    }
+}
+
 fn run(
     project: PathBuf,
     process_command: AgentLaunchConfig,
@@ -373,6 +401,7 @@ fn run(
         pending_prompt_target: None,
         pending_prompt_item: None,
         pending_outbox_id: None,
+        title_generation: SessionTitleGeneration::default(),
         transcript_changed_from: Some(0),
         event_tx,
         discovery_tx,
@@ -413,6 +442,9 @@ fn run(
         }
         while let Ok(result) = history_rx.try_recv() {
             owner.apply_history(result);
+        }
+        while let Ok(result) = owner.title_generation.receiver.try_recv() {
+            owner.apply_generated_session_title(result);
         }
         while let Ok(event) = watch_rx.try_recv() {
             match event {
@@ -482,6 +514,79 @@ fn run(
 }
 
 impl RuntimeOwner {
+    fn start_auto_title_generation(&mut self) {
+        if self.title_generation.in_flight || !agents::supports_auto_title_generation(&self.harness)
+        {
+            return;
+        }
+        if self
+            .active_snapshot()
+            .session
+            .as_ref()
+            .and_then(|state| state.session_name.as_ref())
+            .is_some()
+        {
+            self.title_generation.pending_prompt = None;
+            return;
+        }
+        let Some(prompt) = self.title_generation.pending_prompt.take() else {
+            return;
+        };
+        let generation = self.process_generation;
+        let revision = self.title_generation.revision;
+        let config = self.process_command.clone();
+        let harness = self.harness.clone();
+        let project = self.project.clone();
+        let sender = self.title_generation.sender.clone();
+        let wake = thread::current();
+        self.title_generation.in_flight = true;
+        if let Err(error) = thread::Builder::new()
+            .name("farcaster-session-title".into())
+            .spawn(move || {
+                let result = agents::generate_session_title(&config, &harness, &project, &prompt);
+                let _ = sender.send(SessionTitleResult {
+                    generation,
+                    revision,
+                    result,
+                });
+                wake.unpark();
+            })
+        {
+            self.title_generation.in_flight = false;
+            zlog::warn!("Failed to start session title generation: {error}");
+        }
+    }
+
+    fn apply_generated_session_title(&mut self, result: SessionTitleResult) {
+        if result.generation != self.process_generation {
+            return;
+        }
+        if result.revision != self.title_generation.revision {
+            self.title_generation.in_flight = false;
+            return;
+        }
+        self.title_generation.in_flight = false;
+        let title = match result.result {
+            Ok(title) => title,
+            Err(error) => {
+                zlog::warn!("Session title generation failed: {error}");
+                return;
+            }
+        };
+        let unnamed = self
+            .active_snapshot()
+            .session
+            .as_ref()
+            .is_some_and(|state| state.session_name.is_none());
+        if unnamed {
+            if let Some(state) = self.active_snapshot_mut().session.as_mut() {
+                state.session_name = Some(title.clone());
+            }
+            self.send(SessionCommand::Rename { name: title });
+            self.refresh_sessions();
+        }
+    }
+
     pub(super) fn backend_name(&self) -> &str {
         match self.harness.as_str() {
             "pi" => "Pi",
@@ -521,6 +626,9 @@ impl RuntimeOwner {
         self.startup_history_loaded = false;
         self.pending_prompt_id = None;
         self.pending_prompt_item = None;
+        self.title_generation.pending_prompt = None;
+        self.title_generation.in_flight = false;
+        self.title_generation.revision = self.title_generation.revision.saturating_add(1);
         self.transcript_changed_from = Some(0);
     }
 
@@ -652,6 +760,8 @@ impl RuntimeOwner {
                 self.send(SessionCommand::ExportHtml { output_path })
             }
             RuntimeCommand::SetSessionName(name) => {
+                self.title_generation.pending_prompt = None;
+                self.title_generation.revision = self.title_generation.revision.saturating_add(1);
                 if let Some(state) = self.active_snapshot_mut().session.as_mut() {
                     state.session_name = Some(name.clone());
                 }
@@ -850,6 +960,7 @@ impl RuntimeOwner {
                     self.schedule_session_refresh();
                 }
                 if settled {
+                    self.start_auto_title_generation();
                     self.send(SessionCommand::LoadState);
                     self.send(SessionCommand::LoadUsage);
                     self.refresh_sessions();
@@ -1103,6 +1214,7 @@ impl RuntimeOwner {
                     let _ = agents::complete_prompt(state, id, &target, session.as_deref());
                 }
             } else {
+                self.title_generation.pending_prompt = None;
                 self.mark_outbox_failed(
                     response
                         .error
