@@ -10,6 +10,15 @@ pub(super) use catalog::{delete_session, discover, load_history, rename_session}
 pub(crate) use worker::CodexWorkerFactory;
 pub(super) use worker::{load_configuration, spawn_main};
 
+const fn approvals_reviewer(mode: crate::agents::HarnessAccessMode) -> &'static str {
+    match mode {
+        crate::agents::HarnessAccessMode::Auto => "auto_review",
+        crate::agents::HarnessAccessMode::Full | crate::agents::HarnessAccessMode::Sandboxed => {
+            "user"
+        }
+    }
+}
+
 fn configure_permissions(
     command: &mut std::process::Command,
     mode: crate::agents::HarnessAccessMode,
@@ -123,6 +132,9 @@ mod tests {
             ]
         );
         assert_eq!(arguments(Auto), ["--approve-for-me"]);
+        assert_eq!(approvals_reviewer(Auto), "auto_review");
+        assert_eq!(approvals_reviewer(Sandboxed), "user");
+        assert_eq!(approvals_reviewer(Full), "user");
     }
 
     #[test]

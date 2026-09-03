@@ -64,7 +64,7 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             .map_err(|error| format!("start Codex worker app-server: {error}"))?;
         child_stderr::capture(&mut child, "codex-worker")?;
         let (mut reader, writer, queued, next_id, thread) =
-            match setup_connection(&mut child, &launch) {
+            match setup_connection(&mut child, &launch, self.command.access_mode) {
                 Ok(setup) => setup,
                 Err(error) => {
                     let _ = child.kill();
@@ -190,7 +190,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         .spawn()
         .map_err(|error| format!("start Codex main-session app-server: {error}"))?;
     child_stderr::capture(&mut child, "codex-main-session")?;
-    let setup = setup_main_connection(&mut child, launch);
+    let setup = setup_main_connection(&mut child, launch, command.access_mode);
     let ((mut reader, writer, queued, next_id, thread), metadata) = match setup {
         Ok(setup) => setup,
         Err(error) => {
@@ -277,7 +277,11 @@ type CodexSetup = (
     super::contract::CodexThread,
 );
 
-fn setup_connection(child: &mut Child, launch: &WorkerLaunch) -> Result<CodexSetup, String> {
+fn setup_connection(
+    child: &mut Child,
+    launch: &WorkerLaunch,
+    access_mode: crate::agents::HarnessAccessMode,
+) -> Result<CodexSetup, String> {
     let stdin = child
         .stdin
         .take()
@@ -298,10 +302,14 @@ fn setup_connection(child: &mut Child, launch: &WorkerLaunch) -> Result<CodexSet
             &cwd,
             launch.provider.as_deref(),
             launch.model.as_deref(),
+            access_mode,
         )?,
-        WorkerContext::Fresh => {
-            connection.start_thread(&cwd, launch.provider.as_deref(), launch.model.as_deref())?
-        }
+        WorkerContext::Fresh => connection.start_thread(
+            &cwd,
+            launch.provider.as_deref(),
+            launch.model.as_deref(),
+            access_mode,
+        )?,
         WorkerContext::Session { .. } if launch.ephemeral => {
             return Err("Codex cannot combine ephemeral inference with inherited context".into());
         }
@@ -317,6 +325,7 @@ fn setup_connection(child: &mut Child, launch: &WorkerLaunch) -> Result<CodexSet
                 &cwd,
                 launch.provider.as_deref(),
                 launch.model.as_deref(),
+                access_mode,
             )?
         }
     };
@@ -327,6 +336,7 @@ fn setup_connection(child: &mut Child, launch: &WorkerLaunch) -> Result<CodexSet
 fn setup_main_connection(
     child: &mut Child,
     launch: &crate::agents::SessionLaunch,
+    access_mode: crate::agents::HarnessAccessMode,
 ) -> Result<
     (
         CodexSetup,
@@ -351,16 +361,18 @@ fn setup_main_connection(
     let metadata = load_main_metadata(&mut connection)?;
     let cwd = launch.project.to_string_lossy();
     let thread = match &launch.start {
-        crate::agents::SessionStart::New => connection.start_thread(&cwd, None, None)?,
+        crate::agents::SessionStart::New => {
+            connection.start_thread(&cwd, None, None, access_mode)?
+        }
         crate::agents::SessionStart::Resume(_) => {
             let thread_id = main_session::launch_session_locator(launch)
                 .ok_or_else(|| "Codex resume requires a thread id".to_owned())?;
-            connection.resume_thread(&thread_id)?
+            connection.resume_thread(&thread_id, access_mode)?
         }
         crate::agents::SessionStart::Fork(_) => {
             let thread_id = main_session::launch_session_locator(launch)
                 .ok_or_else(|| "Codex fork requires a thread id".to_owned())?;
-            connection.fork_thread(&thread_id, &cwd, None, None)?
+            connection.fork_thread(&thread_id, &cwd, None, None, access_mode)?
         }
     };
     let (reader, writer, queued, next_id) = connection.into_parts();
