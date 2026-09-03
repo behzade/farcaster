@@ -15,9 +15,10 @@ use super::{
 };
 use crate::{
     agents::{
-        AgentLaunchConfig, CommonTool, PeerMessage, TokenUsage, ToolReviewState, WorkerActivity,
-        WorkerActivityState, WorkerContext, WorkerEvent, WorkerInput, WorkerInputResponse,
-        WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory, WorkerUsage,
+        AgentLaunchConfig, CommonTool, PeerMessage, SessionGoal, TokenUsage, ToolReviewState,
+        WorkerActivity, WorkerActivityState, WorkerContext, WorkerEvent, WorkerInput,
+        WorkerInputResponse, WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory,
+        WorkerUsage,
     },
     modules::agents::adapter::{child_stderr, farcaster_mcp, main_session},
 };
@@ -231,7 +232,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
             ))
         })
         .collect();
-    let session = CodexWorkerSession {
+    let mut session = CodexWorkerSession {
         caller_identity,
         child,
         writer,
@@ -254,6 +255,11 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         peer_messages: VecDeque::new(),
         events: VecDeque::new(),
     };
+    let goal_request =
+        session.request("thread/goal/get", json!({"threadId": thread_id.clone()}))?;
+    session
+        .pending
+        .insert(goal_request, PendingRequest::LoadGoal);
     Ok((Box::new(session), thread_id, metadata))
 }
 
@@ -480,6 +486,7 @@ fn supported_model_efforts(model: &Value) -> Vec<String> {
 #[derive(Clone, Copy)]
 enum PendingRequest {
     StartTurn,
+    LoadGoal,
     Ignore,
 }
 
@@ -631,11 +638,42 @@ impl WorkerSession for CodexWorkerSession {
                             return Some(WorkerEvent::Started);
                         }
                     }
+                    Some(PendingRequest::LoadGoal) => {
+                        let Some(goal) = result.get("goal") else {
+                            log_bad_codex_notification(
+                                "thread/goal/get",
+                                &result,
+                                "goal response is missing goal",
+                            );
+                            continue;
+                        };
+                        match decode_codex_goal(goal) {
+                            Ok(goal) => {
+                                return Some(WorkerEvent::Activity(
+                                    WorkerActivity::SessionGoalChanged(goal),
+                                ));
+                            }
+                            Err(reason) => {
+                                log_bad_codex_notification("thread/goal/get", &result, &reason);
+                            }
+                        }
+                    }
                     Some(PendingRequest::Ignore) | None => {}
                 },
                 Ok(CodexInbound::Error { id, error }) => {
-                    if matches!(self.pending.remove(&id), Some(PendingRequest::StartTurn)) {
-                        self.caller_identity.set_activity(WorkerActivityState::Idle);
+                    match self.pending.remove(&id) {
+                        Some(PendingRequest::LoadGoal) => {
+                            zlog::warn!(
+                                "Codex thread goal could not be read: {}: {}",
+                                error.code,
+                                error.message
+                            );
+                            continue;
+                        }
+                        Some(PendingRequest::StartTurn) => {
+                            self.caller_identity.set_activity(WorkerActivityState::Idle);
+                        }
+                        Some(PendingRequest::Ignore) | None => {}
                     }
                     return Some(WorkerEvent::Failed(format!(
                         "Codex app-server error {}: {}",
@@ -853,6 +891,31 @@ impl WorkerSession for CodexWorkerSession {
                                         .unwrap_or(0),
                                 },
                             )));
+                        }
+                        "thread/goal/updated" => {
+                            let Some(goal) = params.get("goal") else {
+                                log_bad_codex_notification(
+                                    &method,
+                                    &params,
+                                    "goal update is missing goal",
+                                );
+                                continue;
+                            };
+                            match decode_codex_goal(goal) {
+                                Ok(goal) => {
+                                    return Some(WorkerEvent::Activity(
+                                        WorkerActivity::SessionGoalChanged(goal),
+                                    ));
+                                }
+                                Err(reason) => {
+                                    log_bad_codex_notification(&method, &params, &reason);
+                                }
+                            }
+                        }
+                        "thread/goal/cleared" => {
+                            return Some(WorkerEvent::Activity(
+                                WorkerActivity::SessionGoalChanged(None),
+                            ));
                         }
                         "turn/completed" => {
                             self.current_turn = None;
@@ -1158,6 +1221,15 @@ fn codex_agent_message_text(item: &Value) -> Option<String> {
                     .collect(),
             )
         })
+}
+
+fn decode_codex_goal(value: &Value) -> Result<Option<SessionGoal>, String> {
+    if value.is_null() {
+        return Ok(None);
+    }
+    serde_json::from_value(value.clone())
+        .map(Some)
+        .map_err(|error| format!("decode thread goal: {error}"))
 }
 
 fn codex_usage(value: &Value) -> TokenUsage {
@@ -1530,6 +1602,27 @@ mod tests {
             ),
             Some(WorkerActivity::RateLimitsChanged { limits })
         );
+    }
+
+    #[test]
+    fn decodes_codex_goal_state() {
+        assert_eq!(
+            decode_codex_goal(&json!({
+                "objective": "Ship the release",
+                "status": "active",
+                "tokenBudget": 200000,
+                "tokensUsed": 10000,
+                "timeUsedSeconds": 60
+            })),
+            Ok(Some(SessionGoal {
+                objective: "Ship the release".into(),
+                status: "active".into(),
+                token_budget: Some(200000),
+                tokens_used: 10000,
+                time_used_seconds: 60,
+            }))
+        );
+        assert_eq!(decode_codex_goal(&Value::Null), Ok(None));
     }
 
     #[test]

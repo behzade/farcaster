@@ -59,8 +59,9 @@ use supervisor::{SessionEventSender, SessionRuntimeHandle};
 #[cfg(test)]
 use supervisor::{
     SupervisorSessionAction, UiEventSender, actor_key_for_command, changed_external_documents,
-    initial_draft_command, is_view_only_selection, publish_session_status_if_changed,
-    route_session_discovery, rpc_owned_session_paths, target_command_needs_actor_message,
+    command_targets_catalog, initial_draft_command, is_view_only_selection,
+    publish_session_status_if_changed, route_session_discovery, rpc_owned_session_paths,
+    target_command_needs_actor_message,
 };
 pub(crate) use types::{ConfigurationStatus, RuntimeCommand, RuntimeEvent, RuntimeSnapshot};
 
@@ -871,6 +872,7 @@ impl RuntimeOwner {
             }
             RuntimeCommand::LoadSessions(query) => self.load_sessions(query),
             RuntimeCommand::RefreshSessions => self.refresh_sessions(),
+            RuntimeCommand::ScheduleSessionRefresh => self.schedule_session_refresh(),
             RuntimeCommand::Shutdown => {}
         }
     }
@@ -935,6 +937,11 @@ impl RuntimeOwner {
                         conversation_mut(snapshot).reduce_deferred_with_change(event.value());
                     let context_changed =
                         update_context_from_event(&mut snapshot.stats, event.value());
+                    let goal_changed = update_session_goal_from_event(
+                        &mut snapshot.session_goal,
+                        event.kind(),
+                        event.value(),
+                    );
                     let status = run_status(&snapshot.conversation);
                     let status_changed = snapshot.status != status;
                     snapshot.status = status.to_owned();
@@ -946,6 +953,7 @@ impl RuntimeOwner {
                         changed_from.is_some()
                             || conversation_state_changed
                             || context_changed
+                            || goal_changed
                             || status_changed,
                         live_status_changed,
                     )
@@ -1512,6 +1520,28 @@ impl RuntimeOwner {
             snapshot: Arc::new(snapshot),
         });
     }
+}
+
+fn update_session_goal_from_event(
+    goal: &mut Option<crate::agents::SessionGoal>,
+    kind: &SessionActivityKind,
+    event: &Value,
+) -> bool {
+    if kind != &SessionActivityKind::SessionGoalChanged {
+        return false;
+    }
+    let Some(value) = event.get("goal") else {
+        return false;
+    };
+    let Ok(updated) = serde_json::from_value::<Option<crate::agents::SessionGoal>>(value.clone())
+    else {
+        return false;
+    };
+    if *goal == updated {
+        return false;
+    }
+    *goal = updated;
+    true
 }
 
 fn tool_starts_worker(kind: &SessionActivityKind, event: &Value) -> bool {

@@ -235,6 +235,7 @@ impl WorkerSessionTransport {
                 "from": message.from,
                 "message": message.message,
             }),
+            WorkerActivity::TurnStarted => json!({"type": "turn_start"}),
             WorkerActivity::TextDelta {
                 content_index,
                 delta,
@@ -335,6 +336,10 @@ impl WorkerSessionTransport {
             WorkerActivity::RateLimitsChanged { limits } => json!({
                 "type": "rate_limits_changed",
                 "limits": limits,
+            }),
+            WorkerActivity::SessionGoalChanged(goal) => json!({
+                "type": "session_goal_changed",
+                "goal": goal,
             }),
             WorkerActivity::CompactionStarted => json!({
                 "type": "compaction_start",

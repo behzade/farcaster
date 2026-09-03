@@ -14,6 +14,85 @@ use crate::{
     app::ui::theme::THEME,
 };
 
+pub(super) fn render_session_goal(goal: &crate::agents::SessionGoal, compact: bool) -> Div {
+    let status = goal.status.replace('_', " ");
+    let usage = goal_usage_label(goal);
+    div()
+        .mx(if compact { px(0.0) } else { THEME.space.md })
+        .mt(if compact { px(0.0) } else { THEME.space.sm })
+        .px(THEME.space.sm)
+        .py(THEME.space.sm)
+        .border(THEME.border)
+        .border_color(THEME.colors.border)
+        .bg(THEME.colors.surface)
+        .flex()
+        .items_start()
+        .gap(THEME.space.sm)
+        .child(
+            div()
+                .h(px(20.0))
+                .flex()
+                .items_center()
+                .text_color(THEME.colors.accent)
+                .child(app_icon(AppIcon::Eye, AppIconSize::Inline)),
+        )
+        .child(
+            div()
+                .min_w_0()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .gap(px(3.0))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(THEME.space.xs)
+                        .text_size(THEME.type_scale.caption)
+                        .text_color(THEME.colors.subtle)
+                        .child("Native goal")
+                        .child("·")
+                        .child(status),
+                )
+                .child(
+                    div()
+                        .line_clamp(if compact { 3 } else { 2 })
+                        .text_size(THEME.type_scale.body_small)
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(THEME.colors.text)
+                        .child(goal.objective.clone()),
+                )
+                .when_some(usage, |content, usage| {
+                    content.child(
+                        div()
+                            .text_size(THEME.type_scale.caption)
+                            .text_color(THEME.colors.subtle)
+                            .child(usage),
+                    )
+                }),
+        )
+}
+
+fn goal_usage_label(goal: &crate::agents::SessionGoal) -> Option<String> {
+    let tokens = goal
+        .token_budget
+        .map(|budget| format!("{} / {budget} tokens", goal.tokens_used));
+    let time = (goal.time_used_seconds > 0).then(|| {
+        let minutes = goal.time_used_seconds / 60;
+        if minutes > 0 {
+            format!("{minutes}m elapsed")
+        } else {
+            format!("{}s elapsed", goal.time_used_seconds)
+        }
+    });
+    match (tokens, time) {
+        (Some(tokens), Some(time)) => Some(format!("{tokens} · {time}")),
+        (Some(tokens), None) => Some(tokens),
+        (None, Some(time)) => Some(time),
+        (None, None) => None,
+    }
+}
+
 pub(super) fn render_plan_list(
     rows: Vec<PlanRow>,
     selected: Option<u64>,

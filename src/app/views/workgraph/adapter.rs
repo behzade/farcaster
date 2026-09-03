@@ -6,7 +6,7 @@ pub(super) use create::CreateStage;
 use std::path::PathBuf;
 
 use super::{
-    components::{render_create_step, render_plan_list},
+    components::{render_create_step, render_plan_list, render_session_goal},
     contract::PlanLoadState,
     core::{adjacent_node_number, create_form_valid, plan_rows},
     layout::BoardLayoutMode,
@@ -34,6 +34,7 @@ pub(crate) struct WorkGraphBoardView {
     pub(super) selected: Option<u64>,
     create_stage: CreateStage,
     pub(super) active_session: Option<(String, String)>,
+    session_goal: Option<crate::agents::SessionGoal>,
     search: Option<Entity<InputState>>,
     create_title: Option<Entity<InputState>>,
     create_detail: Option<Entity<TextareaState>>,
@@ -61,6 +62,7 @@ impl WorkGraphBoardView {
             selected: None,
             create_stage: CreateStage::Closed,
             active_session: None,
+            session_goal: None,
             search: None,
             create_title: None,
             create_detail: None,
@@ -78,11 +80,24 @@ impl WorkGraphBoardView {
         &mut self,
         project: PathBuf,
         active_session: Option<(String, String)>,
+        session_goal: Option<crate::agents::SessionGoal>,
         cx: &mut Context<Self>,
     ) {
         self.project = project;
         self.active_session = active_session;
+        self.session_goal = session_goal;
         self.refresh(cx);
+    }
+
+    pub(crate) fn set_session_goal(
+        &mut self,
+        goal: Option<crate::agents::SessionGoal>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.session_goal != goal {
+            self.session_goal = goal;
+            cx.notify();
+        }
     }
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
@@ -422,6 +437,9 @@ impl Render for WorkGraphBoardView {
                                             }),
                                     ),
                             )
+                            .when_some(self.session_goal.as_ref(), |board, goal| {
+                                board.child(render_session_goal(goal, false))
+                            })
                             .child(
                                 div()
                                     .flex_1()

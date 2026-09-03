@@ -796,6 +796,7 @@ impl FarcasterApp {
         let mut composer_dirty = false;
         let mut run_dirty = performance_changed;
         let mut workgraph_session_dirty = false;
+        let mut workgraph_goal_dirty = false;
         while let Ok(event) = self.runtime.try_recv() {
             operation.increment_work();
             match &event {
@@ -809,6 +810,7 @@ impl FarcasterApp {
                     run_dirty |= run_panel_snapshot_changed(&self.snapshot, snapshot);
                     workgraph_session_dirty |=
                         self.snapshot.selected_session != snapshot.selected_session;
+                    workgraph_goal_dirty |= self.snapshot.session_goal != snapshot.session_goal;
                 }
                 RuntimeEvent::Sessions { .. }
                 | RuntimeEvent::SessionsFailed { .. }
@@ -1256,6 +1258,9 @@ impl FarcasterApp {
         }
         if workgraph_session_dirty {
             self.refresh_workgraph_sidebar(cx);
+        }
+        if workgraph_goal_dirty {
+            self.refresh_workgraph_goal(cx);
         }
         self.sync_notification_expiries(cx);
         self.sync_recent_completion_expiries(cx);

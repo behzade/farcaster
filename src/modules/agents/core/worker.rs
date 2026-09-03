@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use serde::Serialize;
 use serde_json::Value;
 
-use super::super::{PeerMessage, WorkerContext, WorkerInput, WorkerInputResponse};
+use super::super::{PeerMessage, SessionGoal, WorkerContext, WorkerInput, WorkerInputResponse};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -121,6 +121,7 @@ pub(crate) enum WorkerActivity {
     PeerInputDelivered {
         message: PeerMessage,
     },
+    TurnStarted,
     TextDelta {
         content_index: usize,
         delta: String,
@@ -161,6 +162,7 @@ pub(crate) enum WorkerActivity {
     RateLimitsChanged {
         limits: Value,
     },
+    SessionGoalChanged(Option<SessionGoal>),
     CompactionStarted,
     CompactionFinished {
         aborted: bool,
