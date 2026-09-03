@@ -1,5 +1,6 @@
 use std::{
     path::Path,
+    process::Stdio,
     sync::Arc,
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -29,6 +30,36 @@ pub(crate) fn generate_session_title(
     let catalog = super::load_configuration_catalog(config, harness, project).unwrap_or_default();
     let selection = title_model(harness, &catalog);
     let effort = lowest_effort(&catalog, selection.as_ref());
+    let output = match harness {
+        // Pi title inference must never enter the transcript-oriented RPC worker path.
+        "pi" => generate_pi_title(
+            config,
+            project,
+            first_prompt,
+            selection.as_ref(),
+            effort.as_deref(),
+        ),
+        "codex-cli" => generate_worker_title(
+            config,
+            harness,
+            project,
+            first_prompt,
+            selection.as_ref(),
+            effort,
+        ),
+        _ => unreachable!("unsupported title backend was rejected above"),
+    }?;
+    normalize_title(&output)
+}
+
+fn generate_worker_title(
+    config: &AgentLaunchConfig,
+    harness: &str,
+    project: &Path,
+    first_prompt: &str,
+    selection: Option<&crate::protocol::Model>,
+    effort: Option<String>,
+) -> Result<String, String> {
     let factory = title_factory(config, harness)?;
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -41,13 +72,12 @@ pub(crate) fn generate_session_title(
         parent_session: "ephemeral".into(),
         parent_worker_id: None,
         context: WorkerContext::Fresh,
-        provider: selection.as_ref().map(|model| model.provider.clone()),
-        model: selection.map(|model| model.id),
+        provider: selection.map(|model| model.provider.clone()),
+        model: selection.map(|model| model.id.clone()),
         effort,
         ephemeral: true,
     })?;
-    let prompt = title_prompt(first_prompt);
-    if let Err(error) = session.send(prompt, WorkerSendMode::Prompt) {
+    if let Err(error) = session.send(title_prompt(first_prompt), WorkerSendMode::Prompt) {
         let _ = session.close();
         return Err(error);
     }
@@ -58,7 +88,7 @@ pub(crate) fn generate_session_title(
             break Err("session title generation timed out".into());
         }
         match session.poll() {
-            Some(WorkerEvent::Settled { output }) => break normalize_title(&output),
+            Some(WorkerEvent::Settled { output }) => break Ok(output),
             Some(WorkerEvent::Failed(error)) => break Err(error),
             Some(WorkerEvent::NeedsInput(_)) => {
                 let _ = session.abort();
@@ -70,9 +100,97 @@ pub(crate) fn generate_session_title(
     };
     let close = session.close();
     match (result, close) {
-        (Ok(title), Ok(())) => Ok(title),
+        (Ok(output), Ok(())) => Ok(output),
         (Err(error), _) | (Ok(_), Err(error)) => Err(error),
     }
+}
+
+fn generate_pi_title(
+    config: &AgentLaunchConfig,
+    project: &Path,
+    first_prompt: &str,
+    selection: Option<&crate::protocol::Model>,
+    effort: Option<&str>,
+) -> Result<String, String> {
+    let mut command = pi_title_command(config, project, first_prompt, selection, effort)?;
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("start ephemeral Pi title generator: {error}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Pi title stdout was not piped".to_owned())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "Pi title stderr was not piped".to_owned())?;
+    let stdout = thread::spawn(move || read_output(stdout));
+    let stderr = thread::spawn(move || read_output(stderr));
+    let deadline = Instant::now() + TITLE_TIMEOUT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status),
+            Ok(None) if Instant::now() < deadline => thread::sleep(POLL_INTERVAL),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break Err("session title generation timed out".to_owned());
+            }
+            Err(error) => break Err(format!("wait for Pi title generator: {error}")),
+        }
+    };
+    let stdout = stdout.join().unwrap_or_default();
+    let stderr = stderr.join().unwrap_or_default();
+    let status = status?;
+    if !status.success() {
+        let stderr = String::from_utf8_lossy(&stderr);
+        return Err(format!(
+            "Pi title generator exited {}: {}",
+            status.code().unwrap_or(-1),
+            stderr.trim().chars().take(500).collect::<String>()
+        ));
+    }
+    String::from_utf8(stdout).map_err(|error| format!("decode Pi title output: {error}"))
+}
+
+fn pi_title_command(
+    config: &AgentLaunchConfig,
+    project: &Path,
+    first_prompt: &str,
+    selection: Option<&crate::protocol::Model>,
+    effort: Option<&str>,
+) -> Result<std::process::Command, String> {
+    let mut command = config.command(project)?;
+    command.args([
+        "--print",
+        "--no-session",
+        "--no-tools",
+        "--no-extensions",
+        "--no-skills",
+        "--no-prompt-templates",
+        "--no-context-files",
+        "--no-approve",
+        "--system-prompt",
+        "Create a concise coding-session title. Output only the title: 3-8 words, at most 60 characters, without quotes, markdown, a label, or final punctuation.",
+    ]);
+    if let Some(model) = selection {
+        command.args(["--provider", &model.provider, "--model", &model.id]);
+    }
+    if let Some(effort) = effort {
+        command.args(["--thinking", effort]);
+    }
+    command.arg(first_prompt.chars().take(8_000).collect::<String>());
+    Ok(command)
+}
+
+fn read_output(mut reader: impl std::io::Read) -> Vec<u8> {
+    let mut output = Vec::new();
+    let _ = reader.read_to_end(&mut output);
+    output
 }
 
 fn title_factory(
@@ -205,6 +323,37 @@ mod tests {
             reasoning,
             efforts: None,
         }
+    }
+
+    #[test]
+    fn pi_title_command_is_isolated_from_session_transport() {
+        let project = std::env::current_dir().unwrap();
+        let command = pi_title_command(
+            &AgentLaunchConfig::default(),
+            &project,
+            "Fix the transcript",
+            None,
+            Some("low"),
+        )
+        .unwrap();
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        for required in [
+            "--print",
+            "--no-session",
+            "--no-tools",
+            "--no-extensions",
+            "--no-context-files",
+        ] {
+            assert!(arguments.iter().any(|argument| argument == required));
+        }
+        assert!(!arguments.iter().any(|argument| argument == "--mode"));
+        assert_eq!(
+            arguments.last().map(String::as_str),
+            Some("Fix the transcript")
+        );
     }
 
     #[test]
