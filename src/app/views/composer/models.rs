@@ -93,7 +93,6 @@ pub(in crate::app::views) fn render(
         .child(separator())
         .child(access_selector(
             app.snapshot.access_mode,
-            app.effective_access_mode,
             &app.snapshot.harness,
             entity,
         ))
@@ -456,15 +455,17 @@ fn effort_label(level: &str) -> String {
 
 fn access_selector(
     selected: HarnessAccessMode,
-    effective: HarnessAccessMode,
     harness: &str,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
     let supported = crate::agents::supported_access_modes(harness);
     let selected = crate::agents::normalize_access_mode(harness, selected);
-    let effective = crate::agents::normalize_access_mode(harness, effective);
     let next = next_access_mode(selected, supported);
-    let label = access_mode_cycle_label(effective, selected, next);
+    let label = cycle_label(
+        "Access",
+        access_mode_label(selected),
+        access_mode_label(next),
+    );
 
     div()
         .id("harness-access")
@@ -472,34 +473,13 @@ fn access_selector(
         .child(access_cycle_button(
             "cycle-harness-access",
             AppIcon::Folder,
-            access_mode_color(effective),
+            access_mode_color(selected),
             label,
             move |cx| {
                 let _ = entity.update(cx, |this, cx| this.set_access_mode(next, cx));
             },
         ))
         .into_any_element()
-}
-
-fn access_mode_cycle_label(
-    effective: HarnessAccessMode,
-    selected: HarnessAccessMode,
-    next: HarnessAccessMode,
-) -> String {
-    if selected == effective {
-        cycle_label(
-            "Access",
-            access_mode_label(effective),
-            access_mode_label(next),
-        )
-    } else {
-        format!(
-            "Access: {} ({} pending). Click to change to {}",
-            access_mode_label(effective),
-            access_mode_label(selected),
-            access_mode_label(next),
-        )
-    }
 }
 
 fn access_cycle_button(
@@ -609,15 +589,5 @@ mod tests {
         assert_eq!(next_access_mode(Full, &[Sandboxed, Full]), Sandboxed);
         assert_eq!(next_access_mode(Sandboxed, &[Sandboxed, Auto, Full]), Auto);
         assert_eq!(next_access_mode(Sandboxed, &[Auto, Full]), Auto);
-    }
-
-    #[test]
-    fn pending_access_mode_keeps_the_effective_mode_in_the_label() {
-        use HarnessAccessMode::{Auto, Full, Sandboxed};
-
-        assert_eq!(
-            access_mode_cycle_label(Sandboxed, Auto, Full),
-            "Access: Sandboxed (Auto pending). Click to change to Full access"
-        );
     }
 }

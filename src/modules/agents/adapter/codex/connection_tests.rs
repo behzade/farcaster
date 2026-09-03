@@ -6,6 +6,7 @@ use super::{
     connection::CodexConnection,
     contract::{CodexClientInfo, CodexInbound, CodexRequestId, CodexUserInput},
 };
+use crate::agents::HarnessAccessMode;
 
 #[test]
 fn native_vertical_slice_preserves_streaming_events() -> Result<(), String> {
@@ -88,15 +89,20 @@ fn native_vertical_slice_preserves_streaming_events() -> Result<(), String> {
         version: "0.1.0".into(),
     })?;
     assert_eq!(initialized.platform_family, "unix");
-    let thread = connection.start_thread("/project", None, None)?;
+    let thread = connection.start_thread("/project", None, None, HarnessAccessMode::Auto)?;
     assert_eq!(thread.id, "thread-1");
     assert_eq!(
         connection
-            .fork_thread("thread-1", "/project", None, None)?
+            .fork_thread("thread-1", "/project", None, None, HarnessAccessMode::Auto)?
             .id,
         "thread-1"
     );
-    assert_eq!(connection.resume_thread("thread-1")?.id, "thread-1");
+    assert_eq!(
+        connection
+            .resume_thread("thread-1", HarnessAccessMode::Auto)?
+            .id,
+        "thread-1"
+    );
     let turn = connection.start_turn(
         "thread-1",
         vec![
@@ -139,8 +145,11 @@ fn native_vertical_slice_preserves_streaming_events() -> Result<(), String> {
     assert_eq!(sent[1], json!({"method":"initialized"}));
     assert_eq!(sent[2]["method"], "thread/start");
     assert_eq!(sent[2]["params"]["ephemeral"], false);
+    assert_eq!(sent[2]["params"]["approvalsReviewer"], "auto_review");
     assert_eq!(sent[3]["method"], "thread/fork");
+    assert_eq!(sent[3]["params"]["approvalsReviewer"], "auto_review");
     assert_eq!(sent[4]["method"], "thread/resume");
+    assert_eq!(sent[4]["params"]["approvalsReviewer"], "auto_review");
     assert_eq!(sent[5]["method"], "turn/start");
     assert_eq!(sent[5]["params"]["input"][0]["text_elements"], json!([]));
     assert_eq!(sent[5]["params"]["input"][1]["type"], "image");
@@ -154,11 +163,17 @@ fn auxiliary_threads_are_explicitly_ephemeral() -> Result<(), String> {
 "#;
     let mut connection =
         CodexConnection::new(BufReader::new(Cursor::new(input.to_vec())), Vec::new());
-    connection.start_ephemeral_thread("/work", Some("openai"), Some("small"))?;
+    connection.start_ephemeral_thread(
+        "/work",
+        Some("openai"),
+        Some("small"),
+        HarnessAccessMode::Sandboxed,
+    )?;
     let output = String::from_utf8(connection.into_writer()).map_err(|error| error.to_string())?;
     let request: Value = serde_json::from_str(output.trim()).map_err(|error| error.to_string())?;
     assert_eq!(request["method"], "thread/start");
     assert_eq!(request["params"]["ephemeral"], true);
+    assert_eq!(request["params"]["approvalsReviewer"], "user");
     Ok(())
 }
 

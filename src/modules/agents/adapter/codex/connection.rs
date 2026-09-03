@@ -7,6 +7,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use super::{
+    approvals_reviewer,
     contract::{
         CodexClientInfo, CodexInbound, CodexInitializeResponse, CodexRequestId, CodexThread,
         CodexTurn, CodexUserInput, ThreadResponse, TurnResponse,
@@ -127,8 +128,9 @@ impl<R: BufRead, W: Write> CodexConnection<R, W> {
         cwd: &str,
         provider: Option<&str>,
         model: Option<&str>,
+        access_mode: crate::agents::HarnessAccessMode,
     ) -> Result<CodexThread, String> {
-        self.start_thread_with_persistence(cwd, provider, model, true)
+        self.start_thread_with_persistence(cwd, provider, model, access_mode, true)
     }
 
     pub(crate) fn start_ephemeral_thread(
@@ -136,8 +138,9 @@ impl<R: BufRead, W: Write> CodexConnection<R, W> {
         cwd: &str,
         provider: Option<&str>,
         model: Option<&str>,
+        access_mode: crate::agents::HarnessAccessMode,
     ) -> Result<CodexThread, String> {
-        self.start_thread_with_persistence(cwd, provider, model, false)
+        self.start_thread_with_persistence(cwd, provider, model, access_mode, false)
     }
 
     fn start_thread_with_persistence(
@@ -145,6 +148,7 @@ impl<R: BufRead, W: Write> CodexConnection<R, W> {
         cwd: &str,
         provider: Option<&str>,
         model: Option<&str>,
+        access_mode: crate::agents::HarnessAccessMode,
         persist: bool,
     ) -> Result<CodexThread, String> {
         let id = self.send_request(
@@ -153,6 +157,7 @@ impl<R: BufRead, W: Write> CodexConnection<R, W> {
                 "cwd": cwd,
                 "modelProvider": provider,
                 "model": model,
+                "approvalsReviewer": approvals_reviewer(access_mode),
                 "ephemeral": !persist,
             }),
         )?;
@@ -166,6 +171,7 @@ impl<R: BufRead, W: Write> CodexConnection<R, W> {
         cwd: &str,
         provider: Option<&str>,
         model: Option<&str>,
+        access_mode: crate::agents::HarnessAccessMode,
     ) -> Result<CodexThread, String> {
         let id = self.send_request(
             "thread/fork",
@@ -174,14 +180,25 @@ impl<R: BufRead, W: Write> CodexConnection<R, W> {
                 "cwd": cwd,
                 "modelProvider": provider,
                 "model": model,
+                "approvalsReviewer": approvals_reviewer(access_mode),
             }),
         )?;
         self.wait_response::<ThreadResponse>(&id)
             .map(|response| response.thread)
     }
 
-    pub(crate) fn resume_thread(&mut self, thread_id: &str) -> Result<CodexThread, String> {
-        let id = self.send_request("thread/resume", json!({"threadId": thread_id}))?;
+    pub(crate) fn resume_thread(
+        &mut self,
+        thread_id: &str,
+        access_mode: crate::agents::HarnessAccessMode,
+    ) -> Result<CodexThread, String> {
+        let id = self.send_request(
+            "thread/resume",
+            json!({
+                "threadId": thread_id,
+                "approvalsReviewer": approvals_reviewer(access_mode),
+            }),
+        )?;
         self.wait_response::<ThreadResponse>(&id)
             .map(|response| response.thread)
     }
