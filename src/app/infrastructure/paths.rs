@@ -5,12 +5,14 @@ pub(crate) fn data_dir() -> Result<PathBuf, String> {
         return absolute(PathBuf::from(path));
     }
 
+    Ok(user_data_home()?.join("farcaster"))
+}
+
+pub(crate) fn user_data_home() -> Result<PathBuf, String> {
     let path = match std::env::var_os("XDG_DATA_HOME") {
         Some(path) => PathBuf::from(path),
         None => home_dir()?.join(".local/share"),
-    }
-    .join("farcaster");
-
+    };
     absolute(path)
 }
 

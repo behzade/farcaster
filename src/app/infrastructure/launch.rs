@@ -11,6 +11,9 @@ use std::{
     time::Duration,
 };
 
+#[cfg(target_os = "linux")]
+use std::fs;
+
 use crate::{
     app::infrastructure::persistence::{StateStore, WindowPlacement, WindowState},
     app::ui::theme::{THEME, install_component_theme},
@@ -66,6 +69,9 @@ pub(crate) fn run(
 ) -> Result<(), LaunchError> {
     const FONT_FAILURE: u8 = 1;
     const WINDOW_FAILURE: u8 = 2;
+
+    #[cfg(target_os = "linux")]
+    install_linux_desktop_identity();
 
     let trust_timing =
         crate::app::infrastructure::performance::StartupTiming::new("launch.project_trust");
@@ -192,6 +198,63 @@ pub(crate) fn run(
         WINDOW_FAILURE => Err(LaunchError::NativeWindow),
         _ => Ok(()),
     }
+}
+
+#[cfg(target_os = "linux")]
+fn install_linux_desktop_identity() {
+    const APP_ID: &str = "io.github.behzade.farcaster";
+    const ICON: &[u8] = include_bytes!("../../../assets/icons/app/icon_256x256.png");
+
+    let Ok(data_home) = crate::app::infrastructure::paths::user_data_home() else {
+        return;
+    };
+    let icon_dir = data_home.join("icons/hicolor/256x256/apps");
+    let applications_dir = data_home.join("applications");
+    if fs::create_dir_all(&icon_dir).is_err() || fs::create_dir_all(&applications_dir).is_err() {
+        return;
+    }
+    let icon = icon_dir.join(format!("{APP_ID}.png"));
+    if fs::write(&icon, ICON).is_err() {
+        return;
+    }
+
+    let executable = std::env::var_os("APPIMAGE")
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_exe().ok());
+    let Some(executable) = executable else {
+        return;
+    };
+    let executable = desktop_exec_path(&executable.to_string_lossy());
+    let icon = icon.to_string_lossy();
+    let desktop_entry = format!(
+        "[Desktop Entry]\n\
+         Categories=Development;\n\
+         Comment=Native desktop client for coding agents\n\
+         Exec=\"{executable}\"\n\
+         Icon={icon}\n\
+         Name=Farcaster\n\
+         StartupWMClass={APP_ID}\n\
+         Terminal=false\n\
+         Type=Application\n"
+    );
+    let _ = fs::write(
+        applications_dir.join(format!("{APP_ID}.desktop")),
+        desktop_entry,
+    );
+}
+
+#[cfg(target_os = "linux")]
+fn desktop_exec_path(path: &str) -> String {
+    path.chars().fold(String::new(), |mut escaped, character| {
+        if matches!(character, '\\' | '"' | '`' | '$') {
+            escaped.push('\\');
+        }
+        if character == '%' {
+            escaped.push('%');
+        }
+        escaped.push(character);
+        escaped
+    })
 }
 
 pub(crate) fn observe_window_placement<T: 'static>(
