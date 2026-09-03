@@ -220,6 +220,14 @@ impl WorkerSessionTransport {
         let event = match worker_activity {
             WorkerActivity::InputDelivered { mode, message } => {
                 self.acknowledge_delivery(mode, &message);
+                self.finish_assistant_message(None);
+                let message = json!({"role": "user", "content": message});
+                for event_type in ["message_start", "message_end"] {
+                    self.pending.push_back(activity(json!({
+                        "type": event_type,
+                        "message": message,
+                    })));
+                }
                 return;
             }
             WorkerActivity::PeerInputDelivered { message } => json!({
@@ -837,7 +845,7 @@ mod tests {
     }
 
     #[test]
-    fn delivered_worker_messages_leave_the_visible_queue_independently() {
+    fn delivered_worker_message_leaves_the_queue_and_enters_the_transcript() {
         let mut transport = WorkerSessionTransport::new(
             std::path::Path::new("/locators"),
             "codex-cli",
@@ -848,48 +856,35 @@ mod tests {
         )
         .expect("transport");
 
-        transport
-            .send(SessionCommand::Prompt {
-                mode: PromptMode::Steer,
-                message: "redirect".into(),
-                images: Vec::new(),
-            })
-            .expect("steer");
-        transport
-            .send(SessionCommand::Prompt {
-                mode: PromptMode::FollowUp,
-                message: "then verify".into(),
-                images: Vec::new(),
-            })
-            .expect("follow-up");
-        transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::InputDelivered {
-            mode: WorkerSendMode::Steer,
-            message: "untracked peer message".into(),
-        }));
+        transport.steering.push("redirect".into());
         transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::InputDelivered {
             mode: WorkerSendMode::Steer,
             message: "redirect".into(),
         }));
+        assert!(transport.steering.is_empty());
 
-        let updates = transport
+        let delivered = transport
             .pending
             .iter()
             .filter_map(|event| match event {
                 SessionEvent::Activity(activity)
-                    if activity.kind() == &crate::agents::SessionActivityKind::QueueUpdated =>
+                    if matches!(
+                        activity.value()["type"].as_str(),
+                        Some("message_start" | "message_end")
+                    ) =>
                 {
-                    Some(activity.clone())
+                    Some(activity.value().clone())
                 }
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert_eq!(updates.len(), 3);
-        assert_eq!(updates[0].value()["steering"], json!(["redirect"]));
-        assert_eq!(updates[0].value()["followUp"], json!([]));
-        assert_eq!(updates[1].value()["steering"], json!(["redirect"]));
-        assert_eq!(updates[1].value()["followUp"], json!(["then verify"]));
-        assert_eq!(updates[2].value()["steering"], json!([]));
-        assert_eq!(updates[2].value()["followUp"], json!(["then verify"]));
+        assert_eq!(
+            delivered,
+            [
+                json!({"type": "message_start", "message": {"role": "user", "content": "redirect"}}),
+                json!({"type": "message_end", "message": {"role": "user", "content": "redirect"}}),
+            ]
+        );
     }
 
     #[test]
