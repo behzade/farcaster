@@ -109,6 +109,7 @@ fn parse_account_login_shell(output: &[u8]) -> Option<PathBuf> {
     absolute_path(shell)
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn absolute_path(value: &[u8]) -> Option<PathBuf> {
     if value.first() != Some(&b'/') {
         return None;
