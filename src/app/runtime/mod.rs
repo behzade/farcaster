@@ -534,6 +534,11 @@ impl RuntimeOwner {
         };
         let generation = self.process_generation;
         let revision = self.title_generation.revision;
+        let active_model = self
+            .active_snapshot()
+            .session
+            .as_ref()
+            .and_then(|session| session.model.clone());
         let config = self.process_command.clone();
         let harness = self.harness.clone();
         let project = self.project.clone();
@@ -543,7 +548,13 @@ impl RuntimeOwner {
         if let Err(error) = thread::Builder::new()
             .name("farcaster-session-title".into())
             .spawn(move || {
-                let result = agents::generate_session_title(&config, &harness, &project, &prompt);
+                let result = agents::generate_session_title(
+                    &config,
+                    &harness,
+                    &project,
+                    &prompt,
+                    active_model.as_ref(),
+                );
                 let _ = sender.send(SessionTitleResult {
                     generation,
                     revision,

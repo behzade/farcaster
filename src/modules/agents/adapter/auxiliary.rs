@@ -23,12 +23,13 @@ pub(crate) fn generate_session_title(
     harness: &str,
     project: &Path,
     first_prompt: &str,
+    active_model: Option<&crate::protocol::Model>,
 ) -> Result<String, String> {
     if !supports_auto_title_generation(harness) {
         return Err(format!("{harness} does not expose ephemeral inference"));
     }
     let catalog = super::load_configuration_catalog(config, harness, project).unwrap_or_default();
-    let selection = title_model(harness, &catalog);
+    let selection = title_model(harness, &catalog, active_model);
     let effort = lowest_effort(&catalog, selection.as_ref());
     let selected = selection
         .as_ref()
@@ -209,7 +210,11 @@ fn title_factory(
         .ok_or_else(|| format!("unsupported title generator backend: {harness}"))
 }
 
-fn title_model(harness: &str, catalog: &ConfigurationCatalog) -> Option<crate::protocol::Model> {
+fn title_model(
+    harness: &str,
+    catalog: &ConfigurationCatalog,
+    active_model: Option<&crate::protocol::Model>,
+) -> Option<crate::protocol::Model> {
     let override_name = match harness {
         "pi" => "FARCASTER_PI_TITLE_MODEL",
         "codex-cli" => "FARCASTER_CODEX_TITLE_MODEL",
@@ -225,21 +230,22 @@ fn title_model(harness: &str, catalog: &ConfigurationCatalog) -> Option<crate::p
         }
     }
     let preferences: &[&str] = match harness {
-        "pi" => &[
-            "nano",
-            "flash-lite",
-            "haiku",
-            "mini",
-            "flash",
-            "small",
-            "lite",
-        ],
-        "codex-cli" => &["nano", "mini"],
+        "pi" => match active_model.map(|model| model.provider.as_str()) {
+            Some("openai-codex" | "openai") => &["gpt-5.6-luna", "luna", "nano", "mini"],
+            Some("anthropic") => &["haiku"],
+            Some("google") => &["flash-lite", "flash"],
+            Some(_) => &["nano", "mini", "small", "lite", "flash"],
+            None => &[],
+        },
+        "codex-cli" => &["gpt-5.6-luna", "luna", "nano", "mini"],
         _ => &[],
     };
-    catalog
+    let selected = catalog
         .models
         .iter()
+        .filter(|model| {
+            harness != "pi" || active_model.is_some_and(|active| model.provider == active.provider)
+        })
         .filter(|model| {
             let id = model.id.to_ascii_lowercase();
             !["image", "vision", "live", "computer-use", "deep-research"]
@@ -254,7 +260,8 @@ fn title_model(harness: &str, catalog: &ConfigurationCatalog) -> Option<crate::p
             Some(((rank, model.reasoning, model.id.as_str()), model))
         })
         .min_by_key(|(rank, _)| *rank)
-        .map(|(_, model)| model.clone())
+        .map(|(_, model)| model.clone());
+    selected.or_else(|| (harness == "pi").then(|| active_model.cloned()).flatten())
 }
 
 fn lowest_effort(
@@ -267,7 +274,7 @@ fn lowest_effort(
     let efforts = model
         .and_then(|model| model.efforts.as_ref())
         .unwrap_or(&catalog.efforts);
-    ["none", "minimal", "low"]
+    ["off", "none", "minimal", "low"]
         .into_iter()
         .find_map(|candidate| {
             efforts
@@ -326,10 +333,14 @@ mod tests {
     use crate::protocol::Model;
 
     fn model(id: &str, reasoning: bool) -> Model {
+        model_from("provider", id, reasoning)
+    }
+
+    fn model_from(provider: &str, id: &str, reasoning: bool) -> Model {
         Model {
             id: id.into(),
             name: id.into(),
-            provider: "provider".into(),
+            provider: provider.into(),
             context_window: 0,
             reasoning,
             efforts: None,
@@ -368,29 +379,66 @@ mod tests {
     }
 
     #[test]
-    fn pi_prefers_a_cheap_advertised_model() {
+    fn pi_prefers_a_cheap_model_from_the_active_provider() {
         let catalog = ConfigurationCatalog {
             models: vec![
-                model("large", false),
-                model("flash", false),
-                model("haiku", false),
+                model_from("google", "gemini-flash-lite", false),
+                model_from("anthropic", "claude-opus", true),
+                model_from("anthropic", "claude-haiku", true),
             ],
             efforts: Vec::new(),
         };
-        assert_eq!(title_model("pi", &catalog).unwrap().id, "haiku");
+        let active = model_from("anthropic", "claude-opus", true);
+        let selected = title_model("pi", &catalog, Some(&active)).unwrap();
+        assert_eq!(selected.provider, "anthropic");
+        assert_eq!(selected.id, "claude-haiku");
     }
 
     #[test]
     fn pi_ignores_image_models_with_cheap_display_names() {
-        let mut image = model("gemini-3.1-flash-lite-image", true);
+        let mut image = model_from("google", "gemini-3.1-flash-lite-image", true);
         image.name = "Nano Banana 2 Lite".into();
         let catalog = ConfigurationCatalog {
-            models: vec![image, model("gemini-2.5-flash-lite", true)],
+            models: vec![image, model_from("google", "gemini-2.5-flash-lite", true)],
+            efforts: Vec::new(),
+        };
+        let active = model_from("google", "gemini-2.5-pro", true);
+        assert_eq!(
+            title_model("pi", &catalog, Some(&active)).unwrap().id,
+            "gemini-2.5-flash-lite"
+        );
+    }
+
+    #[test]
+    fn pi_without_an_active_model_uses_backend_default() {
+        let catalog = ConfigurationCatalog {
+            models: vec![model_from("google", "gemini-flash-lite", false)],
+            efforts: Vec::new(),
+        };
+        assert_eq!(title_model("pi", &catalog, None), None);
+    }
+
+    #[test]
+    fn pi_falls_back_to_the_active_model() {
+        let active = model_from("custom", "custom-large", true);
+        assert_eq!(
+            title_model("pi", &ConfigurationCatalog::default(), Some(&active)),
+            Some(active)
+        );
+    }
+
+    #[test]
+    fn codex_prefers_luna() {
+        let catalog = ConfigurationCatalog {
+            models: vec![
+                model_from("openai", "gpt-5.4-mini", true),
+                model_from("openai", "gpt-5.6-luna", true),
+            ],
             efforts: Vec::new(),
         };
         assert_eq!(
-            title_model("pi", &catalog).unwrap().id,
-            "gemini-2.5-flash-lite"
+            title_model("codex-cli", &catalog, None).unwrap().id,
+            "gpt-5.6-luna"
         );
     }
 
@@ -400,7 +448,17 @@ mod tests {
             models: vec![model("custom", false)],
             efforts: Vec::new(),
         };
-        assert_eq!(title_model("codex-cli", &catalog), None);
+        assert_eq!(title_model("codex-cli", &catalog, None), None);
+    }
+
+    #[test]
+    fn uses_lowest_advertised_reasoning_effort() {
+        let mut selected = model("reasoning", true);
+        selected.efforts = Some(vec!["high".into(), "minimal".into(), "off".into()]);
+        assert_eq!(
+            lowest_effort(&ConfigurationCatalog::default(), Some(&selected)),
+            Some("off".into())
+        );
     }
 
     #[test]
