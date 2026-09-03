@@ -30,6 +30,11 @@ pub(crate) fn generate_session_title(
     let catalog = super::load_configuration_catalog(config, harness, project).unwrap_or_default();
     let selection = title_model(harness, &catalog);
     let effort = lowest_effort(&catalog, selection.as_ref());
+    let selected = selection
+        .as_ref()
+        .map(|model| format!("{}/{}", model.provider, model.id))
+        .unwrap_or_else(|| "backend-default".into());
+    zlog::info!("Generating {harness} session title with {selected}");
     let output = match harness {
         // Pi title inference must never enter the transcript-oriented RPC worker path.
         "pi" => generate_pi_title(
@@ -235,11 +240,17 @@ fn title_model(harness: &str, catalog: &ConfigurationCatalog) -> Option<crate::p
     catalog
         .models
         .iter()
+        .filter(|model| {
+            let id = model.id.to_ascii_lowercase();
+            !["image", "vision", "live", "computer-use", "deep-research"]
+                .iter()
+                .any(|excluded| id.contains(excluded))
+        })
         .filter_map(|model| {
-            let identity = format!("{} {}", model.id, model.name).to_ascii_lowercase();
+            let id = model.id.to_ascii_lowercase();
             let rank = preferences
                 .iter()
-                .position(|candidate| identity.contains(candidate))?;
+                .position(|candidate| id.contains(candidate))?;
             Some(((rank, model.reasoning, model.id.as_str()), model))
         })
         .min_by_key(|(rank, _)| *rank)
@@ -367,6 +378,20 @@ mod tests {
             efforts: Vec::new(),
         };
         assert_eq!(title_model("pi", &catalog).unwrap().id, "haiku");
+    }
+
+    #[test]
+    fn pi_ignores_image_models_with_cheap_display_names() {
+        let mut image = model("gemini-3.1-flash-lite-image", true);
+        image.name = "Nano Banana 2 Lite".into();
+        let catalog = ConfigurationCatalog {
+            models: vec![image, model("gemini-2.5-flash-lite", true)],
+            efforts: Vec::new(),
+        };
+        assert_eq!(
+            title_model("pi", &catalog).unwrap().id,
+            "gemini-2.5-flash-lite"
+        );
     }
 
     #[test]

@@ -115,6 +115,7 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             manual_compaction: false,
             pending: HashMap::new(),
             pending_inputs: HashMap::new(),
+            queued_inbound: VecDeque::new(),
             peer_messages: VecDeque::new(),
             events: VecDeque::from([WorkerEvent::SessionChanged { locator: thread_id }]),
         }))
@@ -249,6 +250,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         manual_compaction: false,
         pending: HashMap::new(),
         pending_inputs: HashMap::new(),
+        queued_inbound: VecDeque::new(),
         peer_messages: VecDeque::new(),
         events: VecDeque::new(),
     };
@@ -488,6 +490,7 @@ struct CodexWorkerSession {
     manual_compaction: bool,
     pending: HashMap<CodexRequestId, PendingRequest>,
     pending_inputs: HashMap<String, CodexRequestId>,
+    queued_inbound: VecDeque<Result<CodexInbound, String>>,
     peer_messages: VecDeque<PeerMessage>,
     events: VecDeque<WorkerEvent>,
 }
@@ -553,8 +556,7 @@ impl WorkerSession for CodexWorkerSession {
             "thread/name/set",
             json!({"threadId": self.thread_id, "name": name}),
         )?;
-        self.pending.insert(id, PendingRequest::Ignore);
-        Ok(())
+        self.wait_response(&id, "rename thread")
     }
 
     fn select_model(&mut self, provider: &str, model: &str) -> Result<(), String> {
@@ -598,7 +600,11 @@ impl WorkerSession for CodexWorkerSession {
             });
         }
         loop {
-            match self.incoming.try_recv().ok()? {
+            let inbound = self
+                .queued_inbound
+                .pop_front()
+                .or_else(|| self.incoming.try_recv().ok())?;
+            match inbound {
                 Ok(CodexInbound::Response { id, result }) => match self.pending.remove(&id) {
                     Some(PendingRequest::StartTurn) => {
                         let turn = match serde_json::from_value::<TurnResponse>(result) {
@@ -940,6 +946,34 @@ impl WorkerSession for CodexWorkerSession {
 }
 
 impl CodexWorkerSession {
+    fn wait_response(
+        &mut self,
+        request_id: &CodexRequestId,
+        operation: &str,
+    ) -> Result<(), String> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while std::time::Instant::now() < deadline {
+            match self
+                .incoming
+                .recv_timeout(std::time::Duration::from_millis(50))
+            {
+                Ok(Ok(CodexInbound::Response { id, .. })) if &id == request_id => return Ok(()),
+                Ok(Ok(CodexInbound::Error { id, error })) if &id == request_id => {
+                    return Err(format!(
+                        "Codex could not {operation}: {} ({})",
+                        error.message, error.code
+                    ));
+                }
+                Ok(inbound) => self.queued_inbound.push_back(inbound),
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(format!("Codex stopped while attempting to {operation}"));
+                }
+            }
+        }
+        Err(format!("Codex did not {operation} within 15 seconds"))
+    }
+
     fn begin_turn(&mut self, turn_id: &str) -> bool {
         let is_new = self.current_turn.as_deref() != Some(turn_id);
         self.current_turn = Some(turn_id.to_owned());
