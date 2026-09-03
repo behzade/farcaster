@@ -675,6 +675,7 @@ pub(super) fn session_row_with_height(
         &session.id,
         session.path.clone(),
         session.project.clone(),
+        session.title.clone(),
         target_kind,
         entity,
         row.into_any_element(),
@@ -696,6 +697,7 @@ fn session_context_menu(
     id: &str,
     path: PathBuf,
     project: PathBuf,
+    title: String,
     kind: SessionRailKind,
     entity: WeakEntity<FarcasterApp>,
     row: AnyElement,
@@ -703,18 +705,40 @@ fn session_context_menu(
     ContextMenuTrigger::new(format!("session-context-trigger-{id}"), row)
         .size_full()
         .dropdown_menu_with_anchor(gpui::Anchor::TopLeft, move |menu, _, _| {
+            let rename_path = path.clone();
+            let rename_project = project.clone();
+            let rename_title = title.clone();
+            let rename_entity = entity.clone();
             let fork_path = path.clone();
             let fork_project = project.clone();
             let fork_entity = entity.clone();
-            let mut menu = menu.min_w(px(190.0)).item(
-                PopupMenuItem::new("Fork session")
-                    .icon(AppIcon::GitFork)
-                    .on_click(move |_, window, cx| {
-                        let _ = fork_entity.update(cx, |this, cx| {
-                            this.fork_session(fork_path.clone(), fork_project.clone(), window, cx);
-                        });
-                    }),
-            );
+            let mut menu = menu
+                .min_w(px(190.0))
+                .item(PopupMenuItem::new("Rename").on_click(move |_, window, cx| {
+                    let _ = rename_entity.update(cx, |this, cx| {
+                        this.begin_session_title_edit(
+                            rename_path.clone(),
+                            rename_project.clone(),
+                            rename_title.clone(),
+                            window,
+                            cx,
+                        );
+                    });
+                }))
+                .item(
+                    PopupMenuItem::new("Fork session")
+                        .icon(AppIcon::GitFork)
+                        .on_click(move |_, window, cx| {
+                            let _ = fork_entity.update(cx, |this, cx| {
+                                this.fork_session(
+                                    fork_path.clone(),
+                                    fork_project.clone(),
+                                    window,
+                                    cx,
+                                );
+                            });
+                        }),
+                );
 
             if kind == SessionRailKind::Project {
                 let archive_path = path.clone();

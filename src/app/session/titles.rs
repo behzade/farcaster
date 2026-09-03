@@ -3,7 +3,10 @@ use std::path::PathBuf;
 use gpui::{Context, Window};
 
 use super::{FarcasterApp, SessionTitleEdit};
-use crate::{runtime::RuntimeCommand, sessions::normalize_session_path};
+use crate::{
+    runtime::RuntimeCommand,
+    sessions::{SessionSummary, normalize_session_path},
+};
 
 impl FarcasterApp {
     pub(in crate::app) fn begin_session_title_edit(
@@ -50,6 +53,15 @@ impl FarcasterApp {
             .map(PathBuf::from)
             .map(|path| normalize_session_path(&path));
         let edited_path = normalize_session_path(&edit.path);
+        self.pending_session_titles
+            .insert(edited_path.clone(), title.clone());
+        set_session_title(
+            &mut self.sessions,
+            &mut self.all_sessions,
+            &edited_path,
+            &title,
+        );
+
         if active_path.as_deref() == Some(edited_path.as_path()) && !self.snapshot.history_preview {
             self.send(RuntimeCommand::SetSessionName(title));
         } else {
@@ -70,6 +82,35 @@ impl FarcasterApp {
         if self.editing_session_title.take().is_some() {
             self.notify_session_rail(cx);
             cx.notify();
+        }
+    }
+
+    pub(in crate::app) fn reconcile_pending_session_titles(
+        &mut self,
+        sessions: &mut [SessionSummary],
+        all_sessions: &mut [SessionSummary],
+    ) {
+        self.pending_session_titles.retain(|path, pending_title| {
+            !all_sessions.iter().chain(sessions.iter()).any(|session| {
+                normalize_session_path(&session.path) == *path && session.title == *pending_title
+            })
+        });
+
+        for (path, title) in &self.pending_session_titles {
+            set_session_title(sessions, all_sessions, path, title);
+        }
+    }
+}
+
+fn set_session_title(
+    sessions: &mut [SessionSummary],
+    all_sessions: &mut [SessionSummary],
+    path: &std::path::Path,
+    title: &str,
+) {
+    for session in sessions.iter_mut().chain(all_sessions) {
+        if normalize_session_path(&session.path) == path {
+            session.title = title.to_owned();
         }
     }
 }
