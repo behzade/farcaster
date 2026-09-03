@@ -246,6 +246,7 @@ pub(crate) struct FarcasterApp {
     network_proxy_error: Option<String>,
     settings_application_modifier: ui::keybindings::ApplicationModifier,
     editing_session_title: Option<SessionTitleEdit>,
+    pending_session_titles: HashMap<PathBuf, String>,
     pending_session_title_focus: bool,
     dialog_input: Entity<TextareaState>,
     composer_focus: FocusHandle,
@@ -719,6 +720,7 @@ impl FarcasterApp {
             network_proxy_error: None,
             settings_application_modifier: ui::keybindings::application_modifier(),
             editing_session_title: None,
+            pending_session_titles: HashMap::new(),
             pending_session_title_focus: false,
             dialog_input,
             composer_focus,
@@ -938,12 +940,13 @@ impl FarcasterApp {
                 }
                 RuntimeEvent::Sessions {
                     generation,
-                    sessions,
-                    all_sessions,
+                    mut sessions,
+                    mut all_sessions,
                     activities,
                     ..
                 } if generation >= self.session_generation => {
                     self.session_generation = generation;
+                    self.reconcile_pending_session_titles(&mut sessions, &mut all_sessions);
                     let catalog_changed = session_catalog_changed(
                         &self.sessions,
                         &self.all_sessions,
