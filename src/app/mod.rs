@@ -204,6 +204,8 @@ pub(crate) struct FarcasterApp {
     archived_session_list_rows: RefCell<Vec<String>>,
     session_generation: u64,
     runtime_generation: u64,
+    effective_access_mode: crate::runtime::HarnessAccessMode,
+    access_mode_generation: Option<u64>,
     composer: Entity<TextareaState>,
     composer_project_files: Vec<String>,
     composer_project_files_project: Option<PathBuf>,
@@ -678,6 +680,8 @@ impl FarcasterApp {
             archived_session_list_rows: RefCell::new(Vec::new()),
             session_generation: 0,
             runtime_generation: 0,
+            effective_access_mode: crate::runtime::HarnessAccessMode::default(),
+            access_mode_generation: None,
             composer,
             composer_project_files: Vec::new(),
             composer_project_files_project: None,
@@ -871,6 +875,16 @@ impl FarcasterApp {
                     generation,
                     snapshot,
                 } if generation >= self.runtime_generation => {
+                    let (effective_access_mode, access_mode_generation) =
+                        effective_access_mode_for_snapshot(
+                            self.effective_access_mode,
+                            self.access_mode_generation,
+                            generation,
+                            snapshot.access_mode,
+                        );
+                    composer_dirty |= self.effective_access_mode != effective_access_mode;
+                    self.effective_access_mode = effective_access_mode;
+                    self.access_mode_generation = access_mode_generation;
                     if self
                         .pending_session_switch
                         .as_ref()
@@ -1950,6 +1964,9 @@ impl FarcasterApp {
         level: crate::runtime::HarnessAccessMode,
         cx: &mut Context<Self>,
     ) {
+        if !self.snapshot.connected {
+            self.effective_access_mode = level;
+        }
         self.send(RuntimeCommand::SetAccessMode(level));
         cx.notify();
     }
@@ -2175,6 +2192,19 @@ fn composer_snapshot_changed(previous: &RuntimeSnapshot, next: &RuntimeSnapshot)
         || previous.thinking_levels != next.thinking_levels
         || previous.configuration_status != next.configuration_status
         || previous.access_mode != next.access_mode
+}
+
+fn effective_access_mode_for_snapshot(
+    current: crate::runtime::HarnessAccessMode,
+    synced_generation: Option<u64>,
+    generation: u64,
+    selected: crate::runtime::HarnessAccessMode,
+) -> (crate::runtime::HarnessAccessMode, Option<u64>) {
+    if synced_generation == Some(generation) {
+        (current, synced_generation)
+    } else {
+        (selected, Some(generation))
+    }
 }
 
 fn run_panel_snapshot_changed(previous: &RuntimeSnapshot, next: &RuntimeSnapshot) -> bool {

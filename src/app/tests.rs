@@ -346,6 +346,20 @@ fn restored_questions_invalidate_the_composer() {
 }
 
 #[test]
+fn access_mode_stays_effective_until_the_process_generation_changes() {
+    use crate::runtime::HarnessAccessMode::{Auto, Sandboxed};
+
+    assert_eq!(
+        effective_access_mode_for_snapshot(Sandboxed, Some(4), 4, Auto),
+        (Sandboxed, Some(4))
+    );
+    assert_eq!(
+        effective_access_mode_for_snapshot(Sandboxed, Some(4), 5, Auto),
+        (Auto, Some(5))
+    );
+}
+
+#[test]
 fn composer_and_run_panel_track_their_rendered_snapshot_inputs() {
     let previous = RuntimeSnapshot::default();
     let mut composer_status = previous.clone();
