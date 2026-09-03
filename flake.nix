@@ -28,6 +28,7 @@
               cups
               dbus
               expat
+              file
               fontconfig
               freetype
               glib
