@@ -38,12 +38,12 @@ impl FarcasterApp {
         Self::notify_region(&self.run_panel_view, cx);
     }
 
-    pub(in crate::app) fn send(&mut self, command: RuntimeCommand) {
+    pub(in crate::app) fn send(&mut self, command: RuntimeCommand, cx: &mut Context<Self>) {
         if let Err(error) = self.runtime.send(command) {
             let snapshot = Arc::make_mut(&mut self.snapshot);
             let index = snapshot.conversation.items.len();
             Arc::make_mut(&mut snapshot.conversation).push_transport_error(error);
-            self.mark_transcript_changed(index, index == 0);
+            self.mark_transcript_changed(index, index == 0, cx);
         }
     }
 }

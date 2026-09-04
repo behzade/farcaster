@@ -1,6 +1,8 @@
+use std::cell::RefCell;
+
 use gpui::{
-    FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Styled as _, WeakEntity,
-    div, list, prelude::FluentBuilder as _, px,
+    FontWeight, InteractiveElement as _, IntoElement, ListState, ParentElement as _, Styled as _,
+    WeakEntity, div, list, prelude::FluentBuilder as _, px,
 };
 
 use super::{
@@ -23,6 +25,8 @@ impl FarcasterApp {
         &self,
         entity: WeakEntity<Self>,
         kind: SessionRailKind,
+        list_state: ListState,
+        list_rows: &RefCell<Vec<String>>,
     ) -> gpui::AnyElement {
         debug_assert!(kind != SessionRailKind::Project);
         let selected_root =
@@ -38,13 +42,8 @@ impl FarcasterApp {
             self.session_project_filter.as_deref(),
             &self.session_order,
         );
-        let (rows, list_state, list_rows, expanded) = match kind {
-            SessionRailKind::Archived => (
-                lists.archived,
-                self.archived_session_list.clone(),
-                &self.archived_session_list_rows,
-                self.archived_sessions_expanded,
-            ),
+        let (rows, expanded) = match kind {
+            SessionRailKind::Archived => (lists.archived, self.archived_sessions_expanded),
             SessionRailKind::Project => unreachable!("active sessions use the main rail"),
         };
         let count = rows.len();

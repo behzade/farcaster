@@ -9,9 +9,11 @@ mod resize;
 mod tests;
 
 use gpui::{
-    InteractiveElement as _, IntoElement, ParentElement as _, StatefulInteractiveElement as _,
-    Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
+    InteractiveElement as _, IntoElement, ParentElement as _, ScrollHandle,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
 };
+
+pub(super) use resize::clamped_run_panel_width;
 
 use self::{
     agents::{
@@ -21,7 +23,7 @@ use self::{
     background_jobs::background_job_row,
     performance::render_performance,
 };
-use super::super::FarcasterApp;
+use super::super::{FarcasterApp, RunPanelView};
 use crate::{
     agent_activity::AgentActivity,
     app::ui::primitives::{panel, section_heading},
@@ -30,7 +32,14 @@ use crate::{
 };
 
 impl FarcasterApp {
-    pub(super) fn render_run_panel(&self, entity: WeakEntity<Self>) -> impl IntoElement {
+    pub(super) fn render_run_panel(
+        &self,
+        entity: WeakEntity<Self>,
+        run_panel: WeakEntity<RunPanelView>,
+        scroll: &ScrollHandle,
+        completed_agents_expanded: bool,
+        limited_agents_expanded: bool,
+    ) -> impl IntoElement {
         let root = root_session_for_path(
             &self.all_sessions,
             self.snapshot.selected_session.as_deref(),
@@ -73,16 +82,16 @@ impl FarcasterApp {
         let completed_control = disclosure_control(
             "toggle-completed-agents",
             "Completed agents",
-            self.view.run_panel.completed_agents_expanded,
+            completed_agents_expanded,
             RunDisclosure::Completed,
-            entity.clone(),
+            run_panel.clone(),
         );
         let limited_control = disclosure_control(
             "toggle-limited-agents",
             "Limited agents",
-            self.view.run_panel.limited_agents_expanded,
+            limited_agents_expanded,
             RunDisclosure::Limited,
-            entity.clone(),
+            run_panel,
         );
         let body = div()
             .id("run-panel-scroll")
@@ -96,7 +105,7 @@ impl FarcasterApp {
             .pl(px(18.0))
             .gap(px(26.0))
             .overflow_y_scroll()
-            .track_scroll(&self.view.run_panel.scroll)
+            .track_scroll(scroll)
             .child(self.workgraph_sidebar_view.clone())
             .when_some(self.performance_monitor.as_ref(), |run, monitor| {
                 run.child(render_performance(&monitor.summary))
@@ -157,7 +166,7 @@ impl FarcasterApp {
                                 )))
                                 .child(completed_control),
                         )
-                        .when(self.view.run_panel.completed_agents_expanded, |section| {
+                        .when(completed_agents_expanded, |section| {
                             section
                                 .children(
                                     completed
@@ -202,7 +211,7 @@ impl FarcasterApp {
                                 )))
                                 .child(limited_control),
                         )
-                        .when(self.view.run_panel.limited_agents_expanded, |section| {
+                        .when(limited_agents_expanded, |section| {
                             section.children(limited.iter().filter_map(|(activity, depth, _)| {
                                 self.agent_card(activity, *depth, false, true, None, entity.clone())
                             }))

@@ -134,11 +134,11 @@ impl FarcasterApp {
         let transcript_preselected =
             session_changed && self.snapshot.selected_session == snapshot.selected_session;
         if session_changed {
-            self.reset_session_ui(generation, transcript_preselected);
+            self.reset_session_ui(generation, transcript_preselected, cx);
             dirty.root = true;
         }
         let row_update = if transcript_preselected {
-            self.project_transcript_rows(&snapshot)
+            self.project_transcript_rows(&snapshot, cx)
         } else if session_changed {
             let _timing = crate::app::infrastructure::performance::OperationTiming::new(
                 crate::app::infrastructure::performance::OperationKind::FullProjection,
@@ -148,16 +148,11 @@ impl FarcasterApp {
                 crate::app::views::transcript::project_rows(&snapshot.conversation.items),
             )
         } else {
-            self.project_transcript_rows(&snapshot)
+            self.project_transcript_rows(&snapshot, cx)
         };
-        let count = row_update.row_count(self.view.transcript.rows.len());
-        if count > self.view.transcript.last_count && !self.view.transcript.following {
-            self.view.transcript.unseen = self
-                .view
-                .transcript
-                .unseen
-                .saturating_add(count - self.view.transcript.last_count);
-        }
+        let count = row_update.row_count(self.transcript_view.read(cx).rows.len());
+        self.transcript_view
+            .update(cx, |transcript, _| transcript.update_count(count));
         if snapshot.history_preview && !self.snapshot.history_preview {
             dirty.root = true;
             park_extension_surface(&mut self.extension, &mut self.parked_extension);
@@ -171,8 +166,7 @@ impl FarcasterApp {
             self.dialog_return_focus = None;
         }
         self.snapshot = snapshot;
-        dirty.transcript |= self.apply_transcript_rows(row_update);
-        self.view.transcript.last_count = count;
+        dirty.transcript |= self.apply_transcript_rows(row_update, cx);
         self.sync_restored_dialog();
         self.sync_composer_history();
         dirty.rail |= self.reconcile_submitted_drafts(cx);
@@ -344,7 +338,7 @@ impl FarcasterApp {
             if self.surface != AppSurface::Work {
                 self.set_surface(AppSurface::Chat, cx);
             }
-            self.reset_session_ui(generation, false);
+            self.reset_session_ui(generation, false, cx);
             self.pending_composer_restore = Some((next_target, composer));
             self.selected_draft = next_draft.as_ref().map(|draft| draft.id.clone());
             if let Some(draft) = next_draft {
@@ -352,11 +346,14 @@ impl FarcasterApp {
                     .insert(draft.id.clone(), draft.app_session_id);
                 self.drafts.push(draft.clone());
                 self.save_project_registry();
-                self.send(RuntimeCommand::NewSession {
-                    id: draft.id,
-                    harness: draft.harness,
-                    project: draft.project,
-                });
+                self.send(
+                    RuntimeCommand::NewSession {
+                        id: draft.id,
+                        harness: draft.harness,
+                        project: draft.project,
+                    },
+                    cx,
+                );
             }
             let snapshot = Arc::make_mut(&mut self.snapshot);
             snapshot.live_session = None;
@@ -421,12 +418,15 @@ impl FarcasterApp {
             .is_some_and(|path| paths.contains_key(path));
         if selected_was_moved {
             self.select_project(target_project.clone(), cx);
-            self.send(RuntimeCommand::SelectSession {
-                session_id: target_root.to_string_lossy().into_owned(),
-                path: target_root,
-                harness: "pi".into(),
-                project: target_project,
-            });
+            self.send(
+                RuntimeCommand::SelectSession {
+                    session_id: target_root.to_string_lossy().into_owned(),
+                    path: target_root,
+                    harness: "pi".into(),
+                    project: target_project,
+                },
+                cx,
+            );
         }
         self.save_project_registry();
     }
@@ -489,10 +489,10 @@ impl FarcasterApp {
                 generation,
                 preserve_submission,
             } if generation >= self.runtime_generation => {
-                self.reset_session_ui(generation, preserve_submission);
+                self.reset_session_ui(generation, preserve_submission, cx);
             }
             RuntimeEvent::HistoryReset { generation } if generation == self.runtime_generation => {
-                self.reset_transcript_ui();
+                self.reset_transcript_ui(cx);
             }
             RuntimeEvent::Sessions {
                 generation,

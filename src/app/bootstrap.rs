@@ -121,7 +121,7 @@ impl FarcasterApp {
             cx.subscribe_in(&search, window, |this, state, event: &InputEvent, _, cx| {
                 if matches!(event, InputEvent::Change) {
                     let query = state.read(cx).value().trim().to_owned();
-                    this.send(RuntimeCommand::LoadSessions(query));
+                    this.send(RuntimeCommand::LoadSessions(query), cx);
                 }
             });
         let session_title_subscription = cx.subscribe_in(
@@ -137,13 +137,10 @@ impl FarcasterApp {
         let window_activation_subscription =
             cx.observe_window_activation(window, |this, window, cx| {
                 let visible = session_shortcuts_visible_for_window(
-                    this.view.session_rail.shortcuts_visible,
+                    this.session_rail_view.read(cx).shortcuts_visible(),
                     window.is_window_active(),
                 );
-                if this.view.session_rail.shortcuts_visible != visible {
-                    this.view.session_rail.shortcuts_visible = visible;
-                    this.notify_session_rail(cx);
-                }
+                this.set_session_shortcuts_visible(visible, cx);
             });
         let window_placement_subscription = launch::observe_window_placement(window, cx);
         let runtime_wake = runtime.wake_receiver();
@@ -167,8 +164,8 @@ impl FarcasterApp {
         let worker_update_task = cx.spawn(async move |weak, cx| {
             while worker_updates.recv().await.is_ok() {
                 if weak
-                    .update(cx, |this, _| {
-                        this.send(RuntimeCommand::RefreshSessions);
+                    .update(cx, |this, cx| {
+                        this.send(RuntimeCommand::RefreshSessions, cx);
                     })
                     .is_err()
                 {
@@ -209,7 +206,7 @@ impl FarcasterApp {
         let session_rail_view = cx.new(|_| SessionRailView::new(app.clone()));
         let archived_session_rail_view =
             cx.new(|_| InactiveSessionRailView::new(app.clone(), SessionRailKind::Archived));
-        let transcript_view = cx.new(|_| TranscriptView::new(app.clone()));
+        let transcript_view = cx.new(|_| TranscriptView::new(app.clone(), transcript_list.clone()));
         let composer_view = cx.new(|_| ComposerView::new(app.clone()));
         let run_panel_view = cx.new(|_| RunPanelView::new(app.clone()));
         let workgraph_view = cx.new(|cx| {
@@ -230,29 +227,26 @@ impl FarcasterApp {
                 cx,
             )
         });
+        let transcript_scroll_view = transcript_view.downgrade();
         transcript_list.set_scroll_handler(move |following, _, cx| {
-            let needs_update = app.upgrade().is_some_and(|app| {
-                let app = app.read(cx);
-                transcript_follow_state_needs_update(
-                    app.view.transcript.following,
-                    app.view.transcript.unseen,
-                    following,
-                )
+            let needs_update = transcript_scroll_view.upgrade().is_some_and(|view| {
+                let view = view.read(cx);
+                transcript_follow_state_needs_update(view.following, view.unseen, following)
             });
             if !needs_update {
                 return;
             }
-            let app = app.clone();
+            let transcript_view = transcript_scroll_view.clone();
             let deferred_at = Instant::now();
             cx.defer(move |cx| {
                 crate::app::infrastructure::performance::record_scroll_defer(deferred_at.elapsed());
-                let _ = app.update(cx, |this, cx| {
+                let _ = transcript_view.update(cx, |view, cx| {
                     if update_transcript_follow_state(
-                        &mut this.view.transcript.following,
-                        &mut this.view.transcript.unseen,
+                        &mut view.following,
+                        &mut view.unseen,
                         following,
                     ) {
-                        this.notify_transcript(cx);
+                        cx.notify();
                     }
                 });
             });
@@ -294,18 +288,6 @@ impl FarcasterApp {
             session_project_filter: None,
             picker: None,
             picker_return_focus: None,
-            session_list: ListState::new(
-                0,
-                ListAlignment::Top,
-                crate::app::ui::theme::THEME.layout.transcript_overdraw,
-            ),
-            session_list_rows: RefCell::new(Vec::new()),
-            archived_session_list: ListState::new(
-                0,
-                ListAlignment::Top,
-                crate::app::ui::theme::THEME.layout.transcript_overdraw,
-            ),
-            archived_session_list_rows: RefCell::new(Vec::new()),
             session_generation: 0,
             runtime_generation: 0,
             composer,
@@ -354,7 +336,7 @@ impl FarcasterApp {
             image_preview_return_focus: None,
             sheet_focus: cx.focus_handle(),
             sheet_return_focus: None,
-            view: views::state::ViewState::new(transcript_list),
+            overlays: views::overlay_state::OverlayViewState::default(),
             performance_monitor,
             _performance_task: performance_task,
             pending_session_switch: None,

@@ -40,7 +40,7 @@ use self::{
     rows::{session_accessible_label, session_badge, status_visual},
 };
 
-fn clamped_session_rail_width(width: f32) -> Pixels {
+pub(super) fn clamped_session_rail_width(width: f32) -> Pixels {
     px(width.clamp(
         f32::from(THEME.layout.session_rail_min),
         f32::from(THEME.layout.session_rail_max),
@@ -274,12 +274,25 @@ impl FarcasterApp {
         .collect()
     }
 
+    pub(in crate::app) fn set_session_shortcuts_visible(
+        &mut self,
+        visible: bool,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.session_rail_view.update(cx, |view, cx| {
+            if view.set_shortcuts_visible(visible) {
+                cx.notify();
+            }
+        });
+    }
+
     pub(super) fn begin_session_rail_resize(
         &mut self,
         pointer_x: Pixels,
         cx: &mut gpui::Context<Self>,
     ) {
-        self.view.session_rail.resize_start = Some((pointer_x, self.view.session_rail.width));
+        self.session_rail_view
+            .update(cx, |view, _| view.begin_resize(pointer_x));
         cx.notify();
     }
 
@@ -288,20 +301,23 @@ impl FarcasterApp {
         pointer_x: Pixels,
         cx: &mut gpui::Context<Self>,
     ) {
-        let Some((start_x, start_width)) = self.view.session_rail.resize_start else {
-            return;
-        };
-        let width = clamped_session_rail_width(
-            f32::from(start_width) + f32::from(pointer_x) - f32::from(start_x),
-        );
-        if width != self.view.session_rail.width {
-            self.view.session_rail.width = width;
+        let changed = self.session_rail_view.update(cx, |view, cx| {
+            let changed = view.update_resize(pointer_x);
+            if changed {
+                cx.notify();
+            }
+            changed
+        });
+        if changed {
             cx.notify();
         }
     }
 
     pub(super) fn finish_session_rail_resize(&mut self, cx: &mut gpui::Context<Self>) {
-        if self.view.session_rail.resize_start.take().is_some() {
+        if self
+            .session_rail_view
+            .update(cx, |view, _| view.finish_resize())
+        {
             cx.notify();
         }
     }

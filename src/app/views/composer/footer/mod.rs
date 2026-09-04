@@ -70,8 +70,9 @@ impl FarcasterApp {
                                 "Abort",
                                 ButtonTone::Quiet,
                                 move |_, cx| {
-                                    let _ = abort_entity
-                                        .update(cx, |this, _| this.send(RuntimeCommand::Abort));
+                                    let _ = abort_entity.update(cx, |this, cx| {
+                                        this.send(RuntimeCommand::Abort, cx)
+                                    });
                                 },
                             )
                             .text_color(THEME.colors.error),

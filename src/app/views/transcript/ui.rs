@@ -6,14 +6,20 @@ use super::{
 use crate::app::FarcasterApp;
 
 impl FarcasterApp {
+    pub(in crate::app) fn transcript_selected_text(&self, cx: &Context<Self>) -> Option<String> {
+        self.transcript_view.read(cx).list.selected_text()
+    }
+
     pub(in crate::app) fn project_transcript_rows(
         &self,
         snapshot: &crate::runtime::RuntimeSnapshot,
+        cx: &Context<Self>,
     ) -> TranscriptRowUpdate {
         let _timing =
             crate::app::infrastructure::performance::Timing::new("transcript.project_rows");
+        let transcript = self.transcript_view.read(cx);
         update_rows_incremental(
-            &self.view.transcript.rows,
+            &transcript.rows,
             &self.snapshot.conversation.items,
             &snapshot.conversation.items,
             snapshot.transcript_changed_from,
@@ -21,10 +27,12 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn jump_to_latest(&mut self, cx: &mut Context<Self>) {
-        self.view.transcript.following = true;
-        self.view.transcript.unseen = 0;
-        self.view.transcript.list.scroll_to_end();
-        self.notify_transcript(cx);
+        self.transcript_view.update(cx, |transcript, cx| {
+            transcript.following = true;
+            transcript.unseen = 0;
+            transcript.list.scroll_to_end();
+            cx.notify();
+        });
     }
 
     pub(in crate::app) fn set_transcript_item_expanded(
@@ -33,23 +41,18 @@ impl FarcasterApp {
         expanded: bool,
         cx: &mut Context<Self>,
     ) {
-        if expanded {
-            self.view.transcript.list.pause_following_tail();
-        }
-        self.view.transcript.disclosure_states.insert(key, expanded);
-        if let Some(index) = self
-            .view
-            .transcript
-            .rows
-            .iter()
-            .position(|row| row.key() == key)
-        {
-            self.view
-                .transcript
-                .list
-                .remeasure_items(index..index.saturating_add(1));
-        }
-        self.notify_transcript(cx);
+        self.transcript_view.update(cx, |transcript, cx| {
+            if expanded {
+                transcript.list.pause_following_tail();
+            }
+            transcript.disclosure_states.insert(key, expanded);
+            if let Some(index) = transcript.rows.iter().position(|row| row.key() == key) {
+                transcript
+                    .list
+                    .remeasure_items(index..index.saturating_add(1));
+            }
+            cx.notify();
+        });
     }
 
     pub(in crate::app) fn sync_composer_history(&mut self) {
@@ -85,21 +88,27 @@ impl FarcasterApp {
         self.composer_history_marker = Some((target, user_count, last_user.to_owned()));
     }
 
-    pub(in crate::app) fn apply_transcript_rows(&mut self, update: TranscriptRowUpdate) -> bool {
-        update.apply(
-            &self.view.transcript.list,
-            &mut self.view.transcript.rows,
-            &self.snapshot.conversation.items,
-        )
+    pub(in crate::app) fn apply_transcript_rows(
+        &mut self,
+        update: TranscriptRowUpdate,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let items = self.snapshot.conversation.items.clone();
+        self.transcript_view
+            .update(cx, |transcript, _| transcript.apply_rows(update, &items))
     }
 
-    pub(in crate::app) fn mark_transcript_changed(&mut self, index: usize, _was_empty: bool) {
-        let rows = update_rows_from(
-            &self.view.transcript.rows,
-            &self.snapshot.conversation.items,
-            &self.snapshot.conversation.items,
-            Some(index),
-        );
-        let _changed = self.apply_transcript_rows(TranscriptRowUpdate::replace(rows));
+    pub(in crate::app) fn mark_transcript_changed(
+        &mut self,
+        index: usize,
+        _was_empty: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let items = self.snapshot.conversation.items.clone();
+        self.transcript_view.update(cx, |transcript, cx| {
+            let rows = update_rows_from(&transcript.rows, &items, &items, Some(index));
+            let _changed = transcript.apply_rows(TranscriptRowUpdate::replace(rows), &items);
+            cx.notify();
+        });
     }
 }
