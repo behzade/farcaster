@@ -11,7 +11,7 @@ use gpui::{Context, Window};
 use super::FarcasterApp;
 use crate::app::infrastructure::persistence::state_path;
 
-const MAX_INLINE_PASTE_LINES: usize = 3;
+const MAX_INLINE_PASTE_CHARACTERS: usize = 1000;
 static PASTE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -153,7 +153,8 @@ fn store_long_paste(text: &str) -> Result<Option<ComposerPaste>, String> {
 fn long_paste(text: &str) -> Option<(String, usize)> {
     let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
     let line_count = normalized.lines().count().max(1);
-    (line_count > MAX_INLINE_PASTE_LINES).then_some((normalized, line_count))
+    (normalized.chars().count() > MAX_INLINE_PASTE_CHARACTERS)
+        .then_some((normalized, line_count))
 }
 
 fn store_long_paste_in(
@@ -220,17 +221,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_pastes_longer_than_three_lines_become_files() -> Result<(), String> {
-        assert!(long_paste("one\ntwo\nthree").is_none());
-        assert!(long_paste("one\ntwo\nthree\n").is_none());
-        let (normalized, line_count) = long_paste("one\r\ntwo\rthree\nfour")
+    fn only_pastes_longer_than_1000_characters_become_files() -> Result<(), String> {
+        assert!(long_paste(&"é".repeat(1000)).is_none());
+        assert!(long_paste(&format!("{}\n", "x".repeat(999))).is_none());
+
+        let (normalized, line_count) = long_paste(&format!("{}\r\nz", "é".repeat(1000)))
             .ok_or_else(|| "expected a long paste".to_owned())?;
         let directory = tempfile::tempdir().map_err(|error| error.to_string())?;
         let paste = store_long_paste_in(&normalized, line_count, directory.path())?;
-        assert_eq!(paste.line_count, 4);
+        assert_eq!(paste.line_count, 2);
         assert_eq!(
             std::fs::read_to_string(&paste.path).map_err(|error| error.to_string())?,
-            "one\ntwo\nthree\nfour"
+            format!("{}\nz", "é".repeat(1000))
         );
         Ok(())
     }
