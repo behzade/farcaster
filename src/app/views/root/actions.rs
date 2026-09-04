@@ -1,4 +1,4 @@
-use gpui::{App, Context, InteractiveElement as _, Keystroke, Window};
+use gpui::{Context, InteractiveElement as _};
 use gpui_base::TextSelection;
 
 use super::super::FarcasterApp;
@@ -28,23 +28,10 @@ fn bind_actions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
         );
     }))
     .on_action(cx.listener(|this, _: &ClipboardCopyAlias, window, cx| {
-        if matches!(this.surface, AppSurface::Editor | AppSurface::Terminal) {
-            dispatch_keystroke("ctrl-shift-c", window, cx);
-        } else {
-            crate::app::ui::keyboard::copy_selection(
-                this.transcript_selected_text(cx),
-                this.composer.read(cx).selected_value().to_string(),
-                cx,
-            );
-        }
+        this.handle_clipboard_alias(false, window, cx);
     }))
     .on_action(cx.listener(|this, _: &ClipboardPasteAlias, window, cx| {
-        let keystroke = if matches!(this.surface, AppSurface::Editor | AppSurface::Terminal) {
-            "ctrl-shift-v"
-        } else {
-            "ctrl-v"
-        };
-        dispatch_keystroke(keystroke, window, cx);
+        this.handle_clipboard_alias(true, window, cx);
     }))
     .on_action(cx.listener(|this, _: &DismissSurface, window, cx| {
         this.dismiss_surface(window, cx);
@@ -227,10 +214,4 @@ fn bind_pointer_interactions(root: gpui::Div, cx: &mut Context<FarcasterApp>) ->
             this.finish_run_panel_resize(cx);
         }),
     )
-}
-
-fn dispatch_keystroke(keystroke: &str, window: &mut Window, cx: &mut App) {
-    if let Ok(keystroke) = Keystroke::parse(keystroke) {
-        window.dispatch_keystroke(keystroke, cx);
-    }
 }
