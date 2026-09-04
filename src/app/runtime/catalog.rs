@@ -212,21 +212,18 @@ mod tests {
     }
 
     #[test]
-    fn heartbeats_refresh_only_at_activity_boundaries() {
+    fn every_external_write_refreshes_the_catalog_and_activity_deadline() {
         let path = PathBuf::from("/sessions/external.jsonl");
-        let dormant = summary(&path, SystemTime::now(), false);
         let start = Instant::now();
         let mut activity = ExternalActivityTracker::default();
 
         assert!(activity.observe_files(
-            std::slice::from_ref(&dormant),
             &HashSet::new(),
             std::slice::from_ref(&path),
             start,
             crate::sessions::normalize_session_path,
         ));
-        assert!(!activity.observe_files(
-            std::slice::from_ref(&dormant),
+        assert!(activity.observe_files(
             &HashSet::new(),
             std::slice::from_ref(&path),
             start + Duration::from_secs(1),
@@ -235,22 +232,9 @@ mod tests {
         assert!(!activity.take_expired(start + RUNNING_ACTIVITY_TIMEOUT));
         assert!(activity.take_expired(start + Duration::from_secs(1) + RUNNING_ACTIVITY_TIMEOUT));
 
-        let mut running = dormant.clone();
-        running.is_running = true;
-        let mut active = ExternalActivityTracker::default();
-        assert!(!active.observe_files(
-            &[running],
-            &HashSet::new(),
-            std::slice::from_ref(&path),
-            start,
-            crate::sessions::normalize_session_path,
-        ));
-        assert!(active.take_expired(start + RUNNING_ACTIVITY_TIMEOUT));
-
         let mut owned = ExternalActivityTracker::default();
         let owned_paths = HashSet::from([path.clone()]);
         assert!(!owned.observe_files(
-            &[dormant],
             &owned_paths,
             &[path],
             start,

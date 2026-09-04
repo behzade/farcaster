@@ -14,7 +14,6 @@ pub(crate) struct ExternalActivityTracker {
 impl ExternalActivityTracker {
     pub(crate) fn observe_files(
         &mut self,
-        catalog: &[SessionSummary],
         owned: &HashSet<PathBuf>,
         paths: &[PathBuf],
         now: Instant,
@@ -25,30 +24,19 @@ impl ExternalActivityTracker {
             if owned.contains(candidate) {
                 continue;
             }
-            let known = catalog
-                .iter()
-                .find(|session| session.path == candidate.as_path());
-            let (path, is_running) = if let Some(session) = known {
-                (session.path.clone(), session.is_running)
+            let path = if self.deadlines.contains_key(candidate) {
+                candidate.clone()
             } else {
-                let path = if self.deadlines.contains_key(candidate) {
-                    candidate.clone()
-                } else {
-                    normalize(candidate)
-                };
-                let is_running = catalog
-                    .iter()
-                    .any(|session| session.path == path && session.is_running);
-                (path, is_running)
+                normalize(candidate)
             };
             if owned.contains(&path) {
                 continue;
             }
-            let became_active = self
-                .deadlines
-                .insert(path, now + RUNNING_ACTIVITY_TIMEOUT)
-                .is_none();
-            refresh |= became_active && !is_running;
+            self.deadlines.insert(path, now + RUNNING_ACTIVITY_TIMEOUT);
+            // Every external write can be the terminal assistant entry. Refresh
+            // even while the activity deadline is already armed so a completed
+            // terminal session does not remain stuck in its previous state.
+            refresh = true;
         }
         refresh
     }

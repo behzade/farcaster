@@ -1171,11 +1171,13 @@ fn background_catalog_refresh_preserves_search_until_user_clears_it()
 }
 
 #[test]
-fn filesystem_changes_coalesce_into_one_delayed_scan() {
+fn filesystem_refresh_commands_coalesce_into_one_delayed_scan() {
     let (mut owner, _events, _discovery) = owner_without_process(std::env::temp_dir());
-    owner.schedule_session_refresh();
+    let command = RuntimeCommand::ScheduleSessionRefresh;
+    assert!(command_targets_catalog(&command));
+    owner.apply_command(command.clone());
     let due = owner.session_refresh_due.expect("filesystem refresh");
-    owner.schedule_session_refresh();
+    owner.apply_command(command);
     assert_eq!(owner.session_refresh_due, Some(due));
 
     owner.poll_deferred_session_refresh(due - Duration::from_millis(1));
