@@ -3,11 +3,13 @@ mod contract;
 mod core;
 
 pub(crate) use adapter::{
-    app_shell_environment, backend_display_name, backend_statuses, default_login_shell,
-    delete_external_session, discover_external_sessions, external_session_identity,
-    generate_session_title, is_external_session, load_configuration_catalog, load_external_history,
-    normalize_access_mode, rename_session, spawn_session, supported_access_modes,
-    supports_auto_title_generation, supports_startup_command, validate_launch, worker_factories,
+    app_shell_environment, apply_project_trust, backend_display_name, backend_statuses,
+    default_login_shell, delete_external_session, discover_external_sessions,
+    external_session_identity, generate_session_title, is_external_session,
+    load_configuration_catalog, load_external_history, normalize_access_mode, project_trust,
+    project_trust_description, rename_session, saved_project_trust, spawn_session,
+    supported_access_modes, supports_auto_title_generation, supports_startup_command,
+    validate_launch, worker_factories,
 };
 pub(crate) use contract::extensions;
 pub(crate) use contract::{

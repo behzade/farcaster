@@ -20,7 +20,7 @@ impl FarcasterApp {
 
         let answer = window.prompt(
             PromptLevel::Warning,
-            "Exit Pi?",
+            "Exit Farcaster?",
             Some("Agents, subagents, or tool runs are still active. Exiting now will stop them."),
             &[PromptButton::ok("Exit"), PromptButton::cancel("Cancel")],
             cx,

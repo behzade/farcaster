@@ -254,6 +254,7 @@ pub(crate) struct FarcasterApp {
     archived_sessions_expanded: bool,
     project_trust_error: Option<String>,
     project_trust_project: Option<PathBuf>,
+    project_trust_backend: Option<String>,
     pending_project_trust_command: Option<RuntimeCommand>,
     _composer_subscription: Subscription,
     _search_subscription: Subscription,

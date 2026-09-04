@@ -55,6 +55,11 @@ Safety enforcement is delegated to the selected harness:
 
 Unsupported modes are omitted from the selector.
 
+Farcaster saves its own project trust decisions for repository commands. These
+decisions do not change a harness's trust settings. Pi project-resource trust is
+checked separately when opening a Pi session; other harnesses manage their own
+trust. Existing Pi trust decisions do not grant Farcaster repository access.
+
 ## Prompt fragments
 
 Files in [`prompts`](prompts) are available in every harness. Type `$` to

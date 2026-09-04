@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use gpui::{Context, Window};
 
 use super::FarcasterApp;
@@ -6,10 +8,33 @@ use crate::{
     runtime::RuntimeCommand,
 };
 
+fn trust_path() -> Result<PathBuf, String> {
+    Ok(crate::app::paths::data_dir()?.join("project-trust.json"))
+}
+
+pub(in crate::app) fn startup_trust(project: &Path) -> Result<StartupTrust, String> {
+    projects::startup_trust(&trust_path()?, project)
+}
+
+pub(in crate::app) fn repository_execution_allowed(project: &Path) -> Result<bool, String> {
+    projects::repository_execution_allowed(&trust_path()?, project)
+}
+
+pub(in crate::app) fn saved_decision(project: &Path) -> Result<Option<(PathBuf, bool)>, String> {
+    projects::saved_decision(&trust_path()?, project)
+}
+
+pub(in crate::app) fn apply(
+    project: &Path,
+    choice: TrustChoice,
+) -> Result<projects::AppliedTrust, String> {
+    projects::apply(&trust_path()?, project, choice)
+}
+
 impl FarcasterApp {
     pub(in crate::app) fn send_project_command(
         &mut self,
-        project: &std::path::Path,
+        project: &Path,
         command: RuntimeCommand,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -17,17 +42,21 @@ impl FarcasterApp {
         if self.pending_project_trust_command.is_some() {
             return;
         }
-        match projects::startup_trust(project) {
-            Ok(StartupTrust::Ready) => self.send(command, cx),
-            Ok(StartupTrust::Prompt) => {
-                self.open_project_trust(window, cx);
-                self.project_trust_project = Some(project.to_path_buf());
-                self.pending_project_trust_command = Some(command);
+        match startup_trust(project) {
+            Ok(StartupTrust::Ready) => {
+                let backend = command_backend(&command)
+                    .unwrap_or(&self.snapshot.harness)
+                    .to_owned();
+                if self.ensure_backend_trust(&backend, project, window, cx) {
+                    self.send(command, cx);
+                } else {
+                    self.pending_project_trust_command = Some(command);
+                }
             }
-            Err(error) => {
+            result => {
                 self.open_project_trust(window, cx);
                 self.project_trust_project = Some(project.to_path_buf());
-                self.project_trust_error = Some(error);
+                self.project_trust_error = result.err();
                 self.pending_project_trust_command = Some(command);
             }
         }
@@ -43,31 +72,44 @@ impl FarcasterApp {
             .project_trust_project
             .clone()
             .unwrap_or_else(|| self.project.clone());
-        match projects::apply(&project, choice) {
+        let backend = self.project_trust_backend.clone();
+        let applied = match backend.as_deref() {
+            Some(backend) => crate::agents::apply_project_trust(backend, &project, choice),
+            None => apply(&project, choice),
+        };
+        match applied {
             Ok(applied) => {
-                self.set_repository_project_execution(project, applied.trusted, cx);
+                if backend.is_none() {
+                    self.set_repository_project_execution(project.clone(), applied.trusted, cx);
+                }
                 let scope = applied.saved_path.map_or_else(
                     || self.project.display().to_string(),
                     |path| path.display().to_string(),
                 );
                 self.project_trust_error = None;
                 self.project_trust_project = None;
+                self.project_trust_backend = None;
                 let pending = self
                     .pending_project_trust_command
                     .take()
                     .map(restart_session_after_trust);
                 self.close_sheet(window, cx);
                 if let Some(command) = pending {
-                    self.send(command, cx);
+                    self.send_project_command(&project, command, window, cx);
                 } else {
                     let decision = if applied.trusted {
                         "trusted"
                     } else {
                         "untrusted"
                     };
-                    std::sync::Arc::make_mut(&mut self.snapshot).status = format!(
-                        "Project {decision} in {scope}. Restart Farcaster to apply the new decision."
-                    );
+                    let status = match backend {
+                        Some(backend) => format!(
+                            "{} project {decision} in {scope}. Restart existing sessions to apply the new decision.",
+                            crate::agents::backend_display_name(&backend)
+                        ),
+                        None => format!("Farcaster project {decision} in {scope}."),
+                    };
+                    std::sync::Arc::make_mut(&mut self.snapshot).status = status;
                     self.notify_composer(cx);
                 }
             }
@@ -90,7 +132,53 @@ impl FarcasterApp {
         }
         self.project_trust_error = None;
         self.project_trust_project = None;
+        self.project_trust_backend = None;
         self.close_sheet(window, cx);
+    }
+
+    pub(in crate::app) fn ensure_backend_trust(
+        &mut self,
+        backend: &str,
+        project: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        match crate::agents::project_trust(backend, project) {
+            Ok(StartupTrust::Ready) => true,
+            result => {
+                self.open_backend_project_trust(
+                    backend.to_owned(),
+                    project.to_path_buf(),
+                    window,
+                    cx,
+                );
+                self.project_trust_error = result.err();
+                false
+            }
+        }
+    }
+
+    pub(in crate::app) fn open_backend_project_trust(
+        &mut self,
+        backend: String,
+        project: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_project_trust(window, cx);
+        self.project_trust_project = Some(project);
+        self.project_trust_backend = Some(backend);
+    }
+}
+
+fn command_backend(command: &RuntimeCommand) -> Option<&str> {
+    match command {
+        RuntimeCommand::NewSession { harness, .. }
+        | RuntimeCommand::ResumeDraft { harness, .. }
+        | RuntimeCommand::SelectSession { harness, .. }
+        | RuntimeCommand::RestartSession { harness, .. }
+        | RuntimeCommand::ForkSession { harness, .. } => Some(harness),
+        _ => None,
     }
 }
 
@@ -117,8 +205,6 @@ fn restart_session_after_trust(command: RuntimeCommand) -> RuntimeCommand {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::*;
 
     #[test]

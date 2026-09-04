@@ -55,7 +55,7 @@ impl ProjectTrustView {
     }
 
     fn select_trust(&mut self, choice: TrustChoice, window: &mut Window, cx: &mut Context<Self>) {
-        match projects::apply(&self.project, choice) {
+        match crate::app::project::trust::apply(&self.project, choice) {
             Ok(applied) => self.start_app(Some(applied.trusted), window, cx),
             Err(error) => {
                 self.error = Some(error);
@@ -71,8 +71,9 @@ impl ProjectTrustView {
         cx: &mut Context<Self>,
     ) {
         let project = self.project.clone();
-        let repository_execution_allowed = repository_execution_allowed
-            .unwrap_or_else(|| projects::repository_execution_allowed(&project).unwrap_or(false));
+        let repository_execution_allowed = repository_execution_allowed.unwrap_or_else(|| {
+            crate::app::project::trust::repository_execution_allowed(&project).unwrap_or(false)
+        });
         let workgraph_updates = self.workgraph_updates.clone();
         let worker_updates = self.worker_updates.clone();
         let app = cx.new(|cx| {
@@ -139,7 +140,7 @@ impl Render for ProjectTrustView {
                     .role(Role::Group)
                     .aria_label("Project trust")
                     .track_focus(&self.focus)
-                    .key_context("PiProjectTrust")
+                    .key_context("FarcasterProjectTrust")
                     .w_full()
                     .max_w(px(640.0))
                     .flex()
@@ -167,7 +168,7 @@ impl Render for ProjectTrustView {
                         div()
                             .line_height(THEME.type_scale.line_body)
                             .text_color(THEME.colors.muted)
-                            .child("Trusting allows Pi to load project settings and resources, install missing project packages, and execute project extensions."),
+                            .child(projects::TRUST_DESCRIPTION),
                     )
                     .when_some(self.error.clone(), |panel, error| {
                         panel.child(

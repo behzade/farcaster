@@ -2,6 +2,7 @@ mod adapter;
 mod contract;
 mod core;
 mod trust;
+pub(crate) mod trust_store;
 
 pub(crate) use adapter::{is_temporary_project, load_legacy};
 pub(crate) use contract::{
@@ -12,7 +13,7 @@ pub(crate) use core::{
     save_registry, select,
 };
 pub(crate) use trust::{
-    apply, options, repository_execution_allowed, saved_decision, startup_trust,
+    TRUST_DESCRIPTION, apply, options, repository_execution_allowed, saved_decision, startup_trust,
 };
 
 #[cfg(test)]
