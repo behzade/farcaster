@@ -1,5 +1,3 @@
-//! App-level navigation and picker coordination.
-
 use super::*;
 
 mod picker;

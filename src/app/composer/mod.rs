@@ -1,5 +1,3 @@
-//! Composer state, completion, and submission coordination.
-
 use super::*;
 
 pub(in crate::app) mod completion;

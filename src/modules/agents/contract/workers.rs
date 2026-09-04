@@ -11,9 +11,8 @@ pub(crate) struct PeerMessage {
 }
 
 impl PeerMessage {
-    // Current backend protocols expose only user-input channels. Keep this
-    // fallback envelope reversible so Farcaster retains worker presentation
-    // when loading backend-owned history.
+    // Encode the sender reversibly when a backend accepts worker messages
+    // through its user-input channel.
     const PROMPT_PREFIX: &'static str = "Message from Farcaster worker ";
     const LEGACY_PROMPT_PREFIX: &'static str = "Message from Farcaster peer ";
 

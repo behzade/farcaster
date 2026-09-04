@@ -1,4 +1,4 @@
-//! Native startup gate shown before a project's first Pi RPC process starts.
+//! Project trust gate shown before the application opens a project.
 
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
 

@@ -85,8 +85,8 @@ fn dropping_runtime_waits_for_owned_pi_processes_to_handle_exit() -> Result<(), 
         ),
     );
     runtime.send(RuntimeCommand::Reload)?;
-    // The session adapter permits up to 15 seconds for its readiness handshake. The
-    // full test suite can also delay this supervisor under build-machine load.
+    // Pi permits up to 15 seconds for its readiness handshake; leave headroom for
+    // build-machine load.
     let deadline = Instant::now() + Duration::from_secs(20);
     let mut connected = false;
     while Instant::now() < deadline && !connected {
@@ -1566,8 +1566,7 @@ fn viewing_a_subagent_does_not_change_new_session_defaults() {
     };
     defaults.reconcile_snapshot(&mut root, true);
 
-    // The user views a subagent running a different model; the supervisor passes
-    // adopt_identity=false for descendant sessions.
+    // A descendant's model must not replace the defaults inherited by new drafts.
     let mut subagent = RuntimeSnapshot {
         live_session: Some(PathBuf::from("/sessions/child.jsonl")),
         session: session_state("/sessions/child.jsonl", luna.clone()),

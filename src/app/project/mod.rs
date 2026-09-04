@@ -1,5 +1,3 @@
-//! Project and repository application coordination.
-
 use super::*;
 
 mod management;

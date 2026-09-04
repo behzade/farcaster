@@ -1,5 +1,3 @@
-//! Session-facing application coordination.
-
 use super::*;
 
 pub(super) mod archive;
