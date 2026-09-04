@@ -21,7 +21,7 @@ pub(crate) fn section_heading(title: impl Into<SharedString>) -> impl gpui::Into
         .role(Role::Heading)
         .aria_label(title.clone())
         .aria_level(2)
-        .text_size(THEME.type_scale.caption)
+        .text_size(THEME.type_scale.body)
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(THEME.colors.muted)
         .child(title)

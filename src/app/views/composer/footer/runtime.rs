@@ -54,7 +54,7 @@ pub(in crate::app::views) fn render(
         .flex()
         .items_center()
         .font_family(MONO_FONT_FAMILY)
-        .text_size(THEME.type_scale.caption)
+        .text_size(THEME.type_scale.body)
         .child(div().text_color(THEME.colors.muted).child(provider_label))
         .child(runtime_slash())
         .child(div().text_color(THEME.colors.text).child(model_label))

@@ -69,8 +69,10 @@ pub(crate) struct TypeScale {
     pub caption: Pixels,
     pub body_small: Pixels,
     pub body: Pixels,
+    pub reading: Pixels,
     pub display: Pixels,
     pub line_body: Pixels,
+    pub line_reading: Pixels,
     pub line_composer: Pixels,
 }
 
@@ -157,12 +159,14 @@ pub(crate) const THEME: Theme = Theme {
         md: px(16.0),
     },
     type_scale: TypeScale {
-        caption: px(11.0),
-        body_small: px(12.0),
+        caption: px(12.0),
+        body_small: px(13.0),
         body: px(13.0),
+        reading: px(15.0),
         display: px(18.0),
         line_body: px(19.0),
-        line_composer: px(20.0),
+        line_reading: px(23.0),
+        line_composer: px(22.0),
     },
     icons: IconScale {
         inline: px(16.0),

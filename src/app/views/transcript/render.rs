@@ -506,14 +506,15 @@ fn styled_selectable_text(text: TextView) -> TextView {
         .selectable(true)
         .w_full()
         .min_w_0()
-        .text_size(THEME.type_scale.body)
-        .line_height(THEME.type_scale.line_body)
+        .text_size(THEME.type_scale.reading)
+        .line_height(THEME.type_scale.line_reading)
 }
 
 fn technical_text(id: impl Into<gpui::ElementId>, text: impl Into<gpui::SharedString>) -> TextView {
     selectable_text(id, text)
         .font_family(MONO_FONT_FAMILY)
         .text_size(THEME.type_scale.body_small)
+        .line_height(THEME.type_scale.line_body)
 }
 
 pub(super) fn transcript_markdown_style() -> TextViewStyle {
@@ -551,7 +552,7 @@ fn transcript_markdown_style_with_inline_code(inline_code: HighlightStyle) -> Te
     code_block.restrict_scroll_to_axis = Some(true);
     TextViewStyle {
         paragraph_gap: rems(0.5),
-        heading_base_font_size: THEME.type_scale.body,
+        heading_base_font_size: THEME.type_scale.reading,
         highlight_theme: HighlightTheme::default_dark(),
         code_block,
         inline_code,
