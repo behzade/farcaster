@@ -672,8 +672,6 @@ fn verify_persistence_and_cleanup(
             .ok_or_else(|| "external backend omitted deletion".to_owned())?
             .map_err(|error| format!("delete failed: {error}"))
     } else {
-        // External session paths are logical locator keys, not files. A backend that
-        // advertises no deletion (currently Cursor) deliberately leaves its live fixture.
         Ok(())
     }
 }

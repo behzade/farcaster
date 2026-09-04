@@ -1,172 +1,98 @@
 # Farcaster
 
-Farcaster is a native multi-agent development workspace that orchestrates
-coding-agent harnesses. It supports Pi, Codex, Cursor, and OpenCode through
-backend-specific protocol adapters. Cursor uses Farcaster's generic Agent Client
-Protocol (ACP) adapter.
+Farcaster is a native workspace for running multiple coding-agent sessions across
+projects. It supports Pi, Codex, Cursor, and OpenCode.
 
 Farcaster is GPL-3.0-or-later. See [`NOTICE.md`](NOTICE.md) for source and asset
 attribution.
 
-## Current features
+## Features
 
-- Multiple live and historical sessions across projects
-- Streaming text, thinking, tool calls, retries, queues, and compaction
-- Harness-native access modes
-- Extension questions and permission prompts
+- Live and historical sessions across projects
+- Streaming text, reasoning, tool calls, retries, queues, and compaction
 - Git and Jujutsu working-copy views
-- Embedded Neovim and project terminal surfaces
+- Embedded Neovim and project terminals
 - Durable drafts, session ordering, workgraphs, and application state
-- Stateless MCP access to workers and workgraphs
+- Harness permission prompts, questions, models, and access modes
+- Built-in tools for parent-child workers and workgraphs
 
-## Prompt fragments
+## Install
 
-Farcaster owns the manual prompt fragments in [`prompts`](prompts) and exposes
-them in every harness. Type `$` to complete a fragment. Multiple fragments such
-as `$simplify $commit` expand in order before Farcaster sends the prompt to Pi,
-Codex, or OpenCode. Harness skills and commands remain owned by their adapters.
+Release builds are available for Linux x86_64 and macOS arm64 from
+[GitHub Releases](https://github.com/behzade/farcaster/releases). macOS requires
+version 12 or later.
 
-Farcaster does not provide a filesystem or network sandbox. The access selector
-configures each harness directly:
+Install and authenticate any agent harnesses you intend to use:
 
-- **Full access** disables the harness sandbox.
-- **Sandboxed** uses the harness's sandbox integration.
-- **Auto** routes approval requests through a model reviewer when the harness
-  supports it.
+- Pi: `pi` (run `/login` before launching Farcaster)
+- Codex: `codex`
+- Cursor Agent: `agent` (run `agent login`)
+- OpenCode: `opencode2`
 
-Unsupported modes are omitted. For Pi, sandboxed mode leaves user-installed
-sandbox extensions such as `pi-nono` active; full access sets
-`PI_NONO_DISABLED=1`. Codex supports all three modes. OpenCode supports sandboxed
-and full modes.
+Executable paths can be overridden with the environment variables listed under
+[Configuration](#configuration).
 
-Pi settings, context files, extensions, skills, and authentication load in the
-selected project directory. Farcaster does not modify Pi. The `pi` executable
-must be available on `PATH` unless `FARCASTER_PI_PATH` is set.
+## Run from source
 
-## Provider authentication
-
-Pi does not expose provider login through its public RPC interface, so Farcaster
-cannot start `/login`. Authenticate directly in a terminal before using the
-provider in Farcaster:
-
-```sh
-pi
-# Then run /login in Pi.
-```
-
-Restart Farcaster after login so its Pi process reloads the credentials and
-available models.
-
-Cursor runs through `agent acp`. Install Cursor Agent, authenticate once in a
-terminal, then restart Farcaster:
-
-```sh
-agent login
-```
-
-## Run
+Farcaster requires Rust 1.95.
 
 ```sh
 cargo run -- /path/to/project
 ```
 
 The project argument is optional. Farcaster otherwise opens the most recent
-project or the current directory.
+project or the current directory. Linux build dependencies are listed in the
+[release workflow](.github/workflows/release.yml).
 
-## App bundle
+## Access modes
 
-```sh
-make bundle
-make bundle-relaunch
-```
+Safety enforcement is delegated to the selected harness:
 
-`make bundle` creates a macOS app or Linux AppImage. `make bundle-relaunch`
-builds the same bundle, stops Farcaster, and starts the new build with the
-selected project. macOS signing is ad hoc by default; set `CODESIGN_IDENTITY`
-to use a Developer ID identity.
+- Pi: Sandboxed or Full. Sandboxed preserves installed sandbox extensions such
+  as `pi-nono`; Full sets `PI_NONO_DISABLED=1`.
+- Codex: Sandboxed, Auto, or Full. Auto uses model-reviewed approvals.
+- Cursor and OpenCode: Sandboxed or Full.
 
-## Linux packages
+Unsupported modes are omitted from the selector.
 
-Install Cargo Packager, then build any supported package format:
+## Prompt fragments
 
-```sh
-cargo install cargo-packager --locked
-make package FORMAT=deb
-```
+Files in [`prompts`](prompts) are available in every harness. Type `$` to
+complete a fragment. Fragments such as `$simplify $commit` expand in order
+before submission.
 
-Set `BUNDLE_FORMATS=appimage,deb,pacman` when calling `make bundle` to create all
-Linux formats. Packages and Linux windows use the bundled Farcaster icon and
-the `io.github.behzade.farcaster` app ID.
+## Built-in MCP
 
-## Releases
+Built-in MCP is enabled by default for new sessions. It provides parent-child
+workers, a project coordination notice board, and durable workgraphs. It can be
+disabled under **Settings → Built-in MCP**.
 
-Prepare and push a release from a clean `main` branch with Cargo Release:
+## Configuration
 
-```sh
-cargo install cargo-release --locked
-cargo release patch --execute # or minor, major, or an explicit version
-```
-
-Without `--execute`, Cargo Release performs a dry run. The executed command
-automatically increments (or explicitly sets) the versions in `Cargo.toml`,
-`Cargo.lock`, and the Linux package config, verifies the build, commits the
-version, creates an annotated `v<version>` tag, and pushes the commit and tag.
-Pushing that tag runs independent Linux x86_64 and macOS arm64 builds, then
-publishes both assets to one GitHub release. Both builds must succeed before
-publication. CI currently ad-hoc signs the macOS app, so it is not notarized.
-
-Windows is not currently supported. GPUI has a Windows backend, but Farcaster's
-shell environment capture, process lifecycle, terminal integration, and data
-paths still rely on Unix APIs and conventions.
-
-Farcaster serves stateless Streamable HTTP MCP at
-`http://127.0.0.1:8765/mcp`. It exposes `worker_send`, `worker_notices`, and the
-`workgraph_*` tools. Workers have stable human-readable names while opaque IDs
-remain internal. Top-level names are generated from a namespace of more than
-16,000 adjective-animal combinations; top-level models choose concise names for
-their own children. A top-level worker calls `worker_send` with a child name:
-the first call creates that child and later calls reuse it. A child worker sees
-a role-specific `worker_send` schema without `to`; its messages always go to its
-parent. The child's final assistant response is delivered to the parent
-automatically, so child `worker_send` calls are reserved for interim updates or
-questions rather than final results. Top-level workers can read or post
-`worker_notices` when overlapping shared-worktree changes require coordination
-or ownership is unclear. It is a
-pull-only, expiring project notice board and never interrupts another agent;
-unrelated changes do not warrant consulting it. Children inherit the parent's
-project, harness, model, and effort and remain off the session rail. Pi and OpenCode additionally
-persist the parent relationship in their native session metadata. Use
-harness-native subagents when the harness provides them. Farcaster
-accepts MCP `2026-07-28` only and
-passes the endpoint to each launched agent through its native transient
-configuration; it does not create or modify a project MCP file.
-
-Useful environment variables:
-
-- `FARCASTER_PI_PATH`: Pi executable override
-- `FARCASTER_CODEX_PATH`: Codex executable override
-- `FARCASTER_CURSOR_PATH`: Cursor Agent executable override (default: `agent`)
-- `FARCASTER_OPENCODE_PATH`: OpenCode executable override
-- `FARCASTER_PI_TITLE_MODEL`: Pi model ID (or `provider/model`) for automatic session titles
-- `FARCASTER_CODEX_TITLE_MODEL`: Codex model ID (or `provider/model`) for automatic session titles
+- `FARCASTER_PI_PATH`: Pi executable
+- `FARCASTER_CODEX_PATH`: Codex executable
+- `FARCASTER_CURSOR_PATH`: Cursor Agent executable
+- `FARCASTER_OPENCODE_PATH`: OpenCode executable
+- `FARCASTER_PI_TITLE_MODEL`: Pi model for automatic session titles
+- `FARCASTER_CODEX_TITLE_MODEL`: Codex model for automatic session titles
 - `FARCASTER_DATA_DIR`: application database, project registry, and logs
-- `FARCASTER_SHELL`: login shell override
-- `FARCASTER_GIT`, `FARCASTER_JJ`, `FARCASTER_NVIM`: executable overrides
+- `FARCASTER_SHELL`: login shell
+- `FARCASTER_GIT`, `FARCASTER_JJ`, `FARCASTER_NVIM`: tool executables
 
-On all platforms, application data defaults to `$XDG_DATA_HOME/farcaster` or
-`~/.local/share/farcaster` when `XDG_DATA_HOME` is unset.
+Application data defaults to `$XDG_DATA_HOME/farcaster`, or
+`~/.local/share/farcaster` when `XDG_DATA_HOME` is unset. Run `make logs` to read
+the application log.
 
-## Check
+## Development
 
 ```sh
-cargo fmt --check
-cargo test
-cargo check
-cargo clippy --all-targets -- -D warnings
+make check
+cargo bench --bench transcript
 ```
 
-Run the transcript benchmark with:
+Create a native bundle with Cargo Packager 0.11.8:
 
 ```sh
-cargo bench --bench transcript
+cargo install cargo-packager --version 0.11.8 --locked
+make bundle
 ```

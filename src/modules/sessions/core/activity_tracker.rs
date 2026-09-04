@@ -33,9 +33,8 @@ impl ExternalActivityTracker {
                 continue;
             }
             self.deadlines.insert(path, now + RUNNING_ACTIVITY_TIMEOUT);
-            // Every external write can be the terminal assistant entry. Refresh
-            // even while the activity deadline is already armed so a completed
-            // terminal session does not remain stuck in its previous state.
+            // Reload external state on every write, even while its activity
+            // deadline is already armed.
             refresh = true;
         }
         refresh

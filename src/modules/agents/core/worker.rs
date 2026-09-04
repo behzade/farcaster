@@ -30,7 +30,6 @@ impl WorkerSendMode {
     }
 }
 
-/// Backend-neutral names for operations with shared transcript presentation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CommonTool {
     Read,

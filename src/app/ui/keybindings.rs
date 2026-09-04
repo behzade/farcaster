@@ -77,7 +77,6 @@ const DEFAULT_APPLICATION_MODIFIER: ApplicationModifier = if cfg!(target_os = "m
 
 static APPLICATION_MODIFIER: AtomicU8 = AtomicU8::new(DEFAULT_APPLICATION_MODIFIER as u8);
 
-/// Sets the initial modifier before application key bindings are registered.
 /// A saved choice takes priority over the legacy environment override.
 pub(crate) fn initialize_application_modifier(saved: Option<&str>) {
     let environment = std::env::var("FARCASTER_APP_MODIFIER")
@@ -90,7 +89,6 @@ pub(crate) fn initialize_application_modifier(saved: Option<&str>) {
     );
 }
 
-/// Returns the process-wide application modifier.
 pub(crate) fn application_modifier() -> ApplicationModifier {
     match APPLICATION_MODIFIER.load(Ordering::Relaxed) {
         value if value == ApplicationModifier::Command as u8 => ApplicationModifier::Command,

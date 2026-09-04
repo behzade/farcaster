@@ -94,7 +94,7 @@ fn rpc_command(
     }
     prepared
         .env("FARCASTER_NATIVE_NOTIFICATIONS", "1")
-        // Compatibility with existing Pi notification extensions.
+        // Legacy alias used by pi-gpui notification extensions.
         .env("PI_GPUI_NATIVE_NOTIFICATIONS", "1");
     if matches!(command.access_mode, HarnessAccessMode::Full) {
         prepared.env("PI_NONO_DISABLED", "1");

@@ -1,4 +1,4 @@
-//! Stateless MCP delivery adapter for Farcaster-owned capabilities.
+//! Sessionless Streamable HTTP adapter for Farcaster-owned MCP capabilities.
 
 mod notices;
 mod workers;

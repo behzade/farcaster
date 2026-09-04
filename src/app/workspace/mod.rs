@@ -1,5 +1,3 @@
-//! Native workspace surfaces and focus coordination.
-
 use std::time::Duration;
 
 use super::*;
