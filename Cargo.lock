@@ -1815,6 +1815,7 @@ dependencies = [
  "thiserror 2.0.19",
  "time",
  "tokio",
+ "tpt-logfmt-parse",
  "url",
  "uzers",
  "workgraph",
@@ -6676,6 +6677,12 @@ name = "tower-service"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
+
+[[package]]
+name = "tpt-logfmt-parse"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed2526905ef8ebae5af2ac8d497b7e27ee55d69b0746213de22d524760d386ad"
 
 [[package]]
 name = "tracing"
