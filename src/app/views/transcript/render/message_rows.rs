@@ -2,7 +2,10 @@ use gpui::{
     AnyElement, Entity, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
 };
-use gpui_component::text::{TextViewState, TextViewStyle};
+use gpui_component::{
+    text::{TextViewState, TextViewStyle},
+    tooltip::Tooltip,
+};
 
 use crate::app::{
     FarcasterApp,
@@ -29,6 +32,7 @@ pub(super) fn render_invocation(
     let attachments_entity = entity.clone();
     let resolved_ready = !resolved.is_empty();
     let skill = kind == "Skill";
+    let tooltip = invocation_tooltip_text(item);
     div()
         .id(("invocation-row", key))
         .w_full()
@@ -79,7 +83,10 @@ pub(super) fn render_invocation(
                         THEME.colors.muted
                     })
                     .child(if resolved_ready { kind } else { "Resolving" }),
-            ),
+            )
+            .when_some(tooltip, |row, tooltip| {
+                row.tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+            }),
         )
         .when(expanded && resolved_ready, |row| {
             row.child(
@@ -131,6 +138,28 @@ pub(in crate::app::views::transcript) fn invocation_kind(
 
 pub(super) fn invocation_resolution(item: &TranscriptItem) -> &str {
     item.invocation.as_deref().unwrap_or_default()
+}
+
+fn invocation_tooltip_text(item: &TranscriptItem) -> Option<String> {
+    const MAX_PREVIEW_CHARS: usize = 320;
+
+    let resolved = item.invocation.as_deref()?.trim();
+    if resolved.is_empty() {
+        return None;
+    }
+    let compact = resolved.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut characters = compact.chars();
+    let mut preview = characters
+        .by_ref()
+        .take(MAX_PREVIEW_CHARS)
+        .collect::<String>();
+    if characters.next().is_some() {
+        preview.push('…');
+    }
+    Some(format!(
+        "{} expansion: {preview}",
+        invocation_kind(&item.text, resolved)
+    ))
 }
 
 pub(super) fn resolved_contains_skill(resolved: &str) -> bool {
@@ -216,6 +245,7 @@ pub(super) fn render_message(
 ) -> AnyElement {
     let user = item.kind == TranscriptKind::User;
     let role = item_role_label(item, assistant_label);
+    let tooltip = invocation_tooltip_text(item);
     div()
         .id(("transcript-row", key))
         .w_full()
@@ -228,6 +258,9 @@ pub(super) fn render_message(
         })
         .when(follows_tool, |row| {
             row.mt(THEME.space.md).pt(THEME.space.sm)
+        })
+        .when_some(tooltip, |row, tooltip| {
+            row.tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
         })
         .children(role.map(|role| message_role(role, user)))
         .when(user && !item.images.is_empty(), |row| {
