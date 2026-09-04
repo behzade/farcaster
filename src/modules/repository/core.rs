@@ -257,17 +257,25 @@ pub(super) fn discover_location(
     let Some((workspace_root, kind)) =
         find_marker(&project_root, preference, git_available, jj_available)?
     else {
-        return match preference {
-            BackendPreference::Auto => Ok(None),
-            BackendPreference::Git => Err(RepositoryError::BackendUnavailable {
-                kind: RepositoryKind::Git,
-                project: project_root,
-            }),
-            BackendPreference::Jujutsu => Err(RepositoryError::BackendUnavailable {
-                kind: RepositoryKind::Jujutsu,
-                project: project_root,
-            }),
+        let unavailable_kind = match preference {
+            BackendPreference::Auto => return Ok(None),
+            BackendPreference::Git => RepositoryKind::Git,
+            BackendPreference::Jujutsu => RepositoryKind::Jujutsu,
         };
+        if find_marker(
+            &project_root,
+            BackendPreference::Auto,
+            git_available,
+            jj_available,
+        )?
+        .is_none()
+        {
+            return Ok(None);
+        }
+        return Err(RepositoryError::BackendUnavailable {
+            kind: unavailable_kind,
+            project: project_root,
+        });
     };
     Ok(Some(RepositoryLocation {
         kind,

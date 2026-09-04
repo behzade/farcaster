@@ -130,7 +130,12 @@ impl FarcasterApp {
                         .children(self.background_jobs.iter().map(background_job_row)),
                 )
             })
-            .child(inspector_section().child(self.render_repository(entity.clone())))
+            .when(
+                !self.repository.execution_allowed
+                    || self.repository.backend.is_some()
+                    || self.repository.error.is_some(),
+                |run| run.child(inspector_section().child(self.render_repository(entity.clone()))),
+            )
             .when(!completed.is_empty(), |run| {
                 run.child(
                     inspector_section()
