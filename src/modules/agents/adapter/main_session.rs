@@ -321,6 +321,18 @@ impl WorkerSessionTransport {
                     "usage": usage_json(usage.turn),
                 })
             }
+            WorkerActivity::CommandsChanged { commands } => {
+                self.metadata.commands.clone_from(&commands);
+                self.pending
+                    .push_back(SessionEvent::Response(SessionResponse {
+                        id: None,
+                        operation: SessionOperation::ListCommands,
+                        success: true,
+                        data: json!({"commands": commands}),
+                        error: None,
+                    }));
+                return;
+            }
             WorkerActivity::ServiceStatusChanged {
                 name,
                 status,

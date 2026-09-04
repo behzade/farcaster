@@ -106,6 +106,43 @@ pub(super) fn metadata_from_options(
     (metadata, ids)
 }
 
+pub(super) fn commands_from_update(
+    message: &super::wire::AcpInbound,
+    session_id: &str,
+) -> Option<Vec<Value>> {
+    let super::wire::AcpInbound::Notification { method, params } = message else {
+        return None;
+    };
+    if method != "session/update"
+        || params.get("sessionId").and_then(Value::as_str) != Some(session_id)
+        || params
+            .pointer("/update/sessionUpdate")
+            .and_then(Value::as_str)
+            != Some("available_commands_update")
+    {
+        return None;
+    }
+    commands_from_value(params.get("update")?)
+}
+
+pub(super) fn commands_from_value(update: &Value) -> Option<Vec<Value>> {
+    Some(
+        update
+            .get("availableCommands")?
+            .as_array()?
+            .iter()
+            .filter_map(|command| {
+                let name = command.get("name")?.as_str()?.trim_start_matches('/');
+                Some(json!({
+                    "name": name,
+                    "description": command.get("description").and_then(Value::as_str),
+                    "source": "prompt",
+                }))
+            })
+            .collect(),
+    )
+}
+
 pub(super) fn content_text(content: &Value) -> Option<String> {
     content
         .get("text")
@@ -273,5 +310,28 @@ mod tests {
             })),
             json!([{"type": "text", "text": "done"}])
         );
+    }
+
+    #[test]
+    fn available_commands_update_becomes_prompt_commands() {
+        let message = super::super::wire::AcpInbound::Notification {
+            method: "session/update".into(),
+            params: json!({
+                "sessionId": "one",
+                "update": {
+                    "sessionUpdate": "available_commands_update",
+                    "availableCommands": [{"name":"/review","description":"Review changes"}]
+                }
+            }),
+        };
+        assert_eq!(
+            commands_from_update(&message, "one"),
+            Some(vec![json!({
+                "name": "review",
+                "description": "Review changes",
+                "source": "prompt"
+            })])
+        );
+        assert_eq!(commands_from_update(&message, "other"), None);
     }
 }

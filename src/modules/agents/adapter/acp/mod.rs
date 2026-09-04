@@ -1,5 +1,6 @@
 mod catalog;
 mod connection;
+mod cursor_extension;
 mod translate;
 mod wire;
 mod worker;
