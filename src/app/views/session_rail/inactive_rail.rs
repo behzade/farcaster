@@ -11,7 +11,7 @@ use super::{
         ARCHIVED_LEADING_GAP, INACTIVE_PREVIEW_LIMIT, inactive_session_badge,
         session_section_drop_target, subagent_counts,
     },
-    rows::{session_row, session_row_with_height},
+    rows::{SessionRow, SessionRowInput},
     session_item_identity,
 };
 use crate::{
@@ -73,16 +73,14 @@ impl FarcasterApp {
                     .editing_session_title
                     .as_ref()
                     .is_some_and(|edit| edit.path == item.session.path);
-                session_row_with_height(
+                SessionRow::new(
                     item,
-                    selected,
-                    badge,
-                    None,
-                    None,
-                    true,
-                    editing.then(|| self.session_title_input.clone()),
-                    counts.get(item.session.id.as_str()).copied().unwrap_or(0),
-                    THEME.controls.archived_preview_row,
+                    SessionRowInput {
+                        title_editor: editing.then(|| self.session_title_input.clone()),
+                        subagents: counts.get(item.session.id.as_str()).copied().unwrap_or(0),
+                        row_height: THEME.controls.archived_preview_row,
+                        ..SessionRowInput::standard(selected, badge)
+                    },
                     entity.clone(),
                 )
             })
@@ -107,17 +105,16 @@ impl FarcasterApp {
                     &waiting_roots,
                 );
                 let editing = editing_path.as_deref() == Some(item.session.path.as_path());
-                session_row(
+                SessionRow::new(
                     item,
-                    selected,
-                    badge,
-                    None,
-                    None,
-                    true,
-                    editing.then(|| title_input.clone()),
-                    counts.get(item.session.id.as_str()).copied().unwrap_or(0),
+                    SessionRowInput {
+                        title_editor: editing.then(|| title_input.clone()),
+                        subagents: counts.get(item.session.id.as_str()).copied().unwrap_or(0),
+                        ..SessionRowInput::standard(selected, badge)
+                    },
                     row_entity.clone(),
                 )
+                .into_any_element()
             }
             None => div().into_any_element(),
         })

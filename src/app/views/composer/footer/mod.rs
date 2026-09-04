@@ -22,6 +22,7 @@ impl FarcasterApp {
         &self,
         entity: WeakEntity<Self>,
         show_usage: bool,
+        scroll: &gpui::ScrollHandle,
     ) -> AnyElement {
         let mut footer = div()
             .id("composer-footer-controls")
@@ -30,7 +31,7 @@ impl FarcasterApp {
             .flex()
             .items_center()
             .overflow_x_scroll()
-            .track_scroll(&self.view.composer.footer_scroll)
+            .track_scroll(scroll)
             .child(runtime::render(self, entity));
 
         if show_usage {

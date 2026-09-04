@@ -6,7 +6,6 @@ use super::transcript::TranscriptRow;
 use crate::app::ui::persistent_vec::PersistentVec;
 
 pub(crate) struct ViewState {
-    pub(crate) composer: ComposerViewState,
     pub(crate) overlays: OverlayViewState,
     pub(crate) run_panel: RunPanelViewState,
     pub(crate) session_rail: SessionRailViewState,
@@ -16,10 +15,6 @@ pub(crate) struct ViewState {
 impl ViewState {
     pub(crate) fn new(transcript_list: super::transcript::list::TranscriptListState) -> Self {
         Self {
-            composer: ComposerViewState {
-                suggestion_selection: 0,
-                footer_scroll: ScrollHandle::new(),
-            },
             overlays: OverlayViewState::default(),
             run_panel: RunPanelViewState {
                 width: super::super::ui::theme::THEME.layout.run_panel,
@@ -43,11 +38,6 @@ impl ViewState {
             },
         }
     }
-}
-
-pub(crate) struct ComposerViewState {
-    pub(crate) suggestion_selection: usize,
-    pub(crate) footer_scroll: ScrollHandle,
 }
 
 #[derive(Default)]

@@ -17,6 +17,158 @@ use crate::{
     },
 };
 
+fn render_node_identity(node: &workgraph::Node, current: bool, leaf: bool) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap(THEME.space.md)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(THEME.space.sm)
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(THEME.space.xs)
+                        .when(current, |status| {
+                            status
+                                .child(div().size(px(8.0)).rounded_full().bg(THEME.colors.accent))
+                                .child(
+                                    div()
+                                        .text_size(THEME.type_scale.caption)
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(THEME.colors.accent)
+                                        .child("CURRENT"),
+                                )
+                        }),
+                )
+                .child(
+                    div()
+                        .text_size(THEME.type_scale.caption)
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(THEME.colors.muted)
+                        .child(format!(
+                            "NODE {}{}",
+                            node.number,
+                            if leaf { " · LEAF" } else { "" }
+                        )),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(THEME.space.xs)
+                .child(
+                    div()
+                        .text_size(THEME.type_scale.display)
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .line_height(THEME.type_scale.line_composer)
+                        .child(node.title.clone()),
+                )
+                .child(
+                    div()
+                        .text_size(THEME.type_scale.caption)
+                        .text_color(THEME.colors.subtle)
+                        .child(requirement_label(node.completion)),
+                ),
+        )
+}
+
+fn render_acceptance(node: &workgraph::Node) -> impl IntoElement {
+    detail_section("ACCEPTANCE").child(
+        detail_copy()
+            .text_color(if node.acceptance.is_empty() {
+                THEME.colors.subtle
+            } else {
+                THEME.colors.text
+            })
+            .child(if node.acceptance.is_empty() {
+                "No acceptance condition recorded.".to_owned()
+            } else {
+                node.acceptance.clone()
+            }),
+    )
+}
+
+fn render_scoped_paths(node: &workgraph::Node) -> impl IntoElement {
+    detail_section("SCOPED PATHS")
+        .when(node.files.is_empty(), |section| {
+            section.child(detail_empty("No paths recorded."))
+        })
+        .children(node.files.iter().map(|path| {
+            div()
+                .text_size(THEME.type_scale.body_small)
+                .text_color(THEME.colors.code)
+                .child(path.clone())
+        }))
+}
+
+fn render_outcome(outcome: Option<&workgraph::WalkStep>, current: bool) -> impl IntoElement {
+    detail_section("OUTCOME")
+        .when_some(outcome, |section, step| {
+            section
+                .child(detail_copy().child(step.outcome.note.clone()))
+                .child(
+                    div()
+                        .text_size(THEME.type_scale.caption)
+                        .text_color(THEME.colors.subtle)
+                        .child(format!(
+                            "{} · {}",
+                            evidence_label(step.outcome.evidence.kind),
+                            step.outcome.evidence.reference
+                        )),
+                )
+        })
+        .when(outcome.is_none(), |section| {
+            section.child(detail_empty(if current {
+                "Record one concise outcome to advance."
+            } else {
+                "This state has not been reached on the active walk."
+            }))
+        })
+}
+
+fn render_successors(
+    successors: Vec<workgraph::Node>,
+    add_successor: Entity<WorkGraphBoardView>,
+    entity: Entity<WorkGraphBoardView>,
+) -> impl IntoElement {
+    let leaf = successors.is_empty();
+    detail_section("NEXT STATES")
+        .when(leaf, |section| {
+            section.child(detail_empty("Leaf — completing this node ends the branch"))
+        })
+        .children(successors.into_iter().map(|successor| {
+            let number = successor.number;
+            let entity = entity.clone();
+            div()
+                .id(format!("workgraph-successor-{number}"))
+                .cursor_pointer()
+                .rounded(THEME.radius)
+                .px(THEME.space.xs)
+                .py(THEME.space.xs)
+                .hover(|row| row.bg(THEME.colors.hover))
+                .on_click(move |_, _, cx| {
+                    entity.update(cx, |this, cx| this.select_node(number, cx));
+                })
+                .text_size(THEME.type_scale.body_small)
+                .child(successor.title)
+        }))
+        .child(detail_action(button(
+            "workgraph-detail-add-successor",
+            "Add successor",
+            ButtonTone::Quiet,
+            true,
+            move |window, cx| {
+                add_successor.update(cx, |this, cx| this.start_create(window, cx));
+            },
+        )))
+}
+
 impl WorkGraphBoardView {
     pub(super) fn render_detail(
         &self,
@@ -105,153 +257,14 @@ impl WorkGraphBoardView {
                                 },
                             )))
                         })
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .gap(THEME.space.sm)
-                                .child(div().flex().items_center().gap(THEME.space.xs).when(
-                                    current,
-                                    |status| {
-                                        status
-                                            .child(
-                                                div()
-                                                    .size(px(8.0))
-                                                    .rounded_full()
-                                                    .bg(THEME.colors.accent),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_size(THEME.type_scale.caption)
-                                                    .font_weight(FontWeight::SEMIBOLD)
-                                                    .text_color(THEME.colors.accent)
-                                                    .child("CURRENT"),
-                                            )
-                                    },
-                                ))
-                                .child(
-                                    div()
-                                        .text_size(THEME.type_scale.caption)
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(THEME.colors.muted)
-                                        .child(format!(
-                                            "NODE {}{}",
-                                            node.number,
-                                            if leaf { " · LEAF" } else { "" }
-                                        )),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap(THEME.space.xs)
-                                .child(
-                                    div()
-                                        .text_size(THEME.type_scale.display)
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .line_height(THEME.type_scale.line_composer)
-                                        .child(node.title.clone()),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(THEME.type_scale.caption)
-                                        .text_color(THEME.colors.subtle)
-                                        .child(requirement_label(node.completion)),
-                                ),
-                        )
+                        .child(render_node_identity(node, current, leaf))
                         .child(detail_rule())
-                        .child(
-                            detail_section("ACCEPTANCE").child(
-                                detail_copy()
-                                    .text_color(if node.acceptance.is_empty() {
-                                        THEME.colors.subtle
-                                    } else {
-                                        THEME.colors.text
-                                    })
-                                    .child(if node.acceptance.is_empty() {
-                                        "No acceptance condition recorded.".to_owned()
-                                    } else {
-                                        node.acceptance.clone()
-                                    }),
-                            ),
-                        )
-                        .child(
-                            detail_section("SCOPED PATHS")
-                                .when(node.files.is_empty(), |section| {
-                                    section.child(detail_empty("No paths recorded."))
-                                })
-                                .children(node.files.iter().map(|path| {
-                                    div()
-                                        .text_size(THEME.type_scale.body_small)
-                                        .text_color(THEME.colors.code)
-                                        .child(path.clone())
-                                })),
-                        )
+                        .child(render_acceptance(node))
+                        .child(render_scoped_paths(node))
                         .child(detail_rule())
-                        .child(
-                            detail_section("OUTCOME")
-                                .when_some(outcome, |section, step| {
-                                    section
-                                        .child(detail_copy().child(step.outcome.note.clone()))
-                                        .child(
-                                            div()
-                                                .text_size(THEME.type_scale.caption)
-                                                .text_color(THEME.colors.subtle)
-                                                .child(format!(
-                                                    "{} · {}",
-                                                    evidence_label(step.outcome.evidence.kind),
-                                                    step.outcome.evidence.reference
-                                                )),
-                                        )
-                                })
-                                .when(outcome.is_none(), |section| {
-                                    section.child(detail_empty(if current {
-                                        "Record one concise outcome to advance."
-                                    } else {
-                                        "This state has not been reached on the active walk."
-                                    }))
-                                }),
-                        )
+                        .child(render_outcome(outcome, current))
                         .child(detail_rule())
-                        .child(
-                            detail_section("NEXT STATES")
-                                .when(leaf, |section| {
-                                    section.child(detail_empty(
-                                        "Leaf — completing this node ends the branch",
-                                    ))
-                                })
-                                .children(successors.into_iter().map(|successor| {
-                                    let number = successor.number;
-                                    let entity = entity.clone();
-                                    div()
-                                        .id(format!("workgraph-successor-{number}"))
-                                        .cursor_pointer()
-                                        .rounded(THEME.radius)
-                                        .px(THEME.space.xs)
-                                        .py(THEME.space.xs)
-                                        .hover(|row| row.bg(THEME.colors.hover))
-                                        .on_click(move |_, _, cx| {
-                                            entity.update(cx, |this, cx| {
-                                                this.select_node(number, cx);
-                                            });
-                                        })
-                                        .text_size(THEME.type_scale.body_small)
-                                        .child(successor.title)
-                                }))
-                                .child(detail_action(button(
-                                    "workgraph-detail-add-successor",
-                                    "Add successor",
-                                    ButtonTone::Quiet,
-                                    true,
-                                    move |window, cx| {
-                                        add_successor.update(cx, |this, cx| {
-                                            this.start_create(window, cx);
-                                        });
-                                    },
-                                ))),
-                        )
+                        .child(render_successors(successors, add_successor, entity))
                         .when_some(session_action, |detail, action| {
                             detail.child(detail_action(action))
                         })

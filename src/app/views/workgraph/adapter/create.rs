@@ -23,19 +23,22 @@ impl WorkGraphBoardView {
         if self.create_stage.is_open() {
             return;
         }
-        if let Some(title) = &self.create_title {
-            title.update(cx, |input, cx| input.set_value(String::new(), window, cx));
-        }
-        if let Some(detail) = &self.create_detail {
-            detail.update(cx, |input, cx| input.set_value(String::new(), window, cx));
-        }
+        self.create_title
+            .update(cx, |input, cx| input.set_value(String::new(), window, cx));
+        self.create_detail
+            .update(cx, |input, cx| input.set_value(String::new(), window, cx));
         self.create_stage = if matches!(&self.state, PlanLoadState::Ready(data) if data.snapshot.is_some())
         {
             CreateStage::Node
         } else {
             CreateStage::CurrentState
         };
-        self.pending_create_focus = true;
+        let focus = match self.create_stage {
+            CreateStage::Node => self.create_title.read(cx).focus_handle(cx),
+            CreateStage::CurrentState => self.create_detail.read(cx).focus_handle(cx),
+            CreateStage::Closed | CreateStage::Outcome => unreachable!("create stage just opened"),
+        };
+        cx.defer_in(window, move |_, window, cx| focus.focus(window, cx));
         cx.notify();
     }
 
@@ -44,15 +47,13 @@ impl WorkGraphBoardView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let has_current_state = self
-            .create_detail
-            .as_ref()
-            .is_some_and(|detail| !detail.read(cx).value().trim().is_empty());
+        let has_current_state = !self.create_detail.read(cx).value().trim().is_empty();
         if self.create_stage == CreateStage::CurrentState && has_current_state {
             self.create_stage = CreateStage::Outcome;
-            if let Some(title) = &self.create_title {
-                title.read(cx).focus_handle(cx).focus(window, cx);
-            }
+            self.create_title
+                .read(cx)
+                .focus_handle(cx)
+                .focus(window, cx);
             cx.notify();
         }
     }
@@ -64,9 +65,10 @@ impl WorkGraphBoardView {
     ) {
         if self.create_stage == CreateStage::Outcome {
             self.create_stage = CreateStage::CurrentState;
-            if let Some(detail) = &self.create_detail {
-                detail.read(cx).focus_handle(cx).focus(window, cx);
-            }
+            self.create_detail
+                .read(cx)
+                .focus_handle(cx)
+                .focus(window, cx);
             cx.notify();
         }
     }
@@ -78,7 +80,6 @@ impl WorkGraphBoardView {
     ) {
         if self.create_stage.is_open() {
             self.create_stage = CreateStage::Closed;
-            self.pending_create_focus = false;
             self.focus.focus(window, cx);
             cx.notify();
         }
@@ -89,22 +90,16 @@ impl WorkGraphBoardView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(title_input) = &self.create_title else {
-            return;
-        };
-        let Some(detail_input) = &self.create_detail else {
-            return;
-        };
-        let title = title_input.read(cx).value().trim().to_owned();
-        let detail = detail_input.read(cx).value().trim().to_owned();
+        let title = self.create_title.read(cx).value().trim().to_owned();
+        let detail = self.create_detail.read(cx).value().trim().to_owned();
         let has_plan = matches!(&self.state, PlanLoadState::Ready(data) if data.snapshot.is_some());
         if !create_form_valid(has_plan, &title, &detail) {
             return;
         }
-        title_input.update(cx, |input, cx| {
+        self.create_title.update(cx, |input, cx| {
             input.set_value(String::new(), window, cx);
         });
-        detail_input.update(cx, |input, cx| {
+        self.create_detail.update(cx, |input, cx| {
             input.set_value(String::new(), window, cx);
         });
         self.focus.focus(window, cx);
@@ -143,7 +138,6 @@ impl WorkGraphBoardView {
             let result = edit.await;
             let _ = weak.update(cx, |this, cx| {
                 this.create_stage = CreateStage::Closed;
-                this.pending_create_focus = false;
                 match result {
                     Ok((data, number)) => {
                         this.state = PlanLoadState::Ready(Box::new(data));

@@ -10,13 +10,13 @@ use gpui_component::{
 
 use super::{
     FarcasterApp, active_item_identity,
-    draft_row::draft_session_row,
+    draft_row::{DraftRow, DraftRowInput},
     groups::{
         ActiveSessionItem, SessionRailKind, roots_waiting_for_descendants, session_rail_lists,
     },
     reconcile_list_rows,
     rendering::{inactive_rail_style, session_section_drop_target, subagent_counts},
-    rows::{project_label, session_badge, session_row},
+    rows::{SessionRow, SessionRowInput, project_label, session_badge},
     visible_session_shortcuts,
 };
 use crate::{
@@ -96,14 +96,17 @@ impl FarcasterApp {
                     let drop_position = active_drop_target
                         .filter(|(target, _)| *target == draft.app_session_id)
                         .map(|(_, position)| position);
-                    draft_session_row(
+                    DraftRow::new(
                         draft,
-                        selected,
-                        &status,
-                        shortcut,
-                        drop_position,
+                        DraftRowInput {
+                            selected,
+                            status,
+                            shortcut,
+                            drop_position,
+                        },
                         active_row_entity.clone(),
                     )
+                    .into_any_element()
                 }
                 Some(ActiveSessionItem::Session(item)) => {
                     let selected =
@@ -124,17 +127,21 @@ impl FarcasterApp {
                     let drop_position = active_drop_target
                         .filter(|(target, _)| *target == item.session.app_session_id)
                         .map(|(_, position)| position);
-                    session_row(
+                    SessionRow::new(
                         item,
-                        selected,
-                        badge,
-                        shortcut,
-                        drop_position,
-                        true,
-                        editing.then(|| active_title_input.clone()),
-                        counts.get(item.session.id.as_str()).copied().unwrap_or(0),
+                        SessionRowInput {
+                            selected,
+                            status: badge,
+                            shortcut,
+                            drop_position,
+                            draggable: true,
+                            title_editor: editing.then(|| active_title_input.clone()),
+                            subagents: counts.get(item.session.id.as_str()).copied().unwrap_or(0),
+                            row_height: THEME.layout.session_row_height,
+                        },
                         active_row_entity.clone(),
                     )
+                    .into_any_element()
                 }
                 None => div().into_any_element(),
             },
