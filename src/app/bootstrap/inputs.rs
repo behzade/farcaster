@@ -19,7 +19,7 @@ pub(super) fn create(
 ) -> BootstrapInputs {
     let composer = cx.new(|cx| {
         TextareaState::new(window, cx)
-            .auto_grow(3, 8)
+            .auto_grow(1, 8)
             .submit_on_enter(true)
             .placeholder("Ask Pi")
     });

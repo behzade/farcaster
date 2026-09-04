@@ -52,7 +52,7 @@ impl RenderOnce for ComposerInput {
             .key_context(COMPOSER_KEY_CONTEXT)
             .relative()
             .flex_1()
-            .min_h(px(112.0))
+            .min_h(px(48.0))
             .font_family(MONO_FONT_FAMILY)
             .text_size(THEME.type_scale.reading)
             .line_height(THEME.type_scale.line_composer)

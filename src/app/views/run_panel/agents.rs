@@ -92,7 +92,7 @@ impl FarcasterApp {
                         .flex_1()
                         .overflow_hidden()
                         .whitespace_normal()
-                        .line_clamp(2)
+                        .line_clamp(3)
                         .line_height(THEME.type_scale.line_body)
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(THEME.colors.text)

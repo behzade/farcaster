@@ -34,6 +34,8 @@ use crate::{
 
 #[path = "render/chunking.rs"]
 mod chunking;
+#[path = "render/command_summary.rs"]
+mod command_summary;
 #[path = "render/detail_rows.rs"]
 mod detail_rows;
 #[path = "render/message_rows.rs"]
@@ -552,6 +554,7 @@ fn transcript_markdown_style_with_inline_code(inline_code: HighlightStyle) -> Te
     code_block.restrict_scroll_to_axis = Some(true);
     TextViewStyle {
         paragraph_gap: rems(0.5),
+        prose_max_width: Some(px(780.0)),
         heading_base_font_size: THEME.type_scale.reading,
         highlight_theme: HighlightTheme::default_dark(),
         code_block,
@@ -570,9 +573,14 @@ fn fenced_text(text: &str) -> String {
 
 pub(super) fn tool_target(arguments: &str) -> String {
     let first = if let Some((_, command)) = conversation::split_command_block(arguments) {
-        command.lines().next().unwrap_or_default().trim()
+        return command_summary::command_summary(command);
     } else {
         let first = arguments.lines().next().unwrap_or_default();
+        if let Some((name, command)) = arguments.split_once(':')
+            && matches!(name.trim().to_ascii_lowercase().as_str(), "command" | "cmd")
+        {
+            return command_summary::command_summary(command);
+        }
         first
             .split_once(':')
             .map(|(_, value)| value.trim())
