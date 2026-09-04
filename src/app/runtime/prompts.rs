@@ -11,6 +11,7 @@ use super::{RuntimeEvent, RuntimeOwner, can_send_prompt, conversation_mut};
 pub(super) struct DeferredPrompt {
     pub(super) mode: PromptMode,
     pub(super) message: String,
+    pub(super) auto_title: bool,
     pub(super) display_message: Option<String>,
     pub(super) invocation: Option<String>,
     pub(super) images: Vec<PromptImage>,
@@ -85,19 +86,7 @@ impl RuntimeOwner {
         };
         self.pending_prompt_target = Some(target);
         self.snapshot.pending_question = None;
-        let unnamed_fresh_session = self
-            .snapshot
-            .session
-            .as_ref()
-            .is_none_or(|state| state.message_count == 0 && state.session_name.is_none());
-        if mode == PromptMode::Normal
-            && !was_running
-            && unnamed_fresh_session
-            && self.title_generation.pending_prompt.is_none()
-            && agents::supports_auto_title_generation(&self.harness)
-        {
-            self.title_generation.pending_prompt = Some(message.clone());
-        }
+        let auto_title = self.should_generate_automatic_title(mode, was_running);
         let native_invocation = crate::app::composer::user_invocations::contains_invocation(
             &message,
             &self.snapshot.commands,
@@ -123,6 +112,7 @@ impl RuntimeOwner {
         self.dispatch_prompt(
             mode,
             message,
+            auto_title,
             display_message,
             invocation,
             images,
@@ -135,18 +125,7 @@ impl RuntimeOwner {
         self.snapshot.project = self.project.clone();
         self.snapshot.selected_session = prompt.session.clone();
         self.pending_prompt_target = Some(prompt.target);
-        let unnamed_fresh_session = self
-            .snapshot
-            .session
-            .as_ref()
-            .is_none_or(|state| state.message_count == 0 && state.session_name.is_none());
-        if prompt.mode == PromptMode::Normal
-            && unnamed_fresh_session
-            && self.title_generation.pending_prompt.is_none()
-            && agents::supports_auto_title_generation(&self.harness)
-        {
-            self.title_generation.pending_prompt = Some(prompt.message.clone());
-        }
+        let auto_title = self.should_generate_automatic_title(prompt.mode, false);
         let native_invocation = crate::app::composer::user_invocations::contains_invocation(
             &prompt.message,
             &self.snapshot.commands,
@@ -171,6 +150,7 @@ impl RuntimeOwner {
         self.dispatch_prompt(
             prompt.mode,
             prompt.message,
+            auto_title,
             prompt.display_message,
             prompt.invocation,
             prompt.images,
@@ -182,48 +162,27 @@ impl RuntimeOwner {
         &mut self,
         mode: PromptMode,
         message: String,
+        auto_title: bool,
         display_message: Option<String>,
         invocation: Option<String>,
         images: Vec<PromptImage>,
         outbox_id: Option<i64>,
     ) {
-        if self.snapshot.history_preview {
-            let path = self.snapshot.selected_session.clone();
+        let start_process = self.snapshot.history_preview || self.process.is_none();
+        if start_process || !self.startup_state_loaded || !self.startup_history_loaded {
             self.pending_outbox_id = outbox_id;
             self.deferred_prompt = Some(DeferredPrompt {
                 mode,
                 message,
+                auto_title,
                 display_message,
                 invocation,
                 images,
                 outbox_id,
             });
-            self.start_process(path);
-            return;
-        }
-        if self.process.is_none() {
-            self.pending_outbox_id = outbox_id;
-            self.deferred_prompt = Some(DeferredPrompt {
-                mode,
-                message,
-                display_message,
-                invocation,
-                images,
-                outbox_id,
-            });
-            self.start_process(self.snapshot.selected_session.clone());
-            return;
-        }
-        if !self.startup_state_loaded || !self.startup_history_loaded {
-            self.pending_outbox_id = outbox_id;
-            self.deferred_prompt = Some(DeferredPrompt {
-                mode,
-                message,
-                display_message,
-                invocation,
-                images,
-                outbox_id,
-            });
+            if start_process {
+                self.start_process(self.snapshot.selected_session.clone());
+            }
             return;
         }
         if self.active_session.is_none() {
@@ -250,6 +209,7 @@ impl RuntimeOwner {
             self.reject_prompt(&target, error);
             return;
         }
+        let title_prompt = auto_title.then(|| message.clone());
         let request = SessionCommand::Prompt {
             mode,
             message,
@@ -259,6 +219,9 @@ impl RuntimeOwner {
             Some(Ok(id)) => {
                 self.pending_prompt_id = Some(id);
                 self.pending_outbox_id = outbox_id;
+                if self.title_generation.pending_prompt.is_none() {
+                    self.title_generation.pending_prompt = title_prompt;
+                }
             }
             Some(Err(error)) => {
                 self.mark_outbox_failed(error.as_str());
@@ -270,6 +233,18 @@ impl RuntimeOwner {
                 self.fail(format!("Cannot send prompt: {error}"));
             }
         }
+    }
+
+    fn should_generate_automatic_title(&self, mode: PromptMode, was_running: bool) -> bool {
+        mode == PromptMode::Normal
+            && !was_running
+            && self
+                .snapshot
+                .session
+                .as_ref()
+                .is_none_or(|state| state.message_count == 0 && state.session_name.is_none())
+            && self.title_generation.pending_prompt.is_none()
+            && agents::supports_auto_title_generation(&self.harness)
     }
 
     pub(super) fn reject_prompt(&mut self, target: &str, message: String) {
@@ -332,6 +307,7 @@ impl RuntimeOwner {
             self.dispatch_prompt(
                 prompt.mode,
                 prompt.message,
+                prompt.auto_title,
                 prompt.display_message,
                 prompt.invocation,
                 prompt.images,
