@@ -123,7 +123,7 @@ fn builtin_mcp_setting(enabled: bool, entity: WeakEntity<FarcasterApp>) -> AnyEl
         .gap(THEME.space.md)
         .child(setting_label(
             "Built-in MCP",
-            "Adds Farcaster tools to new agent sessions.",
+            "Runs the local MCP server and adds tools to new sessions. Turning it off disconnects existing MCP clients.",
         ))
         .child(
             Button::new("builtin-mcp-toggle")

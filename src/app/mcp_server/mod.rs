@@ -1,10 +1,12 @@
 //! Sessionless Streamable HTTP adapter for Farcaster-owned MCP capabilities.
 
+mod lifecycle;
 mod notices;
+pub(crate) use lifecycle::{set_enabled, start};
 mod workers;
 mod workgraph;
 
-use std::{borrow::Cow, net::TcpListener, path::PathBuf, thread::JoinHandle};
+use std::{borrow::Cow, path::PathBuf};
 
 use rmcp::{
     ServerHandler,
@@ -14,73 +16,12 @@ use rmcp::{
     },
     model::ProtocolVersion,
     tool, tool_handler, tool_router,
-    transport::streamable_http_server::{
-        StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
-    },
+    transport::streamable_http_server::StreamableHttpServerConfig,
 };
 
 const BIND_ADDRESS: &str = "127.0.0.1:8765";
 const MCP_PATH: &str = "/mcp";
 const CALLER_HEADER: &str = "farcaster-caller";
-
-pub(crate) struct McpServer {
-    _thread: JoinHandle<()>,
-}
-
-pub(crate) fn start(
-    database: PathBuf,
-    worker_pool: crate::agents::WorkerPool,
-    workgraph_updates: async_channel::Sender<()>,
-) -> Result<McpServer, String> {
-    let listener = TcpListener::bind(BIND_ADDRESS)
-        .map_err(|error| format!("bind http://{BIND_ADDRESS}{MCP_PATH}: {error}"))?;
-    listener
-        .set_nonblocking(true)
-        .map_err(|error| format!("configure MCP listener: {error}"))?;
-    let thread = std::thread::Builder::new()
-        .name("farcaster-mcp".into())
-        .spawn(move || {
-            if let Err(error) = serve(listener, database, worker_pool, workgraph_updates) {
-                zlog::error!("MCP server stopped: {error}");
-            }
-        })
-        .map_err(|error| format!("spawn MCP server: {error}"))?;
-    Ok(McpServer { _thread: thread })
-}
-
-fn serve(
-    listener: TcpListener,
-    database: PathBuf,
-    worker_pool: crate::agents::WorkerPool,
-    workgraph_updates: async_channel::Sender<()>,
-) -> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .map_err(|error| format!("create MCP runtime: {error}"))?;
-    runtime.block_on(async move {
-        let notices = notices::NoticeBoard::default();
-        let listener = tokio::net::TcpListener::from_std(listener)
-            .map_err(|error| format!("open MCP listener: {error}"))?;
-        let config = server_config();
-        let service = StreamableHttpService::new(
-            move || {
-                Ok(FarcasterMcp::new(
-                    database.clone(),
-                    worker_pool.clone(),
-                    workgraph_updates.clone(),
-                    notices.clone(),
-                ))
-            },
-            LocalSessionManager::default().into(),
-            config,
-        );
-        let router = axum::Router::new().nest_service(MCP_PATH, service);
-        axum::serve(listener, router)
-            .await
-            .map_err(|error| format!("serve MCP requests: {error}"))
-    })
-}
 
 fn server_config() -> StreamableHttpServerConfig {
     StreamableHttpServerConfig::default()
