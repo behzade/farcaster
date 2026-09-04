@@ -346,6 +346,13 @@ impl ConversationState {
         self.reduce_with_projection(event, true)
     }
 
+    pub(crate) fn ended_in_error(&self) -> bool {
+        self.items
+            .iter_rev()
+            .find(|item| item.kind != TranscriptKind::Notice)
+            .is_some_and(|item| item.kind == TranscriptKind::Error)
+    }
+
     pub(crate) fn reduce_deferred(&mut self, event: &Value) -> Option<usize> {
         self.reduce_with_projection(event, false)
     }
