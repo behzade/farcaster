@@ -350,6 +350,33 @@ fn assistant_error_without_content_is_visible_live_and_in_history() {
 }
 
 #[test]
+fn notices_do_not_hide_a_terminal_model_error() {
+    let mut state = ConversationState::default();
+    state.reduce(&json!({
+        "type":"message_end",
+        "message":{
+            "role":"assistant",
+            "content":[],
+            "stopReason":"error",
+            "errorMessage":"Request timed out."
+        }
+    }));
+    state.reduce(&json!({"type":"auto_retry_end","attempt":3}));
+    assert!(state.ended_in_error());
+
+    state.reduce(&json!({
+        "type":"message_end",
+        "message":{
+            "role":"assistant",
+            "content":[{"type":"text","text":"recovered"}],
+            "stopReason":"stop"
+        }
+    }));
+    state.reduce(&json!({"type":"auto_retry_end","attempt":3}));
+    assert!(!state.ended_in_error());
+}
+
+#[test]
 fn assistant_error_with_content_keeps_response_and_appends_error() {
     let failed = json!({
         "role":"assistant",

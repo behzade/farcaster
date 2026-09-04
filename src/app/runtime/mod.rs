@@ -195,12 +195,7 @@ fn semantic_status(snapshot: &RuntimeSnapshot) -> &'static str {
     }
     if snapshot.conversation.running {
         "Working"
-    } else if snapshot
-        .conversation
-        .items
-        .last()
-        .is_some_and(|item| item.kind == TranscriptKind::Error)
-    {
+    } else if snapshot.conversation.ended_in_error() {
         "Failed"
     } else {
         "Done"
@@ -1685,6 +1680,8 @@ fn session_badge_status(conversation: &ConversationState) -> &'static str {
         "Retrying"
     } else if conversation.running {
         "Working"
+    } else if conversation.ended_in_error() {
+        "Failed"
     } else {
         "Done"
     }
