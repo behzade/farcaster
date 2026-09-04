@@ -18,6 +18,7 @@ pub(super) struct CursorQuestion {
     pub(super) id: String,
     pub(super) prompt: String,
     pub(super) options: Vec<(String, String)>,
+    pub(super) allow_multiple: bool,
 }
 
 pub(super) fn request(method: &str, params: &Value) -> Option<CursorRequest> {
@@ -75,6 +76,10 @@ fn parse_question(value: &Value) -> Option<CursorQuestion> {
         id,
         prompt,
         options,
+        allow_multiple: value
+            .get("allowMultiple")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     })
 }
 
@@ -83,15 +88,31 @@ pub(super) fn question_input(
     title: &str,
     question: &CursorQuestion,
     index: usize,
+    option_index: usize,
 ) -> WorkerInput {
+    let (prompt, options) = if question.allow_multiple {
+        let label = &question.options[option_index].0;
+        (
+            format!("{title}\n\n{}\n\nSelect “{label}”?", question.prompt),
+            vec!["Include".into(), "Skip".into()],
+        )
+    } else {
+        (
+            format!("{title}\n\n{}", question.prompt),
+            question
+                .options
+                .iter()
+                .map(|(label, _)| label.clone())
+                .collect(),
+        )
+    };
     WorkerInput {
-        id: format!("cursor-question:{}:{index}", request_id(request)),
-        prompt: format!("{title}\n\n{}", question.prompt),
-        options: question
-            .options
-            .iter()
-            .map(|(label, _)| label.clone())
-            .collect(),
+        id: format!(
+            "cursor-question:{}:{index}:{option_index}",
+            request_id(request)
+        ),
+        prompt,
+        options,
         secret: false,
     }
 }

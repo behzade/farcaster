@@ -323,14 +323,32 @@ impl WorkerSessionTransport {
             }
             WorkerActivity::CommandsChanged { commands } => {
                 self.metadata.commands.clone_from(&commands);
-                self.pending
-                    .push_back(SessionEvent::Response(SessionResponse {
-                        id: None,
-                        operation: SessionOperation::ListCommands,
-                        success: true,
-                        data: json!({"commands": commands}),
-                        error: None,
-                    }));
+                self.enqueue_catalog_response(
+                    SessionOperation::ListCommands,
+                    json!({"commands": commands}),
+                );
+                return;
+            }
+            WorkerActivity::ConfigurationChanged {
+                models,
+                efforts,
+                modes,
+            } => {
+                self.metadata.models.clone_from(&models);
+                self.metadata.efforts.clone_from(&efforts);
+                self.metadata.modes.clone_from(&modes);
+                self.enqueue_catalog_response(
+                    SessionOperation::ListModels,
+                    json!({"models": models}),
+                );
+                self.enqueue_catalog_response(
+                    SessionOperation::ListReasoningLevels,
+                    json!({"levels": efforts}),
+                );
+                self.enqueue_catalog_response(
+                    SessionOperation::ListModes,
+                    json!({"modes": modes, "selected": self.selected_mode}),
+                );
                 return;
             }
             WorkerActivity::ServiceStatusChanged {
@@ -365,6 +383,17 @@ impl WorkerSessionTransport {
             }),
         };
         self.pending.push_back(activity(event));
+    }
+
+    fn enqueue_catalog_response(&mut self, operation: SessionOperation, data: Value) {
+        self.pending
+            .push_back(SessionEvent::Response(SessionResponse {
+                id: None,
+                operation,
+                success: true,
+                data,
+                error: None,
+            }));
     }
 
     fn start_assistant_message(&mut self) {
