@@ -153,8 +153,7 @@ fn store_long_paste(text: &str) -> Result<Option<ComposerPaste>, String> {
 fn long_paste(text: &str) -> Option<(String, usize)> {
     let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
     let line_count = normalized.lines().count().max(1);
-    (normalized.chars().count() > MAX_INLINE_PASTE_CHARACTERS)
-        .then_some((normalized, line_count))
+    (normalized.chars().count() > MAX_INLINE_PASTE_CHARACTERS).then_some((normalized, line_count))
 }
 
 fn store_long_paste_in(
