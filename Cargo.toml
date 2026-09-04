@@ -10,6 +10,7 @@ description = "Native desktop client for coding agents"
 product-name = "Farcaster"
 identifier = "io.github.behzade.farcaster"
 category = "DeveloperTool"
+license-file = "LICENSE"
 icons = [
     "assets/icons/app/Farcaster.icns",
     "assets/icons/app/icon_16x16.png",
@@ -19,7 +20,16 @@ icons = [
     "assets/icons/app/icon_512x512.png",
     "assets/icons/app/icon_512x512@2x.png",
 ]
-resources = ["NOTICE.md"]
+resources = [
+    "LICENSE",
+    "NOTICE.md",
+    "THIRD_PARTY_LICENSES",
+    { src = "assets/lilex/OFL.txt", target = "THIRD_PARTY_LICENSES/LILEX-OFL.txt" },
+    { src = "assets/vazirmatn/OFL.txt", target = "THIRD_PARTY_LICENSES/VAZIRMATN-OFL.txt" },
+    { src = "third_party/gpui-component-bd83329/LICENSE-APACHE", target = "THIRD_PARTY_LICENSES/GPUI-COMPONENT-APACHE-2.0.txt" },
+    { src = "third_party/zed-gpui-cc053a4/LICENSE-APACHE", target = "THIRD_PARTY_LICENSES/ZED-GPUI-APACHE-2.0.txt" },
+    { src = "third_party/zed-gpui-cc053a4/LICENSE-GPL", target = "THIRD_PARTY_LICENSES/ZED-GPUI-GPL-3.0.txt" },
+]
 binaries = [{ path = "farcaster", main = true }]
 before-packaging-command = "cargo build --release --locked --bin farcaster"
 
