@@ -1,0 +1,145 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_TARGET_DIR: target
+
+jobs:
+  linux:
+    name: Linux x86_64
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            clang cmake desktop-file-utils libasound2-dev libegl1-mesa-dev \
+            libfontconfig1-dev libfreetype6-dev libfuse2 libvulkan-dev \
+            libwayland-dev libx11-dev libxcb1-dev libxkbcommon-dev \
+            libxkbcommon-x11-dev libxml2-dev patchelf pkg-config
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.95.0
+
+      - name: Verify tag matches Cargo version
+        shell: bash
+        run: |
+          package_version=$(cargo metadata --no-deps --format-version 1 \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)["packages"][0]["version"])')
+          test "$GITHUB_REF_NAME" = "v$package_version" || {
+            echo "tag $GITHUB_REF_NAME does not match Cargo.toml version $package_version" >&2
+            exit 1
+          }
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --version 0.11.8 --locked
+
+      - name: Build AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: make bundle BUNDLE_FORMATS=appimage
+
+      - name: Stage release asset
+        shell: bash
+        run: |
+          mkdir -p dist
+          appimage=$(find target/release -maxdepth 1 -type f -iname '*farcaster*.AppImage' -print -quit)
+          test -n "$appimage"
+          cp "$appimage" "dist/Farcaster-${GITHUB_REF_NAME}-linux-x86_64.AppImage"
+          chmod 755 "dist/Farcaster-${GITHUB_REF_NAME}-linux-x86_64.AppImage"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux-x86_64
+          path: dist/*
+          if-no-files-found: error
+
+  macos:
+    name: macOS arm64
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.95.0
+
+      - name: Verify tag matches Cargo version
+        shell: bash
+        run: |
+          package_version=$(cargo metadata --no-deps --format-version 1 \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)["packages"][0]["version"])')
+          test "$GITHUB_REF_NAME" = "v$package_version" || {
+            echo "tag $GITHUB_REF_NAME does not match Cargo.toml version $package_version" >&2
+            exit 1
+          }
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --version 0.11.8 --locked
+
+      - name: Build app bundle
+        run: make bundle BUNDLE_FORMATS=app
+
+      - name: Stage release asset
+        run: |
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent target/release/Farcaster.app \
+            "dist/Farcaster-${GITHUB_REF_NAME}-macos-arm64.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos-arm64
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: [linux, macos]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Create release and upload assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes \
+              --title "Farcaster $GITHUB_REF_NAME"
+          fi
