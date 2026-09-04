@@ -98,7 +98,6 @@ impl FarcasterApp {
             .relative()
             .w_full()
             .flex_none()
-            .min_h(THEME.layout.composer_min)
             .flex()
             .flex_col()
             .when(floating, |composer| {

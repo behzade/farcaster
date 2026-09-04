@@ -190,11 +190,28 @@ impl RenderOnce for SessionRow {
             .rounded(px(2.0))
             .group(action_group)
             .bg(if selected {
-                THEME.colors.selection
+                THEME.colors.session_selection
             } else {
                 THEME.colors.panel
             })
-            .hover(|row| row.bg(THEME.colors.surface))
+            .hover(move |row| {
+                row.bg(if selected {
+                    THEME.colors.session_selection
+                } else {
+                    THEME.colors.surface
+                })
+            })
+            .when(selected, |row| {
+                row.child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .top(THEME.space.xs)
+                        .bottom(THEME.space.xs)
+                        .w(px(2.0))
+                        .bg(THEME.colors.accent),
+                )
+            })
             .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
             .cursor(CursorStyle::PointingHand)
             .when(draggable, move |row| {

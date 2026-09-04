@@ -9,6 +9,8 @@ use crate::{ActiveTheme as _, highlighter::HighlightTheme};
 pub struct TextViewStyle {
     /// Gap of each paragraphs, default is 1 rem.
     pub paragraph_gap: Rems,
+    /// Maximum width for prose and headings; code and tables keep the available width.
+    pub prose_max_width: Option<Pixels>,
     /// Base font size for headings, default is 14px.
     pub heading_base_font_size: Pixels,
     /// Function to calculate heading font size based on heading level (1-6).
@@ -46,6 +48,7 @@ pub struct TextViewStyle {
 impl PartialEq for TextViewStyle {
     fn eq(&self, other: &Self) -> bool {
         self.paragraph_gap == other.paragraph_gap
+            && self.prose_max_width == other.prose_max_width
             && self.heading_base_font_size == other.heading_base_font_size
             && match (&self.heading_font_size, &other.heading_font_size) {
                 (Some(left), Some(right)) => (1..=6).all(|level| {
@@ -68,6 +71,7 @@ impl Default for TextViewStyle {
     fn default() -> Self {
         Self {
             paragraph_gap: rems(1.),
+            prose_max_width: None,
             heading_base_font_size: px(14.),
             heading_font_size: None,
             highlight_theme: HighlightTheme::default_light().clone(),
@@ -145,6 +149,9 @@ mod tests {
     #[test]
     fn selection_layout_fingerprint_covers_callback_table_and_theme_fields() {
         let base = TextViewStyle::default();
+        let mut narrow = base.clone();
+        narrow.prose_max_width = Some(px(780.));
+        assert!(base != narrow);
         let heading = base.clone().heading_font_size(|_, size| size);
         assert!(heading == base.clone().heading_font_size(|_, size| size));
         assert!(heading != base.clone().heading_font_size(|_, size| size * 2.));

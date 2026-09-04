@@ -2246,6 +2246,9 @@ impl BlockNode {
                 .into_any_element(),
             BlockNode::Paragraph(paragraph) => div()
                 .id(("p", ix))
+                .when_some(node_cx.style.prose_max_width, |paragraph, width| {
+                    paragraph.max_w(width)
+                })
                 .pb(mb)
                 .child(paragraph.render(node_cx, window, cx))
                 .into_any_element(),
@@ -2269,6 +2272,9 @@ impl BlockNode {
 
                 div()
                     .id(SharedString::from(format!("h{}-{}", level, ix)))
+                    .when_some(node_cx.style.prose_max_width, |heading, width| {
+                        heading.max_w(width)
+                    })
                     .pb(rems(0.3))
                     .whitespace_normal()
                     .text_size(text_size)

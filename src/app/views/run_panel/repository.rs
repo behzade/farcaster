@@ -2,6 +2,7 @@ use gpui::{
     AnyElement, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Role,
     StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
 };
+use gpui_component::tooltip::Tooltip;
 
 #[cfg(test)]
 use super::repository_controls::selected_backend;
@@ -10,7 +11,7 @@ use super::{
     repository_controls::{repository_header, repository_sync_row},
     repository_presentation::{
         accessible_change_path, bounded_message, change_color, change_kind_label,
-        change_status_label, display_change_path, group_title, middle_truncate, repository_row_id,
+        change_status_label, display_change_path, file_path_labels, group_title, repository_row_id,
     },
 };
 #[cfg(test)]
@@ -192,7 +193,12 @@ impl FarcasterApp {
         let key_path = change.target.absolute_path();
         let row_id = repository_row_id(&change.target.key);
         let full_path = display_change_path(change);
-        let display_path = middle_truncate(&full_path, 42);
+        let (filename, parent) = file_path_labels(&change.relative_path);
+        let context = if change.original_relative_path.is_some() {
+            full_path.clone()
+        } else {
+            parent
+        };
         let status = change_status_label(change).to_owned();
         let layer = group_title(change.layer);
         let state = change_kind_label(&change.kind);
@@ -203,6 +209,7 @@ impl FarcasterApp {
             .track_focus(&focus)
             .role(Role::Button)
             .aria_label(accessible)
+            .tooltip(move |window, cx| Tooltip::new(full_path.clone()).build(window, cx))
             .tab_index(0)
             .min_w_0()
             .flex_1()
@@ -241,12 +248,25 @@ impl FarcasterApp {
                 div()
                     .min_w_0()
                     .flex_1()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
+                    .flex()
+                    .flex_col()
                     .font_family(MONO_FONT_FAMILY)
-                    .text_size(THEME.type_scale.caption)
-                    .child(display_path),
+                    .child(
+                        div()
+                            .text_size(THEME.type_scale.body)
+                            .text_color(THEME.colors.text)
+                            .text_ellipsis()
+                            .child(filename),
+                    )
+                    .when(!context.is_empty(), |label| {
+                        label.child(
+                            div()
+                                .text_size(THEME.type_scale.caption)
+                                .text_color(THEME.colors.muted)
+                                .text_ellipsis()
+                                .child(context),
+                        )
+                    }),
             );
         Some(target.into_any_element())
     }

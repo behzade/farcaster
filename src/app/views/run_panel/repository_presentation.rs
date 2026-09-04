@@ -85,6 +85,14 @@ pub(super) fn display_change_path(change: &WorkingCopyChange) -> String {
         })
 }
 
+pub(super) fn file_path_labels(path: &Path) -> (String, String) {
+    let filename = path
+        .file_name()
+        .map_or_else(|| visible_path(path), |name| visible_path(Path::new(name)));
+    let parent = path.parent().map(visible_path).unwrap_or_default();
+    (filename, parent)
+}
+
 pub(super) fn accessible_change_path(change: &WorkingCopyChange) -> String {
     let target = visible_path(&change.relative_path);
     change
@@ -104,20 +112,6 @@ fn visible_path(path: &Path) -> String {
         .replace('\n', "\\n")
         .replace('\r', "\\r")
         .replace('\t', "\\t")
-}
-
-pub(super) fn middle_truncate(value: &str, max_chars: usize) -> String {
-    let chars = value.chars().collect::<Vec<_>>();
-    if chars.len() <= max_chars || max_chars < 3 {
-        return value.to_owned();
-    }
-    let left = (max_chars - 1) / 2;
-    let right = max_chars - 1 - left;
-    chars[..left]
-        .iter()
-        .chain(std::iter::once(&'…'))
-        .chain(chars[chars.len() - right..].iter())
-        .collect()
 }
 
 fn short_id(value: &str) -> String {
@@ -171,6 +165,22 @@ pub(super) fn change_color(kind: &ChangeKind) -> gpui::Rgba {
 mod tests {
     use super::*;
     use crate::repository::JujutsuIdentity;
+
+    #[test]
+    fn file_labels_keep_names_and_parent_paths_distinct() {
+        assert_eq!(
+            file_path_labels(Path::new("src/app/theme.rs")),
+            ("theme.rs".into(), "src/app".into())
+        );
+        assert_eq!(
+            file_path_labels(Path::new("Cargo.toml")),
+            ("Cargo.toml".into(), String::new())
+        );
+        assert_eq!(
+            file_path_labels(Path::new("src/نام\n.rs")),
+            ("نام\\n.rs".into(), "src".into())
+        );
+    }
 
     #[test]
     fn unborn_and_detached_git_heads_are_explicit() {
