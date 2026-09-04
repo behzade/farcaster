@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     io::{BufReader, Write as _},
     process::{Child, ChildStdin, Stdio},
     sync::mpsc,
@@ -186,8 +186,16 @@ fn spawn_session(
         .spawn()
         .map_err(|error| format!("start {} ACP agent: {error}", profile.name))?;
     child_stderr::capture(&mut child, "acp-agent")?;
-    let setup = setup_connection(&mut child, profile, project, resume, caller_token);
-    let (mut reader, writer, queued, next_id, session_id, metadata, config_ids) = match setup {
+    let AcpSetup {
+        mut reader,
+        writer,
+        queued,
+        next_id,
+        session_id,
+        metadata,
+        config_ids,
+        features,
+    } = match setup_connection(&mut child, profile, project, resume, caller_token) {
         Ok(setup) => setup,
         Err(error) => {
             let _ = child.kill();
@@ -195,6 +203,12 @@ fn spawn_session(
             return Err(error);
         }
     };
+    let commands = metadata
+        .commands
+        .iter()
+        .filter_map(|command| command.get("name").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect();
     let (sender, incoming) = mpsc::channel();
     let reader_name = session_id.clone();
     thread::Builder::new()
@@ -224,6 +238,8 @@ fn spawn_session(
             session_id,
             next_id,
             current_prompt: None,
+            compacting: false,
+            pending_steers: HashMap::new(),
             queued_prompts: VecDeque::new(),
             output: String::new(),
             thought_started: false,
@@ -232,6 +248,8 @@ fn spawn_session(
             peer_messages: VecDeque::new(),
             events: VecDeque::new(),
             config_ids,
+            commands,
+            features,
             caller_identity: None,
         },
         metadata,
@@ -250,15 +268,16 @@ fn send_and_wake<T>(
     Ok(())
 }
 
-type AcpSetup = (
-    BufReader<std::process::ChildStdout>,
-    ChildStdin,
-    VecDeque<AcpInbound>,
-    i64,
-    String,
-    super::super::main_session::MainSessionMetadata,
-    ConfigIds,
-);
+struct AcpSetup {
+    reader: BufReader<std::process::ChildStdout>,
+    writer: ChildStdin,
+    queued: VecDeque<AcpInbound>,
+    next_id: i64,
+    session_id: String,
+    metadata: super::super::main_session::MainSessionMetadata,
+    config_ids: ConfigIds,
+    features: AcpFeatures,
+}
 
 fn setup_connection(
     child: &mut Child,
@@ -283,6 +302,7 @@ fn setup_connection(
             profile.name
         ));
     }
+    let features = AcpFeatures::from_initialize(&initialized);
     let params = json!({
         "cwd": project.to_string_lossy(),
         "mcpServers": acp_mcp_servers(caller_token),
@@ -314,14 +334,31 @@ fn setup_connection(
     if resume.is_some() {
         queued.clear();
     }
-    Ok((
-        reader, writer, queued, next_id, session_id, metadata, config_ids,
-    ))
+    Ok(AcpSetup {
+        reader,
+        writer,
+        queued,
+        next_id,
+        session_id,
+        metadata,
+        config_ids,
+        features,
+    })
 }
 
 fn merge(mut object: Value, key: &str, value: Value) -> Value {
     object[key] = value;
     object
+}
+
+fn prompt_content(message: &str, images: Vec<crate::protocol::PromptImage>) -> Vec<Value> {
+    let mut prompt = vec![json!({"type": "text", "text": message})];
+    prompt.extend(
+        images
+            .into_iter()
+            .map(|image| json!({"type": "image", "mimeType": image.mime_type, "data": image.data})),
+    );
+    prompt
 }
 
 pub(in crate::modules::agents::adapter) fn configure_command(
@@ -353,6 +390,26 @@ fn acp_mcp_servers(caller_token: Option<&str>) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+struct AcpFeatures {
+    steering: bool,
+    close: bool,
+}
+
+impl AcpFeatures {
+    fn from_initialize(value: &Value) -> Self {
+        Self {
+            steering: value
+                .pointer("/_meta/steering/supported")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            close: value
+                .pointer("/agentCapabilities/sessionCapabilities/close")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        }
+    }
+}
+
 struct PendingInput {
     request: AcpRequestId,
     kind: PendingInputKind,
@@ -368,6 +425,8 @@ enum PendingInputKind {
         title: String,
         questions: Vec<super::cursor_extension::CursorQuestion>,
         index: usize,
+        option_index: usize,
+        selected: Vec<String>,
         answers: Vec<Value>,
     },
     CursorPlan,
@@ -389,7 +448,9 @@ struct AcpWorkerSession {
     session_id: String,
     next_id: i64,
     current_prompt: Option<AcpRequestId>,
-    queued_prompts: VecDeque<(String, Vec<crate::protocol::PromptImage>)>,
+    compacting: bool,
+    pending_steers: HashMap<AcpRequestId, (String, Vec<crate::protocol::PromptImage>)>,
+    queued_prompts: VecDeque<(WorkerSendMode, String, Vec<crate::protocol::PromptImage>)>,
     output: String,
     thought_started: bool,
     pending_inputs: HashMap<String, PendingInput>,
@@ -397,6 +458,8 @@ struct AcpWorkerSession {
     peer_messages: VecDeque<PeerMessage>,
     events: VecDeque<WorkerEvent>,
     config_ids: ConfigIds,
+    commands: HashSet<String>,
+    features: AcpFeatures,
     caller_identity: Option<crate::modules::agents::core::CallerIdentity>,
 }
 
@@ -424,10 +487,7 @@ impl AcpWorkerSession {
         message: &str,
         images: Vec<crate::protocol::PromptImage>,
     ) -> Result<(), String> {
-        let mut prompt = vec![json!({"type": "text", "text": message})];
-        prompt.extend(images.into_iter().map(
-            |image| json!({"type": "image", "mimeType": image.mime_type, "data": image.data}),
-        ));
+        let prompt = prompt_content(message, images);
         self.output.clear();
         self.thought_started = false;
         self.tool_states.clear();
@@ -507,15 +567,25 @@ impl AcpWorkerSession {
             "usage_update" => usage_update(update)
                 .map(WorkerActivity::Usage)
                 .map(WorkerEvent::Activity),
-            "available_commands_update" => commands_from_value(update)
-                .map(|commands| WorkerActivity::CommandsChanged { commands })
-                .map(WorkerEvent::Activity),
+            "available_commands_update" => commands_from_value(update).map(|commands| {
+                self.commands = commands
+                    .iter()
+                    .filter_map(|command| command.get("name").and_then(Value::as_str))
+                    .map(str::to_owned)
+                    .collect();
+                WorkerEvent::Activity(WorkerActivity::CommandsChanged { commands })
+            }),
             "config_option_update" => {
-                if let Some(options) = update.get("configOptions").and_then(Value::as_array) {
-                    let (_, ids) = metadata_from_options(&self.profile, options);
-                    self.config_ids = ids;
-                }
-                None
+                let options = update.get("configOptions")?.as_array()?;
+                let (metadata, ids) = metadata_from_options(&self.profile, options);
+                self.config_ids = ids;
+                Some(WorkerEvent::Activity(
+                    WorkerActivity::ConfigurationChanged {
+                        models: metadata.models,
+                        efforts: metadata.efforts,
+                        modes: metadata.modes,
+                    },
+                ))
             }
             _ => {
                 log_bad_acp_message(
@@ -646,13 +716,15 @@ impl AcpWorkerSession {
         let (input, kind) = match super::cursor_extension::request(method, params)? {
             super::cursor_extension::CursorRequest::Questions { title, questions } => {
                 let input =
-                    super::cursor_extension::question_input(id, &title, questions.first()?, 0);
+                    super::cursor_extension::question_input(id, &title, questions.first()?, 0, 0);
                 (
                     input,
                     PendingInputKind::CursorQuestions {
                         title,
                         questions,
                         index: 0,
+                        option_index: 0,
+                        selected: Vec::new(),
                         answers: Vec::new(),
                     },
                 )
@@ -704,14 +776,32 @@ impl WorkerSession for AcpWorkerSession {
         images: Vec<crate::protocol::PromptImage>,
     ) -> Result<(), String> {
         if mode == WorkerSendMode::Steer {
-            return Err(format!(
-                "{} ACP agent did not advertise mid-turn steering",
-                self.profile.name
-            ));
+            if !self.features.steering {
+                return Err(format!(
+                    "{} ACP agent did not advertise mid-turn steering",
+                    self.profile.name
+                ));
+            }
+            if self.current_prompt.is_none() {
+                self.start_prompt_request(&message, images)?;
+                self.events.push_back(WorkerEvent::Started);
+                return Ok(());
+            }
+            let id = self.request(
+                "_session/steering",
+                json!({
+                    "sessionId": self.session_id,
+                    "prompt": prompt_content(&message, images.clone()),
+                    "_meta": {"steering": {"idleBehavior": "promptRequired"}},
+                }),
+            )?;
+            self.pending_steers.insert(id, (message, images));
+            return Ok(());
         }
         if self.current_prompt.is_some() {
             if mode == WorkerSendMode::Queue {
-                self.queued_prompts.push_back((message, images));
+                self.queued_prompts
+                    .push_back((WorkerSendMode::Queue, message, images));
                 return Ok(());
             }
             return Err(format!(
@@ -768,6 +858,8 @@ impl WorkerSession for AcpWorkerSession {
                 title,
                 questions,
                 index,
+                option_index,
+                mut selected,
                 mut answers,
             } => {
                 if response.cancel {
@@ -777,22 +869,56 @@ impl WorkerSession for AcpWorkerSession {
                         .get(index)
                         .ok_or_else(|| "Cursor question index is invalid".to_owned())?;
                     let value = response.value.as_deref().unwrap_or_default();
-                    let option_id = question
-                        .options
-                        .iter()
-                        .find(|(label, id)| label == value || id == value)
-                        .map(|(_, id)| id.clone())
-                        .ok_or_else(|| {
-                            "Cursor question response has no matching option".to_owned()
-                        })?;
+                    if question.allow_multiple {
+                        if is_acceptance(value) {
+                            selected.push(question.options[option_index].1.clone());
+                        }
+                        let next_option = option_index + 1;
+                        if next_option < question.options.len() {
+                            let input = super::cursor_extension::question_input(
+                                &request,
+                                &title,
+                                question,
+                                index,
+                                next_option,
+                            );
+                            self.pending_inputs.insert(
+                                input.id.clone(),
+                                PendingInput {
+                                    request,
+                                    kind: PendingInputKind::CursorQuestions {
+                                        title,
+                                        questions,
+                                        index,
+                                        option_index: next_option,
+                                        selected,
+                                        answers,
+                                    },
+                                },
+                            );
+                            self.events.push_back(WorkerEvent::NeedsInput(input));
+                            return Ok(());
+                        }
+                    } else {
+                        selected.push(
+                            question
+                                .options
+                                .iter()
+                                .find(|(label, id)| label == value || id == value)
+                                .map(|(_, id)| id.clone())
+                                .ok_or_else(|| {
+                                    "Cursor question response has no matching option".to_owned()
+                                })?,
+                        );
+                    }
                     answers.push(json!({
                         "questionId": question.id,
-                        "selectedOptionIds": [option_id],
+                        "selectedOptionIds": selected,
                     }));
                     let next = index + 1;
                     if let Some(question) = questions.get(next) {
                         let input = super::cursor_extension::question_input(
-                            &request, &title, question, next,
+                            &request, &title, question, next, 0,
                         );
                         self.pending_inputs.insert(
                             input.id.clone(),
@@ -802,6 +928,8 @@ impl WorkerSession for AcpWorkerSession {
                                     title,
                                     questions,
                                     index: next,
+                                    option_index: 0,
+                                    selected: Vec::new(),
                                     answers,
                                 },
                             },
@@ -836,6 +964,44 @@ impl WorkerSession for AcpWorkerSession {
             )?)
             .and_then(|()| self.writer.flush())
             .map_err(|error| format!("cancel {} ACP prompt: {error}", self.profile.name))
+    }
+
+    fn compact(&mut self) -> Result<(), String> {
+        if self.profile.backend != "cursor-cli"
+            || (!self.commands.contains("compress") && !self.commands.contains("compact"))
+        {
+            return Err(format!(
+                "{} did not advertise an ACP compaction command",
+                self.profile.name
+            ));
+        }
+        if self.current_prompt.is_some() {
+            return Err(format!(
+                "{} ACP session is already working",
+                self.profile.name
+            ));
+        }
+        let command = if self.commands.contains("compress") {
+            "/compress"
+        } else {
+            "/compact"
+        };
+        self.start_prompt_request(command, Vec::new())?;
+        self.compacting = true;
+        self.events
+            .push_back(WorkerEvent::Activity(WorkerActivity::CompactionStarted));
+        Ok(())
+    }
+
+    fn rename(&mut self, name: &str) -> Result<(), String> {
+        if self.profile.backend == "cursor-cli" {
+            crate::modules::agents::adapter::cursor::rename_session(&self.session_id, name)
+        } else {
+            Err(format!(
+                "{} does not expose ACP session naming",
+                self.profile.name
+            ))
+        }
     }
 
     fn select_model(&mut self, _provider: &str, model: &str) -> Result<(), String> {
@@ -902,14 +1068,37 @@ impl WorkerSession for AcpWorkerSession {
                 .pop_front()
                 .or_else(|| self.incoming.try_recv().ok())?;
             match incoming {
+                Ok(AcpInbound::Response { id, result })
+                    if let Some((message, images)) = self.pending_steers.remove(&id) =>
+                {
+                    if result.get("outcome").and_then(Value::as_str) == Some("promptRequired") {
+                        self.queued_prompts
+                            .push_front((WorkerSendMode::Steer, message, images));
+                        continue;
+                    }
+                    return Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+                        mode: WorkerSendMode::Steer,
+                        message,
+                    }));
+                }
                 Ok(AcpInbound::Response { id, .. })
                     if self.current_prompt.as_ref() == Some(&id) =>
                 {
                     self.current_prompt = None;
-                    if let Some((message, images)) = self.queued_prompts.pop_front() {
+                    if self.compacting {
+                        self.compacting = false;
+                        if let Some(identity) = &self.caller_identity {
+                            identity.set_activity(WorkerActivityState::Idle);
+                        }
+                        return Some(WorkerEvent::Activity(WorkerActivity::CompactionFinished {
+                            aborted: false,
+                            error: None,
+                        }));
+                    }
+                    if let Some((mode, message, images)) = self.queued_prompts.pop_front() {
                         return Some(match self.start_prompt_request(&message, images) {
                             Ok(()) => WorkerEvent::Activity(WorkerActivity::InputDelivered {
-                                mode: WorkerSendMode::Queue,
+                                mode,
                                 message,
                             }),
                             Err(error) => WorkerEvent::Failed(error),
@@ -924,8 +1113,10 @@ impl WorkerSession for AcpWorkerSession {
                 }
                 Ok(AcpInbound::Response { .. }) => {}
                 Ok(AcpInbound::Error { id, code, message }) => {
+                    self.pending_steers.remove(&id);
                     if self.current_prompt.as_ref() == Some(&id) {
                         self.current_prompt = None;
+                        self.compacting = false;
                         if let Some(identity) = &self.caller_identity {
                             identity.set_activity(WorkerActivityState::Idle);
                         }
@@ -976,6 +1167,15 @@ impl WorkerSession for AcpWorkerSession {
     }
 
     fn close(&mut self) -> Result<(), String> {
+        if self.features.close
+            && self
+                .child
+                .try_wait()
+                .map_err(|error| format!("check {} ACP agent: {error}", self.profile.name))?
+                .is_none()
+        {
+            let _ = self.request("session/close", json!({"sessionId": self.session_id}));
+        }
         if self
             .child
             .try_wait()

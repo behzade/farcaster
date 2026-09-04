@@ -1,3 +1,5 @@
+mod catalog;
+
 use std::path::Path;
 
 use super::super::contract::{
@@ -29,9 +31,9 @@ pub(crate) fn descriptor() -> AgentBackendDescriptor {
                 history: Available,
                 resume: Available,
                 fork: Unsupported,
-                rename: Unsupported,
+                rename: Available,
                 close: Available,
-                delete: Unsupported,
+                delete: Available,
             },
             turns: TurnCapabilities {
                 prompt: Available,
@@ -39,7 +41,7 @@ pub(crate) fn descriptor() -> AgentBackendDescriptor {
                 interrupt: Available,
                 steer: Unsupported,
                 follow_up: Available,
-                compact: Unsupported,
+                compact: Available,
                 queue: Available,
             },
             configuration: ConfigurationCapabilities {
@@ -86,20 +88,33 @@ pub(super) fn spawn_main(
     super::acp::spawn_main(command, &PROFILE, launch)
 }
 
+pub(super) use catalog::{delete as delete_session, rename as rename_session};
+
+pub(super) fn load_configuration(
+    project: &Path,
+) -> Result<super::main_session::MainSessionMetadata, String> {
+    let (metadata, session_id) = super::acp::load_configuration(&PROFILE, project)?;
+    let _ = catalog::delete(&session_id);
+    Ok(metadata)
+}
+
 pub(super) fn discover(
     locator_root: &Path,
     query: &str,
 ) -> Result<Vec<crate::agents::DiscoveredSession>, String> {
-    super::acp::discover(&PROFILE, locator_root, query)
+    catalog::discover(locator_root, query)
 }
 
 pub(super) fn load_history(path: &Path) -> Result<crate::agents::DiscoveredHistory, String> {
-    super::acp::load_history(&PROFILE, path, None)
+    let session_id = super::main_session::external_session_locator(PROFILE.backend, path)
+        .ok_or_else(|| format!("invalid Cursor session locator: {}", path.display()))?;
+    let project = catalog::project(&session_id)?;
+    super::acp::load_history(&PROFILE, path, &project)
 }
 
 pub(super) fn load_history_at(
     path: &Path,
     project: &Path,
 ) -> Result<crate::agents::DiscoveredHistory, String> {
-    super::acp::load_history(&PROFILE, path, Some(project))
+    super::acp::load_history(&PROFILE, path, project)
 }

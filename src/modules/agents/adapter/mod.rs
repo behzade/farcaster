@@ -99,7 +99,7 @@ pub(crate) fn load_configuration_catalog(
                 .unwrap_or_else(|| "codex".into());
             codex::load_configuration(&command, project).and_then(configuration_catalog)
         }
-        "cursor-cli" => Ok(crate::agents::ConfigurationCatalog::default()),
+        "cursor-cli" => cursor::load_configuration(project).and_then(configuration_catalog),
         "opencode2" => {
             let mut command = config.clone();
             command.program = std::env::var_os("FARCASTER_OPENCODE_PATH")
@@ -300,7 +300,7 @@ pub(crate) fn rename_session(
     match harness {
         "pi" => pi::PiRpcProcess::rename_session(config, project, session, name),
         "codex-cli" => codex::rename_session(session_id, name),
-        "cursor-cli" => Err("Cursor ACP does not expose session naming".into()),
+        "cursor-cli" => cursor::rename_session(session_id, name),
         "opencode2" => opencode::rename_session(session_id, name),
         _ => Err(format!("unsupported session harness: {harness}")),
     }
@@ -323,7 +323,7 @@ pub(crate) fn is_external_session(path: &std::path::Path) -> bool {
 pub(crate) fn delete_external_session(path: &std::path::Path) -> Option<Result<(), String>> {
     external_session_identity(path).map(|(harness, locator)| match harness {
         "codex-cli" => codex::delete_session(&locator),
-        "cursor-cli" => Err("Cursor ACP session deletion is not enabled".into()),
+        "cursor-cli" => cursor::delete_session(&locator),
         "opencode2" => opencode::delete_session(&locator),
         _ => unreachable!("external session identity returned an unknown backend"),
     })
@@ -461,6 +461,7 @@ pub(super) fn known_backend_descriptors() -> [super::contract::AgentBackendDescr
 mod tests {
     use super::*;
     use crate::agents::{
+        HarnessAccessMode,
         HarnessAccessMode::{Auto, Full, Sandboxed},
         SessionCommand,
     };
@@ -481,6 +482,7 @@ mod tests {
 
     #[test]
     fn backend_access_modes_match_their_native_safety_models() {
+        assert_eq!(HarnessAccessMode::default(), Auto);
         assert_eq!(supported_access_modes("pi"), &[Sandboxed, Full]);
         assert_eq!(
             supported_access_modes("codex-cli"),
@@ -489,5 +491,8 @@ mod tests {
         assert_eq!(supported_access_modes("cursor-cli"), &[Sandboxed, Full]);
         assert_eq!(supported_access_modes("opencode2"), &[Sandboxed, Full]);
         assert_eq!(normalize_access_mode("opencode2", Auto), Sandboxed);
+        assert_eq!(normalize_access_mode("codex-cli", Auto), Auto);
+        assert_eq!(normalize_access_mode("cursor-cli", Auto), Sandboxed);
+        assert_eq!(normalize_access_mode("pi", Auto), Sandboxed);
     }
 }

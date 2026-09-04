@@ -7,7 +7,7 @@ mod worker;
 
 use std::path::PathBuf;
 
-pub(in crate::modules::agents::adapter) use catalog::{discover, load_history};
+pub(in crate::modules::agents::adapter) use catalog::{load_configuration, load_history};
 pub(in crate::modules::agents::adapter) use worker::{AcpWorkerFactory, spawn_main};
 
 #[derive(Clone, Debug)]

@@ -156,6 +156,11 @@ pub(crate) enum WorkerActivity {
     CommandsChanged {
         commands: Vec<Value>,
     },
+    ConfigurationChanged {
+        models: Vec<Value>,
+        efforts: Vec<String>,
+        modes: Vec<Value>,
+    },
     ServiceStatusChanged {
         name: String,
         status: String,

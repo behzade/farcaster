@@ -1,41 +1,53 @@
 use std::{
     io::BufReader,
-    path::{Path, PathBuf},
+    path::Path,
     process::{ChildStdin, ChildStdout, Stdio},
-    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use serde_json::{Value, json};
 
 use super::{
-    AcpProfile, connection::AcpConnection, translate::tool_content, wire::AcpInbound,
+    AcpProfile,
+    connection::AcpConnection,
+    translate::{commands_from_update, metadata_from_session, tool_content},
+    wire::AcpInbound,
     worker::configure_command,
 };
-use crate::agents::{
-    AgentLaunchConfig, DiscoveredHistory, DiscoveredSession, DiscoveredUsage, HarnessAccessMode,
-};
+use crate::agents::{AgentLaunchConfig, DiscoveredHistory, HarnessAccessMode};
 
 use super::super::{child_stderr, main_session};
 
-pub(in crate::modules::agents::adapter) fn discover(
+pub(in crate::modules::agents::adapter) fn load_configuration(
     profile: &AcpProfile,
-    locator_root: &Path,
-    query: &str,
-) -> Result<Vec<DiscoveredSession>, String> {
-    let cwd =
-        std::env::current_dir().map_err(|error| format!("resolve ACP catalog cwd: {error}"))?;
-    with_connection(profile, &cwd, |connection| {
-        Ok(list_sessions(connection)?
+    project: &Path,
+) -> Result<(main_session::MainSessionMetadata, String), String> {
+    with_connection(profile, project, |connection| {
+        let id = connection.send_request(
+            "session/new",
+            json!({"cwd": project.to_string_lossy(), "mcpServers": []}),
+        )?;
+        let response = connection.wait_response(&id)?;
+        let session_id = response
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("{} did not provide an ACP session id", profile.name))?;
+        let (mut metadata, _) = metadata_from_session(profile, &response);
+        if let Some(commands) = connection
+            .drain_queued()
             .iter()
-            .filter_map(|value| summary(profile, locator_root, value, query))
-            .collect())
+            .filter_map(|message| commands_from_update(message, session_id))
+            .next_back()
+        {
+            metadata.commands = commands;
+        }
+        Ok((metadata, session_id.to_owned()))
     })
 }
 
 pub(in crate::modules::agents::adapter) fn load_history(
     profile: &AcpProfile,
     path: &Path,
-    project: Option<&Path>,
+    project: &Path,
 ) -> Result<DiscoveredHistory, String> {
     let locator =
         main_session::external_session_locator(profile.backend, path).ok_or_else(|| {
@@ -45,17 +57,12 @@ pub(in crate::modules::agents::adapter) fn load_history(
                 path.display()
             )
         })?;
-    let cwd = match project {
-        Some(project) => project.to_owned(),
-        None => session_project(profile, &locator)?
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))),
-    };
-    with_connection(profile, &cwd, |connection| {
+    with_connection(profile, project, |connection| {
         let id = connection.send_request(
             "session/load",
             json!({
                 "sessionId": locator,
-                "cwd": cwd.to_string_lossy(),
+                "cwd": project.to_string_lossy(),
                 "mcpServers": [],
             }),
         )?;
@@ -69,43 +76,7 @@ pub(in crate::modules::agents::adapter) fn load_history(
     })
 }
 
-fn session_project(profile: &AcpProfile, locator: &str) -> Result<Option<PathBuf>, String> {
-    let cwd =
-        std::env::current_dir().map_err(|error| format!("resolve ACP catalog cwd: {error}"))?;
-    with_connection(profile, &cwd, |connection| {
-        Ok(list_sessions(connection)?
-            .iter()
-            .find(|session| session.get("sessionId").and_then(Value::as_str) == Some(locator))
-            .and_then(|session| session.get("cwd").and_then(Value::as_str))
-            .map(PathBuf::from))
-    })
-}
-
 type CatalogConnection = AcpConnection<BufReader<ChildStdout>, ChildStdin>;
-
-fn list_sessions(connection: &mut CatalogConnection) -> Result<Vec<Value>, String> {
-    let mut cursor = None;
-    let mut sessions = Vec::new();
-    loop {
-        let id = connection.send_request("session/list", json!({"cursor": cursor}))?;
-        let response = connection.wait_response(&id)?;
-        sessions.extend(
-            response
-                .get("sessions")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .cloned(),
-        );
-        cursor = response
-            .get("nextCursor")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-        if cursor.is_none() {
-            return Ok(sessions);
-        }
-    }
-}
 
 fn with_connection<T>(
     profile: &AcpProfile,
@@ -145,79 +116,6 @@ fn with_connection<T>(
     let _ = child.kill();
     let _ = child.wait();
     result
-}
-
-fn summary(
-    profile: &AcpProfile,
-    locator_root: &Path,
-    value: &Value,
-    query: &str,
-) -> Option<DiscoveredSession> {
-    let id = value.get("sessionId")?.as_str()?;
-    let cwd = value.get("cwd")?.as_str()?;
-    let project = PathBuf::from(cwd);
-    if !project.is_dir() || crate::projects::is_temporary_project(&project) {
-        return None;
-    }
-    let title = value
-        .get("title")
-        .and_then(Value::as_str)
-        .filter(|title| !title.trim().is_empty())
-        .unwrap_or("New ACP session")
-        .to_owned();
-    let search = format!("{title} {cwd} {}", profile.name);
-    if !query.is_empty()
-        && !search
-            .to_ascii_lowercase()
-            .contains(&query.to_ascii_lowercase())
-    {
-        return None;
-    }
-    let updated = value.get("updatedAt").or_else(|| value.get("createdAt"));
-    Some(DiscoveredSession {
-        id: id.into(),
-        harness: profile.backend.into(),
-        path: main_session::external_session_path(locator_root, profile.backend, id),
-        project,
-        title,
-        first_user_message: String::new(),
-        timestamp: value
-            .get("createdAt")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .into(),
-        parent_session: crate::modules::agents::core::CallerRegistry::shared()
-            .session_parent(profile.backend, id),
-        modified: system_time(updated),
-        message_count: 0,
-        usage: DiscoveredUsage::default(),
-        archived: false,
-        is_running: false,
-        search,
-    })
-}
-
-fn system_time(value: Option<&Value>) -> SystemTime {
-    let seconds = value
-        .and_then(|value| {
-            value
-                .as_u64()
-                .or_else(|| value.as_i64()?.try_into().ok())
-                .or_else(|| {
-                    let parsed = time::OffsetDateTime::parse(
-                        value.as_str()?,
-                        &time::format_description::well_known::Rfc3339,
-                    )
-                    .ok()?;
-                    parsed.unix_timestamp().try_into().ok()
-                })
-        })
-        .unwrap_or(0);
-    if seconds == 0 {
-        SystemTime::now()
-    } else {
-        UNIX_EPOCH + Duration::from_secs(seconds)
-    }
 }
 
 fn replay_history(messages: impl IntoIterator<Item = AcpInbound>) -> Vec<Value> {
@@ -384,30 +282,6 @@ fn selected_option(response: &Value, categories: &[&str]) -> Option<String> {
 mod tests {
     use super::*;
     use crate::modules::agents::adapter::acp::wire::AcpInbound;
-
-    #[test]
-    fn translates_acp_session_summaries() -> Result<(), String> {
-        let project = std::env::current_dir().map_err(|error| error.to_string())?;
-        let profile = AcpProfile {
-            backend: "example-acp",
-            name: "Example",
-            command: "example",
-            path_environment: "EXAMPLE_PATH",
-            arguments: &["acp"],
-            auth_method: None,
-            force_argument: None,
-        };
-        let session = summary(
-            &profile,
-            &project,
-            &json!({"sessionId":"one", "cwd":project, "title":"Fix it", "updatedAt":1}),
-            "",
-        )
-        .ok_or("summary")?;
-        assert_eq!(session.harness, "example-acp");
-        assert_eq!(session.title, "Fix it");
-        Ok(())
-    }
 
     #[test]
     fn replay_keeps_messages_and_tools() {
