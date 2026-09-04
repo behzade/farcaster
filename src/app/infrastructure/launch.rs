@@ -17,8 +17,13 @@ use std::fs;
 use crate::{
     app::infrastructure::persistence::{StateStore, WindowPlacement, WindowState},
     app::ui::theme::{THEME, install_component_theme},
-    app::ui::{assets::AppAssets, keybindings},
+    app::ui::{
+        assets::AppAssets,
+        keybindings,
+        keyboard::{ClipboardCopyAlias, ClipboardPasteAlias},
+    },
     app::views::dialogs::startup_trust::ProjectTrustView,
+    app::workspace::{CycleWorkspaceBackward, CycleWorkspaceForward},
     app::{FarcasterApp, QuitApplication},
     projects,
 };
@@ -60,6 +65,16 @@ pub(crate) fn resolve_project(path: Option<PathBuf>) -> Result<PathBuf, LaunchEr
         return Err(LaunchError::NotDirectory(resolved));
     }
     Ok(resolved)
+}
+
+fn update_app(
+    app: &RefCell<Option<WeakEntity<FarcasterApp>>>,
+    cx: &mut App,
+    update: impl FnOnce(&mut FarcasterApp, &mut Window, &mut Context<FarcasterApp>),
+) {
+    if let Some(app) = app.borrow().clone() {
+        let _ = app.update_in(cx, update);
+    }
 }
 
 pub(crate) fn run(
@@ -112,6 +127,30 @@ pub(crate) fn run(
                 {
                     cx.quit();
                 }
+            });
+            let cycle_forward_app = notification_app.clone();
+            cx.on_action(move |_: &CycleWorkspaceForward, cx| {
+                update_app(&cycle_forward_app, cx, |app, window, cx| {
+                    app.cycle_workspace_surface(true, window, cx);
+                });
+            });
+            let cycle_backward_app = notification_app.clone();
+            cx.on_action(move |_: &CycleWorkspaceBackward, cx| {
+                update_app(&cycle_backward_app, cx, |app, window, cx| {
+                    app.cycle_workspace_surface(false, window, cx);
+                });
+            });
+            let copy_app = notification_app.clone();
+            cx.on_action(move |_: &ClipboardCopyAlias, cx| {
+                update_app(&copy_app, cx, |app, window, cx| {
+                    app.handle_clipboard_alias(false, window, cx);
+                });
+            });
+            let paste_app = notification_app.clone();
+            cx.on_action(move |_: &ClipboardPasteAlias, cx| {
+                update_app(&paste_app, cx, |app, window, cx| {
+                    app.handle_clipboard_alias(true, window, cx);
+                });
             });
             let response_app = notification_app.clone();
             cx.on_system_notification_response(move |response, cx| {

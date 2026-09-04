@@ -11,6 +11,8 @@ mod regions;
 mod surfaces;
 mod terminal;
 
+pub(crate) use surfaces::{CycleWorkspaceBackward, CycleWorkspaceForward};
+
 impl FarcasterApp {
     fn monitor_native_process(
         &self,

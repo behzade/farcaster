@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicU8, Ordering};
 
-use crate::app::ui::keyboard::CopySelection;
+use crate::app::ui::keyboard::{ClipboardCopyAlias, ClipboardPasteAlias, CopySelection};
+use crate::app::workspace::{CycleWorkspaceBackward, CycleWorkspaceForward};
 use crate::app::{APP_SHORTCUT_CONTEXT, TRANSCRIPT_SELECTION_KEY_CONTEXT};
 use crate::app::{
     AbortRun, AddProject, CloseCurrent, ComposerCompletionNext, ComposerCompletionPrevious,
@@ -308,6 +309,38 @@ fn registry_for_modifier(modifier: ApplicationModifier) -> Vec<Shortcut> {
             "Open terminal",
             "f3",
             ShowTerminal,
+            None,
+            false
+        ),
+        shortcut!(
+            "Workspace",
+            "Next workspace surface",
+            "ctrl-tab",
+            CycleWorkspaceForward,
+            None
+        ),
+        shortcut!(
+            "Workspace",
+            "Previous workspace surface",
+            "ctrl-shift-tab",
+            CycleWorkspaceBackward,
+            None
+        ),
+        #[cfg(target_os = "linux")]
+        shortcut!(
+            "Clipboard",
+            "Copy",
+            "super-c",
+            ClipboardCopyAlias,
+            None,
+            false
+        ),
+        #[cfg(target_os = "linux")]
+        shortcut!(
+            "Clipboard",
+            "Paste",
+            "super-v",
+            ClipboardPasteAlias,
             None,
             false
         ),

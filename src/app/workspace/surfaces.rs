@@ -2,9 +2,11 @@
 
 use std::{path::PathBuf, sync::Arc};
 
-use gpui::{Context, FocusHandle, Image, Window};
+use gpui::{Context, FocusHandle, Image, Window, actions};
 
 use super::{AppSurface, FarcasterApp, ImagePreview, PostRenderFocus};
+actions!(farcaster, [CycleWorkspaceForward, CycleWorkspaceBackward]);
+
 use crate::{
     protocol::{ExtensionUiRequest, PromptMode},
     runtime::RuntimeCommand,
@@ -263,6 +265,29 @@ impl FarcasterApp {
 
     pub(in crate::app) fn workspace_switch_blocked(&self) -> bool {
         self.center_surface_switch_blocked() || self.surface == AppSurface::Work
+    }
+
+    pub(in crate::app) fn cycle_workspace_surface(
+        &mut self,
+        forward: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspace_switch_blocked() {
+            return;
+        }
+        let target = match (self.surface, forward) {
+            (AppSurface::Chat, true) | (AppSurface::Terminal, false) => AppSurface::Editor,
+            (AppSurface::Editor, true) | (AppSurface::Chat, false) => AppSurface::Terminal,
+            (AppSurface::Terminal, true) | (AppSurface::Editor, false) => AppSurface::Chat,
+            (AppSurface::Work, _) => return,
+        };
+        match target {
+            AppSurface::Chat => self.show_chat_surface(window, cx),
+            AppSurface::Editor => self.show_editor_surface(window, cx),
+            AppSurface::Terminal => self.show_terminal_surface(window, cx),
+            AppSurface::Work => {}
+        }
     }
 
     pub(in crate::app) fn respond_value(
