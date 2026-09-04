@@ -106,12 +106,17 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
             access_mode: self.command.access_mode,
             incoming,
             reasoning_started: false,
+            text_streams: HashMap::new(),
+            reasoning_streams: HashMap::new(),
             session_usage: TokenUsage::default(),
+            last_turn_usage: None,
             context_window: 0,
             pending_inputs: HashMap::new(),
+            pending_deliveries: HashMap::new(),
             active_tools: HashMap::new(),
             generation: 0,
             completions: None,
+            turn_active: false,
             wake: None,
             pending: VecDeque::from([WorkerEvent::SessionChanged {
                 locator: session_id,
@@ -216,12 +221,17 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
             access_mode: command.access_mode,
             incoming,
             reasoning_started: false,
+            text_streams: HashMap::new(),
+            reasoning_streams: HashMap::new(),
             session_usage: TokenUsage::default(),
+            last_turn_usage: None,
             context_window,
             pending_inputs: HashMap::new(),
+            pending_deliveries: HashMap::new(),
             active_tools: HashMap::new(),
             generation: 0,
             completions: None,
+            turn_active: false,
             wake: launch.wake.clone(),
             pending: VecDeque::new(),
         }),
@@ -373,6 +383,13 @@ fn model_variant_efforts(model: &Value) -> Vec<String> {
         .collect()
 }
 
+#[derive(Default)]
+struct ActiveOpenCodeTool {
+    name: String,
+    input: String,
+    started: bool,
+}
+
 enum PendingOpenCodeInput {
     Permission {
         session_id: String,
@@ -393,12 +410,17 @@ struct OpenCodeWorkerSession {
     access_mode: crate::agents::HarnessAccessMode,
     incoming: mpsc::Receiver<Result<super::contract::OpenCodeEvent, String>>,
     reasoning_started: bool,
+    text_streams: HashMap<String, String>,
+    reasoning_streams: HashMap<String, String>,
     session_usage: TokenUsage,
+    last_turn_usage: Option<TokenUsage>,
     context_window: u64,
     pending_inputs: HashMap<String, PendingOpenCodeInput>,
-    active_tools: HashMap<String, String>,
+    pending_deliveries: HashMap<String, (WorkerSendMode, String)>,
+    active_tools: HashMap<String, ActiveOpenCodeTool>,
     generation: u64,
     completions: Option<mpsc::Receiver<(u64, Result<String, String>)>>,
+    turn_active: bool,
     wake: Option<thread::Thread>,
     pending: VecDeque<WorkerEvent>,
 }
@@ -416,32 +438,55 @@ impl OpenCodeWorkerSession {
             }
             WorkerSendMode::Steer => super::contract::OpenCodeDelivery::Steer,
         };
-        self.server
+        let admission = self
+            .server
             .client()
             .prompt(&self.session_id, &message, files, delivery)?;
+        self.pending_deliveries
+            .insert(admission.id, (mode, message));
         self.caller_identity
             .set_activity(WorkerActivityState::Working);
         if mode != WorkerSendMode::Steer {
             self.reasoning_started = false;
+            self.text_streams.clear();
+            self.reasoning_streams.clear();
+            self.active_tools.clear();
         }
         self.generation = self.generation.saturating_add(1);
+        self.completions = None;
+        self.turn_active = true;
+        self.pending.push_back(WorkerEvent::Started);
+        Ok(())
+    }
+
+    fn finish_turn(&mut self) {
+        self.turn_active = false;
+        self.completions = None;
+        self.active_tools.clear();
+        self.text_streams.clear();
+        self.reasoning_streams.clear();
+        self.caller_identity.set_activity(WorkerActivityState::Idle);
+    }
+
+    fn fetch_completed_context(&mut self) -> Result<(), String> {
+        if self.completions.is_some() {
+            return Ok(());
+        }
         let generation = self.generation;
         let session_id = self.session_id.clone();
         let mut client = self.server.client();
         let (sender, receiver) = mpsc::channel();
         let wake = self.wake.clone();
         thread::Builder::new()
-            .name(format!("opencode-worker-{session_id}"))
+            .name(format!("opencode-context-{session_id}"))
             .spawn(move || {
                 let result = client
-                    .wait_session(&session_id)
-                    .and_then(|()| client.context(&session_id))
+                    .context(&session_id)
                     .map(|context| final_assistant_text(&context));
                 let _ = send_and_wake(&sender, (generation, result), wake.as_ref());
             })
-            .map_err(|error| format!("watch OpenCode worker: {error}"))?;
+            .map_err(|error| format!("read completed OpenCode context: {error}"))?;
         self.completions = Some(receiver);
-        self.pending.push_back(WorkerEvent::Started);
         Ok(())
     }
 
@@ -486,20 +531,110 @@ impl OpenCodeWorkerSession {
             }
             let event_type = unversioned_opencode_event_type(reported_event_type);
             match event_type {
+                "session.execution.started" => {
+                    if !self.turn_active {
+                        self.turn_active = true;
+                        self.caller_identity
+                            .set_activity(WorkerActivityState::Working);
+                        return Some(WorkerEvent::Started);
+                    }
+                }
+                "session.execution.succeeded" => {
+                    if self.turn_active
+                        && let Err(error) = self.fetch_completed_context()
+                    {
+                        self.finish_turn();
+                        return Some(WorkerEvent::Failed(error));
+                    }
+                }
+                "session.execution.interrupted" => {
+                    if self.turn_active {
+                        self.finish_turn();
+                        return Some(WorkerEvent::Settled {
+                            output: String::new(),
+                        });
+                    }
+                }
+                "session.execution.failed" => {
+                    if self.turn_active {
+                        self.finish_turn();
+                        return Some(WorkerEvent::Failed(opencode_event_error(
+                            &event.data,
+                            "OpenCode execution failed",
+                        )));
+                    }
+                }
+                "session.inbox.delivered" => {
+                    let Some(id) = event
+                        .data
+                        .get("inboxID")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                    else {
+                        log_bad_opencode_event(&event, "inbox delivery is missing inboxID");
+                        continue;
+                    };
+                    if let Some((mode, message)) = self.pending_deliveries.remove(&id)
+                        && mode != WorkerSendMode::Prompt
+                    {
+                        return Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+                            mode,
+                            message,
+                        }));
+                    }
+                }
+                "session.inbox.cancelled" => {
+                    if let Some(id) = event.data.get("inboxID").and_then(Value::as_str) {
+                        self.pending_deliveries.remove(id);
+                    }
+                }
                 "session.next.prompted" => {
                     if let Some(activity) = opencode_input_delivery(&event.data) {
                         return Some(WorkerEvent::Activity(activity));
                     }
                     log_bad_opencode_event(&event, "prompted event has invalid delivery or prompt");
                 }
+                "session.text.started" | "session.next.text.started" => {
+                    if let Some(key) = opencode_part_key(&event.data) {
+                        self.text_streams.entry(key).or_default();
+                    }
+                }
                 "session.text.delta" | "session.next.text.delta" => {
                     let Some(delta) = event.data.get("delta").and_then(Value::as_str) else {
                         log_bad_opencode_event(&event, "text delta is missing delta");
                         continue;
                     };
+                    if let Some(key) = opencode_part_key(&event.data) {
+                        self.text_streams.entry(key).or_default().push_str(delta);
+                    }
                     return Some(WorkerEvent::Activity(WorkerActivity::TextDelta {
                         content_index: usize::from(self.reasoning_started),
                         delta: delta.to_owned(),
+                    }));
+                }
+                "session.text.ended" | "session.next.text.ended" => {
+                    let Some(text) = event.data.get("text").and_then(Value::as_str) else {
+                        log_bad_opencode_event(&event, "text end is missing text");
+                        continue;
+                    };
+                    let streamed = opencode_part_key(&event.data)
+                        .and_then(|key| self.text_streams.remove(&key))
+                        .unwrap_or_default();
+                    let Some(delta) = completed_opencode_delta(&streamed, text) else {
+                        continue;
+                    };
+                    return Some(WorkerEvent::Activity(WorkerActivity::TextDelta {
+                        content_index: usize::from(self.reasoning_started),
+                        delta,
+                    }));
+                }
+                "session.reasoning.started" | "session.next.reasoning.started" => {
+                    if let Some(key) = opencode_part_key(&event.data) {
+                        self.reasoning_streams.entry(key).or_default();
+                    }
+                    self.reasoning_started = true;
+                    return Some(WorkerEvent::Activity(WorkerActivity::ThinkingStarted {
+                        content_index: 0,
                     }));
                 }
                 "session.reasoning.delta" | "session.next.reasoning.delta" => {
@@ -507,10 +642,33 @@ impl OpenCodeWorkerSession {
                         log_bad_opencode_event(&event, "reasoning delta is missing delta");
                         continue;
                     };
+                    if let Some(key) = opencode_part_key(&event.data) {
+                        self.reasoning_streams
+                            .entry(key)
+                            .or_default()
+                            .push_str(delta);
+                    }
                     self.reasoning_started = true;
                     return Some(WorkerEvent::Activity(WorkerActivity::ThinkingDelta {
                         content_index: 0,
                         delta: delta.to_owned(),
+                    }));
+                }
+                "session.reasoning.ended" | "session.next.reasoning.ended" => {
+                    let Some(text) = event.data.get("text").and_then(Value::as_str) else {
+                        log_bad_opencode_event(&event, "reasoning end is missing text");
+                        continue;
+                    };
+                    let streamed = opencode_part_key(&event.data)
+                        .and_then(|key| self.reasoning_streams.remove(&key))
+                        .unwrap_or_default();
+                    let Some(delta) = completed_opencode_delta(&streamed, text) else {
+                        continue;
+                    };
+                    self.reasoning_started = true;
+                    return Some(WorkerEvent::Activity(WorkerActivity::ThinkingDelta {
+                        content_index: 0,
+                        delta,
                     }));
                 }
                 "session.tool.input.started" | "session.next.tool.input.started" => {
@@ -522,21 +680,77 @@ impl OpenCodeWorkerSession {
                         opencode_tool_name(&event.data).unwrap_or("tool"),
                         &Value::Null,
                     );
-                    self.active_tools.insert(id, name);
+                    self.active_tools.insert(
+                        id,
+                        ActiveOpenCodeTool {
+                            name,
+                            ..Default::default()
+                        },
+                    );
+                }
+                "session.tool.input.delta" | "session.next.tool.input.delta" => {
+                    let Some(id) = opencode_tool_id(&event.data).map(str::to_owned) else {
+                        log_bad_opencode_event(&event, "tool input delta is missing call id");
+                        continue;
+                    };
+                    let Some(delta) = event.data.get("delta").and_then(Value::as_str) else {
+                        log_bad_opencode_event(&event, "tool input delta is missing delta");
+                        continue;
+                    };
+                    self.active_tools
+                        .entry(id)
+                        .or_default()
+                        .input
+                        .push_str(delta);
+                }
+                "session.tool.input.ended" | "session.next.tool.input.ended" => {
+                    let Some(id) = opencode_tool_id(&event.data).map(str::to_owned) else {
+                        log_bad_opencode_event(&event, "tool input end is missing call id");
+                        continue;
+                    };
+                    let tool = self.active_tools.entry(id.clone()).or_default();
+                    let text = event
+                        .data
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .unwrap_or(&tool.input);
+                    let args = match serde_json::from_str(text) {
+                        Ok(args) => args,
+                        Err(error) => {
+                            log_bad_opencode_event(
+                                &event,
+                                &format!("tool input end contains invalid JSON: {error}"),
+                            );
+                            continue;
+                        }
+                    };
+                    let (name, args) = normalize_opencode_tool(&tool.name, &args);
+                    tool.name.clone_from(&name);
+                    tool.started = true;
+                    return Some(WorkerEvent::Activity(WorkerActivity::ToolStarted {
+                        id,
+                        name,
+                        args,
+                    }));
                 }
                 "session.tool.called" | "session.next.tool.called" => {
                     let Some(id) = opencode_tool_id(&event.data).map(str::to_owned) else {
                         log_bad_opencode_event(&event, "tool call is missing call id");
                         continue;
                     };
+                    let tool = self.active_tools.entry(id.clone()).or_default();
                     let reported_name = opencode_tool_name(&event.data)
-                        .or_else(|| self.active_tools.get(&id).map(String::as_str))
+                        .filter(|name| !name.is_empty())
+                        .or_else(|| (!tool.name.is_empty()).then_some(tool.name.as_str()))
                         .unwrap_or("tool");
                     let (name, args) = normalize_opencode_tool(
                         reported_name,
                         event.data.get("input").unwrap_or(&Value::Null),
                     );
-                    self.active_tools.insert(id.clone(), name.clone());
+                    tool.name.clone_from(&name);
+                    if std::mem::replace(&mut tool.started, true) {
+                        continue;
+                    }
                     return Some(WorkerEvent::Activity(WorkerActivity::ToolStarted {
                         id,
                         name,
@@ -556,23 +770,32 @@ impl OpenCodeWorkerSession {
                         }]),
                     }));
                 }
+                "session.step.started" | "session.next.step.started" => {
+                    self.last_turn_usage = None;
+                    return Some(WorkerEvent::Activity(WorkerActivity::TurnStarted));
+                }
                 "session.step.ended" | "session.next.step.ended" => {
-                    let Some(usage) = event.data.get("tokens").or_else(|| event.data.get("usage"))
-                    else {
+                    let Some(turn) = opencode_event_usage(&event.data) else {
                         log_bad_opencode_event(&event, "step end is missing token usage");
                         continue;
                     };
-                    let input = opencode_token(usage.get("input"));
-                    let output = opencode_token(usage.get("output"));
-                    let reasoning = opencode_token(usage.get("reasoning"));
-                    let cache_read = opencode_token(usage.pointer("/cache/read"));
-                    let cache_write = opencode_token(usage.pointer("/cache/write"));
-                    let turn = TokenUsage {
-                        input,
-                        output: output.saturating_add(reasoning),
-                        cache_read,
-                        cache_write,
+                    self.last_turn_usage = Some(turn);
+                    self.session_usage = self.session_usage.saturating_add(turn);
+                    return Some(WorkerEvent::Activity(WorkerActivity::Usage(WorkerUsage {
+                        turn,
+                        session: self.session_usage,
+                        context_window: self.context_window,
+                    })));
+                }
+                "session.usage.updated" | "session.usage.recorded" => {
+                    let Some(turn) = opencode_event_usage(&event.data) else {
+                        log_bad_opencode_event(&event, "usage event is missing token usage");
+                        continue;
                     };
+                    if self.last_turn_usage == Some(turn) {
+                        continue;
+                    }
+                    self.last_turn_usage = Some(turn);
                     self.session_usage = self.session_usage.saturating_add(turn);
                     return Some(WorkerEvent::Activity(WorkerActivity::Usage(WorkerUsage {
                         turn,
@@ -596,6 +819,26 @@ impl OpenCodeWorkerSession {
                         is_error: failed,
                     }));
                 }
+                "session.retry.scheduled" => {
+                    return Some(WorkerEvent::Activity(
+                        WorkerActivity::ServiceStatusChanged {
+                            name: "opencode".into(),
+                            status: "retrying".into(),
+                            error: event.data.get("error").cloned(),
+                            failure_reason: event.data.get("reason").cloned(),
+                        },
+                    ));
+                }
+                "session.step.failed" => {
+                    return Some(WorkerEvent::Activity(
+                        WorkerActivity::ServiceStatusChanged {
+                            name: "opencode".into(),
+                            status: "step_failed".into(),
+                            error: event.data.get("error").cloned(),
+                            failure_reason: event.data.get("reason").cloned(),
+                        },
+                    ));
+                }
                 "session.compaction.started" | "session.next.compaction.started" => {
                     return Some(WorkerEvent::Activity(WorkerActivity::CompactionStarted));
                 }
@@ -611,6 +854,15 @@ impl OpenCodeWorkerSession {
                             .get("error")
                             .and_then(Value::as_str)
                             .map(str::to_owned),
+                    }));
+                }
+                "session.compaction.failed" => {
+                    return Some(WorkerEvent::Activity(WorkerActivity::CompactionFinished {
+                        aborted: false,
+                        error: Some(opencode_event_error(
+                            &event.data,
+                            "OpenCode compaction failed",
+                        )),
                     }));
                 }
                 "form.created" => {
@@ -669,17 +921,10 @@ impl OpenCodeWorkerSession {
                         secret: false,
                     }));
                 }
-                // These events carry lifecycle or partial-input state for which the shared
-                // worker contract has no distinct event. Their useful payload is represented by
-                // the matching delta, called, terminal, or completion event.
+                // Admission and streamed-time markers carry no transcript payload; compaction
+                // progress is represented by its start and terminal events.
                 "session.next.prompt.admitted"
-                | "session.next.step.started"
-                | "session.next.text.started"
-                | "session.next.text.ended"
-                | "session.next.reasoning.started"
-                | "session.next.reasoning.ended"
-                | "session.next.tool.input.delta"
-                | "session.next.tool.input.ended"
+                | "session.step.streamed"
                 | "session.next.compaction.delta" => {}
                 _ => log_bad_opencode_event(&event, "unmapped same-session event"),
             }
@@ -735,9 +980,7 @@ impl WorkerSession for OpenCodeWorkerSession {
     fn abort(&mut self) -> Result<(), String> {
         self.server.client().interrupt(&self.session_id)?;
         self.generation = self.generation.saturating_add(1);
-        self.completions = None;
-        self.active_tools.clear();
-        self.caller_identity.set_activity(WorkerActivityState::Idle);
+        self.finish_turn();
         self.pending.push_back(WorkerEvent::Settled {
             output: String::new(),
         });
@@ -785,7 +1028,7 @@ impl WorkerSession for OpenCodeWorkerSession {
             return Some(event);
         }
         if let Some(message) = self.caller_identity.try_recv() {
-            let activity = if self.completions.is_some() {
+            let activity = if self.turn_active {
                 WorkerActivityState::Working
             } else {
                 WorkerActivityState::Idle
@@ -806,8 +1049,7 @@ impl WorkerSession for OpenCodeWorkerSession {
         if completion.0 != self.generation {
             return None;
         }
-        self.completions = None;
-        self.caller_identity.set_activity(WorkerActivityState::Idle);
+        self.finish_turn();
         Some(match completion.1 {
             Ok(output) => WorkerEvent::Settled { output },
             Err(error) => WorkerEvent::Failed(error),
@@ -854,6 +1096,42 @@ fn unversioned_opencode_event_type(event_type: &str) -> &str {
     } else {
         event_type
     }
+}
+
+fn opencode_part_key(data: &Value) -> Option<String> {
+    let message = data.get("assistantMessageID")?.as_str()?;
+    let ordinal = data.get("ordinal").and_then(Value::as_u64).unwrap_or(0);
+    Some(format!("{message}:{ordinal}"))
+}
+
+fn completed_opencode_delta(streamed: &str, completed: &str) -> Option<String> {
+    if streamed.is_empty() {
+        return (!completed.is_empty()).then(|| completed.to_owned());
+    }
+    completed
+        .strip_prefix(streamed)
+        .filter(|suffix| !suffix.is_empty())
+        .map(str::to_owned)
+}
+
+fn opencode_event_error(data: &Value, fallback: &str) -> String {
+    data.pointer("/error/message")
+        .and_then(Value::as_str)
+        .or_else(|| data.get("error").and_then(Value::as_str))
+        .or_else(|| data.get("message").and_then(Value::as_str))
+        .unwrap_or(fallback)
+        .to_owned()
+}
+
+fn opencode_event_usage(data: &Value) -> Option<TokenUsage> {
+    let usage = data.get("tokens").or_else(|| data.get("usage"))?;
+    Some(TokenUsage {
+        input: opencode_token(usage.get("input")),
+        output: opencode_token(usage.get("output"))
+            .saturating_add(opencode_token(usage.get("reasoning"))),
+        cache_read: opencode_token(usage.pointer("/cache/read")),
+        cache_write: opencode_token(usage.pointer("/cache/write")),
+    })
 }
 
 fn opencode_token(value: Option<&Value>) -> u64 {
