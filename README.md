@@ -97,6 +97,27 @@ Set `BUNDLE_FORMATS=appimage,deb,pacman` when calling `make bundle` to create al
 Linux formats. Packages and Linux windows use the bundled Farcaster icon and
 the `io.github.behzade.farcaster` app ID.
 
+## Releases
+
+Prepare and push a release from a clean `main` branch with Cargo Release:
+
+```sh
+cargo install cargo-release --locked
+cargo release patch --execute # or minor, major, or an explicit version
+```
+
+Without `--execute`, Cargo Release performs a dry run. The executed command
+automatically increments (or explicitly sets) the versions in `Cargo.toml`,
+`Cargo.lock`, and the Linux package config, verifies the build, commits the
+version, creates an annotated `v<version>` tag, and pushes the commit and tag.
+Pushing that tag runs independent Linux x86_64 and macOS arm64 builds, then
+publishes both assets to one GitHub release. Both builds must succeed before
+publication. CI currently ad-hoc signs the macOS app, so it is not notarized.
+
+Windows is not currently supported. GPUI has a Windows backend, but Farcaster's
+shell environment capture, process lifecycle, terminal integration, and data
+paths still rely on Unix APIs and conventions.
+
 Farcaster serves stateless Streamable HTTP MCP at
 `http://127.0.0.1:8765/mcp`. It exposes `worker_send`, `worker_notices`, and the
 `workgraph_*` tools. Workers have stable human-readable names while opaque IDs
