@@ -525,7 +525,7 @@ impl AcpWorkerSession {
         if session_id != Some(&self.session_id) {
             if session_id.is_none() {
                 log_bad_acp_message(
-                    &self.profile.name,
+                    self.profile.name,
                     "session/update",
                     &params,
                     "missing sessionId",
@@ -539,7 +539,7 @@ impl AcpWorkerSession {
             .and_then(Value::as_str);
         let (Some(update), Some(update_type)) = (update, update_type) else {
             log_bad_acp_message(
-                &self.profile.name,
+                self.profile.name,
                 "session/update",
                 &params,
                 "malformed update",
@@ -589,7 +589,7 @@ impl AcpWorkerSession {
             }
             _ => {
                 log_bad_acp_message(
-                    &self.profile.name,
+                    self.profile.name,
                     "session/update",
                     &params,
                     "unmapped same-session update",
@@ -826,7 +826,7 @@ impl WorkerSession for AcpWorkerSession {
                 allow_option,
                 reject_option,
             } => {
-                let result = if response.cancel {
+                if response.cancel {
                     json!({"outcome": {"outcome": "cancelled"}})
                 } else {
                     let value = response.value.as_deref().unwrap_or_default();
@@ -841,8 +841,7 @@ impl WorkerSession for AcpWorkerSession {
                         "ACP permission response has no matching option".to_owned()
                     })?;
                     json!({"outcome": {"outcome": "selected", "optionId": option_id}})
-                };
-                result
+                }
             }
             PendingInputKind::CursorPlan => {
                 let outcome = if response.cancel {
@@ -1135,7 +1134,7 @@ impl WorkerSession for AcpWorkerSession {
                         return Some(event);
                     } else {
                         log_bad_acp_message(
-                            &self.profile.name,
+                            self.profile.name,
                             &method,
                             &params,
                             "unmapped notification",
@@ -1156,7 +1155,7 @@ impl WorkerSession for AcpWorkerSession {
                     } else {
                         "unsupported agent request"
                     };
-                    log_bad_acp_message(&self.profile.name, &method, &params, reason);
+                    log_bad_acp_message(self.profile.name, &method, &params, reason);
                     if let Err(error) = self.reject_request(&id) {
                         return Some(WorkerEvent::Failed(error));
                     }

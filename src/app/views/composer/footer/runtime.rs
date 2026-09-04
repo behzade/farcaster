@@ -111,7 +111,7 @@ fn build_runtime_menu(
             selected_effort: identity.effort.map(str::to_owned),
             modes: app.snapshot.modes.clone(),
             selected_mode: app.snapshot.selected_mode.clone(),
-            feedback: catalog_feedback(&app),
+            feedback: catalog_feedback(app),
         }
     };
     if let Some(message) = data.feedback {
@@ -176,6 +176,7 @@ fn build_runtime_menu(
     menu
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_model_menu(
     menu: PopupMenu,
     entity: &WeakEntity<FarcasterApp>,

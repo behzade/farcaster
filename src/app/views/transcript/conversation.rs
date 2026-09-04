@@ -13,8 +13,11 @@ use crate::{
     protocol::PromptImage,
 };
 
+#[path = "conversation/history.rs"]
 mod history;
+#[path = "conversation/stream.rs"]
 mod stream;
+#[path = "conversation/tools.rs"]
 mod tools;
 
 pub(crate) use history::annotate_prompt_presentations;

@@ -324,10 +324,10 @@ pub(super) fn render_message_chunk(
         .into_any_element()
 }
 
-pub(in crate::app::views::transcript) fn message_role_label<'a>(
+pub(in crate::app::views::transcript) fn message_role_label(
     kind: TranscriptKind,
-    assistant_label: &'a str,
-) -> Option<&'a str> {
+    assistant_label: &str,
+) -> Option<&str> {
     match kind {
         TranscriptKind::User => Some("You"),
         TranscriptKind::Assistant => Some(assistant_label),

@@ -160,9 +160,11 @@ fn read_session(locator_root: &Path, query: &str, directory: &Path) -> Option<Di
     if !project.is_dir() || crate::projects::is_temporary_project(&project) {
         return None;
     }
-    let title = (!meta.name.trim().is_empty())
-        .then_some(meta.name)
-        .unwrap_or_else(|| "New Cursor session".into());
+    let title = if meta.name.trim().is_empty() {
+        "New Cursor session".into()
+    } else {
+        meta.name
+    };
     let search = format!("{title} {} {}", project.display(), PROFILE.name);
     if !query.is_empty() && !search.to_ascii_lowercase().contains(query) {
         return None;

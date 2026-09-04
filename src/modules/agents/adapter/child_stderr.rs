@@ -48,13 +48,12 @@ fn emit_line(label: &str, line: &str) {
 }
 
 fn structured_level(line: &str) -> Option<Level> {
-    if let Ok(Value::Object(fields)) = serde_json::from_str(line) {
-        if let Some(level) = fields
+    if let Ok(Value::Object(fields)) = serde_json::from_str(line)
+        && let Some(level) = fields
             .iter()
             .find_map(|(key, value)| level_from_field(key, value.as_str()?))
-        {
-            return Some(level);
-        }
+    {
+        return Some(level);
     }
     LogfmtParser::new(line).find_map(|pair| {
         let (key, value) = pair.ok()?;
