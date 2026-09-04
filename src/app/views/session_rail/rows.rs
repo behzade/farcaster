@@ -4,9 +4,10 @@ use std::{
 };
 
 use gpui::{
-    AnyElement, AppContext as _, CursorStyle, Entity, FontWeight, InteractiveElement as _,
-    IntoElement, MouseButton, ParentElement as _, Pixels, Rgba, Role,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
+    AnyElement, App, AppContext as _, CursorStyle, Entity, FontWeight, InteractiveElement as _,
+    IntoElement, MouseButton, ParentElement as _, Pixels, RenderOnce, Rgba, Role,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div,
+    prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
     input::{Escape, Input, InputState},
@@ -60,95 +61,381 @@ fn normalized_session_status(status: &str) -> Option<String> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn session_row(
-    item: &SessionRailItem,
-    selected: bool,
-    status: Option<String>,
-    shortcut: Option<u8>,
-    drop_position: Option<ReorderPosition>,
-    draggable: bool,
-    title_editor: Option<Entity<InputState>>,
-    subagents: usize,
-    entity: WeakEntity<FarcasterApp>,
-) -> AnyElement {
-    session_row_with_height(
-        item,
-        selected,
-        status,
-        shortcut,
-        drop_position,
-        draggable,
-        title_editor,
-        subagents,
-        THEME.layout.session_row_height,
-        entity,
-    )
+pub(super) struct SessionRowInput {
+    pub(super) selected: bool,
+    pub(super) status: Option<String>,
+    pub(super) shortcut: Option<u8>,
+    pub(super) drop_position: Option<ReorderPosition>,
+    pub(super) draggable: bool,
+    pub(super) title_editor: Option<Entity<InputState>>,
+    pub(super) subagents: usize,
+    pub(super) row_height: Pixels,
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn session_row_with_height(
-    item: &SessionRailItem,
+impl SessionRowInput {
+    pub(super) fn standard(selected: bool, status: Option<String>) -> Self {
+        Self {
+            selected,
+            status,
+            shortcut: None,
+            drop_position: None,
+            draggable: true,
+            title_editor: None,
+            subagents: 0,
+            row_height: THEME.layout.session_row_height,
+        }
+    }
+}
+
+#[derive(IntoElement)]
+pub(super) struct SessionRow {
+    item: SessionRailItem,
+    input: SessionRowInput,
+    entity: WeakEntity<FarcasterApp>,
+}
+
+impl SessionRow {
+    pub(super) fn new(
+        item: &SessionRailItem,
+        input: SessionRowInput,
+        entity: WeakEntity<FarcasterApp>,
+    ) -> Self {
+        Self {
+            item: item.clone(),
+            input,
+            entity,
+        }
+    }
+}
+
+impl RenderOnce for SessionRow {
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        let Self {
+            item,
+            input:
+                SessionRowInput {
+                    selected,
+                    status,
+                    shortcut,
+                    drop_position,
+                    draggable,
+                    title_editor,
+                    subagents,
+                    row_height,
+                },
+            entity,
+        } = self;
+        let session = &item.session;
+        let path = session.path.clone();
+        let project = session.project.clone();
+        let open_entity = entity.clone();
+        let edit_entity = entity.clone();
+        let cancel_entity = entity.clone();
+        let edit_path = path.clone();
+        let edit_project = project.clone();
+        let edit_title = session.title.clone();
+        let move_path = session.path.clone();
+        let move_project = session.project.clone();
+        let move_entity = entity.clone();
+        let target_app_session_id = session.app_session_id;
+        let drag = DraggedSession {
+            app_session_id: target_app_session_id,
+            path: Some(session.path.clone()),
+            kind: item.kind,
+            title: session.title.clone(),
+            project: project_label(&session.project),
+        };
+        let drag_move_entity = entity.clone();
+        let drop_entity = entity.clone();
+        let drag_entity = entity.clone();
+        let age = relative_age(session.modified);
+        let target_kind = item.kind;
+        let is_archived = target_kind == SessionRailKind::Archived;
+        let status_text = status.unwrap_or_default();
+        let accessible_state = if is_archived {
+            "Archived"
+        } else {
+            status_text.as_str()
+        };
+        let accessible_label = session_accessible_label(&session.title, accessible_state, &age);
+        let hover_details = session_hover_details(session, accessible_state, &age, subagents);
+        let hover_id = format!("session-hover-{}", session.id);
+        let action_group = format!("session-actions-{}", session.id);
+        let archive_action = session_archive_action(
+            &session.id,
+            session.path.clone(),
+            is_archived,
+            action_group.clone(),
+            entity.clone(),
+        );
+        let delete_action = session_delete_action(
+            &session.id,
+            session.path.clone(),
+            action_group.clone(),
+            entity.clone(),
+        );
+        let row = div()
+            .id(format!("session-{}", session.id))
+            .role(Role::Button)
+            .aria_label(accessible_label)
+            .aria_selected(selected)
+            .tab_index(0)
+            .size_full()
+            .h(row_height)
+            .relative()
+            .flex()
+            .items_stretch()
+            .px(THEME.space.sm)
+            .py(THEME.space.xs)
+            .rounded(px(2.0))
+            .group(action_group)
+            .bg(if selected {
+                THEME.colors.selection
+            } else {
+                THEME.colors.panel
+            })
+            .hover(|row| row.bg(THEME.colors.surface))
+            .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
+            .cursor(CursorStyle::PointingHand)
+            .when(draggable, move |row| {
+                row.on_drag(drag, move |drag, _, _, cx| {
+                    let _ = drag_entity.update(cx, |this, cx| this.begin_session_drag(cx));
+                    cx.new(|_| drag.clone())
+                })
+                .can_drop(move |value, _, _| {
+                    value
+                        .downcast_ref::<DraggedSession>()
+                        .is_some_and(|drag| drag.can_drop_on(target_kind, target_app_session_id))
+                })
+                .reorder_target::<DraggedSession>(
+                    drop_position,
+                    THEME.colors.accent,
+                    THEME.colors.hover,
+                    move |position, _, cx| {
+                        let _ = drag_move_entity.update(cx, |this, cx| {
+                            this.update_session_drop_target(target_app_session_id, position, cx);
+                        });
+                    },
+                    move |drag, window, cx| {
+                        cx.stop_propagation();
+                        let _ = drop_entity.update(cx, |this, cx| {
+                            this.complete_session_row_drop(drag, target_kind, window, cx);
+                        });
+                    },
+                )
+            })
+            .on_click(move |event, window, cx| {
+                if event.click_count() >= 2 {
+                    cx.stop_propagation();
+                    let _ = edit_entity.update(cx, |this, cx| {
+                        this.begin_session_title_edit(
+                            edit_path.clone(),
+                            edit_project.clone(),
+                            edit_title.clone(),
+                            window,
+                            cx,
+                        );
+                    });
+                } else {
+                    let _ = open_entity.update(cx, |this, cx| {
+                        this.select_session(path.clone(), project.clone(), window, cx)
+                    });
+                }
+            })
+            .child(
+                div()
+                    .w_full()
+                    .min_w_0()
+                    .flex()
+                    .items_stretch()
+                    .gap(THEME.space.sm)
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.0))
+                            .overflow_hidden()
+                            .child(session_row_title(
+                                session.title.clone(),
+                                selected,
+                                is_archived,
+                                title_editor,
+                                cancel_entity,
+                            ))
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .flex()
+                                    .items_center()
+                                    .gap(THEME.space.xs)
+                                    .child(
+                                        div()
+                                            .min_w_0()
+                                            .flex_1()
+                                            .flex()
+                                            .items_center()
+                                            .gap(px(3.0))
+                                            .text_size(THEME.type_scale.caption)
+                                            .text_color(THEME.colors.subtle)
+                                            .child(
+                                                div()
+                                                    .id(format!("move-project-{}", session.id))
+                                                    .role(Role::Button)
+                                                    .aria_label("Move session to another project")
+                                                    .tab_index(0)
+                                                    .min_w_0()
+                                                    .rounded(THEME.radius)
+                                                    .cursor(CursorStyle::PointingHand)
+                                                    .hover(|icon| {
+                                                        icon.text_color(THEME.colors.accent)
+                                                    })
+                                                    .focus(|icon| {
+                                                        icon.border(THEME.border)
+                                                            .border_color(THEME.colors.accent)
+                                                    })
+                                                    .tooltip(move |window, cx| {
+                                                        Tooltip::new("Move to project…")
+                                                            .build(window, cx)
+                                                    })
+                                                    .on_click(move |_, window, cx| {
+                                                        cx.stop_propagation();
+                                                        let _ =
+                                                            move_entity.update(cx, |this, cx| {
+                                                                this.open_picker(
+                                                            PickerScope::Projects(
+                                                                ProjectPickerIntent::MoveSession {
+                                                                    path: move_path.clone(),
+                                                                    source_project: move_project
+                                                                        .clone(),
+                                                                },
+                                                            ),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                            });
+                                                    })
+                                                    .child(
+                                                        div()
+                                                            .min_w_0()
+                                                            .overflow_hidden()
+                                                            .whitespace_nowrap()
+                                                            .text_ellipsis()
+                                                            .child(project_label(&session.project)),
+                                                    ),
+                                            ),
+                                    )
+                                    .child(app_icon(
+                                        AppIcon::for_harness(&session.harness),
+                                        AppIconSize::Inline,
+                                    ))
+                                    .when_some(
+                                        status_icon(target_app_session_id, &status_text),
+                                        |metadata, icon| metadata.child(icon),
+                                    )
+                                    .child(
+                                        div()
+                                            .w(px(30.0))
+                                            .flex_none()
+                                            .whitespace_nowrap()
+                                            .text_align(gpui::TextAlign::Right)
+                                            .text_size(THEME.type_scale.caption)
+                                            .text_color(THEME.colors.subtle)
+                                            .child(age),
+                                    )
+                                    .when_some(shortcut, |metadata, number| {
+                                        metadata.child(Kbd::new(
+                                            gpui::Keystroke::parse(&format!(
+                                                "{}-{number}",
+                                                application_modifier().prefix()
+                                            ))
+                                            .expect("fixed session shortcut must parse"),
+                                        ))
+                                    }),
+                            ),
+                    ),
+            )
+            .child(archive_action)
+            .when(is_archived, |row| row.child(delete_action));
+        let context_menu = session_context_menu(
+            &session.id,
+            session.path.clone(),
+            session.project.clone(),
+            session.title.clone(),
+            target_kind,
+            entity,
+            row.into_any_element(),
+        );
+
+        session_hover_panel(
+            hover_id,
+            hover_details,
+            div()
+                .h(row_height)
+                .w_full()
+                .px(px(2.0))
+                .child(context_menu)
+                .into_any_element(),
+        )
+    }
+}
+
+fn session_row_title(
+    title: String,
     selected: bool,
-    status: Option<String>,
-    shortcut: Option<u8>,
-    drop_position: Option<ReorderPosition>,
-    draggable: bool,
+    is_archived: bool,
     title_editor: Option<Entity<InputState>>,
-    subagents: usize,
-    row_height: Pixels,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
-    let session = &item.session;
-    let path = session.path.clone();
-    let project = session.project.clone();
-    let open_entity = entity.clone();
-    let edit_entity = entity.clone();
-    let cancel_entity = entity.clone();
-    let edit_path = path.clone();
-    let edit_project = project.clone();
-    let edit_title = session.title.clone();
-    let move_path = session.path.clone();
-    let move_project = session.project.clone();
-    let move_entity = entity.clone();
-    let archive_path = session.path.clone();
-    let archive_entity = entity.clone();
-    let delete_path = session.path.clone();
-    let delete_entity = entity.clone();
-    let target_app_session_id = session.app_session_id;
-    let drag = DraggedSession {
-        app_session_id: target_app_session_id,
-        path: Some(session.path.clone()),
-        kind: item.kind,
-        title: session.title.clone(),
-        project: project_label(&session.project),
-    };
-    let drag_move_entity = entity.clone();
-    let drop_entity = entity.clone();
-    let drag_entity = entity.clone();
-    let age = relative_age(session.modified);
-    let target_kind = item.kind;
-    let is_archived = target_kind == SessionRailKind::Archived;
-    let status_text = status.unwrap_or_default();
-    let accessible_state = if is_archived {
-        "Archived"
+    if let Some(title_input) = title_editor {
+        div()
+            .min_w_0()
+            .on_mouse_down(MouseButton::Left, move |_, _, cx| cx.stop_propagation())
+            .on_action(move |_: &Escape, _, cx| {
+                cx.stop_propagation();
+                let _ = entity.update(cx, |this, cx| this.cancel_session_title_edit(cx));
+            })
+            .child(Input::new(&title_input).w_full().appearance(false))
+            .into_any_element()
     } else {
-        status_text.as_str()
-    };
-    let accessible_label = session_accessible_label(&session.title, accessible_state, &age);
-    let archive_label = if is_archived { "Restore" } else { "Archive" };
-    let archive_icon = if is_archived {
+        div()
+            .pr(if is_archived { px(50.0) } else { px(24.0) })
+            .whitespace_nowrap()
+            .text_ellipsis()
+            .text_size(THEME.type_scale.body_small)
+            .font_weight(if selected {
+                FontWeight::SEMIBOLD
+            } else {
+                FontWeight::NORMAL
+            })
+            .text_color(if is_archived && !selected {
+                THEME.colors.muted
+            } else {
+                THEME.colors.text
+            })
+            .child(title)
+            .into_any_element()
+    }
+}
+
+fn session_archive_action(
+    id: &str,
+    path: PathBuf,
+    is_archived: bool,
+    action_group: String,
+    entity: WeakEntity<FarcasterApp>,
+) -> AnyElement {
+    let label = if is_archived { "Restore" } else { "Archive" };
+    let icon = if is_archived {
         AppIcon::ArrowCounterClockwise
     } else {
         AppIcon::Archive
     };
-    let hover_details = session_hover_details(session, accessible_state, &age, subagents);
-    let hover_id = format!("session-hover-{}", session.id);
-    let action_group = format!("session-actions-{}", session.id);
-    let archive_action = div()
-        .id(format!("archive-{}", session.id))
+    div()
+        .id(format!("archive-{id}"))
         .role(Role::Button)
-        .aria_label(format!("{archive_label} session"))
+        .aria_label(format!("{label} session"))
         .tab_index(0)
         .absolute()
         .top(px(4.0))
@@ -159,7 +446,7 @@ pub(super) fn session_row_with_height(
         .justify_center()
         .rounded(THEME.radius)
         .opacity(0.0)
-        .group_hover(action_group.clone(), |button| button.opacity(1.0))
+        .group_hover(action_group, |button| button.opacity(1.0))
         .focus(|button| {
             button
                 .opacity(1.0)
@@ -172,18 +459,25 @@ pub(super) fn session_row_with_height(
             THEME.colors.muted
         })
         .hover(|button| button.bg(THEME.colors.hover))
-        .tooltip(move |window, cx| {
-            Tooltip::new(format!("{archive_label} session")).build(window, cx)
-        })
-        .child(app_icon(archive_icon, AppIconSize::Control))
+        .tooltip(move |window, cx| Tooltip::new(format!("{label} session")).build(window, cx))
+        .child(app_icon(icon, AppIconSize::Control))
         .on_click(move |_, window, cx| {
             cx.stop_propagation();
-            let _ = archive_entity.update(cx, |this, cx| {
-                this.request_session_archive(archive_path.clone(), !is_archived, window, cx);
+            let _ = entity.update(cx, |this, cx| {
+                this.request_session_archive(path.clone(), !is_archived, window, cx);
             });
-        });
-    let delete_action = div()
-        .id(format!("delete-{}", session.id))
+        })
+        .into_any_element()
+}
+
+fn session_delete_action(
+    id: &str,
+    path: PathBuf,
+    action_group: String,
+    entity: WeakEntity<FarcasterApp>,
+) -> AnyElement {
+    div()
+        .id(format!("delete-{id}"))
         .role(Role::Button)
         .aria_label("Delete session permanently")
         .tab_index(0)
@@ -196,7 +490,7 @@ pub(super) fn session_row_with_height(
         .justify_center()
         .rounded(THEME.radius)
         .opacity(0.0)
-        .group_hover(action_group.clone(), |button| button.opacity(1.0))
+        .group_hover(action_group, |button| button.opacity(1.0))
         .focus(|button| {
             button
                 .opacity(1.0)
@@ -209,237 +503,11 @@ pub(super) fn session_row_with_height(
         .child(app_icon(AppIcon::Trash, AppIconSize::Control))
         .on_click(move |_, window, cx| {
             cx.stop_propagation();
-            let _ = delete_entity.update(cx, |this, cx| {
-                this.request_session_delete(delete_path.clone(), window, cx);
+            let _ = entity.update(cx, |this, cx| {
+                this.request_session_delete(path.clone(), window, cx);
             });
-        });
-    let row = div()
-        .id(format!("session-{}", session.id))
-        .role(Role::Button)
-        .aria_label(accessible_label)
-        .aria_selected(selected)
-        .tab_index(0)
-        .size_full()
-        .h(row_height)
-        .relative()
-        .flex()
-        .items_stretch()
-        .px(THEME.space.sm)
-        .py(THEME.space.xs)
-        .rounded(px(2.0))
-        .group(action_group)
-        .bg(if selected {
-            THEME.colors.selection
-        } else {
-            THEME.colors.panel
         })
-        .hover(|row| row.bg(THEME.colors.surface))
-        .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
-        .cursor(CursorStyle::PointingHand)
-        .when(draggable, move |row| {
-            row.on_drag(drag, move |drag, _, _, cx| {
-                let _ = drag_entity.update(cx, |this, cx| this.begin_session_drag(cx));
-                cx.new(|_| drag.clone())
-            })
-            .can_drop(move |value, _, _| {
-                value
-                    .downcast_ref::<DraggedSession>()
-                    .is_some_and(|drag| drag.can_drop_on(target_kind, target_app_session_id))
-            })
-            .reorder_target::<DraggedSession>(
-                drop_position,
-                THEME.colors.accent,
-                THEME.colors.hover,
-                move |position, _, cx| {
-                    let _ = drag_move_entity.update(cx, |this, cx| {
-                        this.update_session_drop_target(target_app_session_id, position, cx);
-                    });
-                },
-                move |drag, window, cx| {
-                    cx.stop_propagation();
-                    let _ = drop_entity.update(cx, |this, cx| {
-                        this.complete_session_row_drop(drag, target_kind, window, cx);
-                    });
-                },
-            )
-        })
-        .on_click(move |event, window, cx| {
-            if event.click_count() >= 2 {
-                cx.stop_propagation();
-                let _ = edit_entity.update(cx, |this, cx| {
-                    this.begin_session_title_edit(
-                        edit_path.clone(),
-                        edit_project.clone(),
-                        edit_title.clone(),
-                        window,
-                        cx,
-                    );
-                });
-            } else {
-                let _ = open_entity.update(cx, |this, cx| {
-                    this.select_session(path.clone(), project.clone(), window, cx)
-                });
-            }
-        })
-        .child(
-            div()
-                .w_full()
-                .min_w_0()
-                .flex()
-                .items_stretch()
-                .gap(THEME.space.sm)
-                .child(
-                    div()
-                        .min_w_0()
-                        .flex_1()
-                        .flex()
-                        .flex_col()
-                        .gap(px(2.0))
-                        .overflow_hidden()
-                        .child(if let Some(title_input) = title_editor {
-                            div()
-                                .min_w_0()
-                                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                    cx.stop_propagation();
-                                })
-                                .on_action(move |_: &Escape, _, cx| {
-                                    cx.stop_propagation();
-                                    let _ = cancel_entity.update(cx, |this, cx| {
-                                        this.cancel_session_title_edit(cx);
-                                    });
-                                })
-                                .child(Input::new(&title_input).w_full().appearance(false))
-                                .into_any_element()
-                        } else {
-                            div()
-                                .pr(if is_archived { px(50.0) } else { px(24.0) })
-                                .whitespace_nowrap()
-                                .text_ellipsis()
-                                .text_size(THEME.type_scale.body_small)
-                                .font_weight(if selected {
-                                    FontWeight::SEMIBOLD
-                                } else {
-                                    FontWeight::NORMAL
-                                })
-                                .text_color(if is_archived && !selected {
-                                    THEME.colors.muted
-                                } else {
-                                    THEME.colors.text
-                                })
-                                .child(session.title.clone())
-                                .into_any_element()
-                        })
-                        .child(
-                            div()
-                                .min_w_0()
-                                .flex()
-                                .items_center()
-                                .gap(THEME.space.xs)
-                                .child(
-                                    div()
-                                        .min_w_0()
-                                        .flex_1()
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(3.0))
-                                        .text_size(THEME.type_scale.caption)
-                                        .text_color(THEME.colors.subtle)
-                                        .child(
-                                            div()
-                                                .id(format!("move-project-{}", session.id))
-                                                .role(Role::Button)
-                                                .aria_label("Move session to another project")
-                                                .tab_index(0)
-                                                .min_w_0()
-                                                .rounded(THEME.radius)
-                                                .cursor(CursorStyle::PointingHand)
-                                                .hover(|icon| icon.text_color(THEME.colors.accent))
-                                                .focus(|icon| {
-                                                    icon.border(THEME.border)
-                                                        .border_color(THEME.colors.accent)
-                                                })
-                                                .tooltip(move |window, cx| {
-                                                    Tooltip::new("Move to project…")
-                                                        .build(window, cx)
-                                                })
-                                                .on_click(move |_, window, cx| {
-                                                    cx.stop_propagation();
-                                                    let _ = move_entity.update(cx, |this, cx| {
-                                                        this.open_picker(
-                                                            PickerScope::Projects(
-                                                                ProjectPickerIntent::MoveSession {
-                                                                    path: move_path.clone(),
-                                                                    source_project: move_project
-                                                                        .clone(),
-                                                                },
-                                                            ),
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    });
-                                                })
-                                                .child(
-                                                    div()
-                                                        .min_w_0()
-                                                        .overflow_hidden()
-                                                        .whitespace_nowrap()
-                                                        .text_ellipsis()
-                                                        .child(project_label(&session.project)),
-                                                ),
-                                        ),
-                                )
-                                .child(app_icon(
-                                    AppIcon::for_harness(&session.harness),
-                                    AppIconSize::Inline,
-                                ))
-                                .when_some(
-                                    status_icon(target_app_session_id, &status_text),
-                                    |metadata, icon| metadata.child(icon),
-                                )
-                                .child(
-                                    div()
-                                        .w(px(30.0))
-                                        .flex_none()
-                                        .whitespace_nowrap()
-                                        .text_align(gpui::TextAlign::Right)
-                                        .text_size(THEME.type_scale.caption)
-                                        .text_color(THEME.colors.subtle)
-                                        .child(age),
-                                )
-                                .when_some(shortcut, |metadata, number| {
-                                    metadata.child(Kbd::new(
-                                        gpui::Keystroke::parse(&format!(
-                                            "{}-{number}",
-                                            application_modifier().prefix()
-                                        ))
-                                        .expect("fixed session shortcut must parse"),
-                                    ))
-                                }),
-                        ),
-                ),
-        )
-        .child(archive_action)
-        .when(is_archived, |row| row.child(delete_action));
-    let context_menu = session_context_menu(
-        &session.id,
-        session.path.clone(),
-        session.project.clone(),
-        session.title.clone(),
-        target_kind,
-        entity,
-        row.into_any_element(),
-    );
-
-    session_hover_panel(
-        hover_id,
-        hover_details,
-        div()
-            .h(row_height)
-            .w_full()
-            .px(px(2.0))
-            .child(context_menu)
-            .into_any_element(),
-    )
+        .into_any_element()
 }
 
 fn session_context_menu(

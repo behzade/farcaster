@@ -28,7 +28,13 @@ use dialogs::{
 use queue::{QueuedMessageKind, queued_message_groups, queued_message_preview};
 
 impl FarcasterApp {
-    pub(super) fn render_composer(&self, entity: WeakEntity<Self>, cx: &App) -> AnyElement {
+    pub(super) fn render_composer(
+        &self,
+        entity: WeakEntity<Self>,
+        suggestion_selection: usize,
+        footer_scroll: &gpui::ScrollHandle,
+        cx: &App,
+    ) -> AnyElement {
         if self.extension.dialog.is_some() {
             return self.render_composer_request(entity);
         }
@@ -72,7 +78,6 @@ impl FarcasterApp {
             .unwrap_or_default();
         let widgets_above = widgets::render("above", &self.extension.above_widgets);
         let widgets_below = widgets::render("below", &self.extension.below_widgets);
-        let suggestion_selection = self.view.composer.suggestion_selection;
         let mention_selection = suggestion_selection.min(file_suggestions.len().saturating_sub(1));
         let command_selection =
             suggestion_selection.min(command_suggestion_count.saturating_sub(1));
@@ -156,7 +161,7 @@ impl FarcasterApp {
                     .border_t(THEME.border)
                     .border_color(THEME.colors.surface)
                     .bg(THEME.colors.panel)
-                    .child(self.render_composer_controls(entity, !floating)),
+                    .child(self.render_composer_controls(entity, !floating, footer_scroll)),
             )
             .into_any_element()
     }
@@ -166,17 +171,9 @@ impl FarcasterApp {
         suggestion_count: usize,
         cx: &mut Context<Self>,
     ) -> bool {
-        if suggestion_count == 0 {
-            return false;
-        }
-        self.view.composer.suggestion_selection = self
-            .view
-            .composer
-            .suggestion_selection
-            .checked_sub(1)
-            .unwrap_or(suggestion_count - 1);
-        self.notify_composer(cx);
-        true
+        self.composer_view.update(cx, |view, cx| {
+            view.select_previous_suggestion(suggestion_count, cx)
+        })
     }
 
     fn select_next_composer_suggestion(
@@ -184,13 +181,9 @@ impl FarcasterApp {
         suggestion_count: usize,
         cx: &mut Context<Self>,
     ) -> bool {
-        if suggestion_count == 0 {
-            return false;
-        }
-        self.view.composer.suggestion_selection =
-            (self.view.composer.suggestion_selection + 1) % suggestion_count;
-        self.notify_composer(cx);
-        true
+        self.composer_view.update(cx, |view, cx| {
+            view.select_next_suggestion(suggestion_count, cx)
+        })
     }
 }
 

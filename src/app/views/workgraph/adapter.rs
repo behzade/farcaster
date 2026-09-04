@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use super::{
     components::{render_create_step, render_plan_list, render_session_goal},
-    contract::PlanLoadState,
+    contract::{PlanData, PlanLoadState},
     core::{adjacent_node_number, create_form_valid, plan_rows},
     layout::BoardLayoutMode,
 };
@@ -35,24 +35,53 @@ pub(crate) struct WorkGraphBoardView {
     create_stage: CreateStage,
     pub(super) active_session: Option<(String, String)>,
     session_goal: Option<crate::agents::SessionGoal>,
-    search: Option<Entity<InputState>>,
-    create_title: Option<Entity<InputState>>,
-    create_detail: Option<Entity<TextareaState>>,
-    pending_create_focus: bool,
+    search: Entity<InputState>,
+    create_title: Entity<InputState>,
+    create_detail: Entity<TextareaState>,
     refresh: Option<Task<()>>,
-    subscriptions: Vec<Subscription>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl WorkGraphBoardView {
     pub(crate) fn new(
         database: Result<PathBuf, String>,
         project: PathBuf,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let (database, state) = match database {
             Ok(database) => (database, PlanLoadState::Loading),
             Err(error) => (PathBuf::new(), PlanLoadState::Failed(error)),
         };
+        let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search plan"));
+        let create_title =
+            cx.new(|cx| InputState::new(window, cx).placeholder("What should be true?"));
+        let create_detail = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .auto_grow(3, 6)
+                .submit_on_enter(false)
+        });
+        let subscriptions = vec![
+            cx.subscribe_in(&search, window, |_, _, _: &InputEvent, _, cx| {
+                cx.notify();
+            }),
+            cx.subscribe_in(
+                &create_title,
+                window,
+                |this, _, event: &InputEvent, window, cx| match event {
+                    InputEvent::Change => cx.notify(),
+                    InputEvent::PressEnter { shift: false, .. } => {
+                        this.submit_create_inputs(window, cx);
+                    }
+                    InputEvent::PressEnter { .. } | InputEvent::Blur | InputEvent::Focus => {}
+                },
+            ),
+            cx.subscribe_in(&create_detail, window, |_, _, event: &InputEvent, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            }),
+        ];
         let should_refresh = matches!(state, PlanLoadState::Loading);
         let mut view = Self {
             database,
@@ -63,12 +92,11 @@ impl WorkGraphBoardView {
             create_stage: CreateStage::Closed,
             active_session: None,
             session_goal: None,
-            search: None,
-            create_title: None,
-            create_detail: None,
-            pending_create_focus: false,
+            search,
+            create_title,
+            create_detail,
             refresh: None,
-            subscriptions: Vec::new(),
+            _subscriptions: subscriptions,
         };
         if should_refresh {
             view.refresh(cx);
@@ -149,22 +177,15 @@ impl WorkGraphBoardView {
     pub(crate) fn prepare_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.selected = None;
         self.create_stage = CreateStage::Closed;
-        self.pending_create_focus = false;
-        if let Some(search) = &self.search {
-            search.update(cx, |input, cx| {
-                input.set_value(String::new(), window, cx);
-            });
-        }
+        self.search.update(cx, |input, cx| {
+            input.set_value(String::new(), window, cx);
+        });
         self.focus.focus(window, cx);
         cx.notify();
     }
 
     pub(crate) fn focus_search(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(search) = &self.search {
-            search.read(cx).focus_handle(cx).focus(window, cx);
-        } else {
-            self.focus.focus(window, cx);
-        }
+        self.search.read(cx).focus_handle(cx).focus(window, cx);
     }
 
     pub(crate) fn move_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
@@ -174,11 +195,7 @@ impl WorkGraphBoardView {
         let Some(snapshot) = &data.snapshot else {
             return;
         };
-        let search = self
-            .search
-            .as_ref()
-            .map(|input| input.read(cx).value().to_string())
-            .unwrap_or_default();
+        let search = self.search.read(cx).value().to_string();
         let rows = plan_rows(snapshot, &search);
         if let Some(number) = adjacent_node_number(&rows, self.selected, delta) {
             self.select_node(number, cx);
@@ -201,10 +218,8 @@ impl WorkGraphBoardView {
             }
             CreateStage::Closed => {}
         }
-        if let Some(search) = &self.search
-            && !search.read(cx).value().is_empty()
-        {
-            search.update(cx, |input, cx| {
+        if !self.search.read(cx).value().is_empty() {
+            self.search.update(cx, |input, cx| {
                 input.set_value(String::new(), window, cx);
             });
             return true;
@@ -240,255 +255,203 @@ impl WorkGraphBoardView {
     }
 }
 
-impl Render for WorkGraphBoardView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.search.is_none() {
-            let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search plan"));
-            self.subscriptions.push(cx.subscribe_in(
-                &search,
-                window,
-                |_, _, _: &InputEvent, _, cx| cx.notify(),
-            ));
-            self.search = Some(search);
-        }
-        if self.create_title.is_none() {
-            let title =
-                cx.new(|cx| InputState::new(window, cx).placeholder("What should be true?"));
-            self.subscriptions.push(cx.subscribe_in(
-                &title,
-                window,
-                |this, _, event: &InputEvent, window, cx| match event {
-                    InputEvent::Change => cx.notify(),
-                    InputEvent::PressEnter { shift: false, .. } => {
-                        this.submit_create_inputs(window, cx);
-                    }
-                    InputEvent::PressEnter { .. } | InputEvent::Blur | InputEvent::Focus => {}
-                },
-            ));
-            self.create_title = Some(title);
-        }
-        if self.create_detail.is_none() {
-            let detail = cx.new(|cx| {
-                TextareaState::new(window, cx)
-                    .auto_grow(3, 6)
-                    .submit_on_enter(false)
-            });
-            self.subscriptions.push(cx.subscribe_in(
-                &detail,
-                window,
-                |_, _, event: &InputEvent, _, cx| {
-                    if matches!(event, InputEvent::Change) {
-                        cx.notify();
-                    }
-                },
-            ));
-            self.create_detail = Some(detail);
-        }
-        if self.pending_create_focus {
-            match self.create_stage {
-                CreateStage::Node | CreateStage::Outcome => {
-                    if let Some(title) = &self.create_title {
-                        title.read(cx).focus_handle(cx).focus(window, cx);
-                    }
-                }
-                CreateStage::CurrentState => {
-                    if let Some(detail) = &self.create_detail {
-                        detail.read(cx).focus_handle(cx).focus(window, cx);
-                    }
-                }
-                CreateStage::Closed => {}
-            }
-            self.pending_create_focus = false;
-        }
+impl WorkGraphBoardView {
+    fn render_state(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let entity = cx.entity();
+        match &self.state {
+            PlanLoadState::Loading => {
+                feedback("workgraph-loading", "Loading plan…", FeedbackTone::Info)
+                    .into_any_element()
+            }
+            PlanLoadState::Failed(error) => render_load_error(error, entity),
+            PlanLoadState::Ready(data) => self.render_ready(data, entity, cx),
+        }
+    }
+
+    fn render_ready(
+        &self,
+        data: &PlanData,
+        entity: Entity<Self>,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let has_plan = data.snapshot.is_some();
+        let current_state_complete = !self.create_detail.read(cx).value().trim().is_empty();
+        let can_submit = create_form_valid(
+            has_plan,
+            self.create_title.read(cx).value().as_ref(),
+            self.create_detail.read(cx).value().as_ref(),
+        );
+        if self.create_stage.is_open() {
+            return render_create_step(
+                &self.create_title,
+                &self.create_detail,
+                self.create_stage,
+                current_state_complete,
+                can_submit,
+                entity,
+            )
+            .into_any_element();
+        }
+
+        let search = self.search.read(cx).value().to_string();
+        let rows = data
+            .snapshot
+            .as_ref()
+            .map(|snapshot| plan_rows(snapshot, &search))
+            .unwrap_or_default();
+        let plan_title = data
+            .snapshot
+            .as_ref()
+            .map_or("Plans", |snapshot| snapshot.plan.title.as_str());
+        div()
+            .size_full()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .child(render_board_header(
+                plan_title,
+                has_plan,
+                self.selected.is_none(),
+                &self.search,
+                entity.clone(),
+            ))
+            .when_some(self.session_goal.as_ref(), |board, goal| {
+                board.child(render_session_goal(goal, false))
+            })
+            .child(self.render_board_body(data, rows, has_plan, entity))
+            .into_any_element()
+    }
+
+    fn render_board_body(
+        &self,
+        data: &PlanData,
+        rows: Vec<super::contract::PlanRow>,
+        has_plan: bool,
+        entity: Entity<Self>,
+    ) -> impl IntoElement {
+        div()
+            .flex_1()
+            .min_h_0()
+            .when_some(self.selected, |body, _| {
+                body.child(self.render_detail(entity.clone(), data, BoardLayoutMode::Narrow, false))
+            })
+            .when(self.selected.is_none(), |body| {
+                body.child(if has_plan {
+                    render_plan_list(rows, None, entity.clone()).into_any_element()
+                } else {
+                    render_empty_plan(entity).into_any_element()
+                })
+            })
+    }
+}
+
+fn render_load_error(error: &str, entity: Entity<WorkGraphBoardView>) -> gpui::AnyElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap(THEME.space.sm)
+        .child(feedback(
+            "workgraph-error",
+            error.to_owned(),
+            FeedbackTone::Error,
+        ))
+        .child(button(
+            "workgraph-retry",
+            "Try again",
+            ButtonTone::Neutral,
+            true,
+            move |_, cx| entity.update(cx, |this, cx| this.refresh(cx)),
+        ))
+        .into_any_element()
+}
+
+fn render_board_header(
+    plan_title: &str,
+    has_plan: bool,
+    show_create: bool,
+    search: &Entity<InputState>,
+    entity: Entity<WorkGraphBoardView>,
+) -> impl IntoElement {
+    let refresh = entity.clone();
+    div()
+        .h(px(52.0))
+        .flex_none()
+        .px(THEME.space.md)
+        .flex()
+        .items_center()
+        .justify_between()
+        .border_b(THEME.border)
+        .border_color(THEME.colors.border)
+        .child(
+            div()
+                .min_w_0()
+                .text_size(THEME.type_scale.body)
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(plan_title.to_owned()),
+        )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(THEME.space.xs)
+                .when(has_plan && show_create, |actions| {
+                    actions.child(Input::new(search).w(px(190.0)))
+                })
+                .child(button(
+                    "workgraph-refresh",
+                    "Refresh",
+                    ButtonTone::Quiet,
+                    true,
+                    move |_, cx| refresh.update(cx, |this, cx| this.refresh(cx)),
+                ))
+                .when(show_create, |actions| {
+                    actions.child(button(
+                        "workgraph-create-open",
+                        if has_plan { "Add node" } else { "New plan" },
+                        ButtonTone::Neutral,
+                        true,
+                        move |window, cx| {
+                            entity.update(cx, |this, cx| this.start_create(window, cx));
+                        },
+                    ))
+                }),
+        )
+}
+
+fn render_empty_plan(entity: Entity<WorkGraphBoardView>) -> impl IntoElement {
+    div()
+        .id("workgraph-empty")
+        .size_full()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap(THEME.space.sm)
+        .child(
+            div()
+                .text_size(THEME.type_scale.body)
+                .font_weight(FontWeight::SEMIBOLD)
+                .child("No plan yet"),
+        )
+        .child(button(
+            "workgraph-empty-create",
+            "New plan",
+            ButtonTone::Accent,
+            true,
+            move |window, cx| {
+                entity.update(cx, |this, cx| this.start_create(window, cx));
+            },
+        ))
+}
+
+impl Render for WorkGraphBoardView {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .size_full()
             .track_focus(&self.focus)
             .key_context(WORKGRAPH_KEY_CONTEXT)
             .min_h_0()
             .bg(THEME.colors.panel)
-            .child(match &self.state {
-                PlanLoadState::Loading => {
-                    feedback("workgraph-loading", "Loading plan…", FeedbackTone::Info)
-                        .into_any_element()
-                }
-                PlanLoadState::Failed(error) => {
-                    let retry = entity.clone();
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(THEME.space.sm)
-                        .child(feedback(
-                            "workgraph-error",
-                            error.clone(),
-                            FeedbackTone::Error,
-                        ))
-                        .child(button(
-                            "workgraph-retry",
-                            "Try again",
-                            ButtonTone::Neutral,
-                            true,
-                            move |_, cx| retry.update(cx, |this, cx| this.refresh(cx)),
-                        ))
-                        .into_any_element()
-                }
-                PlanLoadState::Ready(data) => {
-                    let search = self
-                        .search
-                        .as_ref()
-                        .map(|input| input.read(cx).value().to_string())
-                        .unwrap_or_default();
-                    let rows = data
-                        .snapshot
-                        .as_ref()
-                        .map(|snapshot| plan_rows(snapshot, &search))
-                        .unwrap_or_default();
-                    let has_plan = data.snapshot.is_some();
-                    let title = self
-                        .create_title
-                        .as_ref()
-                        .expect("create title initialized");
-                    let detail = self
-                        .create_detail
-                        .as_ref()
-                        .expect("create detail initialized");
-                    let current_state_complete = !detail.read(cx).value().trim().is_empty();
-                    let can_submit = create_form_valid(
-                        has_plan,
-                        title.read(cx).value().as_ref(),
-                        detail.read(cx).value().as_ref(),
-                    );
-
-                    if self.create_stage.is_open() {
-                        render_create_step(
-                            title,
-                            detail,
-                            self.create_stage,
-                            current_state_complete,
-                            can_submit,
-                            entity,
-                        )
-                        .into_any_element()
-                    } else {
-                        let plan_title = data
-                            .snapshot
-                            .as_ref()
-                            .map_or("Plans", |snapshot| snapshot.plan.title.as_str());
-                        let refresh = entity.clone();
-                        let create = entity.clone();
-                        div()
-                            .size_full()
-                            .min_h_0()
-                            .flex()
-                            .flex_col()
-                            .child(
-                                div()
-                                    .h(px(52.0))
-                                    .flex_none()
-                                    .px(THEME.space.md)
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .border_b(THEME.border)
-                                    .border_color(THEME.colors.border)
-                                    .child(
-                                        div()
-                                            .min_w_0()
-                                            .text_size(THEME.type_scale.body)
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .child(plan_title.to_owned()),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap(THEME.space.xs)
-                                            .when(has_plan && self.selected.is_none(), |actions| {
-                                                actions.child(
-                                                    Input::new(
-                                                        self.search
-                                                            .as_ref()
-                                                            .expect("plan search initialized"),
-                                                    )
-                                                    .w(px(190.0)),
-                                                )
-                                            })
-                                            .child(button(
-                                                "workgraph-refresh",
-                                                "Refresh",
-                                                ButtonTone::Quiet,
-                                                true,
-                                                move |_, cx| {
-                                                    refresh.update(cx, |this, cx| this.refresh(cx));
-                                                },
-                                            ))
-                                            .when(self.selected.is_none(), |actions| {
-                                                actions.child(button(
-                                                    "workgraph-create-open",
-                                                    if has_plan { "Add node" } else { "New plan" },
-                                                    ButtonTone::Neutral,
-                                                    true,
-                                                    move |window, cx| {
-                                                        create.update(cx, |this, cx| {
-                                                            this.start_create(window, cx);
-                                                        });
-                                                    },
-                                                ))
-                                            }),
-                                    ),
-                            )
-                            .when_some(self.session_goal.as_ref(), |board, goal| {
-                                board.child(render_session_goal(goal, false))
-                            })
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_h_0()
-                                    .when_some(self.selected, |body, _| {
-                                        body.child(self.render_detail(
-                                            entity.clone(),
-                                            data,
-                                            BoardLayoutMode::Narrow,
-                                            false,
-                                        ))
-                                    })
-                                    .when(self.selected.is_none(), |body| {
-                                        body.child(if has_plan {
-                                            render_plan_list(rows, None, entity.clone())
-                                                .into_any_element()
-                                        } else {
-                                            div()
-                                                .id("workgraph-empty")
-                                                .size_full()
-                                                .flex()
-                                                .flex_col()
-                                                .items_center()
-                                                .justify_center()
-                                                .gap(THEME.space.sm)
-                                                .child(
-                                                    div()
-                                                        .text_size(THEME.type_scale.body)
-                                                        .font_weight(FontWeight::SEMIBOLD)
-                                                        .child("No plan yet"),
-                                                )
-                                                .child(button(
-                                                    "workgraph-empty-create",
-                                                    "New plan",
-                                                    ButtonTone::Accent,
-                                                    true,
-                                                    move |window, cx| {
-                                                        entity.update(cx, |this, cx| {
-                                                            this.start_create(window, cx);
-                                                        });
-                                                    },
-                                                ))
-                                                .into_any_element()
-                                        })
-                                    }),
-                            )
-                            .into_any_element()
-                    }
-                }
-            })
+            .child(self.render_state(cx))
     }
 }

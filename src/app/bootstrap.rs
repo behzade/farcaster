@@ -116,56 +116,7 @@ impl FarcasterApp {
         });
         let composer_focus = composer.read(cx).focus_handle(cx);
         let dialog_focus = cx.focus_handle();
-        let composer_subscription = cx.subscribe_in(
-            &composer,
-            window,
-            |this, state, event: &InputEvent, _window, cx| match event {
-                InputEvent::Change => {
-                    this.view.composer.suggestion_selection = 0;
-                    this.composer_sessions.exit_history();
-                    let snapshot = input_snapshot(state.read(cx));
-                    let has_mention =
-                        file_mentions::query_at_cursor(&snapshot.text, snapshot.cursor).is_some();
-                    this.composer_sessions.capture_current(snapshot);
-                    if has_mention {
-                        this.request_composer_project_files(cx);
-                    }
-                    this.notify_composer(cx);
-                }
-                InputEvent::Blur => {
-                    this.composer_sessions
-                        .capture_current(input_snapshot(state.read(cx)));
-                }
-                InputEvent::PressEnter { shift: false, .. } => {
-                    let input = state.read(cx);
-                    let value = input.value();
-                    if let Some(completion) = composer_completion::resolve_for_harness(
-                        &value,
-                        input.cursor(),
-                        &this.composer_project_files,
-                        this.view.composer.suggestion_selection,
-                        &this.snapshot.commands,
-                        this.active_harness(),
-                    ) {
-                        let submitted_value = completion
-                            .submit
-                            .then(|| completion.snapshot.text.trim().to_owned());
-                        this.apply_composer_snapshot(completion.snapshot, _window, cx);
-                        if let Some(value) = submitted_value {
-                            this.submit(value, this.enter_mode(), _window, cx);
-                        } else {
-                            this.composer_focus.focus(_window, cx);
-                        }
-                    } else {
-                        let value = value.trim().to_owned();
-                        if !value.is_empty() || this.has_composer_attachments() {
-                            this.submit(value, this.enter_mode(), _window, cx);
-                        }
-                    }
-                }
-                InputEvent::PressEnter { .. } | InputEvent::Focus => {}
-            },
-        );
+        let composer_subscription = subscribe_composer(&composer, window, cx);
         let search_subscription =
             cx.subscribe_in(&search, window, |this, state, event: &InputEvent, _, cx| {
                 if matches!(event, InputEvent::Change) {
@@ -436,4 +387,63 @@ impl FarcasterApp {
         this.request_repository_refresh(cx);
         this
     }
+}
+
+fn subscribe_composer(
+    composer: &Entity<TextareaState>,
+    window: &mut Window,
+    cx: &mut Context<FarcasterApp>,
+) -> Subscription {
+    cx.subscribe_in(
+        composer,
+        window,
+        |this, state, event: &InputEvent, window, cx| match event {
+            InputEvent::Change => {
+                this.composer_view.update(cx, |view, _| {
+                    view.reset_suggestion_selection();
+                });
+                this.composer_sessions.exit_history();
+                let snapshot = input_snapshot(state.read(cx));
+                let has_mention =
+                    file_mentions::query_at_cursor(&snapshot.text, snapshot.cursor).is_some();
+                this.composer_sessions.capture_current(snapshot);
+                if has_mention {
+                    this.request_composer_project_files(cx);
+                }
+                this.notify_composer(cx);
+            }
+            InputEvent::Blur => {
+                this.composer_sessions
+                    .capture_current(input_snapshot(state.read(cx)));
+            }
+            InputEvent::PressEnter { shift: false, .. } => {
+                let input = state.read(cx);
+                let value = input.value();
+                if let Some(completion) = composer_completion::resolve_for_harness(
+                    &value,
+                    input.cursor(),
+                    &this.composer_project_files,
+                    this.composer_view.read(cx).suggestion_selection(),
+                    &this.snapshot.commands,
+                    this.active_harness(),
+                ) {
+                    let submitted_value = completion
+                        .submit
+                        .then(|| completion.snapshot.text.trim().to_owned());
+                    this.apply_composer_snapshot(completion.snapshot, window, cx);
+                    if let Some(value) = submitted_value {
+                        this.submit(value, this.enter_mode(), window, cx);
+                    } else {
+                        this.composer_focus.focus(window, cx);
+                    }
+                } else {
+                    let value = value.trim().to_owned();
+                    if !value.is_empty() || this.has_composer_attachments() {
+                        this.submit(value, this.enter_mode(), window, cx);
+                    }
+                }
+            }
+            InputEvent::PressEnter { .. } | InputEvent::Focus => {}
+        },
+    )
 }
