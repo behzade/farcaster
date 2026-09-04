@@ -53,10 +53,68 @@ exec "$(dirname "$0")/farcaster" "$@"
 EOF
     chmod 755 "$launcher"
     cp "$launcher" "$launcher."
+
+    packager_config="$root/packaging/linux.toml"
+    case ",$formats," in
+        *,appimage,*)
+            # linuxdeploy excludes libxcb as a host library and cannot detect
+            # the Wayland and graphics libraries GPUI loads at runtime. NixOS
+            # provides none of them in the global loader search path.
+            libxcb=$(ldd "$target_dir/release/farcaster" | awk \
+                '$1 == "libxcb.so.1" && $2 == "=>" { print $3; exit }')
+            wayland_libdir=$(pkg-config --variable=libdir wayland-client)
+            libwayland_client="$wayland_libdir/libwayland-client.so.0"
+            libwayland_egl="$wayland_libdir/libwayland-egl.so.1"
+            libvulkan="$(pkg-config --variable=libdir vulkan)/libvulkan.so.1"
+            egl_libdir=$(pkg-config --variable=libdir egl)
+            libegl="$egl_libdir/libEGL.so.1"
+            libgl_dispatch="$egl_libdir/libGLdispatch.so.0"
+            for library in "$libxcb" "$libwayland_client" "$libwayland_egl" \
+                "$libvulkan" "$libegl" "$libgl_dispatch"; do
+                if [ -z "$library" ] || [ ! -f "$library" ]; then
+                    echo "could not locate AppImage runtime library: $library" >&2
+                    exit 1
+                fi
+            done
+
+            staged_libxcb="$target_dir/release/libxcb.so.1.appimage"
+            staged_wayland_client="$target_dir/release/libwayland-client.so.0.appimage"
+            staged_wayland_egl="$target_dir/release/libwayland-egl.so.1.appimage"
+            staged_vulkan="$target_dir/release/libvulkan.so.1.appimage"
+            staged_egl="$target_dir/release/libEGL.so.1.appimage"
+            staged_gl_dispatch="$target_dir/release/libGLdispatch.so.0.appimage"
+            generated_config=$(mktemp "$root/packaging/linux.XXXXXX.toml")
+            cleanup_appimage_staging() {
+                rm -f "$staged_libxcb" "$staged_wayland_client" \
+                    "$staged_wayland_egl" "$staged_vulkan" "$staged_egl" \
+                    "$staged_gl_dispatch" "$generated_config"
+            }
+            trap cleanup_appimage_staging EXIT HUP INT TERM
+            cp -L "$libxcb" "$staged_libxcb"
+            cp -L "$libwayland_client" "$staged_wayland_client"
+            cp -L "$libwayland_egl" "$staged_wayland_egl"
+            cp -L "$libvulkan" "$staged_vulkan"
+            cp -L "$libegl" "$staged_egl"
+            cp -L "$libgl_dispatch" "$staged_gl_dispatch"
+            cat "$packager_config" >"$generated_config"
+            cat >>"$generated_config" <<EOF
+
+[appimage.files]
+"$staged_libxcb" = "/usr/lib/libxcb.so.1"
+"$staged_wayland_client" = "/usr/lib/libwayland-client.so.0"
+"$staged_wayland_egl" = "/usr/lib/libwayland-egl.so.1"
+"$staged_vulkan" = "/usr/lib/libvulkan.so.1"
+"$staged_egl" = "/usr/lib/libEGL.so.1"
+"$staged_gl_dispatch" = "/usr/lib/libGLdispatch.so.0"
+EOF
+            packager_config=$generated_config
+            ;;
+    esac
+
     # appimagetool passes explicit timestamp flags to mksquashfs. Recent
     # mksquashfs rejects those flags when SOURCE_DATE_EPOCH is also inherited.
     unset SOURCE_DATE_EPOCH
-    cargo packager --config "$root/packaging/linux.toml" --formats "$formats" \
+    cargo packager --config "$packager_config" --formats "$formats" \
         --out-dir "$target_dir/release" --binaries-dir "$target_dir/release"
 else
     CARGO_TARGET_DIR="$target_dir" cargo packager --release --formats "$formats" \
