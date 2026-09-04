@@ -331,7 +331,6 @@ struct SessionTitleResult {
 }
 
 struct SessionTitleGeneration {
-    pending_prompt: Option<String>,
     in_flight: bool,
     revision: u64,
     sender: mpsc::Sender<SessionTitleResult>,
@@ -342,7 +341,6 @@ impl Default for SessionTitleGeneration {
     fn default() -> Self {
         let (sender, receiver) = mpsc::channel();
         Self {
-            pending_prompt: None,
             in_flight: false,
             revision: 0,
             sender,
@@ -510,24 +508,18 @@ fn run(
 }
 
 impl RuntimeOwner {
-    fn start_auto_title_generation(&mut self) {
-        if self.title_generation.in_flight || !agents::supports_auto_title_generation(&self.harness)
+    fn start_auto_title_generation(&mut self, prompt: String) {
+        if self.title_generation.in_flight
+            || !agents::supports_auto_title_generation(&self.harness)
+            || self
+                .active_snapshot()
+                .session
+                .as_ref()
+                .and_then(|state| state.session_name.as_ref())
+                .is_some()
         {
             return;
         }
-        if self
-            .active_snapshot()
-            .session
-            .as_ref()
-            .and_then(|state| state.session_name.as_ref())
-            .is_some()
-        {
-            self.title_generation.pending_prompt = None;
-            return;
-        }
-        let Some(prompt) = self.title_generation.pending_prompt.take() else {
-            return;
-        };
         let generation = self.process_generation;
         let revision = self.title_generation.revision;
         let active_model = self
@@ -564,12 +556,16 @@ impl RuntimeOwner {
         }
     }
 
+    fn invalidate_auto_title_generation(&mut self) {
+        self.title_generation.in_flight = false;
+        self.title_generation.revision = self.title_generation.revision.saturating_add(1);
+    }
+
     fn apply_generated_session_title(&mut self, result: SessionTitleResult) {
         if result.generation != self.process_generation {
             return;
         }
         if result.revision != self.title_generation.revision {
-            self.title_generation.in_flight = false;
             return;
         }
         self.title_generation.in_flight = false;
@@ -633,9 +629,7 @@ impl RuntimeOwner {
         self.startup_history_loaded = false;
         self.pending_prompt_id = None;
         self.pending_prompt_item = None;
-        self.title_generation.pending_prompt = None;
-        self.title_generation.in_flight = false;
-        self.title_generation.revision = self.title_generation.revision.saturating_add(1);
+        self.invalidate_auto_title_generation();
         self.transcript_changed_from = Some(0);
     }
 
@@ -767,8 +761,7 @@ impl RuntimeOwner {
                 self.send(SessionCommand::ExportHtml { output_path })
             }
             RuntimeCommand::SetSessionName(name) => {
-                self.title_generation.pending_prompt = None;
-                self.title_generation.revision = self.title_generation.revision.saturating_add(1);
+                self.invalidate_auto_title_generation();
                 if let Some(state) = self.active_snapshot_mut().session.as_mut() {
                     state.session_name = Some(name.clone());
                 }
@@ -974,7 +967,6 @@ impl RuntimeOwner {
                     self.schedule_session_refresh();
                 }
                 if settled {
-                    self.start_auto_title_generation();
                     self.send(SessionCommand::LoadState);
                     self.send(SessionCommand::LoadUsage);
                     self.refresh_sessions();
@@ -1228,7 +1220,7 @@ impl RuntimeOwner {
                     let _ = agents::complete_prompt(state, id, &target, session.as_deref());
                 }
             } else {
-                self.title_generation.pending_prompt = None;
+                self.invalidate_auto_title_generation();
                 self.mark_outbox_failed(
                     response
                         .error
