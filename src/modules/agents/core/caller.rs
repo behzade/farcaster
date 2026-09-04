@@ -260,19 +260,6 @@ impl CallerRegistry {
         }
         Ok(Some(recipient_name))
     }
-
-    pub(crate) fn report_from_worker(&self, from: &str, message: String) -> Result<String, String> {
-        let token = self
-            .callers
-            .lock()
-            .map_err(|_| "worker caller registry is unavailable".to_owned())?
-            .iter()
-            .find(|(_, caller)| caller.worker_id == from && caller.session.is_some())
-            .map(|(token, _)| token.clone())
-            .ok_or_else(|| format!("unknown Farcaster worker: {from}"))?;
-        self.send(&token, "", message)?
-            .ok_or_else(|| "parent worker is unavailable".to_owned())
-    }
 }
 
 impl CallerIdentity {

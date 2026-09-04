@@ -139,7 +139,6 @@ impl WorkerPool {
         state.starting = state.starting.saturating_add(1);
         drop(state);
 
-        let parent_worker_id = request.parent_worker_id.clone();
         let prepared = (|| {
             let mut session = factory.create(WorkerLaunch {
                 worker_id: id.clone(),
@@ -174,13 +173,8 @@ impl WorkerPool {
             pending_input: None,
         };
         let shared = Arc::new(Mutex::new(initial.clone()));
-        let (commands, handle) = run::spawn(
-            &id,
-            session,
-            shared.clone(),
-            parent_worker_id,
-            self.inner.updates.clone(),
-        )?;
+        let (commands, handle) =
+            run::spawn(&id, session, shared.clone(), self.inner.updates.clone())?;
         state.records.insert(
             id,
             WorkerRecord {
