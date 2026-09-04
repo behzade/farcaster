@@ -38,6 +38,7 @@ impl RuntimeOwner {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn send_prompt_with_presentation(
         &mut self,
         target: String,
@@ -158,6 +159,7 @@ impl RuntimeOwner {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn dispatch_prompt(
         &mut self,
         mode: PromptMode,

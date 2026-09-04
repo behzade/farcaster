@@ -49,11 +49,6 @@ use gpui_component::input::{InputEvent, InputState, TextareaState};
 use gpui_libghostty::Terminal;
 use gpui_neovim::NvimEditor;
 
-#[cfg(test)]
-use crate::{
-    app::views::transcript::transcript_splice,
-    protocol::ExtensionUiRequest,
-};
 use crate::{
     agent_activity::AgentActivity,
     app::composer::sessions::{
@@ -69,6 +64,8 @@ use crate::{
         SessionRootIndex, SessionSummary, SessionTarget, descendant_sessions, root_session_for_path,
     },
 };
+#[cfg(test)]
+use crate::{app::views::transcript::transcript_splice, protocol::ExtensionUiRequest};
 
 const SYSTEM_NOTIFICATION_TAG: &str = "farcaster-agent";
 pub(crate) const COMPOSER_KEY_CONTEXT: &str = "FarcasterComposer";

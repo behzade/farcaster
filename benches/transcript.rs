@@ -11,12 +11,16 @@ use gpui::{IntoElement as _, Render, TestApp, WeakEntity};
 use serde_json::{Value, json};
 
 mod app {
-    pub(crate) use crate::performance;
-
     #[derive(Clone, Debug, Eq, PartialEq, gpui::Action)]
     #[action(namespace = farcaster_bench, no_json)]
     pub(crate) struct RemoveProject {
         pub(crate) path: std::path::PathBuf,
+    }
+
+    pub(crate) mod infrastructure {
+        pub(crate) mod performance {
+            pub(crate) use crate::performance::*;
+        }
     }
 
     pub(crate) mod ui {
@@ -28,11 +32,43 @@ mod app {
 
     pub(crate) mod views {
         pub(crate) mod transcript {
-            pub(crate) use crate::conversation;
-            pub(crate) use crate::tool_changes;
-            pub(crate) use crate::transcript_attachments as attachments;
-            pub(crate) use crate::transcript_list as list;
-            pub(crate) use crate::transcript_markdown as markdown;
+            pub(crate) mod attachments {
+                include!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/src/app/views/transcript/attachments.rs"
+                ));
+            }
+            pub(crate) mod conversation {
+                include!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/src/app/views/transcript/conversation.rs"
+                ));
+            }
+            pub(crate) mod list {
+                include!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/src/app/views/transcript/list.rs"
+                ));
+            }
+            pub(crate) mod markdown {
+                include!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/src/app/views/transcript/markdown.rs"
+                ));
+            }
+            mod tool_changes {
+                include!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/src/app/views/transcript/tool_changes.rs"
+                ));
+            }
+            pub(crate) mod render {
+                include!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/src/app/views/transcript/render.rs"
+                ));
+            }
+            pub(crate) use render::*;
         }
     }
 
@@ -71,6 +107,44 @@ mod app {
 }
 
 mod agents {
+    #[derive(Clone, Copy)]
+    pub(crate) enum CommonTool {
+        Read,
+        Write,
+        Edit,
+        Bash,
+    }
+
+    impl CommonTool {
+        pub(crate) fn from_name(name: &str) -> Option<Self> {
+            match name.to_ascii_lowercase().as_str() {
+                "read" => Some(Self::Read),
+                "write" => Some(Self::Write),
+                "edit" => Some(Self::Edit),
+                "bash" => Some(Self::Bash),
+                _ => None,
+            }
+        }
+    }
+
+    #[derive(Clone)]
+    pub(crate) struct PeerMessage {
+        pub(crate) from: String,
+        pub(crate) message: String,
+    }
+
+    impl PeerMessage {
+        pub(crate) fn from_prompt(_: &str) -> Option<Self> {
+            None
+        }
+    }
+
+    pub(crate) struct PromptPresentation {
+        pub(crate) resolved_message: String,
+        pub(crate) display_message: String,
+        pub(crate) invocation: String,
+    }
+
     pub(crate) fn is_hidden_user_message(_: &serde_json::Value) -> bool {
         false
     }
@@ -91,9 +165,7 @@ mod sessions {
 
 #[path = "../src/app/ui/assets.rs"]
 mod assets;
-#[path = "../src/app/views/transcript/conversation.rs"]
-mod conversation;
-#[path = "../src/app/performance.rs"]
+#[path = "../src/app/infrastructure/performance.rs"]
 mod performance;
 #[path = "../src/app/ui/persistent_vec.rs"]
 mod persistent_vec;
@@ -103,16 +175,10 @@ mod primitives;
 mod protocol;
 #[path = "../src/app/ui/theme.rs"]
 mod theme;
-#[path = "../src/app/views/transcript/tool_changes.rs"]
-mod tool_changes;
-#[path = "../src/app/views/transcript/render.rs"]
-mod transcript;
-#[path = "../src/app/views/transcript/attachments.rs"]
-mod transcript_attachments;
-#[path = "../src/app/views/transcript/list.rs"]
-mod transcript_list;
-#[path = "../src/app/views/transcript/markdown.rs"]
-mod transcript_markdown;
+
+use app::views::transcript::{
+    self as transcript, conversation, list as transcript_list, markdown as transcript_markdown,
+};
 
 const WARMUP_FRAMES: usize = 10;
 const SAMPLE_FRAMES: usize = 60;
@@ -204,6 +270,7 @@ impl Render for TranscriptBenchView {
             self.conversation.clone(),
             HashMap::new(),
             self.markdown_cache.clone(),
+            "Assistant".into(),
             WeakEntity::<app::FarcasterApp>::new_invalid(),
         )
         .into_any_element()

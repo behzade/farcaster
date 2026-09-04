@@ -222,12 +222,11 @@ fn title_model(
     };
     if let Some(requested) =
         std::env::var_os(override_name).and_then(|value| value.into_string().ok())
-    {
-        if let Some(model) = catalog.models.iter().find(|model| {
+        && let Some(model) = catalog.models.iter().find(|model| {
             model.id == requested || format!("{}/{}", model.provider, model.id) == requested
-        }) {
-            return Some(model.clone());
-        }
+        })
+    {
+        return Some(model.clone());
     }
     let preferences: &[&str] = match harness {
         "pi" => match active_model.map(|model| model.provider.as_str()) {
@@ -349,7 +348,7 @@ mod tests {
 
     #[test]
     fn pi_title_command_is_isolated_from_session_transport() {
-        let project = std::env::current_dir().unwrap();
+        let project = std::env::current_dir().expect("current project directory");
         let command = pi_title_command(
             &AgentLaunchConfig::default(),
             &project,
@@ -357,7 +356,7 @@ mod tests {
             None,
             Some("low"),
         )
-        .unwrap();
+        .expect("build isolated Pi title command");
         let arguments = command
             .get_args()
             .map(|argument| argument.to_string_lossy().into_owned())
@@ -389,7 +388,8 @@ mod tests {
             efforts: Vec::new(),
         };
         let active = model_from("anthropic", "claude-opus", true);
-        let selected = title_model("pi", &catalog, Some(&active)).unwrap();
+        let selected =
+            title_model("pi", &catalog, Some(&active)).expect("cheap model from active provider");
         assert_eq!(selected.provider, "anthropic");
         assert_eq!(selected.id, "claude-haiku");
     }
@@ -404,7 +404,9 @@ mod tests {
         };
         let active = model_from("google", "gemini-2.5-pro", true);
         assert_eq!(
-            title_model("pi", &catalog, Some(&active)).unwrap().id,
+            title_model("pi", &catalog, Some(&active))
+                .expect("non-image cheap model")
+                .id,
             "gemini-2.5-flash-lite"
         );
     }
@@ -437,7 +439,9 @@ mod tests {
             efforts: Vec::new(),
         };
         assert_eq!(
-            title_model("codex-cli", &catalog, None).unwrap().id,
+            title_model("codex-cli", &catalog, None)
+                .expect("preferred Codex model")
+                .id,
             "gpt-5.6-luna"
         );
     }
@@ -464,7 +468,7 @@ mod tests {
     #[test]
     fn normalizes_model_title_output() {
         assert_eq!(
-            normalize_title("**Title: Fix session names.**\n").unwrap(),
+            normalize_title("**Title: Fix session names.**\n").expect("normalized title"),
             "Fix session names"
         );
     }

@@ -32,10 +32,15 @@ use crate::{
     },
 };
 
+#[path = "render/chunking.rs"]
 mod chunking;
+#[path = "render/detail_rows.rs"]
 mod detail_rows;
+#[path = "render/message_rows.rs"]
 mod message_rows;
+#[path = "render/rows.rs"]
 mod rows;
+#[path = "render/tool_rows.rs"]
 mod tool_rows;
 
 use chunking::*;
@@ -141,6 +146,7 @@ pub(super) fn copy_transcript_items(
         .join("\n\n")
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn render(
     list_state: &TranscriptListState,
     viewport: TranscriptViewport,

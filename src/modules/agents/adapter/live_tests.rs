@@ -315,10 +315,11 @@ fn exercise_live_session(
     session.send(SessionCommand::Prompt {
         mode: PromptMode::Normal,
         message,
-        images: coverage
-            .images
-            .then(|| vec![PromptImage::new(TEST_IMAGE.into(), "image/png".into())])
-            .unwrap_or_default(),
+        images: if coverage.images {
+            vec![PromptImage::new(TEST_IMAGE.into(), "image/png".into())]
+        } else {
+            Vec::new()
+        },
     })?;
     poll_until(
         session,

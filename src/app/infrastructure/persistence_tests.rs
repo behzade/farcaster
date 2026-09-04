@@ -60,7 +60,7 @@ fn configuration_catalogs_survive_reopen() -> Result<(), Box<dyn std::error::Err
         },
     };
 
-    StateStore::open_at(&database)?.save_configuration_catalogs(&[cached.clone()])?;
+    StateStore::open_at(&database)?.save_configuration_catalogs(std::slice::from_ref(&cached))?;
 
     assert_eq!(
         StateStore::open_at(&database)?.load_configuration_catalogs()?,
@@ -86,7 +86,7 @@ fn session_control_defaults_survive_reopen() -> Result<(), Box<dyn std::error::E
         effort: Some("high".into()),
     };
 
-    StateStore::open_at(&database)?.save_session_control_defaults(&[cached.clone()])?;
+    StateStore::open_at(&database)?.save_session_control_defaults(std::slice::from_ref(&cached))?;
 
     assert_eq!(
         StateStore::open_at(&database)?.load_session_control_defaults()?,

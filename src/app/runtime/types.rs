@@ -3,6 +3,7 @@
 use super::*;
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub(crate) enum RuntimeCommand {
     Prompt {
         target: String,
