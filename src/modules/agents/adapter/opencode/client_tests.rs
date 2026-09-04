@@ -146,7 +146,7 @@ fn model_selection_omits_an_unset_variant() -> Result<(), String> {
     let requests = client.into_transport().requests;
     assert_eq!(
         body(&requests[0])["model"],
-        json!({"providerID": "openai", "modelID": "gpt-5"})
+        json!({"providerID": "openai", "id": "gpt-5"})
     );
     assert_eq!(
         body(&requests[1])["model"],
