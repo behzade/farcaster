@@ -16,6 +16,12 @@ patterns were adapted from the local Issues project at:
 - Commit: `2df4b944983889305e4e196408b400d06f571bfd`
 - Upstream license: GPL-3.0-or-later
 
+IBM Plex Sans font binaries were copied from IBM Plex commit
+`bf260093582f04622aacc1e9f9ca604d7ccd0c42`. IBM Plex is copyright IBM Corp.
+and is distributed under the SIL Open Font License 1.1. Its license is included at
+`THIRD_PARTY_LICENSES/IBM-PLEX-OFL.txt`. Upstream:
+<https://github.com/IBM/plex>.
+
 Lilex font binaries were copied from Zed commit
 `ce6f3af5f7ae2bbdb002c8ce5cc38e96179de811`. Lilex is copyright Mikhael
 Khrustik and contributors, based on IBM Plex Mono, and is distributed under

@@ -24,6 +24,7 @@ resources = [
     "LICENSE",
     "NOTICE.md",
     "THIRD_PARTY_LICENSES",
+    { src = "assets/ibm-plex-sans/OFL.txt", target = "THIRD_PARTY_LICENSES/IBM-PLEX-OFL.txt" },
     { src = "assets/lilex/OFL.txt", target = "THIRD_PARTY_LICENSES/LILEX-OFL.txt" },
     { src = "assets/vazirmatn/OFL.txt", target = "THIRD_PARTY_LICENSES/VAZIRMATN-OFL.txt" },
     { src = "third_party/gpui-component-bd83329/LICENSE-APACHE", target = "THIRD_PARTY_LICENSES/GPUI-COMPONENT-APACHE-2.0.txt" },

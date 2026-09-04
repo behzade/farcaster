@@ -5,7 +5,7 @@ use gpui_component::{
 };
 use gpui_libghostty::{TerminalColor, TerminalTheme};
 
-pub(crate) const UI_FONT_FAMILY: &str = "Lilex";
+pub(crate) const UI_FONT_FAMILY: &str = "IBM Plex Sans";
 pub(crate) const FARSI_FONT_FAMILY: &str = "Vazirmatn";
 pub(crate) const MONO_FONT_FAMILY: &str = "Lilex";
 
@@ -282,11 +282,12 @@ pub(crate) fn install_component_theme(cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use super::{FARSI_FONT_FAMILY, THEME, ui_font};
+    use super::{FARSI_FONT_FAMILY, THEME, UI_FONT_FAMILY, ui_font};
 
     #[test]
-    fn ui_font_prefers_vazirmatn_for_missing_persian_glyphs() {
+    fn ui_font_uses_plex_sans_with_a_persian_fallback() {
         let font = ui_font();
+        assert_eq!(font.family, UI_FONT_FAMILY);
         assert_eq!(
             font.fallbacks
                 .expect("UI font should have a Persian fallback")

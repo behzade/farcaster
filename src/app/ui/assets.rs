@@ -62,6 +62,30 @@ pub(crate) struct AppAssets;
 impl AppAssets {
     pub(crate) fn load_fonts(&self, cx: &App) -> Result<()> {
         cx.text_system().add_fonts(vec![
+            Cow::Borrowed(include_bytes!(
+                "../../../assets/ibm-plex-sans/IBMPlexSans-Regular.ttf"
+            )),
+            Cow::Borrowed(include_bytes!(
+                "../../../assets/ibm-plex-sans/IBMPlexSans-Italic.ttf"
+            )),
+            Cow::Borrowed(include_bytes!(
+                "../../../assets/ibm-plex-sans/IBMPlexSans-Medium.ttf"
+            )),
+            Cow::Borrowed(include_bytes!(
+                "../../../assets/ibm-plex-sans/IBMPlexSans-MediumItalic.ttf"
+            )),
+            Cow::Borrowed(include_bytes!(
+                "../../../assets/ibm-plex-sans/IBMPlexSans-SemiBold.ttf"
+            )),
+            Cow::Borrowed(include_bytes!(
+                "../../../assets/ibm-plex-sans/IBMPlexSans-SemiBoldItalic.ttf"
+            )),
+            Cow::Borrowed(include_bytes!(
+                "../../../assets/ibm-plex-sans/IBMPlexSans-Bold.ttf"
+            )),
+            Cow::Borrowed(include_bytes!(
+                "../../../assets/ibm-plex-sans/IBMPlexSans-BoldItalic.ttf"
+            )),
             Cow::Borrowed(include_bytes!("../../../assets/lilex/Lilex-Regular.ttf")),
             Cow::Borrowed(include_bytes!("../../../assets/lilex/Lilex-Bold.ttf")),
             Cow::Borrowed(include_bytes!("../../../assets/lilex/Lilex-Italic.ttf")),
@@ -365,6 +389,15 @@ mod tests {
     #[test]
     fn bundled_fonts_have_true_type_headers() {
         for bytes in [
+            include_bytes!("../../../assets/ibm-plex-sans/IBMPlexSans-Regular.ttf").as_slice(),
+            include_bytes!("../../../assets/ibm-plex-sans/IBMPlexSans-Italic.ttf").as_slice(),
+            include_bytes!("../../../assets/ibm-plex-sans/IBMPlexSans-Medium.ttf").as_slice(),
+            include_bytes!("../../../assets/ibm-plex-sans/IBMPlexSans-MediumItalic.ttf").as_slice(),
+            include_bytes!("../../../assets/ibm-plex-sans/IBMPlexSans-SemiBold.ttf").as_slice(),
+            include_bytes!("../../../assets/ibm-plex-sans/IBMPlexSans-SemiBoldItalic.ttf")
+                .as_slice(),
+            include_bytes!("../../../assets/ibm-plex-sans/IBMPlexSans-Bold.ttf").as_slice(),
+            include_bytes!("../../../assets/ibm-plex-sans/IBMPlexSans-BoldItalic.ttf").as_slice(),
             include_bytes!("../../../assets/lilex/Lilex-Regular.ttf").as_slice(),
             include_bytes!("../../../assets/lilex/Lilex-Bold.ttf").as_slice(),
             include_bytes!("../../../assets/lilex/Lilex-Italic.ttf").as_slice(),
