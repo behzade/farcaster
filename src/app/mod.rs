@@ -238,7 +238,6 @@ pub(crate) struct FarcasterApp {
     network_proxy_input: Entity<InputState>,
     network_proxy_error: Option<String>,
     settings_application_modifier: ui::keybindings::ApplicationModifier,
-    settings_builtin_mcp_enabled: bool,
     editing_session_title: Option<SessionTitleEdit>,
     pending_session_titles: HashMap<PathBuf, String>,
     pending_session_title_focus: bool,

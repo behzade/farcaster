@@ -2,8 +2,12 @@ use gpui::{
     AnyElement, IntoElement as _, ParentElement as _, Styled as _, WeakEntity, div,
     prelude::FluentBuilder as _,
 };
-use gpui_component::input::Input;
-use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
+use gpui_component::{
+    Sizable as _, Size,
+    button::{Button, ButtonVariants as _},
+    input::Input,
+    menu::{DropdownMenu as _, PopupMenuItem},
+};
 
 use super::super::FarcasterApp;
 use crate::{
@@ -38,6 +42,10 @@ pub(in crate::app::views) fn render(
                     .p(THEME.space.md)
                     .child(modifier_setting(
                         app.settings_application_modifier,
+                        entity.clone(),
+                    ))
+                    .child(builtin_mcp_setting(
+                        crate::builtin_mcp::enabled(),
                         entity.clone(),
                     ))
                     .child(
@@ -107,30 +115,60 @@ pub(in crate::app::views) fn render(
     .into_any_element()
 }
 
+fn builtin_mcp_setting(enabled: bool, entity: WeakEntity<FarcasterApp>) -> AnyElement {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(THEME.space.md)
+        .child(setting_label(
+            "Built-in MCP",
+            "Adds Farcaster tools to new agent sessions.",
+        ))
+        .child(
+            Button::new("builtin-mcp-toggle")
+                .label(if enabled { "On" } else { "Off" })
+                .with_size(Size::Small)
+                .toggled(enabled)
+                .when(enabled, |button| button.primary())
+                .when(!enabled, |button| button.secondary())
+                .on_click(move |_, _, cx| {
+                    let _ = entity.update(cx, |this, cx| this.toggle_settings_builtin_mcp(cx));
+                }),
+        )
+        .into_any_element()
+}
+
+fn setting_label(title: &'static str, description: &'static str) -> AnyElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap(THEME.space.xs)
+        .child(
+            div()
+                .text_size(THEME.type_scale.body)
+                .text_color(THEME.colors.text)
+                .child(title),
+        )
+        .child(
+            div()
+                .text_size(THEME.type_scale.body_small)
+                .text_color(THEME.colors.subtle)
+                .child(description),
+        )
+        .into_any_element()
+}
+
 fn modifier_setting(selected: ApplicationModifier, entity: WeakEntity<FarcasterApp>) -> AnyElement {
     div()
         .flex()
         .items_center()
         .justify_between()
         .gap(THEME.space.md)
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(THEME.space.xs)
-                .child(
-                    div()
-                        .text_size(THEME.type_scale.body)
-                        .text_color(THEME.colors.text)
-                        .child("Keybinding modifier"),
-                )
-                .child(
-                    div()
-                        .text_size(THEME.type_scale.body_small)
-                        .text_color(THEME.colors.subtle)
-                        .child("Used for application shortcuts."),
-                ),
-        )
+        .child(setting_label(
+            "Keybinding modifier",
+            "Used for application shortcuts.",
+        ))
         .child(
             dropdown_button(
                 "keybinding-modifier",

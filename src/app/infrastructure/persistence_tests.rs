@@ -126,8 +126,10 @@ fn application_settings_survive_reopen() -> Result<(), Box<dyn std::error::Error
     let database = temp.path().join("gui.sqlite3");
     let store = StateStore::open_at(&database)?;
     assert_eq!(store.load_application_modifier()?, None);
+    assert!(store.load_builtin_mcp_enabled()?);
 
     store.save_application_settings("ctrl", Some("http://proxy.example:8080"))?;
+    store.save_builtin_mcp_enabled(false)?;
     assert_eq!(
         StateStore::open_at(&database)?
             .load_application_modifier()?
@@ -140,6 +142,7 @@ fn application_settings_survive_reopen() -> Result<(), Box<dyn std::error::Error
             .as_deref(),
         Some("http://proxy.example:8080")
     );
+    assert!(!StateStore::open_at(&database)?.load_builtin_mcp_enabled()?);
     Ok(())
 }
 

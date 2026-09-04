@@ -578,6 +578,20 @@ impl FarcasterApp {
         cx.notify();
     }
 
+    pub(in crate::app) fn toggle_settings_builtin_mcp(&mut self, cx: &mut Context<Self>) {
+        let enabled = !crate::builtin_mcp::enabled();
+        match crate::app::infrastructure::persistence::StateStore::open()
+            .and_then(|store| store.save_builtin_mcp_enabled(enabled))
+        {
+            Ok(()) => {
+                crate::builtin_mcp::set_enabled(enabled);
+                self.network_proxy_error = None;
+            }
+            Err(error) => self.network_proxy_error = Some(error),
+        }
+        cx.notify();
+    }
+
     fn persist_settings(
         &mut self,
         proxy: Option<String>,
