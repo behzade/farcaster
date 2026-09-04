@@ -22,7 +22,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.view.overlays.run {
+        if self.overlays.run {
             self.close_sheet(window, cx);
         }
         self.hide_terminal(cx);

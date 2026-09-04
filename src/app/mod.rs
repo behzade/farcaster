@@ -32,7 +32,6 @@ use views::{
 };
 
 use std::{
-    cell::RefCell,
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::Arc,
@@ -40,9 +39,8 @@ use std::{
 };
 
 use gpui::{
-    AppContext as _, Context, Entity, FocusHandle, Focusable as _, Image, ListAlignment, ListState,
-    PathPromptOptions, RenderImage, Subscription, SystemNotification, Task, Window, actions, point,
-    px,
+    AppContext as _, Context, Entity, FocusHandle, Focusable as _, Image, PathPromptOptions,
+    RenderImage, Subscription, SystemNotification, Task, Window, actions,
 };
 use gpui_component::input::{InputEvent, InputState, TextareaState};
 use gpui_libghostty::Terminal;
@@ -198,10 +196,6 @@ pub(crate) struct FarcasterApp {
     session_project_filter: Option<PathBuf>,
     picker: Option<navigation::PickerState>,
     picker_return_focus: Option<FocusHandle>,
-    session_list: ListState,
-    session_list_rows: RefCell<Vec<String>>,
-    archived_session_list: ListState,
-    archived_session_list_rows: RefCell<Vec<String>>,
     session_generation: u64,
     runtime_generation: u64,
     composer: Entity<TextareaState>,
@@ -250,7 +244,7 @@ pub(crate) struct FarcasterApp {
     image_preview_return_focus: Option<FocusHandle>,
     sheet_focus: FocusHandle,
     sheet_return_focus: Option<FocusHandle>,
-    view: views::state::ViewState,
+    overlays: views::overlay_state::OverlayViewState,
     performance_monitor: Option<crate::app::infrastructure::performance::PerformanceMonitor>,
     _performance_task: Option<Task<()>>,
     pending_session_switch: Option<(PathBuf, crate::app::infrastructure::performance::Timing)>,
@@ -286,8 +280,6 @@ fn session_shortcuts_visible_for_window(current: bool, window_active: bool) -> b
 }
 
 impl FarcasterApp {
-
-
     fn record_run_status(&mut self, target: String, status: String, force_recent: bool) -> bool {
         if status == "Done" {
             if starts_recent_completion(
@@ -312,7 +304,12 @@ impl FarcasterApp {
         false
     }
 
-    fn reset_session_ui(&mut self, generation: u64, preserve_submission: bool) {
+    fn reset_session_ui(
+        &mut self,
+        generation: u64,
+        preserve_submission: bool,
+        cx: &mut Context<Self>,
+    ) {
         self.runtime_generation = generation;
         self.extension.reset();
         self.parked_extension = None;
@@ -327,12 +324,12 @@ impl FarcasterApp {
             self.composer_focus.clone(),
         )));
         self.dialog_return_focus = None;
-        self.view.overlays.sessions = false;
-        self.view.overlays.run = false;
+        self.overlays.sessions = false;
+        self.overlays.run = false;
         self.sheet_return_focus = None;
-        self.view.overlays.pending_setup = false;
+        self.overlays.pending_setup = false;
         if !preserve_submission {
-            self.reset_transcript_ui();
+            self.reset_transcript_ui(cx);
         }
     }
 
@@ -388,15 +385,11 @@ impl FarcasterApp {
         }
     }
 
-    fn reset_transcript_ui(&mut self) {
-        self.view.transcript.list.reset();
-        self.view.transcript.list.scroll_to_end();
-        self.view.transcript.rows =
-            Arc::new(crate::app::ui::persistent_vec::PersistentVec::default());
-        self.view.transcript.disclosure_states.clear();
-        self.view.transcript.following = true;
-        self.view.transcript.unseen = 0;
-        self.view.transcript.last_count = 0;
+    fn reset_transcript_ui(&mut self, cx: &mut Context<Self>) {
+        self.transcript_view.update(cx, |transcript, cx| {
+            transcript.reset();
+            cx.notify();
+        });
     }
 
     pub(crate) fn activate_system_notification(
@@ -469,10 +462,7 @@ impl FarcasterApp {
         );
         self.close_sessions_sheet_after_selection(window, cx);
         if previous_root != next_root {
-            self.view
-                .run_panel
-                .scroll
-                .set_offset(point(px(0.0), px(0.0)));
+            self.reset_run_panel_scroll(cx);
             self.notify_session_rail(cx);
         }
         self.notify_transcript(cx);
@@ -491,10 +481,7 @@ impl FarcasterApp {
         if self.pending_project_trust_command.is_some() || self.workspace_switch_blocked() {
             return;
         }
-        self.view
-            .run_panel
-            .scroll
-            .set_offset(point(px(0.0), px(0.0)));
+        self.reset_run_panel_scroll(cx);
         self.selected_draft = None;
         self.select_project(project.clone(), cx);
         self.restore_center_surface(project.clone(), window, cx);
@@ -522,10 +509,7 @@ impl FarcasterApp {
         if self.pending_project_trust_command.is_some() {
             return;
         }
-        self.view
-            .run_panel
-            .scroll
-            .set_offset(point(px(0.0), px(0.0)));
+        self.reset_run_panel_scroll(cx);
         let draft = match project_registry::new_draft(project.clone(), &self.preferred_harness) {
             Ok(draft) => draft,
             Err(error) => {
@@ -578,10 +562,7 @@ impl FarcasterApp {
             self.close_sessions_sheet_after_selection(window, cx);
             return;
         }
-        self.view
-            .run_panel
-            .scroll
-            .set_offset(point(px(0.0), px(0.0)));
+        self.reset_run_panel_scroll(cx);
         self.switch_composer_target(draft_target(&id), window, cx);
         self.selected_draft = Some(id.clone());
         self.select_project(project.clone(), cx);
@@ -878,7 +859,7 @@ impl FarcasterApp {
         if !self.sessions.iter().any(|session| session.archived) {
             self.archived_sessions_expanded = false;
         }
-        self.send(RuntimeCommand::SetSessionArchived { path, archived });
+        self.send(RuntimeCommand::SetSessionArchived { path, archived }, cx);
         self.notify_session_rail(cx);
         self.notify_run_panel(cx);
     }
@@ -941,17 +922,17 @@ impl FarcasterApp {
     }
 
     fn select_model(&mut self, model: &Model, cx: &mut Context<Self>) {
-        self.send(RuntimeCommand::SetModel(model.clone()));
+        self.send(RuntimeCommand::SetModel(model.clone()), cx);
         cx.notify();
     }
 
     fn set_thinking_level(&mut self, level: String, cx: &mut Context<Self>) {
-        self.send(RuntimeCommand::SetThinking(level));
+        self.send(RuntimeCommand::SetThinking(level), cx);
         cx.notify();
     }
 
     fn set_agent_mode(&mut self, mode: String, cx: &mut Context<Self>) {
-        self.send(RuntimeCommand::SetMode(mode));
+        self.send(RuntimeCommand::SetMode(mode), cx);
         cx.notify();
     }
 
@@ -960,7 +941,7 @@ impl FarcasterApp {
         level: crate::runtime::HarnessAccessMode,
         cx: &mut Context<Self>,
     ) {
-        self.send(RuntimeCommand::SetAccessMode(level));
+        self.send(RuntimeCommand::SetAccessMode(level), cx);
         cx.notify();
     }
 }

@@ -18,7 +18,7 @@ impl FarcasterApp {
             return;
         }
         match projects::startup_trust(project) {
-            Ok(StartupTrust::Ready) => self.send(command),
+            Ok(StartupTrust::Ready) => self.send(command, cx),
             Ok(StartupTrust::Prompt) => {
                 self.open_project_trust(window, cx);
                 self.project_trust_project = Some(project.to_path_buf());
@@ -58,7 +58,7 @@ impl FarcasterApp {
                     .map(restart_session_after_trust);
                 self.close_sheet(window, cx);
                 if let Some(command) = pending {
-                    self.send(command);
+                    self.send(command, cx);
                 } else {
                     let decision = if applied.trusted {
                         "trusted"

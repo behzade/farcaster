@@ -57,7 +57,10 @@ impl FarcasterApp {
             self.archived_sessions_expanded = false;
         }
         self.notify_session_rail(cx);
-        self.send(RuntimeCommand::DeleteSessionFamily { path: pending.path });
+        self.send(
+            RuntimeCommand::DeleteSessionFamily { path: pending.path },
+            cx,
+        );
     }
 
     pub(in crate::app) fn close_delete_confirmation(

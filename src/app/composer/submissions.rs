@@ -122,7 +122,7 @@ impl FarcasterApp {
                 conversation.running = true;
                 snapshot.status = "Working".into();
                 if show_in_transcript {
-                    self.mark_transcript_changed(index, index == 0);
+                    self.mark_transcript_changed(index, index == 0, cx);
                 }
                 self.jump_to_latest(cx);
                 cx.notify();
@@ -131,7 +131,7 @@ impl FarcasterApp {
                 let snapshot = Arc::make_mut(&mut self.snapshot);
                 let index = snapshot.conversation.items.len();
                 Arc::make_mut(&mut snapshot.conversation).push_transport_error(error);
-                self.mark_transcript_changed(index, index == 0);
+                self.mark_transcript_changed(index, index == 0, cx);
                 cx.notify();
             }
         }
@@ -144,7 +144,7 @@ impl FarcasterApp {
         )
     }
 
-    pub(crate) fn handle_composer_escape(&mut self) {
+    pub(crate) fn handle_composer_escape(&mut self, cx: &mut gpui::Context<Self>) {
         let (abort, arm) = composer_escape(
             self.snapshot.conversation.running,
             !self.snapshot.conversation.queue.steering.is_empty(),
@@ -154,7 +154,7 @@ impl FarcasterApp {
         );
         self.composer_escape_armed = arm;
         if abort {
-            self.send(RuntimeCommand::Abort);
+            self.send(RuntimeCommand::Abort, cx);
         }
     }
 

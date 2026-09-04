@@ -1,5 +1,7 @@
+use std::cell::RefCell;
+
 use gpui::{
-    Anchor, InteractiveElement as _, IntoElement, ParentElement as _,
+    Anchor, InteractiveElement as _, IntoElement, ListState, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, WeakEntity, div, list,
     prelude::FluentBuilder as _, px,
 };
@@ -34,6 +36,9 @@ impl FarcasterApp {
         &self,
         entity: WeakEntity<Self>,
         session_drag_active: bool,
+        session_list: ListState,
+        session_list_rows: &RefCell<Vec<String>>,
+        shortcuts_visible: bool,
     ) -> impl IntoElement {
         let new_entity = entity.clone();
         let actions_entity = entity.clone();
@@ -60,8 +65,8 @@ impl FarcasterApp {
         let active_rows = lists.active;
         let session_shortcuts = visible_session_shortcuts(&active_rows);
         reconcile_list_rows(
-            &self.session_list,
-            &self.session_list_rows,
+            &session_list,
+            session_list_rows,
             active_rows.iter().map(active_item_identity).collect(),
         );
 
@@ -79,10 +84,8 @@ impl FarcasterApp {
             .map(|edit| edit.path.clone());
         let active_title_input = self.session_title_input.clone();
         let active_drop_target = self.session_drop_target;
-        let shortcuts_visible = self.view.session_rail.shortcuts_visible;
-        let active_list = list(
-            self.session_list.clone(),
-            move |index, _, _| match active_rows.get(index) {
+        let active_list = list(session_list, move |index, _, _| {
+            match active_rows.get(index) {
                 Some(ActiveSessionItem::Draft(draft)) => {
                     let selected = selected_draft.as_deref() == Some(draft.id.as_str());
                     let status = crate::app::session::drafts::resolved_draft_status(
@@ -144,8 +147,8 @@ impl FarcasterApp {
                     .into_any_element()
                 }
                 None => div().into_any_element(),
-            },
-        )
+            }
+        })
         .size_full();
 
         let archived_expanded =

@@ -1,10 +1,10 @@
 mod composer;
 pub(in crate::app) mod dialogs;
+pub(crate) mod overlay_state;
 mod regions;
 mod root;
 mod run_panel;
 mod session_rail;
-pub(crate) mod state;
 pub(crate) mod transcript;
 mod usage;
 pub(super) mod workgraph;

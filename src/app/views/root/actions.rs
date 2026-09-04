@@ -22,7 +22,7 @@ pub(super) fn bind(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div
 fn bind_actions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
     root.on_action(cx.listener(|this, _: &CopySelection, _, cx| {
         crate::app::ui::keyboard::copy_selection(
-            this.view.transcript.list.selected_text(),
+            this.transcript_selected_text(cx),
             this.composer.read(cx).selected_value().to_string(),
             cx,
         );
@@ -32,7 +32,7 @@ fn bind_actions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
             dispatch_keystroke("ctrl-shift-c", window, cx);
         } else {
             crate::app::ui::keyboard::copy_selection(
-                this.view.transcript.list.selected_text(),
+                this.transcript_selected_text(cx),
                 this.composer.read(cx).selected_value().to_string(),
                 cx,
             );
@@ -107,13 +107,13 @@ fn bind_actions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
             this.submit(value, this.enter_mode(), window, cx);
         }
     }))
-    .on_action(cx.listener(|this, _: &AbortRun, _, _| {
+    .on_action(cx.listener(|this, _: &AbortRun, _, cx| {
         if this.snapshot.conversation.running {
-            this.send(crate::runtime::RuntimeCommand::Abort);
+            this.send(crate::runtime::RuntimeCommand::Abort, cx);
         }
     }))
-    .on_action(cx.listener(|this, _: &ComposerEscape, _, _| {
-        this.handle_composer_escape();
+    .on_action(cx.listener(|this, _: &ComposerEscape, _, cx| {
+        this.handle_composer_escape(cx);
     }))
     .on_action(cx.listener(|this, _: &CloseCurrent, window, cx| {
         if this.surface == AppSurface::Editor {
@@ -202,14 +202,11 @@ fn bind_pointer_interactions(root: gpui::Div, cx: &mut Context<FarcasterApp>) ->
         |this, event: &gpui::ModifiersChangedEvent, window, cx| {
             let requested = cfg!(target_os = "macos") && event.modifiers.platform;
             let visible = if TextSelection::has_selection(window, cx) {
-                this.view.session_rail.shortcuts_visible
+                this.session_rail_view.read(cx).shortcuts_visible()
             } else {
                 requested
             };
-            if this.view.session_rail.shortcuts_visible != visible {
-                this.view.session_rail.shortcuts_visible = visible;
-                this.notify_session_rail(cx);
-            }
+            this.set_session_shortcuts_visible(visible, cx);
         },
     ))
     .on_mouse_move(cx.listener(|this, event: &gpui::MouseMoveEvent, _, cx| {

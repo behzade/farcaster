@@ -31,7 +31,15 @@ impl Render for FarcasterApp {
         };
         let work_active = self.surface == AppSurface::Work;
         let main = self.render_workspace_main(entity.clone(), mode);
-        let shell = self.render_inline_shell(entity.clone(), mode, main);
+        let session_rail_width = self.session_rail_view.read(cx).width();
+        let run_panel_width = self.run_panel_view.read(cx).width();
+        let shell = self.render_inline_shell(
+            entity.clone(),
+            mode,
+            main,
+            session_rail_width,
+            run_panel_width,
+        );
         let picker = self.render_picker(entity.clone(), cx);
         let root = div()
             .relative()

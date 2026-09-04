@@ -5,7 +5,7 @@ use gpui::{
     StatefulInteractiveElement as _, Styled as _, WeakEntity, div, px,
 };
 
-use super::super::super::FarcasterApp;
+use super::super::super::{FarcasterApp, RunPanelView};
 use crate::{
     agent_activity::{AgentActivity, AgentLifecycle, AgentOutcome},
     app::ui::assets::AppIcon,
@@ -118,20 +118,6 @@ impl FarcasterApp {
                 .into_any_element(),
         )
     }
-
-    fn toggle_run_disclosure(&mut self, disclosure: RunDisclosure, cx: &mut gpui::Context<Self>) {
-        match disclosure {
-            RunDisclosure::Completed => {
-                self.view.run_panel.completed_agents_expanded =
-                    !self.view.run_panel.completed_agents_expanded
-            }
-            RunDisclosure::Limited => {
-                self.view.run_panel.limited_agents_expanded =
-                    !self.view.run_panel.limited_agents_expanded
-            }
-        }
-        self.notify_run_panel(cx);
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -178,10 +164,16 @@ pub(super) fn disclosure_control(
     label: &'static str,
     expanded: bool,
     disclosure: RunDisclosure,
-    entity: WeakEntity<FarcasterApp>,
+    entity: WeakEntity<RunPanelView>,
 ) -> AnyElement {
     disclosure_button(id, expanded, label, move |_, cx| {
-        let _ = entity.update(cx, |this, cx| this.toggle_run_disclosure(disclosure, cx));
+        let _ = entity.update(cx, |view, cx| {
+            match disclosure {
+                RunDisclosure::Completed => view.toggle_completed_agents(),
+                RunDisclosure::Limited => view.toggle_limited_agents(),
+            }
+            cx.notify();
+        });
     })
 }
 

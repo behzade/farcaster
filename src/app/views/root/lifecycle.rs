@@ -18,8 +18,8 @@ impl FarcasterApp {
             let focus = self.session_title_input.read(cx).focus_handle(cx);
             cx.defer_in(window, move |_, window, cx| focus.focus(window, cx));
         }
-        if self.view.overlays.pending_setup {
-            self.view.overlays.pending_setup = false;
+        if self.overlays.pending_setup {
+            self.overlays.pending_setup = false;
             let focus = self.sheet_focus.clone();
             cx.defer_in(window, move |_, window, cx| focus.focus(window, cx));
         }

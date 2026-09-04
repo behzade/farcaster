@@ -135,6 +135,8 @@ impl FarcasterApp {
         entity: WeakEntity<Self>,
         mode: LayoutMode,
         main: AnyElement,
+        session_rail_width: gpui::Pixels,
+        run_panel_width: gpui::Pixels,
     ) -> AnyElement {
         div()
             .size_full()
@@ -144,7 +146,7 @@ impl FarcasterApp {
                 shell.child(
                     div()
                         .relative()
-                        .w(self.view.session_rail.width)
+                        .w(session_rail_width)
                         .min_w(THEME.layout.session_rail_min)
                         .max_w(THEME.layout.session_rail_max)
                         .flex_none()
@@ -168,7 +170,7 @@ impl FarcasterApp {
                 shell.child(
                     div()
                         .relative()
-                        .w(self.view.run_panel.width)
+                        .w(run_panel_width)
                         .min_w(THEME.layout.run_panel_min)
                         .max_w(THEME.layout.run_panel_max)
                         .flex_none()
