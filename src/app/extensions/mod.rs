@@ -1,3 +1,5 @@
+mod state;
+
 use std::{
     collections::{BTreeMap, VecDeque},
     time::{Duration, Instant},

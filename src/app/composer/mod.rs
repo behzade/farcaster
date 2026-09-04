@@ -11,6 +11,7 @@ pub(crate) mod sessions;
 #[cfg(test)]
 mod sessions_tests;
 pub(in crate::app) mod slash_commands;
+mod state;
 pub(in crate::app) mod submissions;
 pub(crate) mod user_invocations;
 
