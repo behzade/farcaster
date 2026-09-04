@@ -144,7 +144,7 @@ impl FarcasterApp {
                 shell.child(
                     div()
                         .relative()
-                        .w(self.session_rail_width)
+                        .w(self.view.session_rail.width)
                         .min_w(THEME.layout.session_rail_min)
                         .max_w(THEME.layout.session_rail_max)
                         .flex_none()
@@ -168,7 +168,7 @@ impl FarcasterApp {
                 shell.child(
                     div()
                         .relative()
-                        .w(self.run_panel_width)
+                        .w(self.view.run_panel.width)
                         .min_w(THEME.layout.run_panel_min)
                         .max_w(THEME.layout.run_panel_max)
                         .flex_none()

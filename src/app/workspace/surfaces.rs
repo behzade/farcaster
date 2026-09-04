@@ -147,9 +147,9 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.sessions_sheet {
+        if self.view.overlays.sessions {
             self.apply_sheet_flags(sheet_flags(None));
-            self.pending_sheet_setup = false;
+            self.view.overlays.pending_setup = false;
             self.sheet_return_focus = None;
         }
         if self.surface == AppSurface::Work {
@@ -244,11 +244,11 @@ impl FarcasterApp {
 
     pub(in crate::app) fn native_workspace_modal_active(&self) -> bool {
         self.picker.is_some()
-            || self.sessions_sheet
-            || self.run_sheet
-            || self.keybindings_help
-            || self.settings_sheet
-            || self.project_trust_sheet
+            || self.view.overlays.sessions
+            || self.view.overlays.run
+            || self.view.overlays.keybindings
+            || self.view.overlays.settings
+            || self.view.overlays.project_trust
             || self.pending_archive.is_some()
             || self.pending_delete.is_some()
             || self.image_preview.is_some()
@@ -457,7 +457,7 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         self.hide_native_workspace_surfaces(cx);
-        if self.run_sheet {
+        if self.view.overlays.run {
             self.close_sheet(window, cx);
         }
         if self.surface != AppSurface::Work {
@@ -527,7 +527,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.sessions_sheet {
+        if self.view.overlays.sessions {
             self.close_sheet(window, cx);
         }
     }
@@ -642,26 +642,26 @@ impl FarcasterApp {
             self.sheet_return_focus = window.focused(cx);
         }
         self.apply_sheet_flags(sheet_flags(Some(sheet)));
-        self.pending_sheet_setup = true;
+        self.view.overlays.pending_setup = true;
         cx.notify();
     }
 
     fn current_sheet_flags(&self) -> SheetFlags {
         SheetFlags {
-            sessions: self.sessions_sheet,
-            run: self.run_sheet,
-            keybindings: self.keybindings_help,
-            settings: self.settings_sheet,
-            project_trust: self.project_trust_sheet,
+            sessions: self.view.overlays.sessions,
+            run: self.view.overlays.run,
+            keybindings: self.view.overlays.keybindings,
+            settings: self.view.overlays.settings,
+            project_trust: self.view.overlays.project_trust,
         }
     }
 
     fn apply_sheet_flags(&mut self, flags: SheetFlags) {
-        self.sessions_sheet = flags.sessions;
-        self.run_sheet = flags.run;
-        self.keybindings_help = flags.keybindings;
-        self.settings_sheet = flags.settings;
-        self.project_trust_sheet = flags.project_trust;
+        self.view.overlays.sessions = flags.sessions;
+        self.view.overlays.run = flags.run;
+        self.view.overlays.keybindings = flags.keybindings;
+        self.view.overlays.settings = flags.settings;
+        self.view.overlays.project_trust = flags.project_trust;
     }
 
     pub(crate) fn open_image_preview(
@@ -703,7 +703,7 @@ impl FarcasterApp {
 
     pub(in crate::app) fn close_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.apply_sheet_flags(sheet_flags(None));
-        self.pending_sheet_setup = false;
+        self.view.overlays.pending_setup = false;
         let focus = self
             .sheet_return_focus
             .take()
@@ -722,12 +722,12 @@ impl FarcasterApp {
             self.close_picker(window, cx);
         } else if self.extension.dialog.is_some() {
             self.cancel_dialog(window, cx);
-        } else if self.project_trust_sheet {
+        } else if self.view.overlays.project_trust {
             self.dismiss_project_trust(window, cx);
-        } else if self.sessions_sheet
-            || self.run_sheet
-            || self.keybindings_help
-            || self.settings_sheet
+        } else if self.view.overlays.sessions
+            || self.view.overlays.run
+            || self.view.overlays.keybindings
+            || self.view.overlays.settings
         {
             self.close_sheet(window, cx);
         }

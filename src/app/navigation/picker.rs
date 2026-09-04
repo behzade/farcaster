@@ -94,17 +94,19 @@ impl FarcasterApp {
     ) {
         self.cover_native_workspace_surface(cx);
         if self.picker.is_none() {
-            let sheet_open = self.sessions_sheet || self.run_sheet || self.keybindings_help;
+            let sheet_open = self.view.overlays.sessions
+                || self.view.overlays.run
+                || self.view.overlays.keybindings;
             self.picker_return_focus = if sheet_open {
                 Some(self.composer_focus.clone())
             } else {
                 window.focused(cx)
             };
             if sheet_open {
-                self.sessions_sheet = false;
-                self.run_sheet = false;
-                self.keybindings_help = false;
-                self.pending_sheet_setup = false;
+                self.view.overlays.sessions = false;
+                self.view.overlays.run = false;
+                self.view.overlays.keybindings = false;
+                self.view.overlays.pending_setup = false;
                 self.sheet_return_focus = None;
             }
         }

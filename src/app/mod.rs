@@ -39,8 +39,8 @@ use std::{
 
 use gpui::{
     AppContext as _, Context, Entity, FocusHandle, Focusable as _, Image, ListAlignment, ListState,
-    PathPromptOptions, Pixels, RenderImage, ScrollHandle, Subscription, SystemNotification, Task,
-    Window, actions, point, px,
+    PathPromptOptions, RenderImage, Subscription, SystemNotification, Task, Window, actions, point,
+    px,
 };
 use gpui_component::input::{InputEvent, InputState, TextareaState};
 use gpui_libghostty::Terminal;
@@ -198,8 +198,6 @@ pub(crate) struct FarcasterApp {
     picker_return_focus: Option<FocusHandle>,
     session_list: ListState,
     session_list_rows: RefCell<Vec<String>>,
-    session_rail_width: Pixels,
-    session_rail_resize_start: Option<(Pixels, Pixels)>,
     archived_session_list: ListState,
     archived_session_list_rows: RefCell<Vec<String>>,
     session_generation: u64,
@@ -208,9 +206,6 @@ pub(crate) struct FarcasterApp {
     composer_project_files: Vec<String>,
     composer_project_files_project: Option<PathBuf>,
     composer_project_files_loading: Option<PathBuf>,
-    composer_suggestion_selection: usize,
-    runtime_picker_open: bool,
-    runtime_model_search: Entity<InputState>,
     session_rail_view: Entity<SessionRailView>,
     archived_session_rail_view: Entity<InactiveSessionRailView>,
     transcript_view: Entity<TranscriptView>,
@@ -229,10 +224,6 @@ pub(crate) struct FarcasterApp {
     native_surface_covered: bool,
     surface: AppSurface,
     workgraph_inspector_issue: Option<u64>,
-    run_panel_width: Pixels,
-    run_panel_resize_start: Option<(Pixels, Pixels)>,
-    run_panel_scroll: ScrollHandle,
-    composer_footer_scroll: ScrollHandle,
     composer_sessions: ComposerSessions,
     session_surfaces: HashMap<String, AppSurface>,
     composer_history_marker: Option<(String, usize, String)>,
@@ -257,15 +248,7 @@ pub(crate) struct FarcasterApp {
     image_preview_return_focus: Option<FocusHandle>,
     sheet_focus: FocusHandle,
     sheet_return_focus: Option<FocusHandle>,
-    pending_sheet_setup: bool,
-    transcript_list: TranscriptListState,
-    transcript_rows: Arc<
-        crate::app::ui::persistent_vec::PersistentVec<crate::app::views::transcript::TranscriptRow>,
-    >,
-    transcript_following: bool,
-    transcript_unseen: usize,
-    pub(crate) transcript_disclosure_states: HashMap<usize, bool>,
-    last_transcript_count: usize,
+    view: views::state::ViewState,
     performance_monitor: Option<crate::app::infrastructure::performance::PerformanceMonitor>,
     _performance_task: Option<Task<()>>,
     pending_session_switch: Option<(PathBuf, crate::app::infrastructure::performance::Timing)>,
@@ -280,23 +263,14 @@ pub(crate) struct FarcasterApp {
     pending_composer_restore: Option<(String, ComposerSnapshot)>,
     pending_submissions: HashMap<String, PendingSubmission>,
     post_render_focus: Option<PostRenderFocus>,
-    sessions_sheet: bool,
     pending_archive: Option<session::archive::PendingArchive>,
     pending_delete: Option<session::deletion::PendingDelete>,
     archived_sessions_expanded: bool,
-    run_sheet: bool,
-    keybindings_help: bool,
-    settings_sheet: bool,
-    project_trust_sheet: bool,
     project_trust_error: Option<String>,
     project_trust_project: Option<PathBuf>,
     pending_project_trust_command: Option<RuntimeCommand>,
-    completed_agents_expanded: bool,
-    limited_agents_expanded: bool,
-    session_shortcuts_visible: bool,
     _composer_subscription: Subscription,
     _search_subscription: Subscription,
-    _runtime_model_search_subscription: Subscription,
     _session_title_subscription: Subscription,
     _window_activation_subscription: Subscription,
     _window_placement_subscription: Subscription,
@@ -412,8 +386,6 @@ impl FarcasterApp {
         });
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search sessions"));
         let search_focus = search.read(cx).focus_handle(cx);
-        let runtime_model_search =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Filter models…"));
         let session_title_input = cx.new(|cx| InputState::new(window, cx));
         let network_proxy_input = cx.new(|cx| {
             InputState::new(window, cx)
@@ -432,7 +404,7 @@ impl FarcasterApp {
             window,
             |this, state, event: &InputEvent, _window, cx| match event {
                 InputEvent::Change => {
-                    this.composer_suggestion_selection = 0;
+                    this.view.composer.suggestion_selection = 0;
                     this.composer_sessions.exit_history();
                     let snapshot = input_snapshot(state.read(cx));
                     let has_mention =
@@ -454,7 +426,7 @@ impl FarcasterApp {
                         &value,
                         input.cursor(),
                         &this.composer_project_files,
-                        this.composer_suggestion_selection,
+                        this.view.composer.suggestion_selection,
                         &this.snapshot.commands,
                         this.active_harness(),
                     ) {
@@ -484,15 +456,6 @@ impl FarcasterApp {
                     this.send(RuntimeCommand::LoadSessions(query));
                 }
             });
-        let runtime_model_search_subscription = cx.subscribe_in(
-            &runtime_model_search,
-            window,
-            |this, _, event: &InputEvent, _, cx| {
-                if matches!(event, InputEvent::Change) {
-                    this.notify_composer(cx);
-                }
-            },
-        );
         let session_title_subscription = cx.subscribe_in(
             &session_title_input,
             window,
@@ -506,11 +469,11 @@ impl FarcasterApp {
         let window_activation_subscription =
             cx.observe_window_activation(window, |this, window, cx| {
                 let visible = session_shortcuts_visible_for_window(
-                    this.session_shortcuts_visible,
+                    this.view.session_rail.shortcuts_visible,
                     window.is_window_active(),
                 );
-                if this.session_shortcuts_visible != visible {
-                    this.session_shortcuts_visible = visible;
+                if this.view.session_rail.shortcuts_visible != visible {
+                    this.view.session_rail.shortcuts_visible = visible;
                     this.notify_session_rail(cx);
                 }
             });
@@ -602,8 +565,8 @@ impl FarcasterApp {
             let needs_update = app.upgrade().is_some_and(|app| {
                 let app = app.read(cx);
                 transcript_follow_state_needs_update(
-                    app.transcript_following,
-                    app.transcript_unseen,
+                    app.view.transcript.following,
+                    app.view.transcript.unseen,
                     following,
                 )
             });
@@ -616,8 +579,8 @@ impl FarcasterApp {
                 crate::app::infrastructure::performance::record_scroll_defer(deferred_at.elapsed());
                 let _ = app.update(cx, |this, cx| {
                     if update_transcript_follow_state(
-                        &mut this.transcript_following,
-                        &mut this.transcript_unseen,
+                        &mut this.view.transcript.following,
+                        &mut this.view.transcript.unseen,
                         following,
                     ) {
                         this.notify_transcript(cx);
@@ -668,8 +631,6 @@ impl FarcasterApp {
                 crate::app::ui::theme::THEME.layout.transcript_overdraw,
             ),
             session_list_rows: RefCell::new(Vec::new()),
-            session_rail_width: crate::app::ui::theme::THEME.layout.session_rail,
-            session_rail_resize_start: None,
             archived_session_list: ListState::new(
                 0,
                 ListAlignment::Top,
@@ -682,9 +643,6 @@ impl FarcasterApp {
             composer_project_files: Vec::new(),
             composer_project_files_project: None,
             composer_project_files_loading: None,
-            composer_suggestion_selection: 0,
-            runtime_picker_open: false,
-            runtime_model_search,
             session_rail_view,
             archived_session_rail_view,
             transcript_view,
@@ -703,10 +661,6 @@ impl FarcasterApp {
             native_surface_covered: false,
             surface: AppSurface::Chat,
             workgraph_inspector_issue: None,
-            run_panel_width: crate::app::ui::theme::THEME.layout.run_panel,
-            run_panel_resize_start: None,
-            run_panel_scroll: ScrollHandle::new(),
-            composer_footer_scroll: ScrollHandle::new(),
             composer_sessions,
             session_surfaces: HashMap::new(),
             composer_history_marker: None,
@@ -731,13 +685,7 @@ impl FarcasterApp {
             image_preview_return_focus: None,
             sheet_focus: cx.focus_handle(),
             sheet_return_focus: None,
-            pending_sheet_setup: false,
-            transcript_list,
-            transcript_rows: Arc::new(crate::app::ui::persistent_vec::PersistentVec::default()),
-            transcript_following: true,
-            transcript_unseen: 0,
-            transcript_disclosure_states: HashMap::new(),
-            last_transcript_count: 0,
+            view: views::state::ViewState::new(transcript_list),
             performance_monitor,
             _performance_task: performance_task,
             pending_session_switch: None,
@@ -752,23 +700,14 @@ impl FarcasterApp {
             pending_composer_restore: None,
             pending_submissions: HashMap::new(),
             post_render_focus: None,
-            sessions_sheet: false,
             pending_archive: None,
             pending_delete: None,
             archived_sessions_expanded: false,
-            run_sheet: false,
-            keybindings_help: false,
-            settings_sheet: false,
-            project_trust_sheet: false,
             project_trust_error: None,
             project_trust_project: None,
             pending_project_trust_command: None,
-            completed_agents_expanded: false,
-            limited_agents_expanded: false,
-            session_shortcuts_visible: false,
             _composer_subscription: composer_subscription,
             _search_subscription: search_subscription,
-            _runtime_model_search_subscription: runtime_model_search_subscription,
             _session_title_subscription: session_title_subscription,
             _window_activation_subscription: window_activation_subscription,
             _window_placement_subscription: window_placement_subscription,
@@ -904,11 +843,13 @@ impl FarcasterApp {
                     } else {
                         self.project_transcript_rows(&snapshot)
                     };
-                    let count = row_update.row_count(self.transcript_rows.len());
-                    if count > self.last_transcript_count && !self.transcript_following {
-                        self.transcript_unseen = self
-                            .transcript_unseen
-                            .saturating_add(count - self.last_transcript_count);
+                    let count = row_update.row_count(self.view.transcript.rows.len());
+                    if count > self.view.transcript.last_count && !self.view.transcript.following {
+                        self.view.transcript.unseen = self
+                            .view
+                            .transcript
+                            .unseen
+                            .saturating_add(count - self.view.transcript.last_count);
                     }
                     if snapshot.history_preview && !self.snapshot.history_preview {
                         root_dirty = true;
@@ -924,7 +865,7 @@ impl FarcasterApp {
                     }
                     self.snapshot = snapshot;
                     transcript_dirty |= self.apply_transcript_rows(row_update);
-                    self.last_transcript_count = count;
+                    self.view.transcript.last_count = count;
                     self.sync_restored_dialog();
                     self.sync_composer_history();
                     rail_dirty |= self.reconcile_submitted_drafts(cx);
@@ -1323,10 +1264,10 @@ impl FarcasterApp {
             self.composer_focus.clone(),
         )));
         self.dialog_return_focus = None;
-        self.sessions_sheet = false;
-        self.run_sheet = false;
+        self.view.overlays.sessions = false;
+        self.view.overlays.run = false;
         self.sheet_return_focus = None;
-        self.pending_sheet_setup = false;
+        self.view.overlays.pending_setup = false;
         if !preserve_submission {
             self.reset_transcript_ui();
         }
@@ -1385,13 +1326,14 @@ impl FarcasterApp {
     }
 
     fn reset_transcript_ui(&mut self) {
-        self.transcript_list.reset();
-        self.transcript_list.scroll_to_end();
-        self.transcript_rows = Arc::new(crate::app::ui::persistent_vec::PersistentVec::default());
-        self.transcript_disclosure_states.clear();
-        self.transcript_following = true;
-        self.transcript_unseen = 0;
-        self.last_transcript_count = 0;
+        self.view.transcript.list.reset();
+        self.view.transcript.list.scroll_to_end();
+        self.view.transcript.rows =
+            Arc::new(crate::app::ui::persistent_vec::PersistentVec::default());
+        self.view.transcript.disclosure_states.clear();
+        self.view.transcript.following = true;
+        self.view.transcript.unseen = 0;
+        self.view.transcript.last_count = 0;
     }
 
     pub(crate) fn activate_system_notification(
@@ -1464,7 +1406,10 @@ impl FarcasterApp {
         );
         self.close_sessions_sheet_after_selection(window, cx);
         if previous_root != next_root {
-            self.run_panel_scroll.set_offset(point(px(0.0), px(0.0)));
+            self.view
+                .run_panel
+                .scroll
+                .set_offset(point(px(0.0), px(0.0)));
             self.notify_session_rail(cx);
         }
         self.notify_transcript(cx);
@@ -1483,7 +1428,10 @@ impl FarcasterApp {
         if self.pending_project_trust_command.is_some() || self.workspace_switch_blocked() {
             return;
         }
-        self.run_panel_scroll.set_offset(point(px(0.0), px(0.0)));
+        self.view
+            .run_panel
+            .scroll
+            .set_offset(point(px(0.0), px(0.0)));
         self.selected_draft = None;
         self.select_project(project.clone(), cx);
         self.restore_center_surface(project.clone(), window, cx);
@@ -1511,7 +1459,10 @@ impl FarcasterApp {
         if self.pending_project_trust_command.is_some() {
             return;
         }
-        self.run_panel_scroll.set_offset(point(px(0.0), px(0.0)));
+        self.view
+            .run_panel
+            .scroll
+            .set_offset(point(px(0.0), px(0.0)));
         let draft = match project_registry::new_draft(project.clone(), &self.preferred_harness) {
             Ok(draft) => draft,
             Err(error) => {
@@ -1564,7 +1515,10 @@ impl FarcasterApp {
             self.close_sessions_sheet_after_selection(window, cx);
             return;
         }
-        self.run_panel_scroll.set_offset(point(px(0.0), px(0.0)));
+        self.view
+            .run_panel
+            .scroll
+            .set_offset(point(px(0.0), px(0.0)));
         self.switch_composer_target(draft_target(&id), window, cx);
         self.selected_draft = Some(id.clone());
         self.select_project(project.clone(), cx);
@@ -1920,18 +1874,6 @@ impl FarcasterApp {
                 }
                 true
             }
-        }
-    }
-
-    fn select_provider(&mut self, provider: &str, cx: &mut Context<Self>) {
-        if let Some(model) = self
-            .snapshot
-            .models
-            .iter()
-            .find(|model| model.provider == provider)
-            .cloned()
-        {
-            self.select_model(&model, cx);
         }
     }
 

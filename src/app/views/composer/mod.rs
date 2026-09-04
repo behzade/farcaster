@@ -72,7 +72,7 @@ impl FarcasterApp {
             .unwrap_or_default();
         let widgets_above = widgets::render("above", &self.extension.above_widgets);
         let widgets_below = widgets::render("below", &self.extension.below_widgets);
-        let suggestion_selection = self.composer_suggestion_selection;
+        let suggestion_selection = self.view.composer.suggestion_selection;
         let mention_selection = suggestion_selection.min(file_suggestions.len().saturating_sub(1));
         let command_selection =
             suggestion_selection.min(command_suggestion_count.saturating_sub(1));
@@ -169,8 +169,10 @@ impl FarcasterApp {
         if suggestion_count == 0 {
             return false;
         }
-        self.composer_suggestion_selection = self
-            .composer_suggestion_selection
+        self.view.composer.suggestion_selection = self
+            .view
+            .composer
+            .suggestion_selection
             .checked_sub(1)
             .unwrap_or(suggestion_count - 1);
         self.notify_composer(cx);
@@ -185,8 +187,8 @@ impl FarcasterApp {
         if suggestion_count == 0 {
             return false;
         }
-        self.composer_suggestion_selection =
-            (self.composer_suggestion_selection + 1) % suggestion_count;
+        self.view.composer.suggestion_selection =
+            (self.view.composer.suggestion_selection + 1) % suggestion_count;
         self.notify_composer(cx);
         true
     }

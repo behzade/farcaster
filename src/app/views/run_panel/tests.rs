@@ -1,4 +1,15 @@
-use super::*;
+use std::time::Duration;
+
+use super::{
+    agents::{
+        AgentSection, agent_section, format_duration, lifecycle_icon, lifecycle_label, role_icon,
+    },
+    resize::clamped_run_panel_width,
+};
+use crate::{
+    agent_activity::{AgentLifecycle, AgentOutcome},
+    app::ui::{assets::AppIcon, theme::THEME},
+};
 
 #[test]
 fn run_panel_resize_stays_within_design_bounds() {
