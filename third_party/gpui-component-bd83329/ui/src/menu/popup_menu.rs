@@ -363,6 +363,18 @@ impl PopupMenu {
         self
     }
 
+    /// Highlight the item at `ix`. If it is a submenu, that submenu is shown.
+    pub fn with_selected_index(mut self, ix: usize) -> Self {
+        if self
+            .menu_items
+            .get(ix)
+            .is_some_and(|item| item.is_clickable())
+        {
+            self.selected_index = Some(ix);
+        }
+        self
+    }
+
     /// Set min width of the popup menu, default is 120px
     pub fn min_w(mut self, width: impl Into<Pixels>) -> Self {
         self.min_width = Some(width.into());
