@@ -67,19 +67,21 @@ impl WorkerSessionFactory for AcpWorkerFactory {
                 self.profile.name, self.profile.backend
             ));
         }
-        let caller_identity = crate::modules::agents::core::CallerRegistry::shared().issue_as(
-            &launch.project,
-            crate::modules::agents::core::CallerProfile {
-                backend: self.profile.backend.into(),
-                provider: launch.provider.clone(),
-                model: launch.model.clone(),
-                effort: launch.effort.clone(),
-            },
-            None,
-            launch.worker_id.clone(),
-            launch.worker_name.clone(),
-            launch.parent_worker_id.clone(),
-        )?;
+        let caller_identity = crate::modules::agents::core::CallerRegistry::shared()
+            .issue_as(
+                &launch.project,
+                crate::modules::agents::core::CallerProfile {
+                    backend: self.profile.backend.into(),
+                    provider: launch.provider.clone(),
+                    model: launch.model.clone(),
+                    effort: launch.effort.clone(),
+                },
+                None,
+                launch.worker_id.clone(),
+                launch.worker_name.clone(),
+                launch.parent_worker_id.clone(),
+            )?
+            .with_slot(launch.slot.clone());
         if matches!(launch.context, crate::agents::WorkerContext::Session { .. }) {
             return Err(format!(
                 "{} does not advertise ACP session fork for inherited workers",
@@ -1053,6 +1055,11 @@ impl WorkerSession for AcpWorkerSession {
             self.peer_messages.push_back(message);
         }
         if self.current_prompt.is_none()
+            && !self.peer_messages.is_empty()
+            && self
+                .caller_identity
+                .as_ref()
+                .is_none_or(|identity| identity.try_activate())
             && let Some(message) = self.peer_messages.pop_front()
         {
             let mode = WorkerSendMode::Prompt;

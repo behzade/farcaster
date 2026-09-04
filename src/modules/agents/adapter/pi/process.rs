@@ -131,6 +131,13 @@ pub(crate) struct PiRpcProcess {
 }
 
 impl PiRpcProcess {
+    pub(super) fn set_worker_slot(
+        &mut self,
+        slot: Option<crate::modules::agents::core::WorkerSlot>,
+    ) {
+        self.caller_identity.set_slot(slot);
+    }
+
     pub(in crate::modules::agents::adapter) fn spawn_catalog(
         command: &AgentLaunchConfig,
         project: &Path,
@@ -430,6 +437,8 @@ impl PiRpcProcess {
             self.peer_messages.push_back(message);
         }
         if let Some(mode) = WorkerSendMode::for_peer(self.activity)
+            && !self.peer_messages.is_empty()
+            && self.caller_identity.try_activate()
             && let Some(message) = self.peer_messages.pop_front()
         {
             let mode = match mode {

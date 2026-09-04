@@ -38,19 +38,21 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
             return Err("OpenCode worker provider and model must be supplied together".into());
         }
         let mut prepared = self.command.command(&launch.project)?;
-        let caller_identity = crate::modules::agents::core::CallerRegistry::shared().issue_as(
-            &launch.project,
-            crate::modules::agents::core::CallerProfile {
-                backend: "opencode2".into(),
-                provider: launch.provider.clone(),
-                model: launch.model.clone(),
-                effort: launch.effort.clone(),
-            },
-            None,
-            launch.worker_id.clone(),
-            launch.worker_name.clone(),
-            launch.parent_worker_id.clone(),
-        )?;
+        let caller_identity = crate::modules::agents::core::CallerRegistry::shared()
+            .issue_as(
+                &launch.project,
+                crate::modules::agents::core::CallerProfile {
+                    backend: "opencode2".into(),
+                    provider: launch.provider.clone(),
+                    model: launch.model.clone(),
+                    effort: launch.effort.clone(),
+                },
+                None,
+                launch.worker_id.clone(),
+                launch.worker_name.clone(),
+                launch.parent_worker_id.clone(),
+            )?
+            .with_slot(launch.slot.clone());
         if farcaster_mcp::enabled() {
             configure_farcaster_mcp(&mut prepared, caller_identity.token())?;
         }

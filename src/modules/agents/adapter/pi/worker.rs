@@ -66,6 +66,7 @@ impl WorkerSessionFactory for PiWorkerFactory {
                 }
             }
         };
+        process.set_worker_slot(launch.slot);
         process.request_and_wait(SessionCommand::ConfigureSteering)?;
         if let (Some(provider), Some(model_id)) = (launch.provider, launch.model) {
             process.request_and_wait(SessionCommand::SelectModel { provider, model_id })?;

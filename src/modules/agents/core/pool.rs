@@ -7,6 +7,7 @@ use std::{
 };
 
 use super::{
+    concurrency::WorkerConcurrency,
     run::{self, RunCommand},
     worker::{WorkerLaunch, WorkerSendMode, WorkerSessionFactory},
 };
@@ -22,7 +23,7 @@ pub(crate) struct WorkerPool {
 struct PoolInner {
     factories: BTreeMap<String, Arc<dyn WorkerSessionFactory>>,
     allowed_projects: Mutex<BTreeSet<std::path::PathBuf>>,
-    maximum: usize,
+    concurrency: WorkerConcurrency,
     updates: async_channel::Sender<()>,
     update_receiver: async_channel::Receiver<()>,
     state: Mutex<PoolState>,
@@ -31,7 +32,6 @@ struct PoolInner {
 #[derive(Default)]
 struct PoolState {
     sequence: u64,
-    starting: usize,
     records: BTreeMap<String, WorkerRecord>,
 }
 
@@ -60,7 +60,7 @@ impl WorkerPool {
             inner: Arc::new(PoolInner {
                 factories,
                 allowed_projects: Mutex::new(BTreeSet::from([allowed_project])),
-                maximum,
+                concurrency: WorkerConcurrency::new(maximum),
                 updates,
                 update_receiver,
                 state: Mutex::new(PoolState::default()),
@@ -119,49 +119,39 @@ impl WorkerPool {
             .lock()
             .map_err(|_| "worker pool state is unavailable".to_owned())?;
         reap_terminal(&mut state);
-        let active = state
-            .records
-            .values()
-            .filter(|record| match snapshot(record) {
-                Ok(snapshot) => !snapshot.status.terminal(),
-                Err(_) => true,
-            })
-            .count()
-            + state.starting;
-        if active >= self.inner.maximum {
-            return Err(format!(
-                "worker pool is full ({active}/{})",
-                self.inner.maximum
-            ));
-        }
+        let slot = self.inner.concurrency.reserve()?;
         state.sequence = state.sequence.saturating_add(1);
         let id = worker_id(state.sequence)?;
-        state.starting = state.starting.saturating_add(1);
         drop(state);
 
-        let prepared = (|| {
-            let mut session = factory.create(WorkerLaunch {
-                worker_id: id.clone(),
-                worker_name: request.name,
-                project: project.clone(),
-                parent_session: request.parent_session,
-                parent_worker_id: request.parent_worker_id,
-                context,
-                provider: request.provider,
-                model: request.model,
-                effort: request.effort,
-                ephemeral: false,
-            })?;
-            session.send(request.prompt, WorkerSendMode::Prompt)?;
-            Ok::<_, String>(session)
-        })();
+        let parent =
+            request
+                .parent_worker_id
+                .as_ref()
+                .map(|parent_id| super::caller::WorkerParent {
+                    id: parent_id.clone(),
+                    project: project.clone(),
+                    child_name: request.name.clone(),
+                });
+        let mut session = factory.create(WorkerLaunch {
+            slot: Some(slot.clone()),
+            worker_id: id.clone(),
+            worker_name: request.name,
+            project: project.clone(),
+            parent_session: request.parent_session,
+            parent_worker_id: request.parent_worker_id,
+            context,
+            provider: request.provider,
+            model: request.model,
+            effort: request.effort,
+            ephemeral: false,
+        })?;
+        session.send(request.prompt, WorkerSendMode::Prompt)?;
         let mut state = self
             .inner
             .state
             .lock()
             .map_err(|_| "worker pool state is unavailable".to_owned())?;
-        state.starting = state.starting.saturating_sub(1);
-        let session = prepared?;
         let initial = WorkerSnapshot {
             id: id.clone(),
             backend: request.backend,
@@ -173,8 +163,14 @@ impl WorkerPool {
             pending_input: None,
         };
         let shared = Arc::new(Mutex::new(initial.clone()));
-        let (commands, handle) =
-            run::spawn(&id, session, shared.clone(), self.inner.updates.clone())?;
+        let (commands, handle) = run::spawn(
+            &id,
+            session,
+            shared.clone(),
+            slot,
+            parent,
+            self.inner.updates.clone(),
+        )?;
         state.records.insert(
             id,
             WorkerRecord {

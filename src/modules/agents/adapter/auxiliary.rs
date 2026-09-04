@@ -72,6 +72,7 @@ fn generate_worker_title(
         .unwrap_or_default()
         .as_nanos();
     let mut session = factory.create(WorkerLaunch {
+        slot: None,
         worker_id: format!("title-{nonce}"),
         worker_name: "session-title".into(),
         project: project.to_owned(),
