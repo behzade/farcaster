@@ -55,9 +55,7 @@ pub(in crate::app) fn resolve_for_harness(
     let suggestion =
         suggestions.get(suggestion_selection.min(suggestions.len().saturating_sub(1)))?;
     let standalone = cursor == text.len() && text.split_whitespace().count() == 1;
-    let submit = standalone
-        && suggestions.len() == 1
-        && (suggestion.sigil == '$' || slash_commands::submits_after_completion(&suggestion.name));
+    let submit = standalone && suggestions.len() == 1 && suggestion.sigil == '$';
     let (text, cursor) =
         user_invocations::complete(text, cursor, suggestion.sigil, &suggestion.name);
     Some(ComposerCompletion {
@@ -96,21 +94,26 @@ mod tests {
     }
 
     #[test]
-    fn standalone_skills_and_argumentless_slash_commands_submit_after_completion() {
+    fn standalone_skills_submit_but_backend_commands_only_complete() {
         let skill = command("skill:review", SlashCommandSource::Skill);
         let skill_completion =
             resolve("$rev", 4, &[], 0, std::slice::from_ref(&skill)).expect("skill completion");
         assert_eq!(skill_completion.snapshot.text, "$review ");
         assert!(skill_completion.submit);
 
-        let slash_completion = resolve("/rel", 4, &[], 0, &[]).expect("slash completion");
+        let reload = command("reload", SlashCommandSource::Extension);
+        let slash_completion = resolve("/rel", 4, &[], 0, &[reload]).expect("slash completion");
         assert_eq!(slash_completion.snapshot.text, "/reload ");
-        assert!(slash_completion.submit);
+        assert!(!slash_completion.submit);
     }
 
     #[test]
-    fn selection_completes_the_highlighted_command() {
-        let completion = resolve("/r", 2, &[], 1, &[]).expect("selected completion");
+    fn selection_completes_the_highlighted_backend_command() {
+        let commands = [
+            command("review", SlashCommandSource::Prompt),
+            command("reload", SlashCommandSource::Extension),
+        ];
+        let completion = resolve("/r", 2, &[], 1, &commands).expect("selected completion");
 
         assert_eq!(completion.snapshot.text, "/reload ");
         assert!(!completion.submit);
@@ -130,18 +133,23 @@ mod tests {
             .expect("composed skill completion")
             .submit
         );
+        let slash_commands = [
+            command("review", SlashCommandSource::Prompt),
+            command("reload", SlashCommandSource::Extension),
+            command("model", SlashCommandSource::Prompt),
+        ];
         assert!(
-            !resolve("/r", 2, &[], 0, &[])
+            !resolve("/r", 2, &[], 0, &slash_commands)
                 .expect("ambiguous completion")
                 .submit
         );
         assert!(
-            !resolve("/mod", 4, &[], 0, &[])
-                .expect("argument-accepting command completion")
+            !resolve("/mod", 4, &[], 0, &slash_commands)
+                .expect("backend command completion")
                 .submit
         );
         assert!(resolve("$review ", 8, &[], 0, std::slice::from_ref(&skill)).is_none());
-        assert!(resolve("/reload ", 8, &[], 0, &[]).is_none());
+        assert!(resolve("/reload ", 8, &[], 0, &slash_commands).is_none());
     }
 
     #[test]

@@ -4,17 +4,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-use gpui::{ClipboardItem, Context, Window};
+use gpui::{Context, Window};
 
 use super::{
     ComposerImage, ComposerPaste, FarcasterApp, pastes as composer_pastes, prompt_fragments,
-    slash_commands,
 };
 use crate::{
     app::composer::sessions::{ComposerSnapshot, session_target},
-    app::composer::slash_commands::{BuiltinInvocation, BuiltinSlashCommand},
     app::composer::user_invocations,
-    app::views::transcript::conversation::TranscriptKind,
     protocol::{PromptImage, PromptMode},
     runtime::RuntimeCommand,
     sessions::{SessionSummary, normalize_session_path},
@@ -39,20 +36,10 @@ impl FarcasterApp {
         if !self.can_submit() {
             return;
         }
-        if let Some(invocation) = slash_commands::builtin_invocation(&value) {
-            self.submit_builtin(&value, invocation, window, cx);
-            return;
-        }
         self.capture_composer_session(cx);
         let target = self.composer_sessions.current_target().to_owned();
         let editor_text = self.composer.read(cx).value().to_string();
-        let allow_while_running =
-            slash_commands::is_immediate_extension(&value, &self.snapshot.commands);
-        let mode = if allow_while_running {
-            PromptMode::Normal
-        } else {
-            mode
-        };
+        let (mode, allow_while_running) = submission_delivery(&value, mode);
         let show_in_transcript = !self.snapshot.conversation.running;
         let images = self
             .composer_images
@@ -148,193 +135,6 @@ impl FarcasterApp {
                 cx.notify();
             }
         }
-    }
-
-    fn submit_builtin(
-        &mut self,
-        value: &str,
-        invocation: BuiltinInvocation<'_>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if matches!(invocation.command, BuiltinSlashCommand::Reload) && self.session_is_busy() {
-            self.push_builtin_error(
-                "Reload not started",
-                "Wait for the current response to finish before reloading.",
-                cx,
-            );
-            return;
-        }
-
-        self.consume_composer_command(value, window, cx);
-        let harness = self.active_harness().to_owned();
-        if !crate::app::composer::slash_commands::available_for_harness(
-            invocation.command,
-            &harness,
-        ) {
-            self.push_builtin_error(
-                "Command unavailable",
-                &format!("/{} is not supported by {harness}.", invocation.name),
-                cx,
-            );
-            return;
-        }
-        if invocation.command == BuiltinSlashCommand::Compact
-            && invocation.arguments.is_some()
-            && harness != "pi"
-        {
-            self.push_builtin_error(
-                "Custom compaction unavailable",
-                &format!("{harness} supports compaction without custom instructions."),
-                cx,
-            );
-            return;
-        }
-        match invocation.command {
-            BuiltinSlashCommand::Model => {
-                if let Some(reference) = invocation.arguments {
-                    let model = self.snapshot.models.iter().find(|model| {
-                        format!("{}/{}", model.provider, model.id) == reference
-                            || model.id == reference
-                    });
-                    if let Some(model) = model.cloned() {
-                        self.select_model(&model, cx);
-                    } else {
-                        self.push_builtin_error(
-                            "Model not changed",
-                            &format!("No available model exactly matches {reference}."),
-                            cx,
-                        );
-                    }
-                } else {
-                    Arc::make_mut(&mut self.snapshot).status = "Choose a model below".into();
-                    self.composer_focus.focus(window, cx);
-                    cx.notify();
-                }
-            }
-            BuiltinSlashCommand::Export => {
-                if invocation
-                    .arguments
-                    .is_some_and(|path| path.ends_with(".jsonl"))
-                {
-                    self.push_builtin_error(
-                        "Export unavailable",
-                        "Pi’s public RPC supports HTML export, not JSONL export.",
-                        cx,
-                    );
-                } else {
-                    self.send(RuntimeCommand::ExportHtml {
-                        output_path: invocation.arguments.map(str::to_owned),
-                    });
-                }
-            }
-            BuiltinSlashCommand::Copy => {
-                let mut parts = self
-                    .snapshot
-                    .conversation
-                    .items
-                    .iter_rev()
-                    .take_while(|item| item.kind != TranscriptKind::User)
-                    .filter(|item| item.kind == TranscriptKind::Assistant && !item.text.is_empty())
-                    .map(|item| item.text.clone())
-                    .collect::<Vec<_>>();
-                parts.reverse();
-                let text = parts.join("\n\n");
-                if !text.is_empty() {
-                    cx.write_to_clipboard(ClipboardItem::new_string(text));
-                    Arc::make_mut(&mut self.snapshot).status = "Copied last response".into();
-                    cx.notify();
-                } else {
-                    self.push_builtin_error(
-                        "Nothing copied",
-                        "This session has no assistant response.",
-                        cx,
-                    );
-                }
-            }
-            BuiltinSlashCommand::Name => {
-                if let Some(name) = invocation.arguments {
-                    self.send(RuntimeCommand::SetSessionName(name.to_owned()));
-                } else {
-                    self.push_builtin_error(
-                        "Name not changed",
-                        "Use /name <session name> in GPUI.",
-                        cx,
-                    );
-                }
-            }
-            BuiltinSlashCommand::Session => self.open_run_sheet(window, cx),
-            BuiltinSlashCommand::New => self.open_picker(
-                super::PickerScope::Projects(super::ProjectPickerIntent::NewSession),
-                window,
-                cx,
-            ),
-            BuiltinSlashCommand::Compact => self.send(RuntimeCommand::Compact {
-                custom_instructions: invocation.arguments.map(str::to_owned),
-            }),
-            BuiltinSlashCommand::Resume => self.open_sessions_sheet(window, cx),
-            BuiltinSlashCommand::Reload => self.send(RuntimeCommand::Reload),
-            BuiltinSlashCommand::Settings => self.open_settings(window, cx),
-            BuiltinSlashCommand::Trust => self.open_project_trust(window, cx),
-            BuiltinSlashCommand::Login => self.push_builtin_error(
-                "Provider login unavailable",
-                "Pi does not expose provider login through its public RPC interface. Run `pi` in a terminal and use `/login`, then restart Farcaster.",
-                cx,
-            ),
-            BuiltinSlashCommand::Quit => cx.quit(),
-            BuiltinSlashCommand::ScopedModels
-            | BuiltinSlashCommand::Import
-            | BuiltinSlashCommand::Share
-            | BuiltinSlashCommand::Changelog
-            | BuiltinSlashCommand::Hotkeys
-            | BuiltinSlashCommand::Fork
-            | BuiltinSlashCommand::Clone
-            | BuiltinSlashCommand::Tree
-            | BuiltinSlashCommand::Logout => self.push_builtin_error(
-                "Command unavailable",
-                &format!(
-                    "/{} is not available in GPUI and was not sent as a prompt.",
-                    invocation.name
-                ),
-                cx,
-            ),
-        }
-    }
-
-    fn session_is_busy(&self) -> bool {
-        self.snapshot.conversation.running
-            || self.snapshot.conversation.compacting
-            || matches!(
-                self.snapshot.live_status.as_str(),
-                "Working" | "Compacting" | "Retrying"
-            )
-    }
-
-    fn consume_composer_command(
-        &mut self,
-        value: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.capture_composer_session(cx);
-        let target = self.composer_sessions.current_target().to_owned();
-        let editor_text = self.composer.read(cx).value().to_string();
-        self.composer_sessions.record_submission(&target, value);
-        if self
-            .composer_sessions
-            .clear_submitted_text(&target, &editor_text)
-            && self.composer_sessions.current_target() == target
-        {
-            self.apply_composer_snapshot(ComposerSnapshot::default(), window, cx);
-        }
-    }
-
-    fn push_builtin_error(&mut self, label: &str, message: &str, cx: &mut Context<Self>) {
-        let snapshot = Arc::make_mut(&mut self.snapshot);
-        let index = snapshot.conversation.items.len();
-        Arc::make_mut(&mut snapshot.conversation).push_local_error(label, message.to_owned());
-        self.mark_transcript_changed(index, index == 0);
-        cx.notify();
     }
 
     pub(crate) fn can_submit(&self) -> bool {
@@ -463,6 +263,16 @@ fn rejected_attachment_target(
         .map(|path| session_target(&path))
 }
 
+fn submission_delivery(value: &str, requested: PromptMode) -> (PromptMode, bool) {
+    // Slash commands belong to the selected backend. Send them as normal prompts even
+    // while a turn is active so the backend can apply its own command semantics.
+    if value.trim_start().starts_with('/') {
+        (PromptMode::Normal, true)
+    } else {
+        (requested, false)
+    }
+}
+
 fn prompt_mode_for_enter(running: bool) -> PromptMode {
     if running {
         PromptMode::Steer
@@ -578,6 +388,22 @@ mod tests {
         assert!(!can_submit_to(&pending, "session:compacting"));
         assert!(can_submit_to(&pending, "session:other"));
         assert!(can_submit_to(&pending, "draft:new"));
+    }
+
+    #[test]
+    fn every_slash_command_uses_backend_prompt_semantics() {
+        assert_eq!(
+            submission_delivery("/settings", PromptMode::Steer),
+            (PromptMode::Normal, true)
+        );
+        assert_eq!(
+            submission_delivery("  /backend-command argument", PromptMode::FollowUp),
+            (PromptMode::Normal, true)
+        );
+        assert_eq!(
+            submission_delivery("ordinary prompt", PromptMode::Steer),
+            (PromptMode::Steer, false)
+        );
     }
 
     #[test]
