@@ -22,7 +22,7 @@ pub(super) fn bind(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div
 fn bind_actions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
     root.on_action(cx.listener(|this, _: &CopySelection, _, cx| {
         crate::app::ui::keyboard::copy_selection(
-            this.transcript_list.selected_text(),
+            this.view.transcript.list.selected_text(),
             this.composer.read(cx).selected_value().to_string(),
             cx,
         );
@@ -32,7 +32,7 @@ fn bind_actions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
             dispatch_keystroke("ctrl-shift-c", window, cx);
         } else {
             crate::app::ui::keyboard::copy_selection(
-                this.transcript_list.selected_text(),
+                this.view.transcript.list.selected_text(),
                 this.composer.read(cx).selected_value().to_string(),
                 cx,
             );
@@ -202,12 +202,12 @@ fn bind_pointer_interactions(root: gpui::Div, cx: &mut Context<FarcasterApp>) ->
         |this, event: &gpui::ModifiersChangedEvent, window, cx| {
             let requested = cfg!(target_os = "macos") && event.modifiers.platform;
             let visible = if TextSelection::has_selection(window, cx) {
-                this.session_shortcuts_visible
+                this.view.session_rail.shortcuts_visible
             } else {
                 requested
             };
-            if this.session_shortcuts_visible != visible {
-                this.session_shortcuts_visible = visible;
+            if this.view.session_rail.shortcuts_visible != visible {
+                this.view.session_rail.shortcuts_visible = visible;
                 this.notify_session_rail(cx);
             }
         },

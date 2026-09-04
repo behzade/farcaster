@@ -125,15 +125,15 @@ impl Render for TranscriptView {
         let app = app.read(cx);
         let viewport = window.viewport_size();
         transcript::render(
-            &app.transcript_list,
+            &app.view.transcript.list,
             transcript::TranscriptViewport {
-                following: app.transcript_following,
-                unseen: app.transcript_unseen,
+                following: app.view.transcript.following,
+                unseen: app.view.transcript.unseen,
                 tail_reserve: transcript::tail_reserve(viewport.height),
             },
-            app.transcript_rows.clone(),
+            app.view.transcript.rows.clone(),
             app.snapshot.conversation.clone(),
-            app.transcript_disclosure_states.clone(),
+            app.view.transcript.disclosure_states.clone(),
             self.markdown_cache.clone(),
             crate::agents::backend_display_name(&app.snapshot.harness).into(),
             self.app.clone(),

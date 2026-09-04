@@ -23,7 +23,7 @@ impl FarcasterApp {
         cx: &Context<Self>,
     ) -> gpui::Div {
         let workgraph_focus = self.workgraph_view.read(cx).focus_handle();
-        let sessions_sheet = self.sessions_sheet.then(|| {
+        let sessions_sheet = self.view.overlays.sessions.then(|| {
             panel_sheet(
                 "sessions",
                 "Sessions",
@@ -35,7 +35,7 @@ impl FarcasterApp {
                     .into_any_element(),
             )
         });
-        let run_sheet = self.run_sheet.then(|| {
+        let run_sheet = self.view.overlays.run.then(|| {
             let inspecting = self.workgraph_inspector_issue.is_some();
             let content = if inspecting {
                 self.workgraph_detail_view.clone().into_any_element()
@@ -128,13 +128,13 @@ impl FarcasterApp {
             .when(self.repository.pending_jj_init.is_some(), |root| {
                 root.child(dialogs::jj_init_confirmation::render(self, entity.clone()))
             })
-            .when(self.project_trust_sheet, |root| {
+            .when(self.view.overlays.project_trust, |root| {
                 root.child(dialogs::project_trust::render(self, entity.clone()))
             })
-            .when(self.settings_sheet, |root| {
+            .when(self.view.overlays.settings, |root| {
                 root.child(dialogs::settings::render(self, entity.clone()))
             })
-            .when(self.keybindings_help, |root| {
+            .when(self.view.overlays.keybindings, |root| {
                 let close = entity.clone();
                 root.child(modal(
                     "keybindings-help",

@@ -30,7 +30,7 @@ impl FarcasterApp {
             .flex()
             .items_center()
             .overflow_x_scroll()
-            .track_scroll(&self.composer_footer_scroll)
+            .track_scroll(&self.view.composer.footer_scroll)
             .child(runtime::render(self, entity));
 
         if show_usage {

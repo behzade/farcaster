@@ -13,7 +13,7 @@ impl FarcasterApp {
         let _timing =
             crate::app::infrastructure::performance::Timing::new("transcript.project_rows");
         update_rows_incremental(
-            &self.transcript_rows,
+            &self.view.transcript.rows,
             &self.snapshot.conversation.items,
             &snapshot.conversation.items,
             snapshot.transcript_changed_from,
@@ -21,9 +21,9 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn jump_to_latest(&mut self, cx: &mut Context<Self>) {
-        self.transcript_following = true;
-        self.transcript_unseen = 0;
-        self.transcript_list.scroll_to_end();
+        self.view.transcript.following = true;
+        self.view.transcript.unseen = 0;
+        self.view.transcript.list.scroll_to_end();
         self.notify_transcript(cx);
     }
 
@@ -34,11 +34,19 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         if expanded {
-            self.transcript_list.pause_following_tail();
+            self.view.transcript.list.pause_following_tail();
         }
-        self.transcript_disclosure_states.insert(key, expanded);
-        if let Some(index) = self.transcript_rows.iter().position(|row| row.key() == key) {
-            self.transcript_list
+        self.view.transcript.disclosure_states.insert(key, expanded);
+        if let Some(index) = self
+            .view
+            .transcript
+            .rows
+            .iter()
+            .position(|row| row.key() == key)
+        {
+            self.view
+                .transcript
+                .list
                 .remeasure_items(index..index.saturating_add(1));
         }
         self.notify_transcript(cx);
@@ -79,15 +87,15 @@ impl FarcasterApp {
 
     pub(in crate::app) fn apply_transcript_rows(&mut self, update: TranscriptRowUpdate) -> bool {
         update.apply(
-            &self.transcript_list,
-            &mut self.transcript_rows,
+            &self.view.transcript.list,
+            &mut self.view.transcript.rows,
             &self.snapshot.conversation.items,
         )
     }
 
     pub(in crate::app) fn mark_transcript_changed(&mut self, index: usize, _was_empty: bool) {
         let rows = update_rows_from(
-            &self.transcript_rows,
+            &self.view.transcript.rows,
             &self.snapshot.conversation.items,
             &self.snapshot.conversation.items,
             Some(index),
