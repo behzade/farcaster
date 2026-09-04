@@ -146,6 +146,7 @@ impl FarcasterApp {
             archived_sessions_expanded: false,
             project_trust_error: None,
             project_trust_project: None,
+            project_trust_backend: None,
             pending_project_trust_command: None,
             _composer_subscription: subscriptions.composer,
             _search_subscription: subscriptions.search,

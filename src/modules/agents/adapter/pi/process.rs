@@ -220,6 +220,9 @@ impl PiRpcProcess {
         worker: Option<(String, String)>,
         parent: Option<(String, String)>,
     ) -> Result<Self, String> {
+        if super::trust::startup_trust(project)? == crate::projects::StartupTrust::Prompt {
+            return Err("Pi project trust needs a decision before starting this session".into());
+        }
         let registry = crate::modules::agents::core::CallerRegistry::shared();
         let profile = crate::modules::agents::core::CallerProfile {
             backend: "pi".into(),

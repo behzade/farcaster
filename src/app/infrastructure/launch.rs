@@ -25,7 +25,6 @@ use crate::{
     app::views::dialogs::startup_trust::ProjectTrustView,
     app::workspace::{CycleWorkspaceBackward, CycleWorkspaceForward},
     app::{FarcasterApp, QuitApplication},
-    projects,
 };
 use gpui::{
     App, AppContext as _, Bounds, Context, DisplayId, Subscription, TitlebarOptions, WeakEntity,
@@ -90,7 +89,8 @@ pub(crate) fn run(
 
     let trust_timing =
         crate::app::infrastructure::performance::StartupTiming::new("launch.project_trust");
-    let startup_trust = projects::startup_trust(&project).map_err(LaunchError::ProjectTrust)?;
+    let startup_trust =
+        crate::app::project::trust::startup_trust(&project).map_err(LaunchError::ProjectTrust)?;
     drop(trust_timing);
     let saved_modifier = StateStore::open()
         .and_then(|store| store.load_application_modifier())

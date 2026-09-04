@@ -33,7 +33,12 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.can_submit() {
+        if !self.can_submit() || self.pending_project_trust_command.is_some() {
+            return;
+        }
+        let backend = self.snapshot.harness.clone();
+        let project = self.project.clone();
+        if !self.ensure_backend_trust(&backend, &project, window, cx) {
             return;
         }
         self.capture_composer_session(cx);

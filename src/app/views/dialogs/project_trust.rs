@@ -20,7 +20,28 @@ pub(in crate::app::views) fn render(
         .project_trust_project
         .as_deref()
         .unwrap_or(app.project.as_path());
-    let saved = match projects::saved_decision(project) {
+    let backend = app.project_trust_backend.as_deref();
+    let title = backend.map_or_else(
+        || "Farcaster project trust".to_owned(),
+        |backend| {
+            format!(
+                "{} project trust",
+                crate::agents::backend_display_name(backend)
+            )
+        },
+    );
+    let description = backend
+        .and_then(crate::agents::project_trust_description)
+        .unwrap_or(projects::TRUST_DESCRIPTION);
+    let editable_backend = (backend.is_none()
+        && app.pending_project_trust_command.is_none()
+        && crate::agents::project_trust_description(&app.snapshot.harness).is_some())
+    .then_some(app.snapshot.harness.clone());
+    let decision = match backend {
+        Some(backend) => crate::agents::saved_project_trust(backend, project),
+        None => crate::app::project::trust::saved_decision(project),
+    };
+    let saved = match decision {
         Ok(Some((path, trusted))) => format!(
             "Saved decision: {} ({})",
             if trusted { "trusted" } else { "untrusted" },
@@ -31,7 +52,7 @@ pub(in crate::app::views) fn render(
     };
     modal(
         "project-trust",
-        "Project trust",
+        title,
         &app.sheet_focus,
         OVERLAY_KEY_CONTEXT,
         move |window, cx| {
@@ -82,7 +103,7 @@ pub(in crate::app::views) fn render(
                         div()
                             .text_color(THEME.colors.muted)
                             .line_height(THEME.type_scale.line_body)
-                            .child("Trusting allows Pi to load project settings and resources, install missing project packages, and execute project extensions."),
+                            .child(description),
                     )
                     .child(
                         div()
@@ -98,14 +119,24 @@ pub(in crate::app::views) fn render(
                         )
                     })
                     .child(choices)
+                    .when_some(editable_backend, |content, backend| {
+                        let label = format!("{} project trust…", crate::agents::backend_display_name(&backend));
+                        let project = project.to_path_buf();
+                        let entity = entity.clone();
+                        content.child(button("backend-project-trust", label, ButtonTone::Quiet, true, move |window, cx| {
+                            let _ = entity.update(cx, |this, cx| this.open_backend_project_trust(backend.clone(), project.clone(), window, cx));
+                        }))
+                    })
                     .child(
                         div()
                             .text_size(THEME.type_scale.caption)
                             .text_color(THEME.colors.subtle)
                             .child(if app.pending_project_trust_command.is_some() {
                                 "Choose a decision to continue opening this project, or close to cancel."
-                            } else {
+                            } else if backend.is_some() {
                                 "Restart Farcaster after changing this decision."
+                            } else {
+                                "This decision controls Farcaster's repository commands."
                             }),
                     ),
             )

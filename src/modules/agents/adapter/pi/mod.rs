@@ -2,6 +2,7 @@ mod framing;
 mod mcp_config;
 mod process;
 mod protocol;
+pub(super) mod trust;
 mod wire;
 mod worker;
 

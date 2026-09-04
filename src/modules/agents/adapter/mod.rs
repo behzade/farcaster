@@ -13,6 +13,10 @@ mod opencode;
 mod pi;
 mod process_command;
 mod shell_environment;
+mod trust;
+pub(crate) use trust::{
+    apply_project_trust, project_trust, project_trust_description, saved_project_trust,
+};
 
 pub(crate) use auxiliary::{generate_session_title, supports_auto_title_generation};
 pub(crate) use shell_environment::{app_shell_environment, default_login_shell};
