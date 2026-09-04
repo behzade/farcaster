@@ -21,6 +21,19 @@ use crate::{
 };
 
 #[test]
+fn draft_inspector_preference_survives_reopen() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let database = temp.path().join("gui.sqlite3");
+    let store = StateStore::open_at(&database)?;
+    assert!(!store.load_draft_inspector()?);
+    store.save_draft_inspector(true)?;
+    assert!(StateStore::open_at(&database)?.load_draft_inspector()?);
+    store.save_draft_inspector(false)?;
+    assert!(!StateStore::open_at(&database)?.load_draft_inspector()?);
+    Ok(())
+}
+
+#[test]
 fn window_placement_survives_reopen() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let database = temp.path().join("gui.sqlite3");

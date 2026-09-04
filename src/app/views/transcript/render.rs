@@ -186,6 +186,9 @@ pub(crate) fn render(
                 && latest_allows_tail_reserve(row, &conversation.items, expanded);
             let content = div()
                 .w_full()
+                .max_w(THEME.layout.conversation_width)
+                .when(expanded, |row| row.max_w_full())
+                .mx_auto()
                 .when(reserves_tail, |row| row.pb(viewport.tail_reserve))
                 .child(
                     div()
@@ -554,7 +557,6 @@ fn transcript_markdown_style_with_inline_code(inline_code: HighlightStyle) -> Te
     code_block.restrict_scroll_to_axis = Some(true);
     TextViewStyle {
         paragraph_gap: rems(0.5),
-        prose_max_width: Some(px(780.0)),
         heading_base_font_size: THEME.type_scale.reading,
         highlight_theme: HighlightTheme::default_dark(),
         code_block,
