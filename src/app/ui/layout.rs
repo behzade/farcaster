@@ -10,6 +10,14 @@ pub(crate) enum LayoutMode {
 pub(crate) const WIDE_MIN_WIDTH: f32 = 1_180.0;
 pub(crate) const COMPACT_MIN_WIDTH: f32 = 960.0;
 
+pub(crate) fn draft_top_padding(height: Pixels) -> Pixels {
+    gpui::px((f32::from(height) * 0.18).clamp(24.0, 160.0))
+}
+
+pub(crate) const fn shows_draft_inspector(mode: LayoutMode, enabled: bool) -> bool {
+    shows_right_inline(mode) && enabled
+}
+
 pub(crate) fn layout_mode(width: Pixels) -> LayoutMode {
     let width = f32::from(width);
     if width >= WIDE_MIN_WIDTH {
@@ -41,6 +49,21 @@ pub(crate) const fn shows_run_sheet_button(mode: LayoutMode) -> bool {
 mod tests {
     use super::*;
     use gpui::px;
+
+    #[test]
+    fn draft_inspector_only_uses_inline_space_when_requested_and_wide() {
+        assert!(!shows_draft_inspector(LayoutMode::Wide, false));
+        assert!(shows_draft_inspector(LayoutMode::Wide, true));
+        assert!(!shows_draft_inspector(LayoutMode::Compact, true));
+        assert!(!shows_draft_inspector(LayoutMode::Narrow, true));
+    }
+
+    #[test]
+    fn draft_start_spacing_is_bounded_for_short_and_tall_windows() {
+        assert_eq!(draft_top_padding(px(100.0)), px(24.0));
+        assert_eq!(draft_top_padding(px(2000.0)), px(160.0));
+        assert!(draft_top_padding(px(600.0)) < draft_top_padding(px(820.0)));
+    }
 
     #[test]
     fn exact_layout_boundaries_are_stable() {

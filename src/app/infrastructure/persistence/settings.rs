@@ -1,6 +1,15 @@
 use super::*;
 
 impl StateStore {
+    pub(crate) fn load_draft_inspector(&self) -> Result<bool, String> {
+        self.load_json_meta("draft_inspector", "new-session inspector")
+            .map(Option::unwrap_or_default)
+    }
+
+    pub(crate) fn save_draft_inspector(&self, visible: bool) -> Result<(), String> {
+        self.save_json_meta("draft_inspector", "new-session inspector", &visible)
+    }
+
     pub(crate) fn load_window_placement(&self) -> Result<Option<WindowPlacement>, String> {
         let stored = self
             .connection

@@ -3,6 +3,7 @@ mod dialogs;
 mod editor;
 mod footer;
 mod queue;
+mod start;
 mod suggestions;
 #[cfg(test)]
 mod tests;
@@ -92,6 +93,7 @@ impl FarcasterApp {
             entity.clone(),
             suggestion_count,
             actions,
+            floating,
         );
 
         div()
@@ -160,8 +162,11 @@ impl FarcasterApp {
                     .border_t(THEME.border)
                     .border_color(THEME.colors.surface)
                     .bg(THEME.colors.panel)
-                    .child(self.render_composer_controls(entity, !floating, footer_scroll)),
+                    .child(self.render_composer_controls(entity.clone(), !floating, footer_scroll)),
             )
+            .when(floating, |composer| {
+                composer.child(start::shortcuts(entity))
+            })
             .into_any_element()
     }
 

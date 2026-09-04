@@ -1,6 +1,7 @@
 use gpui::{
     AnyElement, InteractiveElement as _, IntoElement as _, ObjectFit, ParentElement as _,
-    Styled as _, StyledImage as _, WeakEntity, div, img, prelude::FluentBuilder as _,
+    StatefulInteractiveElement as _, Styled as _, StyledImage as _, WeakEntity, div, img,
+    prelude::FluentBuilder as _,
 };
 
 use super::{super::FarcasterApp, draft};
@@ -8,8 +9,8 @@ use crate::app::{
     AppSurface,
     ui::{
         layout::{
-            LayoutMode, shows_left_inline, shows_right_inline, shows_run_sheet_button,
-            shows_session_sheet_button,
+            LayoutMode, draft_top_padding, shows_draft_inspector, shows_left_inline,
+            shows_right_inline, shows_run_sheet_button, shows_session_sheet_button,
         },
         theme::THEME,
     },
@@ -20,13 +21,11 @@ impl FarcasterApp {
         &self,
         entity: WeakEntity<Self>,
         mode: LayoutMode,
+        viewport_height: gpui::Pixels,
     ) -> AnyElement {
         let has_conversation = !self.selected_draft_is_empty_and_unsubmitted();
         let editable_draft_project = (!has_conversation)
             .then(|| self.editable_draft_project())
-            .flatten();
-        let editable_draft_harness = (!has_conversation)
-            .then(|| self.editable_draft_harness())
             .flatten();
 
         div()
@@ -36,48 +35,53 @@ impl FarcasterApp {
             .h_full()
             .flex()
             .flex_col()
-            .when(shows_run_sheet_button(mode), |main| {
-                main.child(
-                    self.render_chat_navigation(shows_session_sheet_button(mode), entity.clone()),
-                )
+            .when(shows_run_sheet_button(mode) || !has_conversation, |main| {
+                main.child(self.render_chat_navigation(
+                    shows_session_sheet_button(mode),
+                    shows_right_inline(mode),
+                    entity.clone(),
+                ))
             })
             .child(
                 div()
+                    .id("chat-body")
                     .flex_1()
                     .min_h_0()
                     .when(has_conversation, |body| {
                         body.child(self.transcript_view.clone())
                     })
                     .when(!has_conversation, |body| {
-                        let heading_entity = entity.clone();
-                        body.flex()
+                        body.overflow_y_scroll()
+                            .flex()
+                            .flex_col()
                             .items_center()
-                            .justify_center()
-                            .px(THEME.space.md)
+                            .pt(draft_top_padding(viewport_height))
+                            .pb(THEME.space.md)
                             .child(
                                 div()
                                     .w_full()
-                                    .max_w(gpui::px(1080.0))
+                                    .max_w(THEME.layout.conversation_width)
+                                    .px(THEME.space.md)
+                                    .flex_none()
                                     .flex()
                                     .flex_col()
-                                    .items_center()
                                     .gap(THEME.space.md)
-                                    .when_some(
-                                        editable_draft_project.zip(editable_draft_harness),
-                                        |draft, (project, harness)| {
-                                            draft.child(draft::render_heading(
-                                                project,
-                                                harness,
-                                                heading_entity,
-                                            ))
-                                        },
-                                    )
+                                    .when_some(editable_draft_project, |draft, project| {
+                                        draft.child(draft::render_heading(project))
+                                    })
                                     .child(self.composer_view.clone()),
                             )
                     }),
             )
             .when(has_conversation, |main| {
-                main.child(self.composer_view.clone())
+                main.child(
+                    div()
+                        .w_full()
+                        .max_w(THEME.layout.conversation_width)
+                        .mx_auto()
+                        .flex_none()
+                        .child(self.composer_view.clone()),
+                )
             })
             .into_any_element()
     }
@@ -86,6 +90,7 @@ impl FarcasterApp {
         &self,
         entity: WeakEntity<Self>,
         mode: LayoutMode,
+        viewport_height: gpui::Pixels,
     ) -> AnyElement {
         let native_surface = matches!(self.surface, AppSurface::Editor | AppSurface::Terminal);
         let native_surface_covered = native_surface
@@ -103,7 +108,9 @@ impl FarcasterApp {
             match self.surface {
                 AppSurface::Editor => self.render_editor_surface(),
                 AppSurface::Terminal => self.render_terminal_workspace(),
-                AppSurface::Chat | AppSurface::Work => self.render_chat_main(entity.clone(), mode),
+                AppSurface::Chat | AppSurface::Work => {
+                    self.render_chat_main(entity.clone(), mode, viewport_height)
+                }
             }
         };
 
@@ -165,32 +172,41 @@ impl FarcasterApp {
                 )
             })
             .child(main)
-            .when(shows_right_inline(mode), |shell| {
-                let resize = entity;
-                shell.child(
-                    div()
-                        .relative()
-                        .w(run_panel_width)
-                        .min_w(THEME.layout.run_panel_min)
-                        .max_w(THEME.layout.run_panel_max)
-                        .flex_none()
-                        .border_l(THEME.border)
-                        .border_color(THEME.colors.border)
-                        .child(if self.workgraph_inspector_issue.is_some() {
-                            self.workgraph_detail_view.clone().into_any_element()
-                        } else {
-                            self.run_panel_view
-                                .clone()
-                                .cached(gpui::StyleRefinement::default().size_full())
-                                .into_any_element()
-                        })
-                        .child(resize_handle("run-panel-resize", false, move |x, cx| {
-                            let _ = resize.update(cx, |this, cx| {
-                                this.begin_run_panel_resize(x, cx);
-                            });
-                        })),
-                )
-            })
+            .when(
+                if self.surface == AppSurface::Chat
+                    && self.selected_draft_is_empty_and_unsubmitted()
+                {
+                    shows_draft_inspector(mode, self.overlays.draft_inspector)
+                } else {
+                    shows_right_inline(mode)
+                },
+                |shell| {
+                    let resize = entity;
+                    shell.child(
+                        div()
+                            .relative()
+                            .w(run_panel_width)
+                            .min_w(THEME.layout.run_panel_min)
+                            .max_w(THEME.layout.run_panel_max)
+                            .flex_none()
+                            .border_l(THEME.border)
+                            .border_color(THEME.colors.border)
+                            .child(if self.workgraph_inspector_issue.is_some() {
+                                self.workgraph_detail_view.clone().into_any_element()
+                            } else {
+                                self.run_panel_view
+                                    .clone()
+                                    .cached(gpui::StyleRefinement::default().size_full())
+                                    .into_any_element()
+                            })
+                            .child(resize_handle("run-panel-resize", false, move |x, cx| {
+                                let _ = resize.update(cx, |this, cx| {
+                                    this.begin_run_panel_resize(x, cx);
+                                });
+                            })),
+                    )
+                },
+            )
             .into_any_element()
     }
 }

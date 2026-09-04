@@ -17,6 +17,7 @@ pub(super) struct ComposerInput {
     app: WeakEntity<FarcasterApp>,
     suggestion_count: usize,
     actions: AnyElement,
+    starting: bool,
 }
 
 impl ComposerInput {
@@ -25,12 +26,14 @@ impl ComposerInput {
         app: WeakEntity<FarcasterApp>,
         suggestion_count: usize,
         actions: AnyElement,
+        starting: bool,
     ) -> Self {
         Self {
             composer,
             app,
             suggestion_count,
             actions,
+            starting,
         }
     }
 }
@@ -52,7 +55,11 @@ impl RenderOnce for ComposerInput {
             .key_context(COMPOSER_KEY_CONTEXT)
             .relative()
             .flex_1()
-            .min_h(px(48.0))
+            .min_h(if self.starting {
+                THEME.type_scale.line_composer * 3.0 + THEME.space.sm * 2.0
+            } else {
+                px(48.0)
+            })
             .font_family(MONO_FONT_FAMILY)
             .text_size(THEME.type_scale.reading)
             .line_height(THEME.type_scale.line_composer)

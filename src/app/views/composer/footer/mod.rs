@@ -32,6 +32,11 @@ impl FarcasterApp {
             .items_center()
             .overflow_x_scroll()
             .track_scroll(scroll)
+            .when_some(self.editable_draft_harness(), |footer, harness| {
+                footer
+                    .child(super::start::harness_selector(&harness, entity.clone()))
+                    .child(separator())
+            })
             .child(runtime::render(self, entity));
 
         if show_usage {
