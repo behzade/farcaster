@@ -29,7 +29,7 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
                 "location": {"directory": directory},
                 "parentID": parent_id,
                 "model": model.map(|(provider_id, model_id, variant)| {
-                    model_selection(provider_id, "modelID", model_id, variant)
+                    model_selection(provider_id, "id", model_id, variant)
                 }),
             })),
         )
@@ -45,7 +45,7 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
             format!("/api/session/{}/fork", path_segment(session_id)),
             Some(json!({
                 "model": model.map(|(provider_id, model_id, variant)| {
-                    model_selection(provider_id, "modelID", model_id, variant)
+                    model_selection(provider_id, "id", model_id, variant)
                 }),
             })),
         )

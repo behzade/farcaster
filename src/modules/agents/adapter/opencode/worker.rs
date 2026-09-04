@@ -3,7 +3,7 @@ use std::{
     process::Stdio,
     sync::mpsc,
     thread,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use serde_json::{Value, json};
@@ -141,8 +141,12 @@ pub(in crate::modules::agents::adapter) fn load_configuration(
         .map_err(|error| format!("start OpenCode catalog server: {error}"))?;
     child_stderr::capture(&mut child, "opencode-catalog")?;
     let mut server = OpenCodeServerProcess::attach(child, "opencode", password)?;
-    let result = load_main_metadata(&mut server.client(), &project.to_string_lossy())
-        .and_then(|metadata| complete_model_catalog(command, project, metadata));
+    let result = load_main_metadata(&mut server.client(), &project.to_string_lossy()).and_then(
+        |mut metadata| {
+            complete_model_catalog(command, project, &mut metadata)?;
+            Ok(metadata)
+        },
+    );
     let _ = server.terminate();
     result
 }
@@ -184,8 +188,10 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
     child_stderr::capture(&mut child, "opencode-main-session")?;
     let server = OpenCodeServerProcess::attach(child, "opencode", password)?;
     let mut client = server.client();
-    let metadata = load_main_metadata(&mut client, &launch.project.to_string_lossy())?;
-    let metadata = complete_model_catalog(command, &launch.project, metadata)?;
+    let mut metadata = load_main_metadata(&mut client, &launch.project.to_string_lossy())?;
+    if let Err(error) = complete_model_catalog(command, &launch.project, &mut metadata) {
+        zlog::warn!("OpenCode started without a refreshed model catalog: {error}");
+    }
     let context_window = metadata
         .models
         .first()
@@ -243,13 +249,14 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
 fn complete_model_catalog(
     command: &AgentLaunchConfig,
     project: &std::path::Path,
-    mut metadata: crate::modules::agents::adapter::main_session::MainSessionMetadata,
-) -> Result<crate::modules::agents::adapter::main_session::MainSessionMetadata, String> {
+    metadata: &mut crate::modules::agents::adapter::main_session::MainSessionMetadata,
+) -> Result<(), String> {
     if !metadata.models.is_empty() {
-        return Ok(metadata);
+        return Ok(());
     }
     let mut prepared = command.command(project)?;
     let output = prepared
+        .env("OPENCODE_DISABLE_AUTOUPDATE", "true")
         .arg("models")
         .output()
         .map_err(|error| format!("run OpenCode model catalog fallback: {error}"))?;
@@ -263,7 +270,7 @@ fn complete_model_catalog(
     if metadata.models.is_empty() {
         Err("OpenCode model API and CLI fallback returned no models".into())
     } else {
-        Ok(metadata)
+        Ok(())
     }
 }
 
@@ -289,12 +296,19 @@ fn load_main_metadata(
     client: &mut super::client::OpenCodeClient<super::transport::OpenCodeTcpTransport>,
     directory: &str,
 ) -> Result<crate::modules::agents::adapter::main_session::MainSessionMetadata, String> {
-    let model_response = client.models(directory)?;
-    let model_rows = model_response
-        .as_array()
-        .or_else(|| model_response.get("data").and_then(Value::as_array))
-        .cloned()
-        .unwrap_or_default();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let model_rows = loop {
+        let model_response = client.models(directory)?;
+        let rows = model_response
+            .as_array()
+            .or_else(|| model_response.get("data").and_then(Value::as_array))
+            .cloned()
+            .unwrap_or_default();
+        if !rows.is_empty() || Instant::now() >= deadline {
+            break rows;
+        }
+        thread::sleep(Duration::from_millis(50));
+    };
     let mut efforts = Vec::new();
     let models = model_rows
         .iter()
@@ -1295,7 +1309,11 @@ fn configure_opencode_server(
     if matches!(mode, crate::agents::HarnessAccessMode::Auto) {
         return Err("OpenCode does not support model-reviewed automatic approvals".into());
     }
-    command.args(["serve", "--stdio", "--print-logs"]);
+    // A Farcaster session owns this server process. Letting the server replace its global
+    // executable in the background makes concurrently starting sessions fail nondeterministically.
+    command
+        .env("OPENCODE_DISABLE_AUTOUPDATE", "true")
+        .args(["serve", "--stdio", "--print-logs"]);
     Ok(())
 }
 
@@ -1447,6 +1465,13 @@ mod tests {
             assert_eq!(
                 command.get_args().collect::<Vec<_>>(),
                 ["serve", "--stdio", "--print-logs"]
+            );
+            assert_eq!(
+                command
+                    .get_envs()
+                    .find(|(name, _)| *name == "OPENCODE_DISABLE_AUTOUPDATE")
+                    .and_then(|(_, value)| value),
+                Some(std::ffi::OsStr::new("true"))
             );
         }
 

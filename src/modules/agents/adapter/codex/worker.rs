@@ -100,7 +100,7 @@ impl WorkerSessionFactory for CodexWorkerFactory {
         Ok(Box::new(CodexWorkerSession {
             caller_identity,
             child,
-            writer,
+            writer: Some(writer),
             incoming,
             thread_id: thread_id.clone(),
             model: launch.model,
@@ -235,7 +235,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
     let mut session = CodexWorkerSession {
         caller_identity,
         child,
-        writer,
+        writer: Some(writer),
         incoming,
         thread_id: thread_id.clone(),
         model: None,
@@ -493,7 +493,7 @@ enum PendingRequest {
 struct CodexWorkerSession {
     caller_identity: crate::modules::agents::core::CallerIdentity,
     child: Child,
-    writer: ChildStdin,
+    writer: Option<ChildStdin>,
     incoming: mpsc::Receiver<Result<CodexInbound, String>>,
     thread_id: String,
     model: Option<String>,
@@ -545,9 +545,14 @@ impl WorkerSession for CodexWorkerSession {
                 )
             });
         let result = json!({"decision": if accepted { "accept" } else { "decline" }});
-        self.writer
-            .write_all(&encode_response(&request_id, result)?)
-            .and_then(|()| self.writer.flush())
+        let encoded = encode_response(&request_id, result)?;
+        let writer = self
+            .writer
+            .as_mut()
+            .ok_or_else(|| "Codex worker input is closed".to_owned())?;
+        writer
+            .write_all(&encoded)
+            .and_then(|()| writer.flush())
             .map_err(|error| format!("answer Codex worker request: {error}"))
     }
 
@@ -973,9 +978,13 @@ impl WorkerSession for CodexWorkerSession {
                         let message = format!("unsupported Codex server request: {method}");
                         let rejected =
                             encode_error_response(&id, -32601, &message).and_then(|encoded| {
-                                self.writer
+                                let writer = self
+                                    .writer
+                                    .as_mut()
+                                    .ok_or_else(|| "Codex worker input is closed".to_owned())?;
+                                writer
                                     .write_all(&encoded)
-                                    .and_then(|()| self.writer.flush())
+                                    .and_then(|()| writer.flush())
                                     .map_err(|error| error.to_string())
                             });
                         if let Err(error) = rejected {
@@ -1003,16 +1012,28 @@ impl WorkerSession for CodexWorkerSession {
     }
 
     fn close(&mut self) -> Result<(), String> {
-        if self
-            .child
-            .try_wait()
-            .map_err(|error| format!("check Codex worker: {error}"))?
-            .is_none()
-        {
-            self.child
-                .kill()
-                .map_err(|error| format!("terminate Codex worker: {error}"))?;
+        // Closing stdin lets app-server shut down normally and release its per-thread writer.
+        // Killing it first can leave a short-lived ownership record that rejects an immediate
+        // resume or delete from the next app-server process.
+        self.writer.take();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            if self
+                .child
+                .try_wait()
+                .map_err(|error| format!("check Codex worker: {error}"))?
+                .is_some()
+            {
+                return Ok(());
+            }
+            if std::time::Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
+        self.child
+            .kill()
+            .map_err(|error| format!("terminate Codex worker: {error}"))?;
         self.child
             .wait()
             .map_err(|error| format!("reap Codex worker: {error}"))?;
@@ -1141,9 +1162,14 @@ impl CodexWorkerSession {
             .checked_add(1)
             .ok_or_else(|| "Codex worker request id overflow".to_owned())?;
         let id = CodexRequestId::Number(self.next_id);
-        self.writer
-            .write_all(&encode_request(&id, method, params)?)
-            .and_then(|()| self.writer.flush())
+        let encoded = encode_request(&id, method, params)?;
+        let writer = self
+            .writer
+            .as_mut()
+            .ok_or_else(|| "Codex worker input is closed".to_owned())?;
+        writer
+            .write_all(&encoded)
+            .and_then(|()| writer.flush())
             .map_err(|error| format!("write Codex worker request: {error}"))?;
         Ok(id)
     }
