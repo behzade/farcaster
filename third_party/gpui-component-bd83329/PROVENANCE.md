@@ -40,7 +40,9 @@ changes:
 - `ui/src/button/button_icon.rs` omits the unused progress-circle variant.
 - `ui/src/input/state.rs` omits the unused OTP state, while retaining input,
   textarea, and editor state behavior.
-- `ui/src/menu/popup_menu.rs` adds `with_selected_index` so a nested menu can open on the current item.
+- `ui/src/menu/popup_menu.rs` adds `with_selected_index` so a nested menu can
+  open on the current item, and defers rendering preselected submenus until
+  their parent bounds are known.
 - `ui/src/select.rs` retains only the caret used by dropdown buttons.
 - `ui/src/theme/mod.rs` omits settings for removed sheet and notification
   modules. `ui/src/text/node.rs` always uses the retained non-tree-sitter

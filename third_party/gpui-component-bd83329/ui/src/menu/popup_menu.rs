@@ -294,6 +294,7 @@ pub struct PopupMenu {
     max_width: Option<Pixels>,
     max_height: Option<Pixels>,
     bounds: Bounds<Pixels>,
+    bounds_ready: bool,
     size: Size,
     check_side: Side,
 
@@ -335,6 +336,7 @@ impl PopupMenu {
             max_height: None,
             check_side: Side::Left,
             bounds: Bounds::default(),
+            bounds_ready: false,
             scrollable: false,
             scroll_handle: ScrollHandle::default(),
             external_link_icon: true,
@@ -1276,7 +1278,10 @@ impl PopupMenu {
                                 ),
                         ),
                 )
-                .when(selected, |this| {
+                // A preselected submenu can be active before its parent has been
+                // laid out. Wait for the parent's real bounds instead of painting
+                // one frame from Bounds::default() at the window's left edge.
+                .when(selected && self.bounds_ready, |this| {
                     this.child({
                         let (anchor, left) = self.submenu_anchor;
                         let is_bottom_pos =
@@ -1396,7 +1401,15 @@ impl Render for PopupMenu {
                             .filter(|(ix, item)| !(*ix + 1 == items_count && item.is_separator()))
                             .map(|(ix, item)| self.render_item(ix, item, options, window, cx)),
                     )
-                    .on_prepaint(move |bounds, _, cx| view.update(cx, |r, _| r.bounds = bounds)),
+                    .on_prepaint(move |bounds, _, cx| {
+                        view.update(cx, |menu, cx| {
+                            menu.bounds = bounds;
+                            if !menu.bounds_ready {
+                                menu.bounds_ready = true;
+                                cx.notify();
+                            }
+                        })
+                    }),
             )
             .when(self.scrollable, |this| {
                 // TODO: When the menu is limited by `overflow_y_scroll`, the sub-menu will cannot be displayed.
