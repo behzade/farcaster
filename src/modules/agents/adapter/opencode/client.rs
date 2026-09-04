@@ -79,15 +79,6 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
         )
     }
 
-    pub(crate) fn wait_session(&mut self, session_id: &str) -> Result<(), String> {
-        let response = self.execute(
-            OpenCodeHttpMethod::Post,
-            format!("/api/session/{}/wait", path_segment(session_id)),
-            None,
-        )?;
-        decode_empty(response)
-    }
-
     pub(crate) fn context(&mut self, session_id: &str) -> Result<Vec<Value>, String> {
         self.json(
             OpenCodeHttpMethod::Get,

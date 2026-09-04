@@ -181,17 +181,58 @@ fn history_messages(value: &Value) -> Vec<Value> {
     match role {
         Some("user") => vec![json!({
             "role": "user",
-            "content": value
-                .get("text")
-                .and_then(Value::as_str)
-                .map(|text| vec![json!({"type": "text", "text": text})])
-                .or_else(|| value.get("content").and_then(Value::as_array).cloned())
-                .unwrap_or_default(),
+            "content": opencode_user_content(value),
         })],
         Some("assistant") => assistant_history_messages(value),
         Some(_) if value.get("role").is_some() => vec![value.clone()],
         _ => Vec::new(),
     }
+}
+
+fn opencode_user_content(value: &Value) -> Vec<Value> {
+    let mut content = value
+        .get("text")
+        .and_then(Value::as_str)
+        .map(|text| vec![json!({"type": "text", "text": text})])
+        .or_else(|| value.get("content").and_then(Value::as_array).cloned())
+        .unwrap_or_default();
+    for file in value
+        .get("files")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if let Some(image) = opencode_image_content(file)
+            && !content.contains(&image)
+        {
+            content.push(image);
+        }
+    }
+    content
+}
+
+fn opencode_image_content(file: &Value) -> Option<Value> {
+    let mime = file
+        .get("mime")
+        .or_else(|| file.get("mimeType"))
+        .and_then(Value::as_str);
+    let data = file
+        .pointer("/source/data")
+        .or_else(|| file.get("data"))
+        .and_then(Value::as_str);
+    if let (Some(mime), Some(data)) = (mime, data)
+        && mime.starts_with("image/")
+    {
+        return Some(json!({"type": "image", "mimeType": mime, "data": data}));
+    }
+    let uri = file
+        .pointer("/source/uri")
+        .or_else(|| file.get("uri"))
+        .and_then(Value::as_str)?;
+    let encoded = uri.strip_prefix("data:")?;
+    let (mime, data) = encoded.split_once(";base64,")?;
+    mime.starts_with("image/")
+        .then(|| json!({"type": "image", "mimeType": mime, "data": data}))
 }
 
 fn assistant_history_messages(value: &Value) -> Vec<Value> {
@@ -379,6 +420,30 @@ mod tests {
         assert_eq!(session.usage.output, 25);
         assert_eq!(session.usage.cache_read, 80);
         Ok(())
+    }
+
+    #[test]
+    fn preserves_base64_and_data_uri_images_in_user_history() {
+        let messages = history_messages(&json!({
+            "type": "user",
+            "text": "compare",
+            "files": [
+                {
+                    "mime": "image/png",
+                    "source": {"type": "base64", "data": "AQID"}
+                },
+                {"uri": "data:image/jpeg;base64,BAUG"}
+            ]
+        }));
+
+        assert_eq!(
+            messages[0]["content"],
+            json!([
+                {"type": "text", "text": "compare"},
+                {"type": "image", "mimeType": "image/png", "data": "AQID"},
+                {"type": "image", "mimeType": "image/jpeg", "data": "BAUG"},
+            ])
+        );
     }
 
     #[test]
