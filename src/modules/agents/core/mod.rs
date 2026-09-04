@@ -1,4 +1,5 @@
 mod caller;
+mod concurrency;
 mod names;
 mod pool;
 #[cfg(test)]
@@ -8,6 +9,7 @@ mod run;
 mod worker;
 
 pub(crate) use caller::{CallerContext, CallerIdentity, CallerProfile, CallerRegistry};
+pub(crate) use concurrency::WorkerSlot;
 pub(crate) use pool::WorkerPool;
 pub(crate) use prompt_store::{
     PromptStore, begin as begin_prompt, complete as complete_prompt,

@@ -40,19 +40,21 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             return Err("Codex worker provider and model must be supplied together".into());
         }
         let mut prepared = self.command.command(&launch.project)?;
-        let caller_identity = crate::modules::agents::core::CallerRegistry::shared().issue_as(
-            &launch.project,
-            crate::modules::agents::core::CallerProfile {
-                backend: "codex-cli".into(),
-                provider: launch.provider.clone(),
-                model: launch.model.clone(),
-                effort: launch.effort.clone(),
-            },
-            None,
-            launch.worker_id.clone(),
-            launch.worker_name.clone(),
-            launch.parent_worker_id.clone(),
-        )?;
+        let caller_identity = crate::modules::agents::core::CallerRegistry::shared()
+            .issue_as(
+                &launch.project,
+                crate::modules::agents::core::CallerProfile {
+                    backend: "codex-cli".into(),
+                    provider: launch.provider.clone(),
+                    model: launch.model.clone(),
+                    effort: launch.effort.clone(),
+                },
+                None,
+                launch.worker_id.clone(),
+                launch.worker_name.clone(),
+                launch.parent_worker_id.clone(),
+            )?
+            .with_slot(launch.slot.clone());
         configure_codex_app_server(&mut prepared, self.command.access_mode);
         if farcaster_mcp::enabled() {
             configure_farcaster_mcp(&mut prepared, caller_identity.token());
@@ -613,6 +615,8 @@ impl WorkerSession for CodexWorkerSession {
             self.peer_messages.push_back(message);
         }
         if let Some(mode) = WorkerSendMode::for_peer(self.activity())
+            && !self.peer_messages.is_empty()
+            && self.caller_identity.try_activate()
             && let Some(message) = self.peer_messages.pop_front()
         {
             return Some(match self.send_peer_message(&message, mode) {

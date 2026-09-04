@@ -67,6 +67,11 @@ Built-in MCP is enabled by default for new sessions. It provides parent-child
 workers, a project coordination notice board, and durable workgraphs. It can be
 disabled under **Settings → Built-in MCP**.
 
+Up to eight child workers can be active at once. Idle children keep their sessions
+for reuse without counting toward that limit. Messages to an idle child wait for
+a free slot before starting another turn. Children send results explicitly with
+`worker_send`; Farcaster reports child failures to the parent automatically.
+
 ## Configuration
 
 - `FARCASTER_PI_PATH`: Pi executable

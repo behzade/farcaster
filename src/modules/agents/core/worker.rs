@@ -56,8 +56,9 @@ impl CommonTool {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub(crate) struct WorkerLaunch {
+    pub(crate) slot: Option<super::WorkerSlot>,
     pub(crate) worker_id: String,
     pub(crate) worker_name: String,
     pub(crate) project: PathBuf,

@@ -1,4 +1,5 @@
 use std::{
+    cell::RefCell,
     collections::HashMap,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock, mpsc},
@@ -53,6 +54,8 @@ pub(crate) struct CallerIdentity {
     token: String,
     inbox: mpsc::Receiver<PeerMessage>,
     registry: CallerRegistry,
+    slot: Option<super::WorkerSlot>,
+    pending_message: RefCell<Option<PeerMessage>>,
 }
 
 impl CallerRegistry {
@@ -101,6 +104,8 @@ impl CallerRegistry {
             token,
             inbox: receiver,
             registry: self.clone(),
+            slot: None,
+            pending_message: RefCell::new(None),
         }
     }
 
@@ -153,6 +158,8 @@ impl CallerRegistry {
             token,
             inbox: receiver,
             registry: self.clone(),
+            slot: None,
+            pending_message: RefCell::new(None),
         })
     }
 
@@ -263,6 +270,21 @@ impl CallerRegistry {
 }
 
 impl CallerIdentity {
+    pub(crate) fn with_slot(mut self, slot: Option<super::WorkerSlot>) -> Self {
+        self.slot = slot;
+        self
+    }
+
+    pub(crate) fn set_slot(&mut self, slot: Option<super::WorkerSlot>) {
+        self.slot = slot;
+    }
+
+    pub(crate) fn try_activate(&self) -> bool {
+        self.slot
+            .as_ref()
+            .is_none_or(super::WorkerSlot::try_activate)
+    }
+
     pub(crate) fn token(&self) -> &str {
         &self.token
     }
@@ -302,7 +324,53 @@ impl CallerIdentity {
     }
 
     pub(crate) fn try_recv(&self) -> Option<PeerMessage> {
-        self.inbox.try_recv().ok()
+        let message = self
+            .pending_message
+            .borrow_mut()
+            .take()
+            .or_else(|| self.inbox.try_recv().ok())?;
+        if self.try_activate() {
+            Some(message)
+        } else {
+            *self.pending_message.borrow_mut() = Some(message);
+            None
+        }
+    }
+}
+
+pub(super) struct WorkerParent {
+    pub(super) id: String,
+    pub(super) project: PathBuf,
+    pub(super) child_name: String,
+}
+
+impl WorkerParent {
+    pub(super) fn report_failure(&self, error: &str) {
+        let registry = CallerRegistry::shared();
+        let Ok(callers) = registry.callers.lock() else {
+            return;
+        };
+        let Some(parent) = callers
+            .values()
+            .find(|caller| caller.worker_id == self.id && caller.project == self.project)
+        else {
+            return;
+        };
+        if parent
+            .inbox
+            .send(PeerMessage {
+                from: self.child_name.clone(),
+                message: format!("Worker failed: {error}"),
+            })
+            .is_err()
+        {
+            zlog::warn!(
+                "Failed to notify parent of worker {} failure",
+                self.child_name
+            );
+        } else if let Some(wake) = &parent.wake {
+            wake.unpark();
+        }
     }
 }
 
@@ -483,6 +551,30 @@ mod tests {
         assert!(child(&registry, &first, "REVIEW").is_err());
         assert!(child(&registry, &first, "bad name").is_err());
         assert!(child(&registry, &second, "review").is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn queued_child_message_waits_for_capacity_without_being_lost() -> Result<(), String> {
+        let registry = CallerRegistry::default();
+        let parent = identity(&registry, Path::new("/project"), "pi");
+        parent.bind("parent");
+        let concurrency = super::super::concurrency::WorkerConcurrency::new(1);
+        let slot = concurrency.reserve()?;
+        let child =
+            child(&registry, &context(&registry, &parent), "review")?.with_slot(Some(slot.clone()));
+        child.bind("child");
+        slot.release();
+        let other = concurrency.reserve()?;
+        registry.send(parent.token(), "review", "first".into())?;
+        registry.send(parent.token(), "review", "second".into())?;
+        assert!(child.try_recv().is_none());
+        assert!(child.try_recv().is_none());
+        drop(other);
+        assert_eq!(child.try_recv().expect("first message").message, "first");
+        assert!(concurrency.reserve().is_err(), "delivery reserves capacity");
+        assert_eq!(child.try_recv().expect("second message").message, "second");
+        assert!(child.try_recv().is_none());
         Ok(())
     }
 }
