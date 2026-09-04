@@ -5,7 +5,6 @@ use std::{
 };
 
 use super::*;
-use crate::agents::PeerMessage;
 use crate::agents::{
     WorkerEvent, WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory,
 };
@@ -137,7 +136,7 @@ fn projects_from_later_calling_sessions_can_be_allowed() -> Result<(), String> {
 }
 
 #[test]
-fn child_result_notifies_the_ui_and_parent() -> Result<(), String> {
+fn child_settlement_notifies_the_ui_without_messaging_parent() -> Result<(), String> {
     let project = tempfile::tempdir().map_err(|error| error.to_string())?;
     let factory = Arc::new(FakeFactory::default());
     let (pool, updates) = pool(factory.clone(), project.path(), 1)?;
@@ -182,9 +181,7 @@ fn child_result_notifies_the_ui_and_parent() -> Result<(), String> {
         .map_err(|_| "fake worker stopped".to_owned())?;
 
     wait_for_update(&updates)?;
-    let message = wait_for_message(&parent)?;
-    assert_eq!(message.from, "implementation");
-    assert_eq!(message.message, "done");
+    assert!(parent.try_recv().is_none());
     Ok(())
 }
 
@@ -198,18 +195,5 @@ fn wait_for_update(receiver: &async_channel::Receiver<()>) -> Result<(), String>
             }
             Err(error) => return Err(format!("worker update was not delivered: {error}")),
         }
-    }
-}
-
-fn wait_for_message(identity: &CallerIdentity) -> Result<PeerMessage, String> {
-    let deadline = Instant::now() + Duration::from_secs(1);
-    loop {
-        if let Some(message) = identity.try_recv() {
-            return Ok(message);
-        }
-        if Instant::now() >= deadline {
-            return Err("child result was not delivered to its parent".into());
-        }
-        std::thread::sleep(Duration::from_millis(5));
     }
 }

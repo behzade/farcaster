@@ -228,7 +228,7 @@ fn tools_for_role(child: bool) -> Vec<rmcp::model::Tool> {
             }
             schema.insert("required".into(), serde_json::json!(["message"]));
             tool.description = Some(Cow::Borrowed(
-                "Send an interim update or question to your parent worker. The parent is implicit. Your final assistant response is delivered automatically; do not send final results with this tool.",
+                "Send a message to your parent worker. The parent is implicit; use this tool for all communication, including final results.",
             ));
         } else {
             schema.insert("required".into(), serde_json::json!(["to", "message"]));
