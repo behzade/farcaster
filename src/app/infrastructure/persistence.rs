@@ -23,6 +23,7 @@ const ACTIVE_IMPORT_WINDOW: Duration = Duration::from_secs(3 * 60 * 60);
 const REPOSITORY_BACKEND_PREFERENCES_KEY: &str = "repository_backend_preferences";
 const NETWORK_PROXY_KEY: &str = "network_proxy";
 const APPLICATION_MODIFIER_KEY: &str = "application_modifier";
+const BUILTIN_MCP_ENABLED_KEY: &str = "builtin_mcp_enabled";
 const CONFIGURATION_CATALOGS_KEY: &str = "configuration_catalogs";
 const SESSION_CONTROL_DEFAULTS_KEY: &str = "session_control_defaults";
 const LEGACY_PI_GPUI_IMPORT_KEY: &str = "legacy_pi_gpui_state_imported";
@@ -551,6 +552,34 @@ impl StateStore {
             )
             .optional()
             .map_err(|error| format!("load application modifier: {error}"))
+    }
+
+    pub(crate) fn load_builtin_mcp_enabled(&self) -> Result<bool, String> {
+        let value = self
+            .connection
+            .query_row(
+                "SELECT value FROM meta WHERE key=?1",
+                [BUILTIN_MCP_ENABLED_KEY],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| format!("load built-in MCP setting: {error}"))?;
+        match value.as_deref() {
+            None | Some("true") => Ok(true),
+            Some("false") => Ok(false),
+            Some(value) => Err(format!("invalid built-in MCP setting: {value}")),
+        }
+    }
+
+    pub(crate) fn save_builtin_mcp_enabled(&self, enabled: bool) -> Result<(), String> {
+        self.connection
+            .execute(
+                "INSERT INTO meta(key, value) VALUES(?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                params![BUILTIN_MCP_ENABLED_KEY, enabled.to_string()],
+            )
+            .map(|_| ())
+            .map_err(|error| format!("save built-in MCP setting: {error}"))
     }
 
     pub(crate) fn save_application_settings(

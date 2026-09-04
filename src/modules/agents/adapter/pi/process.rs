@@ -81,15 +81,18 @@ fn rpc_command(
     command: &AgentLaunchConfig,
     project: &Path,
     launch: SessionLaunch<'_>,
-    mcp_config: &Path,
+    mcp_config: Option<&Path>,
 ) -> Result<std::process::Command, String> {
     let mut prepared = command.command(project)?;
+    prepared.args(["--mode", "rpc"]);
+    if let Some(mcp_config) = mcp_config {
+        prepared
+            .arg("--mcp-config")
+            .arg(mcp_config)
+            .arg("--append-system-prompt")
+            .arg(INSTRUCTIONS);
+    }
     prepared
-        .args(["--mode", "rpc"])
-        .arg("--mcp-config")
-        .arg(mcp_config)
-        .arg("--append-system-prompt")
-        .arg(INSTRUCTIONS)
         .env("FARCASTER_NATIVE_NOTIFICATIONS", "1")
         // Compatibility with existing Pi notification extensions.
         .env("PI_GPUI_NATIVE_NOTIFICATIONS", "1");
@@ -113,7 +116,7 @@ fn rpc_command(
 
 pub(crate) struct PiRpcProcess {
     caller_identity: crate::modules::agents::core::CallerIdentity,
-    _mcp_config: TransientMcpConfig,
+    _mcp_config: Option<TransientMcpConfig>,
     child: Arc<Mutex<Child>>,
     stdin: Arc<Mutex<ChildStdin>>,
     incoming: mpsc::Receiver<ReaderItem>,
@@ -231,8 +234,15 @@ impl PiRpcProcess {
         } else {
             registry.issue(project, profile, wake.clone())
         };
-        let mcp_config = TransientMcpConfig::create(caller_identity.token())?;
-        let mut prepared = rpc_command(command, project, launch, mcp_config.path())?;
+        let mcp_config = crate::modules::agents::adapter::farcaster_mcp::enabled()
+            .then(|| TransientMcpConfig::create(caller_identity.token()))
+            .transpose()?;
+        let mut prepared = rpc_command(
+            command,
+            project,
+            launch,
+            mcp_config.as_ref().map(TransientMcpConfig::path),
+        )?;
         let mut child = prepared
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

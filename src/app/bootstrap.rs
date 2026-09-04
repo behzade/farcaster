@@ -391,7 +391,6 @@ impl FarcasterApp {
             network_proxy_input,
             network_proxy_error: None,
             settings_application_modifier: ui::keybindings::application_modifier(),
-            settings_builtin_mcp_enabled: crate::builtin_mcp::enabled(),
             editing_session_title: None,
             pending_session_titles: HashMap::new(),
             pending_session_title_focus: false,

@@ -1,4 +1,5 @@
 mod app;
+mod builtin_mcp;
 mod modules;
 
 pub(crate) use app::runtime;
@@ -29,6 +30,10 @@ fn main() -> std::process::ExitCode {
         Ok(path) => path,
         Err(error) => return fail(error),
     };
+    let builtin_mcp_enabled = app::persistence::StateStore::open()
+        .and_then(|store| store.load_builtin_mcp_enabled())
+        .unwrap_or(true);
+    builtin_mcp::set_enabled(builtin_mcp_enabled);
     let worker_command = agents::AgentLaunchConfig {
         session_locator_root: Some(data_root.join("session-locators")),
         ..agents::AgentLaunchConfig::default()

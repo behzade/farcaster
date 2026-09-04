@@ -46,7 +46,7 @@ fn catalog_process_disables_session_persistence() -> TestResult {
         },
         project.path(),
         SessionLaunch::Catalog,
-        Path::new("/dev/fd/9"),
+        Some(Path::new("/dev/fd/9")),
     )?;
     assert!(
         process
@@ -66,7 +66,7 @@ fn fork_process_passes_the_source_session_to_pi() -> TestResult {
         },
         project.path(),
         SessionLaunch::Fork(source),
-        Path::new("/dev/fd/9"),
+        Some(Path::new("/dev/fd/9")),
     )?;
     let arguments = process.get_args().collect::<Vec<_>>();
     assert!(arguments.windows(2).any(|pair| pair == ["--mode", "rpc"]));
@@ -84,6 +84,25 @@ fn fork_process_passes_the_source_session_to_pi() -> TestResult {
     assert_eq!(
         arguments.get(arguments.len().saturating_sub(2)..),
         Some([std::ffi::OsStr::new("--fork"), source.as_os_str()].as_slice())
+    );
+    Ok(())
+}
+
+#[test]
+fn process_omits_builtin_mcp_when_disabled() -> TestResult {
+    let project = tempdir()?;
+    let process = rpc_command(
+        &AgentLaunchConfig::default(),
+        project.path(),
+        SessionLaunch::New,
+        None,
+    )?;
+    let arguments = process.get_args().collect::<Vec<_>>();
+    assert!(!arguments.iter().any(|argument| *argument == "--mcp-config"));
+    assert!(
+        !arguments
+            .iter()
+            .any(|argument| *argument == "--append-system-prompt")
     );
     Ok(())
 }
@@ -135,7 +154,7 @@ fn pi_delegates_sandboxing_to_the_harness() -> TestResult {
             },
             project.path(),
             SessionLaunch::New,
-            Path::new("/dev/fd/9"),
+            Some(Path::new("/dev/fd/9")),
         )
     };
 
