@@ -128,7 +128,7 @@ fn owner_without_process(
             process_command: AgentLaunchConfig {
                 program: PathBuf::from("/definitely/missing/farcaster-test-command"),
                 prefix_args: Vec::new(),
-                access_mode: HarnessAccessMode::default(),
+                access_mode: HarnessAccessMode::Sandboxed,
                 app_proxy: None,
                 session_locator_root: None,
             },
@@ -250,12 +250,12 @@ fn access_mode_changes_during_a_response_keep_latest_and_allow_cancel() {
 
     owner.apply_command(RuntimeCommand::SetAccessMode(full));
     assert_eq!(owner.snapshot.access_mode, full);
-    owner.apply_command(RuntimeCommand::SetAccessMode(HarnessAccessMode::default()));
-    assert_eq!(owner.snapshot.access_mode, HarnessAccessMode::default());
+    owner.apply_command(RuntimeCommand::SetAccessMode(HarnessAccessMode::Sandboxed));
+    assert_eq!(owner.snapshot.access_mode, HarnessAccessMode::Sandboxed);
     assert!(owner.access_mode_changes.is_idle());
     assert_eq!(
         owner.process_command.access_mode,
-        HarnessAccessMode::default()
+        HarnessAccessMode::Sandboxed
     );
     assert!(owner.snapshot.conversation.items.is_empty());
 }
@@ -287,7 +287,7 @@ fn access_mode_change_restarts_and_resumes_the_idle_session() -> Result<(), Stri
     assert_eq!(owner.process_generation, generation);
     assert_eq!(
         owner.process_command.access_mode,
-        HarnessAccessMode::default()
+        HarnessAccessMode::Sandboxed
     );
     assert_eq!(owner.snapshot.access_mode, target);
     assert!(!owner.access_mode_changes.is_idle());
