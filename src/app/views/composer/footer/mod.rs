@@ -1,14 +1,13 @@
+mod runtime;
+
 use gpui::{
     AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _, PathBuilder,
     StatefulInteractiveElement as _, Styled as _, WeakEntity, canvas, div, point,
     prelude::FluentBuilder as _, px,
 };
 
-use super::{
-    super::usage::{
-        ComposerUsage, composer_usage, format_cost, format_tokens, has_meaningful_usage,
-    },
-    models,
+use super::super::usage::{
+    ComposerUsage, composer_usage, format_cost, format_tokens, has_meaningful_usage,
 };
 use crate::{
     app::FarcasterApp,
@@ -32,7 +31,7 @@ impl FarcasterApp {
             .items_center()
             .overflow_x_scroll()
             .track_scroll(&self.composer_footer_scroll)
-            .child(models::render(self, entity));
+            .child(runtime::render(self, entity));
 
         if show_usage {
             let usage = composer_usage(self);
