@@ -1,8 +1,9 @@
 # Farcaster
 
-Farcaster is a native GPUI desktop client for coding agents. It supports Pi,
-Codex, Cursor, and OpenCode through backend-specific protocol adapters. Cursor
-uses Farcaster's generic Agent Client Protocol (ACP) adapter.
+Farcaster is a native multi-agent development workspace that orchestrates
+coding-agent harnesses. It supports Pi, Codex, Cursor, and OpenCode through
+backend-specific protocol adapters. Cursor uses Farcaster's generic Agent Client
+Protocol (ACP) adapter.
 
 Farcaster is GPL-3.0-or-later. See [`NOTICE.md`](NOTICE.md) for source and asset
 attribution.
