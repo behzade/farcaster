@@ -219,8 +219,8 @@ impl RuntimeOwner {
             Some(Ok(id)) => {
                 self.pending_prompt_id = Some(id);
                 self.pending_outbox_id = outbox_id;
-                if self.title_generation.pending_prompt.is_none() {
-                    self.title_generation.pending_prompt = title_prompt;
+                if let Some(prompt) = title_prompt {
+                    self.start_auto_title_generation(prompt);
                 }
             }
             Some(Err(error)) => {
@@ -243,7 +243,7 @@ impl RuntimeOwner {
                 .session
                 .as_ref()
                 .is_none_or(|state| state.message_count == 0 && state.session_name.is_none())
-            && self.title_generation.pending_prompt.is_none()
+            && !self.title_generation.in_flight
             && agents::supports_auto_title_generation(&self.harness)
     }
 
