@@ -39,10 +39,7 @@ impl NvimEditor {
         window: &mut Window,
         cx: &mut Context<T>,
     ) -> Result<Self, String> {
-        let executable = std::env::var_os("FARCASTER_NVIM")
-            .or_else(|| std::env::var_os("GPUI_NVIM"))
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("nvim"));
+        let executable = nvim_executable();
         let socket_dir = Arc::new(
             tempfile::Builder::new()
                 .prefix("farcaster-neovim-")
@@ -64,10 +61,6 @@ impl NvimEditor {
             terminal,
             pending: None,
         })
-    }
-
-    pub(super) fn project(&self) -> &Path {
-        &self.project
     }
 
     pub(super) fn is_alive(&self, cx: &App) -> bool {
@@ -126,6 +119,13 @@ impl Render for NvimEditor {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         self.terminal.clone()
     }
+}
+
+fn nvim_executable() -> PathBuf {
+    std::env::var_os("FARCASTER_NVIM")
+        .or_else(|| std::env::var_os("GPUI_NVIM"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("nvim"))
 }
 
 fn shell_quote(path: &Path) -> String {
@@ -220,9 +220,7 @@ mod tests {
         }
         let project = tempfile::tempdir().map_err(|error| error.to_string())?;
         let socket = project.path().join("nvim.sock");
-        let executable = std::env::var_os("FARCASTER_NVIM")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("nvim"));
+        let executable = nvim_executable();
         let _server = Server(
             Command::new(&executable)
                 .current_dir(project.path())
@@ -249,33 +247,49 @@ mod tests {
             ))
         };
         request(session_expression(11, Some(&a), None))?;
-        lua(
-            "vim.o.hidden = false; _G.a_tab = vim.api.nvim_get_current_tabpage(); _G.a_buf = vim.api.nvim_get_current_buf(); vim.cmd('vsplit'); _G.a_win = vim.api.nvim_get_current_win(); vim.api.nvim_win_set_cursor(0, {4, 1}); vim.api.nvim_buf_set_lines(0, 0, 1, false, {'unsaved'})",
-        )?;
+        lua(r#"
+            vim.o.hidden = false
+            a_tab = vim.api.nvim_get_current_tabpage()
+            a_buf = vim.api.nvim_get_current_buf()
+            vim.cmd('vsplit')
+            a_win = vim.api.nvim_get_current_win()
+            vim.api.nvim_win_set_cursor(0, {4, 1})
+            vim.api.nvim_buf_set_lines(0, 0, 1, false, {'unsaved'})
+            "#)?;
         request(session_expression(22, Some(&b), Some(2)))?;
-        lua(
-            "assert(vim.api.nvim_get_current_tabpage() ~= a_tab); _G.b_tab = vim.api.nvim_get_current_tabpage(); assert(vim.api.nvim_win_get_cursor(0)[1] == 2); assert(vim.bo[a_buf].modified); assert(#vim.api.nvim_list_tabpages() == 2)",
-        )?;
+        lua(r#"
+            b_tab = vim.api.nvim_get_current_tabpage()
+            assert(b_tab ~= a_tab)
+            assert(vim.api.nvim_win_get_cursor(0)[1] == 2)
+            assert(vim.bo[a_buf].modified)
+            assert(#vim.api.nvim_list_tabpages() == 2)
+            "#)?;
         request(session_expression(11, None, None))?;
-        lua(
-            "assert(vim.api.nvim_get_current_tabpage() == a_tab); assert(vim.api.nvim_get_current_win() == a_win); assert(#vim.api.nvim_tabpage_list_wins(a_tab) == 2); assert(vim.api.nvim_win_get_cursor(0)[1] == 4); assert(vim.api.nvim_win_get_cursor(0)[2] == 1); assert(vim.api.nvim_get_current_buf() == a_buf)",
-        )?;
+        lua(r#"
+            assert(vim.api.nvim_get_current_tabpage() == a_tab)
+            assert(vim.api.nvim_get_current_win() == a_win)
+            assert(#vim.api.nvim_tabpage_list_wins(a_tab) == 2)
+            assert(vim.deep_equal(vim.api.nvim_win_get_cursor(0), {4, 1}))
+            assert(vim.api.nvim_get_current_buf() == a_buf)
+            "#)?;
         // Opening the same file in another session shares its unsaved buffer,
         // but not the first session's cursor or split layout.
         request(session_expression(22, Some(&a), Some(1)))?;
-        lua(
-            "assert(vim.api.nvim_get_current_buf() == a_buf); assert(vim.api.nvim_get_current_line() == 'unsaved'); assert(#vim.api.nvim_tabpage_list_wins(0) == 1)",
-        )?;
+        lua(r#"
+            assert(vim.api.nvim_get_current_buf() == a_buf)
+            assert(vim.api.nvim_get_current_line() == 'unsaved')
+            assert(#vim.api.nvim_tabpage_list_wins(0) == 1)
+            "#)?;
         request(session_expression(11, None, None))?;
-        lua(
-            "assert(vim.api.nvim_win_get_cursor(0)[1] == 4); assert(#vim.api.nvim_list_tabpages() == 2)",
-        )?;
+        lua("assert(vim.deep_equal(vim.api.nvim_win_get_cursor(0), {4, 1}))")?;
         // A user-closed tab is recreated without invalid-handle errors.
         lua("vim.cmd('tabclose')")?;
         request(session_expression(11, Some(&b), None))?;
-        lua(
-            "assert(vim.api.nvim_get_current_tabpage() ~= b_tab); assert(#vim.api.nvim_list_tabpages() == 2); assert(vim.bo[a_buf].modified)",
-        )?;
+        lua(r#"
+            assert(vim.api.nvim_get_current_tabpage() ~= b_tab)
+            assert(#vim.api.nvim_list_tabpages() == 2)
+            assert(vim.bo[a_buf].modified)
+            "#)?;
         // The remote client must propagate Lua errors, not report success.
         assert!(lua("error('expected test error')").is_err());
         Ok(())

@@ -154,7 +154,6 @@ impl FarcasterApp {
             self.overlays.pending_setup = false;
             self.sheet_return_focus = None;
         }
-        self.select_editor_for_project(project.clone(), cx);
         if self.surface == AppSurface::Work {
             return;
         }

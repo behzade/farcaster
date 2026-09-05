@@ -74,29 +74,31 @@ impl FarcasterApp {
             );
             return;
         }
+        // Hide the previous session's tab until this request completes, even
+        // when both sessions use the same project server.
+        self.hide_editor(cx);
+        self.editor = None;
+        self.editor_ready = false;
+        self.editor_return_focus = window.focused(cx);
+        self.editor_request_generation = self.editor_request_generation.wrapping_add(1);
+
         let project = project.canonicalize().unwrap_or(project);
-        self.select_editor_for_project(project.clone(), cx);
-        let reusable = self.editor.as_ref().is_some_and(|editor| {
-            editor.read(cx).project() == project && editor.read(cx).is_alive(cx)
-        });
-        if !reusable && !self.spawn_editor(project, window, cx) {
-            return;
-        }
-        let Some(editor) = self.editor.clone() else {
+        let Some(editor) = self
+            .project_editors
+            .get(&project)
+            .filter(|editor| editor.read(cx).is_alive(cx))
+            .cloned()
+            .or_else(|| self.spawn_editor(project, window, cx))
+        else {
             return;
         };
+        self.editor = Some(editor.clone());
         let target = self.composer_sessions.current_target().to_owned();
         let tab = *self
             .session_editor_tabs
             .entry(target.clone())
             .or_insert_with(new_session_tab);
-        self.editor_request_generation = self.editor_request_generation.wrapping_add(1);
-        self.editor_ready = false;
-        self.hide_editor(cx);
         self.hide_terminal(cx);
-        if self.editor_return_focus.is_none() {
-            self.editor_return_focus = window.focused(cx);
-        }
         self.set_surface(AppSurface::Editor, cx);
         let generation = self.editor_request_generation;
         let opened = editor.update(cx, |editor, cx| editor.activate_tab(tab, path, line, cx));
@@ -132,41 +134,26 @@ impl FarcasterApp {
         cx.notify();
     }
 
-    pub(in crate::app) fn select_editor_for_project(
-        &mut self,
-        project: PathBuf,
-        cx: &mut Context<Self>,
-    ) {
-        let project = project.canonicalize().unwrap_or(project);
-        // Hide even when the project/entity is unchanged: its active tab still
-        // belongs to the previous session until the queued request completes.
-        self.hide_editor(cx);
-        self.editor = self.project_editors.get(&project).cloned();
-        self.editor_ready = false;
-        self.editor_return_focus = None;
-        self.editor_request_generation = self.editor_request_generation.wrapping_add(1);
-    }
-
     fn spawn_editor(
         &mut self,
         project: PathBuf,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> bool {
+    ) -> Option<gpui::Entity<NvimEditor>> {
         match NvimEditor::spawn(project.clone(), window, cx) {
             Ok(editor) => {
                 let editor = cx.new(|_| editor);
-                self.project_editors.insert(project, editor.clone());
-                self.editor = Some(editor.clone());
+                self.project_editors.insert(project.clone(), editor.clone());
+                let monitored = editor.clone();
                 self.monitor_native_process(window, cx, move |this, _window, cx| {
-                    if !this.project_editors.values().any(|entry| entry == &editor) {
+                    if this.project_editors.get(&project) != Some(&monitored) {
                         return false;
                     }
-                    if editor.read(cx).is_alive(cx) {
+                    if monitored.read(cx).is_alive(cx) {
                         return true;
                     }
-                    this.project_editors.retain(|_, entry| entry != &editor);
-                    if this.editor.as_ref() != Some(&editor) {
+                    this.project_editors.remove(&project);
+                    if this.editor.as_ref() != Some(&monitored) {
                         return false;
                     }
                     if this.surface == AppSurface::Editor {
@@ -179,11 +166,11 @@ impl FarcasterApp {
                     }
                     false
                 });
-                true
+                Some(editor)
             }
             Err(error) => {
                 self.notify_workspace_error("Neovim", error, cx);
-                false
+                None
             }
         }
     }
@@ -280,42 +267,19 @@ mod tests {
             Some(11),
             AppSurface::Editor
         ));
-        // Sessions share an entity, but not ownership of delayed completions.
-        assert!(!editor_completion_is_current(
-            1,
-            1,
-            11,
-            Some(22),
-            AppSurface::Editor
-        ));
-        assert!(!editor_completion_is_current(
-            1,
-            1,
-            11,
-            None,
-            AppSurface::Editor
-        ));
-        for surface in [AppSurface::Chat, AppSurface::Terminal, AppSurface::Work] {
-            assert!(!editor_completion_is_current(1, 1, 11, Some(11), surface));
+        // A shared process is not enough: the request, tab, and view must match.
+        for (generation, tab, surface) in [
+            (2, Some(11), AppSurface::Editor),
+            (1, Some(22), AppSurface::Editor),
+            (1, None, AppSurface::Editor),
+            (1, Some(11), AppSurface::Chat),
+            (1, Some(11), AppSurface::Terminal),
+            (1, Some(11), AppSurface::Work),
+        ] {
+            assert!(!editor_completion_is_current(
+                1, generation, 11, tab, surface
+            ));
         }
-        assert!(!editor_completion_is_current(
-            1,
-            2,
-            11,
-            Some(11),
-            AppSurface::Editor
-        ));
-        // Draft promotion changes the routing key, not the native tab identity.
-        let mut tabs = std::collections::HashMap::from([("draft", 11)]);
-        let tab = tabs.remove("draft").expect("draft has a tab");
-        tabs.insert("session", tab);
-        assert!(editor_completion_is_current(
-            1,
-            1,
-            11,
-            tabs.get("session").copied(),
-            AppSurface::Editor
-        ));
     }
 
     #[test]
