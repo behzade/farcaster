@@ -20,6 +20,7 @@ use crate::{
     app::ui::theme::THEME,
     app::ui::{
         assets::AppIcon,
+        file_icons::file_icon,
         primitives::{AppIconSize, activates_button, app_icon},
     },
     repository::{RepositoryKind, WorkingCopyChange, WorkingCopySnapshot},
@@ -348,6 +349,7 @@ impl FarcasterApp {
                     .flex()
                     .items_center()
                     .gap(THEME.space.xs)
+                    .child(file_icon(&change.relative_path))
                     .child(
                         div()
                             .min_w_0()

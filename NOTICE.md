@@ -83,3 +83,10 @@ with attribution metadata added. Upstream:
 <https://github.com/humanlayer/skills/blob/main/plugins/show-me/skills/show-me/SKILL.md>.
 Copyright (c) 2026 HumanLayer, distributed under MIT. The license is included at
 `THIRD_PARTY_LICENSES/HUMANLAYER-SKILLS-MIT.txt`.
+
+File-type icons under `assets/file-icons` (except the original Farcaster
+`file.svg`, `config.svg`, and `image.svg` fallback glyphs) are from Devicon
+v2.17.0, distributed under MIT. Multicolor logos retain their original colors;
+monochrome glyphs receive dark-theme tints. The upstream license is included at
+`THIRD_PARTY_LICENSES/DEVICON-MIT.txt`. Upstream:
+<https://github.com/devicons/devicon/tree/v2.17.0>.
