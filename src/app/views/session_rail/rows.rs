@@ -343,33 +343,13 @@ impl RenderOnce for SessionRow {
                                                     ),
                                             ),
                                     )
-                                    .child(app_icon(
-                                        AppIcon::for_harness(&session.harness),
-                                        AppIconSize::Inline,
-                                    ))
-                                    .when_some(
-                                        status_icon(target_app_session_id, &status_text),
-                                        |metadata, icon| metadata.child(icon),
-                                    )
-                                    .child(
-                                        div()
-                                            .w(px(30.0))
-                                            .flex_none()
-                                            .whitespace_nowrap()
-                                            .text_align(gpui::TextAlign::Right)
-                                            .text_size(THEME.type_scale.caption)
-                                            .text_color(THEME.colors.subtle)
-                                            .child(age),
-                                    )
-                                    .when_some(shortcut, |metadata, number| {
-                                        metadata.child(Kbd::new(
-                                            gpui::Keystroke::parse(&format!(
-                                                "{}-{number}",
-                                                application_modifier().prefix()
-                                            ))
-                                            .expect("fixed session shortcut must parse"),
-                                        ))
-                                    }),
+                                    .child(session_row_metadata(
+                                        &session.harness,
+                                        target_app_session_id,
+                                        &status_text,
+                                        age,
+                                        shortcut,
+                                    )),
                             ),
                     ),
             )
@@ -631,7 +611,48 @@ pub(super) fn session_accessible_label(title: &str, state: &str, age: &str) -> S
     format!("Resume session: {title}. State: {state}. Updated {age}")
 }
 
-pub(super) fn status_icon(app_session_id: i64, status: &str) -> Option<AnyElement> {
+// Keep draft and persisted rows on the same trailing metadata columns.
+pub(super) fn session_row_metadata(
+    harness: &str,
+    app_session_id: i64,
+    status: &str,
+    age: String,
+    shortcut: Option<u8>,
+) -> AnyElement {
+    div()
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap(THEME.space.xs)
+        .child(app_icon(AppIcon::for_harness(harness), AppIconSize::Inline))
+        .child(
+            div()
+                .size(THEME.icons.inline)
+                .flex_none()
+                .when_some(status_icon(app_session_id, status), |slot, icon| {
+                    slot.child(icon)
+                }),
+        )
+        .child(
+            div()
+                .w(px(30.0))
+                .flex_none()
+                .whitespace_nowrap()
+                .text_align(gpui::TextAlign::Right)
+                .text_size(THEME.type_scale.caption)
+                .text_color(THEME.colors.subtle)
+                .child(age),
+        )
+        .when_some(shortcut, |metadata, number| {
+            metadata.child(Kbd::new(
+                gpui::Keystroke::parse(&format!("{}-{number}", application_modifier().prefix()))
+                    .expect("fixed session shortcut must parse"),
+            ))
+        })
+        .into_any_element()
+}
+
+fn status_icon(app_session_id: i64, status: &str) -> Option<AnyElement> {
     let (icon, color) = status_visual(status)?;
     let tooltip = status.to_owned();
     let icon = app_icon(icon, AppIconSize::Inline).into_any_element();
@@ -688,7 +709,7 @@ pub(in crate::app) fn project_label(project: &Path) -> String {
         .map_or_else(|| project.display().to_string(), str::to_owned)
 }
 
-fn relative_age(modified: SystemTime) -> String {
+pub(super) fn relative_age(modified: SystemTime) -> String {
     let age = SystemTime::now()
         .duration_since(modified)
         .unwrap_or(Duration::ZERO);

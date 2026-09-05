@@ -1,20 +1,20 @@
+use std::time::{Duration, UNIX_EPOCH};
+
 use gpui::{
     AnyElement, App, AppContext as _, CursorStyle, FontWeight, InteractiveElement as _,
     IntoElement, ParentElement as _, RenderOnce, Role, StatefulInteractiveElement as _,
     Styled as _, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
 };
-use gpui_component::kbd::Kbd;
 
 use super::{
     drag::DraggedSession,
     groups::SessionRailKind,
     hover::{draft_hover_details, session_hover_panel},
-    rows::{project_badge, project_label, status_icon},
+    rows::{project_badge, project_label, relative_age, session_row_metadata},
 };
 use crate::{
     app::FarcasterApp,
     app::ui::assets::AppIcon,
-    app::ui::keybindings::application_modifier,
     app::ui::primitives::{
         AppIconSize, ReorderPosition, ReorderTargetExt as _, app_icon, icon_control,
     },
@@ -64,6 +64,8 @@ impl RenderOnce for DraftRow {
             entity,
         } = self;
         let status = status.as_str();
+        let is_draft = status == "Draft";
+        let age = relative_age(UNIX_EPOCH + Duration::from_millis(draft.created_ms));
         let id = draft.id.clone();
         let discard_id = id.clone();
         let project = draft.project.clone();
@@ -101,17 +103,34 @@ impl RenderOnce for DraftRow {
                         .h(THEME.layout.session_row_height)
                         .relative()
                         .flex()
-                        .items_center()
-                        .gap(THEME.space.sm)
+                        .items_stretch()
                         .px(THEME.space.sm)
+                        .py(THEME.space.xs)
                         .rounded(px(2.0))
                         .group(action_group.clone())
                         .bg(if selected {
-                            THEME.colors.selection
+                            THEME.colors.session_selection
                         } else {
                             THEME.colors.panel
                         })
-                        .hover(|row| row.bg(THEME.colors.surface))
+                        .hover(move |row| {
+                            row.bg(if selected {
+                                THEME.colors.session_selection
+                            } else {
+                                THEME.colors.surface
+                            })
+                        })
+                        .when(selected, |row| {
+                            row.child(
+                                div()
+                                    .absolute()
+                                    .left_0()
+                                    .top(THEME.space.xs)
+                                    .bottom(THEME.space.xs)
+                                    .w(px(2.0))
+                                    .bg(THEME.colors.accent),
+                            )
+                        })
                         .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
                         .cursor(CursorStyle::PointingHand)
                         .on_drag(drag, move |drag, _, _, cx| {
@@ -157,23 +176,32 @@ impl RenderOnce for DraftRow {
                             div()
                                 .min_w_0()
                                 .flex_1()
-                                .pr(px(24.0))
                                 .flex()
                                 .flex_col()
                                 .gap(px(2.0))
                                 .overflow_hidden()
                                 .child(
                                     div()
-                                        .whitespace_nowrap()
-                                        .text_ellipsis()
-                                        .text_size(THEME.type_scale.body_small)
-                                        .font_weight(if selected {
-                                            FontWeight::SEMIBOLD
-                                        } else {
-                                            FontWeight::NORMAL
-                                        })
-                                        .text_color(THEME.colors.text)
-                                        .child(title),
+                                        .min_w_0()
+                                        .pr(px(24.0))
+                                        .flex()
+                                        .items_center()
+                                        .gap(THEME.space.xs)
+                                        .child(
+                                            div()
+                                                .min_w_0()
+                                                .whitespace_nowrap()
+                                                .text_ellipsis()
+                                                .text_size(THEME.type_scale.body_small)
+                                                .font_weight(if selected {
+                                                    FontWeight::SEMIBOLD
+                                                } else {
+                                                    FontWeight::NORMAL
+                                                })
+                                                .text_color(THEME.colors.text)
+                                                .child(title),
+                                        )
+                                        .when(is_draft, |title| title.child(draft_badge())),
                                 )
                                 .child(
                                     div()
@@ -187,68 +215,35 @@ impl RenderOnce for DraftRow {
                                                 .flex_1()
                                                 .child(project_badge(&draft.project)),
                                         )
-                                        .when(shows_draft_badge(status), |metadata| {
-                                            metadata.child(draft_badge())
-                                        })
-                                        .child(app_icon(
-                                            AppIcon::for_harness(&draft.harness),
-                                            AppIconSize::Inline,
-                                        ))
-                                        .when(status != "Draft", |metadata| {
-                                            metadata.when_some(
-                                                status_icon(target_app_session_id, status),
-                                                |metadata, icon| metadata.child(icon),
-                                            )
-                                        })
-                                        .when_some(shortcut, |metadata, number| {
-                                            metadata.child(Kbd::new(
-                                                gpui::Keystroke::parse(&format!(
-                                                    "{}-{number}",
-                                                    application_modifier().prefix()
-                                                ))
-                                                .expect("fixed session shortcut must parse"),
-                                            ))
-                                        })
-                                        .when(
-                                            draft_can_be_discarded(draft.submitted, status),
-                                            |metadata| {
-                                                metadata.child(
-                                                    icon_control(
-                                                        format!("discard-{discard_id}"),
-                                                        "Discard draft",
-                                                    )
-                                                    .absolute()
-                                                    .top(px(4.0))
-                                                    .right(px(5.0))
-                                                    .size(px(21.0))
-                                                    .opacity(0.0)
-                                                    .group_hover(action_group, |button| {
-                                                        button.opacity(1.0)
-                                                    })
-                                                    .focus(|button| button.opacity(1.0))
-                                                    .hover(|button| button.bg(THEME.colors.hover))
-                                                    .child(app_icon(
-                                                        AppIcon::Trash,
-                                                        AppIconSize::Control,
-                                                    ))
-                                                    .on_click(move |_, window, cx| {
-                                                        cx.stop_propagation();
-                                                        let _ = discard_entity.update(
-                                                            cx,
-                                                            |this, cx| {
-                                                                this.discard_draft(
-                                                                    &discard_id,
-                                                                    window,
-                                                                    cx,
-                                                                );
-                                                            },
-                                                        );
-                                                    }),
-                                                )
-                                            },
-                                        ),
+                                        .child(session_row_metadata(
+                                            &draft.harness,
+                                            target_app_session_id,
+                                            if is_draft { "" } else { status },
+                                            age,
+                                            shortcut,
+                                        )),
                                 ),
-                        ),
+                        )
+                        .when(draft_can_be_discarded(draft.submitted, status), |row| {
+                            row.child(
+                                icon_control(format!("discard-{discard_id}"), "Discard draft")
+                                    .absolute()
+                                    .top(px(4.0))
+                                    .right(px(5.0))
+                                    .size(px(21.0))
+                                    .opacity(0.0)
+                                    .group_hover(action_group, |button| button.opacity(1.0))
+                                    .focus(|button| button.opacity(1.0))
+                                    .hover(|button| button.bg(THEME.colors.hover))
+                                    .child(app_icon(AppIcon::Trash, AppIconSize::Control))
+                                    .on_click(move |_, window, cx| {
+                                        cx.stop_propagation();
+                                        let _ = discard_entity.update(cx, |this, cx| {
+                                            this.discard_draft(&discard_id, window, cx);
+                                        });
+                                    }),
+                            )
+                        }),
                 )
                 .into_any_element(),
         )
@@ -272,21 +267,9 @@ fn draft_badge() -> AnyElement {
         .into_any_element()
 }
 
-fn shows_draft_badge(status: &str) -> bool {
-    status == "Draft"
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{draft_can_be_discarded, shows_draft_badge};
-
-    #[test]
-    fn submitted_session_status_replaces_the_draft_badge() {
-        assert!(shows_draft_badge("Draft"));
-        assert!(!shows_draft_badge("Working"));
-        assert!(!shows_draft_badge("Needs input"));
-        assert!(!shows_draft_badge("Done"));
-    }
+    use super::draft_can_be_discarded;
 
     #[test]
     fn failed_submitted_drafts_can_be_discarded() {
