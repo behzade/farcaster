@@ -43,6 +43,21 @@ impl FarcasterApp {
         let role = activity.role.clone();
         let marker = role_icon(&role);
         let elapsed = elapsed_label(activity, SystemTime::now());
+        let registry = crate::agents::CallerRegistry::shared();
+        let profile = registry
+            .session_profile(&session.project, &session.harness, &session.id)
+            .or_else(|| {
+                registry.session_profile(
+                    &session.project,
+                    &session.harness,
+                    &session.path.to_string_lossy(),
+                )
+            });
+        let execution = execution_label(
+            profile.as_ref(),
+            session.model.as_ref(),
+            session.thinking_level.as_deref(),
+        );
         Some(
             div()
                 .id(format!("agent-card-{}", activity.session_id))
@@ -105,6 +120,26 @@ impl FarcasterApp {
                                 .flex()
                                 .items_center()
                                 .gap(THEME.space.xs)
+                                .text_size(THEME.type_scale.caption)
+                                .text_color(THEME.colors.muted)
+                                .child(app_icon(
+                                    AppIcon::for_harness(&session.harness),
+                                    AppIconSize::Inline,
+                                ))
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .overflow_hidden()
+                                        .whitespace_nowrap()
+                                        .text_ellipsis()
+                                        .child(execution),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(THEME.space.xs)
                                 .child(
                                     div()
                                         .text_color(lifecycle_color(displayed_lifecycle))
@@ -118,6 +153,33 @@ impl FarcasterApp {
                 .into_any_element(),
         )
     }
+}
+
+pub(super) fn execution_label(
+    profile: Option<&crate::agents::CallerProfile>,
+    model: Option<&(String, String)>,
+    effort: Option<&str>,
+) -> String {
+    let (provider, model, effort) = match profile {
+        Some(profile) => (
+            profile.provider.as_deref(),
+            profile.model.as_deref(),
+            profile.effort.as_deref(),
+        ),
+        None => (
+            model.map(|(provider, _)| provider.as_str()),
+            model.map(|(_, model)| model.as_str()),
+            effort,
+        ),
+    };
+    format!(
+        "{} · {} · {}",
+        provider.filter(|value| !value.is_empty()).unwrap_or("—"),
+        model.filter(|value| !value.is_empty()).unwrap_or("—"),
+        effort
+            .filter(|value| !value.is_empty())
+            .unwrap_or("default"),
+    )
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

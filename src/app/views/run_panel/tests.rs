@@ -90,3 +90,33 @@ fn active_agents_are_never_hidden_by_limited_history() {
         AgentSection::Completed
     );
 }
+
+#[test]
+fn worker_subtitle_uses_live_profile_then_catalog_identity() {
+    use super::agents::execution_label;
+
+    let cached_model = ("cached-provider".into(), "cached-model".into());
+    let profile = crate::agents::CallerProfile {
+        backend: "codex-cli".into(),
+        provider: Some("openai".into()),
+        model: Some("gpt-5.6-luna".into()),
+        effort: Some("high".into()),
+    };
+    assert_eq!(
+        execution_label(Some(&profile), Some(&cached_model), Some("low")),
+        "openai · gpt-5.6-luna · high"
+    );
+    let profile = crate::agents::CallerProfile {
+        effort: None,
+        ..profile
+    };
+    assert_eq!(
+        execution_label(Some(&profile), Some(&cached_model), Some("low")),
+        "openai · gpt-5.6-luna · default"
+    );
+    assert_eq!(
+        execution_label(None, Some(&cached_model), Some("low")),
+        "cached-provider · cached-model · low"
+    );
+    assert_eq!(execution_label(None, None, None), "— · — · default");
+}
