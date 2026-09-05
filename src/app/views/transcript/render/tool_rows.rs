@@ -127,6 +127,10 @@ pub(super) fn render_tool(
         },
         |details| details.summary(),
     );
+    let command = item
+        .tool_details
+        .as_ref()
+        .and_then(|details| details.command_preview());
     let open_target = direct_change_target(item).map(|(path, line)| (path.to_owned(), line));
     let opens_editor = open_target.is_some();
     let expanded = expanded && !opens_editor;
@@ -156,7 +160,16 @@ pub(super) fn render_tool(
                     }
                 });
             })
-            .when(!opens_editor, |row| row.aria_expanded(expanded))
+            .when(!opens_editor, |row| {
+                row.aria_expanded(expanded).child(app_icon(
+                    if expanded {
+                        AppIcon::CaretDown
+                    } else {
+                        AppIcon::CaretRight
+                    },
+                    AppIconSize::Inline,
+                ))
+            })
             .child(status_slot(status))
             .when_some(presentation, |row, presentation| {
                 row.child(tool_changes::tool_label(item.label.clone()))
@@ -181,6 +194,16 @@ pub(super) fn render_tool(
                 )
             }),
         )
+        .when_some(command, |tool, command| {
+            tool.child(
+                disclosure_detail().child(
+                    selectable_text(("tool-command", key), fenced_text(command))
+                        .font_family(MONO_FONT_FAMILY)
+                        .text_size(THEME.type_scale.body_small)
+                        .text_color(THEME.colors.text),
+                ),
+            )
+        })
         .when(expanded, |tool| {
             tool.child(
                 disclosure_detail()

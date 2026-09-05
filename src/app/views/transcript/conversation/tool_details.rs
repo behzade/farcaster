@@ -94,6 +94,14 @@ impl ToolDetails {
         }
     }
 
+    /// Canonical command source, displayed verbatim rather than inferred from a title.
+    pub(crate) fn command_preview(&self) -> Option<&str> {
+        self.arguments
+            .get("command")
+            .and_then(Value::as_str)
+            .filter(|command| !command.trim().is_empty())
+    }
+
     pub(crate) fn inspection_text(&self) -> String {
         let mut text = format!(
             "Tool: {}\n\nArguments:\n{}",
@@ -133,6 +141,26 @@ impl TranscriptItem {
             } else {
                 ToolExecutionState::Succeeded
             };
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn command_preview_preserves_source_and_ignores_missing_or_invalid_commands() {
+        let command = "cargo test mcp\ngit diff --check";
+        for (arguments, expected) in [
+            (json!({"command": command}), Some(command)),
+            (json!({}), None),
+            (json!({"command": " \n"}), None),
+            (json!({"command": []}), None),
+        ] {
+            let details = ToolDetails::from_call("bash", Some(&arguments), None);
+            assert_eq!(details.command_preview(), expected);
         }
     }
 }
