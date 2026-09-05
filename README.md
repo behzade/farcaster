@@ -82,12 +82,17 @@ a free slot before starting another turn. Children send results explicitly with
 
 ### Worker task routing
 
-**Settings → Worker tasks** lets you add, rename, or delete task definitions and
-choose a harness, provider, model, and effort for each judgment level. Changes
-are saved with the rest of Settings; Cancel discards edits. Model choices come
-from the current project's cached harness catalogs; exact IDs can also be typed.
-Changing harness clears the previous provider/model/effort to avoid mixing IDs.
-An empty effort uses that backend's default.
+**Settings → Worker tasks** lists your tasks beside their three judgment routes.
+Use **Add task** to name a new definition; a task's **…** menu contains Rename
+and Delete. Each route has dependent **Harness → Provider → Model → Effort**
+selectors populated from the current project's cached harness catalogs.
+Changing a harness or provider clears incompatible downstream choices. Changing
+a model resets effort to the backend default.
+
+Use **Reload choices** to reread catalogs discovered by the app. If a model is
+not listed, the route's **… → Enter custom IDs** action opens an explicit editor.
+Apply or cancel name/custom edits before saving Settings. **Save** persists all
+task changes; **Cancel** discards them. Existing worker sessions are unchanged.
 
 The initial task definitions are `read`, `implement`, and `review`, each with:
 

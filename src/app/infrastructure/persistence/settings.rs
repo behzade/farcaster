@@ -218,13 +218,9 @@ impl StateStore {
                 .map_err(|error| format!("encode worker tasks: {error}"))?;
             save("worker_tasks", &value, "worker tasks")?;
         }
-        if let Some(proxy) = proxy {
-            save(NETWORK_PROXY_KEY, proxy, "network proxy")?;
-        } else {
-            transaction
-                .execute("DELETE FROM meta WHERE key=?1", [NETWORK_PROXY_KEY])
-                .map_err(|error| format!("clear network proxy: {error}"))?;
-        }
+        // The proxy store uses this connection, so the write participates in
+        // the same transaction as the modifier and worker routes.
+        crate::access::save_proxy(self, proxy)?;
         transaction
             .commit()
             .map_err(|error| format!("commit application settings: {error}"))
