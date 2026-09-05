@@ -391,6 +391,7 @@ fn render_row(
             expanded,
             disclosure_states,
             entity,
+            cx,
         ),
         TranscriptRow::MessageChunk {
             index,
@@ -471,7 +472,7 @@ fn render_row(
             render_invocation(key, &items[index], entity)
         }
         TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Tool => {
-            render_tool(key, &items[index], expanded, entity)
+            render_tool(key, &items[index], expanded, entity, cx)
         }
         TranscriptRow::Item { index, revision }
             if matches!(
