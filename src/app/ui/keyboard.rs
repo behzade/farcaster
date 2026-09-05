@@ -37,7 +37,9 @@ impl FarcasterApp {
             (false, false) => return,
         };
         if let Ok(keystroke) = Keystroke::parse(target) {
-            cx.defer_in(window, move |_, window, cx| {
+            // Dispatch without borrowing FarcasterApp: the composer's paste capture
+            // updates that entity again to handle image and long-text attachments.
+            window.defer(cx, move |window, cx| {
                 window.dispatch_keystroke(keystroke, cx);
             });
         }
