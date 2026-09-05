@@ -87,7 +87,7 @@ impl Render for RunPanelView {
             return gpui::div().into_any_element();
         };
         if self.search.is_none() {
-            let input = cx.new(|cx| InputState::new(window, cx).placeholder("Search files…"));
+            let input = cx.new(|cx| InputState::new(window, cx).placeholder("Filter files…"));
             self.search_subscription =
                 Some(
                     cx.subscribe_in(&input, window, |this, _, event: &InputEvent, _, cx| {
