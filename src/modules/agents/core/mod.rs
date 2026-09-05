@@ -6,7 +6,9 @@ mod pool;
 mod pool_tests;
 mod prompt_store;
 mod run;
+mod tool;
 mod worker;
+pub(crate) use tool::{ToolCategory, ToolMetadata};
 mod worker_tasks;
 pub(crate) use worker_tasks::{
     WorkerAssignment, WorkerExecution, WorkerJudgment, WorkerTaskDefinition, WorkerTasks,

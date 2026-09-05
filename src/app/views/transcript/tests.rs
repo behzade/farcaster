@@ -572,21 +572,6 @@ fn explicit_disclosure_state_survives_default_changes() {
         std::slice::from_ref(&running),
         &states
     ));
-    assert_eq!(
-        tool_state(false, 0, true),
-        Some(ToolState {
-            glyph: "✓",
-            label: "Done"
-        })
-    );
-    assert_eq!(
-        tool_state(false, 1, true),
-        Some(ToolState {
-            glyph: "×",
-            label: "Failed"
-        })
-    );
-    assert_eq!(tool_state(false, 0, false), None);
 }
 
 #[test]
@@ -637,20 +622,6 @@ fn streaming_chunk_growth_keeps_stable_row_position() {
 }
 
 #[test]
-fn targets_use_the_first_readable_argument_value() {
-    assert_eq!(tool_target("Path: src/main.rs\nOffset: 2"), "src/main.rs");
-    assert_eq!(tool_target(""), "");
-}
-
-#[test]
-fn host_script_targets_prefer_the_command_over_the_reason() {
-    assert_eq!(
-        tool_target("Need sudo to install docker\n\nCommand:\nsudo apt install docker"),
-        "sudo apt install docker"
-    );
-}
-
-#[test]
 fn transcript_copy_keeps_pasted_file_links() {
     let mut state = conversation::ConversationState::default();
     state.push_local_user_with_prompt_images(
@@ -672,18 +643,30 @@ fn activity_groups_keep_thinking_inside_and_attention_outside() {
     let mut failed = item(TranscriptKind::Tool, "Read", "Path: denied");
     Arc::make_mut(&mut failed).is_error = true;
     let mut approval = item(TranscriptKind::Tool, "Bash", "Command: deploy");
-    Arc::make_mut(&mut approval).tool_review = Some(ToolReview { state: ToolReviewState::Reviewing, detail: None });
+    Arc::make_mut(&mut approval).tool_review = Some(ToolReview {
+        state: ToolReviewState::Reviewing,
+        detail: None,
+    });
     let items = vec![
         item(TranscriptKind::Tool, "Read", "Path: one"),
         item(TranscriptKind::Thinking, "", "Inspecting attachments"),
         item(TranscriptKind::Tool, "Bash", "Command: opaque script"),
-        running, failed, approval,
+        running,
+        failed,
+        approval,
         item(TranscriptKind::Assistant, "", "Done"),
         item(TranscriptKind::Tool, "Read", "Path: two"),
     ];
     let rows = project_rows(&items);
     assert_eq!(rows.len(), 6);
-    assert!(matches!(rows[0], TranscriptRow::ActivityGroup { start: 0, len: 3, .. }));
+    assert!(matches!(
+        rows[0],
+        TranscriptRow::ActivityGroup {
+            start: 0,
+            len: 3,
+            ..
+        }
+    ));
     for (row, index) in rows.iter().skip(1).zip(3..8) {
         assert!(matches!(row, TranscriptRow::Item { index: actual, .. } if *actual == index));
     }
@@ -699,7 +682,10 @@ fn completing_a_tool_merges_activity_without_losing_disclosure_identity() {
     Arc::make_mut(&mut items[1]).streaming = false;
     let rows = update_rows_from(&previous_rows, &previous, &items, Some(1));
     assert_eq!(rows, project_rows(&items));
-    assert!(matches!(rows[0], TranscriptRow::ActivityGroup { len: 2, .. }));
+    assert!(matches!(
+        rows[0],
+        TranscriptRow::ActivityGroup { len: 2, .. }
+    ));
     assert_ne!(rows[0].disclosure_key(), rows[0].key());
     let states = std::collections::HashMap::from([(rows[0].disclosure_key(), true), (0, false)]);
     assert!(resolved_expanded(rows[0], &items, &states));
@@ -718,7 +704,8 @@ fn activity_incremental_projection_matches_full_projection_at_every_boundary() {
         item(TranscriptKind::Thinking, "", "Inspect further"),
         item(TranscriptKind::Tool, "Read", "Path: one"),
         item(TranscriptKind::Tool, "Bash", "Command: unknown"),
-        running, failed,
+        running,
+        failed,
         item(TranscriptKind::Tool, "Read", "Path: two"),
         item(TranscriptKind::Thinking, "", "Review"),
         item(TranscriptKind::Assistant, "", "Finished"),
@@ -734,8 +721,53 @@ fn activity_incremental_projection_matches_full_projection_at_every_boundary() {
     }
     for index in 0..previous.len() {
         let mut changed = previous.clone();
-        Arc::make_mut(&mut changed[index]).is_error = true;
+        Arc::make_mut(&mut changed[index]).is_error = !previous[index].is_error;
         let updated = update_rows_from(&rows, &previous, &changed, Some(index));
         assert_eq!(updated, project_rows(&changed), "changed index {index}");
     }
+}
+
+#[test]
+fn selecting_an_activity_row_copies_every_call_and_thought_in_order() {
+    let mut items = PersistentVec::default();
+    items.extend([
+        item(TranscriptKind::Tool, "Read", "first"),
+        item(TranscriptKind::Thinking, "", "second"),
+        item(TranscriptKind::Tool, "Bash", "third"),
+        item(TranscriptKind::Assistant, "", "fourth"),
+    ]);
+    let rows = project_rows(&items);
+    assert_eq!(
+        copy_transcript_row_range(&items, &rows, 0..=0),
+        "first\n\nsecond\n\nthird"
+    );
+    assert_eq!(
+        copy_transcript_row_range(&items, &rows, 0..=3),
+        "first\n\nsecond\n\nthird\n\nfourth"
+    );
+    assert!(rows[0].contains_disclosure_key(rows[0].disclosure_key()));
+    assert!(rows[0].contains_disclosure_key(2));
+    assert!(!rows[0].contains_disclosure_key(3));
+}
+
+#[test]
+fn tool_completion_and_late_metadata_invalidate_the_actual_earlier_row() {
+    use serde_json::json;
+    let mut conversation = conversation::ConversationState::default();
+    for id in ["first", "second"] {
+        conversation.reduce(&json!({"type":"tool_execution_start", "toolCallId":id, "toolName":"bash", "args":{"command":"true"}}));
+    }
+    let before = conversation.items.clone();
+    let before_rows = project_rows(&before);
+    let changed = conversation.reduce(&json!({"type":"tool_execution_end", "toolCallId":"first", "result":{"content":[]}, "isError":false}));
+    assert_eq!(changed, Some(0));
+    let rows = update_rows_from(&before_rows, &before, &conversation.items, changed);
+    assert_eq!(rows, project_rows(&conversation.items));
+    let changed = conversation.reduce(&json!({"type":"tool_metadata_changed", "toolCallId":"first", "toolMetadata":{"category":"execute","title":"Finished tests"}}));
+    assert_eq!(changed, Some(0));
+    let changed = conversation
+        .reduce(&json!({"type":"tool_review_changed", "toolCallId":"first", "state":"blocked"}));
+    assert_eq!(changed, Some(0));
+    let changed = conversation.reduce(&json!({"type":"message_end", "message":{"role":"toolResult", "toolCallId":"first", "content":[], "isError":false}}));
+    assert_eq!(changed, Some(0));
 }

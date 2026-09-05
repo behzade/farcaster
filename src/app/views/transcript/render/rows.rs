@@ -89,6 +89,10 @@ impl TranscriptRow {
         }
     }
 
+    pub(crate) fn contains_disclosure_key(&self, key: usize) -> bool {
+        self.disclosure_key() == key || (self.item_start()..self.item_end()).contains(&key)
+    }
+
     pub(crate) fn same_position(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Item { index: left, .. }, Self::Item { index: right, .. }) => left == right,
@@ -412,6 +416,14 @@ fn project_rows_from(
             while let Some(next) = items.get(end).filter(|next| is_routine_activity(next)) {
                 has_tool |= next.kind == TranscriptKind::Tool;
                 end += 1;
+            }
+            if !has_tool && end - start > 1 {
+                rows.extend((start..end).map(|index| TranscriptRow::Item {
+                    index,
+                    revision: item_revision(items, index..index + 1),
+                }));
+                index = end;
+                continue;
             }
             if has_tool && end - start > 1 {
                 rows.push(TranscriptRow::ActivityGroup {

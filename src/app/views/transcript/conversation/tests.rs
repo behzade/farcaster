@@ -81,22 +81,33 @@ fn saved_presentations_restore_compact_history_in_order() {
 }
 
 #[test]
-fn pasted_file_contents_stay_out_of_the_transcript() {
+fn pasted_files_and_images_survive_finalization_and_history() {
     let prompt = "check this\n\nPasted text files:\n- [pasted.txt](</tmp/pasted.txt>)\n\n--- BEGIN PASTED FILE pasted.txt ---\nsecret\n--- END PASTED FILE pasted.txt ---";
-    let display = "check this\n\nPasted text files:\n- [pasted.txt](</tmp/pasted.txt>)";
+    let image = Arc::new(Image::from_bytes(ImageFormat::Png, vec![1, 2, 3]));
+    let message = json!({"role":"user", "content":[
+        {"type":"text", "text":prompt},
+        {"type":"image", "data":"AQID", "mimeType":"image/png"}
+    ]});
     let mut state = ConversationState::default();
+    let optimistic = state.push_local_user_with_images(prompt.into(), Arc::new(vec![image]), None);
+    assert_eq!(optimistic.text, "check this");
+    assert_eq!(optimistic.files.len(), 1);
+    assert_eq!(
+        optimistic.files[0].path,
+        std::path::Path::new("/tmp/pasted.txt")
+    );
 
-    state.push_local_user(prompt.into(), 0, false);
-    assert_eq!(state.items[0].text, display);
-    state.start_message(Some(&json!({"role": "user", "content": prompt})));
-    state.end_message(Some(&json!({"role": "user", "content": prompt})));
-
+    state.start_message(Some(&message));
+    state.end_message(Some(&message));
     assert_eq!(state.items.len(), 1);
-    assert_eq!(state.items[0].text, display);
+    assert_eq!(state.items[0].text, optimistic.text);
+    assert_eq!(state.items[0].files, optimistic.files);
+    assert_eq!(state.items[0].images.len(), 1);
 
-    let mut runtime_state = ConversationState::default();
-    runtime_state.push_local_user_with_prompt_images(prompt.into(), &[], false);
-    assert_eq!(runtime_state.items[0].text, display);
+    state.replace_history(&[message]);
+    assert_eq!(state.items[0].text, optimistic.text);
+    assert_eq!(state.items[0].files, optimistic.files);
+    assert_eq!(state.items[0].images.len(), 1);
 }
 
 #[test]
@@ -832,4 +843,60 @@ fn delivered_user_message_is_removed_from_the_visible_queue() {
     }));
 
     assert_eq!(state.queue.follow_up, ["then test"]);
+}
+
+#[test]
+fn tool_metadata_updates_preserve_lifecycle_and_raw_arguments() {
+    let mut state = ConversationState::default();
+    state.reduce(&json!({
+        "type":"tool_execution_start", "toolCallId":"t", "toolName":"bash",
+        "args":{"command":"python3 - <<'PY'\nprint('hello')\nPY"},
+        "toolMetadata":{"category":"execute", "native":{"original":true}}
+    }));
+    let details = state.items[0].tool_details.as_ref().unwrap();
+    assert_eq!(details.summary(), "Run command");
+    assert_eq!(details.state, ToolExecutionState::Running);
+    let args = details.arguments.clone();
+    state.reduce(&json!({
+        "type":"tool_metadata_changed", "toolCallId":"t",
+        "toolMetadata":{"category":"execute", "title":"Run attachment tests", "native":{"original":true, "status":"running"}}
+    }));
+    assert_eq!(state.items.len(), 1);
+    let details = state.items[0].tool_details.as_ref().unwrap();
+    assert_eq!(details.arguments, args);
+    assert_eq!(details.summary(), "Run attachment tests");
+    assert_eq!(details.state, ToolExecutionState::Running);
+    state.reduce(&json!({
+        "type":"tool_execution_end", "toolCallId":"t", "isError":false,
+        "result":{"content":[]}
+    }));
+    let details = state.items[0].tool_details.as_ref().unwrap();
+    assert_eq!(details.state, ToolExecutionState::Succeeded);
+    assert_eq!(details.result, Some(json!({"content":[]})));
+    assert!(details.inspection_text().contains("python3"));
+    assert!(details.inspection_text().contains("Native data:"));
+    assert!(!state.items[0].streaming);
+}
+
+#[test]
+fn tool_metadata_is_identical_in_live_and_history_projection() {
+    let metadata = json!({"category":"search", "title":"Search attachment references", "targets":["src"], "native":{"kind":"search"}});
+    let args = json!({"pattern":"attachment"});
+    let result = json!({"content":[{"type":"text", "text":"found"}], "isError":false});
+    let mut live = ConversationState::default();
+    live.reduce(&json!({"type":"tool_execution_start", "toolCallId":"s", "toolName":"grep", "args":args, "toolMetadata":metadata}));
+    live.reduce(
+        &json!({"type":"tool_execution_end", "toolCallId":"s", "result":result, "isError":false}),
+    );
+    let mut history = ConversationState::default();
+    history.replace_history(&[
+        json!({"role":"assistant", "content":[{"type":"toolCall", "id":"s", "name":"grep", "arguments":args, "toolMetadata":metadata}]}),
+        json!({"role":"toolResult", "toolCallId":"s", "toolName":"grep", "content":[{"type":"text","text":"found"}], "isError":false}),
+    ]);
+    let left = live.items[0].tool_details.as_ref().unwrap();
+    let right = history.items[0].tool_details.as_ref().unwrap();
+    assert_eq!(left.metadata, right.metadata);
+    assert_eq!(left.arguments, right.arguments);
+    assert_eq!(left.state, right.state);
+    assert_eq!(left.summary(), right.summary());
 }

@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 
 use super::AcpProfile;
-use crate::agents::{CommonTool, TokenUsage, WorkerUsage};
+use crate::agents::{CommonTool, TokenUsage, ToolCategory, ToolMetadata, WorkerUsage};
 
 #[derive(Clone, Default)]
 pub(super) struct ConfigIds {
@@ -155,11 +155,85 @@ pub(super) fn normalize_tool_name(update: &Value, title: &str) -> String {
     match update.get("kind").and_then(Value::as_str).unwrap_or("") {
         "read" => CommonTool::Read.name().into(),
         "edit" | "delete" | "move" => CommonTool::Edit.name().into(),
-        "execute" => CommonTool::Bash.name().into(),
         "search" => "grep".into(),
         "fetch" => "web_fetch".into(),
+        // ACP's `execute` kind is broader than a shell command. Keep the
+        // agent-provided title rather than manufacturing bash semantics.
         _ => title.to_owned(),
     }
+}
+
+pub(super) fn merge_tool_metadata(metadata: &mut ToolMetadata, update: &Value) {
+    let mut native = metadata
+        .native
+        .take()
+        .unwrap_or_else(|| Value::Object(Default::default()));
+    merge_value(&mut native, update);
+
+    metadata.category = native
+        .get("kind")
+        .and_then(Value::as_str)
+        .map(|kind| match kind {
+            "read" => ToolCategory::Read,
+            "search" => ToolCategory::Search,
+            "list" => ToolCategory::List,
+            "edit" | "delete" | "move" => ToolCategory::Change,
+            "execute" => ToolCategory::Execute,
+            "fetch" => ToolCategory::Fetch,
+            "delegate" => ToolCategory::Delegate,
+            _ => ToolCategory::Other,
+        });
+    metadata.title = native
+        .get("title")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    metadata.targets = native
+        .get("locations")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|location| {
+            location
+                .as_str()
+                .or_else(|| location.get("path").and_then(Value::as_str))
+                .or_else(|| location.get("uri").and_then(Value::as_str))
+                .map(str::to_owned)
+        })
+        .collect();
+    metadata.native = Some(native);
+}
+
+pub(super) fn tool_metadata(update: &Value) -> ToolMetadata {
+    let mut metadata = ToolMetadata::default();
+    merge_tool_metadata(&mut metadata, update);
+    metadata
+}
+
+pub(super) fn tool_args(metadata: &ToolMetadata) -> Value {
+    metadata
+        .native
+        .as_ref()
+        .and_then(|native| native.get("rawInput"))
+        .cloned()
+        .unwrap_or_else(|| json!({}))
+}
+
+fn merge_value(current: &mut Value, update: &Value) {
+    if let (Some(current), Some(update)) = (current.as_object_mut(), update.as_object()) {
+        for (key, value) in update {
+            if let Some(previous) = current.get_mut(key) {
+                merge_value(previous, value);
+            } else {
+                current.insert(key.clone(), value.clone());
+            }
+        }
+    } else {
+        *current = update.clone();
+    }
+}
+
+pub(super) fn merged_tool_content(metadata: &ToolMetadata, update: &Value) -> Value {
+    tool_content(metadata.native.as_ref().unwrap_or(update))
 }
 
 pub(super) fn tool_content(update: &Value) -> Value {
@@ -309,6 +383,57 @@ mod tests {
                 }]
             })),
             json!([{"type": "text", "text": "done"}])
+        );
+    }
+
+    #[test]
+    fn tool_metadata_merges_partial_acp_updates() {
+        let mut metadata = tool_metadata(&json!({
+            "sessionUpdate": "tool_call",
+            "toolCallId": "one",
+            "kind": "read",
+            "title": "Read file",
+            "locations": [{"path": "src/main.rs", "line": 4}]
+        }));
+        merge_tool_metadata(
+            &mut metadata,
+            &json!({"sessionUpdate":"tool_call_update", "rawInput":{"path":"src/main.rs"}}),
+        );
+        assert_eq!(metadata.category, Some(ToolCategory::Read));
+        assert_eq!(metadata.title.as_deref(), Some("Read file"));
+        assert_eq!(metadata.targets, ["src/main.rs"]);
+        assert_eq!(tool_args(&metadata), json!({"path":"src/main.rs"}));
+        assert_eq!(metadata.native.as_ref().unwrap()["kind"], "read");
+        assert_eq!(
+            metadata.native.as_ref().unwrap()["rawInput"]["path"],
+            "src/main.rs"
+        );
+    }
+
+    #[test]
+    fn completed_update_retains_content_from_an_earlier_partial_update() {
+        let mut metadata = tool_metadata(&json!({
+            "sessionUpdate":"tool_call_update",
+            "toolCallId":"one",
+            "content":[{"type":"text", "text":"earlier output"}]
+        }));
+        let completed = json!({
+            "sessionUpdate":"tool_call_update",
+            "toolCallId":"one",
+            "status":"completed"
+        });
+        merge_tool_metadata(&mut metadata, &completed);
+        assert_eq!(
+            merged_tool_content(&metadata, &completed),
+            json!([{"type":"text", "text":"earlier output"}])
+        );
+    }
+
+    #[test]
+    fn execute_kind_does_not_guess_bash() {
+        assert_eq!(
+            normalize_tool_name(&json!({"kind":"execute"}), "Run database migration"),
+            "Run database migration"
         );
     }
 

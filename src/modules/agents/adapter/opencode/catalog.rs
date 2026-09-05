@@ -245,7 +245,21 @@ fn assistant_history_messages(value: &Value) -> Vec<Value> {
         .flatten()
     {
         match block.get("type").and_then(Value::as_str) {
-            Some("text" | "thinking" | "toolCall") => content.push(block.clone()),
+            Some("text" | "thinking") => content.push(block.clone()),
+            Some("toolCall") => {
+                let mut tool_call = block.clone();
+                let reported_name = block.get("name").and_then(Value::as_str).unwrap_or("tool");
+                let (name, arguments) = super::tool::normalize_opencode_tool(
+                    reported_name,
+                    block.get("arguments").unwrap_or(&Value::Null),
+                );
+                let metadata = opencode_history_tool_metadata(block, &name, &arguments);
+                tool_call["name"] = Value::String(name);
+                tool_call["arguments"] = arguments;
+                tool_call["toolMetadata"] =
+                    serde_json::to_value(metadata).expect("tool metadata serializes");
+                content.push(tool_call);
+            }
             Some("reasoning") => content.push(json!({
                 "type": "thinking",
                 "thinking": block.get("text").and_then(Value::as_str).unwrap_or_default(),
@@ -261,11 +275,13 @@ fn assistant_history_messages(value: &Value) -> Vec<Value> {
                     state.get("input").unwrap_or(&Value::Null),
                 );
                 let is_error = opencode_tool_failed(state);
+                let metadata = opencode_history_tool_metadata(block, &name, &arguments);
                 content.push(json!({
                     "type": "toolCall",
                     "id": id,
                     "name": name,
                     "arguments": arguments,
+                    "toolMetadata": metadata,
                 }));
                 results.push(json!({
                     "role": "toolResult",
@@ -297,6 +313,19 @@ fn assistant_history_messages(value: &Value) -> Vec<Value> {
     })];
     messages.append(&mut results);
     messages
+}
+
+fn opencode_history_tool_metadata(
+    block: &Value,
+    name: &str,
+    arguments: &Value,
+) -> crate::agents::ToolMetadata {
+    let native = block
+        .get("toolMetadata")
+        .and_then(|metadata| metadata.get("native"))
+        .cloned()
+        .unwrap_or_else(|| block.clone());
+    super::tool::opencode_tool_metadata(name, arguments, native)
 }
 
 fn opencode_tool_failed(state: &Value) -> bool {
@@ -482,6 +511,18 @@ mod tests {
             Some(&json!("src/main.rs"))
         );
         assert_eq!(messages[0].pointer("/content/2/text"), Some(&json!("Done")));
+        assert_eq!(
+            messages[0].pointer("/content/1/toolMetadata/category"),
+            Some(&json!("read"))
+        );
+        assert_eq!(
+            messages[0].pointer("/content/1/toolMetadata/targets/0"),
+            Some(&json!("src/main.rs"))
+        );
+        assert_eq!(
+            messages[0].pointer("/content/1/toolMetadata/native/state/input/filePath"),
+            Some(&json!("src/main.rs"))
+        );
         assert_eq!(messages[0].pointer("/usage/input"), Some(&json!(10)));
         assert_eq!(messages[1]["role"], "toolResult");
         assert_eq!(

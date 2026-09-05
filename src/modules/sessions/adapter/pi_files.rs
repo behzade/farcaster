@@ -389,7 +389,11 @@ fn active_branch_entries(entries: &[Value]) -> Vec<&Value> {
 
 fn entry_message(entry: &Value) -> Option<Value> {
     match entry.get("type").and_then(Value::as_str)? {
-        "message" => entry.get("message").cloned(),
+        "message" => {
+            let mut message = entry.get("message").cloned()?;
+            crate::agents::annotate_history_message("pi", &mut message);
+            Some(message)
+        }
         "custom_message" => Some(json_object([
             ("role", Value::String("custom".into())),
             (
@@ -989,6 +993,35 @@ pub(crate) fn normalize_session_path(path: &Path) -> PathBuf {
     path.canonicalize()
         .map(|canonical| normalize_lexical(&canonical))
         .unwrap_or_else(|_| normalize_lexical(path))
+}
+
+#[cfg(test)]
+mod tool_metadata_tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn loaded_pi_history_annotates_tool_calls_without_changing_arguments() {
+        let arguments = json!({"path": "README.md", "offset": 4});
+        let messages = project_display_history(&[json!({
+            "type": "message",
+            "message": {
+                "role": "assistant",
+                "content": [{
+                    "type": "toolCall",
+                    "id": "read-1",
+                    "name": "read",
+                    "arguments": arguments.clone()
+                }]
+            }
+        })]);
+        let block = &messages[0]["content"][0];
+        assert_eq!(block["arguments"], arguments);
+        assert_eq!(block["toolMetadata"]["category"], "read");
+        assert_eq!(block["toolMetadata"]["targets"], json!(["README.md"]));
+        assert_eq!(block["toolMetadata"]["native"], arguments);
+    }
 }
 
 #[cfg(test)]

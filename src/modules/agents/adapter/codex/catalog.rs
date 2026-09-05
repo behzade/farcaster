@@ -8,8 +8,8 @@ use std::{
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use serde_json::{Value, json};
 
-use super::{connection::CodexConnection, contract::CodexClientInfo};
-use crate::agents::{CommonTool, DiscoveredHistory, DiscoveredSession, DiscoveredUsage};
+use super::{connection::CodexConnection, contract::CodexClientInfo, tool};
+use crate::agents::{DiscoveredHistory, DiscoveredSession, DiscoveredUsage};
 
 use super::super::{
     child_stderr,
@@ -315,9 +315,7 @@ fn history_messages(item: &Value) -> Vec<Value> {
             "role": "assistant",
             "content": [{"type": "thinking", "thinking": reasoning_text(item)}],
         })],
-        Some(kind @ ("commandExecution" | "mcpToolCall" | "fileChange" | "webSearch")) => {
-            history_tool_messages(item, kind)
-        }
+        Some(kind) if tool::is_tool_kind(kind) => history_tool_messages(item, kind),
         _ => Vec::new(),
     }
 }
@@ -326,7 +324,7 @@ fn history_tool_messages(item: &Value, kind: &str) -> Vec<Value> {
     let Some(id) = item.get("id").and_then(Value::as_str) else {
         return Vec::new();
     };
-    let (name, arguments) = history_tool_call(item, kind);
+    let projection = tool::project(item, kind);
     let is_error = item
         .get("status")
         .and_then(Value::as_str)
@@ -337,69 +335,19 @@ fn history_tool_messages(item: &Value, kind: &str) -> Vec<Value> {
             "content": [{
                 "type": "toolCall",
                 "id": id,
-                "name": name,
-                "arguments": arguments,
+                "name": projection.name,
+                "arguments": projection.args,
+                "toolMetadata": projection.metadata,
             }],
         }),
         json!({
             "role": "toolResult",
             "toolCallId": id,
-            "toolName": name,
+            "toolName": projection.name,
             "content": history_tool_output(item, kind, is_error),
             "isError": is_error,
         }),
     ]
-}
-
-fn history_tool_call(item: &Value, kind: &str) -> (String, Value) {
-    match kind {
-        "fileChange" => {
-            let changes = item.get("changes").cloned().unwrap_or_else(|| json!([]));
-            let path = changes
-                .as_array()
-                .and_then(|changes| changes.first())
-                .and_then(|change| change.get("path"))
-                .cloned()
-                .unwrap_or(Value::String(String::new()));
-            (
-                CommonTool::Edit.name().into(),
-                json!({"path": path, "changes": changes}),
-            )
-        }
-        "commandExecution" => {
-            let read = item
-                .get("commandActions")
-                .and_then(Value::as_array)
-                .filter(|actions| actions.len() == 1)
-                .and_then(|actions| actions.first())
-                .filter(|action| action.get("type").and_then(Value::as_str) == Some("read"));
-            if let Some(action) = read {
-                (
-                    CommonTool::Read.name().into(),
-                    json!({"path": action.get("path").cloned().unwrap_or(Value::Null)}),
-                )
-            } else {
-                (
-                    CommonTool::Bash.name().into(),
-                    json!({"command": item.get("command").cloned().unwrap_or(Value::Null)}),
-                )
-            }
-        }
-        "webSearch" => (
-            "web_search".into(),
-            json!({"query": history_web_search_query(item)}),
-        ),
-        _ => {
-            let name = item
-                .get("tool")
-                .and_then(Value::as_str)
-                .or_else(|| item.get("name").and_then(Value::as_str))
-                .or_else(|| item.get("server").and_then(Value::as_str))
-                .unwrap_or(kind);
-            let arguments = item.get("arguments").cloned().unwrap_or_else(|| json!({}));
-            (name.to_owned(), arguments)
-        }
-    }
 }
 
 fn history_tool_output(item: &Value, kind: &str, is_error: bool) -> Vec<Value> {
@@ -422,7 +370,7 @@ fn history_tool_output(item: &Value, kind: &str, is_error: bool) -> Vec<Value> {
         .and_then(Value::as_str)
         .or_else(|| {
             (kind == "webSearch")
-                .then(|| history_web_search_query(item))
+                .then(|| tool::web_search_query(item))
                 .flatten()
         })
         .unwrap_or_else(|| {
@@ -433,18 +381,6 @@ fn history_tool_output(item: &Value, kind: &str, is_error: bool) -> Vec<Value> {
             }
         });
     vec![json!({"type": "text", "text": output})]
-}
-
-fn history_web_search_query(item: &Value) -> Option<&str> {
-    item.get("query")
-        .and_then(Value::as_str)
-        .filter(|query| !query.is_empty())
-        .or_else(|| {
-            let action = item.get("action")?;
-            ["query", "url", "pattern"]
-                .into_iter()
-                .find_map(|field| action.get(field).and_then(Value::as_str))
-        })
 }
 
 fn text_content(content: Option<&Value>) -> Vec<Value> {
@@ -578,6 +514,21 @@ mod tests {
             messages[0].pointer("/content/0/arguments/command"),
             Some(&json!("cargo test"))
         );
+        assert_eq!(
+            messages[0].pointer("/content/0/toolMetadata/category"),
+            Some(&json!("execute"))
+        );
+        assert_eq!(
+            messages[0].pointer("/content/0/toolMetadata/native"),
+            Some(&json!({
+                "type": "commandExecution",
+                "id": "command-1",
+                "command": "cargo test",
+                "commandActions": [],
+                "status": "completed",
+                "aggregatedOutput": "ok",
+            }))
+        );
         assert_eq!(messages[1]["role"], "toolResult");
         assert_eq!(messages[1].pointer("/content/0/text"), Some(&json!("ok")));
         assert_eq!(messages[1]["isError"], false);
@@ -614,16 +565,30 @@ mod tests {
 
     #[test]
     fn translates_historical_file_changes_and_web_searches() {
-        let file = history_messages(&json!({
+        let native_file = json!({
             "type": "fileChange",
             "id": "change-1",
-            "changes": [{"path": "src/main.rs", "diff": "+fn main() {}"}],
+            "changes": [
+                {"path": "src/main.rs", "diff": "+fn main() {}"},
+                {"path": "src/lib.rs", "diff": "+pub mod new;"}
+            ],
             "status": "completed",
-        }));
+        });
+        let file = history_messages(&native_file);
         assert_eq!(file[0].pointer("/content/0/name"), Some(&json!("edit")));
         assert_eq!(
             file[0].pointer("/content/0/arguments/path"),
             Some(&json!("src/main.rs"))
+        );
+        assert_eq!(
+            file[0].pointer("/content/0/toolMetadata/targets"),
+            Some(&json!(["src/main.rs", "src/lib.rs"]))
+        );
+        let expected_metadata = serde_json::to_value(tool::metadata(&native_file, "fileChange"))
+            .expect("metadata serializes");
+        assert_eq!(
+            file[0].pointer("/content/0/toolMetadata"),
+            Some(&expected_metadata)
         );
         assert_eq!(
             file[1].pointer("/content/0/text"),

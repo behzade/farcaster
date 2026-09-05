@@ -373,6 +373,13 @@ pub(crate) fn discover_external_sessions(
     (sessions, exhaustive)
 }
 
+/// Apply backend-specific presentation facts before history reaches the UI.
+pub(crate) fn annotate_history_message(harness: &str, message: &mut serde_json::Value) {
+    if harness == "pi" {
+        pi::annotate_history_message(message);
+    }
+}
+
 pub(crate) fn load_external_history(
     path: &std::path::Path,
 ) -> Option<Result<crate::agents::DiscoveredHistory, String>> {

@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 use super::{
     connection::{CodexConnection, read_message},
     contract::{CodexClientInfo, CodexInbound, CodexRequestId, CodexUserInput, TurnResponse},
+    tool,
     wire::{encode_error_response, encode_request, encode_response},
 };
 use crate::{
@@ -830,8 +831,12 @@ impl WorkerSession for CodexWorkerSession {
                                 self.events.push_back(WorkerEvent::Activity(finished));
                                 return Some(WorkerEvent::Activity(started));
                             }
-                            if let Some(event) = codex_tool_end(&params) {
-                                return Some(WorkerEvent::Activity(event));
+                            if let Some(finished) = codex_tool_end(&params) {
+                                if let Some(changed) = codex_tool_metadata_changed(&params) {
+                                    self.events.push_back(WorkerEvent::Activity(finished));
+                                    return Some(WorkerEvent::Activity(changed));
+                                }
+                                return Some(WorkerEvent::Activity(finished));
                             }
                             if !codex_passive_item(&params["item"]) {
                                 log_bad_codex_notification(
@@ -1362,20 +1367,6 @@ fn codex_passive_item(item: &Value) -> bool {
         })
 }
 
-fn codex_tool_kind(kind: &str) -> bool {
-    matches!(
-        kind,
-        "commandExecution"
-            | "mcpToolCall"
-            | "fileChange"
-            | "webSearch"
-            | "dynamicToolCall"
-            | "collabAgentToolCall"
-            | "imageView"
-            | "imageGeneration"
-    )
-}
-
 fn codex_tool_review_started(params: &Value) -> Option<(WorkerActivity, WorkerActivity)> {
     let id = params.get("targetItemId")?.as_str()?;
     let action = params.get("action")?;
@@ -1395,6 +1386,7 @@ fn codex_tool_review_started(params: &Value) -> Option<(WorkerActivity, WorkerAc
             id: id.to_owned(),
             name,
             args,
+            metadata: tool::metadata(action, kind),
         },
         WorkerActivity::ToolReviewChanged {
             id: id.to_owned(),
@@ -1441,112 +1433,38 @@ fn codex_tool_review_completed(params: &Value) -> Option<(WorkerActivity, Option
 fn codex_tool_start(params: &Value) -> Option<WorkerActivity> {
     let item = params.get("item")?;
     let kind = item.get("type")?.as_str()?;
-    if !codex_tool_kind(kind) {
+    if !tool::is_tool_kind(kind) {
         return None;
     }
     let id = item.get("id")?.as_str()?;
-    let (name, args) = codex_tool_call(item, kind);
+    let projection = tool::project(item, kind);
     Some(WorkerActivity::ToolStarted {
         id: id.to_owned(),
-        name,
-        args,
+        name: projection.name,
+        args: projection.args,
+        metadata: projection.metadata,
     })
 }
 
-fn codex_tool_call(item: &Value, kind: &str) -> (String, Value) {
-    match kind {
-        "fileChange" => {
-            let changes = item.get("changes").cloned().unwrap_or_else(|| json!([]));
-            let path = changes
-                .as_array()
-                .and_then(|changes| changes.first())
-                .and_then(|change| change.get("path"))
-                .cloned()
-                .unwrap_or(Value::String(String::new()));
-            (
-                CommonTool::Edit.name().into(),
-                json!({"path": path, "changes": changes}),
-            )
-        }
-        "commandExecution" => {
-            let read = item
-                .get("commandActions")
-                .and_then(Value::as_array)
-                .filter(|actions| actions.len() == 1)
-                .and_then(|actions| actions.first())
-                .filter(|action| action.get("type").and_then(Value::as_str) == Some("read"));
-            if let Some(action) = read {
-                (
-                    CommonTool::Read.name().into(),
-                    json!({"path": action.get("path").cloned().unwrap_or(Value::Null)}),
-                )
-            } else {
-                (
-                    CommonTool::Bash.name().into(),
-                    json!({"command": item.get("command").cloned().unwrap_or(Value::Null)}),
-                )
-            }
-        }
-        "webSearch" => (
-            "web_search".into(),
-            json!({"query": codex_web_search_query(item)}),
-        ),
-        "imageView" => (
-            "view_image".into(),
-            json!({"path": item.get("path").cloned().unwrap_or(Value::Null)}),
-        ),
-        "imageGeneration" => (
-            "image_generation".into(),
-            item.get("arguments").cloned().unwrap_or_else(|| json!({})),
-        ),
-        "collabAgentToolCall" => {
-            let args = [
-                "prompt",
-                "model",
-                "senderThreadId",
-                "receiverThreadIds",
-                "agentsStates",
-            ]
-            .into_iter()
-            .filter_map(|field| Some((field.into(), item.get(field)?.clone())))
-            .collect();
-            (
-                item.get("tool")
-                    .and_then(Value::as_str)
-                    .unwrap_or("collabAgent")
-                    .to_owned(),
-                Value::Object(args),
-            )
-        }
-        _ => {
-            let name = item
-                .get("tool")
-                .and_then(Value::as_str)
-                .or_else(|| item.get("name").and_then(Value::as_str))
-                .or_else(|| item.get("server").and_then(Value::as_str))
-                .unwrap_or(kind);
-            let args = item.get("arguments").cloned().unwrap_or_else(|| json!({}));
-            (name.to_owned(), args)
-        }
+fn codex_tool_metadata_changed(params: &Value) -> Option<WorkerActivity> {
+    let item = params.get("item")?;
+    let kind = item.get("type")?.as_str()?;
+    if !tool::is_tool_kind(kind) {
+        return None;
     }
-}
-
-fn codex_web_search_query(item: &Value) -> Option<&str> {
-    item.get("query")
-        .and_then(Value::as_str)
-        .filter(|query| !query.is_empty())
-        .or_else(|| {
-            let action = item.get("action")?;
-            ["query", "url", "pattern"]
-                .into_iter()
-                .find_map(|field| action.get(field).and_then(Value::as_str))
-        })
+    let id = item.get("id")?.as_str()?;
+    let projection = tool::project(item, kind);
+    Some(WorkerActivity::ToolMetadataChanged {
+        id: id.to_owned(),
+        args: Some(projection.args),
+        metadata: projection.metadata,
+    })
 }
 
 fn codex_tool_end(params: &Value) -> Option<WorkerActivity> {
     let item = params.get("item")?;
     let kind = item.get("type")?.as_str()?;
-    if !codex_tool_kind(kind) {
+    if !tool::is_tool_kind(kind) {
         return None;
     }
     let id = item.get("id")?.as_str()?;
@@ -1571,7 +1489,7 @@ fn codex_tool_end(params: &Value) -> Option<WorkerActivity> {
             "text": output.as_str().map(str::to_owned).unwrap_or_else(|| output.to_string()),
         }])
     } else if kind == "webSearch" {
-        json!([{"type": "text", "text": codex_web_search_query(item).unwrap_or_default()}])
+        json!([{"type": "text", "text": tool::web_search_query(item).unwrap_or_default()}])
     } else if kind == "fileChange" && !failed {
         json!([{"type": "text", "text": "Applied patch"}])
     } else if kind == "imageView" {
@@ -1681,60 +1599,23 @@ mod tests {
     }
 
     #[test]
-    fn codex_tools_use_shared_names_and_arguments() {
-        let change = json!({"changes":[{"path":"src/main.rs","diff":"-old\n+new\n"}]});
+    fn completed_tools_publish_late_metadata() {
+        let completed = json!({"item": {
+            "type":"fileChange",
+            "id":"change-1",
+            "changes":[{"path":"a.rs"},{"path":"b.rs"}],
+            "status":"completed"
+        }});
         assert_eq!(
-            codex_tool_call(&change, "fileChange"),
-            (
-                "edit".into(),
-                json!({"path":"src/main.rs","changes":change["changes"]})
-            )
-        );
-
-        let read = json!({
-            "command":"cat src/main.rs",
-            "commandActions":[{"type":"read","path":"src/main.rs"}]
-        });
-        assert_eq!(
-            codex_tool_call(&read, "commandExecution"),
-            ("read".into(), json!({"path":"src/main.rs"}))
-        );
-        assert_eq!(
-            codex_tool_call(&json!({"command":"cargo test"}), "commandExecution"),
-            ("bash".into(), json!({"command":"cargo test"}))
-        );
-        assert_eq!(
-            codex_tool_call(&json!({"query":"Codex app-server protocol"}), "webSearch"),
-            (
-                "web_search".into(),
-                json!({"query":"Codex app-server protocol"})
-            )
-        );
-        assert_eq!(
-            codex_tool_call(
-                &json!({"server":"github", "tool":"get_issue", "arguments":{"id":7}}),
-                "mcpToolCall"
-            ),
-            ("get_issue".into(), json!({"id":7}))
-        );
-        assert_eq!(
-            codex_tool_call(
-                &json!({
-                    "tool":"spawnAgent",
-                    "prompt":"review this",
-                    "senderThreadId":"parent",
-                    "receiverThreadIds":["child"]
-                }),
-                "collabAgentToolCall"
-            ),
-            (
-                "spawnAgent".into(),
-                json!({
-                    "prompt":"review this",
-                    "senderThreadId":"parent",
-                    "receiverThreadIds":["child"]
-                })
-            )
+            codex_tool_metadata_changed(&completed),
+            Some(WorkerActivity::ToolMetadataChanged {
+                id: "change-1".into(),
+                args: Some(json!({
+                    "path":"a.rs",
+                    "changes":[{"path":"a.rs"},{"path":"b.rs"}]
+                })),
+                metadata: tool::metadata(&completed["item"], "fileChange"),
+            })
         );
     }
 
@@ -1755,6 +1636,7 @@ mod tests {
                     id: "exec-1".into(),
                     name: "bash".into(),
                     args: json!({"command":"git add logo.svg", "cwd":"/project"}),
+                    metadata: tool::metadata(&started["action"], "command"),
                 },
                 WorkerActivity::ToolReviewChanged {
                     id: "exec-1".into(),

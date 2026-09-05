@@ -17,6 +17,10 @@ mod app {
         pub(crate) path: std::path::PathBuf,
     }
 
+    pub(crate) mod composer {
+        pub(crate) use crate::prompt_fragments;
+    }
+
     pub(crate) mod infrastructure {
         pub(crate) mod performance {
             pub(crate) use crate::performance::*;
@@ -31,6 +35,7 @@ mod app {
     }
 
     pub(crate) mod views {
+        pub(crate) use crate::attachment_cards as attachments;
         pub(crate) mod transcript {
             pub(crate) mod attachments {
                 include!(concat!(
@@ -85,6 +90,14 @@ mod app {
         ) {
         }
 
+        pub(crate) fn open_file_editor(
+            &mut self,
+            _: std::path::PathBuf,
+            _: &mut gpui::Window,
+            _: &mut gpui::Context<Self>,
+        ) {
+        }
+
         pub(crate) fn open_file_editor_at_line(
             &mut self,
             _: std::path::PathBuf,
@@ -107,6 +120,13 @@ mod app {
 }
 
 mod agents {
+    mod tool {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/modules/agents/core/tool.rs"
+        ));
+    }
+    pub(crate) use tool::{ToolCategory, ToolMetadata};
     #[derive(Clone, Copy)]
     pub(crate) enum CommonTool {
         Read,
@@ -165,12 +185,16 @@ mod sessions {
 
 #[path = "../src/app/ui/assets.rs"]
 mod assets;
+#[path = "../src/app/views/attachments.rs"]
+pub(crate) mod attachment_cards;
 #[path = "../src/app/infrastructure/performance.rs"]
 mod performance;
 #[path = "../src/app/ui/persistent_vec.rs"]
 mod persistent_vec;
 #[path = "../src/app/ui/primitives/mod.rs"]
 mod primitives;
+#[path = "../src/app/composer/prompt_fragments.rs"]
+pub(crate) mod prompt_fragments;
 #[path = "../src/modules/agents/contract/extensions.rs"]
 mod protocol;
 #[path = "../src/app/ui/theme.rs"]

@@ -27,9 +27,7 @@ impl ConversationState {
                 .and_then(Value::as_str)
                 .unwrap_or_default();
             if !id.is_empty()
-                && let Some(index) = self.items.rposition(|item| {
-                    item.kind == TranscriptKind::Tool && item.tool_call_id.as_deref() == Some(id)
-                })
+                && let Some(index) = self.tool_index(id)
             {
                 let mut item = self.items[index].clone();
                 apply_tool_result(Arc::make_mut(&mut item), message, true);
@@ -53,12 +51,14 @@ pub(super) fn peer_transcript_item(peer: PeerMessage) -> TranscriptItem {
         label: format!("Worker · {}", peer.from),
         text: peer.message,
         images: Arc::default(),
+        files: Arc::default(),
         stream_chunks: Arc::default(),
         streaming: false,
         is_error: false,
         tool_call_id: None,
         tool_output: String::new(),
         tool_presentation: None,
+        tool_details: None,
         tool_review: None,
         invocation: None,
     }
@@ -108,6 +108,7 @@ pub(super) fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
                             label,
                             text,
                             images: Arc::default(),
+                            files: Arc::default(),
                             stream_chunks: Arc::default(),
                             streaming: false,
                             is_error: false,
@@ -120,6 +121,13 @@ pub(super) fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
                                 block
                                     .get("arguments")
                                     .and_then(|arguments| tool_presentation(name, arguments))
+                            }),
+                            tool_details: (kind == TranscriptKind::Tool).then(|| {
+                                Arc::new(ToolDetails::from_call(
+                                    tool_name(block).unwrap_or("tool"),
+                                    block.get("arguments"),
+                                    block.get("toolMetadata"),
+                                ))
                             }),
                             tool_review: None,
                             invocation: None,
@@ -186,6 +194,10 @@ pub(super) fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
     } else {
         None
     };
+    let (user_text, files) = projected_user
+        .as_deref()
+        .map(super::split_pasted_files)
+        .unwrap_or_default();
     vec![TranscriptItem {
         kind: if is_error && kind != TranscriptKind::Tool {
             TranscriptKind::Error
@@ -193,11 +205,12 @@ pub(super) fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
             kind
         },
         label,
-        text: if let Some(projected_user) = projected_user {
-            projected_user
+        text: if projected_user.is_some() {
+            user_text.to_owned()
         } else {
             message_text(message)
         },
+        files: Arc::new(files),
         images: if kind == TranscriptKind::User {
             message_images(message)
         } else {
@@ -212,6 +225,7 @@ pub(super) fn project_message_items(message: &Value) -> Vec<TranscriptItem> {
             .map(str::to_owned),
         tool_output: String::new(),
         tool_presentation: None,
+        tool_details: None,
         tool_review: None,
         invocation,
     }]
@@ -245,12 +259,11 @@ pub(super) fn message_text(message: &Value) -> String {
 }
 
 fn projected_user_message_text(message: &Value) -> String {
-    let text = message
+    message
         .get("farcasterUserInvocation")
         .and_then(Value::as_str)
         .or_else(|| message.get("piUserInvocation").and_then(Value::as_str))
-        .map_or_else(|| message_text(message), str::to_owned);
-    pasted_file_summary(&text).to_owned()
+        .map_or_else(|| message_text(message), str::to_owned)
 }
 
 pub(crate) fn annotate_prompt_presentations(
@@ -285,6 +298,7 @@ pub(crate) fn annotate_prompt_presentations(
     }
 }
 
+#[cfg(test)]
 pub(super) fn user_message_text(message: &str, image_count: usize) -> String {
     let message = pasted_file_summary(message);
     if image_count == 0 {
@@ -300,12 +314,6 @@ pub(super) fn user_message_text(message: &str, image_count: usize) -> String {
     } else {
         format!("{message}\n\n{attachment}")
     }
-}
-
-pub(super) fn pasted_file_summary(message: &str) -> &str {
-    message
-        .split_once("\n\n--- BEGIN PASTED FILE ")
-        .map_or(message, |(summary, _)| summary)
 }
 
 pub(super) fn decode_prompt_images(images: &[PromptImage]) -> Arc<Vec<Arc<Image>>> {
@@ -365,12 +373,14 @@ fn model_error_item(text: String) -> TranscriptItem {
         label: "Model error".into(),
         text,
         images: Arc::default(),
+        files: Arc::default(),
         stream_chunks: Arc::default(),
         streaming: false,
         is_error: true,
         tool_call_id: None,
         tool_output: String::new(),
         tool_presentation: None,
+        tool_details: None,
         tool_review: None,
         invocation: None,
     }

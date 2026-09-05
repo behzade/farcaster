@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     io::{BufReader, Write as _},
     process::{Child, ChildStdin, Stdio},
     sync::mpsc,
@@ -14,16 +14,16 @@ use super::{
     connection::{AcpConnection, read_message},
     translate::{
         ConfigIds, commands_from_update, commands_from_value, content_text, find_permission_option,
-        is_acceptance, metadata_from_options, metadata_from_session, normalize_content,
-        normalize_tool_name, tool_content, usage_update,
+        is_acceptance, merge_tool_metadata, merged_tool_content, metadata_from_options,
+        metadata_from_session, normalize_content, normalize_tool_name, tool_args, usage_update,
     },
     wire::{AcpInbound, AcpRequestId, encode_notification, encode_request, encode_response},
 };
 use crate::{
     agents::{
-        AgentLaunchConfig, HarnessAccessMode, PeerMessage, WorkerActivity, WorkerActivityState,
-        WorkerEvent, WorkerInput, WorkerInputResponse, WorkerLaunch, WorkerSendMode, WorkerSession,
-        WorkerSessionFactory,
+        AgentLaunchConfig, HarnessAccessMode, PeerMessage, ToolMetadata, WorkerActivity,
+        WorkerActivityState, WorkerEvent, WorkerInput, WorkerInputResponse, WorkerLaunch,
+        WorkerSendMode, WorkerSession, WorkerSessionFactory,
     },
     modules::agents::adapter::{child_stderr, farcaster_mcp, main_session},
 };
@@ -205,12 +205,6 @@ fn spawn_session(
             return Err(error);
         }
     };
-    let commands = metadata
-        .commands
-        .iter()
-        .filter_map(|command| command.get("name").and_then(Value::as_str))
-        .map(str::to_owned)
-        .collect();
     let (sender, incoming) = mpsc::channel();
     let reader_name = session_id.clone();
     thread::Builder::new()
@@ -240,7 +234,6 @@ fn spawn_session(
             session_id,
             next_id,
             current_prompt: None,
-            compacting: false,
             pending_steers: HashMap::new(),
             queued_prompts: VecDeque::new(),
             output: String::new(),
@@ -250,7 +243,6 @@ fn spawn_session(
             peer_messages: VecDeque::new(),
             events: VecDeque::new(),
             config_ids,
-            commands,
             features,
             caller_identity: None,
         },
@@ -437,6 +429,8 @@ enum PendingInputKind {
 #[derive(Clone, Default)]
 struct ToolState {
     name: String,
+    args: Value,
+    metadata: ToolMetadata,
     started: bool,
     finished: bool,
 }
@@ -450,7 +444,6 @@ struct AcpWorkerSession {
     session_id: String,
     next_id: i64,
     current_prompt: Option<AcpRequestId>,
-    compacting: bool,
     pending_steers: HashMap<AcpRequestId, (String, Vec<crate::protocol::PromptImage>)>,
     queued_prompts: VecDeque<(WorkerSendMode, String, Vec<crate::protocol::PromptImage>)>,
     output: String,
@@ -460,7 +453,6 @@ struct AcpWorkerSession {
     peer_messages: VecDeque<PeerMessage>,
     events: VecDeque<WorkerEvent>,
     config_ids: ConfigIds,
-    commands: HashSet<String>,
     features: AcpFeatures,
     caller_identity: Option<crate::modules::agents::core::CallerIdentity>,
 }
@@ -570,11 +562,6 @@ impl AcpWorkerSession {
                 .map(WorkerActivity::Usage)
                 .map(WorkerEvent::Activity),
             "available_commands_update" => commands_from_value(update).map(|commands| {
-                self.commands = commands
-                    .iter()
-                    .filter_map(|command| command.get("name").and_then(Value::as_str))
-                    .map(str::to_owned)
-                    .collect();
                 WorkerEvent::Activity(WorkerActivity::CommandsChanged { commands })
             }),
             "config_option_update" => {
@@ -603,51 +590,53 @@ impl AcpWorkerSession {
 
     fn tool_update(&mut self, update: &Value) -> Option<WorkerEvent> {
         let id = update.get("toolCallId")?.as_str()?.to_owned();
-        let state = self.tool_states.entry(id.clone()).or_default();
-        if let Some(title) = update.get("title").and_then(Value::as_str) {
-            state.name = normalize_tool_name(update, title);
-        }
-        if !state.started {
-            state.started = true;
-            let name = if state.name.is_empty() {
-                "tool".into()
-            } else {
-                state.name.clone()
-            };
-            let status = update.get("status").and_then(Value::as_str);
-            if matches!(status, Some("completed" | "failed")) {
-                state.finished = true;
-                self.events
-                    .push_back(WorkerEvent::Activity(WorkerActivity::ToolFinished {
-                        id: id.clone(),
-                        result: tool_content(update),
-                        is_error: status == Some("failed"),
-                    }));
+        let mut emitted = VecDeque::new();
+        {
+            let state = self.tool_states.entry(id.clone()).or_default();
+            let previous_metadata = state.metadata.clone();
+            let previous_args = state.args.clone();
+            merge_tool_metadata(&mut state.metadata, update);
+            state.args = tool_args(&state.metadata);
+
+            if !state.started {
+                state.started = true;
+                let title = state.metadata.title.as_deref().unwrap_or("tool");
+                let native = state.metadata.native.as_ref().unwrap_or(update);
+                state.name = normalize_tool_name(native, title);
+                emitted.push_back(WorkerEvent::Activity(WorkerActivity::ToolStarted {
+                    id: id.clone(),
+                    name: state.name.clone(),
+                    args: state.args.clone(),
+                    metadata: state.metadata.clone(),
+                }));
+            } else if state.metadata != previous_metadata || state.args != previous_args {
+                emitted.push_back(WorkerEvent::Activity(WorkerActivity::ToolMetadataChanged {
+                    id: id.clone(),
+                    args: (state.args != previous_args).then(|| state.args.clone()),
+                    metadata: state.metadata.clone(),
+                }));
             }
-            return Some(WorkerEvent::Activity(WorkerActivity::ToolStarted {
-                id,
-                name,
-                args: update.get("rawInput").cloned().unwrap_or_else(|| json!({})),
-            }));
-        }
-        let status = update.get("status").and_then(Value::as_str);
-        if matches!(status, Some("completed" | "failed")) && !state.finished {
-            state.finished = true;
-            return Some(WorkerEvent::Activity(WorkerActivity::ToolFinished {
-                id,
-                result: tool_content(update),
-                is_error: status == Some("failed"),
-            }));
-        }
-        update
-            .get("content")
-            .or_else(|| update.get("rawOutput"))
-            .map(|content| {
-                WorkerEvent::Activity(WorkerActivity::ToolUpdated {
-                    id,
+
+            let status = update.get("status").and_then(Value::as_str);
+            if matches!(status, Some("completed" | "failed")) && !state.finished {
+                state.finished = true;
+                emitted.push_back(WorkerEvent::Activity(WorkerActivity::ToolFinished {
+                    id: id.clone(),
+                    result: merged_tool_content(&state.metadata, update),
+                    is_error: status == Some("failed"),
+                }));
+            } else if !state.finished
+                && let Some(content) = update.get("content").or_else(|| update.get("rawOutput"))
+            {
+                emitted.push_back(WorkerEvent::Activity(WorkerActivity::ToolUpdated {
+                    id: id.clone(),
                     content: normalize_content(content),
-                })
-            })
+                }));
+            }
+        }
+        let first = emitted.pop_front();
+        self.events.extend(emitted);
+        first
     }
 
     fn permission_request(&mut self, id: &AcpRequestId, params: &Value) -> Option<WorkerEvent> {
@@ -968,30 +957,12 @@ impl WorkerSession for AcpWorkerSession {
     }
 
     fn compact(&mut self) -> Result<(), String> {
-        if self.profile.backend != "cursor-cli"
-            || (!self.commands.contains("compress") && !self.commands.contains("compact"))
-        {
-            return Err(format!(
-                "{} did not advertise an ACP compaction command",
-                self.profile.name
-            ));
-        }
-        if self.current_prompt.is_some() {
-            return Err(format!(
-                "{} ACP session is already working",
-                self.profile.name
-            ));
-        }
-        let command = if self.commands.contains("compress") {
-            "/compress"
-        } else {
-            "/compact"
-        };
-        self.start_prompt_request(command, Vec::new())?;
-        self.compacting = true;
-        self.events
-            .push_back(WorkerEvent::Activity(WorkerActivity::CompactionStarted));
-        Ok(())
+        // A user-defined slash command named compact/compress does not establish
+        // protocol support for compaction or its lifecycle events.
+        Err(format!(
+            "{} does not expose ACP compaction",
+            self.profile.name
+        ))
     }
 
     fn rename(&mut self, name: &str) -> Result<(), String> {
@@ -1091,16 +1062,6 @@ impl WorkerSession for AcpWorkerSession {
                     if self.current_prompt.as_ref() == Some(&id) =>
                 {
                     self.current_prompt = None;
-                    if self.compacting {
-                        self.compacting = false;
-                        if let Some(identity) = &self.caller_identity {
-                            identity.set_activity(WorkerActivityState::Idle);
-                        }
-                        return Some(WorkerEvent::Activity(WorkerActivity::CompactionFinished {
-                            aborted: false,
-                            error: None,
-                        }));
-                    }
                     if let Some((mode, message, images)) = self.queued_prompts.pop_front() {
                         return Some(match self.start_prompt_request(&message, images) {
                             Ok(()) => WorkerEvent::Activity(WorkerActivity::InputDelivered {
@@ -1122,7 +1083,6 @@ impl WorkerSession for AcpWorkerSession {
                     self.pending_steers.remove(&id);
                     if self.current_prompt.as_ref() == Some(&id) {
                         self.current_prompt = None;
-                        self.compacting = false;
                         if let Some(identity) = &self.caller_identity {
                             identity.set_activity(WorkerActivityState::Idle);
                         }
