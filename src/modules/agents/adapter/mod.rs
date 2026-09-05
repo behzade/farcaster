@@ -32,6 +32,14 @@ pub(crate) fn supported_access_modes(harness: &str) -> &'static [crate::agents::
     }
 }
 
+pub(crate) fn supports_reasoning_effort(harness: &str) -> bool {
+    known_backend_descriptors().into_iter().any(|descriptor| {
+        descriptor.id.as_str() == harness
+            && descriptor.capabilities.configuration.reasoning_effort
+                == super::contract::CapabilitySupport::Available
+    })
+}
+
 pub(crate) fn normalize_access_mode(
     harness: &str,
     mode: crate::agents::HarnessAccessMode,
