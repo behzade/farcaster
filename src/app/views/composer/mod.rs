@@ -34,6 +34,7 @@ impl FarcasterApp {
         entity: WeakEntity<Self>,
         suggestion_selection: usize,
         footer_scroll: &gpui::ScrollHandle,
+        status_scroll: &gpui::ScrollHandle,
         cx: &App,
     ) -> AnyElement {
         if self.extension.dialog.is_some() {
@@ -93,12 +94,12 @@ impl FarcasterApp {
             entity.clone(),
             suggestion_count,
             actions,
-            floating,
         );
 
-        div()
+        let composer = div()
             .relative()
             .w_full()
+            .min_h(THEME.layout.composer_min)
             .flex_none()
             .flex()
             .flex_col()
@@ -155,11 +156,20 @@ impl FarcasterApp {
                     .border_color(THEME.colors.surface)
                     .bg(THEME.colors.panel)
                     .when(!floating, |footer| footer.rounded_b(THEME.radius))
-                    .child(self.render_composer_controls(entity.clone(), !floating, footer_scroll)),
+                    .child(self.render_composer_controls(entity.clone(), footer_scroll)),
             )
             .when(floating, |composer| {
                 composer.child(start::shortcuts(entity))
-            })
+            });
+
+        div()
+            .w_full()
+            .min_w_0()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .child(composer)
+            .child(self.render_composer_status(status_scroll))
             .into_any_element()
     }
 

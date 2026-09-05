@@ -21,10 +21,9 @@ impl FarcasterApp {
     pub(in crate::app::views) fn render_composer_controls(
         &self,
         entity: WeakEntity<Self>,
-        show_usage: bool,
         scroll: &gpui::ScrollHandle,
     ) -> AnyElement {
-        let mut footer = div()
+        let footer = div()
             .id("composer-footer-controls")
             .min_w_0()
             .flex_1()
@@ -39,13 +38,30 @@ impl FarcasterApp {
             })
             .child(runtime::render(self, entity));
 
-        if show_usage {
-            let usage = composer_usage(self);
-            if has_meaningful_usage(&usage) {
-                footer = footer.child(separator()).child(render_usage(&usage));
-            }
-        }
         footer.child(div().min_w_0().flex_1()).into_any_element()
+    }
+
+    pub(in crate::app::views) fn render_composer_status(
+        &self,
+        scroll: &gpui::ScrollHandle,
+    ) -> AnyElement {
+        let usage = composer_usage(self);
+        div()
+            .id("composer-status")
+            .w_full()
+            .min_w_0()
+            .h(px(28.0))
+            .flex_none()
+            .flex()
+            .items_center()
+            .px(px(12.0))
+            .overflow_x_scroll()
+            .track_scroll(scroll)
+            .child(div().min_w_0().flex_1())
+            .when(has_meaningful_usage(&usage), |row| {
+                row.child(render_usage(&usage))
+            })
+            .into_any_element()
     }
 
     pub(in crate::app::views) fn render_composer_actions(

@@ -6,6 +6,7 @@ pub(crate) struct ComposerView {
     app: WeakEntity<FarcasterApp>,
     suggestion_selection: usize,
     footer_scroll: ScrollHandle,
+    status_scroll: ScrollHandle,
 }
 
 impl ComposerView {
@@ -14,6 +15,7 @@ impl ComposerView {
             app,
             suggestion_selection: 0,
             footer_scroll: ScrollHandle::new(),
+            status_scroll: ScrollHandle::new(),
         }
     }
 
@@ -62,6 +64,7 @@ impl Render for ComposerView {
                 self.app.clone(),
                 self.suggestion_selection,
                 &self.footer_scroll,
+                &self.status_scroll,
                 cx,
             )
             .into_any_element()
