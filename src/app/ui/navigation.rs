@@ -5,6 +5,8 @@ use crate::app::{AppSurface, FarcasterApp, PickerScope};
 
 pub(crate) struct ChatNavigation {
     pub focus: FocusHandle,
+    // Remember the chat owner across temporary focus and async session resets.
+    pub normal_mode: bool,
     pub leader_pending: bool,
     pub return_shortcut: Option<gpui::Subscription>,
 }
@@ -14,8 +16,7 @@ enum Command {
     Composer,
     Editor,
     Terminal,
-    NextSession,
-    PreviousSession,
+    RelativeSession(isize),
     Session(usize),
     SearchSessions,
 }
@@ -26,8 +27,8 @@ fn normal_command(key: &str, leader: bool) -> Option<Command> {
         (false, "/") => Some(Command::SearchSessions),
         (true, "e") => Some(Command::Editor),
         (true, "t") => Some(Command::Terminal),
-        (true, "j") => Some(Command::NextSession),
-        (true, "k") => Some(Command::PreviousSession),
+        (true, "j") => Some(Command::RelativeSession(1)),
+        (true, "k") => Some(Command::RelativeSession(-1)),
         (false, "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9") => {
             Some(Command::Session(key.parse().expect("single digit")))
         }
@@ -67,8 +68,12 @@ impl FarcasterApp {
                     cx.stop_propagation();
                 }
             }));
-        for focus in [&self.chat_navigation.focus, &self.composer_focus] {
-            cx.on_focus(focus, window, |this, _, cx| {
+        for (focus, normal_mode) in [
+            (&self.chat_navigation.focus, true),
+            (&self.composer_focus, false),
+        ] {
+            cx.on_focus(focus, window, move |this, _, cx| {
+                this.chat_navigation.normal_mode = normal_mode;
                 this.notify_composer(cx);
             })
             .detach();
@@ -85,6 +90,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.chat_navigation.normal_mode = true;
         self.chat_navigation.leader_pending = false;
         if self.image_preview.is_some() {
             self.close_image_preview(window, cx);
@@ -146,16 +152,8 @@ impl FarcasterApp {
                 Command::Editor => self.show_editor_surface(window, cx),
                 Command::Terminal => self.show_terminal_surface(window, cx),
                 Command::SearchSessions => self.open_picker(PickerScope::Sessions, window, cx),
-                Command::NextSession | Command::PreviousSession => {
-                    self.switch_relative_session(
-                        if command == Command::NextSession {
-                            1
-                        } else {
-                            -1
-                        },
-                        window,
-                        cx,
-                    );
+                Command::RelativeSession(direction) => {
+                    self.switch_relative_session(direction, window, cx);
                     self.return_to_chat_normal(window, cx);
                 }
                 Command::Session(number) => {
@@ -183,26 +181,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn insert_aliases_and_session_search_are_unprefixed() {
-        assert_eq!(normal_command("i", false), Some(Command::Composer));
-        assert_eq!(normal_command("a", false), Some(Command::Composer));
-        assert_eq!(normal_command("/", false), Some(Command::SearchSessions));
-        assert_eq!(normal_command("e", false), None);
-        assert_eq!(normal_command("t", false), None);
-    }
-
-    #[test]
-    fn leader_uses_workspace_not_legacy_modifier_assignments() {
-        for (key, command) in [
-            ("e", Command::Editor),
-            ("t", Command::Terminal),
-            ("j", Command::NextSession),
-            ("k", Command::PreviousSession),
+    fn normal_and_leader_commands_are_distinct() {
+        for (key, leader, command) in [
+            ("i", false, Command::Composer),
+            ("a", false, Command::Composer),
+            ("/", false, Command::SearchSessions),
+            ("e", true, Command::Editor),
+            ("t", true, Command::Terminal),
+            ("j", true, Command::RelativeSession(1)),
+            ("k", true, Command::RelativeSession(-1)),
         ] {
-            assert_eq!(normal_command(key, true), Some(command));
+            assert_eq!(normal_command(key, leader), Some(command));
+            assert_eq!(normal_command(key, !leader), None);
         }
         assert_eq!(normal_command("escape", true), None);
-        assert_eq!(normal_command("i", true), None);
     }
 
     #[test]
