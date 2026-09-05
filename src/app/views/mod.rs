@@ -1,3 +1,4 @@
+mod attachments;
 mod composer;
 pub(in crate::app) mod dialogs;
 pub(crate) mod overlay_state;
