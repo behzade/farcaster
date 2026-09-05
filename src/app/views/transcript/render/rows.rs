@@ -500,7 +500,12 @@ fn text_revision(text: &str) -> usize {
 
 fn is_routine_activity(item: &TranscriptItem) -> bool {
     use conversation::{ToolExecutionState, ToolReviewState};
+    let changes_files = item.tool_details.as_ref().is_some_and(|details| {
+        details.metadata.category == Some(crate::agents::ToolCategory::Change)
+    }) || item.label.eq_ignore_ascii_case("edit")
+        || item.label.eq_ignore_ascii_case("write");
     matches!(item.kind, TranscriptKind::Tool | TranscriptKind::Thinking)
+        && !changes_files
         && !item.tool_review.as_ref().is_some_and(|review| {
             matches!(
                 review.state,
