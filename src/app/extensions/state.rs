@@ -2,6 +2,24 @@ use super::*;
 use crate::app::*;
 
 impl FarcasterApp {
+    // App-owned failures use the notification overlay, never transcript events or
+    // center-surface navigation. Callers must validate async ownership first.
+    pub(in crate::app) fn notify_workspace_error(
+        &mut self,
+        source: &str,
+        error: String,
+        cx: &mut Context<Self>,
+    ) {
+        zlog::warn!("{source}: {error}");
+        self.extension.push_notification(
+            format!("workspace:{source}"),
+            format!("{source}: {error}"),
+            crate::protocol::NotifyTone::Error,
+        );
+        self.sync_notification_expiries(cx);
+        cx.notify();
+    }
+
     pub(in crate::app) fn record_run_status(
         &mut self,
         target: String,

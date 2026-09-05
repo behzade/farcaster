@@ -60,6 +60,8 @@ impl FarcasterApp {
         let changed = self.surface != surface;
         self.surface = surface;
         if changed {
+            // A completion from a previous editor visit must not affect this view.
+            self.editor_request_generation = self.editor_request_generation.wrapping_add(1);
             self.notify_session_rail_shell(cx);
             cx.notify();
         }
@@ -74,8 +76,8 @@ impl FarcasterApp {
     pub(in crate::app) fn cover_native_workspace_surface(&mut self, cx: &mut Context<Self>) {
         if !self.native_surface_covered {
             self.native_surface_covered = match self.surface {
-                AppSurface::Editor => self.editor_error.is_none() && self.editor.is_some(),
-                AppSurface::Terminal => self.terminal_error.is_none() && self.terminal.is_some(),
+                AppSurface::Editor => self.editor.is_some(),
+                AppSurface::Terminal => self.terminal.is_some(),
                 AppSurface::Chat | AppSurface::Work => false,
             };
             if self.native_surface_covered {
@@ -155,15 +157,18 @@ impl FarcasterApp {
         if self.surface == AppSurface::Work {
             return;
         }
-        match self
+        let surface = self
             .session_surfaces
             .get(self.composer_sessions.current_target())
             .copied()
-            .unwrap_or(AppSurface::Chat)
-        {
+            .unwrap_or(AppSurface::Chat);
+        // If restoring a native process fails, keep this session's chat visible,
+        // not the previous session's editor or terminal.
+        self.activate_chat_center(cx);
+        match surface {
             AppSurface::Editor => self.activate_editor_for_project(project, window, cx),
             AppSurface::Terminal => self.activate_terminal_for_project(project, window, cx),
-            AppSurface::Chat | AppSurface::Work => self.activate_chat_center(cx),
+            AppSurface::Chat | AppSurface::Work => {},
         }
     }
 

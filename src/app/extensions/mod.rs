@@ -108,7 +108,7 @@ impl ExtensionUiState {
         }
     }
 
-    fn push_notification(&mut self, id: String, message: String, tone: NotifyTone) {
+    pub(crate) fn push_notification(&mut self, id: String, message: String, tone: NotifyTone) {
         self.notifications.push_back(Notification {
             id,
             message,
@@ -212,6 +212,22 @@ mod tests {
 
         assert_eq!(effect, ExtensionEffect::None);
         assert!(state.notifications.is_empty());
+    }
+
+    #[test]
+    fn workspace_errors_are_transient_notifications() {
+        let mut state = ExtensionUiState::default();
+        state.push_notification(
+            "workspace:Neovim".into(),
+            "Neovim: request timed out".into(),
+            NotifyTone::Error,
+        );
+        assert!(state.dialog.is_none());
+        assert_eq!(state.notifications.len(), 1);
+        let notice = state.notifications[0].clone();
+        assert_eq!(notice.tone, NotifyTone::Error);
+        assert!(state.remove_notification(&notice.id, notice.expires_at));
+        assert_eq!(state, ExtensionUiState::default());
     }
 
     #[test]
