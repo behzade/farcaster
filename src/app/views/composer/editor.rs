@@ -5,7 +5,7 @@ use gpui::{
 use gpui_component::input::{MoveDown, MoveUp, Paste, Textarea, TextareaState};
 
 use super::super::FarcasterApp;
-use crate::app::ui::theme::{MONO_FONT_FAMILY, THEME};
+use crate::app::ui::theme::{THEME, UI_FONT_FAMILY};
 use crate::app::{
     COMPOSER_KEY_CONTEXT, ComposerCompletionNext, ComposerCompletionPrevious, ComposerHistoryNext,
     ComposerHistoryPrevious,
@@ -60,7 +60,7 @@ impl RenderOnce for ComposerInput {
             } else {
                 px(48.0)
             })
-            .font_family(MONO_FONT_FAMILY)
+            .font_family(UI_FONT_FAMILY)
             .text_size(THEME.type_scale.reading)
             .line_height(THEME.type_scale.line_composer)
             .pl(THEME.space.sm)
@@ -127,7 +127,12 @@ impl RenderOnce for ComposerInput {
             .on_mouse_up(MouseButton::Left, move |_, _, cx| {
                 capture_after_input(cursor_entity.clone(), cx);
             })
-            .child(Textarea::new(&self.composer).w_full().appearance(false))
+            .child(
+                Textarea::new(&self.composer)
+                    .w_full()
+                    .appearance(false)
+                    .p_0(),
+            )
             .child(self.actions)
     }
 }
