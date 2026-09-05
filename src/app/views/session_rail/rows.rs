@@ -23,7 +23,6 @@ use super::{
 };
 use crate::{
     app::ui::assets::AppIcon,
-    app::ui::keybindings::application_modifier,
     app::ui::primitives::{
         AppIconSize, ContextMenuTrigger, ReorderPosition, ReorderTargetExt as _, app_icon,
     },
@@ -180,6 +179,7 @@ impl RenderOnce for SessionRow {
             .aria_label(accessible_label)
             .aria_selected(selected)
             .tab_index(0)
+            .on_mouse_down(MouseButton::Left, crate::app::ui::primitives::preserve_pointer_focus)
             .size_full()
             .h(row_height)
             .relative()
@@ -302,6 +302,7 @@ impl RenderOnce for SessionRow {
                                                     .role(Role::Button)
                                                     .aria_label("Move session to another project")
                                                     .tab_index(0)
+                                                    .on_mouse_down(MouseButton::Left, crate::app::ui::primitives::preserve_pointer_focus)
                                                     .min_w_0()
                                                     .rounded(THEME.radius)
                                                     .cursor(CursorStyle::PointingHand)
@@ -434,6 +435,10 @@ fn session_archive_action(
         .role(Role::Button)
         .aria_label(format!("{label} session"))
         .tab_index(0)
+        .on_mouse_down(
+            MouseButton::Left,
+            crate::app::ui::primitives::preserve_pointer_focus,
+        )
         .absolute()
         .top(px(4.0))
         .right(if is_archived { px(28.0) } else { px(5.0) })
@@ -478,6 +483,10 @@ fn session_delete_action(
         .role(Role::Button)
         .aria_label("Delete session permanently")
         .tab_index(0)
+        .on_mouse_down(
+            MouseButton::Left,
+            crate::app::ui::primitives::preserve_pointer_focus,
+        )
         .absolute()
         .top(px(4.0))
         .right(px(5.0))
@@ -645,7 +654,7 @@ pub(super) fn session_row_metadata(
         )
         .when_some(shortcut, |metadata, number| {
             metadata.child(Kbd::new(
-                gpui::Keystroke::parse(&format!("{}-{number}", application_modifier().prefix()))
+                gpui::Keystroke::parse(&number.to_string())
                     .expect("fixed session shortcut must parse"),
             ))
         })

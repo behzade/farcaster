@@ -11,61 +11,9 @@ pub(crate) struct ChatNavigation {
     pub return_shortcut: Option<gpui::Subscription>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Command {
-    Composer,
-    Editor,
-    Terminal,
-    RelativeSession(isize),
-    Session(usize),
-    SearchSessions,
-}
-
-fn normal_command(key: &str, leader: bool) -> Option<Command> {
-    match (leader, key) {
-        (false, "i" | "a") => Some(Command::Composer),
-        (false, "/") => Some(Command::SearchSessions),
-        (true, "e") => Some(Command::Editor),
-        (true, "t") => Some(Command::Terminal),
-        (true, "j") => Some(Command::RelativeSession(1)),
-        (true, "k") => Some(Command::RelativeSession(-1)),
-        (false, "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9") => {
-            Some(Command::Session(key.parse().expect("single digit")))
-        }
-        _ => None,
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Scroll {
-    Lines(f32),
-    Pages(f32),
-}
-
-fn transcript_scroll(key: &str, modifiers: gpui::Modifiers, leader: bool) -> Option<Scroll> {
-    if !modifiers.modified() && !leader {
-        return match key {
-            "j" => Some(Scroll::Lines(1.0)),
-            "k" => Some(Scroll::Lines(-1.0)),
-            _ => None,
-        };
-    }
-    if modifiers
-        == (gpui::Modifiers {
-            control: true,
-            ..Default::default()
-        })
-    {
-        return match key {
-            "f" => Some(Scroll::Pages(1.0)),
-            "b" => Some(Scroll::Pages(-1.0)),
-            "d" => Some(Scroll::Pages(0.5)),
-            "u" => Some(Scroll::Pages(-0.5)),
-            _ => None,
-        };
-    }
-    None
-}
+mod shortcuts;
+pub(crate) use shortcuts::{Command, command_key, help_shortcuts};
+use shortcuts::{Scroll, normal_command, transcript_scroll};
 
 fn is_return_chord(key: &str, modifiers: gpui::Modifiers, macos: bool) -> bool {
     key == "g"
@@ -77,6 +25,14 @@ fn is_return_chord(key: &str, modifiers: gpui::Modifiers, macos: bool) -> bool {
 }
 
 impl FarcasterApp {
+    pub(in crate::app) fn preferred_chat_focus(&self) -> FocusHandle {
+        if self.chat_navigation.normal_mode {
+            self.chat_navigation.focus.clone()
+        } else {
+            self.composer_focus.clone()
+        }
+    }
+
     pub(in crate::app) fn initialize_chat_navigation(
         &mut self,
         window: &mut Window,
@@ -105,10 +61,12 @@ impl FarcasterApp {
         ] {
             cx.on_focus(focus, window, move |this, _, cx| {
                 this.chat_navigation.normal_mode = normal_mode;
+                this.set_session_shortcuts_visible(normal_mode, cx);
                 this.notify_composer(cx);
             })
             .detach();
             cx.on_blur(focus, window, |this, _, cx| {
+                this.set_session_shortcuts_visible(false, cx);
                 this.chat_navigation.leader_pending = false;
                 this.notify_composer(cx);
             })
@@ -159,6 +117,27 @@ impl FarcasterApp {
     ) {
         let key = event.keystroke.key.as_str();
         let modifiers = event.keystroke.modifiers;
+        // Root Tab bindings are intentionally unbound for composer commands.
+        // Unhandled Tab still needs to traverse incidental controls explicitly.
+        if self.surface == AppSurface::Chat
+            && key == "tab"
+            && (modifiers == gpui::Modifiers::default()
+                || modifiers
+                    == (gpui::Modifiers {
+                        shift: true,
+                        ..Default::default()
+                    }))
+            && !self.chat_navigation.leader_pending
+        {
+            if modifiers.shift {
+                window.focus_prev(cx);
+            } else {
+                window.focus_next(cx);
+            }
+            window.prevent_default();
+            cx.stop_propagation();
+            return;
+        }
         if self.surface != AppSurface::Chat || !self.chat_navigation.focus.is_focused(window) {
             self.chat_navigation.leader_pending = false;
             return;

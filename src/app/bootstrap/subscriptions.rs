@@ -36,7 +36,7 @@ pub(super) fn create(
     );
     let window_activation = cx.observe_window_activation(window, |this, window, cx| {
         let visible = session_shortcuts_visible_for_window(
-            this.session_rail_view.read(cx).shortcuts_visible(),
+            this.chat_navigation.focus.is_focused(window),
             window.is_window_active(),
         );
         this.set_session_shortcuts_visible(visible, cx);

@@ -2,6 +2,38 @@
 
 [← README](../README.md)
 
+## Keyboard navigation
+
+`Ctrl+G` returns from any surface to **chat normal mode**. macOS also accepts
+`Cmd+G`. These are reserved by Farcaster, including in the terminal and Neovim.
+
+In chat normal:
+
+| Keys | Action |
+| --- | --- |
+| `i` / `a` | Focus composer, preserving draft and caret |
+| `0` / `1`–`9` | First unsubmitted draft / numbered session |
+| `/` | Search sessions |
+| `Space e` / `Space t` | Editor / terminal |
+| `Space j` / `Space k` | Next / previous session |
+| `j` / `k` | Scroll transcript down / up |
+| `Ctrl+f` / `Ctrl+b` | Page down / up |
+| `Ctrl+d` / `Ctrl+u` | Half-page down / up |
+| `Escape` | Cancel pending Space leader |
+
+Session badges show bare numbers while chat normal owns input. Pointer clicks
+on incidental controls do not take keyboard ownership. Menus/dialogs temporarily
+own input and restore their return target when dismissed; an explicit action
+such as opening the editor can intentionally move focus. Tab navigation remains
+available for controls. Text fields and embedded tools keep their own keys.
+
+Composer Escape retains apply-steer / double-Escape-abort behavior. Use `Ctrl+G`
+to leave the composer instead. Visual selection is not implemented yet.
+
+Keyboard help lists these commands first and **Direct** shortcuts separately.
+Settings → **Direct shortcut modifier** changes only those direct shortcuts;
+it does not change normal-mode keys, the Space leader, or `Ctrl+G` / `Cmd+G`.
+
 ## Access modes
 
 Safety enforcement is delegated to the selected harness:

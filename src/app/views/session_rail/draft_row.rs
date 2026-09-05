@@ -99,6 +99,10 @@ impl RenderOnce for DraftRow {
                         .aria_label(format!("Open {status} session in {}", project.display()))
                         .aria_selected(selected)
                         .tab_index(0)
+                        .on_mouse_down(
+                            gpui::MouseButton::Left,
+                            crate::app::ui::primitives::preserve_pointer_focus,
+                        )
                         .size_full()
                         .h(THEME.layout.session_row_height)
                         .relative()

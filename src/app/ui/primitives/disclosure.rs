@@ -5,7 +5,6 @@ use gpui::{
     MouseButton, ParentElement as _, Role, SharedString, Stateful, StatefulInteractiveElement as _,
     Styled as _, Window, div, prelude::FluentBuilder as _,
 };
-use gpui_base::GlobalState;
 
 use super::{AppIconSize, activates_button, app_icon, icon_control};
 use crate::app::ui::{assets::AppIcon, theme::THEME};
@@ -76,10 +75,7 @@ pub(crate) fn disclosure_title_row(
         .cursor(CursorStyle::PointingHand)
         .hover(|row| row.bg(THEME.colors.hover))
         .focus_visible(|row| row.border(THEME.border).border_color(THEME.colors.accent))
-        .on_mouse_down(MouseButton::Left, |_, window, cx| {
-            window.prevent_default();
-            GlobalState::suppress_text_selection(cx);
-        })
+        .on_mouse_down(MouseButton::Left, super::preserve_pointer_focus)
         .on_click(move |_, window, cx| click(window, cx))
         .on_key_down(move |event, window, cx| {
             if activates_button(event) {

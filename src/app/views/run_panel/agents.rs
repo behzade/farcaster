@@ -62,6 +62,10 @@ impl FarcasterApp {
                 .role(Role::Button)
                 .aria_label(format!("Show {role} transcript: {state}"))
                 .tab_index(0)
+                .on_mouse_down(
+                    gpui::MouseButton::Left,
+                    crate::app::ui::primitives::preserve_pointer_focus,
+                )
                 .ml(px(depth.saturating_sub(1) as f32 * 8.0))
                 .px(px(2.0))
                 .py(px(3.0))

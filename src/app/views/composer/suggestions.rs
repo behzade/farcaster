@@ -50,6 +50,10 @@ impl RenderOnce for FileMentionMenu {
                     .role(Role::Button)
                     .aria_label(format!("Mention {path}"))
                     .tab_index(0)
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        crate::app::ui::primitives::preserve_pointer_focus,
+                    )
                     .px(THEME.space.sm)
                     .py(THEME.space.xs)
                     .rounded(THEME.radius)
@@ -104,6 +108,10 @@ impl RenderOnce for CommandMenu {
                     .role(Role::Button)
                     .aria_label(format!("Use {sigil}{name}"))
                     .tab_index(0)
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        crate::app::ui::primitives::preserve_pointer_focus,
+                    )
                     .flex()
                     .items_center()
                     .gap(THEME.space.sm)

@@ -218,6 +218,10 @@ impl FarcasterApp {
                                 .text_color(THEME.colors.muted)
                                 .when(!filtering, |row| {
                                     row.tab_index(0)
+                                        .on_mouse_down(
+                                            gpui::MouseButton::Left,
+                                            crate::app::ui::primitives::preserve_pointer_focus,
+                                        )
                                         .cursor_pointer()
                                         .hover(|row| row.bg(THEME.colors.hover))
                                         .focus_visible(|row| row.bg(THEME.colors.selection))
@@ -306,6 +310,10 @@ impl FarcasterApp {
             .aria_label(accessible)
             .tooltip(move |window, cx| Tooltip::new(full_path.clone()).build(window, cx))
             .tab_index(0)
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                crate::app::ui::primitives::preserve_pointer_focus,
+            )
             .min_w_0()
             .w_full()
             .h(px(24.0))

@@ -130,6 +130,10 @@ fn render_plan_row(
         .role(Role::Button)
         .aria_label(format!("Open plan node {}", row.node.title))
         .tab_index(0)
+        .on_mouse_down(
+            gpui::MouseButton::Left,
+            crate::app::ui::primitives::preserve_pointer_focus,
+        )
         .cursor_pointer()
         .on_click(move |_, _, cx| entity.update(cx, |this, cx| this.select_node(number, cx)))
         .border_l(px(if row.current { 3.0 } else { 1.0 }))

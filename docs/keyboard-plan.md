@@ -9,7 +9,13 @@ Transcript scrolling is active: `j/k` takes small steps, `Ctrl+f/b` pages,
 and `Ctrl+d/u` half-pages. Key repeat is supported, and scrolling uses the
 existing batched list path, including pause/resume of live-tail following.
 
-Still pending: incidental-control focus preservation and unified shortcut help.
+Pointer-focus preservation now covers app-owned action rows as well as buttons
+and disclosures. Existing dropdown return-focus behavior is covered by a UI
+test; sheet-to-picker transitions retain their original return target, and
+missing return targets fall back to the remembered chat owner. Help and workspace
+hints share the navigation command definitions; session badges show bare numbers
+in normal mode. Settings distinguish optional direct shortcuts.
+
 Transcript cursor and `v` selection are deferred. Composer Escape retains its
 existing steer/double-Escape-abort behavior; use `Ctrl+g` to leave the composer.
 
@@ -86,10 +92,11 @@ Embedded surfaces show their own mode indicators.
 
 ## 3. Space leader and session search
 
-Extend `src/app/ui/keybindings.rs` with a modal profile, using GPUI chord support
-where its cancellation/input routing meets the contract. Otherwise use the
-small explicit pending-leader state, not a second independent command system.
-All actions route through existing backend-neutral app commands.
+`src/app/ui/navigation/shortcuts.rs` owns normal-mode command/scroll definitions,
+shared by routing and help. `src/app/ui/navigation.rs` owns the pending-leader
+state and routes commands through existing backend-neutral app methods.
+`src/app/ui/keybindings.rs` retains optional direct shortcuts. No mutually
+exclusive keymap profile is required.
 
 A pending Space shows available next keys in a temporary hint surface without
 taking text focus. Escape, an unknown continuation, focus loss, surface/session
@@ -146,9 +153,9 @@ Keep transport/input implementation under the existing editor/terminal
 boundaries (`src/app/workspace/editor.rs`, `terminal.rs` and their integrations).
 No Pi-specific transport or session semantics belong in modal state.
 
-Land ownership first, then normal/insert and leader navigation behind an opt-in
-profile; add visual selection after its cursor contract passes tests. Preserve
-the existing direct shortcuts during the incremental rollout. Update `docs/usage.md` and shortcut help with the shipped profile.
+Navigation is active alongside optional direct shortcuts. Add visual selection
+only after its cursor contract is agreed and tested. `docs/usage.md`, shortcut
+help, and settings describe the shipped navigation behavior.
 
 Validation: narrow unit tests for transitions/keymap/list first, then integrated
 focus routing tests and `cargo check --bin farcaster`; always `git diff --check`.

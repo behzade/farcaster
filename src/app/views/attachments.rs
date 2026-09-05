@@ -94,6 +94,10 @@ pub(super) fn open_card(
                 .border_color(THEME.colors.surface)
                 .cursor_pointer()
                 .tab_index(0)
+                .on_mouse_down(
+                    gpui::MouseButton::Left,
+                    crate::app::ui::primitives::preserve_pointer_focus,
+                )
                 .role(gpui::Role::Button)
                 .aria_label(format!("Open {name}"))
                 .focus_visible(|control| control.border_color(THEME.colors.accent))

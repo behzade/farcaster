@@ -98,6 +98,10 @@ fn dialog_choice(
         .role(Role::Button)
         .aria_label(label)
         .tab_index(0)
+        .on_mouse_down(
+            gpui::MouseButton::Left,
+            crate::app::ui::primitives::preserve_pointer_focus,
+        )
         .w_full()
         .min_h(px(48.0))
         .flex()

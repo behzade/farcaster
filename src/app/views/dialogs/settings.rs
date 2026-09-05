@@ -58,6 +58,10 @@ pub(in crate::app::views) fn render(
                         .flex_col()
                         .gap(THEME.space.md)
                         .p(THEME.space.md)
+                        .child(setting_label(
+                            "Chat normal mode",
+                            "Ctrl+G returns to chat normal (Cmd+G also works on macOS). Use i/a to compose, 0–9 for sessions, / to search, and Space for workspace commands. Escape keeps its composer behavior.",
+                        ))
                         .child(modifier_setting(
                             app.settings_application_modifier,
                             entity.clone(),
@@ -190,8 +194,8 @@ fn modifier_setting(selected: ApplicationModifier, entity: WeakEntity<FarcasterA
         .justify_between()
         .gap(THEME.space.md)
         .child(setting_label(
-            "Keybinding modifier",
-            "Used for application shortcuts.",
+            "Direct shortcut modifier",
+            "Optional direct shortcuts. Does not change chat-normal keys, the Space leader, or return-to-chat shortcuts.",
         ))
         .child(
             dropdown_button(

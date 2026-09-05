@@ -1,5 +1,4 @@
 use gpui::{Context, InteractiveElement as _};
-use gpui_base::TextSelection;
 
 use super::super::FarcasterApp;
 use crate::app::ui::keyboard::{ClipboardCopyAlias, ClipboardPasteAlias, CopySelection};
@@ -185,18 +184,7 @@ fn bind_actions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
 }
 
 fn bind_pointer_interactions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
-    root.on_modifiers_changed(cx.listener(
-        |this, event: &gpui::ModifiersChangedEvent, window, cx| {
-            let requested = cfg!(target_os = "macos") && event.modifiers.platform;
-            let visible = if TextSelection::has_selection(window, cx) {
-                this.session_rail_view.read(cx).shortcuts_visible()
-            } else {
-                requested
-            };
-            this.set_session_shortcuts_visible(visible, cx);
-        },
-    ))
-    .on_mouse_move(cx.listener(|this, event: &gpui::MouseMoveEvent, _, cx| {
+    root.on_mouse_move(cx.listener(|this, event: &gpui::MouseMoveEvent, _, cx| {
         this.update_session_rail_resize(event.position.x, cx);
         this.update_run_panel_resize(event.position.x, cx);
     }))

@@ -238,6 +238,10 @@ fn render_sidebar_row(row: PlanRow, app: WeakEntity<FarcasterApp>) -> impl IntoE
         .role(Role::Button)
         .aria_label(format!("Open plan node {}", row.node.title))
         .tab_index(0)
+        .on_mouse_down(
+            gpui::MouseButton::Left,
+            crate::app::ui::primitives::preserve_pointer_focus,
+        )
         .cursor_pointer()
         .px(px(2.0))
         .py(px(3.0))

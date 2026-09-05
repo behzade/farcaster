@@ -97,7 +97,9 @@ impl FarcasterApp {
             let sheet_open =
                 self.overlays.sessions || self.overlays.run || self.overlays.keybindings;
             self.picker_return_focus = if sheet_open {
-                Some(self.composer_focus.clone())
+                self.sheet_return_focus
+                    .clone()
+                    .or_else(|| Some(self.preferred_chat_focus()))
             } else {
                 window.focused(cx)
             };
@@ -156,7 +158,7 @@ impl FarcasterApp {
         };
         self.picker_return_focus
             .take()
-            .unwrap_or_else(|| self.composer_focus.clone())
+            .unwrap_or_else(|| self.preferred_chat_focus())
             .focus(window, cx);
         self.restore_active_native_workspace_surface(window, cx);
         cx.notify();

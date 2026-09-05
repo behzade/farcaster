@@ -41,10 +41,6 @@ impl SessionRailView {
         self.width
     }
 
-    pub(crate) fn shortcuts_visible(&self) -> bool {
-        self.shortcuts_visible
-    }
-
     pub(crate) fn set_shortcuts_visible(&mut self, visible: bool) -> bool {
         if self.shortcuts_visible == visible {
             return false;

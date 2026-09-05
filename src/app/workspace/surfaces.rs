@@ -189,7 +189,7 @@ impl FarcasterApp {
             }
             return;
         }
-        let _ = self.enter_chat_surface(self.composer_focus.clone(), cx);
+        let _ = self.enter_chat_surface(self.preferred_chat_focus(), cx);
     }
 
     pub(in crate::app) fn reveal_native_center_surface(
@@ -232,7 +232,7 @@ impl FarcasterApp {
                 }
                 match self.surface {
                     AppSurface::Chat => chat
-                        .unwrap_or_else(|| self.composer_focus.clone())
+                        .unwrap_or_else(|| self.preferred_chat_focus())
                         .focus(window, cx),
                     AppSurface::Editor => {
                         if self.editor_ready
@@ -408,7 +408,7 @@ impl FarcasterApp {
         let focus = self
             .dialog_return_focus
             .take()
-            .unwrap_or_else(|| self.composer_focus.clone());
+            .unwrap_or_else(|| self.preferred_chat_focus());
         focus.focus(window, cx);
         self.restore_active_native_workspace_surface(window, cx);
         cx.notify();
@@ -716,7 +716,7 @@ impl FarcasterApp {
         }
         self.image_preview_return_focus
             .take()
-            .unwrap_or_else(|| self.composer_focus.clone())
+            .unwrap_or_else(|| self.preferred_chat_focus())
             .focus(window, cx);
         self.restore_active_native_workspace_surface(window, cx);
         cx.notify();
@@ -728,7 +728,7 @@ impl FarcasterApp {
         let focus = self
             .sheet_return_focus
             .take()
-            .unwrap_or_else(|| self.composer_focus.clone());
+            .unwrap_or_else(|| self.preferred_chat_focus());
         focus.focus(window, cx);
         self.restore_active_native_workspace_surface(window, cx);
         cx.notify();

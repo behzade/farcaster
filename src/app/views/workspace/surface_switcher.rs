@@ -145,10 +145,7 @@ impl FarcasterApp {
             .gap(gpui::px(2.0))
             .child(surface_control(
                 "show-chat-surface",
-                format!(
-                    "Chat ({})",
-                    crate::app::ui::keybindings::application_key("l")
-                ),
+                "Chat composer (i / a in chat normal; Ctrl+G returns to chat normal)".to_owned(),
                 harness_icon,
                 self.surface == AppSurface::Chat,
                 entity.clone(),
@@ -157,8 +154,10 @@ impl FarcasterApp {
             .child(surface_control(
                 "show-editor-surface",
                 format!(
-                    "Neovim ({})",
-                    crate::app::ui::keybindings::application_key("e")
+                    "Neovim ({} in chat normal)",
+                    crate::app::ui::navigation::command_key(
+                        crate::app::ui::navigation::Command::Editor
+                    )
                 ),
                 AppIcon::Neovim,
                 self.surface == AppSurface::Editor,
@@ -168,8 +167,10 @@ impl FarcasterApp {
             .child(surface_control(
                 "show-terminal-surface",
                 format!(
-                    "Terminal ({})",
-                    crate::app::ui::keybindings::application_key("j")
+                    "Terminal ({} in chat normal)",
+                    crate::app::ui::navigation::command_key(
+                        crate::app::ui::navigation::Command::Terminal
+                    )
                 ),
                 AppIcon::Ghostty,
                 self.surface == AppSurface::Terminal,
