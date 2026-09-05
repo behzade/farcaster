@@ -1,8 +1,7 @@
-//! Bundled Devicon v2.17.0 icons; monochrome glyphs get dark-theme tints.
-//! File, config, and image fallback glyphs are original Farcaster artwork.
+//! Bundled Material Icon Theme SVGs; provenance is in assets/file-icons/README.md.
 use std::{borrow::Cow, path::Path};
 
-use gpui::{AnyElement, IntoElement as _, Styled as _, img, rgb, svg};
+use gpui::{AnyElement, IntoElement as _, Styled as _, img};
 
 use super::theme::THEME;
 
@@ -56,29 +55,11 @@ pub(super) fn load(path: &str) -> Option<Cow<'static, [u8]>> {
 pub(crate) fn file_icon(path: &Path) -> AnyElement {
     let name = classify(path);
     let asset = format!("icons/files/{name}.svg");
-    let tint = match name {
-        "rust" => Some(rgb(0xdea584)),
-        "markdown" => Some(rgb(0x8bb8e8)),
-        "yaml" => Some(rgb(0xd88bb1)),
-        "config" => Some(rgb(0xaab4c4)),
-        "image" => Some(rgb(0xbb9af7)),
-        "file" => Some(THEME.colors.subtle),
-        _ => None,
-    };
-    // SVG elements are alpha masks. Use images for multicolor logos so
-    // lettering and other overlapping color layers remain visible.
-    match tint {
-        Some(color) => svg()
-            .path(asset)
-            .size(THEME.icons.inline)
-            .flex_none()
-            .text_color(color)
-            .into_any_element(),
-        None => img(asset)
-            .size(THEME.icons.inline)
-            .flex_none()
-            .into_any_element(),
-    }
+    // SVG elements are alpha masks. Render images to preserve native colors.
+    img(asset)
+        .size(THEME.icons.inline)
+        .flex_none()
+        .into_any_element()
 }
 
 fn classify(path: &Path) -> &'static str {
@@ -143,6 +124,9 @@ mod tests {
             (".gitignore", "git"),
             (".env.local", "config"),
             ("docs/README.md", "markdown"),
+            ("locales/fa/pdp.json", "json"),
+            ("settings.jsonc", "json"),
+            ("events.jsonl", "json"),
             ("src.rs/unknown", "file"),
             ("unknown.xyz", "file"),
             ("", "file"),
