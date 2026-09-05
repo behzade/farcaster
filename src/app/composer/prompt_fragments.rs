@@ -28,8 +28,7 @@ pub(crate) fn commands() -> Vec<SlashCommand> {
 }
 
 pub(crate) fn expand(input: &str) -> Option<Expansion> {
-    let mut selected = Vec::new();
-    let mut arguments = Vec::new();
+    let mut resolution = String::new();
     let mut cursor = 0;
     for (start, _, token) in tokens(input) {
         let token = invocation_token(token);
@@ -40,26 +39,14 @@ pub(crate) fn expand(input: &str) -> Option<Expansion> {
         let Some((_, source)) = SOURCES.iter().find(|(candidate, _)| *candidate == name) else {
             continue;
         };
-        let argument = input[cursor..start].trim();
-        if !argument.is_empty() {
-            arguments.push(argument);
-        }
-        selected.push(parse(source).1);
+        resolution.push_str(&input[cursor..start]);
+        resolution.push_str(&parse(source).1);
         cursor = start + token.len();
     }
-    if selected.is_empty() {
+    if cursor == 0 {
         return None;
     }
-    let trailing = input[cursor..].trim();
-    if !trailing.is_empty() {
-        arguments.push(trailing);
-    }
-    let arguments = arguments.join(" ");
-    let mut parts = selected;
-    if !arguments.is_empty() {
-        parts.push(arguments);
-    }
-    let resolution = parts.join("\n\n");
+    resolution.push_str(&input[cursor..]);
     Some(Expansion {
         display: input.into(),
         message: resolution.clone(),
@@ -134,19 +121,28 @@ mod tests {
 
     #[test]
     fn fragments_compose_in_user_order_and_keep_other_text() {
-        let expansion = expand("please $simplify this $commit with focused tests")
-            .expect("owned fragments should expand");
-        assert_eq!(
-            expansion.display,
-            "please $simplify this $commit with focused tests"
-        );
-        assert!(expansion.message.starts_with("Refine your implementation"));
-        assert!(expansion.message.contains("Commit your changes."));
-        assert!(
-            expansion
-                .message
-                .ends_with("please this with focused tests")
-        );
+        let simplify = parse(include_str!("../../../prompts/simplify.md")).1;
+        let commit = parse(include_str!("../../../prompts/commit.md")).1;
+        for (input, expected) in [
+            ("$simplify and $commit", format!("{simplify} and {commit}")),
+            (
+                "please $simplify this $commit with focused tests",
+                format!("please {simplify} this {commit} with focused tests"),
+            ),
+            (
+                "  $prompt:commit\n\tthen $simplify!\n",
+                format!("  {commit}\n\tthen {simplify}!\n"),
+            ),
+            (
+                r"$missing $commit and \$simplify $100",
+                format!(r"$missing {commit} and \$simplify $100"),
+            ),
+        ] {
+            let expansion = expand(input).expect("owned fragments should expand");
+            assert_eq!(expansion.display, input);
+            assert_eq!(expansion.message, expected);
+            assert_eq!(expansion.resolution, expected);
+        }
     }
 
     #[test]
@@ -176,8 +172,8 @@ mod tests {
                 let input = format!("${name}{suffix}");
                 let expansion = expand(&input).expect("punctuated prompt should expand");
                 assert_eq!(expansion.display, input);
-                assert!(expansion.message.starts_with("Commit your changes."));
-                assert!(expansion.message.ends_with(&format!("\n\n{suffix}")));
+                let body = parse(include_str!("../../../prompts/commit.md")).1;
+                assert_eq!(expansion.message, format!("{body}{suffix}"));
             }
         }
         assert!(expand("$commit.md").is_none());
