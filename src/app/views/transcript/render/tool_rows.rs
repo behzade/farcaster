@@ -32,6 +32,7 @@ pub(super) fn render_activity_group(
     expanded: bool,
     disclosure_states: &std::collections::HashMap<usize, bool>,
     entity: WeakEntity<FarcasterApp>,
+    cx: &gpui::App,
 ) -> AnyElement {
     let group_items = || items.iter_range(start..start + len);
     let summary = activity_summary(group_items().map(AsRef::as_ref));
@@ -89,7 +90,7 @@ pub(super) fn render_activity_group(
                         if item.kind == TranscriptKind::Thinking {
                             super::render_thinking(index, item, child_expanded, entity.clone())
                         } else {
-                            render_tool(index, item, child_expanded, entity.clone())
+                            render_tool(index, item, child_expanded, entity.clone(), cx)
                         }
                     })),
             )
@@ -102,8 +103,13 @@ pub(super) fn render_tool(
     item: &TranscriptItem,
     expanded: bool,
     entity: WeakEntity<FarcasterApp>,
+    cx: &gpui::App,
 ) -> AnyElement {
     let status = item_status(item);
+    let project = entity
+        .upgrade()
+        .map(|entity| entity.read(cx).workspace_project());
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
     let presentation = item.tool_presentation.as_ref().filter(|presentation| {
         !presentation.path().is_empty()
             && item
@@ -154,7 +160,14 @@ pub(super) fn render_tool(
             .child(status_slot(status))
             .when_some(presentation, |row, presentation| {
                 row.child(tool_changes::tool_label(item.label.clone()))
-                    .child(tool_changes::file_summary(presentation))
+                    .child(tool_changes::file_summary(
+                        presentation,
+                        tool_changes::file_label(
+                            presentation.path(),
+                            project.as_deref(),
+                            home.as_deref(),
+                        ),
+                    ))
             })
             .when(presentation.is_none(), |row| {
                 row.child(
