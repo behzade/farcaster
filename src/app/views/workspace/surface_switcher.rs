@@ -6,7 +6,7 @@ use gpui::{
 
 use crate::{
     app::ui::assets::AppIcon,
-    app::ui::primitives::{AppIconSize, app_icon, icon_control},
+    app::ui::primitives::{AppIconSize, ButtonTone, app_icon, button, icon_control},
     app::ui::theme::THEME,
     app::{AppSurface, FarcasterApp, views::session_rail::project_label},
     sessions::root_session_for_path,
@@ -16,6 +16,7 @@ impl FarcasterApp {
     pub(in crate::app::views) fn render_workspace_bar(
         &self,
         entity: WeakEntity<Self>,
+        mode: crate::app::ui::layout::LayoutMode,
     ) -> impl IntoElement {
         let project = project_label(&self.workspace_project());
         let selected_path = self.snapshot.selected_session.as_deref();
@@ -78,6 +79,56 @@ impl FarcasterApp {
                                     .child(title),
                             )
                     }),
+            )
+            .when(
+                self.surface == AppSurface::Chat && self.selected_draft_is_empty_and_unsubmitted(),
+                |bar| {
+                    let sessions = entity.clone();
+                    let work = entity.clone();
+                    let details = entity.clone();
+                    bar.when(
+                        crate::app::ui::layout::shows_session_sheet_button(mode),
+                        |bar| {
+                            bar.child(button(
+                                "draft-sessions",
+                                "Sessions",
+                                ButtonTone::Quiet,
+                                true,
+                                move |window, cx| {
+                                    let _ = sessions.update(cx, |this, cx| {
+                                        this.open_sessions_sheet(window, cx)
+                                    });
+                                },
+                            ))
+                        },
+                    )
+                    .when(crate::app::ui::layout::shows_draft_inspector(mode, self.overlays.draft_inspector), |bar| {
+                        bar.child(button(
+                            "hide-draft-details", "Hide session details", ButtonTone::Quiet, true,
+                            move |_, cx| {
+                                let _ = details.update(cx, |this, cx| {
+                                    this.overlays.draft_inspector = false;
+                                    if let Err(error) = crate::app::infrastructure::persistence::StateStore::open()
+                                        .and_then(|store| store.save_draft_inspector(false))
+                                    {
+                                        this.sessions_error = Some(error);
+                                    }
+                                    cx.notify();
+                                });
+                            },
+                        ))
+                    })
+                    .child(button(
+                        "draft-project-work",
+                        "Project work",
+                        ButtonTone::Quiet,
+                        true,
+                        move |window, cx| {
+                            let _ =
+                                work.update(cx, |this, cx| this.open_workgraph_surface(window, cx));
+                        },
+                    ))
+                },
             )
             .child(self.render_surface_switcher(entity, harness_icon))
     }
