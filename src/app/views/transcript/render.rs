@@ -51,7 +51,7 @@ pub(super) use chunking::{
     MARKDOWN_CHUNK_HARD_BYTES, markdown_chunk_text, markdown_chunks, markdown_fence,
     markdown_fence_closes,
 };
-use detail_rows::{render_agent_result, render_error, render_thinking};
+use detail_rows::{render_agent_message, render_error, render_thinking};
 #[allow(unused_imports)]
 pub(super) use detail_rows::{thinking_has_details, thinking_preview, thinking_preview_emphasis};
 #[allow(unused_imports)]
@@ -63,7 +63,7 @@ use message_rows::{render_invocation, render_message, render_message_chunk};
 #[cfg(test)]
 pub(super) use rows::matching_item_prefix;
 pub(crate) use rows::*;
-use tool_rows::{render_read_group, render_tool};
+use tool_rows::{render_activity_group, render_tool};
 
 const TRANSCRIPT_HORIZONTAL_PADDING: Pixels = px(18.0);
 pub(crate) const TRANSCRIPT_ROW_HEIGHT_HINT: Pixels = px(24.0);
@@ -88,7 +88,7 @@ pub(super) fn resolved_expanded(
     disclosure_states: &std::collections::HashMap<usize, bool>,
 ) -> bool {
     disclosure_states
-        .get(&row.key())
+        .get(&row.disclosure_key())
         .copied()
         .unwrap_or_else(|| expanded_by_default(row, items))
 }
@@ -104,7 +104,7 @@ pub(super) fn message_follows_tool(
         TranscriptRow::MessageChunk { first, .. } | TranscriptRow::StreamChunk { first, .. } => {
             first
         }
-        TranscriptRow::ReadGroup { .. } => false,
+        TranscriptRow::ActivityGroup { .. } => false,
     };
     is_first_assistant_row
         && row
@@ -121,7 +121,8 @@ pub(super) fn copy_transcript_items(
     range
         .filter_map(|index| items.get(index))
         .map(|item| {
-            let mut text = item.complete_text();
+            let mut text = item.tool_details.as_ref()
+                .map_or_else(|| item.complete_text(), |details| details.inspection_text());
             if !item.images.is_empty() {
                 let label = if item.images.len() == 1 {
                     "[Image attachment]".to_owned()
@@ -134,6 +135,12 @@ pub(super) fn copy_transcript_items(
                     text.push_str("\n\n");
                     text.push_str(&label);
                 }
+            }
+            for file in item.files.iter() {
+                if !text.is_empty() {
+                    text.push_str("\n\n");
+                }
+                text.push_str(&format!("[{}](<{}>)", file.name, file.path.display()));
             }
             if !text.trim().is_empty() {
                 text
@@ -199,6 +206,7 @@ pub(crate) fn render(
                             row,
                             &conversation.items,
                             expanded,
+                            &disclosure_states,
                             &markdown_cache,
                             &assistant_label,
                             row_entity.clone(),
@@ -302,7 +310,7 @@ fn transcript_context_menu(
             let all_text =
                 (!items.is_empty()).then(|| copy_transcript_items(&items, 0..=items.len() - 1));
             menu.item(
-                PopupMenuItem::new(if matches!(row, TranscriptRow::ReadGroup { .. }) {
+                PopupMenuItem::new(if matches!(row, TranscriptRow::ActivityGroup { .. }) {
                     "Copy tool group"
                 } else {
                     "Copy message"
@@ -341,7 +349,7 @@ pub(super) fn latest_allows_tail_reserve(
                     TranscriptKind::Thinking | TranscriptKind::Error | TranscriptKind::AgentResult
                 )
         }
-        TranscriptRow::ReadGroup { .. } => true,
+        TranscriptRow::ActivityGroup { .. } => true,
     }
 }
 
@@ -349,6 +357,7 @@ fn render_row(
     row: TranscriptRow,
     items: &PersistentVec<Arc<TranscriptItem>>,
     expanded: bool,
+    disclosure_states: &std::collections::HashMap<usize, bool>,
     markdown_cache: &TranscriptMarkdownCache,
     assistant_label: &str,
     entity: WeakEntity<FarcasterApp>,
@@ -357,8 +366,8 @@ fn render_row(
     let key = row.key();
     let follows_tool = message_follows_tool(row, items);
     match row {
-        TranscriptRow::ReadGroup { start, len, .. } => {
-            render_read_group(key, items, start, len, expanded, entity)
+        TranscriptRow::ActivityGroup { start, len, .. } => {
+            render_activity_group(row.disclosure_key(), items, start, len, expanded, disclosure_states, entity)
         }
         TranscriptRow::MessageChunk {
             index,
@@ -436,13 +445,16 @@ fn render_row(
             )
         }
         TranscriptRow::Item { index, .. } if items[index].invocation.is_some() => {
-            render_invocation(key, &items[index], expanded, entity)
+            render_invocation(key, &items[index], entity)
         }
         TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Tool => {
             render_tool(key, &items[index], expanded, entity)
         }
         TranscriptRow::Item { index, revision }
-            if items[index].kind == TranscriptKind::AgentResult =>
+            if matches!(
+                items[index].kind,
+                TranscriptKind::AgentResult | TranscriptKind::PeerMessage
+            ) =>
         {
             let markdown_state = expanded.then(|| {
                 markdown_cache.state(
@@ -451,7 +463,7 @@ fn render_row(
                     cx,
                 )
             });
-            render_agent_result(key, &items[index], expanded, markdown_state, entity)
+            render_agent_message(key, &items[index], expanded, markdown_state, entity)
         }
         TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Thinking => {
             render_thinking(key, &items[index], expanded, entity)
@@ -459,7 +471,7 @@ fn render_row(
         TranscriptRow::Item { index, revision } => {
             let markdown_state = matches!(
                 items[index].kind,
-                TranscriptKind::User | TranscriptKind::Assistant | TranscriptKind::PeerMessage
+                TranscriptKind::User | TranscriptKind::Assistant
             )
             .then(|| {
                 markdown_cache.state(

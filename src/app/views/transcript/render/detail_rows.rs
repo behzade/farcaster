@@ -4,26 +4,34 @@ use gpui::{
 };
 use gpui_component::text::TextViewState;
 
-use crate::app::{FarcasterApp, ui::theme::THEME, views::transcript::conversation::TranscriptItem};
+use crate::app::{
+    FarcasterApp,
+    ui::theme::THEME,
+    views::transcript::conversation::{TranscriptItem, TranscriptKind},
+};
 
 use super::{
     TRANSCRIPT_HORIZONTAL_PADDING, disclosure_detail, fenced_text, selectable_text,
     selectable_text_state, technical_text, transcript_title_row,
 };
 
-pub(super) fn render_agent_result(
+pub(super) fn render_agent_message(
     key: usize,
     item: &TranscriptItem,
     expanded: bool,
     markdown_state: Option<Entity<TextViewState>>,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
+    let (details, fallback) = match item.kind {
+        TranscriptKind::PeerMessage => ("worker message", "Message received"),
+        _ => ("subagent result", "Subagent finished"),
+    };
     let summary = item
         .text
         .lines()
         .next()
         .filter(|line| !line.trim().is_empty())
-        .unwrap_or("Subagent finished")
+        .unwrap_or(fallback)
         .chars()
         .take(160)
         .collect::<String>();
@@ -39,7 +47,7 @@ pub(super) fn render_agent_result(
                 ("agent-result-title", key),
                 expanded,
                 true,
-                format!("subagent result details for {summary}"),
+                format!("{details} details for {}: {summary}", item.label),
                 key,
                 entity,
             )
@@ -50,10 +58,13 @@ pub(super) fn render_agent_result(
                     .child(item.label.clone()),
             )
             .child(
-                technical_text(("agent-result-summary", key), summary)
+                div()
                     .flex_1()
                     .min_w_0()
-                    .text_color(THEME.colors.text),
+                    .truncate()
+                    .text_size(THEME.type_scale.body_small)
+                    .text_color(THEME.colors.text)
+                    .child(summary),
             ),
         )
         .when_some(markdown_state, |row, state| {

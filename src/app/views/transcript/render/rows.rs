@@ -22,15 +22,12 @@ pub(crate) fn estimated_row_height(
         TranscriptRow::Item { index, .. }
             if matches!(
                 item(index).kind,
-                TranscriptKind::User
-                    | TranscriptKind::Assistant
-                    | TranscriptKind::Custom
-                    | TranscriptKind::PeerMessage
+                TranscriptKind::User | TranscriptKind::Assistant | TranscriptKind::Custom
             ) && item(index).invocation.is_none() =>
         {
             Some(item(index).text.as_str())
         }
-        TranscriptRow::Item { .. } | TranscriptRow::ReadGroup { .. } => None,
+        TranscriptRow::Item { .. } | TranscriptRow::ActivityGroup { .. } => None,
     };
     let Some(text) = text else {
         return TRANSCRIPT_ROW_HEIGHT_HINT;
@@ -42,7 +39,7 @@ pub(crate) fn estimated_row_height(
         .sum::<usize>()
         .max(1);
     px((visual_lines.min(320) as f32).mul_add(20.0, 36.0))
-        + if item(row.item_start()).images.is_empty() {
+        + if !item(row.item_start()).has_attachments() {
             px(0.0)
         } else {
             ATTACHMENT_ROW_HEIGHT
@@ -72,7 +69,7 @@ pub(crate) enum TranscriptRow {
         first: bool,
         last: bool,
     },
-    ReadGroup {
+    ActivityGroup {
         start: usize,
         len: usize,
         revision: usize,
@@ -82,6 +79,14 @@ pub(crate) enum TranscriptRow {
 impl TranscriptRow {
     pub(crate) fn key(&self) -> usize {
         self.item_start()
+    }
+
+    /// Groups and their first child must have independent disclosure state.
+    pub(crate) fn disclosure_key(&self) -> usize {
+        match self {
+            Self::ActivityGroup { start, .. } => usize::MAX - start,
+            _ => self.key(),
+        }
     }
 
     pub(crate) fn same_position(&self, other: &Self) -> bool {
@@ -125,12 +130,12 @@ impl TranscriptRow {
                 left_index == right_index && left_chunk == right_chunk && left_first == right_first
             }
             (
-                Self::ReadGroup {
+                Self::ActivityGroup {
                     start: left_start,
                     len: left_len,
                     ..
                 },
-                Self::ReadGroup {
+                Self::ActivityGroup {
                     start: right_start,
                     len: right_len,
                     ..
@@ -145,7 +150,7 @@ impl TranscriptRow {
             Self::Item { index, .. }
             | Self::MessageChunk { index, .. }
             | Self::StreamChunk { index, .. } => *index,
-            Self::ReadGroup { start, .. } => *start,
+            Self::ActivityGroup { start, .. } => *start,
         }
     }
 
@@ -154,7 +159,7 @@ impl TranscriptRow {
             Self::Item { index, .. }
             | Self::MessageChunk { index, .. }
             | Self::StreamChunk { index, .. } => index + 1,
-            Self::ReadGroup { start, len, .. } => start + len,
+            Self::ActivityGroup { start, len, .. } => start + len,
         }
     }
 }
@@ -248,16 +253,23 @@ pub(crate) fn update_rows_incremental(
     let mut project_from = previous_rows
         .get(keep_rows)
         .map_or(unchanged_items, TranscriptRow::item_start);
-    if project_from == unchanged_items
-        && unchanged_items < items.len()
-        && items.get(unchanged_items).is_some_and(|item| is_read(item))
-        && let Some(TranscriptRow::ReadGroup { start, len, .. }) = keep_rows
-            .checked_sub(1)
-            .and_then(|index| previous_rows.get(index))
-        && start + len == unchanged_items
+    // A newly completed call can join the previous group (or a standalone
+    // thinking/tool row). Reproject that boundary, not just the changed item.
+    if items
+        .get(project_from)
+        .is_some_and(|item| is_routine_activity(item))
     {
-        keep_rows -= 1;
-        project_from = *start;
+        while let Some(previous) = keep_rows.checked_sub(1).and_then(|i| previous_rows.get(i)) {
+            if previous.item_end() != project_from
+                || !items
+                    .get(previous.item_start())
+                    .is_some_and(|item| is_routine_activity(item))
+            {
+                break;
+            }
+            keep_rows -= 1;
+            project_from = previous.item_start();
+        }
     }
 
     let projected = project_rows_from(items, project_from);
@@ -393,17 +405,23 @@ fn project_rows_from(
         let item = items
             .get(index)
             .expect("projected transcript item should exist");
-        if is_read(item) {
+        if is_routine_activity(item) {
             let start = index;
-            while index < items.len() && items.get(index).is_some_and(|item| is_read(item)) {
-                index += 1;
+            let mut end = start;
+            let mut has_tool = false;
+            while let Some(next) = items.get(end).filter(|next| is_routine_activity(next)) {
+                has_tool |= next.kind == TranscriptKind::Tool;
+                end += 1;
             }
-            rows.push(TranscriptRow::ReadGroup {
-                start,
-                len: index - start,
-                revision: item_revision(items, start..index),
-            });
-            continue;
+            if has_tool && end - start > 1 {
+                rows.push(TranscriptRow::ActivityGroup {
+                    start,
+                    len: end - start,
+                    revision: item_revision(items, start..end),
+                });
+                index = end;
+                continue;
+            }
         }
         if item.kind == TranscriptKind::Assistant && item.streaming {
             let chunk_count = item.stream_chunks.len() + usize::from(!item.text.is_empty());
@@ -420,10 +438,8 @@ fn project_rows_from(
                     last: chunk + 1 == chunk_count,
                 }
             }));
-        } else if matches!(
-            item.kind,
-            TranscriptKind::User | TranscriptKind::Assistant | TranscriptKind::PeerMessage
-        ) && item.invocation.is_none()
+        } else if matches!(item.kind, TranscriptKind::User | TranscriptKind::Assistant)
+            && item.invocation.is_none()
             && (markdown_needs_chunks(&item.text)
                 || (item.streaming && item.text.len() > MARKDOWN_CHUNK_TARGET_BYTES))
         {
@@ -470,6 +486,23 @@ fn text_revision(text: &str) -> usize {
     hasher.finish() as usize
 }
 
-fn is_read(item: &TranscriptItem) -> bool {
-    item.kind == TranscriptKind::Tool && item.label == "Read"
+fn is_routine_activity(item: &TranscriptItem) -> bool {
+    use conversation::{ToolExecutionState, ToolReviewState};
+    matches!(item.kind, TranscriptKind::Tool | TranscriptKind::Thinking)
+        && !item.streaming
+        && !item.is_error
+        && !item.tool_review.as_ref().is_some_and(|review| {
+            matches!(
+                review.state,
+                ToolReviewState::Reviewing | ToolReviewState::Blocked
+            )
+        })
+        && !item.tool_details.as_ref().is_some_and(|details| {
+            matches!(
+                details.state,
+                ToolExecutionState::Pending
+                    | ToolExecutionState::Running
+                    | ToolExecutionState::Failed
+            )
+        })
 }
