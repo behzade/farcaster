@@ -41,7 +41,7 @@ pub(crate) fn descriptor() -> AgentBackendDescriptor {
                 interrupt: Available,
                 steer: Unsupported,
                 follow_up: Available,
-                compact: Available,
+                compact: Unsupported,
                 queue: Available,
             },
             configuration: ConfigurationCapabilities {
@@ -85,6 +85,20 @@ pub(super) fn spawn_main(
     ),
     String,
 > {
+    if let crate::agents::SessionStart::Resume(_) = &launch.start {
+        let id = super::main_session::launch_session_locator(launch)
+            .ok_or_else(|| "Cursor resume requires a session id".to_owned())?;
+        if catalog::inspect(&id)?.1 {
+            let fresh = crate::agents::SessionLaunch {
+                harness: launch.harness.clone(),
+                session_id: None,
+                project: launch.project.clone(),
+                start: crate::agents::SessionStart::New,
+                wake: launch.wake.clone(),
+            };
+            return super::acp::spawn_main(command, &PROFILE, &fresh);
+        }
+    }
     super::acp::spawn_main(command, &PROFILE, launch)
 }
 
@@ -106,15 +120,29 @@ pub(super) fn discover(
 }
 
 pub(super) fn load_history(path: &Path) -> Result<crate::agents::DiscoveredHistory, String> {
-    let session_id = super::main_session::external_session_locator(PROFILE.backend, path)
-        .ok_or_else(|| format!("invalid Cursor session locator: {}", path.display()))?;
-    let project = catalog::project(&session_id)?;
-    super::acp::load_history(&PROFILE, path, &project)
+    history(path, None)
 }
 
 pub(super) fn load_history_at(
     path: &Path,
     project: &Path,
 ) -> Result<crate::agents::DiscoveredHistory, String> {
-    super::acp::load_history(&PROFILE, path, project)
+    history(path, Some(project))
+}
+
+fn history(
+    path: &Path,
+    project: Option<&Path>,
+) -> Result<crate::agents::DiscoveredHistory, String> {
+    let id = super::main_session::external_session_locator(PROFILE.backend, path)
+        .ok_or_else(|| format!("invalid Cursor session locator: {}", path.display()))?;
+    let (stored_project, unpersisted) = catalog::inspect(&id)?;
+    if unpersisted {
+        return Ok(crate::agents::DiscoveredHistory {
+            messages: Vec::new(),
+            model: None,
+            thinking_level: None,
+        });
+    }
+    super::acp::load_history(&PROFILE, path, project.unwrap_or(&stored_project))
 }
