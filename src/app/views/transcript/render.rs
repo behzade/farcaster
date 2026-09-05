@@ -187,7 +187,6 @@ pub(crate) fn render(
             let content = div()
                 .w_full()
                 .max_w(THEME.layout.conversation_width)
-                .when(expanded, |row| row.max_w_full())
                 .mx_auto()
                 .when(reserves_tail, |row| row.pb(viewport.tail_reserve))
                 .child(
@@ -212,6 +211,8 @@ pub(crate) fn render(
                 row,
                 conversation.items.clone(),
                 selection_state.clone(),
+                row_entity.clone(),
+                expanded,
                 content,
             )
         },
@@ -264,6 +265,8 @@ fn transcript_context_menu(
     row: TranscriptRow,
     items: PersistentVec<Arc<TranscriptItem>>,
     selection_state: TranscriptListState,
+    entity: WeakEntity<FarcasterApp>,
+    expanded: bool,
     content: AnyElement,
 ) -> AnyElement {
     ContextMenuTrigger::new(format!("transcript-context-trigger-{row_index}"), content)
@@ -280,6 +283,19 @@ fn transcript_context_menu(
                         }),
                     )
                     .separator();
+            }
+
+            if matches!(row, TranscriptRow::Item { index, .. } if tool_rows::opens_file(&items[index])) {
+                let entity = entity.clone();
+                menu = menu.item(PopupMenuItem::new(if expanded {
+                    "Hide raw tool input/output"
+                } else {
+                    "Show raw tool input/output"
+                }).on_click(move |_, _, cx| {
+                    let _ = entity.update(cx, |this, cx| {
+                        this.set_transcript_item_expanded(row.key(), !expanded, cx);
+                    });
+                })).separator();
             }
 
             let row_text = copy_transcript_items(&items, row.item_start()..=row.item_end() - 1);

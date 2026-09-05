@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _, Styled as _,
-    WeakEntity, div, prelude::FluentBuilder as _, px,
+    AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
 };
 
 use crate::app::{
@@ -21,7 +21,7 @@ use crate::app::{
 
 use super::{
     TRANSCRIPT_HORIZONTAL_PADDING, disclosure_detail, fenced_text, selectable_text, technical_text,
-    toggle_transcript_item, tool_state, tool_target, transcript_title_row,
+    toggle_transcript_item, tool_state, tool_target,
 };
 
 pub(super) fn render_read_group(
@@ -33,21 +33,17 @@ pub(super) fn render_read_group(
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
     let group_items = || items.iter_range(start..start + len);
-    let failed = group_items().filter(|item| item.is_error).count();
-    let running = group_items().filter(|item| item.streaming).count();
     let target = (len == 1).then(|| tool_target(&items[start].text));
-    let has_target = target.as_ref().is_some_and(|target| !target.is_empty());
     let summary = if len == 1 {
         "Read".to_owned()
     } else {
-        format!("Read {len} files")
+        format!("{len} files")
     };
-    let completed = group_items()
-        .all(|item| !item.streaming && (item.is_error || !item.tool_output.is_empty()));
-    let state = tool_state(running > 0, failed, completed);
+    let status = group_status(group_items().map(|item| item_status(item)));
     let disclosure_label = format!(
-        "read call details for {summary}. {}",
-        state.map_or("No result", |state| state.label)
+        "{} read call details for {summary}. {}",
+        if expanded { "Collapse" } else { "Expand" },
+        status.map_or("No result", ToolStatus::label)
     );
     div()
         .id(("read-group", key))
@@ -57,34 +53,26 @@ pub(super) fn render_read_group(
         .flex()
         .flex_col()
         .child(
-            transcript_title_row(
+            tool_changes::title_row(
                 ("read-title", key),
-                expanded,
-                true,
                 disclosure_label,
-                key,
-                entity.clone(),
+                toggle_transcript_item(entity.clone(), key, expanded),
             )
+            .aria_expanded(expanded)
+            .child(status_slot(status))
+            .child(tool_changes::tool_label("Read"))
+            .children(status.and_then(status_badge))
             .child(
-                div()
-                    .text_size(THEME.type_scale.body_small)
-                    .text_color(THEME.colors.muted)
-                    .when(!has_target, |label| label.flex_1())
-                    .child(summary),
-            )
-            .children(target.filter(|target| !target.is_empty()).map(|target| {
-                technical_text(("read-target", key), target)
-                    .flex_1()
-                    .min_w_0()
-                    .text_color(THEME.colors.text)
-            }))
-            .children(state.map(|state| {
-                div()
-                    .flex_none()
-                    .text_size(THEME.type_scale.caption)
-                    .text_color(THEME.colors.subtle)
-                    .child(state.glyph)
-            })),
+                technical_text(
+                    ("read-target", key),
+                    target
+                        .filter(|target| !target.is_empty())
+                        .unwrap_or(summary),
+                )
+                .flex_1()
+                .min_w_0()
+                .text_color(THEME.colors.text),
+            ),
         )
         .when(expanded, |group| {
             group.child(
@@ -106,11 +94,7 @@ pub(super) fn render_tool(
     expanded: bool,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
-    let state = tool_state(
-        item.streaming,
-        usize::from(item.is_error),
-        !item.streaming && (item.is_error || !item.tool_output.is_empty()),
-    );
+    let status = item_status(item);
     let presentation = item.tool_presentation.as_ref();
     let target =
         presentation.map_or_else(|| tool_target(&item.text), |change| change.path().into());
@@ -120,40 +104,18 @@ pub(super) fn render_tool(
     } else {
         format!("{} tool call details", item.label)
     };
-    let review_label = item
-        .tool_review
-        .as_ref()
-        .map(|review| format!("Approval review {}", review.state.label()));
-    let disclosure_label = format!(
-        "{detail_label}. {}{}",
-        state.map_or("No result", |state| state.label),
-        review_label.map_or_else(String::new, |label| format!(". {label}")),
-    );
-    if let Some(presentation) = presentation {
-        let source = presentation.clone();
-        let open_entity = entity.clone();
-        return tool_changes::render(
-            &item.label,
-            presentation,
-            key,
-            state.map(|state| state.glyph),
-            tool_review_indicator(item),
-            expanded,
-            disclosure_label,
-            toggle_transcript_item(entity.clone(), key, expanded),
-            expanded.then(|| expanded_tool_body(("tool-detail", key), item)),
-            move |window, cx| {
-                let _ = open_entity.update(cx, |this, cx| {
-                    this.open_file_editor_at_line(
-                        source.path().into(),
-                        source.first_changed_line(),
-                        window,
-                        cx,
-                    );
-                });
-            },
-        );
-    }
+    let opens_file = opens_file(item);
+    let disclosure_label = if opens_file {
+        format!("Open {target} in Neovim")
+    } else {
+        format!(
+            "{} {detail_label}. {}",
+            if expanded { "Collapse" } else { "Expand" },
+            status.map_or("No result", ToolStatus::label)
+        )
+    };
+    let source = presentation.cloned().filter(|_| opens_file);
+    let click_entity = entity.clone();
     div()
         .id(("tool-row", key))
         .w_full()
@@ -162,37 +124,35 @@ pub(super) fn render_tool(
         .flex()
         .flex_col()
         .child(
-            transcript_title_row(
-                ("tool-title", key),
-                expanded,
-                true,
-                disclosure_label,
-                key,
-                entity,
-            )
-            .child(
-                div()
-                    .text_size(THEME.type_scale.body_small)
-                    .text_color(THEME.colors.muted)
-                    .when(!has_target, |label| label.flex_1())
-                    .child(item.label.clone()),
-            )
-            .when(has_target, |row| {
+            tool_changes::title_row(("tool-title", key), disclosure_label, move |window, cx| {
+                let _ = click_entity.update(cx, |this, cx| {
+                    if let Some(source) = &source {
+                        this.open_file_editor_at_line(
+                            source.path().into(),
+                            source.first_changed_line(),
+                            window,
+                            cx,
+                        );
+                    } else {
+                        this.set_transcript_item_expanded(key, !expanded, cx);
+                    }
+                });
+            })
+            .when(!opens_file, |row| row.aria_expanded(expanded))
+            .child(status_slot(status))
+            .child(tool_changes::tool_label(item.label.clone()))
+            .children(status.and_then(status_badge))
+            .when_some(presentation, |row, presentation| {
+                row.child(tool_changes::file_summary(presentation))
+            })
+            .when(presentation.is_none() && has_target, |row| {
                 row.child(
                     technical_text(("tool-target", key), target)
                         .flex_1()
                         .min_w_0()
                         .text_color(THEME.colors.text),
                 )
-            })
-            .children(tool_review_indicator(item))
-            .children(state.map(|state| {
-                div()
-                    .flex_none()
-                    .text_size(THEME.type_scale.caption)
-                    .text_color(THEME.colors.subtle)
-                    .child(state.glyph)
-            })),
+            }),
         )
         .when(expanded, |tool| {
             tool.child(disclosure_detail().child(expanded_tool_body(("tool-detail", key), item)))
@@ -200,20 +160,115 @@ pub(super) fn render_tool(
         .into_any_element()
 }
 
-fn tool_review_indicator(item: &TranscriptItem) -> Option<AnyElement> {
-    let review = item.tool_review.as_ref()?;
-    let (icon, color) = match review.state {
-        ToolReviewState::Reviewing => (AppIcon::Shield, THEME.colors.warning),
-        ToolReviewState::Approved => (AppIcon::CheckCircle, THEME.colors.success),
-        ToolReviewState::Blocked => (AppIcon::XCircle, THEME.colors.error),
-    };
-    Some(
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ToolStatus {
+    Reviewing,
+    Rejected,
+    Running,
+    Succeeded,
+    Failed,
+}
+
+impl ToolStatus {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Reviewing => "Awaiting approval",
+            Self::Rejected => "Rejected",
+            Self::Running => "Running",
+            Self::Succeeded => "Succeeded",
+            Self::Failed => "Failed",
+        }
+    }
+    fn color(self) -> gpui::Rgba {
+        match self {
+            Self::Reviewing | Self::Rejected => THEME.colors.warning,
+            Self::Failed => THEME.colors.error,
+            Self::Running | Self::Succeeded => THEME.colors.muted,
+        }
+    }
+    fn icon(self) -> AppIcon {
+        match self {
+            Self::Reviewing => AppIcon::Shield,
+            Self::Rejected | Self::Failed => AppIcon::XCircle,
+            Self::Running => AppIcon::SpinnerGap,
+            Self::Succeeded => AppIcon::CheckCircle,
+        }
+    }
+}
+
+fn status_from_label(label: &str) -> ToolStatus {
+    match label {
+        "Failed" => ToolStatus::Failed,
+        "Working" => ToolStatus::Running,
+        _ => ToolStatus::Succeeded,
+    }
+}
+
+fn item_status(item: &TranscriptItem) -> Option<ToolStatus> {
+    match item.tool_review.as_ref().map(|review| review.state) {
+        Some(ToolReviewState::Reviewing) => return Some(ToolStatus::Reviewing),
+        Some(ToolReviewState::Blocked) => return Some(ToolStatus::Rejected),
+        _ => {}
+    }
+    tool_state(
+        item.streaming,
+        usize::from(item.is_error),
+        !item.streaming && (item.is_error || !item.tool_output.is_empty()),
+    )
+    .map(|state| status_from_label(state.label))
+}
+
+fn group_status(statuses: impl Iterator<Item = Option<ToolStatus>>) -> Option<ToolStatus> {
+    let statuses = statuses.collect::<Vec<_>>();
+    [
+        ToolStatus::Reviewing,
+        ToolStatus::Failed,
+        ToolStatus::Rejected,
+        ToolStatus::Running,
+    ]
+    .into_iter()
+    .find(|status| statuses.contains(&Some(*status)))
+    .or_else(|| {
+        (!statuses.is_empty()
+            && statuses
+                .iter()
+                .all(|status| *status == Some(ToolStatus::Succeeded)))
+        .then_some(ToolStatus::Succeeded)
+    })
+}
+
+pub(super) fn opens_file(item: &TranscriptItem) -> bool {
+    item.tool_presentation.is_some() && item_status(item) == Some(ToolStatus::Succeeded)
+}
+
+fn status_slot(status: Option<ToolStatus>) -> AnyElement {
+    div()
+        .w(THEME.icons.control)
+        .h(THEME.icons.control)
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .when_some(status, |slot, status| {
+            slot.text_color(status.color())
+                .child(app_icon(status.icon(), AppIconSize::Inline))
+        })
+        .into_any_element()
+}
+
+fn status_badge(status: ToolStatus) -> Option<AnyElement> {
+    matches!(
+        status,
+        ToolStatus::Reviewing | ToolStatus::Rejected | ToolStatus::Failed
+    )
+    .then(|| {
         div()
             .flex_none()
-            .text_color(color)
-            .child(app_icon(icon, AppIconSize::Inline))
-            .into_any_element(),
-    )
+            .text_size(THEME.type_scale.caption)
+            .text_color(status.color())
+            .child(status.label())
+            .into_any_element()
+    })
 }
 
 fn expanded_tool_body(id: impl Into<gpui::ElementId>, item: &TranscriptItem) -> AnyElement {
@@ -247,4 +302,89 @@ fn expanded_tool_body(id: impl Into<gpui::ElementId>, item: &TranscriptItem) -> 
             THEME.colors.muted
         })
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::views::transcript::conversation::{ConversationState, ToolReview};
+    use serde_json::json;
+
+    fn write_item() -> TranscriptItem {
+        let mut state = ConversationState::default();
+        state.reduce(&json!({
+            "type": "tool_execution_start", "toolCallId": "write-1", "toolName": "write",
+            "args": {"path": "src/main.rs", "content": "fn main() {}\n"}
+        }));
+        state.reduce(&json!({
+            "type": "tool_execution_end", "toolCallId": "write-1", "isError": false,
+            "result": {"content": [{"type": "text", "text": "Wrote src/main.rs"}]}
+        }));
+        (*state.items[0]).clone()
+    }
+
+    #[test]
+    fn only_successful_file_changes_open_editor() {
+        let mut item = write_item();
+        assert!(opens_file(&item));
+        item.streaming = true;
+        assert!(!opens_file(&item));
+        item.streaming = false;
+        item.is_error = true;
+        assert!(!opens_file(&item));
+        item.is_error = false;
+        item.tool_presentation = None;
+        assert!(!opens_file(&item));
+    }
+
+    #[test]
+    fn approval_replaces_execution_status_instead_of_coexisting() {
+        let mut item = write_item();
+        item.streaming = true;
+        item.tool_review = Some(ToolReview {
+            state: ToolReviewState::Reviewing,
+            detail: None,
+        });
+        assert_eq!(item_status(&item), Some(ToolStatus::Reviewing));
+        assert!(!opens_file(&item));
+        item.is_error = true;
+        item.tool_review.as_mut().unwrap().state = ToolReviewState::Blocked;
+        assert_eq!(item_status(&item), Some(ToolStatus::Rejected));
+        assert!(!opens_file(&item));
+        item.tool_review.as_mut().unwrap().state = ToolReviewState::Approved;
+        assert_eq!(item_status(&item), Some(ToolStatus::Failed));
+        item.is_error = false;
+        assert_eq!(item_status(&item), Some(ToolStatus::Running));
+        item.streaming = false;
+        assert_eq!(item_status(&item), Some(ToolStatus::Succeeded));
+        assert!(opens_file(&item));
+    }
+
+    #[test]
+    fn rejection_and_failure_have_distinct_labels_and_colors() {
+        assert_eq!(ToolStatus::Rejected.label(), "Rejected");
+        assert_eq!(ToolStatus::Rejected.color(), THEME.colors.warning);
+        assert_eq!(ToolStatus::Failed.label(), "Failed");
+        assert_eq!(ToolStatus::Failed.color(), THEME.colors.error);
+        assert!(status_badge(ToolStatus::Succeeded).is_none());
+    }
+
+    #[test]
+    fn grouped_reads_preserve_approval_and_failure_states() {
+        use ToolStatus::*;
+        assert_eq!(
+            group_status([Some(Succeeded), Some(Reviewing)].into_iter()),
+            Some(Reviewing)
+        );
+        assert_eq!(
+            group_status([Some(Succeeded), Some(Rejected)].into_iter()),
+            Some(Rejected)
+        );
+        assert_eq!(
+            group_status([Some(Failed), Some(Succeeded)].into_iter()),
+            Some(Failed)
+        );
+        assert_eq!(group_status([Some(Succeeded), None].into_iter()), None);
+        assert_eq!(group_status([Some(Succeeded)].into_iter()), Some(Succeeded));
+    }
 }
