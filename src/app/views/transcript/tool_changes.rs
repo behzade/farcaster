@@ -53,7 +53,7 @@ pub(super) fn title_row(
 
 pub(super) fn tool_label(label: impl Into<gpui::SharedString>) -> Div {
     div()
-        .w(px(64.0))
+        .max_w(px(160.0))
         .flex_none()
         .overflow_hidden()
         .whitespace_nowrap()
