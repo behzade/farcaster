@@ -96,7 +96,6 @@ pub(in crate::app) struct RepositoryState {
     pub(in crate::app) sync: RepositorySyncState,
     pub(in crate::app) additions: Option<u64>,
     pub(in crate::app) deletions: Option<u64>,
-    pub(in crate::app) visible_changes: usize,
     pub(in crate::app) row_focus: std::collections::HashMap<DiffTargetKey, FocusHandle>,
     preferences: BTreeMap<PathBuf, BackendPreference>,
     refresh: RefreshGate,
@@ -132,7 +131,6 @@ impl RepositoryState {
             sync: RepositorySyncState::default(),
             additions: None,
             deletions: None,
-            visible_changes: 5,
             row_focus: std::collections::HashMap::new(),
             preferences,
             refresh: RefreshGate::default(),
@@ -180,7 +178,6 @@ impl RepositoryState {
         self.sync.clear();
         self.additions = None;
         self.deletions = None;
-        self.visible_changes = 5;
         self.row_focus.clear();
         self.watcher = None;
         self.watcher_binding = None;
@@ -189,11 +186,6 @@ impl RepositoryState {
 }
 
 impl FarcasterApp {
-    pub(in crate::app) fn expand_repository_changes(&mut self, cx: &mut Context<Self>) {
-        self.repository.visible_changes = self.repository.visible_changes.saturating_add(20);
-        self.notify_run_panel(cx);
-    }
-
     pub(in crate::app) fn select_repository_project(
         &mut self,
         project: PathBuf,

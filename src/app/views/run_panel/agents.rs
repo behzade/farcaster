@@ -1,7 +1,7 @@
 use std::time::{Duration, SystemTime};
 
 use gpui::{
-    AnyElement, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Role,
+    AnyElement, InteractiveElement as _, IntoElement, ParentElement as _, Role,
     StatefulInteractiveElement as _, Styled as _, WeakEntity, div, px,
 };
 
@@ -9,7 +9,7 @@ use super::super::super::{FarcasterApp, RunPanelView};
 use crate::{
     agent_activity::{AgentActivity, AgentLifecycle, AgentOutcome},
     app::ui::assets::AppIcon,
-    app::ui::primitives::{AppIconSize, app_icon, disclosure_button},
+    app::ui::primitives::{AppIconSize, activates_button, app_icon, disclosure_button},
     app::ui::theme::THEME,
 };
 
@@ -20,9 +20,7 @@ impl FarcasterApp {
         &self,
         activity: &AgentActivity,
         depth: usize,
-        active: bool,
         limited: bool,
-        role_override: Option<&str>,
         entity: WeakEntity<Self>,
     ) -> Option<AnyElement> {
         let focus = self.agent_row_focus.get(&activity.session_id)?.clone();
@@ -32,6 +30,9 @@ impl FarcasterApp {
             .find(|session| session.id == activity.session_id)?;
         let path = session.path.clone();
         let project = session.project.clone();
+        let key_path = path.clone();
+        let key_project = project.clone();
+        let key_entity = entity.clone();
         let displayed_lifecycle = if limited {
             AgentLifecycle::Unknown
         } else {
@@ -39,7 +40,7 @@ impl FarcasterApp {
         };
         let state = lifecycle_label(displayed_lifecycle);
         let activity_text = activity.activity.clone();
-        let role = role_override.unwrap_or(&activity.role).to_owned();
+        let role = activity.role.clone();
         let marker = role_icon(&role);
         let elapsed = elapsed_label(activity, SystemTime::now());
         Some(
@@ -63,26 +64,19 @@ impl FarcasterApp {
                         this.select_session(path.clone(), project.clone(), window, cx);
                     });
                 })
+                .on_key_down(move |event, window, cx| {
+                    if activates_button(event) {
+                        cx.stop_propagation();
+                        let _ = key_entity.update(cx, |this, cx| {
+                            this.select_session(key_path.clone(), key_project.clone(), window, cx)
+                        });
+                    }
+                })
                 .child(
                     div()
-                        .size(THEME.controls.agent_marker)
+                        .w(THEME.controls.agent_marker)
                         .flex_none()
-                        .rounded_full()
-                        .border(THEME.border)
-                        .border_color(if active {
-                            THEME.colors.accent
-                        } else {
-                            THEME.colors.border
-                        })
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(if active {
-                            THEME.colors.accent
-                        } else {
-                            THEME.colors.muted
-                        })
+                        .text_color(THEME.colors.muted)
                         .child(app_icon(marker, AppIconSize::Inline)),
                 )
                 .child(
@@ -91,29 +85,35 @@ impl FarcasterApp {
                         .min_w_0()
                         .flex_1()
                         .overflow_hidden()
-                        .whitespace_normal()
-                        .line_clamp(3)
-                        .line_height(THEME.type_scale.line_body)
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(THEME.colors.text)
-                        .child(if activity_text.is_empty() {
-                            role
-                        } else {
-                            activity_text
-                        }),
-                )
-                .child(
-                    div()
-                        .flex_none()
                         .flex()
-                        .items_start()
-                        .justify_end()
-                        .gap(px(3.0))
-                        .text_size(THEME.type_scale.caption)
-                        .whitespace_nowrap()
-                        .text_color(lifecycle_color(displayed_lifecycle))
-                        .child(lifecycle_indicator(displayed_lifecycle))
-                        .child(elapsed),
+                        .flex_col()
+                        .child(
+                            div()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .text_size(THEME.type_scale.body_small)
+                                .text_color(THEME.colors.text)
+                                .child(if activity_text.is_empty() {
+                                    role
+                                } else {
+                                    activity_text
+                                }),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(THEME.space.xs)
+                                .child(
+                                    div()
+                                        .text_color(lifecycle_color(displayed_lifecycle))
+                                        .child(lifecycle_indicator(displayed_lifecycle)),
+                                )
+                                .text_size(THEME.type_scale.caption)
+                                .text_color(THEME.colors.muted)
+                                .child(format!("{state} · {elapsed}")),
+                        ),
                 )
                 .into_any_element(),
         )
@@ -220,7 +220,7 @@ fn lifecycle_color(lifecycle: AgentLifecycle) -> gpui::Rgba {
         AgentLifecycle::Working => THEME.colors.accent,
         AgentLifecycle::Completed(AgentOutcome::Failed) => THEME.colors.error,
         AgentLifecycle::Completed(AgentOutcome::Incomplete) => THEME.colors.warning,
-        AgentLifecycle::Completed(AgentOutcome::Complete) => THEME.colors.success,
+        AgentLifecycle::Completed(AgentOutcome::Complete) => THEME.colors.muted,
         AgentLifecycle::Unknown => THEME.colors.subtle,
     }
 }

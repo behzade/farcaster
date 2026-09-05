@@ -8,7 +8,7 @@ use gpui_component::tooltip::Tooltip;
 use super::repository_controls::selected_backend;
 use super::{
     super::super::FarcasterApp,
-    repository_controls::{repository_header, repository_sync_row},
+    repository_controls::repository_header,
     repository_presentation::{
         accessible_change_path, bounded_message, change_color, change_kind_label,
         change_status_label, display_change_path, file_path_labels, group_title, repository_row_id,
@@ -17,30 +17,42 @@ use super::{
 #[cfg(test)]
 use crate::repository::BackendPreference;
 use crate::{
-    app::ui::primitives::{activates_button, disclosure_button},
+    app::ui::primitives::{ButtonTone, activates_button, button},
     app::ui::theme::{MONO_FONT_FAMILY, THEME},
     repository::{RepositoryKind, WorkingCopyChange, WorkingCopySnapshot},
 };
 
-const INITIAL_VISIBLE_CHANGES: usize = 5;
-const EXPAND_CHANGE_PAGE: usize = 20;
+use super::{
+    RepositoryView,
+    change_tree::{self, TreeRow},
+};
+use crate::app::RunPanelView;
+use gpui_component::input::Input;
 
 impl FarcasterApp {
-    pub(super) fn render_repository(&self, entity: WeakEntity<Self>) -> AnyElement {
-        let refresh = entity.clone();
+    pub(super) fn render_repository(
+        &self,
+        entity: WeakEntity<Self>,
+        panel: WeakEntity<RunPanelView>,
+        browser: &RepositoryView<'_>,
+    ) -> AnyElement {
         let snapshot = self.repository.snapshot.as_ref();
-        let header = repository_header(self, snapshot, entity.clone(), move |cx| {
-            let _ = refresh.update(cx, |this, cx| this.request_repository_refresh(cx));
-        });
+        let header = repository_header(
+            self,
+            snapshot,
+            entity.clone(),
+            panel.clone(),
+            !browser.query.trim().is_empty(),
+        );
 
         div()
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
             .flex()
             .flex_col()
             .gap(THEME.space.xs)
             .child(header)
-            .when_some(snapshot, |section, snapshot| {
-                section.child(repository_sync_row(self, snapshot, entity.clone()))
-            })
             .when(
                 self.repository.loading && !self.repository.initialized,
                 |section| {
@@ -93,7 +105,14 @@ impl FarcasterApp {
                 section.child(repository_notice(&message, THEME.colors.error))
             })
             .when_some(snapshot, |section, snapshot| {
-                section.child(self.repository_changes(snapshot, entity.clone()))
+                section
+                    .child(Input::new(browser.search))
+                    .child(self.repository_changes(
+                        snapshot,
+                        entity.clone(),
+                        panel.clone(),
+                        browser,
+                    ))
             })
             .when(!self.repository.execution_allowed, |section| {
                 section.child(
@@ -128,55 +147,92 @@ impl FarcasterApp {
         &self,
         snapshot: &WorkingCopySnapshot,
         entity: WeakEntity<Self>,
+        panel: WeakEntity<RunPanelView>,
+        browser: &RepositoryView<'_>,
     ) -> AnyElement {
-        if snapshot.changes.is_empty() {
-            return div()
-                .id("repository-clean")
-                .role(Role::Status)
-                .text_size(THEME.type_scale.caption)
-                .text_color(THEME.colors.subtle)
-                .child(match snapshot.location.kind {
-                    RepositoryKind::Git => "Working tree and index are clean",
-                    RepositoryKind::Jujutsu => "Current change is empty",
-                })
-                .into_any_element();
-        }
-
-        let (visible, remaining, expand_count) =
-            change_page(snapshot.changes.len(), self.repository.visible_changes);
-        let expand = entity.clone();
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(2.0))
-            .children(
-                snapshot
-                    .changes
-                    .iter()
-                    .take(visible)
-                    .filter_map(|change| self.repository_change_row(change, entity.clone())),
-            )
-            .when(remaining > 0, |changes| {
-                changes.child(
-                    div()
-                        .pt(THEME.space.xs)
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.subtle)
-                        .child(format!("{remaining} more files"))
-                        .child(disclosure_button(
-                            "expand-repository-changes",
-                            false,
-                            format!("Show {expand_count} more files"),
-                            move |_, cx| {
-                                let _ = expand.update(cx, |this, cx| {
-                                    this.expand_repository_changes(cx);
-                                });
-                            },
-                        )),
+        let rows = change_tree::rows(
+            snapshot.changes.iter().enumerate().map(|(index, change)| {
+                (
+                    index,
+                    change.relative_path.as_path(),
+                    change.original_relative_path.as_deref(),
                 )
+            }),
+            browser.query,
+            &self.repository.project,
+            browser.state,
+        );
+        div()
+            .id("repository-files")
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .overflow_y_scroll()
+            .track_scroll(browser.scroll)
+            .children(rows.iter().filter_map(|row| {
+                match row {
+                    TreeRow::Folder {
+                        path,
+                        label,
+                        count,
+                        depth,
+                        open,
+                    } => {
+                        let project = self.repository.project.clone();
+                        let path = path.clone();
+                        let panel = panel.clone();
+                        let title = format!("{} {label}", if *open { "▾" } else { "▸" });
+                        Some(
+                            div()
+                                .pl(px(*depth as f32 * 12.0))
+                                .child(
+                                    button(
+                                        format!("repository-folder-{}", path.display()),
+                                        title,
+                                        ButtonTone::Quiet,
+                                        browser.query.trim().is_empty(),
+                                        move |_, cx| {
+                                            let _ = panel.update(cx, |view, cx| {
+                                                view.changes.toggle(&project, &path);
+                                                cx.notify();
+                                            });
+                                        },
+                                    )
+                                    .w_full()
+                                    .justify_start()
+                                    .child(div().flex_1())
+                                    .child(
+                                        div()
+                                            .text_size(THEME.type_scale.caption)
+                                            .text_color(THEME.colors.subtle)
+                                            .child(count.to_string()),
+                                    ),
+                                )
+                                .into_any_element(),
+                        )
+                    }
+                    TreeRow::File { index, depth } => self
+                        .repository_change_row(&snapshot.changes[*index], entity.clone())
+                        .map(|row| {
+                            div()
+                                .pl(px(*depth as f32 * 12.0))
+                                .child(row)
+                                .into_any_element()
+                        }),
+                }
+            }))
+            .when(rows.is_empty(), |list| {
+                list.child(repository_notice(
+                    if !browser.query.trim().is_empty() {
+                        "No matching files"
+                    } else {
+                        match snapshot.location.kind {
+                            RepositoryKind::Git => "Working tree and index are clean",
+                            RepositoryKind::Jujutsu => "Current change is empty",
+                        }
+                    },
+                    THEME.colors.subtle,
+                ))
             })
             .into_any_element()
     }
@@ -193,12 +249,7 @@ impl FarcasterApp {
         let key_path = change.target.absolute_path();
         let row_id = repository_row_id(&change.target.key);
         let full_path = display_change_path(change);
-        let (filename, parent) = file_path_labels(&change.relative_path);
-        let context = if change.original_relative_path.is_some() {
-            full_path.clone()
-        } else {
-            parent
-        };
+        let (filename, _) = file_path_labels(&change.relative_path);
         let status = change_status_label(change).to_owned();
         let layer = group_title(change.layer);
         let state = change_kind_label(&change.kind);
@@ -214,7 +265,7 @@ impl FarcasterApp {
             .min_w_0()
             .flex_1()
             .px(THEME.space.xs)
-            .py(px(6.0))
+            .py(px(3.0))
             .rounded(THEME.radius)
             .flex()
             .items_center()
@@ -249,33 +300,32 @@ impl FarcasterApp {
                     .min_w_0()
                     .flex_1()
                     .flex()
-                    .flex_col()
+                    .items_center()
+                    .gap(THEME.space.xs)
                     .font_family(MONO_FONT_FAMILY)
                     .child(
                         div()
-                            .text_size(THEME.type_scale.body)
+                            .min_w_0()
+                            .flex_1()
+                            .text_size(THEME.type_scale.body_small)
                             .text_color(THEME.colors.text)
                             .text_ellipsis()
                             .child(filename),
                     )
-                    .when(!context.is_empty(), |label| {
-                        label.child(
-                            div()
-                                .text_size(THEME.type_scale.caption)
-                                .text_color(THEME.colors.muted)
-                                .text_ellipsis()
-                                .child(context),
-                        )
-                    }),
+                    .when(
+                        change.layer == crate::repository::ChangeLayer::GitIndex,
+                        |label| {
+                            label.child(
+                                div()
+                                    .text_size(THEME.type_scale.caption)
+                                    .text_color(THEME.colors.subtle)
+                                    .child("Staged"),
+                            )
+                        },
+                    ),
             );
         Some(target.into_any_element())
     }
-}
-
-fn change_page(total: usize, requested: usize) -> (usize, usize, usize) {
-    let visible = requested.max(INITIAL_VISIBLE_CHANGES).min(total);
-    let remaining = total.saturating_sub(visible);
-    (visible, remaining, remaining.min(EXPAND_CHANGE_PAGE))
 }
 
 fn repository_notice(message: &str, color: gpui::Rgba) -> AnyElement {
@@ -311,13 +361,5 @@ mod tests {
             ),
             Some(RepositoryKind::Git)
         );
-    }
-
-    #[test]
-    fn repository_files_start_at_five_and_expand_twenty_at_a_time() {
-        assert_eq!(change_page(50, 5), (5, 45, 20));
-        assert_eq!(change_page(50, 25), (25, 25, 20));
-        assert_eq!(change_page(30, 25), (25, 5, 5));
-        assert_eq!(change_page(3, 5), (3, 0, 0));
     }
 }
