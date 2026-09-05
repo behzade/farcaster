@@ -23,13 +23,12 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.hide_editor(cx);
-
         if !self.repository.execution_allowed {
-            self.clear_terminal_process();
-            self.terminal_error =
-                Some("Trust this project before opening its terminal, then restart Pi.".to_owned());
-            self.set_surface(AppSurface::Terminal, cx);
+            self.notify_workspace_error(
+                "Terminal",
+                "Trust this project before opening its terminal.".to_owned(),
+                cx,
+            );
             return;
         }
 
@@ -38,10 +37,7 @@ impl FarcasterApp {
                 .terminal
                 .as_ref()
                 .is_some_and(|terminal| terminal.read(cx).is_alive());
-        if can_reuse {
-            self.terminal_error = None;
-        } else {
-            self.clear_terminal_process();
+        if !can_reuse {
             let mut options = TerminalOptions::new(
                 crate::app::infrastructure::shell_environment::terminal_login_shell_command(),
                 project.clone(),
@@ -52,7 +48,6 @@ impl FarcasterApp {
                 Ok(terminal) => {
                     self.terminal = Some(terminal.clone());
                     self.terminal_project = Some(project);
-                    self.terminal_error = None;
                     self.monitor_native_process(window, cx, move |this, window, cx| {
                         if this.terminal.as_ref() != Some(&terminal) {
                             return false;
@@ -64,15 +59,18 @@ impl FarcasterApp {
                             this.close_terminal(window, cx);
                         } else {
                             this.clear_terminal_process();
-                            this.terminal_error = None;
                         }
                         false
                     });
                 }
-                Err(error) => self.terminal_error = Some(error),
+                Err(error) => {
+                    self.notify_workspace_error("Terminal", error, cx);
+                    return;
+                }
             }
         }
 
+        self.hide_editor(cx);
         self.reveal_native_center_surface(AppSurface::Terminal, window, cx);
     }
 
@@ -97,7 +95,6 @@ impl FarcasterApp {
 
     pub(in crate::app) fn close_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.clear_terminal_process();
-        self.terminal_error = None;
         self.show_chat_surface(window, cx);
     }
 }

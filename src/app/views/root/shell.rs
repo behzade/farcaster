@@ -110,9 +110,9 @@ impl FarcasterApp {
                 .into_any_element()
         } else {
             match self.surface {
-                AppSurface::Editor => self.render_editor_surface(),
-                AppSurface::Terminal => self.render_terminal_workspace(),
-                AppSurface::Chat | AppSurface::Work => {
+                AppSurface::Editor if self.editor.is_some() => self.render_editor_surface(),
+                AppSurface::Terminal if self.terminal.is_some() => self.render_terminal_workspace(),
+                _ => {
                     self.render_chat_main(entity.clone(), mode, viewport_height)
                 }
             }
