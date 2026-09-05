@@ -247,6 +247,18 @@ impl TranscriptListState {
         self.0.borrow_mut().heights.invalidate(range);
     }
 
+    pub(crate) fn viewport_height(&self) -> Pixels {
+        self.0.borrow().viewport_height
+    }
+
+    /// Positive distances move down, unlike wheel deltas. Use the same batched
+    /// frame path as the mouse so following/unseen state stays in sync.
+    pub(crate) fn scroll_by(&self, distance: Pixels, window: &Window, view: EntityId) {
+        if let Some(token) = self.queue_scroll(-distance) {
+            request_scroll_frame(window, view, self.clone(), token);
+        }
+    }
+
     pub(crate) fn logical_scroll_top(&self) -> ListOffset {
         self.0.borrow().logical_scroll_top()
     }
@@ -479,9 +491,7 @@ impl Element for TranscriptList {
                 return;
             }
             crate::app::infrastructure::performance::record_scroll_event(event.touch_phase);
-            if let Some(token) = state.queue_scroll(event.delta.pixel_delta(px(20.0)).y) {
-                request_scroll_frame(window, current_view, state.clone(), token);
-            }
+            state.scroll_by(-event.delta.pixel_delta(px(20.0)).y, window, current_view);
         });
 
         let selection_state = self.state.clone();

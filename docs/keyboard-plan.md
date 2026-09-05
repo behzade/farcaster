@@ -5,9 +5,13 @@ returns to chat normal; `i`/`a`, bare `0`–`9`, `/`, and Space-prefixed workspa
 navigation are active. Composer status shows the current focus mode and pending
 leader hints. Existing direct shortcuts remain during this incremental rollout.
 
-Still pending: transcript `j/k` cursor and `v` selection, incidental-control
-focus preservation, modal Escape/abort migration, and unified shortcut help.
-Normal mode currently owns chat navigation, not a transcript text cursor.
+Transcript scrolling is active: `j/k` takes small steps, `Ctrl+f/b` pages,
+and `Ctrl+d/u` half-pages. Key repeat is supported, and scrolling uses the
+existing batched list path, including pause/resume of live-tail following.
+
+Still pending: incidental-control focus preservation and unified shortcut help.
+Transcript cursor and `v` selection are deferred. Composer Escape retains its
+existing steer/double-Escape-abort behavior; use `Ctrl+g` to leave the composer.
 
 ## Interaction contract
 
@@ -17,9 +21,11 @@ not silently change the primary keyboard owner.
 
 | Chat normal keys | Action |
 | --- | --- |
-| `j` / `k` | Move transcript cursor down / up, revealing it as needed |
+| `j` / `k` | Scroll transcript down / up by one reading-line height |
+| `Ctrl+f` / `Ctrl+b` | Scroll down / up by the transcript viewport height |
+| `Ctrl+d` / `Ctrl+u` | Scroll down / up by half the transcript viewport height |
 | `i` / `a` | Focus composer and enter insert mode |
-| `v` | Start transcript visual selection |
+| `v` | Deferred: transcript visual selection |
 | `/` | Open session search (not transcript search) |
 | `Space e` | Show/focus embedded editor |
 | `Space t` | Show/focus terminal |
@@ -65,18 +71,13 @@ Add a transcript focus context distinct from composer/input and embedded
 surfaces. Mode must not be inferred from “composer lacks focus.” `i` restores
 the existing draft/caret; leaving insert mode preserves its contents.
 
-Proposed modal Escape precedence:
+Escape does not leave the composer. Preserve the existing apply-steer /
+double-Escape-abort behavior in `src/app/composer/submissions.rs`, along with
+existing menu/dialog dismissal. `Ctrl+g` (or macOS `Cmd+g`) is the consistent
+return-to-chat-normal command across composer and embedded surfaces.
 
-1. Dismiss the active completion/menu/dialog.
-2. Otherwise leave composer insert mode for transcript normal.
-3. In visual mode, clear selection and return to normal.
-4. In normal mode, cancel pending leader; otherwise no destructive action.
-
-This intentionally conflicts with today's Escape-to-apply-steer/double-Escape-
-to-abort behavior in `src/app/composer/submissions.rs`. Before enabling modality,
-assign explicit apply-steer/abort commands and update help/tests. Do not allow
-one Escape both to exit insert mode and arm an abort. Preserve legacy behavior
-only in the legacy keymap profile.
+In normal mode Escape cancels a pending leader without a destructive action.
+If visual selection is implemented, Escape should clear it and stay in normal.
 
 Render `NORMAL · TRANSCRIPT`, `INSERT · COMPOSER`, or `VISUAL · …` on the left
 of the new status strip in `src/app/views/composer/footer/mod.rs`. Usage remains
@@ -104,18 +105,21 @@ must derive from the active registry rather than the current modifier helper.
 Tests: each mapping, pending-leader cancellation, numbering/order parity,
 search typing, no capture of spaces/slashes/j/k in text or embedded inputs.
 
-## 4. Transcript cursor, then visual selection
+## 4. Transcript scrolling now; cursor and visual selection deferred
 
 First inspect and extend the existing virtualized list/selection machinery in
 `src/app/views/transcript/list.rs`, `src/app/views/transcript/list/`, and
 `src/app/ui/keyboard.rs`. Reuse clipboard serialization and existing mouse
 selection behavior; do not introduce a disconnected keyboard-only selection.
 
-Recommended first contract: `j/k` moves by selectable transcript block, and
-`v` selects an inclusive block range. Give the active block a visible cursor
-marker and label visual selection in blocks, not lines. This needs product
-confirmation: rendered-line navigation is a materially larger follow-up and
-must not be implied by the first release.
+The current contract is scrolling only, not block or text cursor movement.
+`j/k` scrolls one reading-line height without snapping to rendered text; paging
+uses the actual transcript viewport, not the whole window. Composer, menus,
+terminal, and Neovim retain their own keys. Modified paging cancels a pending
+leader; unmodified leader `j/k` continues to switch sessions.
+
+A future visual-selection contract still needs confirmation (blocks versus
+rendered lines). Do not make useful scrolling depend on that larger project.
 
 Use stable message/block identities rather than raw virtualized row indices.
 Reveal the active cursor, pause tail-follow on intentional navigation, preserve
@@ -144,8 +148,7 @@ No Pi-specific transport or session semantics belong in modal state.
 
 Land ownership first, then normal/insert and leader navigation behind an opt-in
 profile; add visual selection after its cursor contract passes tests. Preserve
-the existing direct shortcuts until the modal abort/steer behavior and rollout
-are settled. Update `docs/usage.md` and shortcut help with the shipped profile.
+the existing direct shortcuts during the incremental rollout. Update `docs/usage.md` and shortcut help with the shipped profile.
 
 Validation: narrow unit tests for transitions/keymap/list first, then integrated
 focus routing tests and `cargo check --bin farcaster`; always `git diff --check`.

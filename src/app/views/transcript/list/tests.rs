@@ -267,6 +267,32 @@ fn downward_scroll_at_the_end_resumes_tail_following(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn keyboard_scroll_batches_repeats_and_preserves_tail_behavior(cx: &mut TestAppContext) {
+    let cx = cx.add_empty_window();
+    let state = state_with_rows(100);
+    state.scroll_to_end();
+    draw_transcript(cx, &state, px(24.0), px(100.0));
+    let view = cx.update(|_, cx| cx.new(|_| ()));
+    let end = state.0.borrow().scroll_y;
+    assert_eq!(state.viewport_height(), px(100.0));
+
+    cx.update(|window, _| {
+        state.scroll_by(px(-24.0), window, view.entity_id());
+        state.scroll_by(px(-24.0), window, view.entity_id());
+    });
+    assert_eq!(cx.update(|window, cx| window.simulate_next_frame(cx)), 1);
+    draw_transcript(cx, &state, px(24.0), px(100.0));
+    assert_eq!(state.0.borrow().scroll_y, end - px(48.0));
+    assert!(!state.is_following_tail());
+
+    cx.update(|window, _| state.scroll_by(state.viewport_height(), window, view.entity_id()));
+    cx.update(|window, cx| window.simulate_next_frame(cx));
+    draw_transcript(cx, &state, px(24.0), px(100.0));
+    assert_eq!(state.0.borrow().scroll_y, end);
+    assert!(state.is_following_tail());
+}
+
+#[gpui::test]
 fn tail_resume_uses_final_measured_heights(cx: &mut TestAppContext) {
     let cx = cx.add_empty_window();
     let state = TranscriptListState::new();

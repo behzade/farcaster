@@ -36,6 +36,37 @@ fn normal_command(key: &str, leader: bool) -> Option<Command> {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Scroll {
+    Lines(f32),
+    Pages(f32),
+}
+
+fn transcript_scroll(key: &str, modifiers: gpui::Modifiers, leader: bool) -> Option<Scroll> {
+    if !modifiers.modified() && !leader {
+        return match key {
+            "j" => Some(Scroll::Lines(1.0)),
+            "k" => Some(Scroll::Lines(-1.0)),
+            _ => None,
+        };
+    }
+    if modifiers
+        == (gpui::Modifiers {
+            control: true,
+            ..Default::default()
+        })
+    {
+        return match key {
+            "f" => Some(Scroll::Pages(1.0)),
+            "b" => Some(Scroll::Pages(-1.0)),
+            "d" => Some(Scroll::Pages(0.5)),
+            "u" => Some(Scroll::Pages(-0.5)),
+            _ => None,
+        };
+    }
+    None
+}
+
 fn is_return_chord(key: &str, modifiers: gpui::Modifiers, macos: bool) -> bool {
     key == "g"
         && !modifiers.alt
@@ -132,6 +163,21 @@ impl FarcasterApp {
             self.chat_navigation.leader_pending = false;
             return;
         }
+        // Scrolling accepts key repeat, unlike session/surface commands.
+        if let Some(scroll) = transcript_scroll(key, modifiers, self.chat_navigation.leader_pending)
+        {
+            self.chat_navigation.leader_pending = false;
+            let list = &self.transcript_view.read(cx).list;
+            let distance = match scroll {
+                Scroll::Lines(lines) => super::theme::THEME.type_scale.line_reading * lines,
+                Scroll::Pages(pages) => list.viewport_height() * pages,
+            };
+            list.scroll_by(distance, window, self.transcript_view.entity_id());
+            window.prevent_default();
+            cx.stop_propagation();
+            self.notify_composer(cx);
+            return;
+        }
         // Never reinterpret a modified shortcut as a bare normal-mode command.
         if modifiers.modified() {
             self.chat_navigation.leader_pending = false;
@@ -179,6 +225,32 @@ impl FarcasterApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scrolling_respects_leader_and_exact_modifiers() {
+        for (key, leader, expected) in [
+            ("j", false, Some(Scroll::Lines(1.0))),
+            ("k", false, Some(Scroll::Lines(-1.0))),
+            ("ctrl-f", false, Some(Scroll::Pages(1.0))),
+            ("ctrl-b", false, Some(Scroll::Pages(-1.0))),
+            ("ctrl-d", false, Some(Scroll::Pages(0.5))),
+            ("ctrl-u", false, Some(Scroll::Pages(-0.5))),
+            ("ctrl-f", true, Some(Scroll::Pages(1.0))),
+            ("j", true, None),
+            ("k", true, None),
+            ("ctrl-j", false, None),
+            ("f", false, None),
+            ("ctrl-shift-f", false, None),
+            ("cmd-f", false, None),
+        ] {
+            let stroke = gpui::Keystroke::parse(key).expect("test keystroke");
+            assert_eq!(
+                transcript_scroll(&stroke.key, stroke.modifiers, leader),
+                expected,
+                "{key}, leader={leader}"
+            );
+        }
+    }
 
     #[test]
     fn normal_and_leader_commands_are_distinct() {
