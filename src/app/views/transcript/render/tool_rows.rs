@@ -155,8 +155,7 @@ pub(super) fn render_tool(
                         .text_color(THEME.colors.muted)
                         .child(summary),
                 )
-            })
-            .children(status.and_then(status_badge)),
+            }),
         )
         .when(expanded, |tool| {
             tool.child(
@@ -335,17 +334,6 @@ fn status_slot(status: Option<ToolStatus>) -> AnyElement {
                 .child(app_icon(status.icon(), AppIconSize::Inline))
         })
         .into_any_element()
-}
-
-fn status_badge(status: ToolStatus) -> Option<AnyElement> {
-    (status != ToolStatus::Succeeded).then(|| {
-        div()
-            .flex_none()
-            .text_size(THEME.type_scale.caption)
-            .text_color(status.color())
-            .child(status.label())
-            .into_any_element()
-    })
 }
 
 fn expanded_tool_body(id: impl Into<gpui::ElementId>, item: &TranscriptItem) -> AnyElement {
