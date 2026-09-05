@@ -1,11 +1,12 @@
 PROJECT ?= $(CURDIR)
 CARGO_TARGET_DIR ?= $(CURDIR)/target
+GPUI_GHOSTTY_DIR ?= $(abspath ../gpui-ghostty)
 LOG_LINES ?= 50
 DEFAULT_FARCASTER_DATA_DIR := $(if $(XDG_DATA_HOME),$(XDG_DATA_HOME),$(HOME)/.local/share)/farcaster
 LOG_FILE ?= $(if $(FARCASTER_DATA_DIR),$(FARCASTER_DATA_DIR),$(DEFAULT_FARCASTER_DATA_DIR))/logs/farcaster.log
 TAIL_ARGS ?= -n $(LOG_LINES)
 
-.PHONY: run test e2e debug release release-debug bundle bundle-relaunch package logs check check-flake
+.PHONY: run test e2e debug release release-local release-debug bundle bundle-relaunch package logs check check-flake
 
 run:
 	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo run -- "$(PROJECT)"
@@ -23,6 +24,12 @@ debug:
 
 release:
 	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo run --release -- "$(PROJECT)"
+
+# Path overrides test unpublished crates without changing Cargo.toml or Cargo.lock.
+release-local:
+	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo \
+		--config 'paths = ["$(GPUI_GHOSTTY_DIR)/crates/gpui-ghostty", "$(GPUI_GHOSTTY_DIR)/crates/gpui-neovim"]' \
+		run --release -- "$(PROJECT)"
 
 release-debug:
 	DEBUG=true CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo run --release -- "$(PROJECT)"
