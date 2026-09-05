@@ -252,6 +252,26 @@ impl CallerRegistry {
             .ok_or_else(|| "unknown Farcaster caller".to_owned())
     }
 
+    pub(crate) fn session_profile(
+        &self,
+        project: &Path,
+        backend: &str,
+        session: &str,
+    ) -> Option<CallerProfile> {
+        let callers = self.callers.lock().ok()?;
+        let caller = callers.values().find(|caller| {
+            caller.project == project
+                && caller.backend == backend
+                && caller.session.as_deref() == Some(session)
+        })?;
+        Some(CallerProfile {
+            backend: caller.backend.clone(),
+            provider: caller.provider.clone(),
+            model: caller.model.clone(),
+            effort: caller.effort.clone(),
+        })
+    }
+
     pub(crate) fn session_parent(&self, backend: &str, session: &str) -> Option<String> {
         let callers = self.callers.lock().ok()?;
         let child = callers.values().find(|caller| {
@@ -577,6 +597,22 @@ mod tests {
         assert_eq!(resolved.model.as_deref(), Some("sonnet"));
         assert_eq!(resolved.effort.as_deref(), Some("high"));
         assert_eq!(resolved.parent_worker_id, None);
+        let profile = registry
+            .session_profile(Path::new("/project/two"), "pi", "session-2")
+            .expect("bound profile");
+        assert_eq!(profile.provider, resolved.provider);
+        assert_eq!(profile.model, resolved.model);
+        assert_eq!(profile.effort, resolved.effort);
+        assert!(
+            registry
+                .session_profile(Path::new("/other"), "pi", "session-2")
+                .is_none()
+        );
+        assert!(
+            registry
+                .session_profile(Path::new("/project/two"), "codex-cli", "session-2")
+                .is_none()
+        );
     }
 
     #[test]
