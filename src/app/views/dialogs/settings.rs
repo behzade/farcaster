@@ -1,6 +1,6 @@
 mod worker_tasks;
 use gpui::{
-    AnyElement, App, InteractiveElement as _, IntoElement as _, ParentElement as _,
+    AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
 };
 use gpui_component::{
@@ -21,7 +21,6 @@ use crate::{
 pub(in crate::app::views) fn render(
     app: &FarcasterApp,
     entity: WeakEntity<FarcasterApp>,
-    cx: &App,
 ) -> AnyElement {
     let dismiss = entity.clone();
     modal(
@@ -36,86 +35,105 @@ pub(in crate::app::views) fn render(
             let cancel = entity.clone();
             let clear = entity.clone();
             let save = entity.clone();
-            surface.w(gpui::px(680.0)).max_w_full().child(
-                div()
-                    .id("settings-scroll")
-                    .max_h(gpui::px(620.0))
-                    .overflow_y_scroll()
-                    .flex()
-                    .flex_col()
-                    .gap(THEME.space.md)
-                    .p(THEME.space.md)
-                    .child(modifier_setting(
-                        app.settings_application_modifier,
-                        entity.clone(),
-                    ))
-                    .child(builtin_mcp_setting(
-                        crate::builtin_mcp::enabled(),
-                        entity.clone(),
-                    ))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(THEME.space.xs)
-                            .child(
-                                div()
-                                    .text_size(THEME.type_scale.body)
-                                    .text_color(THEME.colors.text)
-                                    .child("Network proxy"),
-                            )
-                            .child(
-                                div()
-                                    .text_size(THEME.type_scale.body_small)
-                                    .text_color(THEME.colors.subtle)
-                                    .child("Used only when the project environment does not set HTTP_PROXY, HTTPS_PROXY, http_proxy, or https_proxy."),
-                            )
-                            .child(Input::new(&app.network_proxy_input)),
-                    )
-                    .child(worker_tasks::render(app, entity.clone(), cx))
-                    .when_some(app.network_proxy_error.clone(), |content, error| {
-                        content.child(feedback("network-proxy-error", error, FeedbackTone::Error))
-                    })
-                    .child(
-                        div()
-                            .flex()
-                            .justify_end()
-                            .gap(THEME.space.sm)
-                            .child(button(
-                                "cancel-settings",
-                                "Cancel",
-                                ButtonTone::Neutral,
-                                true,
-                                move |window, cx| {
-                                    let _ = cancel.update(cx, |this, cx| {
-                                        this.close_sheet(window, cx)
-                                    });
-                                },
-                            ))
-                            .child(button(
-                                "clear-network-proxy",
-                                "Clear proxy",
-                                ButtonTone::Neutral,
-                                true,
-                                move |window, cx| {
-                                    let _ = clear.update(cx, |this, cx| {
-                                        this.clear_network_proxy(window, cx)
-                                    });
-                                },
-                            ))
-                            .child(button(
-                                "save-settings",
-                                "Save",
-                                ButtonTone::Accent,
-                                true,
-                                move |window, cx| {
-                                    let _ = save.update(cx, |this, cx| {
-                                        this.save_settings(window, cx)
-                                    });
-                                },
-                            )),
-                    ),
-            )
+            surface
+                .w(gpui::px(860.0))
+                .max_w_full()
+                .flex()
+                .flex_col()
+                .overflow_hidden()
+                .child(
+                    div()
+                        .px(THEME.space.md)
+                        .py(THEME.space.sm)
+                        .text_size(THEME.type_scale.display)
+                        .child("Settings"),
+                )
+                .child(
+                    div()
+                        .id("settings-scroll")
+                        .min_h_0()
+                        .max_h(gpui::px(520.0))
+                        .overflow_y_scroll()
+                        .flex()
+                        .flex_col()
+                        .gap(THEME.space.md)
+                        .p(THEME.space.md)
+                        .child(modifier_setting(
+                            app.settings_application_modifier,
+                            entity.clone(),
+                        ))
+                        .child(builtin_mcp_setting(
+                            crate::builtin_mcp::enabled(),
+                            entity.clone(),
+                        ))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(THEME.space.xs)
+                                .child(setting_label(
+                                    "Network proxy",
+                                    "Used when the project environment has no HTTP or HTTPS proxy.",
+                                ))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap(THEME.space.sm)
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .child(Input::new(&app.network_proxy_input)),
+                                        )
+                                        .child(button(
+                                            "clear-network-proxy",
+                                            "Clear",
+                                            ButtonTone::Quiet,
+                                            true,
+                                            move |window, cx| {
+                                                let _ = clear.update(cx, |this, cx| {
+                                                    this.clear_network_proxy(window, cx)
+                                                });
+                                            },
+                                        )),
+                                ),
+                        )
+                        .child(worker_tasks::render(app, entity.clone())),
+                )
+                .when_some(app.network_proxy_error.clone(), |content, error| {
+                    content.child(div().px(THEME.space.md).child(feedback(
+                        "settings-error",
+                        error,
+                        FeedbackTone::Error,
+                    )))
+                })
+                .child(
+                    div()
+                        .flex()
+                        .justify_end()
+                        .gap(THEME.space.sm)
+                        .p(THEME.space.md)
+                        .border_t_1()
+                        .border_color(THEME.colors.border)
+                        .child(button(
+                            "cancel-settings",
+                            "Cancel",
+                            ButtonTone::Neutral,
+                            true,
+                            move |window, cx| {
+                                let _ = cancel.update(cx, |this, cx| this.close_sheet(window, cx));
+                            },
+                        ))
+                        .child(button(
+                            "save-settings",
+                            "Save",
+                            ButtonTone::Accent,
+                            app.worker_task_editor.edit.is_none(),
+                            move |window, cx| {
+                                let _ = save.update(cx, |this, cx| this.save_settings(window, cx));
+                            },
+                        )),
+                )
         },
     )
     .into_any_element()

@@ -553,7 +553,7 @@ impl FarcasterApp {
             }
             Err(error) => self.network_proxy_error = Some(error),
         }
-        if let Err(error) = self.load_worker_task_settings(window, cx) {
+        if let Err(error) = self.load_worker_task_settings() {
             self.network_proxy_error = Some(error);
         }
         self.open_sheet(AppSheet::Settings, window, cx);
@@ -564,7 +564,10 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.persist_network_proxy(None, window, cx);
+        self.network_proxy_input
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.network_proxy_error = None;
+        cx.notify();
     }
 
     pub(in crate::app) fn save_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -598,7 +601,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let tasks = match self.worker_task_editor.value(cx) {
+        let tasks = match self.worker_task_editor.value() {
             Ok(tasks) => tasks,
             Err(error) => {
                 self.network_proxy_error = Some(error);
@@ -619,27 +622,6 @@ impl FarcasterApp {
             Ok(()) => {
                 self.network_proxy_error = None;
                 crate::app::ui::keybindings::set_application_modifier(modifier, cx);
-                self.send(RuntimeCommand::SetAppProxy(proxy), cx);
-                self.close_sheet(window, cx);
-            }
-            Err(error) => {
-                self.network_proxy_error = Some(error);
-                cx.notify();
-            }
-        }
-    }
-
-    fn persist_network_proxy(
-        &mut self,
-        proxy: Option<String>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match crate::app::infrastructure::persistence::StateStore::open()
-            .and_then(|store| crate::access::save_proxy(&store, proxy.as_deref()))
-        {
-            Ok(()) => {
-                self.network_proxy_error = None;
                 self.send(RuntimeCommand::SetAppProxy(proxy), cx);
                 self.close_sheet(window, cx);
             }
