@@ -27,7 +27,7 @@ use self::{
 use super::super::{FarcasterApp, RunPanelView};
 use crate::{
     agent_activity::AgentActivity,
-    app::ui::primitives::{panel, section_heading},
+    app::ui::primitives::{ButtonTone, button, panel, section_heading},
     app::ui::theme::THEME,
     sessions::{descendant_sessions, root_session_for_path},
 };
@@ -201,6 +201,33 @@ impl FarcasterApp {
             .pb(px(14.0))
             .pl(px(18.0))
             .gap(THEME.space.md)
+            // Keep the root reachable independently of worker lifecycle and scroll position.
+            .when_some(root, |run, root| {
+                let selected =
+                    self.snapshot.selected_session.as_deref() == Some(root.path.as_path());
+                let path = root.path.clone();
+                let project = root.project.clone();
+                let entity = entity.clone();
+                run.child(
+                    button(
+                        "run-panel-main-agent",
+                        "Main agent",
+                        if selected {
+                            ButtonTone::Neutral
+                        } else {
+                            ButtonTone::Quiet
+                        },
+                        true,
+                        move |window, cx| {
+                            let _ = entity.update(cx, |this, cx| {
+                                this.select_session(path.clone(), project.clone(), window, cx);
+                            });
+                        },
+                    )
+                    .w_full()
+                    .flex_none(),
+                )
+            })
             .child(activity)
             .when(
                 !self.repository.execution_allowed
