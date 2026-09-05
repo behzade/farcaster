@@ -17,10 +17,13 @@ use crate::{
     },
 };
 use gpui::{
-    AnyElement, IntoElement, ParentElement as _, Styled as _, WeakEntity, div,
-    prelude::FluentBuilder as _,
+    AnyElement, InteractiveElement as _, IntoElement, ParentElement as _,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
 };
-use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
+use gpui_component::{
+    menu::{DropdownMenu as _, PopupMenuItem},
+    tooltip::Tooltip,
+};
 
 pub(super) fn repository_header(
     app: &FarcasterApp,
@@ -58,7 +61,7 @@ pub(super) fn repository_header(
                         .flex_1()
                         .text_size(THEME.type_scale.caption)
                         .text_color(THEME.colors.muted)
-                        .child(format!("{count} files")),
+                        .child(format!("· {count}")),
                 )
                 .when(enabled, |row| {
                     row.child(icon_button(
@@ -74,29 +77,34 @@ pub(super) fn repository_header(
                 })
                 .child(menu),
         )
-        .child(working_copy_totals(
-            app.repository.additions,
-            app.repository.deletions,
-        ))
-        .when_some(snapshot, |section, snapshot| {
-            section.child(
-                div()
-                    .min_w_0()
-                    .text_ellipsis()
-                    .font_family(MONO_FONT_FAMILY)
-                    .text_size(THEME.type_scale.caption)
-                    .text_color(THEME.colors.muted)
-                    .child(format!(
-                        "{} · {} · {}",
-                        match snapshot.location.kind {
-                            RepositoryKind::Git => "Git",
-                            RepositoryKind::Jujutsu => "JJ",
-                        },
-                        repository_identity_label(snapshot),
-                        repository_sync_metadata(&snapshot.identity)
-                    )),
-            )
-        })
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(THEME.space.sm)
+                .text_size(THEME.type_scale.caption)
+                .child(working_copy_totals(
+                    app.repository.additions,
+                    app.repository.deletions,
+                ))
+                .child(div().flex_1())
+                .when_some(snapshot, |row, snapshot| {
+                    let metadata = repository_sync_metadata(&snapshot.identity);
+                    let detail = format!("{} · {metadata}", repository_identity_label(snapshot));
+                    row.child(
+                        div()
+                            .id("repository-identity")
+                            .min_w_0()
+                            .text_ellipsis()
+                            .font_family(MONO_FONT_FAMILY)
+                            .text_color(THEME.colors.subtle)
+                            .tooltip(move |window, cx| {
+                                Tooltip::new(detail.clone()).build(window, cx)
+                            })
+                            .child(compact_identity_label(snapshot)),
+                    )
+                }),
+        )
         .when_some(syncing, |section, action| {
             section.child(
                 div()
@@ -125,8 +133,11 @@ fn repository_actions(
     let kind = snapshot.map(|snapshot| snapshot.location.kind);
     let (git, jj) = RepositoryBackend::available_backends();
     let active = selected_backend(kind, app.repository.preference, git, jj);
-    dropdown_button("repository-actions", "Actions", ButtonTone::Quiet, true).dropdown_menu(
-        move |mut menu, _, _| {
+    dropdown_button("repository-actions", "⋯", ButtonTone::Quiet, true)
+        .dropdown_caret(false)
+        .accessibility_label("Repository actions")
+        .tooltip("Repository actions")
+        .dropdown_menu(move |mut menu, _, _| {
             for (label, open) in [
                 ("Expand all folders", true),
                 ("Collapse all folders", false),
@@ -190,8 +201,7 @@ fn repository_actions(
                 );
             }
             menu
-        },
-    )
+        })
 }
 
 pub(super) fn selected_backend(
@@ -231,4 +241,12 @@ fn repository_identity_label(snapshot: &WorkingCopySnapshot) -> String {
         SnapshotIdentity::Git(identity) => git_identity(identity),
         SnapshotIdentity::Jujutsu(identity) => identity.change_id.chars().take(8).collect(),
     }
+}
+
+fn compact_identity_label(snapshot: &WorkingCopySnapshot) -> String {
+    let backend = match snapshot.location.kind {
+        RepositoryKind::Git => "Git",
+        RepositoryKind::Jujutsu => "JJ",
+    };
+    format!("{backend} · {}", repository_identity_label(snapshot))
 }

@@ -1,5 +1,5 @@
 use gpui::{
-    AnyElement, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Role,
+    AnyElement, InteractiveElement as _, IntoElement, ParentElement as _, Role,
     StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::tooltip::Tooltip;
@@ -17,8 +17,11 @@ use super::{
 #[cfg(test)]
 use crate::repository::BackendPreference;
 use crate::{
-    app::ui::primitives::{ButtonTone, activates_button, button},
-    app::ui::theme::{MONO_FONT_FAMILY, THEME},
+    app::ui::theme::THEME,
+    app::ui::{
+        assets::AppIcon,
+        primitives::{AppIconSize, ButtonTone, activates_button, app_icon, button},
+    },
     repository::{RepositoryKind, WorkingCopyChange, WorkingCopySnapshot},
 };
 
@@ -106,7 +109,13 @@ impl FarcasterApp {
             })
             .when_some(snapshot, |section, snapshot| {
                 section
-                    .child(Input::new(browser.search))
+                    .child(
+                        Input::new(browser.search)
+                            .bg(gpui::rgba(0))
+                            .border_color(gpui::rgba(0))
+                            .aria_label("Filter changed files")
+                            .prefix(app_icon(AppIcon::MagnifyingGlass, AppIconSize::Inline)),
+                    )
                     .child(self.repository_changes(
                         snapshot,
                         entity.clone(),
@@ -174,7 +183,7 @@ impl FarcasterApp {
                     TreeRow::Folder {
                         path,
                         label,
-                        count,
+                        count: _,
                         depth,
                         open,
                     } => {
@@ -200,13 +209,8 @@ impl FarcasterApp {
                                     )
                                     .w_full()
                                     .justify_start()
-                                    .child(div().flex_1())
-                                    .child(
-                                        div()
-                                            .text_size(THEME.type_scale.caption)
-                                            .text_color(THEME.colors.subtle)
-                                            .child(count.to_string()),
-                                    ),
+                                    .text_size(THEME.type_scale.caption)
+                                    .text_color(THEME.colors.muted),
                                 )
                                 .into_any_element(),
                         )
@@ -265,7 +269,7 @@ impl FarcasterApp {
             .min_w_0()
             .flex_1()
             .px(THEME.space.xs)
-            .py(px(3.0))
+            .py(px(2.0))
             .rounded(THEME.radius)
             .flex()
             .items_center()
@@ -290,9 +294,12 @@ impl FarcasterApp {
                 div()
                     .w(px(14.0))
                     .flex_none()
-                    .font_family(MONO_FONT_FAMILY)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(change_color(&change.kind))
+                    .text_size(THEME.type_scale.caption)
+                    .text_color(if change.kind == crate::repository::ChangeKind::Modified {
+                        THEME.colors.subtle
+                    } else {
+                        change_color(&change.kind)
+                    })
                     .child(status),
             )
             .child(
@@ -302,12 +309,11 @@ impl FarcasterApp {
                     .flex()
                     .items_center()
                     .gap(THEME.space.xs)
-                    .font_family(MONO_FONT_FAMILY)
                     .child(
                         div()
                             .min_w_0()
                             .flex_1()
-                            .text_size(THEME.type_scale.body_small)
+                            .text_size(THEME.type_scale.caption)
                             .text_color(THEME.colors.text)
                             .text_ellipsis()
                             .child(filename),
