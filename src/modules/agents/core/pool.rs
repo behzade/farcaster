@@ -82,7 +82,16 @@ impl WorkerPool {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn start(&self, request: StartWorker) -> Result<WorkerSnapshot, String> {
+        self.start_assigned(request, None)
+    }
+
+    pub(crate) fn start_assigned(
+        &self,
+        request: StartWorker,
+        assignment: Option<super::WorkerAssignment>,
+    ) -> Result<WorkerSnapshot, String> {
         validate_start(&request)?;
         let project = canonical_directory(&request.project)?;
         if !self
@@ -146,7 +155,16 @@ impl WorkerPool {
             effort: request.effort,
             ephemeral: false,
         })?;
-        session.send(request.prompt, WorkerSendMode::Prompt)?;
+        if let Some(assignment) = assignment {
+            if let Err(error) = super::CallerRegistry::shared().set_assignment(&id, assignment) {
+                let _ = session.close();
+                return Err(error);
+            }
+        }
+        if let Err(error) = session.send(request.prompt, WorkerSendMode::Prompt) {
+            let _ = session.close();
+            return Err(error);
+        }
         let mut state = self
             .inner
             .state

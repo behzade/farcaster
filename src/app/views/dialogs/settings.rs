@@ -1,6 +1,7 @@
+mod worker_tasks;
 use gpui::{
-    AnyElement, IntoElement as _, ParentElement as _, Styled as _, WeakEntity, div,
-    prelude::FluentBuilder as _,
+    AnyElement, App, InteractiveElement as _, IntoElement as _, ParentElement as _,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
 };
 use gpui_component::{
     Sizable as _, Size,
@@ -20,6 +21,7 @@ use crate::{
 pub(in crate::app::views) fn render(
     app: &FarcasterApp,
     entity: WeakEntity<FarcasterApp>,
+    cx: &App,
 ) -> AnyElement {
     let dismiss = entity.clone();
     modal(
@@ -34,8 +36,11 @@ pub(in crate::app::views) fn render(
             let cancel = entity.clone();
             let clear = entity.clone();
             let save = entity.clone();
-            surface.w(gpui::px(520.0)).max_w_full().child(
+            surface.w(gpui::px(680.0)).max_w_full().child(
                 div()
+                    .id("settings-scroll")
+                    .max_h(gpui::px(620.0))
+                    .overflow_y_scroll()
                     .flex()
                     .flex_col()
                     .gap(THEME.space.md)
@@ -67,6 +72,7 @@ pub(in crate::app::views) fn render(
                             )
                             .child(Input::new(&app.network_proxy_input)),
                     )
+                    .child(worker_tasks::render(app, entity.clone(), cx))
                     .when_some(app.network_proxy_error.clone(), |content, error| {
                         content.child(feedback("network-proxy-error", error, FeedbackTone::Error))
                     })
@@ -88,7 +94,7 @@ pub(in crate::app::views) fn render(
                             ))
                             .child(button(
                                 "clear-network-proxy",
-                                "Clear",
+                                "Clear proxy",
                                 ButtonTone::Neutral,
                                 true,
                                 move |window, cx| {

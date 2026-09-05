@@ -67,9 +67,14 @@ impl FarcasterMcp {
     ) -> Result<Json<serde_json::Value>, String> {
         let caller_token = caller_token(&parts);
         let pool = self.workers.clone();
-        let value = tokio::task::spawn_blocking(move || workers::send(&pool, params, caller_token))
-            .await
-            .map_err(|error| format!("worker send task failed: {error}"))??;
+        let database = self.database.clone();
+        let value = tokio::task::spawn_blocking(move || {
+            let tasks =
+                crate::app::persistence::StateStore::open_at(&database)?.load_worker_tasks()?;
+            workers::send(&pool, params, caller_token, &tasks)
+        })
+        .await
+        .map_err(|error| format!("worker send task failed: {error}"))??;
         Ok(Json(value))
     }
 
@@ -153,7 +158,7 @@ fn notify_workgraph_changed(updates: &async_channel::Sender<()>) {
     let _ = updates.try_send(());
 }
 
-fn tools_for_role(child: bool) -> Vec<rmcp::model::Tool> {
+fn tools_for_role(child: bool, tasks: &crate::agents::WorkerTasks) -> Vec<rmcp::model::Tool> {
     let mut tools = FarcasterMcp::tool_router().list_all();
     if child {
         tools.retain(|tool| tool.name != "worker_notices");
@@ -166,12 +171,27 @@ fn tools_for_role(child: bool) -> Vec<rmcp::model::Tool> {
                 .and_then(serde_json::Value::as_object_mut)
             {
                 properties.remove("to");
+                properties.remove("task");
+                properties.remove("judgment");
             }
             schema.insert("required".into(), serde_json::json!(["message"]));
             tool.description = Some(Cow::Borrowed(
                 "Send a message to your parent worker. The parent is implicit; use this tool for all communication, including final results.",
             ));
         } else {
+            if let Some(properties) = schema
+                .get_mut("properties")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                properties.insert("judgment".into(), serde_json::json!({
+                    "type": "string", "enum": crate::agents::WorkerJudgment::ALL.map(|judgment| judgment.label()),
+                    "description": "Judgment delegated: specified procedure, guided local decisions, or independent approach. Defaults to guided on creation; omit on reuse."
+                }));
+                properties.insert("task".into(), if tasks.tasks.is_empty() { serde_json::json!(false) } else { serde_json::json!({
+                    "type": "string", "enum": tasks.tasks.iter().map(|task| task.name.as_str()).collect::<Vec<_>>(),
+                    "description": "Classification of already-delegated work; required on creation, omitted on reuse."
+                }) });
+            }
             schema.insert("required".into(), serde_json::json!(["to", "message"]));
             tool.description = Some(Cow::Borrowed(
                 "Send a message or delegated task to a named direct child. First use creates the child; later uses reuse it.",
@@ -205,9 +225,12 @@ impl ServerHandler for FarcasterMcp {
         let child = crate::agents::CallerRegistry::shared()
             .is_child(&token)
             .map_err(|error| rmcp::ErrorData::internal_error(error, None))?;
+        let tasks = crate::app::persistence::StateStore::open_at(&self.database)
+            .and_then(|store| store.load_worker_tasks())
+            .map_err(|error| rmcp::ErrorData::internal_error(error, None))?;
         Ok(rmcp::model::ListToolsResult {
             result_type: Some(rmcp::model::ResultType::COMPLETE),
-            tools: tools_for_role(child),
+            tools: tools_for_role(child, &tasks),
             meta: None,
             next_cursor: None,
             ttl_ms: Some(0),
@@ -255,7 +278,7 @@ mod tests {
 
     #[test]
     fn tool_schemas_follow_the_caller_role() {
-        let parent = tools_for_role(false);
+        let parent = tools_for_role(false, &crate::agents::WorkerTasks::default());
         let parent_send = parent
             .iter()
             .find(|tool| tool.name == "worker_send")
@@ -266,7 +289,7 @@ mod tests {
             Some(&serde_json::json!(["to", "message"]))
         );
 
-        let child = tools_for_role(true);
+        let child = tools_for_role(true, &crate::agents::WorkerTasks::default());
         let child_send = child
             .iter()
             .find(|tool| tool.name == "worker_send")
@@ -280,6 +303,47 @@ mod tests {
             child_send.input_schema["properties"]
                 .as_object()
                 .is_some_and(|properties| !properties.contains_key("to"))
+        );
+    }
+
+    #[test]
+    fn worker_task_schema_tracks_customization_and_empty_definitions() {
+        let mut tasks = crate::agents::WorkerTasks::default();
+        tasks.tasks[0].name = "audit".into();
+        tasks.tasks.truncate(1);
+        let tools = tools_for_role(false, &tasks);
+        let send = tools
+            .iter()
+            .find(|tool| tool.name == "worker_send")
+            .unwrap();
+        assert_eq!(
+            send.input_schema["properties"]["task"]["enum"],
+            serde_json::json!(["audit"])
+        );
+        assert_eq!(
+            send.input_schema["properties"]["judgment"]["enum"],
+            serde_json::json!(["specified", "guided", "independent"])
+        );
+        let child = tools_for_role(true, &tasks);
+        let properties = child
+            .iter()
+            .find(|tool| tool.name == "worker_send")
+            .unwrap()
+            .input_schema["properties"]
+            .as_object()
+            .unwrap();
+        for name in ["to", "task", "judgment"] {
+            assert!(!properties.contains_key(name));
+        }
+        tasks.tasks.clear();
+        let tools = tools_for_role(false, &tasks);
+        assert_eq!(
+            tools
+                .iter()
+                .find(|tool| tool.name == "worker_send")
+                .unwrap()
+                .input_schema["properties"]["task"],
+            serde_json::json!(false)
         );
     }
 

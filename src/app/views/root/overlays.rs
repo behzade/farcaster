@@ -132,7 +132,7 @@ impl FarcasterApp {
                 root.child(dialogs::project_trust::render(self, entity.clone()))
             })
             .when(self.overlays.settings, |root| {
-                root.child(dialogs::settings::render(self, entity.clone()))
+                root.child(dialogs::settings::render(self, entity.clone(), cx))
             })
             .when(self.overlays.keybindings, |root| {
                 let close = entity.clone();

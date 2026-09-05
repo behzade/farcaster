@@ -417,12 +417,25 @@ fn stamp_parent_session_rewrites_the_header_in_place() -> TestResult {
 fn child_parent_stamp_retries_after_pi_reports_an_uncreated_session_file() -> TestResult {
     let (temp, command) = fake("deferred-session")?;
     let path = temp.path().canonicalize()?.join("fake-session.jsonl");
+    let registry = crate::agents::CallerRegistry::shared();
+    let parent = registry.issue(
+        temp.path(),
+        crate::modules::agents::core::CallerProfile {
+            backend: "pi".into(),
+            provider: None,
+            model: None,
+            effort: None,
+        },
+        None,
+    );
+    parent.bind("/sessions/parent.jsonl");
+    let parent_id = registry.resolve(parent.token())?.worker_id;
     let mut rpc = PiRpcProcess::spawn_worker(
         &command,
         temp.path(),
         "child-worker".into(),
         "review".into(),
-        Some(("parent-worker".into(), "/sessions/parent.jsonl".into())),
+        Some((parent_id, "/sessions/parent.jsonl".into())),
     )?;
     assert!(!path.exists());
     assert_eq!(rpc.pending_parent_stamp.as_deref(), Some(path.as_path()));

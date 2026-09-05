@@ -1,6 +1,41 @@
 use super::*;
 
 impl StateStore {
+    pub(crate) fn save_worker_family(
+        &self,
+        link: &crate::agents::WorkerFamilyLink,
+    ) -> Result<(), String> {
+        let identity =
+            serde_json::to_string(&(&link.project, &link.child_backend, &link.child_session))
+                .map_err(|error| error.to_string())?;
+        self.save_json_meta(&format!("worker_family:{identity}"), "worker family", link)
+    }
+
+    pub(crate) fn load_worker_families(
+        &self,
+    ) -> Result<Vec<crate::agents::WorkerFamilyLink>, String> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT value FROM meta WHERE key GLOB 'worker_family:*'")
+            .map_err(|error| error.to_string())?;
+        statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| error.to_string())?
+            .map(|value| {
+                serde_json::from_str(&value.map_err(|error| error.to_string())?)
+                    .map_err(|error| error.to_string())
+            })
+            .collect()
+    }
+
+    pub(crate) fn load_worker_tasks(&self) -> Result<crate::agents::WorkerTasks, String> {
+        let tasks: crate::agents::WorkerTasks = self
+            .load_json_meta("worker_tasks", "worker tasks")?
+            .unwrap_or_default();
+        tasks.validate()?;
+        Ok(tasks)
+    }
+
     pub(crate) fn load_draft_inspector(&self) -> Result<bool, String> {
         self.load_json_meta("draft_inspector", "new-session inspector")
             .map(Option::unwrap_or_default)
@@ -142,11 +177,24 @@ impl StateStore {
             .map_err(|error| format!("save built-in MCP setting: {error}"))
     }
 
+    #[cfg(test)]
     pub(crate) fn save_application_settings(
         &self,
         modifier: &str,
         proxy: Option<&str>,
     ) -> Result<(), String> {
+        self.save_application_settings_with_workers(modifier, proxy, None)
+    }
+
+    pub(crate) fn save_application_settings_with_workers(
+        &self,
+        modifier: &str,
+        proxy: Option<&str>,
+        tasks: Option<&crate::agents::WorkerTasks>,
+    ) -> Result<(), String> {
+        if let Some(tasks) = tasks {
+            tasks.validate()?;
+        }
         if let Some(proxy) = proxy {
             crate::access::validate_app_proxy(proxy)?;
         }
@@ -154,7 +202,7 @@ impl StateStore {
             .connection
             .unchecked_transaction()
             .map_err(|error| format!("start application settings save: {error}"))?;
-        let save = |key, value, subject| {
+        let save = |key: &str, value: &str, subject: &str| {
             transaction
                 .execute(
                     "INSERT INTO meta(key, value) VALUES(?1, ?2)
@@ -165,6 +213,11 @@ impl StateStore {
                 .map_err(|error| format!("save {subject}: {error}"))
         };
         save(APPLICATION_MODIFIER_KEY, modifier, "application modifier")?;
+        if let Some(tasks) = tasks {
+            let value = serde_json::to_string(tasks)
+                .map_err(|error| format!("encode worker tasks: {error}"))?;
+            save("worker_tasks", &value, "worker tasks")?;
+        }
         if let Some(proxy) = proxy {
             save(NETWORK_PROXY_KEY, proxy, "network proxy")?;
         } else {

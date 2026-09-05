@@ -96,7 +96,15 @@ impl RuntimeOwner {
         self.session_discovery_in_flight = false;
         let event = match result.result {
             Ok(discovery) => {
-                let discovered = discovery.sessions;
+                let mut discovered = discovery.sessions;
+                if let Some(state) = &self.state {
+                    match state.load_worker_families() {
+                        Ok(links) => apply_worker_families(&mut discovered, &links),
+                        Err(error) => {
+                            zlog::warn!("Load worker families: {error}");
+                        }
+                    }
+                }
                 let mut activities = discovery.activities;
                 let (sessions, all_sessions) = if let Some(state) = self.state.as_mut() {
                     match crate::sessions::index_sessions(state, &discovered, discovery.exhaustive)
@@ -212,6 +220,33 @@ mod tests {
     }
 
     #[test]
+    fn worker_families_join_foreign_locators_by_harness_and_project() {
+        let mut parent = summary(
+            Path::new("/sessions/parent.jsonl"),
+            SystemTime::now(),
+            false,
+        );
+        parent.id = "parent-id".into();
+        parent.harness = "pi".into();
+        let mut child = summary(Path::new("/locators/child"), SystemTime::now(), false);
+        child.id = "child-id".into();
+        child.harness = "opencode2".into();
+        let mut unrelated = child.clone();
+        unrelated.harness = "codex-cli".into();
+        let link = crate::agents::WorkerFamilyLink {
+            project: PathBuf::from("/project"),
+            child_backend: "opencode2".into(),
+            child_session: "child-id".into(),
+            parent_backend: "pi".into(),
+            parent_session: "/sessions/parent.jsonl".into(),
+        };
+        let mut sessions = vec![parent, child, unrelated];
+        apply_worker_families(&mut sessions, &[link]);
+        assert_eq!(sessions[1].parent_session.as_deref(), Some("parent-id"));
+        assert!(sessions[2].parent_session.is_none());
+    }
+
+    #[test]
     fn every_external_write_refreshes_the_catalog_and_activity_deadline() {
         let path = PathBuf::from("/sessions/external.jsonl");
         let start = Instant::now();
@@ -303,5 +338,32 @@ mod tests {
         add_limited_activity_fallbacks(&mut activities, &[session]);
 
         assert_eq!(activities.get("external"), Some(&parsed));
+    }
+}
+
+fn apply_worker_families(
+    sessions: &mut [crate::sessions::SessionSummary],
+    links: &[crate::agents::WorkerFamilyLink],
+) {
+    for link in links {
+        // Locators are opaque: match either the discovered ID or path, scoped by
+        // harness and project. No backend's native locator is passed to another.
+        let matches = |session: &crate::sessions::SessionSummary, backend: &str, locator: &str| {
+            session.harness == backend
+                && session.project == link.project
+                && (session.id == locator || session.path == std::path::Path::new(locator))
+        };
+        let parent = sessions
+            .iter()
+            .find(|session| matches(session, &link.parent_backend, &link.parent_session))
+            .map(|session| session.id.clone());
+        if let Some(parent) = parent {
+            if let Some(child) = sessions
+                .iter_mut()
+                .find(|session| matches(session, &link.child_backend, &link.child_session))
+            {
+                child.parent_session = Some(parent);
+            }
+        }
     }
 }

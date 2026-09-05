@@ -1165,3 +1165,68 @@ fn concurrent_state_store_open_waits_for_schema_writers() -> Result<(), Box<dyn 
     }
     Ok(())
 }
+
+#[test]
+fn worker_tasks_customization_and_deletion_survive_reopen() -> Result<(), String> {
+    let temp = tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("settings.sqlite3");
+    let store = StateStore::open_at(&database)?;
+    let mut tasks = store.load_worker_tasks()?;
+    assert_eq!(tasks.tasks.len(), 3);
+    tasks.tasks[0].name = "audit".into();
+    tasks.tasks[0].independent.harness = "codex-cli".into();
+    tasks.tasks[0].independent.provider = "openai".into();
+    tasks.tasks.remove(1);
+    store.save_application_settings_with_workers("ctrl", None, Some(&tasks))?;
+    assert_eq!(StateStore::open_at(&database)?.load_worker_tasks()?, tasks);
+    tasks.tasks.clear();
+    store.save_application_settings_with_workers("ctrl", None, Some(&tasks))?;
+    assert!(
+        StateStore::open_at(&database)?
+            .load_worker_tasks()?
+            .tasks
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
+fn invalid_worker_tasks_do_not_partially_save_application_settings() -> Result<(), String> {
+    let temp = tempdir().map_err(|error| error.to_string())?;
+    let store = StateStore::open_at(&temp.path().join("settings.sqlite3"))?;
+    store.save_application_settings("ctrl", None)?;
+    let original = store.load_worker_tasks()?;
+    let mut invalid = original.clone();
+    invalid.tasks[0].guided.provider.clear();
+    assert!(
+        store
+            .save_application_settings_with_workers("cmd", None, Some(&invalid))
+            .is_err()
+    );
+    assert_eq!(store.load_application_modifier()?.as_deref(), Some("ctrl"));
+    assert_eq!(store.load_worker_tasks()?, original);
+    store.save_application_settings_with_workers("cmd", None, Some(&original))?;
+    assert_eq!(store.load_application_modifier()?.as_deref(), Some("cmd"));
+    Ok(())
+}
+
+#[test]
+fn cross_harness_worker_families_survive_reopen() -> Result<(), String> {
+    let temp = tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("settings.sqlite3");
+    let link = crate::agents::WorkerFamilyLink {
+        project: temp.path().to_owned(),
+        child_backend: "opencode2".into(),
+        child_session: "child-session".into(),
+        parent_backend: "pi".into(),
+        parent_session: "/sessions/parent.jsonl".into(),
+    };
+    let store = StateStore::open_at(&database)?;
+    store.save_worker_family(&link)?;
+    store.save_worker_family(&link)?;
+    assert_eq!(
+        StateStore::open_at(&database)?.load_worker_families()?,
+        vec![link]
+    );
+    Ok(())
+}

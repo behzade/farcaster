@@ -111,6 +111,7 @@ impl FarcasterApp {
             search: inputs.search,
             search_focus: inputs.search_focus,
             session_title_input: inputs.session_title,
+            worker_task_editor: workspace::worker_tasks::WorkerTaskEditor::default(),
             network_proxy_input: inputs.network_proxy,
             network_proxy_error: None,
             settings_application_modifier: ui::keybindings::application_modifier(),

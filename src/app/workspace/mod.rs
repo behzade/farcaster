@@ -8,6 +8,7 @@ mod editor;
 mod regions;
 mod surfaces;
 mod terminal;
+pub(in crate::app) mod worker_tasks;
 
 pub(crate) use surfaces::{CycleWorkspaceBackward, CycleWorkspaceForward};
 

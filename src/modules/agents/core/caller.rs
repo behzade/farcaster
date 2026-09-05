@@ -7,11 +7,27 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use serde::{Deserialize, Serialize};
+
 use super::{super::contract::PeerMessage, names, worker::WorkerActivityState};
+
+/// Farcaster ancestry is independent of backend-native thread/session ancestry.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub(crate) struct WorkerFamilyLink {
+    pub(crate) project: PathBuf,
+    pub(crate) child_backend: String,
+    pub(crate) child_session: String,
+    pub(crate) parent_backend: String,
+    pub(crate) parent_session: String,
+}
+
+pub(crate) type WorkerFamilySink =
+    Arc<dyn Fn(&WorkerFamilyLink) -> Result<(), String> + Send + Sync>;
 
 #[derive(Clone, Default)]
 pub(crate) struct CallerRegistry {
     callers: Arc<Mutex<HashMap<String, RegisteredCaller>>>,
+    family_sink: Arc<Mutex<Option<WorkerFamilySink>>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -45,6 +61,7 @@ struct RegisteredCaller {
     model: Option<String>,
     effort: Option<String>,
     parent_worker_id: Option<String>,
+    assignment: Option<super::WorkerAssignment>,
     activity: WorkerActivityState,
     inbox: mpsc::Sender<PeerMessage>,
     wake: Option<thread::Thread>,
@@ -62,6 +79,36 @@ impl CallerRegistry {
     pub(crate) fn shared() -> &'static Self {
         static REGISTRY: OnceLock<CallerRegistry> = OnceLock::new();
         REGISTRY.get_or_init(Self::default)
+    }
+
+    pub(crate) fn set_family_sink(&self, sink: Option<WorkerFamilySink>) {
+        if let Ok(mut current) = self.family_sink.lock() {
+            *current = sink;
+        }
+    }
+
+    fn persist_family(&self, token: &str) {
+        let link = (|| {
+            let callers = self.callers.lock().ok()?;
+            let child = callers.get(token)?;
+            let parent_id = child.parent_worker_id.as_deref()?;
+            let parent = callers
+                .values()
+                .find(|parent| parent.worker_id == parent_id && parent.project == child.project)?;
+            Some(WorkerFamilyLink {
+                project: child.project.clone(),
+                child_backend: child.backend.clone(),
+                child_session: child.session.clone()?,
+                parent_backend: parent.backend.clone(),
+                parent_session: parent.session.clone()?,
+            })
+        })();
+        let sink = self.family_sink.lock().ok().and_then(|sink| sink.clone());
+        if let (Some(link), Some(sink)) = (link, sink) {
+            if let Err(error) = sink(&link) {
+                zlog::warn!("Persist worker family: {error}");
+            }
+        }
     }
 
     pub(crate) fn issue(
@@ -94,6 +141,7 @@ impl CallerRegistry {
                     model: profile.model,
                     effort: profile.effort,
                     parent_worker_id: None,
+                    assignment: None,
                     activity: WorkerActivityState::Starting,
                     inbox,
                     wake,
@@ -148,6 +196,7 @@ impl CallerRegistry {
                 model: profile.model,
                 effort: profile.effort,
                 parent_worker_id,
+                assignment: None,
                 activity: WorkerActivityState::Starting,
                 inbox,
                 wake,
@@ -216,6 +265,53 @@ impl CallerRegistry {
                     && parent.backend == child.backend
                     && parent.project == child.project
             })?
+            .session
+            .clone()
+    }
+
+    pub(crate) fn set_assignment(
+        &self,
+        worker_id: &str,
+        assignment: super::WorkerAssignment,
+    ) -> Result<(), String> {
+        let mut callers = self
+            .callers
+            .lock()
+            .map_err(|_| "worker caller registry is unavailable")?;
+        let caller = callers
+            .values_mut()
+            .find(|caller| caller.worker_id == worker_id)
+            .ok_or("worker is not registered")?;
+        caller.assignment = Some(assignment);
+        Ok(())
+    }
+
+    pub(crate) fn child_assignment(
+        &self,
+        parent: &CallerContext,
+        name: &str,
+    ) -> Result<Option<super::WorkerAssignment>, String> {
+        let callers = self
+            .callers
+            .lock()
+            .map_err(|_| "worker caller registry is unavailable")?;
+        Ok(callers
+            .values()
+            .find(|child| {
+                child.parent_worker_id.as_deref() == Some(parent.worker_id.as_str())
+                    && child.project == parent.project
+                    && child.worker_name.eq_ignore_ascii_case(name)
+            })
+            .and_then(|child| child.assignment.clone()))
+    }
+
+    /// Backend-native ancestry must never receive a foreign session locator.
+    pub(crate) fn native_parent_session(&self, worker_id: &str, backend: &str) -> Option<String> {
+        self.callers
+            .lock()
+            .ok()?
+            .values()
+            .find(|caller| caller.worker_id == worker_id && caller.backend == backend)?
             .session
             .clone()
     }
@@ -290,11 +386,17 @@ impl CallerIdentity {
     }
 
     pub(crate) fn bind(&self, session_locator: impl Into<String>) {
+        let session_locator = session_locator.into();
+        let mut changed = false;
         if let Ok(mut callers) = self.registry.callers.lock()
             && let Some(context) = callers.get_mut(&self.token)
         {
-            context.session = Some(session_locator.into());
+            changed = context.session.as_deref() != Some(session_locator.as_str());
+            context.session = Some(session_locator);
             context.activity = WorkerActivityState::Idle;
+        }
+        if changed {
+            self.registry.persist_family(&self.token);
         }
     }
 
@@ -551,6 +653,58 @@ mod tests {
         assert!(child(&registry, &first, "REVIEW").is_err());
         assert!(child(&registry, &first, "bad name").is_err());
         assert!(child(&registry, &second, "review").is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn foreign_parents_keep_farcaster_links_but_not_native_ancestry() -> Result<(), String> {
+        let registry = CallerRegistry::default();
+        let links = Arc::new(Mutex::new(Vec::new()));
+        let captured = links.clone();
+        registry.set_family_sink(Some(Arc::new(move |link| {
+            captured.lock().unwrap().push(link.clone());
+            Ok(())
+        })));
+        let parent = identity(&registry, Path::new("/project"), "pi");
+        parent.bind("/sessions/parent.jsonl");
+        let context = context(&registry, &parent);
+        let child = registry.issue_as(
+            &context.project,
+            CallerProfile {
+                backend: "opencode2".into(),
+                provider: None,
+                model: None,
+                effort: None,
+            },
+            None,
+            new_worker_id(),
+            "inspect".into(),
+            Some(context.worker_id.clone()),
+        )?;
+        child.bind("opencode-child");
+        child.bind("opencode-child");
+        assert_eq!(
+            registry
+                .native_parent_session(&context.worker_id, "pi")
+                .as_deref(),
+            Some("/sessions/parent.jsonl")
+        );
+        assert!(
+            registry
+                .native_parent_session(&context.worker_id, "opencode2")
+                .is_none()
+        );
+        assert!(
+            registry
+                .session_parent("opencode2", "opencode-child")
+                .is_none()
+        );
+        assert_eq!(links.lock().unwrap().len(), 1);
+        assert_eq!(links.lock().unwrap()[0].parent_backend, "pi");
+        registry.send(child.token(), "", "done".into())?;
+        assert_eq!(parent.try_recv().unwrap().message, "done");
+        registry.send(parent.token(), "inspect", "continue".into())?;
+        assert_eq!(child.try_recv().unwrap().message, "continue");
         Ok(())
     }
 

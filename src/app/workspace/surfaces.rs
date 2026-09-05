@@ -553,6 +553,9 @@ impl FarcasterApp {
             }
             Err(error) => self.network_proxy_error = Some(error),
         }
+        if let Err(error) = self.load_worker_task_settings(window, cx) {
+            self.network_proxy_error = Some(error);
+        }
         self.open_sheet(AppSheet::Settings, window, cx);
     }
 
@@ -595,9 +598,23 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let tasks = match self.worker_task_editor.value(cx) {
+            Ok(tasks) => tasks,
+            Err(error) => {
+                self.network_proxy_error = Some(error);
+                cx.notify();
+                return;
+            }
+        };
         let modifier = self.settings_application_modifier;
-        let result = crate::app::infrastructure::persistence::StateStore::open()
-            .and_then(|store| store.save_application_settings(modifier.prefix(), proxy.as_deref()));
+        let result =
+            crate::app::infrastructure::persistence::StateStore::open().and_then(|store| {
+                store.save_application_settings_with_workers(
+                    modifier.prefix(),
+                    proxy.as_deref(),
+                    Some(&tasks),
+                )
+            });
         match result {
             Ok(()) => {
                 self.network_proxy_error = None;
