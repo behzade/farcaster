@@ -230,9 +230,7 @@ impl FarcasterApp {
             })
             .child(activity)
             .when(
-                !self.repository.execution_allowed
-                    || self.repository.backend.is_some()
-                    || self.repository.error.is_some(),
+                self.repository.backend.is_some(),
                 |run| run.child(self.render_repository(entity.clone(), run_panel.clone(), browser)),
             );
         panel()
