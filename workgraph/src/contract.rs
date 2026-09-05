@@ -120,6 +120,31 @@ pub struct SessionLink {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TaskOwner {
+    pub session_id: String,
+    pub session_path: String,
+    pub claimed_at: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskCompletion {
+    pub session_id: String,
+    pub outcome: Outcome,
+    pub completed_at: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskState {
+    pub plan_number: u64,
+    pub task: u64,
+    pub owner: Option<TaskOwner>,
+    pub completion: Option<TaskCompletion>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PlanSnapshot {
     pub plan: Plan,
     pub nodes: Vec<Node>,
@@ -146,6 +171,43 @@ pub struct ProjectGraph {
     pub walks: Vec<Walk>,
     pub steps: Vec<WalkStep>,
     pub sessions: Vec<SessionLink>,
+    #[serde(default)]
+    pub tasks: Vec<TaskState>,
+}
+
+impl ProjectGraph {
+    pub fn task_state(&self, task: u64) -> Option<TaskState> {
+        if let Some(state) = self.tasks.iter().find(|state| state.task == task) {
+            let mut state = state.clone();
+            if state.completion.is_none() {
+                state.completion = self.walk_completion(task);
+            }
+            return Some(state);
+        }
+        let node = self.nodes.iter().find(|node| node.number == task)?;
+        Some(TaskState {
+            plan_number: node.plan_number,
+            task,
+            owner: None,
+            completion: self.walk_completion(task),
+        })
+    }
+
+    fn walk_completion(&self, task: u64) -> Option<TaskCompletion> {
+        self.steps
+            .iter()
+            .filter(|step| step.node_number == task)
+            .max_by_key(|step| step.completed_at)
+            .map(|step| TaskCompletion {
+                session_id: self
+                    .sessions
+                    .iter()
+                    .find(|link| link.walk_number == step.walk_number)
+                    .map_or_else(|| "legacy".to_owned(), |link| link.session_id.clone()),
+                outcome: step.outcome.clone(),
+                completed_at: step.completed_at,
+            })
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -236,6 +298,25 @@ pub enum EditAction {
         session_id: String,
         session_path: String,
     },
+    CreateTasks {
+        nodes: Vec<NodeDraft>,
+        after: Option<u64>,
+        before: Option<u64>,
+    },
+    ClaimTask {
+        task: u64,
+        session_id: String,
+        session_path: String,
+    },
+    ReleaseTask {
+        task: u64,
+        session_id: String,
+    },
+    CompleteTask {
+        task: u64,
+        session_id: String,
+        outcome: Outcome,
+    },
     AddEdge {
         plan: u64,
         from: u64,
@@ -295,6 +376,8 @@ pub enum EditResult {
     Step(WalkStep),
     Session(SessionLink),
     UnlinkedSession(SessionLink),
+    Tasks(PlanSnapshot),
+    Task(TaskState),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

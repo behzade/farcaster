@@ -52,6 +52,32 @@ impl FarcasterMcp {
             notices,
         }
     }
+
+    async fn workgraph_call<P: Send + 'static>(
+        &self,
+        parts: axum::http::request::Parts,
+        params: P,
+        operation: fn(
+            &std::path::Path,
+            &crate::agents::CallerContext,
+            P,
+        ) -> Result<serde_json::Value, String>,
+        mutates: bool,
+    ) -> Result<Json<serde_json::Value>, String> {
+        let token = caller_token(&parts)
+            .ok_or_else(|| "workgraph requires a registered Farcaster caller".to_owned())?;
+        let database = self.database.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            let caller = crate::agents::CallerRegistry::shared().resolve(&token)?;
+            operation(&database, &caller, params)
+        })
+        .await
+        .map_err(|error| format!("work graph task failed: {error}"))??;
+        if mutates {
+            notify_workgraph_changed(&self.workgraph_updates);
+        }
+        Ok(Json(result))
+    }
 }
 
 #[tool_router]
@@ -101,48 +127,67 @@ impl FarcasterMcp {
 
     #[tool(
         name = "workgraph_search",
-        description = "Search Farcaster's durable work graph by node title or acceptance condition"
+        description = "Find tasks in your project with owners, blockers, and readiness. Omit query to list all tasks."
     )]
     async fn search(
         &self,
         Parameters(params): Parameters<workgraph::SearchParams>,
-    ) -> Result<String, String> {
-        let database = self.database.clone();
-        tokio::task::spawn_blocking(move || workgraph::search(&database, params))
+        Extension(parts): Extension<axum::http::request::Parts>,
+    ) -> Result<Json<serde_json::Value>, String> {
+        self.workgraph_call(parts, params, workgraph::search, false)
             .await
-            .map_err(|error| format!("work graph search task failed: {error}"))?
     }
 
     #[tool(
         name = "workgraph_patch",
-        description = "Create or extend an ordered task chain in Farcaster's durable work graph"
+        description = "Create or extend an ordered task chain in your project. Creating tasks does not claim them."
     )]
     async fn patch(
         &self,
         Parameters(params): Parameters<workgraph::PatchParams>,
-    ) -> Result<String, String> {
-        let database = self.database.clone();
-        let result = tokio::task::spawn_blocking(move || workgraph::patch(&database, params))
+        Extension(parts): Extension<axum::http::request::Parts>,
+    ) -> Result<Json<serde_json::Value>, String> {
+        self.workgraph_call(parts, params, workgraph::patch, true)
             .await
-            .map_err(|error| format!("work graph patch task failed: {error}"))??;
-        notify_workgraph_changed(&self.workgraph_updates);
-        Ok(result)
+    }
+
+    #[tool(
+        name = "workgraph_claim",
+        description = "Atomically claim a ready task for your authenticated session. Conflicts if already owned by another session."
+    )]
+    async fn claim(
+        &self,
+        Parameters(params): Parameters<workgraph::TaskParams>,
+        Extension(parts): Extension<axum::http::request::Parts>,
+    ) -> Result<Json<serde_json::Value>, String> {
+        self.workgraph_call(parts, params, workgraph::claim, true)
+            .await
+    }
+
+    #[tool(
+        name = "workgraph_release",
+        description = "Release a task owned by your authenticated session so another session can claim it."
+    )]
+    async fn release(
+        &self,
+        Parameters(params): Parameters<workgraph::TaskParams>,
+        Extension(parts): Extension<axum::http::request::Parts>,
+    ) -> Result<Json<serde_json::Value>, String> {
+        self.workgraph_call(parts, params, workgraph::release, true)
+            .await
     }
 
     #[tool(
         name = "workgraph_complete",
-        description = "Complete the active work-graph node for a backend session"
+        description = "Complete a task owned by your authenticated session with evidence. Returns newly ready tasks; does not claim them."
     )]
     async fn complete(
         &self,
         Parameters(params): Parameters<workgraph::CompleteParams>,
-    ) -> Result<String, String> {
-        let database = self.database.clone();
-        let result = tokio::task::spawn_blocking(move || workgraph::complete(&database, params))
+        Extension(parts): Extension<axum::http::request::Parts>,
+    ) -> Result<Json<serde_json::Value>, String> {
+        self.workgraph_call(parts, params, workgraph::complete, true)
             .await
-            .map_err(|error| format!("work graph completion task failed: {error}"))??;
-        notify_workgraph_changed(&self.workgraph_updates);
-        Ok(result)
     }
 }
 
@@ -263,8 +308,10 @@ mod tests {
             [
                 "worker_notices",
                 "worker_send",
+                "workgraph_claim",
                 "workgraph_complete",
                 "workgraph_patch",
+                "workgraph_release",
                 "workgraph_search"
             ]
         );
@@ -369,57 +416,46 @@ mod tests {
         assert!(config.json_response);
     }
 
+    #[tokio::test]
+    async fn workgraph_rejects_missing_authenticated_caller() {
+        let temp = tempfile::tempdir().expect("project");
+        let (updates, _) = async_channel::bounded(1);
+        let server = FarcasterMcp::new(
+            temp.path().join("unused.db"),
+            worker_pool(temp.path()),
+            updates,
+            notices::NoticeBoard::default(),
+        );
+        let (parts, _) = axum::http::Request::new(()).into_parts();
+        let result = server
+            .search(
+                Parameters(workgraph::SearchParams {
+                    query: String::new(),
+                }),
+                Extension(parts),
+            )
+            .await;
+        assert!(matches!(result, Err(error) if error.contains("registered Farcaster caller")));
+        assert!(!temp.path().join("unused.db").exists());
+    }
+
     #[test]
-    fn patch_search_and_complete_share_the_application_database() -> Result<(), String> {
-        let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
-        let project = temp.path().join("project");
-        std::fs::create_dir(&project).map_err(|error| error.to_string())?;
-        let database = temp.path().join("state.sqlite3");
-        let project = project.to_string_lossy().into_owned();
-
-        let patched = workgraph::patch(
-            &database,
-            workgraph::PatchParams {
-                project: project.clone(),
-                session_id: "session-1".into(),
-                session_path: "backend://session-1".into(),
-                nodes: vec![
-                    workgraph::PatchNode {
-                        title: "Add MCP server".into(),
-                        acceptance: "Server answers modern MCP requests".into(),
-                    },
-                    workgraph::PatchNode {
-                        title: "Verify client".into(),
-                        acceptance: "Client can call every exposed tool".into(),
-                    },
-                ],
-                after: None,
-                before: None,
-            },
-        )?;
-        assert!(patched.contains("Add MCP server"));
-
-        let found = workgraph::search(
-            &database,
-            workgraph::SearchParams {
-                project: project.clone(),
-                query: "modern mcp".into(),
-            },
-        )?;
-        assert!(found.contains("Add MCP server"));
-        assert!(!found.contains("Verify client"));
-
-        let completed = workgraph::complete(
-            &database,
-            workgraph::CompleteParams {
-                project,
-                session_id: "session-1".into(),
-                evidence: "MCP contract test passed".into(),
-                next: None,
-            },
-        )?;
-        assert!(completed.contains("MCP contract test passed"));
-        assert!(completed.contains("Verify client"));
-        Ok(())
+    fn workgraph_schemas_do_not_accept_caller_identity() {
+        let tools = FarcasterMcp::tool_router().list_all();
+        for tool in tools
+            .iter()
+            .filter(|tool| tool.name.starts_with("workgraph_"))
+        {
+            let properties = tool.input_schema["properties"].as_object().unwrap();
+            for forbidden in ["project", "sessionId", "sessionPath", "next"] {
+                assert!(
+                    !properties.contains_key(forbidden),
+                    "{} exposes {forbidden}",
+                    tool.name
+                );
+            }
+            assert_eq!(tool.input_schema["additionalProperties"], false);
+            assert!(tool.output_schema.is_some());
+        }
     }
 }
