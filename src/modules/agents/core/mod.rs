@@ -7,8 +7,14 @@ mod pool_tests;
 mod prompt_store;
 mod run;
 mod worker;
+mod worker_tasks;
+pub(crate) use worker_tasks::{
+    WorkerAssignment, WorkerExecution, WorkerJudgment, WorkerTaskDefinition, WorkerTasks,
+};
 
-pub(crate) use caller::{CallerContext, CallerIdentity, CallerProfile, CallerRegistry};
+pub(crate) use caller::{
+    CallerContext, CallerIdentity, CallerProfile, CallerRegistry, WorkerFamilyLink,
+};
 pub(crate) use concurrency::WorkerSlot;
 pub(crate) use pool::WorkerPool;
 pub(crate) use prompt_store::{

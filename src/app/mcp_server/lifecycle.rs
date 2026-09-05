@@ -35,10 +35,20 @@ pub(crate) fn start(
         return Err("MCP server is already initialized".into());
     }
     let server = ServerState::new(
-        FarcasterMcp::new(database, workers, updates, notices::NoticeBoard::default()),
+        FarcasterMcp::new(
+            database.clone(),
+            workers,
+            updates,
+            notices::NoticeBoard::default(),
+        ),
         crate::builtin_mcp::enabled(),
         BIND_ADDRESS,
     )?;
+    crate::agents::CallerRegistry::shared().set_family_sink(Some(std::sync::Arc::new(
+        move |link| {
+            crate::app::persistence::StateStore::open_at(&database)?.save_worker_family(link)
+        },
+    )));
     *current = Some(server);
     Ok(McpServer)
 }
@@ -70,6 +80,7 @@ impl Drop for McpServer {
     fn drop(&mut self) {
         if let Ok(mut current) = SERVER.lock() {
             drop(current.take());
+            crate::agents::CallerRegistry::shared().set_family_sink(None);
         }
     }
 }

@@ -80,6 +80,48 @@ for reuse without counting toward that limit. Messages to an idle child wait for
 a free slot before starting another turn. Children send results explicitly with
 `worker_send`; Farcaster reports child failures to the parent automatically.
 
+### Worker task routing
+
+**Settings → Worker tasks** lets you add, rename, or delete task definitions and
+choose a harness, provider, model, and effort for each judgment level. Changes
+are saved with the rest of Settings; Cancel discards edits. Model choices come
+from the current project's cached harness catalogs; exact IDs can also be typed.
+Changing harness clears the previous provider/model/effort to avoid mixing IDs.
+An empty effort uses that backend's default.
+
+The initial task definitions are `read`, `implement`, and `review`, each with:
+
+| Judgment | Responsibility | Initial route (Pi / openai-codex) |
+| --- | --- | --- |
+| `specified` | Parent supplies the procedure or exact checks | `gpt-5.6-luna`, high |
+| `guided` | Child makes local decisions within constraints | `gpt-5.6-sol`, medium |
+| `independent` | Child chooses an approach or challenges assumptions | `gpt-6-astra`, high |
+
+These are editable starter model IDs, not availability guarantees. Configure
+routes for your installed harnesses and authenticated providers. Farcaster does
+not inherit the parent's execution profile or silently fall back to it.
+Task names classify work that is already being delegated; they are not agent
+personas or permission restrictions. The schema contains no task-specific
+recommendations about when to delegate.
+
+Creating a child requires `task`; `judgment` defaults to `guided`:
+
+```json
+{"to":"check-parser","task":"review","judgment":"specified","message":"Check these three invariants…"}
+```
+
+Follow-up messages can omit both fields. A child's task, judgment, and resolved
+route are bound on creation; conflicting classifications are rejected. Use a new
+child name to select different routing. Deleting all definitions disables new
+child creation but preserves messaging with existing children. Children cannot
+select routing or spawn grandchildren. The tool schema exposes the saved task
+names; clients that cache schemas may need to refresh their tools after edits.
+
+Children may use a different harness from their parent. Farcaster persists those
+family links separately from backend-native session ancestry. Harness-specific
+trust, authentication, and access controls still apply; task routing does not
+grant additional permissions or disable a harness's native delegation tools.
+
 ## Configuration
 
 - `FARCASTER_PI_PATH`: Pi executable

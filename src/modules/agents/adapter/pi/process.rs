@@ -231,7 +231,9 @@ impl PiRpcProcess {
             effort: None,
         };
         let parent_worker_id = parent.as_ref().map(|(id, _)| id.clone());
-        let parent_session = parent.map(|(_, session)| session);
+        let parent_session = parent
+            .as_ref()
+            .and_then(|(id, _)| registry.native_parent_session(id, "pi"));
         let caller_identity = if let Some((worker_id, worker_name)) = worker {
             registry.issue_as(
                 project,

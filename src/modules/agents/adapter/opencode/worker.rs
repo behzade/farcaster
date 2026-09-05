@@ -75,13 +75,12 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
             .map(|(provider, model)| (provider, model, launch.effort.as_deref()));
         let session = match launch.context {
             WorkerContext::Fresh => {
-                let parent_id = launch
-                    .parent_worker_id
-                    .is_some()
-                    .then_some(launch.parent_session.as_str());
+                let parent_id = launch.parent_worker_id.as_deref().and_then(|id| {
+                    crate::agents::CallerRegistry::shared().native_parent_session(id, "opencode2")
+                });
                 client.create_session(
                     &launch.project.to_string_lossy(),
-                    parent_id,
+                    parent_id.as_deref(),
                     selected_model,
                 )?
             }
