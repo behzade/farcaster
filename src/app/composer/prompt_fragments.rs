@@ -3,6 +3,7 @@ use crate::protocol::{SlashCommand, SlashCommandSource};
 const SOURCES: &[(&str, &str)] = &[
     ("commit", include_str!("../../../prompts/commit.md")),
     ("simplify", include_str!("../../../prompts/simplify.md")),
+    ("show-me", include_str!("../../../prompts/show-me.md")),
 ];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -30,7 +31,8 @@ pub(crate) fn expand(input: &str) -> Option<Expansion> {
     let mut selected = Vec::new();
     let mut arguments = Vec::new();
     let mut cursor = 0;
-    for (start, end, token) in tokens(input) {
+    for (start, _, token) in tokens(input) {
+        let token = invocation_token(token);
         let Some(name) = token.strip_prefix('$') else {
             continue;
         };
@@ -43,7 +45,7 @@ pub(crate) fn expand(input: &str) -> Option<Expansion> {
             arguments.push(argument);
         }
         selected.push(parse(source).1);
-        cursor = end;
+        cursor = start + token.len();
     }
     if selected.is_empty() {
         return None;
@@ -81,6 +83,11 @@ fn parse(source: &'static str) -> (Option<String>, String) {
     (description, body.trim().into())
 }
 
+/// Sentence punctuation terminates an invocation without becoming part of its name.
+pub(crate) fn invocation_token(token: &str) -> &str {
+    token.trim_end_matches(['.', ',', ';', ':', '!', '?'])
+}
+
 fn tokens(input: &str) -> impl Iterator<Item = (usize, usize, &str)> {
     let mut start = None;
     input
@@ -116,6 +123,10 @@ mod tests {
                 (
                     "simplify".into(),
                     Some("Refine your implementation without changing behavior".into())
+                ),
+                (
+                    "show-me".into(),
+                    Some("Help the user understand the current topic visually with concise diagrams, code-shape sketches, and focused HTML artifacts.".into())
                 )
             ]
         );
@@ -139,10 +150,39 @@ mod tests {
     }
 
     #[test]
+    fn show_me_expands_without_attribution_metadata() {
+        for input in ["$show-me", "$prompt:show-me"] {
+            let expansion = expand(input).expect("show-me prompt should expand");
+            let (_, body) = include_str!("../../../prompts/show-me.md")
+                .strip_prefix("---\n")
+                .unwrap()
+                .split_once("\n---\n")
+                .unwrap();
+            assert_eq!(expansion.message, body.trim());
+        }
+    }
+
+    #[test]
     fn unknown_and_escaped_invocations_stay_plain() {
         assert!(expand("$missing").is_none());
         assert!(expand(r"\$commit").is_none());
         assert!(expand("cost $100").is_none());
+    }
+
+    #[test]
+    fn trailing_punctuation_expands_and_is_preserved() {
+        for suffix in [".", ",", ";", ":", "!", "?", "..."] {
+            for name in ["commit", "prompt:commit"] {
+                let input = format!("${name}{suffix}");
+                let expansion = expand(&input).expect("punctuated prompt should expand");
+                assert_eq!(expansion.display, input);
+                assert!(expansion.message.starts_with("Commit your changes."));
+                assert!(expansion.message.ends_with(&format!("\n\n{suffix}")));
+            }
+        }
+        assert!(expand("$commit.md").is_none());
+        assert!(expand(r"\$commit.").is_none());
+        assert!(expand("$commit-extra.").is_none());
     }
 
     #[test]
