@@ -13,11 +13,13 @@ pub(crate) struct ComposerSuggestion {
 pub(crate) fn contains_invocation(input: &str, commands: &[SlashCommand]) -> bool {
     let invocable = invocable_commands(commands);
     input.split_whitespace().any(|token| {
-        token.strip_prefix('$').is_some_and(|name| {
-            invocable
-                .iter()
-                .any(|command| invocation_alias(command, &invocable) == name)
-        })
+        prompt_fragments::invocation_token(token)
+            .strip_prefix('$')
+            .is_some_and(|name| {
+                invocable
+                    .iter()
+                    .any(|command| invocation_alias(command, &invocable) == name)
+            })
     })
 }
 
@@ -192,6 +194,13 @@ mod tests {
         let commands = Vec::new();
 
         assert!(contains_invocation("please $simplify this", &commands));
+        assert!(contains_invocation("$commit.", &commands));
+        assert!(contains_invocation(
+            "please $simplify, then $commit!",
+            &commands
+        ));
+        assert!(!contains_invocation("$commit.md", &commands));
+        assert!(!contains_invocation(r"\$commit.", &commands));
         assert!(!contains_invocation("cost $100", &commands));
         assert!(!contains_invocation("please $unknown", &commands));
     }
