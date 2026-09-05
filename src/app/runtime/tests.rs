@@ -1049,6 +1049,20 @@ fn new_session_stays_cold_until_the_first_prompt() -> Result<(), Box<dyn std::er
 }
 
 #[test]
+fn unsupported_reasoning_does_not_queue_a_cursor_startup_command() {
+    let (mut owner, _events, _discovery) = owner_without_process(PathBuf::from("/cursor-project"));
+    owner.harness = "cursor-cli".into();
+    owner.snapshot.harness = "cursor-cli".into();
+
+    for level in ["off", "high"] {
+        owner.set_thinking(level.into());
+        assert!(owner.pending_session_controls.is_empty());
+        assert!(owner.snapshot.prefill_thinking_level.is_none());
+        assert!(owner.process.is_none());
+    }
+}
+
+#[test]
 fn cold_draft_model_selection_is_deferred_without_starting_the_harness() {
     let project = std::env::temp_dir().join("cold-model-project");
     let (mut owner, _events, _discovery) = owner_without_process(project.clone());
@@ -1434,6 +1448,7 @@ fn starting_session_prefills_controls_from_the_last_ready_session() {
     };
     let mut controls = HarnessConfigurationStore::default();
     let mut ready = RuntimeSnapshot {
+        harness: "codex-cli".into(),
         session: serde_json::from_value(json!({
             "model": {
                 "id": "model-1",
@@ -1457,7 +1472,10 @@ fn starting_session_prefills_controls_from_the_last_ready_session() {
     };
     controls.reconcile_snapshot(&mut ready, true);
 
-    let mut starting = RuntimeSnapshot::default();
+    let mut starting = RuntimeSnapshot {
+        harness: "codex-cli".into(),
+        ..RuntimeSnapshot::default()
+    };
     controls.reconcile_snapshot(&mut starting, true);
 
     assert_eq!(starting.prefill_model, Some(model.clone()));
@@ -1487,6 +1505,7 @@ fn history_identity_overrides_draft_defaults_without_changing_them() {
     };
     let mut defaults = HarnessConfigurationStore::default();
     let mut live_sol = RuntimeSnapshot {
+        harness: "codex-cli".into(),
         session: serde_json::from_value(json!({
             "model": sol,
             "thinkingLevel": "high",
@@ -1506,6 +1525,7 @@ fn history_identity_overrides_draft_defaults_without_changing_them() {
     defaults.reconcile_snapshot(&mut live_sol, true);
 
     let mut luna_history = RuntimeSnapshot {
+        harness: "codex-cli".into(),
         prefill_model: Some(luna.clone()),
         prefill_thinking_level: Some("medium".into()),
         history_preview: true,
@@ -1518,7 +1538,10 @@ fn history_identity_overrides_draft_defaults_without_changing_them() {
     assert_eq!(history_identity.model, Some(&luna));
     assert_eq!(history_identity.effort, Some("medium"));
 
-    let mut empty_draft = RuntimeSnapshot::default();
+    let mut empty_draft = RuntimeSnapshot {
+        harness: "codex-cli".into(),
+        ..RuntimeSnapshot::default()
+    };
     defaults.reconcile_snapshot(&mut empty_draft, true);
     let draft_identity = empty_draft.session_identity();
     assert_eq!(draft_identity.model, Some(&sol));
@@ -1559,6 +1582,7 @@ fn viewing_a_subagent_does_not_change_new_session_defaults() {
     };
     let mut defaults = HarnessConfigurationStore::default();
     let mut root = RuntimeSnapshot {
+        harness: "codex-cli".into(),
         session: session_state("/sessions/root.jsonl", sol.clone()),
         models: vec![sol.clone(), luna.clone()],
         thinking_levels: vec!["medium".into(), "high".into()],
@@ -1568,6 +1592,7 @@ fn viewing_a_subagent_does_not_change_new_session_defaults() {
 
     // A descendant's model must not replace the defaults inherited by new drafts.
     let mut subagent = RuntimeSnapshot {
+        harness: "codex-cli".into(),
         live_session: Some(PathBuf::from("/sessions/child.jsonl")),
         session: session_state("/sessions/child.jsonl", luna.clone()),
         models: vec![sol.clone(), luna.clone()],
@@ -1576,7 +1601,10 @@ fn viewing_a_subagent_does_not_change_new_session_defaults() {
     };
     defaults.reconcile_snapshot(&mut subagent, false);
 
-    let mut new_draft = RuntimeSnapshot::default();
+    let mut new_draft = RuntimeSnapshot {
+        harness: "codex-cli".into(),
+        ..RuntimeSnapshot::default()
+    };
     defaults.reconcile_snapshot(&mut new_draft, true);
     let identity = new_draft.session_identity();
     assert_eq!(identity.model, Some(&sol));

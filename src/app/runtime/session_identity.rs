@@ -107,11 +107,14 @@ impl HarnessConfigurationStore {
         entries: Vec<crate::app::infrastructure::persistence::CachedSessionControlDefaults>,
     ) {
         for entry in entries {
+            let effort = entry
+                .effort
+                .filter(|_| crate::agents::supports_reasoning_effort(&entry.harness));
             self.identities.insert(
                 entry.harness,
                 OwnedSessionIdentity {
                     model: entry.model,
-                    effort: entry.effort,
+                    effort,
                 },
             );
         }
@@ -160,6 +163,9 @@ impl HarnessConfigurationStore {
     }
 
     pub fn set_effort(&mut self, harness: &str, effort: String) -> bool {
+        if !crate::agents::supports_reasoning_effort(harness) {
+            return false;
+        }
         let identity = self.identities.entry(harness.to_owned()).or_default();
         if identity.effort.as_ref() == Some(&effort) {
             return false;
@@ -221,14 +227,18 @@ impl HarnessConfigurationStore {
                     .cloned()
                     .unwrap_or_else(|| model.clone())
             });
+            // A display default such as "off" is not a selectable setting when
+            // the backend has no reasoning-effort control.
+            let effort = crate::agents::supports_reasoning_effort(&snapshot.harness)
+                .then(|| session.thinking_level.clone());
             let changed = model
                 .as_ref()
                 .is_some_and(|model| identity.model.as_ref() != Some(model))
-                || identity.effort.as_deref() != Some(session.thinking_level.as_str());
+                || identity.effort != effort;
             if let Some(model) = model {
                 identity.model = Some(model);
             }
-            identity.effort = Some(session.thinking_level.clone());
+            identity.effort = effort;
             return changed;
         }
 
@@ -347,6 +357,47 @@ mod tests {
         defaults.reconcile_snapshot(&mut draft, true);
 
         assert_eq!(draft.prefill_thinking_level.as_deref(), Some("medium"));
+    }
+
+    #[test]
+    fn unsupported_reasoning_is_not_restored_or_cached() {
+        let mut defaults = HarnessConfigurationStore::default();
+        defaults.restore(vec![
+            crate::app::infrastructure::persistence::CachedSessionControlDefaults {
+                harness: "cursor-cli".into(),
+                model: None,
+                effort: Some("off".into()),
+            },
+        ]);
+        assert_eq!(defaults.effort("cursor-cli"), None);
+        assert!(!defaults.set_effort("cursor-cli", "high".into()));
+
+        let mut ready = RuntimeSnapshot {
+            harness: "cursor-cli".into(),
+            session: Some(
+                serde_json::from_value(serde_json::json!({
+                    "thinkingLevel": "off",
+                    "isStreaming": false,
+                    "isCompacting": false,
+                    "sessionId": "cursor-session",
+                    "autoCompactionEnabled": false,
+                    "messageCount": 0,
+                    "pendingMessageCount": 0
+                }))
+                .expect("session state"),
+            ),
+            ..RuntimeSnapshot::default()
+        };
+        defaults.reconcile_snapshot(&mut ready, true);
+        assert_eq!(defaults.effort("cursor-cli"), None);
+        assert!(defaults.cached().is_empty());
+
+        let mut draft = RuntimeSnapshot {
+            harness: "cursor-cli".into(),
+            ..RuntimeSnapshot::default()
+        };
+        defaults.reconcile_snapshot(&mut draft, true);
+        assert_eq!(draft.prefill_thinking_level, None);
     }
 
     #[test]

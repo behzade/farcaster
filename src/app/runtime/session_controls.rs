@@ -38,6 +38,10 @@ enum SessionControl {
 }
 
 impl SessionControl {
+    fn supported_by(&self, harness: &str) -> bool {
+        !matches!(self, Self::Thinking(_)) || crate::agents::supports_reasoning_effort(harness)
+    }
+
     fn command_name(&self) -> &'static str {
         match self {
             Self::Model(..) => "set_model",
@@ -85,6 +89,9 @@ impl RuntimeOwner {
     }
 
     fn send_session_control(&mut self, control: SessionControl) {
+        if !control.supported_by(&self.harness) {
+            return;
+        }
         if !self.snapshot.history_preview && self.process.is_some() {
             self.send(control.into_request());
             return;
@@ -138,7 +145,9 @@ impl RuntimeOwner {
             if self.process.is_none() {
                 break;
             }
-            self.send(control.into_request());
+            if control.supported_by(&self.harness) {
+                self.send(control.into_request());
+            }
         }
     }
 

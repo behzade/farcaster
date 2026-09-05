@@ -2,6 +2,9 @@ use std::{
     io::BufReader,
     path::Path,
     process::{ChildStdin, ChildStdout, Stdio},
+    sync::mpsc,
+    thread,
+    time::Duration,
 };
 
 use serde_json::{Value, json};
@@ -24,7 +27,7 @@ pub(in crate::modules::agents::adapter) fn load_configuration(
     profile: &AcpProfile,
     project: &Path,
 ) -> Result<(main_session::MainSessionMetadata, String), String> {
-    with_connection(profile, project, |connection| {
+    with_connection(profile, project, |connection, profile, project| {
         let id = connection.send_request(
             "session/new",
             json!({"cwd": project.to_string_lossy(), "mcpServers": []}),
@@ -60,7 +63,7 @@ pub(in crate::modules::agents::adapter) fn load_history(
                 path.display()
             )
         })?;
-    with_connection(profile, project, |connection| {
+    with_connection(profile, project, move |connection, profile, project| {
         let id = connection.send_request(
             "session/load",
             json!({
@@ -81,10 +84,12 @@ pub(in crate::modules::agents::adapter) fn load_history(
 
 type CatalogConnection = AcpConnection<BufReader<ChildStdout>, ChildStdin>;
 
-fn with_connection<T>(
+fn with_connection<T: Send + 'static>(
     profile: &AcpProfile,
     project: &Path,
-    operation: impl FnOnce(&mut CatalogConnection) -> Result<T, String>,
+    operation: impl FnOnce(&mut CatalogConnection, &AcpProfile, &Path) -> Result<T, String>
+        + Send
+        + 'static,
 ) -> Result<T, String> {
     let config = AgentLaunchConfig {
         program: profile.program(),
@@ -109,16 +114,46 @@ fn with_connection<T>(
             .stdout
             .take()
             .ok_or_else(|| format!("{} ACP catalog stdout must be piped", profile.name))?;
-        let mut connection = AcpConnection::new(BufReader::new(stdout), stdin);
-        let initialized = connection.initialize(profile)?;
-        if initialized.get("protocolVersion").and_then(Value::as_u64) != Some(1) {
-            return Err(format!("{} did not negotiate ACP version 1", profile.name));
-        }
-        operation(&mut connection)
+        let profile = profile.clone();
+        let project = project.to_owned();
+        run_with_timeout(Duration::from_secs(30), move || {
+            let mut connection = AcpConnection::new(BufReader::new(stdout), stdin);
+            let initialized = connection.initialize(&profile)?;
+            if initialized.get("protocolVersion").and_then(Value::as_u64) != Some(1) {
+                return Err(format!("{} did not negotiate ACP version 1", profile.name));
+            }
+            operation(&mut connection, &profile, &project)
+        })
     })();
     let _ = child.kill();
     let _ = child.wait();
-    result
+    result.map_err(|error| format!("{} ACP catalog: {error}", profile.name))
+}
+
+// Bound the entire exchange, not individual reads: authentication, session creation,
+// and a stream of unrelated notifications must all share the same deadline.
+// The caller always kills/reaps the child, including on timeout or worker failure.
+fn run_with_timeout<T: Send + 'static>(
+    timeout: Duration,
+    operation: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    let (sender, receiver) = mpsc::channel();
+    thread::Builder::new()
+        .name("acp-catalog-handshake".into())
+        .spawn(move || {
+            let _ = sender.send(operation());
+        })
+        .map_err(|error| format!("start ACP catalog handshake: {error}"))?;
+    match receiver.recv_timeout(timeout) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(format!(
+            "timed out loading configuration after {} seconds; check the agent's authentication and connection",
+            timeout.as_secs()
+        )),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Err("ACP catalog handshake stopped unexpectedly".into())
+        }
+    }
 }
 
 #[derive(Default)]
@@ -311,6 +346,18 @@ fn selected_option(response: &Value, categories: &[&str]) -> Option<String> {
 mod tests {
     use super::*;
     use crate::modules::agents::adapter::acp::wire::AcpInbound;
+
+    #[test]
+    fn catalog_exchange_times_out_when_agent_stalls() {
+        let (release, stalled) = mpsc::channel::<()>();
+        let error = run_with_timeout(Duration::from_millis(20), move || {
+            let _ = stalled.recv();
+            Ok(())
+        })
+        .unwrap_err();
+        assert!(error.contains("timed out loading configuration"));
+        drop(release);
+    }
 
     #[test]
     fn replay_keeps_messages_and_tools() {
