@@ -20,7 +20,7 @@ use crate::{
     app::ui::theme::THEME,
     app::ui::{
         assets::AppIcon,
-        primitives::{AppIconSize, ButtonTone, activates_button, app_icon, button},
+        primitives::{AppIconSize, activates_button, app_icon},
     },
     repository::{RepositoryKind, WorkingCopyChange, WorkingCopySnapshot},
 };
@@ -190,27 +190,66 @@ impl FarcasterApp {
                         let project = self.repository.project.clone();
                         let path = path.clone();
                         let panel = panel.clone();
-                        let title = format!("{} {label}", if *open { "▾" } else { "▸" });
+                        let key_panel = panel.clone();
+                        let key_project = project.clone();
+                        let key_path = path.clone();
+                        let filtering = !browser.query.trim().is_empty();
                         Some(
                             div()
-                                .pl(px(*depth as f32 * 12.0))
-                                .child(
-                                    button(
-                                        format!("repository-folder-{}", path.display()),
-                                        title,
-                                        ButtonTone::Quiet,
-                                        browser.query.trim().is_empty(),
-                                        move |_, cx| {
+                                .id(format!("repository-folder-{}", path.display()))
+                                .role(Role::Button)
+                                .aria_label(format!(
+                                    "{} {}",
+                                    if *open { "Collapse" } else { "Expand" },
+                                    path.display()
+                                ))
+                                .aria_expanded(*open)
+                                .w_full()
+                                .min_w_0()
+                                .h(px(24.0))
+                                .pl(px(*depth as f32 * 12.0 + 4.0))
+                                .pr(THEME.space.xs)
+                                .flex()
+                                .items_center()
+                                .gap(THEME.space.xs)
+                                .rounded(THEME.radius)
+                                .text_size(THEME.type_scale.caption)
+                                .text_color(THEME.colors.muted)
+                                .when(!filtering, |row| {
+                                    row.tab_index(0)
+                                        .cursor_pointer()
+                                        .hover(|row| row.bg(THEME.colors.hover))
+                                        .focus_visible(|row| row.bg(THEME.colors.selection))
+                                        .on_click(move |_, _, cx| {
                                             let _ = panel.update(cx, |view, cx| {
                                                 view.changes.toggle(&project, &path);
                                                 cx.notify();
                                             });
-                                        },
-                                    )
-                                    .w_full()
-                                    .justify_start()
-                                    .text_size(THEME.type_scale.caption)
-                                    .text_color(THEME.colors.muted),
+                                        })
+                                        .on_key_down(move |event, _, cx| {
+                                            if activates_button(event) {
+                                                cx.stop_propagation();
+                                                let _ = key_panel.update(cx, |view, cx| {
+                                                    view.changes.toggle(&key_project, &key_path);
+                                                    cx.notify();
+                                                });
+                                            }
+                                        })
+                                })
+                                .child(div().w(px(14.0)).flex_none().child(app_icon(
+                                    if *open {
+                                        AppIcon::CaretDown
+                                    } else {
+                                        AppIcon::CaretRight
+                                    },
+                                    AppIconSize::Inline,
+                                )))
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .flex_1()
+                                        .text_ellipsis()
+                                        .child(label.clone()),
                                 )
                                 .into_any_element(),
                         )
@@ -267,9 +306,9 @@ impl FarcasterApp {
             .tooltip(move |window, cx| Tooltip::new(full_path.clone()).build(window, cx))
             .tab_index(0)
             .min_w_0()
-            .flex_1()
+            .w_full()
+            .h(px(24.0))
             .px(THEME.space.xs)
-            .py(px(2.0))
             .rounded(THEME.radius)
             .flex()
             .items_center()
