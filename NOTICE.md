@@ -84,9 +84,8 @@ with attribution metadata added. Upstream:
 Copyright (c) 2026 HumanLayer, distributed under MIT. The license is included at
 `THIRD_PARTY_LICENSES/HUMANLAYER-SKILLS-MIT.txt`.
 
-File-type icons under `assets/file-icons` (except the original Farcaster
-`file.svg`, `config.svg`, and `image.svg` fallback glyphs) are from Devicon
-v2.17.0, distributed under MIT. Multicolor logos retain their original colors;
-monochrome glyphs receive dark-theme tints. The upstream license is included at
-`THIRD_PARTY_LICENSES/DEVICON-MIT.txt`. Upstream:
-<https://github.com/devicons/devicon/tree/v2.17.0>.
+File-type icons under `assets/file-icons` are from Material Icon Theme,
+distributed under MIT, and retain their upstream colors. The exact upstream
+license is included at `THIRD_PARTY_LICENSES/MATERIAL-ICON-THEME-MIT.txt`.
+Pinned revision and asset mappings are documented in `assets/file-icons/README.md`.
+Upstream: <https://github.com/material-extensions/vscode-material-icon-theme>.
