@@ -19,6 +19,8 @@ pub(crate) struct WorkerFamilyLink {
     pub(crate) child_session: String,
     pub(crate) parent_backend: String,
     pub(crate) parent_session: String,
+    #[serde(default)]
+    pub(crate) execution: Option<super::WorkerExecution>,
 }
 
 pub(crate) type WorkerFamilySink =
@@ -101,6 +103,14 @@ impl CallerRegistry {
                 child_session: child.session.clone()?,
                 parent_backend: parent.backend.clone(),
                 parent_session: parent.session.clone()?,
+                execution: child.provider.as_ref().zip(child.model.as_ref()).map(
+                    |(provider, model)| super::WorkerExecution {
+                        harness: child.backend.clone(),
+                        provider: provider.clone(),
+                        model: model.clone(),
+                        effort: child.effort.clone(),
+                    },
+                ),
             })
         })();
         let sink = self.family_sink.lock().ok().and_then(|sink| sink.clone());
@@ -435,6 +445,7 @@ impl CallerIdentity {
             context.provider = Some(provider.to_owned());
             context.model = Some(model.to_owned());
         }
+        self.registry.persist_family(&self.token);
     }
 
     pub(crate) fn select_effort(&self, effort: &str) {
@@ -443,6 +454,7 @@ impl CallerIdentity {
         {
             context.effort = Some(effort.to_owned());
         }
+        self.registry.persist_family(&self.token);
     }
 
     pub(crate) fn try_recv(&self) -> Option<PeerMessage> {
@@ -737,6 +749,13 @@ mod tests {
         );
         assert_eq!(links.lock().unwrap().len(), 1);
         assert_eq!(links.lock().unwrap()[0].parent_backend, "pi");
+        child.select_model("opencode-go", "glm-5.3-flash");
+        child.select_effort("high");
+        let saved = links.lock().unwrap().last().unwrap().clone();
+        let execution = saved.execution.expect("persisted execution");
+        assert_eq!(execution.provider, "opencode-go");
+        assert_eq!(execution.model, "glm-5.3-flash");
+        assert_eq!(execution.effort.as_deref(), Some("high"));
         registry.send(child.token(), "", "done".into())?;
         assert_eq!(parent.try_recv().unwrap().message, "done");
         registry.send(parent.token(), "inspect", "continue".into())?;

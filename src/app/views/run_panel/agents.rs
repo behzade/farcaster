@@ -143,6 +143,11 @@ pub(super) fn execution_label(
     model: Option<&(String, String)>,
     effort: Option<&str>,
 ) -> String {
+    let effort_fallback = if profile.is_some() || model.is_some() {
+        "default"
+    } else {
+        "—"
+    };
     let (provider, model, effort) = match profile {
         Some(profile) => (
             profile.provider.as_deref(),
@@ -161,7 +166,7 @@ pub(super) fn execution_label(
         model.filter(|value| !value.is_empty()).unwrap_or("—"),
         effort
             .filter(|value| !value.is_empty())
-            .unwrap_or("default"),
+            .unwrap_or(effort_fallback),
     )
 }
 
