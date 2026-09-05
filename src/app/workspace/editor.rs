@@ -249,18 +249,30 @@ mod tests {
     #[test]
     fn editor_completion_is_scoped_to_its_request_session_and_view() {
         assert!(editor_completion_is_current(
-            1, 1, "a", "a", AppSurface::Editor
+            1,
+            1,
+            "a",
+            "a",
+            AppSurface::Editor
         ));
         // Sessions in the same project can share the very same editor entity.
         assert!(!editor_completion_is_current(
-            1, 1, "a", "b", AppSurface::Editor
+            1,
+            1,
+            "a",
+            "b",
+            AppSurface::Editor
         ));
         for surface in [AppSurface::Chat, AppSurface::Terminal, AppSurface::Work] {
             assert!(!editor_completion_is_current(1, 1, "a", "a", surface));
         }
         // A newer open, reactivation, or leaving and returning invalidates it.
         assert!(!editor_completion_is_current(
-            1, 2, "a", "a", AppSurface::Editor
+            1,
+            2,
+            "a",
+            "a",
+            AppSurface::Editor
         ));
     }
 

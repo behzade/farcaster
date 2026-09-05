@@ -168,7 +168,7 @@ impl FarcasterApp {
         match surface {
             AppSurface::Editor => self.activate_editor_for_project(project, window, cx),
             AppSurface::Terminal => self.activate_terminal_for_project(project, window, cx),
-            AppSurface::Chat | AppSurface::Work => {},
+            AppSurface::Chat | AppSurface::Work => {}
         }
     }
 
