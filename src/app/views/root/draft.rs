@@ -16,15 +16,8 @@ pub(super) fn render_heading(
     let label = session_rail::project_label(&project);
     div()
         .flex()
-        .flex_col()
-        .items_start()
-        .gap(THEME.space.sm)
-        .child(
-            div()
-                .text_size(THEME.type_scale.caption)
-                .text_color(THEME.colors.muted)
-                .child("New session"),
-        )
+        .w_full()
+        .items_center()
         .child(
             button(
                 "draft-project",
@@ -41,12 +34,11 @@ pub(super) fn render_heading(
                     });
                 },
             )
-            .dropdown_caret(true)
             .tooltip(project.display().to_string())
-            .h_auto()
+            .max_w_full()
             .px_0()
             .text_size(THEME.type_scale.display)
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_color(THEME.colors.text),
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(THEME.colors.accent),
         )
 }

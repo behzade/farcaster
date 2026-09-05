@@ -21,7 +21,7 @@ pub(super) fn create(
         TextareaState::new(window, cx)
             .auto_grow(1, 8)
             .submit_on_enter(true)
-            .placeholder("Ask Pi")
+            .placeholder("What would you like to work on?")
     });
     let initial_composer = composer_sessions.current();
     composer.update(cx, |input, cx| {
