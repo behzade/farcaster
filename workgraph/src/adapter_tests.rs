@@ -22,6 +22,49 @@ fn legacy_nodes_without_acceptance_remain_readable() {
 }
 
 #[test]
+fn legacy_walk_completion_is_materialized_as_global_task_completion() {
+    let node: crate::contract::Node = serde_json::from_value(serde_json::json!({
+        "planNumber": 1,
+        "number": 2,
+        "title": "Legacy node",
+        "files": [],
+        "completion": "revision_or_observation",
+        "version": 1,
+        "createdAt": 0,
+        "updatedAt": 0
+    }))
+    .expect("legacy node");
+    let graph = crate::contract::ProjectGraph {
+        nodes: vec![node],
+        steps: vec![crate::contract::WalkStep {
+            id: 1,
+            walk_number: 1,
+            node_number: 2,
+            parent_step: None,
+            outcome: crate::contract::Outcome {
+                note: "Legacy done".into(),
+                evidence: crate::contract::Evidence {
+                    kind: crate::contract::EvidenceKind::Observation,
+                    reference: "legacy evidence".into(),
+                },
+            },
+            completed_at: 10,
+        }],
+        ..crate::contract::ProjectGraph::default()
+    };
+
+    let state = graph.task_state(2).expect("legacy task state");
+    assert!(state.owner.is_none());
+    assert_eq!(
+        state
+            .completion
+            .as_ref()
+            .map(|completion| completion.session_id.as_str()),
+        Some("legacy")
+    );
+}
+
+#[test]
 fn sqlite_schema_coexists_with_gui_state_tables() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let path = directory.path().join("gui-state.sqlite3");
@@ -121,6 +164,90 @@ fn version_two_upgrade_retains_legacy_rows_without_reinterpreting_them() {
             )
             .expect("schema version"),
         "3"
+    );
+}
+
+#[test]
+fn concurrent_sqlite_claim_has_exactly_one_owner() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let path = directory.path().join("claims.sqlite3");
+    let mut setup = WorkGraph::new(SqliteAdapter::open(&path).expect("setup adapter"));
+    let EditResult::Tasks(snapshot) = setup
+        .edit(&EditRequest {
+            project: "/project".into(),
+            idempotency_key: "create-task".into(),
+            action: EditAction::CreateTasks {
+                nodes: vec![crate::contract::NodeDraft {
+                    title: "Exclusive task".into(),
+                    acceptance: "One owner".into(),
+                }],
+                after: None,
+                before: None,
+            },
+        })
+        .expect("create task")
+    else {
+        panic!("tasks result");
+    };
+    let task = snapshot.plan.root_node;
+    drop(setup);
+
+    let adapters = [
+        SqliteAdapter::open(&path).expect("first adapter"),
+        SqliteAdapter::open(&path).expect("second adapter"),
+    ];
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+    let handles = adapters.into_iter().enumerate().map(|(index, adapter)| {
+        let barrier = barrier.clone();
+        std::thread::spawn(move || {
+            let mut graph = WorkGraph::new(adapter);
+            barrier.wait();
+            graph.edit(&EditRequest {
+                project: "/project".into(),
+                idempotency_key: format!("claim-{index}"),
+                action: EditAction::ClaimTask {
+                    task,
+                    session_id: format!("session-{index}"),
+                    session_path: format!("/sessions/{index}.jsonl"),
+                },
+            })
+        })
+    }).collect::<Vec<_>>();
+    barrier.wait();
+    let results = handles
+        .into_iter()
+        .map(|handle| handle.join().expect("claim thread"))
+        .collect::<Vec<_>>();
+    assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| matches!(result, Err(crate::core::WorkGraphError::TaskClaimed)))
+            .count(),
+        1
+    );
+
+    let mut reopened = WorkGraph::new(SqliteAdapter::open(path).expect("reopen adapter"));
+    let SearchResult::Project(project) = reopened
+        .search(&SearchRequest::Project {
+            project: "/project".into(),
+        })
+        .expect("project")
+    else {
+        panic!("project result");
+    };
+    assert!(
+        project
+            .task_state(task)
+            .is_some_and(|state| state.owner.is_some())
+    );
+    assert_eq!(
+        project
+            .tasks
+            .iter()
+            .filter(|state| state.owner.is_some())
+            .count(),
+        1
     );
 }
 

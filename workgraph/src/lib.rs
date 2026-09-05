@@ -8,7 +8,8 @@ pub use application::{add_node, create_plan, link_session, load_plan};
 pub use contract::{
     CompletionRequirement, Edge, EditAction, EditRequest, EditResult, Evidence, EvidenceKind,
     IdempotencyReceipt, Node, NodeDraft, Outcome, Plan, PlanSnapshot, ProjectGraph,
-    ProjectSelection, SearchRequest, SearchResult, SessionLink, StoredProject, Walk, WalkStep,
+    ProjectSelection, SearchRequest, SearchResult, SessionLink, StoredProject, TaskCompletion,
+    TaskOwner, TaskState, Walk, WalkStep,
 };
 pub use core::{
     Persistence, PersistenceError, TransactionMode, WorkGraph, WorkGraphError, WorkGraphTransaction,

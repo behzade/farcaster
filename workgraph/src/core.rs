@@ -5,7 +5,7 @@ mod patch;
 use crate::contract::{
     CompletionRequirement, Edge, EditAction, EditRequest, EditResult, EvidenceKind,
     IdempotencyReceipt, Node, Plan, PlanSnapshot, ProjectGraph, SearchRequest, SearchResult,
-    SessionLink, StoredProject, Walk, WalkStep,
+    SessionLink, StoredProject, TaskCompletion, TaskOwner, TaskState, Walk, WalkStep,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -40,6 +40,16 @@ pub enum WorkGraphError {
     EvidenceMismatch,
     #[error("rewind target is not on the active walk")]
     InvalidRewind,
+    #[error("task is already claimed")]
+    TaskClaimed,
+    #[error("session already has an active task")]
+    ActiveTaskConflict,
+    #[error("task is blocked by incomplete dependencies")]
+    TaskBlocked,
+    #[error("task is already completed")]
+    TaskCompleted,
+    #[error("task is not owned by this session")]
+    NotTaskOwner,
     #[error("invalid work graph input: {0}")]
     InvalidInput(&'static str),
     #[error("system clock is unavailable")]
@@ -113,9 +123,10 @@ impl<P: Persistence> WorkGraph<P> {
             | SearchRequest::Node { project, .. }
             | SearchRequest::Session { project, .. } => project,
         };
-        let stored = transaction
+        let mut stored = transaction
             .project(project)?
             .unwrap_or_else(StoredProject::new);
+        materialize_task_states(&mut stored.graph);
         match request {
             SearchRequest::Project { .. } => Ok(SearchResult::Project(stored.graph)),
             SearchRequest::Plan { plan, walk, .. } => {
@@ -154,6 +165,7 @@ impl<P: Persistence> WorkGraph<P> {
         let mut stored = transaction
             .project(&request.project)?
             .unwrap_or_else(StoredProject::new);
+        materialize_task_states(&mut stored.graph);
         let result = apply_edit(&mut stored, request, now)?;
         transaction.save_project(&request.project, &stored, now)?;
         transaction.record_idempotency(&request.idempotency_key, &fingerprint, &result, now)?;
@@ -208,6 +220,12 @@ fn apply_edit(
             };
             stored.graph.plans.push(plan.clone());
             stored.graph.nodes.push(root);
+            stored.graph.tasks.push(TaskState {
+                plan_number,
+                task: node_number,
+                owner: None,
+                completion: None,
+            });
             stored.graph.walks.push(walk);
             Ok(EditResult::Plan(snapshot(
                 &stored.graph,
@@ -239,6 +257,12 @@ fn apply_edit(
                 updated_at: now,
             };
             stored.graph.nodes.push(node.clone());
+            stored.graph.tasks.push(TaskState {
+                plan_number: *plan,
+                task: number,
+                owner: None,
+                completion: None,
+            });
             if let Some(from) = after {
                 stored.graph.edges.push(Edge {
                     plan_number: *plan,
@@ -282,9 +306,41 @@ fn apply_edit(
             Ok(EditResult::Node(node))
         }
         EditAction::Patch { .. } => Ok(EditResult::Plan(patch::apply(stored, request, now)?)),
+        EditAction::CreateTasks { .. } => Ok(EditResult::Tasks(patch::create_tasks(
+            stored, request, now,
+        )?)),
+        EditAction::ClaimTask {
+            task,
+            session_id,
+            session_path,
+        } => Ok(EditResult::Task(claim_task(
+            stored,
+            *task,
+            session_id,
+            session_path,
+            now,
+        )?)),
+        EditAction::ReleaseTask { task, session_id } => Ok(EditResult::Task(release_task(
+            stored, *task, session_id, now,
+        )?)),
+        EditAction::CompleteTask {
+            task,
+            session_id,
+            outcome,
+        } => Ok(EditResult::Task(complete_task(
+            stored, *task, session_id, outcome, now,
+        )?)),
         EditAction::AddEdge { plan, from, to } => {
             require_node(&stored.graph, *plan, *from)?;
             require_node(&stored.graph, *plan, *to)?;
+            if let Some(state) = stored.graph.task_state(*to) {
+                if state.completion.is_some() {
+                    return Err(WorkGraphError::TaskCompleted);
+                }
+                if state.owner.is_some() {
+                    return Err(WorkGraphError::TaskClaimed);
+                }
+            }
             if from == to || reaches(&stored.graph, *plan, *to, *from) {
                 return Err(WorkGraphError::DependencyCycle);
             }
@@ -356,6 +412,17 @@ fn apply_edit(
             number,
             expected_version,
         } => {
+            if stored.graph.sessions.iter().any(|link| {
+                link.walk_number == *walk
+                    && stored.graph.tasks.iter().any(|state| {
+                        state
+                            .owner
+                            .as_ref()
+                            .is_some_and(|owner| owner.session_id == link.session_id)
+                    })
+            }) {
+                return Err(WorkGraphError::TaskClaimed);
+            }
             let walk_index = stored
                 .graph
                 .walks
@@ -420,14 +487,25 @@ fn apply_edit(
             walk,
             session_id,
             session_path,
-        } => Ok(EditResult::Session(attach_session(
-            &mut stored.graph,
-            *walk,
-            session_id,
-            session_path,
-            now,
-        )?)),
+        } => {
+            guard_active_session_link(&stored.graph, *walk, session_id)?;
+            Ok(EditResult::Session(attach_session(
+                &mut stored.graph,
+                *walk,
+                session_id,
+                session_path,
+                now,
+            )?))
+        }
         EditAction::UnlinkSession { session_id } => {
+            if stored.graph.tasks.iter().any(|state| {
+                state
+                    .owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.session_id == *session_id)
+            }) {
+                return Err(WorkGraphError::ActiveTaskConflict);
+            }
             let index = stored
                 .graph
                 .sessions
@@ -438,6 +516,297 @@ fn apply_edit(
                 stored.graph.sessions.remove(index),
             ))
         }
+    }
+}
+
+fn claim_task(
+    stored: &mut StoredProject,
+    task: u64,
+    session_id: &str,
+    session_path: &str,
+    now: i64,
+) -> Result<TaskState, WorkGraphError> {
+    let plan_number = stored
+        .graph
+        .nodes
+        .iter()
+        .find(|node| node.number == task)
+        .map(|node| node.plan_number)
+        .ok_or(WorkGraphError::NodeNotFound)?;
+    let state_index = ensure_task_state(&mut stored.graph, plan_number, task);
+    let state = &stored.graph.tasks[state_index];
+    if state.completion.is_some() {
+        return Err(WorkGraphError::TaskCompleted);
+    }
+    if state
+        .owner
+        .as_ref()
+        .is_some_and(|owner| owner.session_id != session_id)
+    {
+        return Err(WorkGraphError::TaskClaimed);
+    }
+    if stored.graph.tasks.iter().any(|state| {
+        state.task != task
+            && state
+                .owner
+                .as_ref()
+                .is_some_and(|owner| owner.session_id == session_id)
+    }) {
+        return Err(WorkGraphError::ActiveTaskConflict);
+    }
+    let blocked = stored
+        .graph
+        .edges
+        .iter()
+        .filter(|edge| edge.plan_number == plan_number && edge.to == task)
+        .any(|edge| {
+            stored
+                .graph
+                .task_state(edge.from)
+                .is_none_or(|state| state.completion.is_none())
+        });
+    if blocked {
+        return Err(WorkGraphError::TaskBlocked);
+    }
+
+    if stored.graph.tasks[state_index].owner.is_none() {
+        stored.graph.tasks[state_index].owner = Some(TaskOwner {
+            session_id: session_id.to_owned(),
+            session_path: session_path.to_owned(),
+            claimed_at: now,
+        });
+    }
+    position_session_at_task(stored, plan_number, task, session_id, session_path, now)?;
+    Ok(stored.graph.tasks[state_index].clone())
+}
+
+fn release_task(
+    stored: &mut StoredProject,
+    task: u64,
+    session_id: &str,
+    now: i64,
+) -> Result<TaskState, WorkGraphError> {
+    let plan_number = stored
+        .graph
+        .nodes
+        .iter()
+        .find(|node| node.number == task)
+        .map(|node| node.plan_number)
+        .ok_or(WorkGraphError::NodeNotFound)?;
+    let state_index = ensure_task_state(&mut stored.graph, plan_number, task);
+    if stored.graph.tasks[state_index]
+        .owner
+        .as_ref()
+        .is_none_or(|owner| owner.session_id != session_id)
+    {
+        return Err(WorkGraphError::NotTaskOwner);
+    }
+    clear_session_task(&mut stored.graph, task, session_id, now);
+    stored.graph.tasks[state_index].owner = None;
+    Ok(stored.graph.tasks[state_index].clone())
+}
+
+fn complete_task(
+    stored: &mut StoredProject,
+    task: u64,
+    session_id: &str,
+    outcome: &crate::contract::Outcome,
+    now: i64,
+) -> Result<TaskState, WorkGraphError> {
+    let node = stored
+        .graph
+        .nodes
+        .iter()
+        .find(|node| node.number == task)
+        .cloned()
+        .ok_or(WorkGraphError::NodeNotFound)?;
+    if !node.completion.accepts(outcome.evidence.kind) {
+        return Err(WorkGraphError::EvidenceMismatch);
+    }
+    let state_index = ensure_task_state(&mut stored.graph, node.plan_number, task);
+    if stored.graph.tasks[state_index]
+        .owner
+        .as_ref()
+        .is_none_or(|owner| owner.session_id != session_id)
+    {
+        return Err(WorkGraphError::NotTaskOwner);
+    }
+
+    if let Some(link) = stored
+        .graph
+        .sessions
+        .iter()
+        .find(|link| link.session_id == session_id && link.plan_number == node.plan_number)
+        .cloned()
+        && let Some(walk_index) = stored
+            .graph
+            .walks
+            .iter()
+            .position(|walk| walk.number == link.walk_number && walk.current_node == Some(task))
+    {
+        let walk = &stored.graph.walks[walk_index];
+        let step = WalkStep {
+            id: take(&mut stored.next_step_id),
+            walk_number: walk.number,
+            node_number: task,
+            parent_step: walk.head_step,
+            outcome: outcome.clone(),
+            completed_at: now,
+        };
+        let step_id = step.id;
+        stored.graph.steps.push(step);
+        let walk = &mut stored.graph.walks[walk_index];
+        walk.current_node = None;
+        walk.head_step = Some(step_id);
+        walk.version = walk.version.saturating_add(1);
+        walk.updated_at = now;
+    }
+    clear_session_task(&mut stored.graph, task, session_id, now);
+    let state = &mut stored.graph.tasks[state_index];
+    state.owner = None;
+    state.completion = Some(TaskCompletion {
+        session_id: session_id.to_owned(),
+        outcome: outcome.clone(),
+        completed_at: now,
+    });
+    Ok(state.clone())
+}
+
+fn materialize_task_states(graph: &mut ProjectGraph) {
+    let projected = graph
+        .nodes
+        .iter()
+        .filter_map(|node| graph.task_state(node.number))
+        .collect::<Vec<_>>();
+    for state in projected {
+        if let Some(existing) = graph
+            .tasks
+            .iter_mut()
+            .find(|existing| existing.task == state.task)
+        {
+            if existing.completion.is_none() {
+                existing.completion = state.completion;
+            }
+        } else {
+            graph.tasks.push(state);
+        }
+    }
+}
+
+fn ensure_task_state(graph: &mut ProjectGraph, plan_number: u64, task: u64) -> usize {
+    if let Some(index) = graph.tasks.iter().position(|state| state.task == task) {
+        return index;
+    }
+    let state = graph.task_state(task).unwrap_or(TaskState {
+        plan_number,
+        task,
+        owner: None,
+        completion: None,
+    });
+    graph.tasks.push(state);
+    graph.tasks.len() - 1
+}
+
+fn position_session_at_task(
+    stored: &mut StoredProject,
+    plan_number: u64,
+    task: u64,
+    session_id: &str,
+    session_path: &str,
+    now: i64,
+) -> Result<(), WorkGraphError> {
+    let reusable = stored
+        .graph
+        .sessions
+        .iter()
+        .find(|link| {
+            link.session_id == session_id
+                && link.plan_number == plan_number
+                && !stored.graph.sessions.iter().any(|other| {
+                    other.session_id != session_id && other.walk_number == link.walk_number
+                })
+        })
+        .and_then(|link| {
+            stored
+                .graph
+                .walks
+                .iter()
+                .position(|walk| walk.number == link.walk_number)
+        });
+    let walk_number = if let Some(index) = reusable {
+        let walk = &mut stored.graph.walks[index];
+        if walk.current_node != Some(task) {
+            walk.current_node = Some(task);
+            walk.version = walk.version.saturating_add(1);
+            walk.updated_at = now;
+        }
+        walk.number
+    } else {
+        let number = take(&mut stored.next_walk_number);
+        stored.graph.walks.push(Walk {
+            plan_number,
+            number,
+            current_node: Some(task),
+            head_step: None,
+            version: 1,
+            created_at: now,
+            updated_at: now,
+        });
+        number
+    };
+    attach_session(
+        &mut stored.graph,
+        walk_number,
+        session_id,
+        session_path,
+        now,
+    )?;
+    Ok(())
+}
+
+fn clear_session_task(graph: &mut ProjectGraph, task: u64, session_id: &str, now: i64) {
+    let walk_number = graph
+        .sessions
+        .iter()
+        .find(|link| link.session_id == session_id)
+        .map(|link| link.walk_number);
+    if let Some(walk) = graph
+        .walks
+        .iter_mut()
+        .find(|walk| Some(walk.number) == walk_number && walk.current_node == Some(task))
+    {
+        walk.current_node = None;
+        walk.version = walk.version.saturating_add(1);
+        walk.updated_at = now;
+    }
+}
+
+fn guard_active_session_link(
+    graph: &ProjectGraph,
+    walk_number: u64,
+    session_id: &str,
+) -> Result<(), WorkGraphError> {
+    let Some(active) = graph.tasks.iter().find(|state| {
+        state
+            .owner
+            .as_ref()
+            .is_some_and(|owner| owner.session_id == session_id)
+    }) else {
+        return Ok(());
+    };
+    let preserves_claim = graph.sessions.iter().any(|link| {
+        link.session_id == session_id
+            && link.walk_number == walk_number
+            && link.plan_number == active.plan_number
+    }) && graph.walks.iter().any(|walk| {
+        walk.number == walk_number
+            && walk.plan_number == active.plan_number
+            && walk.current_node == Some(active.task)
+    });
+    if preserves_claim {
+        Ok(())
+    } else {
+        Err(WorkGraphError::ActiveTaskConflict)
     }
 }
 
@@ -486,6 +855,14 @@ fn advance_walk(
         return Err(WorkGraphError::VersionConflict);
     }
     let node = require_node(&stored.graph, plan_number, number)?;
+    if stored
+        .graph
+        .task_state(number)
+        .and_then(|state| state.owner)
+        .is_some()
+    {
+        return Err(WorkGraphError::TaskClaimed);
+    }
     if !node.completion.accepts(outcome.evidence.kind) {
         return Err(WorkGraphError::EvidenceMismatch);
     }
@@ -729,13 +1106,7 @@ fn validate_request(request: &EditRequest) -> Result<(), WorkGraphError> {
             session_id,
             session_path,
             ..
-        } if nodes.is_empty()
-            || nodes.len() > 64
-            || nodes.iter().any(|node| {
-                !valid_title(&node.title)
-                    || node.acceptance.trim().is_empty()
-                    || node.acceptance.len() > 4096
-            })
+        } if !valid_drafts(nodes)
             || session_id.trim().is_empty()
             || session_id.len() > 256
             || session_path.trim().is_empty()
@@ -743,7 +1114,28 @@ fn validate_request(request: &EditRequest) -> Result<(), WorkGraphError> {
         {
             Err(WorkGraphError::InvalidInput("node patch is invalid"))
         }
-        EditAction::Advance { outcome, .. } | EditAction::Complete { outcome, .. }
+        EditAction::CreateTasks { nodes, .. } if !valid_drafts(nodes) => {
+            Err(WorkGraphError::InvalidInput("task creation is invalid"))
+        }
+        EditAction::ClaimTask {
+            session_id,
+            session_path,
+            ..
+        } if session_id.trim().is_empty()
+            || session_id.len() > 256
+            || session_path.trim().is_empty()
+            || session_path.len() > 4096 =>
+        {
+            Err(WorkGraphError::InvalidInput("task claim is invalid"))
+        }
+        EditAction::ReleaseTask { session_id, .. }
+            if session_id.trim().is_empty() || session_id.len() > 256 =>
+        {
+            Err(WorkGraphError::InvalidInput("task release is invalid"))
+        }
+        EditAction::Advance { outcome, .. }
+        | EditAction::Complete { outcome, .. }
+        | EditAction::CompleteTask { outcome, .. }
             if outcome.note.trim().is_empty()
                 || outcome.note.len() > 4096
                 || outcome.evidence.reference.trim().is_empty()
@@ -753,7 +1145,7 @@ fn validate_request(request: &EditRequest) -> Result<(), WorkGraphError> {
                 "completion outcome is invalid",
             ))
         }
-        EditAction::Complete { session_id, .. }
+        EditAction::Complete { session_id, .. } | EditAction::CompleteTask { session_id, .. }
             if session_id.trim().is_empty() || session_id.len() > 256 =>
         {
             Err(WorkGraphError::InvalidInput("session link is invalid"))
@@ -776,6 +1168,17 @@ fn validate_request(request: &EditRequest) -> Result<(), WorkGraphError> {
         }
         _ => Ok(()),
     }
+}
+
+fn valid_drafts(nodes: &[crate::contract::NodeDraft]) -> bool {
+    !nodes.is_empty()
+        && nodes.len() <= 64
+        && nodes.iter().all(|node| {
+            !node.title.trim().is_empty()
+                && node.title.len() <= 512
+                && !node.acceptance.trim().is_empty()
+                && node.acceptance.len() <= 4096
+        })
 }
 
 fn take(next: &mut u64) -> u64 {

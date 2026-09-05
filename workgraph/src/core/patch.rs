@@ -1,6 +1,6 @@
 use crate::contract::{
     CompletionRequirement, Edge, EditAction, EditRequest, Node, NodeDraft, Plan, PlanSnapshot,
-    StoredProject, Walk,
+    StoredProject, TaskState, Walk,
 };
 
 use super::{
@@ -87,6 +87,7 @@ pub(super) fn apply(
     }
     if let Some(number) = before {
         require_node(&stored.graph, plan_number, number)?;
+        require_mutable_predecessors(&stored.graph, number)?;
     }
     if after == before {
         return Err(WorkGraphError::InvalidInput("patch points must differ"));
@@ -186,6 +187,134 @@ pub(super) fn apply(
     snapshot(&stored.graph, plan_number, Some(link.walk_number))
 }
 
+pub(super) fn create_tasks(
+    stored: &mut StoredProject,
+    request: &EditRequest,
+    now: i64,
+) -> Result<PlanSnapshot, WorkGraphError> {
+    let EditAction::CreateTasks {
+        nodes,
+        after,
+        before,
+    } = &request.action
+    else {
+        return Err(WorkGraphError::InvalidInput("task creation is invalid"));
+    };
+    let (after, before) = (*after, *before);
+    if after.is_none() && before.is_none() {
+        let plan_number = take(&mut stored.next_plan_number);
+        let (root, _) = append_node_chain(stored, plan_number, nodes, now)?;
+        stored.graph.plans.push(Plan {
+            project: request.project.clone(),
+            number: plan_number,
+            title: nodes[0].title.trim().to_owned(),
+            root_node: root,
+            version: 1,
+            created_at: now,
+            updated_at: now,
+        });
+        return snapshot(&stored.graph, plan_number, None);
+    }
+
+    let plan_number = after
+        .or(before)
+        .and_then(|number| {
+            stored
+                .graph
+                .nodes
+                .iter()
+                .find(|node| node.number == number)
+                .map(|node| node.plan_number)
+        })
+        .ok_or(WorkGraphError::NodeNotFound)?;
+    if let Some(number) = after {
+        require_node(&stored.graph, plan_number, number)?;
+    }
+    if let Some(number) = before {
+        require_node(&stored.graph, plan_number, number)?;
+        require_mutable_predecessors(&stored.graph, number)?;
+    }
+    if after == before {
+        return Err(WorkGraphError::InvalidInput(
+            "task insertion points must differ",
+        ));
+    }
+    if let (Some(from), Some(to)) = (after, before) {
+        let edge = Edge {
+            plan_number,
+            from,
+            to,
+        };
+        let index = stored
+            .graph
+            .edges
+            .iter()
+            .position(|candidate| *candidate == edge)
+            .ok_or(WorkGraphError::InvalidSuccessor)?;
+        stored.graph.edges.remove(index);
+    } else if let Some(before) = before
+        && require_plan(&stored.graph, plan_number)?.root_node != before
+    {
+        return Err(WorkGraphError::InvalidInput(
+            "tasks without an after point must attach before the graph root",
+        ));
+    }
+
+    let (first, last) = append_node_chain(stored, plan_number, nodes, now)?;
+    if let Some(from) = after {
+        stored.graph.edges.push(Edge {
+            plan_number,
+            from,
+            to: first,
+        });
+    }
+    if let Some(to) = before {
+        stored.graph.edges.push(Edge {
+            plan_number,
+            from: last,
+            to,
+        });
+    }
+    if after.is_none() {
+        let old_root = before.ok_or(WorkGraphError::InvalidInput(
+            "task insertion point is missing",
+        ))?;
+        stored
+            .graph
+            .plans
+            .iter_mut()
+            .find(|plan| plan.number == plan_number)
+            .ok_or(WorkGraphError::PlanNotFound)?
+            .root_node = first;
+        for walk in stored.graph.walks.iter_mut().filter(|walk| {
+            walk.plan_number == plan_number
+                && walk.head_step.is_none()
+                && walk.current_node == Some(old_root)
+        }) {
+            walk.current_node = Some(first);
+            walk.version = walk.version.saturating_add(1);
+            walk.updated_at = now;
+        }
+    }
+    bump_plan(&mut stored.graph, plan_number, now)?;
+    snapshot(&stored.graph, plan_number, None)
+}
+
+fn require_mutable_predecessors(
+    graph: &crate::contract::ProjectGraph,
+    task: u64,
+) -> Result<(), WorkGraphError> {
+    if let Some(state) = graph.task_state(task) {
+        if state.completion.is_some() {
+            return Err(WorkGraphError::TaskCompleted);
+        }
+        if state.owner.is_some() {
+            return Err(WorkGraphError::TaskClaimed);
+        }
+    }
+    Ok(())
+}
+
 fn append_node_chain(
     stored: &mut StoredProject,
     plan_number: u64,
@@ -214,6 +343,12 @@ fn append_node_chain(
             version: 1,
             created_at: now,
             updated_at: now,
+        });
+        stored.graph.tasks.push(TaskState {
+            plan_number,
+            task: number,
+            owner: None,
+            completion: None,
         });
         previous = Some(number);
     }

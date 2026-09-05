@@ -85,6 +85,29 @@ family links separately from backend-native session ancestry. Harness-specific
 trust, authentication, and access controls still apply; task routing does not
 grant additional permissions or disable a harness's native delegation tools.
 
+## Workgraph tools
+
+Workgraph MCP tools use the authenticated caller's project and session. Agents
+never supply a project, session ID, or session path.
+
+- `workgraph_search({query?})`: list project tasks, optionally matching title or
+  acceptance text. Results include task IDs, owners, blockers, dependencies,
+  completion evidence, and `ready`, `blocked`, `claimed`, or `completed` status.
+- `workgraph_patch({nodes: [{title, acceptance}], after?, before?})`: create an
+  ordered chain or insert tasks beside existing task IDs. Creation does not claim.
+- `workgraph_claim({task})`: atomically claim a ready task. Repeating your own
+  claim succeeds; another owner's claim conflicts. Claiming links the task to
+  your session's workgraph sidebar.
+- `workgraph_release({task})`: relinquish your task so another session can claim it.
+- `workgraph_complete({task, evidence})`: complete your task and report newly
+  ready tasks. Successors are not automatically claimed.
+
+Typical flow: search → claim → work → complete. To hand work off, release it;
+then the other session claims the same task ID. A session can own one active
+task at a time. Ownership and completion are durable across server restarts.
+Existing recorded walk completions count as completed tasks in the shared graph;
+old walk positions alone do not create exclusive claims.
+
 ## Configuration
 
 - `FARCASTER_PI_PATH`: Pi executable

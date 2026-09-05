@@ -258,7 +258,14 @@ fn patch_after_a_completed_leaf_reactivates_the_walk() {
     let issue = created.nodes[0].number;
     let outcome_node = created.nodes[1].number;
     let walk = created.walk.expect("walk");
-    advance(&mut graph, "complete-issue", walk.number, issue, None, walk.version);
+    advance(
+        &mut graph,
+        "complete-issue",
+        walk.number,
+        issue,
+        None,
+        walk.version,
+    );
     advance(
         &mut graph,
         "complete-outcome",
@@ -474,11 +481,9 @@ fn reusable_plan_walks_advance_independently() {
     let mut graph = WorkGraph::new(MemoryPersistence::default());
     let (plan, root, first_walk) = create_plan(&mut graph);
     let next = add_node(&mut graph, "next", plan, "Integrated", Some(root));
-    let EditResult::Walk(second_walk) = edit(
-        &mut graph,
-        "second-walk",
-        EditAction::CreateWalk { plan },
-    ) else {
+    let EditResult::Walk(second_walk) =
+        edit(&mut graph, "second-walk", EditAction::CreateWalk { plan })
+    else {
         panic!("walk result");
     };
 
@@ -571,6 +576,456 @@ fn observation_is_valid_when_a_code_state_already_exists() {
         panic!("step result");
     };
     assert_eq!(step.outcome.evidence.kind, EvidenceKind::Observation);
+}
+
+fn task_outcome(reference: &str) -> Outcome {
+    outcome(EvidenceKind::Observation, reference)
+}
+
+#[test]
+fn create_tasks_prepend_repositions_unstarted_walk_without_claiming() {
+    let mut graph = WorkGraph::new(MemoryPersistence::default());
+    let (plan, old_root, walk) = create_plan(&mut graph);
+    let EditResult::Tasks(snapshot) = edit(
+        &mut graph,
+        "prepend-task",
+        EditAction::CreateTasks {
+            nodes: vec![NodeDraft {
+                title: "New root".into(),
+                acceptance: "Ready".into(),
+            }],
+            after: None,
+            before: Some(old_root),
+        },
+    ) else {
+        panic!("tasks result");
+    };
+    let new_root = snapshot.plan.root_node;
+
+    assert_eq!(snapshot.plan.number, plan);
+    assert_ne!(new_root, old_root);
+    assert_eq!(
+        snapshot
+            .walk
+            .as_ref()
+            .filter(|candidate| candidate.number == walk)
+            .and_then(|candidate| candidate.current_node),
+        Some(new_root)
+    );
+    let SearchResult::Project(project) = graph
+        .search(&SearchRequest::Project {
+            project: "/project".into(),
+        })
+        .expect("project")
+    else {
+        panic!("project result");
+    };
+    assert!(
+        project
+            .task_state(new_root)
+            .is_some_and(|state| state.owner.is_none())
+    );
+}
+
+#[test]
+fn task_claims_are_exclusive_idempotent_and_single_per_session() {
+    let mut graph = WorkGraph::new(MemoryPersistence::default());
+    let EditResult::Tasks(created) = edit(
+        &mut graph,
+        "create-tasks",
+        EditAction::CreateTasks {
+            nodes: vec![NodeDraft {
+                title: "First".into(),
+                acceptance: "Done".into(),
+            }],
+            after: None,
+            before: None,
+        },
+    ) else {
+        panic!("tasks result");
+    };
+    let first = created.plan.root_node;
+    let EditResult::Task(claimed) = edit(
+        &mut graph,
+        "claim-first",
+        EditAction::ClaimTask {
+            task: first,
+            session_id: "session-1".into(),
+            session_path: "/sessions/one.jsonl".into(),
+        },
+    ) else {
+        panic!("task result");
+    };
+    let claimed_at = claimed.owner.expect("owner").claimed_at;
+    let independent = add_node(
+        &mut graph,
+        "independent-task",
+        created.plan.number,
+        "Independent",
+        None,
+    );
+    let second_for_same_session = graph.edit(&EditRequest {
+        project: "/project".into(),
+        idempotency_key: "second-for-same-session".into(),
+        action: EditAction::ClaimTask {
+            task: independent,
+            session_id: "session-1".into(),
+            session_path: "/sessions/one.jsonl".into(),
+        },
+    });
+    assert!(matches!(
+        second_for_same_session,
+        Err(WorkGraphError::ActiveTaskConflict)
+    ));
+
+    let EditResult::Task(reclaimed) = edit(
+        &mut graph,
+        "claim-first-again",
+        EditAction::ClaimTask {
+            task: first,
+            session_id: "session-1".into(),
+            session_path: "/sessions/one.jsonl".into(),
+        },
+    ) else {
+        panic!("task result");
+    };
+    assert_eq!(reclaimed.owner.expect("owner").claimed_at, claimed_at);
+
+    let other = graph.edit(&EditRequest {
+        project: "/project".into(),
+        idempotency_key: "other-claim".into(),
+        action: EditAction::ClaimTask {
+            task: first,
+            session_id: "session-2".into(),
+            session_path: "/sessions/two.jsonl".into(),
+        },
+    });
+    assert!(matches!(other, Err(WorkGraphError::TaskClaimed)));
+}
+
+#[test]
+fn completion_is_global_unlocks_blockers_and_does_not_auto_advance() {
+    let mut graph = WorkGraph::new(MemoryPersistence::default());
+    let EditResult::Tasks(created) = edit(
+        &mut graph,
+        "create-chain",
+        EditAction::CreateTasks {
+            nodes: vec![
+                NodeDraft {
+                    title: "First".into(),
+                    acceptance: "Done".into(),
+                },
+                NodeDraft {
+                    title: "Second".into(),
+                    acceptance: "Done".into(),
+                },
+            ],
+            after: None,
+            before: None,
+        },
+    ) else {
+        panic!("tasks result");
+    };
+    let first = created.nodes[0].number;
+    let second = created.nodes[1].number;
+    let blocked = graph.edit(&EditRequest {
+        project: "/project".into(),
+        idempotency_key: "blocked".into(),
+        action: EditAction::ClaimTask {
+            task: second,
+            session_id: "session-2".into(),
+            session_path: "/sessions/two.jsonl".into(),
+        },
+    });
+    assert!(matches!(blocked, Err(WorkGraphError::TaskBlocked)));
+
+    edit(
+        &mut graph,
+        "claim-first",
+        EditAction::ClaimTask {
+            task: first,
+            session_id: "session-1".into(),
+            session_path: "/sessions/one.jsonl".into(),
+        },
+    );
+    let EditResult::Task(completed) = edit(
+        &mut graph,
+        "complete-first",
+        EditAction::CompleteTask {
+            task: first,
+            session_id: "session-1".into(),
+            outcome: task_outcome("tests passed"),
+        },
+    ) else {
+        panic!("task result");
+    };
+    assert!(completed.owner.is_none());
+    assert_eq!(
+        completed.completion.as_ref().map(|completion| completion
+            .outcome
+            .evidence
+            .reference
+            .as_str()),
+        Some("tests passed")
+    );
+
+    let SearchResult::Project(project) = graph
+        .search(&SearchRequest::Project {
+            project: "/project".into(),
+        })
+        .expect("project")
+    else {
+        panic!("project result");
+    };
+    let walk = project
+        .sessions
+        .iter()
+        .find(|link| link.session_id == "session-1")
+        .and_then(|link| {
+            project
+                .walks
+                .iter()
+                .find(|walk| walk.number == link.walk_number)
+        })
+        .expect("claimed walk");
+    assert_eq!(walk.current_node, None);
+
+    edit(
+        &mut graph,
+        "claim-second",
+        EditAction::ClaimTask {
+            task: second,
+            session_id: "session-2".into(),
+            session_path: "/sessions/two.jsonl".into(),
+        },
+    );
+}
+
+#[test]
+fn claim_does_not_reposition_a_walk_shared_with_another_session() {
+    let mut graph = WorkGraph::new(MemoryPersistence::default());
+    let (_plan, root, shared_walk) = create_plan(&mut graph);
+    for (key, session_id) in [("link-one", "session-1"), ("link-two", "session-2")] {
+        edit(
+            &mut graph,
+            key,
+            EditAction::LinkSession {
+                walk: shared_walk,
+                session_id: session_id.into(),
+                session_path: format!("/sessions/{session_id}.jsonl"),
+            },
+        );
+    }
+    edit(
+        &mut graph,
+        "claim-shared",
+        EditAction::ClaimTask {
+            task: root,
+            session_id: "session-1".into(),
+            session_path: "/sessions/session-1.jsonl".into(),
+        },
+    );
+
+    let SearchResult::Project(project) = graph
+        .search(&SearchRequest::Project {
+            project: "/project".into(),
+        })
+        .expect("project")
+    else {
+        panic!("project result");
+    };
+    let first = project
+        .sessions
+        .iter()
+        .find(|link| link.session_id == "session-1")
+        .expect("first link");
+    let second = project
+        .sessions
+        .iter()
+        .find(|link| link.session_id == "session-2")
+        .expect("second link");
+    assert_ne!(first.walk_number, second.walk_number);
+    assert_eq!(second.walk_number, shared_walk);
+}
+
+#[test]
+fn active_claim_prevents_relinking_or_unlinking_its_session() {
+    let mut graph = WorkGraph::new(MemoryPersistence::default());
+    let (plan, root, _) = create_plan(&mut graph);
+    let EditResult::Walk(other_walk) =
+        edit(&mut graph, "other-walk", EditAction::CreateWalk { plan })
+    else {
+        panic!("walk result");
+    };
+    edit(
+        &mut graph,
+        "claim-root",
+        EditAction::ClaimTask {
+            task: root,
+            session_id: "session-1".into(),
+            session_path: "/sessions/one.jsonl".into(),
+        },
+    );
+    let relink = graph.edit(&EditRequest {
+        project: "/project".into(),
+        idempotency_key: "relink-active".into(),
+        action: EditAction::LinkSession {
+            walk: other_walk.number,
+            session_id: "session-1".into(),
+            session_path: "/sessions/one.jsonl".into(),
+        },
+    });
+    assert!(matches!(relink, Err(WorkGraphError::ActiveTaskConflict)));
+    let unlink = graph.edit(&EditRequest {
+        project: "/project".into(),
+        idempotency_key: "unlink-active".into(),
+        action: EditAction::UnlinkSession {
+            session_id: "session-1".into(),
+        },
+    });
+    assert!(matches!(unlink, Err(WorkGraphError::ActiveTaskConflict)));
+}
+
+#[test]
+fn release_requires_owner_and_clears_the_claim_walk() {
+    let mut graph = WorkGraph::new(MemoryPersistence::default());
+    let EditResult::Tasks(created) = edit(
+        &mut graph,
+        "create-task",
+        EditAction::CreateTasks {
+            nodes: vec![NodeDraft {
+                title: "Task".into(),
+                acceptance: "Done".into(),
+            }],
+            after: None,
+            before: None,
+        },
+    ) else {
+        panic!("tasks result");
+    };
+    let task = created.plan.root_node;
+    edit(
+        &mut graph,
+        "claim",
+        EditAction::ClaimTask {
+            task,
+            session_id: "session-1".into(),
+            session_path: "/sessions/one.jsonl".into(),
+        },
+    );
+    let wrong_owner = graph.edit(&EditRequest {
+        project: "/project".into(),
+        idempotency_key: "wrong-release".into(),
+        action: EditAction::ReleaseTask {
+            task,
+            session_id: "session-2".into(),
+        },
+    });
+    assert!(matches!(wrong_owner, Err(WorkGraphError::NotTaskOwner)));
+    let EditResult::Task(released) = edit(
+        &mut graph,
+        "release",
+        EditAction::ReleaseTask {
+            task,
+            session_id: "session-1".into(),
+        },
+    ) else {
+        panic!("task result");
+    };
+    assert!(released.owner.is_none());
+}
+
+#[test]
+fn legacy_advance_projects_global_completion_for_persisted_task_state() {
+    let mut graph = WorkGraph::new(MemoryPersistence::default());
+    let (_plan, root, walk) = create_plan(&mut graph);
+    advance(&mut graph, "legacy-advance", walk, root, None, 1);
+
+    let SearchResult::Project(project) = graph
+        .search(&SearchRequest::Project {
+            project: "/project".into(),
+        })
+        .expect("project")
+    else {
+        panic!("project result");
+    };
+    assert!(
+        project
+            .task_state(root)
+            .is_some_and(|state| state.completion.is_some())
+    );
+    assert!(
+        project
+            .tasks
+            .iter()
+            .find(|state| state.task == root)
+            .is_some_and(|state| state.completion.is_some())
+    );
+}
+
+#[test]
+fn rewind_cannot_move_a_walk_positioned_by_an_active_claim() {
+    let mut graph = WorkGraph::new(MemoryPersistence::default());
+    let (plan, root, walk) = create_plan(&mut graph);
+    let next = add_node(&mut graph, "next-for-claim", plan, "Next", Some(root));
+    advance(&mut graph, "finish-root", walk, root, None, 1);
+    edit(
+        &mut graph,
+        "link-before-claim",
+        EditAction::LinkSession {
+            walk,
+            session_id: "session-1".into(),
+            session_path: "/sessions/one.jsonl".into(),
+        },
+    );
+    edit(
+        &mut graph,
+        "claim-next",
+        EditAction::ClaimTask {
+            task: next,
+            session_id: "session-1".into(),
+            session_path: "/sessions/one.jsonl".into(),
+        },
+    );
+
+    let rewind = graph.edit(&EditRequest {
+        project: "/project".into(),
+        idempotency_key: "rewind-claimed-walk".into(),
+        action: EditAction::Rewind {
+            walk,
+            number: root,
+            expected_version: None,
+        },
+    });
+    assert!(matches!(rewind, Err(WorkGraphError::TaskClaimed)));
+}
+
+#[test]
+fn legacy_completion_cannot_bypass_an_exclusive_claim() {
+    let mut graph = WorkGraph::new(MemoryPersistence::default());
+    let (plan, root, walk) = create_plan(&mut graph);
+    edit(
+        &mut graph,
+        "claim-root",
+        EditAction::ClaimTask {
+            task: root,
+            session_id: "session-1".into(),
+            session_path: "/sessions/one.jsonl".into(),
+        },
+    );
+    let result = graph.edit(&EditRequest {
+        project: "/project".into(),
+        idempotency_key: "legacy-advance".into(),
+        action: EditAction::Advance {
+            walk,
+            number: root,
+            next: None,
+            outcome: task_outcome("bypass"),
+            expected_version: None,
+        },
+    });
+    assert!(matches!(result, Err(WorkGraphError::TaskClaimed)));
+    let _ = plan;
 }
 
 #[test]
