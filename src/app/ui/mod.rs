@@ -1,4 +1,5 @@
 pub(crate) mod assets;
+pub(crate) mod file_icons;
 pub(crate) mod keybindings;
 pub(crate) mod keyboard;
 pub(crate) mod layout;

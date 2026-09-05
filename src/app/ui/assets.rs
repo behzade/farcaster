@@ -108,6 +108,9 @@ impl AppAssets {
 
 impl AssetSource for AppAssets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
+        if let Some(bytes) = super::file_icons::load(path) {
+            return Ok(Some(bytes));
+        }
         let bytes: Option<&'static [u8]> = match path {
             "icons/phosphor/archive.svg" => {
                 Some(include_bytes!("../../../assets/phosphor-icons/archive.svg"))
@@ -271,6 +274,7 @@ impl AssetSource for AppAssets {
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {
         Ok(ICON_PATHS
             .iter()
+            .chain(super::file_icons::ASSETS.iter().map(|(name, _)| name))
             .filter(|icon_path| icon_path.starts_with(path))
             .map(|icon_path| SharedString::from(*icon_path))
             .collect())
