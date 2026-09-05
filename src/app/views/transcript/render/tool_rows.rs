@@ -121,11 +121,18 @@ pub(super) fn render_tool(
         },
         |details| details.summary(),
     );
-    let disclosure_label = format!(
-        "{} {summary} details. {}",
-        if expanded { "Collapse" } else { "Expand" },
-        status.map_or("No result", ToolStatus::label)
-    );
+    let open_target = direct_change_target(item).map(|(path, line)| (path.to_owned(), line));
+    let opens_editor = open_target.is_some();
+    let expanded = expanded && !opens_editor;
+    let title_entity = entity.clone();
+    let title_label = match &open_target {
+        Some((path, _)) => format!("Open {path} in Neovim"),
+        None => format!(
+            "{} {summary} details. {}",
+            if expanded { "Collapse" } else { "Expand" },
+            status.map_or("No result", ToolStatus::label)
+        ),
+    };
     div()
         .id(("tool-row", key))
         .w_full()
@@ -134,12 +141,16 @@ pub(super) fn render_tool(
         .flex()
         .flex_col()
         .child(
-            tool_changes::title_row(
-                ("tool-title", key),
-                disclosure_label,
-                toggle_transcript_item(entity.clone(), key, expanded),
-            )
-            .aria_expanded(expanded)
+            tool_changes::title_row(("tool-title", key), title_label, move |window, cx| {
+                let _ = title_entity.update(cx, |this, cx| {
+                    if let Some((path, line)) = &open_target {
+                        this.open_file_editor_at_line(path.clone().into(), *line, window, cx);
+                    } else {
+                        this.set_transcript_item_expanded(key, !expanded, cx);
+                    }
+                });
+            })
+            .when(!opens_editor, |row| row.aria_expanded(expanded))
             .child(status_slot(status))
             .when_some(presentation, |row, presentation| {
                 row.child(tool_changes::tool_label(item.label.clone()))
@@ -226,11 +237,7 @@ fn file_links(
             let path = path.to_owned();
             let entity = entity.clone();
             let label = format!("Open {path} in Neovim");
-            let line = item
-                .tool_presentation
-                .as_ref()
-                .filter(|presentation| presentation.path() == path)
-                .and_then(|presentation| presentation.first_changed_line());
+            let line = file_target_line(item, &path);
             tool_changes::title_row(
                 format!("tool-file-{key}-{offset}"),
                 label.clone(),
@@ -296,6 +303,31 @@ fn item_status(item: &TranscriptItem) -> Option<ToolStatus> {
         ToolExecutionState::Succeeded => Some(ToolStatus::Succeeded),
         ToolExecutionState::Failed => Some(ToolStatus::Failed),
     }
+}
+
+fn direct_change_target(item: &TranscriptItem) -> Option<(&str, Option<u64>)> {
+    if item.tool_presentation.is_none()
+        && item
+            .tool_details
+            .as_ref()
+            .and_then(|details| details.metadata.category)
+            != Some(crate::agents::ToolCategory::Change)
+    {
+        return None;
+    }
+    let mut targets = file_targets(item);
+    let path = targets.next()?;
+    if targets.next().is_some() {
+        return None;
+    }
+    Some((path, file_target_line(item, path)))
+}
+
+fn file_target_line(item: &TranscriptItem, path: &str) -> Option<u64> {
+    item.tool_presentation
+        .as_ref()
+        .filter(|presentation| presentation.path() == path)
+        .and_then(|presentation| presentation.first_changed_line())
 }
 
 fn file_targets(item: &TranscriptItem) -> impl Iterator<Item = &str> {
@@ -392,6 +424,7 @@ mod tests {
     fn only_successful_file_changes_open_editor() {
         let mut item = write_item();
         assert!(file_targets(&item).next().is_some());
+        assert_eq!(direct_change_target(&item), Some(("src/main.rs", None)));
         item.streaming = true;
         assert!(file_targets(&item).next().is_none());
         item.streaming = false;
@@ -410,6 +443,7 @@ mod tests {
             file_targets(&item).collect::<Vec<_>>(),
             ["other.rs", "last.rs"]
         );
+        assert!(direct_change_target(&item).is_none());
         Arc::make_mut(item.tool_details.as_mut().unwrap())
             .metadata
             .targets
@@ -482,5 +516,6 @@ mod tests {
         state.reduce(&json!({"type":"tool_execution_end", "toolCallId":"acp", "result":{"content":[]}, "isError":false}));
         assert!(state.items[0].tool_presentation.is_none());
         assert!(file_targets(&state.items[0]).next().is_some());
+        assert!(direct_change_target(&state.items[0]).is_none());
     }
 }
