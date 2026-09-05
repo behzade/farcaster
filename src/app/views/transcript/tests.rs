@@ -180,6 +180,57 @@ fn mixed_completed_tools_collapse_into_one_activity_row() {
 }
 
 #[test]
+fn file_changes_split_routine_activity_groups() {
+    for label in ["Edit", "Write"] {
+        let rows = project_rows(&[
+            item(TranscriptKind::Tool, "Read", "Path: a"),
+            item(TranscriptKind::Tool, "Bash", "Command: true"),
+            item(TranscriptKind::Tool, label, "Path: a"),
+            item(TranscriptKind::Tool, label, "Path: b"),
+            item(TranscriptKind::Tool, "Read", "Path: b"),
+            item(TranscriptKind::Tool, "Mcp", ""),
+        ]);
+        assert!(matches!(
+            rows.iter().collect::<Vec<_>>().as_slice(),
+            [
+                TranscriptRow::ActivityGroup {
+                    start: 0,
+                    len: 2,
+                    ..
+                },
+                TranscriptRow::Item { index: 2, .. },
+                TranscriptRow::Item { index: 3, .. },
+                TranscriptRow::ActivityGroup {
+                    start: 4,
+                    len: 2,
+                    ..
+                },
+            ]
+        ));
+    }
+}
+
+#[test]
+fn structured_file_changes_stay_outside_activity_groups() {
+    use serde_json::json;
+
+    let mut conversation = conversation::ConversationState::default();
+    for (id, category) in [("read", "read"), ("change", "change"), ("search", "search")] {
+        conversation.reduce(&json!({"type":"tool_execution_start", "toolCallId":id, "toolName":"Custom", "args":{}, "toolMetadata":{"category":category}}));
+        conversation.reduce(&json!({"type":"tool_execution_end", "toolCallId":id, "isError":false, "result":{"content":[]}}));
+    }
+    let rows = project_rows(&conversation.items);
+    assert!(matches!(
+        rows.iter().collect::<Vec<_>>().as_slice(),
+        [
+            TranscriptRow::Item { index: 0, .. },
+            TranscriptRow::Item { index: 1, .. },
+            TranscriptRow::Item { index: 2, .. },
+        ]
+    ));
+}
+
+#[test]
 fn long_assistant_messages_become_independently_virtualized_rows() {
     let text = format!(
         "{}\n\n{}\n\n{}",
