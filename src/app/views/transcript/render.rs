@@ -308,8 +308,9 @@ fn transcript_context_menu(
                     .separator();
             }
 
-            if matches!(row, TranscriptRow::ActivityGroup { .. })
-                || matches!(row, TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Tool)
+            if !rows::is_read(&items[row.item_start()])
+                && (matches!(row, TranscriptRow::ActivityGroup { .. })
+                    || matches!(row, TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Tool))
             {
                 let entity = entity.clone();
                 menu = menu.item(PopupMenuItem::new(if expanded {

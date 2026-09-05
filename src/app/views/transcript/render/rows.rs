@@ -261,13 +261,13 @@ pub(crate) fn update_rows_incremental(
     // thinking/tool row). Reproject that boundary, not just the changed item.
     if items
         .get(project_from)
-        .is_some_and(|item| is_routine_activity(item))
+        .is_some_and(|item| is_groupable_activity(item))
     {
         while let Some(previous) = keep_rows.checked_sub(1).and_then(|i| previous_rows.get(i)) {
             if previous.item_end() != project_from
                 || !items
                     .get(previous.item_start())
-                    .is_some_and(|item| is_routine_activity(item))
+                    .is_some_and(|item| is_groupable_activity(item))
             {
                 break;
             }
@@ -409,11 +409,15 @@ fn project_rows_from(
         let item = items
             .get(index)
             .expect("projected transcript item should exist");
-        if is_routine_activity(item) {
+        if is_groupable_activity(item) {
+            let reads = is_read(item);
             let start = index;
             let mut end = start;
             let mut has_tool = false;
-            while let Some(next) = items.get(end).filter(|next| is_routine_activity(next)) {
+            while let Some(next) = items
+                .get(end)
+                .filter(|next| is_read(next) == reads && is_groupable_activity(next))
+            {
                 has_tool |= next.kind == TranscriptKind::Tool;
                 end += 1;
             }
@@ -496,6 +500,17 @@ fn text_revision(text: &str) -> usize {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     text.hash(&mut hasher);
     hasher.finish() as usize
+}
+
+pub(super) fn is_read(item: &TranscriptItem) -> bool {
+    item.kind == TranscriptKind::Tool
+        && item.tool_details.as_ref().is_some_and(|details| {
+            details.metadata.category == Some(crate::agents::ToolCategory::Read)
+        })
+}
+
+fn is_groupable_activity(item: &TranscriptItem) -> bool {
+    is_read(item) || is_routine_activity(item)
 }
 
 fn is_routine_activity(item: &TranscriptItem) -> bool {

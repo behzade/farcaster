@@ -35,6 +35,10 @@ pub(super) fn render_activity_group(
     cx: &gpui::App,
 ) -> AnyElement {
     let group_items = || items.iter_range(start..start + len);
+    // Projection keeps consecutive reads separate from other activity.
+    if super::rows::is_read(&items[start]) {
+        return render_reads(key, group_items().map(AsRef::as_ref));
+    }
     let summary = activity_summary(group_items().map(AsRef::as_ref));
     // Attention states are standalone rows, never members of this group.
     let status = group_items()
@@ -105,6 +109,9 @@ pub(super) fn render_tool(
     entity: WeakEntity<FarcasterApp>,
     cx: &gpui::App,
 ) -> AnyElement {
+    if super::rows::is_read(item) {
+        return render_reads(key, std::iter::once(item));
+    }
     let status = item_status(item);
     let project = entity
         .upgrade()
@@ -211,6 +218,38 @@ pub(super) fn render_tool(
                     .child(expanded_tool_body(("tool-detail", key), item)),
             )
         })
+        .into_any_element()
+}
+
+fn render_reads<'a>(key: usize, items: impl Iterator<Item = &'a TranscriptItem>) -> AnyElement {
+    let mut text = String::from("read");
+    for item in items {
+        if let Some(details) = &item.tool_details {
+            for path in &details.metadata.targets {
+                if !path.is_empty() {
+                    text.push(' ');
+                    text.push_str(path);
+                }
+            }
+        }
+        if let Some(status) = item_status(item)
+            && status != ToolStatus::Succeeded
+        {
+            text.push_str(" (");
+            text.push_str(status.label());
+            text.push(')');
+        }
+    }
+    div()
+        .id(("read-row", key))
+        .w_full()
+        .min_w_0()
+        .px(TRANSCRIPT_HORIZONTAL_PADDING)
+        .py(px(2.0))
+        .font_family(MONO_FONT_FAMILY)
+        .text_size(THEME.type_scale.body_small)
+        .text_color(THEME.colors.muted)
+        .child(text)
         .into_any_element()
 }
 

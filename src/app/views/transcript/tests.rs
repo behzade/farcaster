@@ -478,6 +478,30 @@ fn appended_reads_merge_with_the_existing_read_group() {
 }
 
 #[test]
+fn consecutive_native_reads_group_without_absorbing_other_activity() {
+    let mut state = conversation::ConversationState::default();
+    for (id, category) in [("a", "read"), ("b", "read"), ("c", "search"), ("d", "read")] {
+        let previous = state.items.clone();
+        let previous_rows = project_rows(&previous);
+        state.reduce(&serde_json::json!({
+            "type": "tool_execution_start", "toolCallId": id, "toolName": "native",
+            "args": {}, "toolMetadata": {"category": category, "targets": [format!("{id}.rs")]}
+        }));
+        assert_eq!(
+            update_rows(&previous_rows, &previous, &state.items),
+            project_rows(&state.items)
+        );
+    }
+    let rows = project_rows(&state.items);
+    assert!(matches!(
+        rows[0],
+        TranscriptRow::ActivityGroup { start: 0, len: 2, .. }
+    ));
+    assert!(matches!(rows[1], TranscriptRow::Item { index: 2, .. }));
+    assert!(matches!(rows[2], TranscriptRow::Item { index: 3, .. }));
+}
+
+#[test]
 fn markdown_row_height_estimates_reflect_wrapping_and_physical_lines() {
     let assistant = item(
         TranscriptKind::Assistant,
