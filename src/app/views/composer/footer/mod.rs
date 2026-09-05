@@ -44,6 +44,7 @@ impl FarcasterApp {
     pub(in crate::app::views) fn render_composer_status(
         &self,
         scroll: &gpui::ScrollHandle,
+        mode: Option<&'static str>,
     ) -> AnyElement {
         let usage = composer_usage(self);
         div()
@@ -57,6 +58,18 @@ impl FarcasterApp {
             .px(px(12.0))
             .overflow_x_scroll()
             .track_scroll(scroll)
+            .when_some(mode, |row, mode| {
+                row.child(
+                    div()
+                        .flex_none()
+                        .pr(THEME.space.sm)
+                        .font_family(MONO_FONT_FAMILY)
+                        .text_size(THEME.type_scale.caption)
+                        .text_color(THEME.colors.accent)
+                        .whitespace_nowrap()
+                        .child(mode),
+                )
+            })
             .child(div().min_w_0().flex_1())
             .when(has_meaningful_usage(&usage), |row| {
                 row.child(render_usage(&usage))

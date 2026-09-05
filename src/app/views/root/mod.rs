@@ -47,6 +47,10 @@ impl Render for FarcasterApp {
             .bg(THEME.colors.canvas)
             .font(ui_font())
             .key_context(key_context)
+            .track_focus(&self.chat_navigation.focus)
+            .capture_key_down(cx.listener(|this, event, window, cx| {
+                this.capture_chat_navigation(event, window, cx);
+            }))
             .text_color(THEME.colors.text)
             .text_size(THEME.type_scale.body);
         let root = actions::bind(root, cx).child(shell);

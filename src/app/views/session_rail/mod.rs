@@ -138,7 +138,7 @@ fn visible_session_shortcuts(rows: &[ActiveSessionItem]) -> HashMap<i64, u8> {
 }
 
 impl FarcasterApp {
-    pub(super) fn switch_to_first_unsubmitted_draft(
+    pub(in crate::app) fn switch_to_first_unsubmitted_draft(
         &mut self,
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
@@ -154,7 +154,7 @@ impl FarcasterApp {
         }
     }
 
-    pub(super) fn switch_to_session_number(
+    pub(in crate::app) fn switch_to_session_number(
         &mut self,
         number: usize,
         window: &mut gpui::Window,
@@ -191,7 +191,7 @@ impl FarcasterApp {
         self.request_session_archive_and_advance(path, replacement, window, cx);
     }
 
-    pub(super) fn switch_relative_session(
+    pub(in crate::app) fn switch_relative_session(
         &mut self,
         direction: isize,
         window: &mut gpui::Window,

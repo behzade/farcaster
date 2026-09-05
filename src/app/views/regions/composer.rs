@@ -54,19 +54,35 @@ impl ComposerView {
 }
 
 impl Render for ComposerView {
-    fn render(&mut self, _: &mut gpui::Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
+    fn render(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) -> impl gpui::IntoElement {
         let _timing = crate::app::infrastructure::performance::Timing::new("render.composer");
         let Some(app) = self.app.upgrade() else {
             return gpui::div().into_any_element();
         };
-        app.read(cx)
-            .render_composer(
-                self.app.clone(),
-                self.suggestion_selection,
-                &self.footer_scroll,
-                &self.status_scroll,
-                cx,
-            )
-            .into_any_element()
+        let app = app.read(cx);
+        let mode = if app.chat_navigation.focus.is_focused(window) {
+            Some(if app.chat_navigation.leader_pending {
+                "SPACE · e editor · t terminal · j/k sessions · Esc cancel"
+            } else {
+                "NORMAL · CHAT"
+            })
+        } else if app.composer_focus.is_focused(window) {
+            Some("INSERT · COMPOSER")
+        } else {
+            None
+        };
+        app.render_composer(
+            self.app.clone(),
+            self.suggestion_selection,
+            &self.footer_scroll,
+            &self.status_scroll,
+            mode,
+            cx,
+        )
+        .into_any_element()
     }
 }

@@ -35,6 +35,7 @@ impl FarcasterApp {
         suggestion_selection: usize,
         footer_scroll: &gpui::ScrollHandle,
         status_scroll: &gpui::ScrollHandle,
+        mode: Option<&'static str>,
         cx: &App,
     ) -> AnyElement {
         if self.extension.dialog.is_some() {
@@ -169,7 +170,7 @@ impl FarcasterApp {
             .flex()
             .flex_col()
             .child(composer)
-            .child(self.render_composer_status(status_scroll))
+            .child(self.render_composer_status(status_scroll, mode))
             .into_any_element()
     }
 

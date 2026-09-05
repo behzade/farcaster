@@ -1,7 +1,13 @@
 # Modal keyboard implementation plan
 
-Status: proposed; composer layout implemented separately. No modal bindings are
-active yet.
+Status: first navigation slice implemented. `Ctrl+g` (plus `Cmd+g` on macOS)
+returns to chat normal; `i`/`a`, bare `0`–`9`, `/`, and Space-prefixed workspace
+navigation are active. Composer status shows the current focus mode and pending
+leader hints. Existing direct shortcuts remain during this incremental rollout.
+
+Still pending: transcript `j/k` cursor and `v` selection, incidental-control
+focus preservation, modal Escape/abort migration, and unified shortcut help.
+Normal mode currently owns chat navigation, not a transcript text cursor.
 
 ## Interaction contract
 
@@ -12,14 +18,14 @@ not silently change the primary keyboard owner.
 | Chat normal keys | Action |
 | --- | --- |
 | `j` / `k` | Move transcript cursor down / up, revealing it as needed |
-| `i` | Focus composer and enter insert mode |
+| `i` / `a` | Focus composer and enter insert mode |
 | `v` | Start transcript visual selection |
 | `/` | Open session search (not transcript search) |
 | `Space e` | Show/focus embedded editor |
 | `Space t` | Show/focus terminal |
 | `Space j` / `Space k` | Next / previous session |
-| `Space 1`–`Space 9` | Jump using existing visible-session numbering |
-| `Space 0` | Existing first-unsubmitted-draft action |
+| `1`–`9` | Jump using existing visible-session numbering |
+| `0` | Existing first-unsubmitted-draft action |
 | `Escape` | Cancel pending leader or visual selection |
 
 Space in composer, search fields, terminal, or Neovim remains literal input.
@@ -123,11 +129,14 @@ per-session cursor restoration, and existing mouse-selection regressions.
 
 ## 5. Embedded boundary and rollout
 
-Unresolved release decision: a configurable escape-to-app chord is required
-from editor/terminal. Prototype `Ctrl+g` as an opt-in candidate, not a silently
-reserved default; it conflicts with Neovim file status, shell commands, and
-Zellij. Supply an explicit way to send that literal chord to the embedded app.
-Do not intercept ordinary Escape or Space inside either embedded surface.
+Decision: reserve `Ctrl+g` everywhere and add `Cmd+g` on macOS. Both return to
+the chat pane in normal mode, not to an app mode over the embedded surface.
+They are intercepted before embedded/input action dispatch. Drafts, editor
+state, and terminal processes remain intact. Pending agent requests are not
+answered or cancelled by navigation. Ordinary Escape and Space inside either
+embedded surface remain untouched. Native Ctrl+g / Cmd+g behavior is deliberately
+unavailable through these reserved chords; configurable bindings/pass-through
+can follow separately.
 
 Keep transport/input implementation under the existing editor/terminal
 boundaries (`src/app/workspace/editor.rs`, `terminal.rs` and their integrations).
@@ -135,7 +144,7 @@ No Pi-specific transport or session semantics belong in modal state.
 
 Land ownership first, then normal/insert and leader navigation behind an opt-in
 profile; add visual selection after its cursor contract passes tests. Preserve
-the legacy modifier profile until the embedded escape and abort/steer decisions
+the existing direct shortcuts until the modal abort/steer behavior and rollout
 are settled. Update `docs/usage.md` and shortcut help with the shipped profile.
 
 Validation: narrow unit tests for transitions/keymap/list first, then integrated

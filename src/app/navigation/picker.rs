@@ -275,8 +275,13 @@ impl FarcasterApp {
                 self.move_session(path, project, window, cx);
             }
             PickerCommand::SelectSession { path, project } => {
+                let return_to_normal =
+                    self.picker_return_focus.as_ref() == Some(&self.chat_navigation.focus);
                 self.close_picker(window, cx);
                 self.select_session(path, project, window, cx);
+                if return_to_normal {
+                    self.return_to_chat_normal(window, cx);
+                }
             }
             PickerCommand::ResumeDraft { id, project } => {
                 self.close_picker(window, cx);
