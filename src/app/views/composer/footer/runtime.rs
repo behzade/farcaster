@@ -1,22 +1,14 @@
-use std::rc::Rc;
-
 use gpui::{
-    AnyElement, App, Context, CursorStyle, ElementId, InteractiveElement as _, IntoElement as _,
-    ParentElement as _, Role, StatefulInteractiveElement as _, Styled as _, WeakEntity, Window,
-    div, prelude::FluentBuilder as _, px,
+    AnyElement, App, Context, IntoElement as _, ParentElement as _, Styled as _, WeakEntity,
+    Window, div, prelude::FluentBuilder as _, px,
 };
-use gpui_component::{
-    menu::{DropdownMenu as _, PopupMenu, PopupMenuItem},
-    tooltip::Tooltip,
-};
+use gpui_component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 
 use super::separator;
 use crate::app::FarcasterApp;
 use crate::{
     app::ui::assets::AppIcon,
-    app::ui::primitives::{
-        AppIconSize, ButtonTone, activates_button, app_icon, dropdown_content_button,
-    },
+    app::ui::primitives::{AppIconSize, ButtonTone, app_icon, dropdown_content_button},
     app::ui::theme::{MONO_FONT_FAMILY, THEME},
     protocol::{AgentMode, Model},
     runtime::{ConfigurationStatus, HarnessAccessMode},
@@ -394,105 +386,50 @@ fn access_selector(
 ) -> AnyElement {
     let supported = crate::agents::supported_access_modes(harness);
     let selected = crate::agents::normalize_access_mode(harness, selected);
-    let next = next_access_mode(selected, supported);
-    let label = cycle_label(
-        "Access",
-        access_mode_label(selected),
-        access_mode_label(next),
-    );
-
-    div()
-        .id("harness-access")
-        .flex_none()
-        .child(access_cycle_button(
-            "cycle-harness-access",
-            AppIcon::Folder,
-            access_mode_color(selected),
-            label,
-            move |cx| {
-                let _ = entity.update(cx, |this, cx| this.set_access_mode(next, cx));
-            },
-        ))
-        .into_any_element()
-}
-
-fn access_cycle_button(
-    id: impl Into<ElementId>,
-    resource: AppIcon,
-    color: gpui::Rgba,
-    label: String,
-    on_press: impl Fn(&mut App) + 'static,
-) -> AnyElement {
-    let on_press = Rc::new(on_press);
-    let click = Rc::clone(&on_press);
-    let tooltip = label.clone();
-    div()
-        .id(id)
-        .role(Role::Button)
-        .aria_label(label)
-        .tab_index(0)
+    let content = div()
         .flex()
         .items_center()
         .gap(px(5.0))
-        .px(px(1.0))
-        .py(px(2.0))
-        .rounded(px(3.0))
-        .cursor(CursorStyle::PointingHand)
-        .text_color(THEME.colors.muted)
-        .hover(|button| {
-            button
-                .bg(THEME.colors.surface)
-                .text_color(THEME.colors.text)
-        })
-        .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
-        .on_click(move |_, _, cx| {
-            cx.stop_propagation();
-            click(cx);
-        })
-        .on_key_down(move |event, _, cx| {
-            if activates_button(event) {
-                cx.stop_propagation();
-                on_press(cx);
-            }
-        })
-        .child(app_icon(resource, AppIconSize::Inline))
-        .child(div().size(px(7.0)).rounded_full().bg(color))
-        .into_any_element()
-}
-
-fn cycle_label(capability: &str, current: &str, next: &str) -> String {
-    format!("{capability}: {current}. Click to change to {next}")
-}
-
-fn next_access_mode(
-    selected: HarnessAccessMode,
-    supported: &[HarnessAccessMode],
-) -> HarnessAccessMode {
-    let Some(index) = supported.iter().position(|mode| *mode == selected) else {
-        return supported
-            .first()
-            .copied()
-            .unwrap_or(HarnessAccessMode::Full);
-    };
-    supported
-        .get((index + 1) % supported.len().max(1))
-        .copied()
-        .unwrap_or(HarnessAccessMode::Full)
+        .text_color(access_mode_color(selected))
+        .child(app_icon(AppIcon::Shield, AppIconSize::Inline))
+        .child(access_mode_label(selected));
+    dropdown_content_button(
+        "harness-access",
+        format!("Sandbox settings: {}", access_mode_label(selected)),
+        content,
+        ButtonTone::Quiet,
+        supported.len() > 1,
+    )
+    .dropdown_menu_with_anchor(gpui::Anchor::BottomLeft, move |mut menu, _, _| {
+        for mode in supported {
+            let target = *mode;
+            let entity = entity.clone();
+            menu = menu.item(
+                PopupMenuItem::new(access_mode_label(target))
+                    .checked(target == selected)
+                    .on_click(move |_, _, cx| {
+                        let _ = entity.update(cx, |this, cx| this.set_access_mode(target, cx));
+                    }),
+            );
+        }
+        menu
+    })
+    .into_any_element()
 }
 
 const fn access_mode_label(mode: HarnessAccessMode) -> &'static str {
     match mode {
-        HarnessAccessMode::Full => "Full access",
-        HarnessAccessMode::Sandboxed => "Sandboxed",
-        HarnessAccessMode::Auto => "Auto",
+        HarnessAccessMode::Full => "Sandbox: Off",
+        HarnessAccessMode::Sandboxed => "Sandbox: On",
+        HarnessAccessMode::Auto => "Sandbox: Auto",
     }
 }
 
 fn access_mode_color(mode: HarnessAccessMode) -> gpui::Rgba {
     match mode {
-        HarnessAccessMode::Sandboxed => THEME.colors.warning,
-        HarnessAccessMode::Auto => THEME.colors.accent,
-        HarnessAccessMode::Full => THEME.colors.error,
+        HarnessAccessMode::Sandboxed => THEME.colors.muted,
+        HarnessAccessMode::Auto => THEME.colors.muted,
+        HarnessAccessMode::Full => THEME.colors.warning,
     }
 }
 
@@ -586,11 +523,12 @@ mod tests {
     }
 
     #[test]
-    fn access_controls_cycle_only_supported_modes() {
+    fn sandbox_labels_and_colors_distinguish_unrestricted_access() {
         use HarnessAccessMode::{Auto, Full, Sandboxed};
-        assert_eq!(next_access_mode(Sandboxed, &[Sandboxed, Full]), Full);
-        assert_eq!(next_access_mode(Full, &[Sandboxed, Full]), Sandboxed);
-        assert_eq!(next_access_mode(Sandboxed, &[Sandboxed, Auto, Full]), Auto);
-        assert_eq!(next_access_mode(Sandboxed, &[Auto, Full]), Auto);
+        assert_eq!(access_mode_label(Sandboxed), "Sandbox: On");
+        assert_eq!(access_mode_label(Full), "Sandbox: Off");
+        assert_eq!(access_mode_label(Auto), "Sandbox: Auto");
+        assert_eq!(access_mode_color(Sandboxed), THEME.colors.muted);
+        assert_eq!(access_mode_color(Full), THEME.colors.warning);
     }
 }

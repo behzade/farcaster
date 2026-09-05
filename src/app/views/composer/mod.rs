@@ -102,17 +102,9 @@ impl FarcasterApp {
             .flex_none()
             .flex()
             .flex_col()
-            .when(floating, |composer| {
-                composer
-                    .rounded(THEME.radius)
-                    .border(THEME.border)
-                    .border_color(THEME.colors.border)
-            })
-            .when(!floating, |composer| {
-                composer
-                    .border_t(THEME.border)
-                    .border_color(THEME.colors.border)
-            })
+            .rounded(THEME.radius)
+            .border(THEME.border)
+            .border_color(THEME.colors.border)
             .bg(THEME.colors.composer)
             .child(
                 div()
@@ -162,6 +154,7 @@ impl FarcasterApp {
                     .border_t(THEME.border)
                     .border_color(THEME.colors.surface)
                     .bg(THEME.colors.panel)
+                    .when(!floating, |footer| footer.rounded_b(THEME.radius))
                     .child(self.render_composer_controls(entity.clone(), !floating, footer_scroll)),
             )
             .when(floating, |composer| {

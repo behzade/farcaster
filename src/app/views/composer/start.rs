@@ -1,10 +1,12 @@
 use gpui::{IntoElement, ParentElement as _, Styled as _, WeakEntity, div};
 
+use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
+
 use crate::app::{
-    FarcasterApp, PickerScope, ProjectPickerIntent,
+    FarcasterApp,
     composer::sessions::ComposerSnapshot,
     ui::{
-        primitives::{ButtonTone, button},
+        primitives::{ButtonTone, button, dropdown_button},
         theme::THEME,
     },
 };
@@ -13,36 +15,34 @@ pub(super) fn harness_selector(
     harness: &str,
     entity: WeakEntity<FarcasterApp>,
 ) -> impl IntoElement {
-    div()
-        .flex()
-        .flex_none()
-        .items_center()
-        .gap(THEME.space.xs)
-        .children(
-            crate::agents::backend_statuses()
-                .into_iter()
-                .filter(|backend| backend.available)
-                .map(|backend| {
-                    let selected = backend.id == harness;
-                    let target = backend.id;
-                    let entity = entity.clone();
-                    button(
-                        format!("draft-harness-{target}"),
-                        backend.name,
-                        if selected {
-                            ButtonTone::Accent
-                        } else {
-                            ButtonTone::Quiet
-                        },
-                        !selected,
-                        move |window, cx| {
+    let backends = crate::agents::backend_statuses()
+        .into_iter()
+        .filter(|backend| backend.available)
+        .collect::<Vec<_>>();
+    let selected = harness.to_owned();
+    let label = backends
+        .iter()
+        .find(|backend| backend.id == harness)
+        .map(|backend| backend.name.to_owned())
+        .unwrap_or_else(|| harness.to_owned());
+    dropdown_button("draft-harness", label, ButtonTone::Quiet, true)
+        .text_color(THEME.colors.text)
+        .dropdown_menu_with_anchor(gpui::Anchor::BottomLeft, move |mut menu, _, _| {
+            for backend in &backends {
+                let target = backend.id.clone();
+                let entity = entity.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(backend.name.clone())
+                        .checked(backend.id == selected)
+                        .on_click(move |_, window, cx| {
                             let _ = entity.update(cx, |this, cx| {
                                 this.change_draft_harness(target.clone(), window, cx);
                             });
-                        },
-                    )
-                }),
-        )
+                        }),
+                );
+            }
+            menu
+        })
 }
 
 pub(super) fn shortcuts(entity: WeakEntity<FarcasterApp>) -> impl IntoElement {
@@ -56,6 +56,7 @@ pub(super) fn shortcuts(entity: WeakEntity<FarcasterApp>) -> impl IntoElement {
         .px(THEME.space.sm)
         .py(THEME.space.xs)
         .bg(THEME.colors.canvas)
+        .rounded_b(THEME.radius)
         .child(button(
             "draft-files",
             "Add files",
@@ -72,21 +73,6 @@ pub(super) fn shortcuts(entity: WeakEntity<FarcasterApp>) -> impl IntoElement {
             true,
             move |window, cx| {
                 let _ = prompts.update(cx, |this, cx| this.open_composer_browser('$', window, cx));
-            },
-        ))
-        .child(button(
-            "draft-project",
-            "Choose project",
-            ButtonTone::Quiet,
-            true,
-            move |window, cx| {
-                let _ = entity.update(cx, |this, cx| {
-                    this.open_picker(
-                        PickerScope::Projects(ProjectPickerIntent::ChangeDraft),
-                        window,
-                        cx,
-                    );
-                });
             },
         ))
 }

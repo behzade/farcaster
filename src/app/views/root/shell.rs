@@ -9,8 +9,9 @@ use crate::app::{
     AppSurface,
     ui::{
         layout::{
-            LayoutMode, draft_top_padding, shows_draft_inspector, shows_left_inline,
-            shows_right_inline, shows_run_sheet_button, shows_session_sheet_button,
+            LayoutMode, composer_bottom_clearance, draft_top_padding, shows_draft_inspector,
+            shows_left_inline, shows_right_inline, shows_run_sheet_button,
+            shows_session_sheet_button,
         },
         theme::THEME,
     },
@@ -35,7 +36,7 @@ impl FarcasterApp {
             .h_full()
             .flex()
             .flex_col()
-            .when(shows_run_sheet_button(mode) || !has_conversation, |main| {
+            .when(shows_run_sheet_button(mode) && has_conversation, |main| {
                 main.child(self.render_chat_navigation(
                     shows_session_sheet_button(mode),
                     shows_right_inline(mode),
@@ -67,7 +68,7 @@ impl FarcasterApp {
                                     .flex_col()
                                     .gap(THEME.space.md)
                                     .when_some(editable_draft_project, |draft, project| {
-                                        draft.child(draft::render_heading(project))
+                                        draft.child(draft::render_heading(project, entity.clone()))
                                     })
                                     .child(self.composer_view.clone()),
                             )
@@ -79,6 +80,9 @@ impl FarcasterApp {
                         .w_full()
                         .max_w(THEME.layout.conversation_width)
                         .mx_auto()
+                        .px(THEME.space.md)
+                        .pt(THEME.space.sm)
+                        .pb(composer_bottom_clearance(viewport_height))
                         .flex_none()
                         .child(self.composer_view.clone()),
                 )
@@ -120,7 +124,7 @@ impl FarcasterApp {
             .h_full()
             .flex()
             .flex_col()
-            .child(self.render_workspace_bar(entity.clone()))
+            .child(self.render_workspace_bar(entity.clone(), mode))
             .child(div().relative().flex_1().min_h_0().child(main).when(
                 native_surface && self.extension.dialog.is_some(),
                 |center| {
