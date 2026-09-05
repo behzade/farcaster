@@ -19,9 +19,23 @@ impl StateStore {
         let rows = statement
             .query_map([], row_to_session)
             .map_err(|error| format!("query cached sessions: {error}"))?;
-        let sessions = rows
+        let mut sessions = rows
             .map(|row| row.map_err(|error| format!("decode cached session: {error}")))
             .collect::<Result<Vec<_>, _>>()?;
+        for link in self.load_worker_families()? {
+            let Some(execution) = link.execution else {
+                continue;
+            };
+            if let Some(session) = sessions.iter_mut().find(|session| {
+                session.project == link.project
+                    && session.harness == link.child_backend
+                    && (session.id == link.child_session
+                        || session.path == std::path::Path::new(&link.child_session))
+            }) {
+                session.model = Some((execution.provider, execution.model));
+                session.thinking_level = execution.effort;
+            }
+        }
         Ok(crate::sessions::filter_session_tree(sessions, query))
     }
 

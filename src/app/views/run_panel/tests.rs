@@ -91,5 +91,5 @@ fn worker_subtitle_uses_live_profile_then_catalog_identity() {
         execution_label(None, Some(&cached_model), Some("low")),
         "cached-provider · cached-model · low"
     );
-    assert_eq!(execution_label(None, None, None), "— · — · default");
+    assert_eq!(execution_label(None, None, None), "— · — · —");
 }

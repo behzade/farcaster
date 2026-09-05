@@ -1220,13 +1220,51 @@ fn cross_harness_worker_families_survive_reopen() -> Result<(), String> {
         child_session: "child-session".into(),
         parent_backend: "pi".into(),
         parent_session: "/sessions/parent.jsonl".into(),
+        execution: Some(crate::agents::WorkerExecution {
+            harness: "opencode2".into(),
+            provider: "opencode-go".into(),
+            model: "glm-5.3-flash".into(),
+            effort: None,
+        }),
     };
-    let store = StateStore::open_at(&database)?;
+    let mut store = StateStore::open_at(&database)?;
     store.save_worker_family(&link)?;
     store.save_worker_family(&link)?;
     assert_eq!(
         StateStore::open_at(&database)?.load_worker_families()?,
-        vec![link]
+        vec![link.clone()]
     );
+    let mut session = SessionSummary::from_cached(
+        link.child_session.clone(),
+        temp.path().join("child"),
+        link.project.clone(),
+        "Worker".into(),
+        String::new(),
+        String::new(),
+        None,
+        SystemTime::now(),
+        0,
+        UsageSummary::default(),
+        false,
+        false,
+        String::new(),
+    );
+    session.harness = link.child_backend.clone();
+    store.replace_sessions(&[session])?;
+    drop(store);
+    let store = StateStore::open_at(&database)?;
+    let cached = store.cached_sessions("")?;
+    assert_eq!(
+        cached[0].model,
+        Some(("opencode-go".into(), "glm-5.3-flash".into()))
+    );
+    assert_eq!(cached[0].thinking_level, None);
+
+    // Records saved before execution metadata was added remain readable.
+    let mut legacy = serde_json::to_value(&link).map_err(|error| error.to_string())?;
+    legacy.as_object_mut().unwrap().remove("execution");
+    let legacy: crate::agents::WorkerFamilyLink =
+        serde_json::from_value(legacy).map_err(|error| error.to_string())?;
+    assert!(legacy.execution.is_none());
     Ok(())
 }

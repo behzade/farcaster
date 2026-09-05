@@ -72,11 +72,26 @@ impl RuntimeOwner {
         let generation = self.session_generation;
         let sender = self.discovery_tx.clone();
         let locator_root = self.process_command.session_locator_root.clone();
+        let worker_families = self
+            .state
+            .as_ref()
+            .map(|state| state.load_worker_families())
+            .transpose()
+            .unwrap_or_else(|error| {
+                zlog::warn!("Load worker families for history recovery: {error}");
+                None
+            })
+            .unwrap_or_default();
         let wake = thread::current();
         if let Err(error) = thread::Builder::new()
             .name("farcaster-sessions".into())
             .spawn(move || {
-                let result = discover_catalog(locator_root.as_deref(), "");
+                let result = discover_catalog(locator_root.as_deref(), "").map(|mut discovery| {
+                    recover_worker_execution(&mut discovery.sessions, &worker_families, |path| {
+                        agents::load_external_history(path).transpose()
+                    });
+                    discovery
+                });
                 let _ = sender.send(DiscoveryResult { generation, result });
                 wake.unpark();
             })
@@ -99,7 +114,27 @@ impl RuntimeOwner {
                 let mut discovered = discovery.sessions;
                 if let Some(state) = &self.state {
                     match state.load_worker_families() {
-                        Ok(links) => apply_worker_families(&mut discovered, &links),
+                        Ok(mut links) => {
+                            for link in &mut links {
+                                if link.execution.is_none()
+                                    && let Some(session) = discovered
+                                        .iter()
+                                        .find(|session| worker_child_matches(session, link))
+                                    && let Some((provider, model)) = &session.model
+                                {
+                                    link.execution = Some(agents::WorkerExecution {
+                                        harness: session.harness.clone(),
+                                        provider: provider.clone(),
+                                        model: model.clone(),
+                                        effort: session.thinking_level.clone(),
+                                    });
+                                    if let Err(error) = state.save_worker_family(link) {
+                                        zlog::warn!("Save recovered worker execution: {error}");
+                                    }
+                                }
+                            }
+                            apply_worker_families(&mut discovered, &links);
+                        }
                         Err(error) => {
                             zlog::warn!("Load worker families: {error}");
                         }
@@ -239,11 +274,58 @@ mod tests {
             child_session: "child-id".into(),
             parent_backend: "pi".into(),
             parent_session: "/sessions/parent.jsonl".into(),
+            execution: None,
         };
         let mut sessions = vec![parent, child, unrelated];
         apply_worker_families(&mut sessions, &[link]);
         assert_eq!(sessions[1].parent_session.as_deref(), Some("parent-id"));
         assert!(sessions[2].parent_session.is_none());
+    }
+
+    #[test]
+    fn legacy_worker_execution_is_recovered_only_for_the_matching_child() {
+        let mut child = summary(Path::new("/locators/child"), SystemTime::now(), false);
+        child.harness = "opencode2".into();
+        let link = agents::WorkerFamilyLink {
+            project: child.project.clone(),
+            child_backend: child.harness.clone(),
+            child_session: child.id.clone(),
+            parent_backend: "pi".into(),
+            parent_session: "/sessions/parent.jsonl".into(),
+            execution: None,
+        };
+        let mut other = child.clone();
+        other.harness = "codex-cli".into();
+        let mut sessions = vec![other, child];
+        let mut calls = 0;
+        recover_worker_execution(&mut sessions, std::slice::from_ref(&link), |_| {
+            calls += 1;
+            Ok(Some(agents::DiscoveredHistory {
+                messages: vec![],
+                model: Some(("opencode-go".into(), "glm-5.3-flash".into())),
+                thinking_level: Some("high".into()),
+            }))
+        });
+        assert_eq!(calls, 1);
+        assert!(sessions[0].model.is_none());
+        assert_eq!(
+            sessions[1].model,
+            Some(("opencode-go".into(), "glm-5.3-flash".into()))
+        );
+        assert_eq!(sessions[1].thinking_level.as_deref(), Some("high"));
+        let saved = agents::WorkerFamilyLink {
+            execution: Some(agents::WorkerExecution {
+                harness: "opencode2".into(),
+                provider: "opencode-go".into(),
+                model: "glm-5.3-flash".into(),
+                effort: Some("high".into()),
+            }),
+            ..link
+        };
+        sessions[1].model = None;
+        recover_worker_execution(&mut sessions, &[saved], |_| {
+            panic!("saved identity must not reload history")
+        });
     }
 
     #[test]
@@ -363,6 +445,49 @@ fn apply_worker_families(
                 .find(|session| matches(session, &link.child_backend, &link.child_session))
             {
                 child.parent_session = Some(parent);
+            }
+        }
+    }
+}
+
+fn worker_child_matches(session: &SessionSummary, link: &agents::WorkerFamilyLink) -> bool {
+    session.project == link.project
+        && session.harness == link.child_backend
+        && (session.id == link.child_session
+            || session.path == std::path::Path::new(&link.child_session))
+}
+
+// Legacy links have no execution metadata. Recover it off the UI thread through
+// the owning backend, then persist it during discovery application for reuse.
+fn recover_worker_execution(
+    sessions: &mut [SessionSummary],
+    links: &[agents::WorkerFamilyLink],
+    mut load: impl FnMut(&std::path::Path) -> Result<Option<agents::DiscoveredHistory>, String>,
+) {
+    for link in links {
+        if link.execution.is_some() {
+            continue;
+        }
+        let Some(session) = sessions
+            .iter_mut()
+            .find(|session| worker_child_matches(session, link))
+        else {
+            continue;
+        };
+        if session.model.is_some() {
+            continue;
+        }
+        match load(&session.path) {
+            Ok(Some(history)) => {
+                session.model = history.model;
+                session.thinking_level = history.thinking_level;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                zlog::warn!(
+                    "Recover worker execution for {}: {error}",
+                    session.path.display()
+                );
             }
         }
     }
