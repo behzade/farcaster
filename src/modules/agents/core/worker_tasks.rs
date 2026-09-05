@@ -75,7 +75,7 @@ impl WorkerTaskDefinition {
             name,
             specified: execution("gpt-5.6-luna", "high"),
             guided: execution("gpt-5.6-sol", "medium"),
-            independent: execution("gpt-6-astra", "high"),
+            independent: execution("gpt-6-astra", "medium"),
         }
     }
 
@@ -183,6 +183,15 @@ mod tests {
                     .execution
                     .model,
                 "gpt-6-astra"
+            );
+            assert_eq!(
+                tasks
+                    .resolve(task, WorkerJudgment::Independent)
+                    .unwrap()
+                    .execution
+                    .effort
+                    .as_deref(),
+                Some("medium")
             );
         }
     }
