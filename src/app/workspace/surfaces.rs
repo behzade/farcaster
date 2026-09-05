@@ -76,7 +76,7 @@ impl FarcasterApp {
     pub(in crate::app) fn cover_native_workspace_surface(&mut self, cx: &mut Context<Self>) {
         if !self.native_surface_covered {
             self.native_surface_covered = match self.surface {
-                AppSurface::Editor => self.editor.is_some(),
+                AppSurface::Editor => self.editor_ready && self.editor.is_some(),
                 AppSurface::Terminal => self.terminal.is_some(),
                 AppSurface::Chat | AppSurface::Work => false,
             };
@@ -154,6 +154,7 @@ impl FarcasterApp {
             self.overlays.pending_setup = false;
             self.sheet_return_focus = None;
         }
+        self.select_editor_for_project(project.clone(), cx);
         if self.surface == AppSurface::Work {
             return;
         }
@@ -173,6 +174,9 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn promote_center_surface(&mut self, from: &str, to: &str) {
+        if let Some(tab) = self.session_editor_tabs.remove(from) {
+            self.session_editor_tabs.insert(to.to_owned(), tab);
+        }
         if let Some(surface) = self.session_surfaces.remove(from) {
             self.session_surfaces.insert(to.to_owned(), surface);
         }
@@ -232,7 +236,9 @@ impl FarcasterApp {
                         .unwrap_or_else(|| self.composer_focus.clone())
                         .focus(window, cx),
                     AppSurface::Editor => {
-                        if let Some(editor) = self.editor.as_ref() {
+                        if self.editor_ready
+                            && let Some(editor) = self.editor.as_ref()
+                        {
                             editor.update(cx, |editor, cx| editor.focus(window, cx));
                         }
                     }

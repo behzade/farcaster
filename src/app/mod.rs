@@ -47,7 +47,7 @@ use gpui::{
 };
 use gpui_component::input::{InputEvent, InputState, TextareaState};
 use gpui_libghostty::Terminal;
-use gpui_neovim::NvimEditor;
+use workspace::neovim::NvimEditor;
 
 use crate::{
     agent_activity::AgentActivity,
@@ -201,6 +201,9 @@ pub(crate) struct FarcasterApp {
     workgraph_detail_view: Entity<WorkGraphDetailView>,
     workgraph_sidebar_view: Entity<WorkGraphSidebarView>,
     editor: Option<Entity<NvimEditor>>,
+    project_editors: HashMap<PathBuf, Entity<NvimEditor>>,
+    session_editor_tabs: HashMap<String, u64>,
+    editor_ready: bool,
     editor_request_generation: u64,
     editor_return_focus: Option<FocusHandle>,
     terminal: Option<Entity<Terminal>>,
@@ -227,6 +230,7 @@ pub(crate) struct FarcasterApp {
     pending_session_title_focus: bool,
     dialog_input: Entity<TextareaState>,
     composer_focus: FocusHandle,
+    chat_navigation: ui::navigation::ChatNavigation,
     dialog_focus: FocusHandle,
     dialog_return_focus: Option<FocusHandle>,
     image_preview: Option<ImagePreview>,

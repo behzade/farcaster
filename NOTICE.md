@@ -51,10 +51,11 @@ GPL-3.0-or-later licensing. Their license texts are included as
 `THIRD_PARTY_LICENSES/ZED-GPUI-GPL-3.0.txt`; detailed provenance remains with
 the corresponding source.
 
-The `gpui-neovim` and `gpui-libghostty` dependencies use crates.io releases
-`0.1.6` and `0.2.1`, respectively, from
-<https://github.com/behzade/gpui-libghostty>. They and the pinned Ghostty source
-are distributed under MIT. Their licenses are included at
+The `gpui-libghostty` dependency uses crates.io release `0.2.1` from
+<https://github.com/behzade/gpui-libghostty>. It and the pinned Ghostty source
+are distributed under MIT. The local Neovim transport in
+`src/app/workspace/neovim.rs` is derived from that project's `gpui-neovim` 0.1.6.
+Their licenses are included at
 `THIRD_PARTY_LICENSES/GPUI-LIBGHOSTTY-MIT.txt` and
 `THIRD_PARTY_LICENSES/GHOSTTY-MIT.txt`; detailed provenance remains in the
 upstream source.

@@ -12,6 +12,7 @@ impl FarcasterApp {
         let discard = self.sync_current_draft(&current, &current_target);
         let snapshot = if discard {
             self.session_surfaces.remove(&current_target);
+            self.session_editor_tabs.remove(&current_target);
             self.composer_sessions
                 .discard_and_switch(&current_target, target)
         } else {

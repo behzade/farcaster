@@ -5,6 +5,7 @@ use super::*;
 const NATIVE_PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 mod editor;
+pub(in crate::app) mod neovim;
 mod regions;
 mod surfaces;
 mod terminal;

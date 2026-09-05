@@ -28,7 +28,7 @@ release:
 # Path overrides test unpublished crates without changing Cargo.toml or Cargo.lock.
 release-local:
 	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo \
-		--config 'paths = ["$(GPUI_GHOSTTY_DIR)/crates/gpui-ghostty", "$(GPUI_GHOSTTY_DIR)/crates/gpui-neovim"]' \
+		--config 'paths = ["$(GPUI_GHOSTTY_DIR)/crates/gpui-ghostty"]' \
 		run --release -- "$(PROJECT)"
 
 release-debug:

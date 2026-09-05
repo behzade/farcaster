@@ -273,6 +273,7 @@ impl FarcasterApp {
             .collect::<HashSet<_>>();
         for path in paths.iter() {
             let target = session_target(path);
+            self.session_editor_tabs.remove(&target);
             self.composer_sessions.remove(&target);
             self.session_surfaces.remove(&target);
             self.composer_images.remove(&target);
@@ -284,6 +285,7 @@ impl FarcasterApp {
         }
         for id in &deleted_draft_ids {
             let target = draft_target(id);
+            self.session_editor_tabs.remove(&target);
             self.composer_sessions.remove(&target);
             self.session_surfaces.remove(&target);
             self.composer_images.remove(&target);

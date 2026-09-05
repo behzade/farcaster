@@ -93,6 +93,9 @@ impl FarcasterApp {
             workgraph_detail_view: regions.workgraph_detail,
             workgraph_sidebar_view: regions.workgraph_sidebar,
             editor: None,
+            project_editors: HashMap::new(),
+            session_editor_tabs: HashMap::new(),
+            editor_ready: false,
             editor_request_generation: 0,
             editor_return_focus: None,
             terminal: None,
@@ -119,6 +122,11 @@ impl FarcasterApp {
             pending_session_title_focus: false,
             dialog_input: inputs.dialog,
             composer_focus: inputs.composer_focus,
+            chat_navigation: ui::navigation::ChatNavigation {
+                focus: cx.focus_handle(),
+                leader_pending: false,
+                return_shortcut: None,
+            },
             dialog_focus: inputs.dialog_focus,
             dialog_return_focus: None,
             image_preview: None,
@@ -160,6 +168,7 @@ impl FarcasterApp {
             _workgraph_update_task: tasks.workgraph_updates,
             _worker_update_task: tasks.worker_updates,
         };
+        this.initialize_chat_navigation(window, cx);
         this.request_repository_refresh(cx);
         this
     }

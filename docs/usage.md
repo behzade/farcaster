@@ -18,6 +18,17 @@ decisions do not change a harness's trust settings. Pi project-resource trust is
 checked separately when opening a Pi session; other harnesses manage their own
 trust. Existing Pi trust decisions do not grant Farcaster repository access.
 
+## Embedded Neovim
+
+Sessions in the same project share one Neovim process. Each session has its own
+tabpage, preserving its open windows, splits, and cursor positions when switching
+sessions. Buffers (including unsaved edits) and LSP clients are shared; editing
+the same file in two sessions edits the same buffer.
+
+Closing the editor surface returns to chat without terminating the shared
+process. Use Neovim's `:qa` to quit the project editor. View state lasts for the
+life of that Neovim process; it is not restored after restarting Farcaster.
+
 ## Prompt fragments
 
 Files in [`prompts`](../prompts) are available in every harness. Type `$` to

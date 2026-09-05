@@ -1800,7 +1800,6 @@ dependencies = [
  "gpui-base",
  "gpui-component",
  "gpui-libghostty",
- "gpui-neovim",
  "gpui_platform",
  "image",
  "notify",
@@ -2499,17 +2498,6 @@ dependencies = [
  "wayland-backend",
  "wayland-client",
  "wayland-protocols",
-]
-
-[[package]]
-name = "gpui-neovim"
-version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a5d240db2185e6a461d3f38bc1a93c1c18209cdc382ba03a231da125b036dc3"
-dependencies = [
- "gpui",
- "gpui-libghostty",
- "wait-timeout",
 ]
 
 [[package]]

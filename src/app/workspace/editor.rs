@@ -1,9 +1,11 @@
 use std::path::{Path, PathBuf};
 
 use gpui::{AppContext as _, Context, Window};
-use gpui_neovim::{NvimEditor, NvimOptions};
 
-use super::{AppSurface, FarcasterApp};
+use super::{
+    AppSurface, FarcasterApp,
+    neovim::{NvimEditor, new_session_tab},
+};
 
 impl FarcasterApp {
     pub(crate) fn open_file_editor(
@@ -22,7 +24,6 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor_request_generation = self.editor_request_generation.wrapping_add(1);
         if self.overlays.run {
             self.close_sheet(window, cx);
         }
@@ -34,47 +35,7 @@ impl FarcasterApp {
                 return;
             }
         };
-
-        if let Some(editor) = self.reusable_editor(&project, cx) {
-            let opened = editor.update(cx, |editor, cx| editor.open_file_at_line(path, line, cx));
-            self.hide_terminal(cx);
-            self.set_surface(AppSurface::Editor, cx);
-            editor.update(cx, |editor, cx| editor.focus(window, cx));
-            cx.notify();
-            let generation = self.editor_request_generation;
-            let target = self.composer_sessions.current_target().to_owned();
-            cx.spawn(async move |weak, cx| {
-                let Err(error) = opened.await else {
-                    return;
-                };
-                zlog::warn!("Neovim file-open failed for {target}: {error}");
-                let _ = weak.update(cx, |this, cx| {
-                    if this.editor.as_ref() != Some(&editor)
-                        || !editor_completion_is_current(
-                            generation,
-                            this.editor_request_generation,
-                            &target,
-                            this.composer_sessions.current_target(),
-                            this.surface,
-                        )
-                    {
-                        return;
-                    }
-                    this.notify_workspace_error("Neovim", error, cx);
-                });
-            })
-            .detach();
-            return;
-        }
-
-        let return_focus = window.focused(cx);
-        if self.spawn_editor(nvim_options(project, path, line), window, cx) {
-            if self.editor_return_focus.is_none() {
-                self.editor_return_focus = return_focus;
-            }
-            self.hide_terminal(cx);
-            self.set_surface(AppSurface::Editor, cx);
-        }
+        self.activate_editor_tab(project, Some(path), line, window, cx);
     }
 
     pub(in crate::app) fn show_editor_surface(
@@ -94,7 +55,17 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor_request_generation = self.editor_request_generation.wrapping_add(1);
+        self.activate_editor_tab(project, None, None, window, cx);
+    }
+
+    fn activate_editor_tab(
+        &mut self,
+        project: PathBuf,
+        path: Option<PathBuf>,
+        line: Option<u64>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !self.repository.execution_allowed {
             self.notify_workspace_error(
                 "Neovim",
@@ -103,47 +74,106 @@ impl FarcasterApp {
             );
             return;
         }
-
-        if self.reusable_editor(&project, cx).is_none()
-            && !self.spawn_editor(nvim_options(project.clone(), project, None), window, cx)
-        {
+        let project = project.canonicalize().unwrap_or(project);
+        self.select_editor_for_project(project.clone(), cx);
+        let reusable = self.editor.as_ref().is_some_and(|editor| {
+            editor.read(cx).project() == project && editor.read(cx).is_alive(cx)
+        });
+        if !reusable && !self.spawn_editor(project, window, cx) {
             return;
         }
+        let Some(editor) = self.editor.clone() else {
+            return;
+        };
+        let target = self.composer_sessions.current_target().to_owned();
+        let tab = *self
+            .session_editor_tabs
+            .entry(target.clone())
+            .or_insert_with(new_session_tab);
+        self.editor_request_generation = self.editor_request_generation.wrapping_add(1);
+        self.editor_ready = false;
+        self.hide_editor(cx);
         self.hide_terminal(cx);
-        self.reveal_native_center_surface(AppSurface::Editor, window, cx);
+        if self.editor_return_focus.is_none() {
+            self.editor_return_focus = window.focused(cx);
+        }
+        self.set_surface(AppSurface::Editor, cx);
+        let generation = self.editor_request_generation;
+        let opened = editor.update(cx, |editor, cx| editor.activate_tab(tab, path, line, cx));
+        cx.spawn_in(window, async move |weak, cx| {
+            let result = opened.await;
+            if let Err(error) = &result {
+                zlog::warn!("Neovim session-view request failed for {target}: {error}");
+            }
+            let _ = weak.update_in(cx, |this, window, cx| {
+                if this.editor.as_ref() != Some(&editor)
+                    || !editor_completion_is_current(
+                        generation,
+                        this.editor_request_generation,
+                        tab,
+                        this.session_editor_tabs
+                            .get(this.composer_sessions.current_target())
+                            .copied(),
+                        this.surface,
+                    )
+                {
+                    return;
+                }
+                match result {
+                    Ok(()) => {
+                        this.editor_ready = true;
+                        this.reveal_native_center_surface(AppSurface::Editor, window, cx);
+                    }
+                    Err(error) => this.notify_workspace_error("Neovim", error, cx),
+                }
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
-    fn reusable_editor(&self, project: &Path, cx: &gpui::App) -> Option<gpui::Entity<NvimEditor>> {
-        self.editor
-            .as_ref()
-            .filter(|editor| {
-                let state = editor.read(cx);
-                state.project() == project && state.is_alive(cx)
-            })
-            .cloned()
+    pub(in crate::app) fn select_editor_for_project(
+        &mut self,
+        project: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        let project = project.canonicalize().unwrap_or(project);
+        // Hide even when the project/entity is unchanged: its active tab still
+        // belongs to the previous session until the queued request completes.
+        self.hide_editor(cx);
+        self.editor = self.project_editors.get(&project).cloned();
+        self.editor_ready = false;
+        self.editor_return_focus = None;
+        self.editor_request_generation = self.editor_request_generation.wrapping_add(1);
     }
 
     fn spawn_editor(
         &mut self,
-        options: NvimOptions,
+        project: PathBuf,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        match NvimEditor::spawn(options, window, cx) {
+        match NvimEditor::spawn(project.clone(), window, cx) {
             Ok(editor) => {
                 let editor = cx.new(|_| editor);
+                self.project_editors.insert(project, editor.clone());
                 self.editor = Some(editor.clone());
                 self.monitor_native_process(window, cx, move |this, _window, cx| {
-                    if this.editor.as_ref() != Some(&editor) {
+                    if !this.project_editors.values().any(|entry| entry == &editor) {
                         return false;
                     }
                     if editor.read(cx).is_alive(cx) {
                         return true;
                     }
+                    this.project_editors.retain(|_, entry| entry != &editor);
+                    if this.editor.as_ref() != Some(&editor) {
+                        return false;
+                    }
                     if this.surface == AppSurface::Editor {
                         this.close_editor(cx);
                     } else {
                         this.editor = None;
+                        this.editor_ready = false;
                         this.editor_return_focus = None;
                         this.request_repository_refresh(cx);
                     }
@@ -166,6 +196,7 @@ impl FarcasterApp {
 
     pub(in crate::app) fn restore_editor_visibility(&self, cx: &mut Context<Self>) {
         if self.surface == AppSurface::Editor
+            && self.editor_ready
             && let Some(editor) = self.editor.as_ref()
         {
             editor.update(cx, |editor, cx| editor.set_visible(true, cx));
@@ -173,7 +204,11 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn close_editor(&mut self, cx: &mut Context<Self>) {
+        // Closing a surface must not kill other sessions' tabs or shared unsaved
+        // buffers. Keep the project server until Neovim exits (or the app does).
+        self.hide_editor(cx);
         self.editor = None;
+        self.editor_ready = false;
         let focus = self
             .editor_return_focus
             .take()
@@ -183,25 +218,16 @@ impl FarcasterApp {
     }
 }
 
-// The editor is shared across sessions. Entity identity alone does not establish
-// ownership of a delayed file-open result, and completions must never navigate.
+// Returning to an editor does not establish ownership of an older delayed
+// request, and completions must never navigate back from another surface.
 fn editor_completion_is_current(
     generation: u64,
     current_generation: u64,
-    target: &str,
-    current_target: &str,
+    tab: u64,
+    current_tab: Option<u64>,
     surface: AppSurface,
 ) -> bool {
-    generation == current_generation && target == current_target && surface == AppSurface::Editor
-}
-
-fn nvim_options(project: PathBuf, path: PathBuf, line: Option<u64>) -> NvimOptions {
-    let mut options = NvimOptions::new(project, path);
-    options.initial_line = line;
-    if let Some(executable) = std::env::var_os("FARCASTER_NVIM") {
-        options.executable = executable.into();
-    }
-    options
+    generation == current_generation && Some(tab) == current_tab && surface == AppSurface::Editor
 }
 
 fn resolve_editor_path(project: &Path, path: &Path) -> Result<PathBuf, String> {
@@ -229,7 +255,6 @@ fn resolve_editor_path(project: &Path, path: &Path) -> Result<PathBuf, String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(format!("open {}: {error}", candidate.display())),
     }
-
     let file_name = candidate
         .file_name()
         .ok_or_else(|| format!("editor target is not a file: {}", candidate.display()))?;
@@ -251,27 +276,44 @@ mod tests {
         assert!(editor_completion_is_current(
             1,
             1,
-            "a",
-            "a",
+            11,
+            Some(11),
             AppSurface::Editor
         ));
-        // Sessions in the same project can share the very same editor entity.
+        // Sessions share an entity, but not ownership of delayed completions.
         assert!(!editor_completion_is_current(
             1,
             1,
-            "a",
-            "b",
+            11,
+            Some(22),
+            AppSurface::Editor
+        ));
+        assert!(!editor_completion_is_current(
+            1,
+            1,
+            11,
+            None,
             AppSurface::Editor
         ));
         for surface in [AppSurface::Chat, AppSurface::Terminal, AppSurface::Work] {
-            assert!(!editor_completion_is_current(1, 1, "a", "a", surface));
+            assert!(!editor_completion_is_current(1, 1, 11, Some(11), surface));
         }
-        // A newer open, reactivation, or leaving and returning invalidates it.
         assert!(!editor_completion_is_current(
             1,
             2,
-            "a",
-            "a",
+            11,
+            Some(11),
+            AppSurface::Editor
+        ));
+        // Draft promotion changes the routing key, not the native tab identity.
+        let mut tabs = std::collections::HashMap::from([("draft", 11)]);
+        let tab = tabs.remove("draft").expect("draft has a tab");
+        tabs.insert("session", tab);
+        assert!(editor_completion_is_current(
+            1,
+            1,
+            11,
+            tabs.get("session").copied(),
             AppSurface::Editor
         ));
     }
@@ -290,7 +332,6 @@ mod tests {
             resolve_editor_path(project.path(), Path::new("deleted.rs"))?,
             project.path().canonicalize()?.join("deleted.rs")
         );
-
         let outside = tempdir()?;
         let outside_file = outside.path().join("outside.rs");
         std::fs::write(&outside_file, "")?;
@@ -303,7 +344,6 @@ mod tests {
             resolve_editor_path(project.path(), &new_outside_file)?,
             outside.path().canonicalize()?.join("new.rs")
         );
-
         #[cfg(unix)]
         {
             let dangling = project.path().join("dangling.rs");
