@@ -13,18 +13,25 @@ use crate::{
     protocol::PromptImage,
 };
 
+#[path = "conversation/attachments.rs"]
+mod attachments;
 #[path = "conversation/history.rs"]
 mod history;
 #[path = "conversation/stream.rs"]
 mod stream;
+#[path = "conversation/tool_details.rs"]
+mod tool_details;
 #[path = "conversation/tools.rs"]
 mod tools;
+pub(crate) use tool_details::{ToolDetails, ToolExecutionState};
 
+#[cfg(test)]
+use attachments::pasted_file_summary;
+use attachments::{FileAttachment, split_pasted_files};
 pub(crate) use history::annotate_prompt_presentations;
-use history::{
-    decode_prompt_images, message_text, pasted_file_summary, peer_transcript_item,
-    project_message_items, user_message_text,
-};
+#[cfg(test)]
+use history::user_message_text;
+use history::{decode_prompt_images, message_text, peer_transcript_item, project_message_items};
 use tools::{apply_tool_result, tool_arguments, tool_name, tool_presentation};
 pub(crate) use tools::{display_tool_name, split_command_block};
 
@@ -129,17 +136,23 @@ pub(crate) struct TranscriptItem {
     pub label: String,
     pub text: String,
     pub images: Arc<Vec<Arc<Image>>>,
+    pub files: Arc<Vec<FileAttachment>>,
     pub stream_chunks: Arc<Vec<Arc<str>>>,
     pub streaming: bool,
     pub is_error: bool,
     pub tool_call_id: Option<String>,
     pub tool_output: String,
     pub tool_presentation: Option<ToolPresentation>,
+    pub tool_details: Option<Arc<ToolDetails>>,
     pub tool_review: Option<ToolReview>,
     pub invocation: Option<String>,
 }
 
 impl TranscriptItem {
+    pub(crate) fn has_attachments(&self) -> bool {
+        !self.images.is_empty() || !self.files.is_empty()
+    }
+
     pub(crate) fn complete_text(&self) -> String {
         if self.stream_chunks.is_empty() {
             return self.text.clone();
@@ -219,6 +232,7 @@ enum PartialKind {
 }
 
 impl ConversationState {
+    #[cfg(test)]
     pub(crate) fn push_local_user(
         &mut self,
         message: String,
@@ -232,6 +246,7 @@ impl ConversationState {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn push_local_invocation(
         &mut self,
         message: String,
@@ -252,7 +267,7 @@ impl ConversationState {
         invocation: bool,
     ) -> Arc<TranscriptItem> {
         self.push_local_user_with_images(
-            pasted_file_summary(&message).to_owned(),
+            message,
             decode_prompt_images(images),
             invocation.then(String::new),
         )
@@ -264,30 +279,29 @@ impl ConversationState {
         images: &[PromptImage],
         resolution: String,
     ) -> Arc<TranscriptItem> {
-        self.push_local_user_with_images(
-            pasted_file_summary(&message).to_owned(),
-            decode_prompt_images(images),
-            Some(resolution),
-        )
+        self.push_local_user_with_images(message, decode_prompt_images(images), Some(resolution))
     }
 
-    fn push_local_user_with_images(
+    pub(in crate::app) fn push_local_user_with_images(
         &mut self,
         message: String,
         images: Arc<Vec<Arc<Image>>>,
         invocation: Option<String>,
     ) -> Arc<TranscriptItem> {
+        let (message, files) = split_pasted_files(&message);
         let item = Arc::new(TranscriptItem {
             kind: TranscriptKind::User,
             label: String::new(),
-            text: message,
+            text: message.to_owned(),
             images,
+            files: Arc::new(files),
             stream_chunks: Arc::default(),
             streaming: false,
             is_error: false,
             tool_call_id: None,
             tool_output: String::new(),
             tool_presentation: None,
+            tool_details: None,
             tool_review: None,
             invocation,
         });
@@ -325,12 +339,14 @@ impl ConversationState {
             label: "Connection error".into(),
             text: message,
             images: Arc::default(),
+            files: Arc::default(),
             stream_chunks: Arc::default(),
             streaming: false,
             is_error: true,
             tool_call_id: None,
             tool_output: String::new(),
             tool_presentation: None,
+            tool_details: None,
             tool_review: None,
             invocation: None,
         }));
@@ -342,12 +358,14 @@ impl ConversationState {
             label: "Extension error".into(),
             text: message,
             images: Arc::default(),
+            files: Arc::default(),
             stream_chunks: Arc::default(),
             streaming: false,
             is_error: true,
             tool_call_id: None,
             tool_output: String::new(),
             tool_presentation: None,
+            tool_details: None,
             tool_review: None,
             invocation: None,
         }));
@@ -368,12 +386,14 @@ impl ConversationState {
             label: label.into(),
             text: message,
             images: Arc::default(),
+            files: Arc::default(),
             stream_chunks: Arc::default(),
             streaming: false,
             is_error: true,
             tool_call_id: None,
             tool_output: details,
             tool_presentation: None,
+            tool_details: None,
             tool_review: None,
             invocation: None,
         }));

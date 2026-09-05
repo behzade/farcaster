@@ -9,11 +9,14 @@ use serde_json::{Value, json};
 use super::{
     AcpProfile,
     connection::AcpConnection,
-    translate::{commands_from_update, metadata_from_session, tool_content},
+    translate::{
+        commands_from_update, merge_tool_metadata, merged_tool_content, metadata_from_session,
+        normalize_tool_name, tool_args, tool_metadata,
+    },
     wire::AcpInbound,
     worker::configure_command,
 };
-use crate::agents::{AgentLaunchConfig, DiscoveredHistory, HarnessAccessMode};
+use crate::agents::{AgentLaunchConfig, DiscoveredHistory, HarnessAccessMode, ToolMetadata};
 
 use super::super::{child_stderr, main_session};
 
@@ -118,10 +121,18 @@ fn with_connection<T>(
     result
 }
 
+#[derive(Default)]
+struct HistoryToolState {
+    index: usize,
+    name: String,
+    metadata: ToolMetadata,
+    finished: bool,
+}
+
 fn replay_history(messages: impl IntoIterator<Item = AcpInbound>) -> Vec<Value> {
     let mut history = Vec::new();
     let mut last_chunk = None;
-    let mut tool_names = std::collections::HashMap::new();
+    let mut tools = std::collections::HashMap::<String, HistoryToolState>::new();
     for message in messages {
         let AcpInbound::Notification { method, params } = message else {
             continue;
@@ -166,40 +177,58 @@ fn replay_history(messages: impl IntoIterator<Item = AcpInbound>) -> Vec<Value> 
                     );
                 }
             }
-            Some("tool_call") => {
+            Some("tool_call" | "tool_call_update") => {
                 last_chunk = None;
-                if let Some(id) = update.get("toolCallId").and_then(Value::as_str) {
-                    let name = update
-                        .get("title")
-                        .and_then(Value::as_str)
-                        .unwrap_or("tool");
-                    tool_names.insert(id.to_owned(), name.to_owned());
+                let Some(id) = update.get("toolCallId").and_then(Value::as_str) else {
+                    continue;
+                };
+                if !tools.contains_key(id) {
+                    let metadata = tool_metadata(update);
+                    let title = metadata.title.as_deref().unwrap_or("tool");
+                    let native = metadata.native.as_ref().unwrap_or(update);
+                    let name = normalize_tool_name(native, title);
+                    let index = history.len();
                     history.push(json!({
                         "role":"assistant",
                         "content":[{
                             "type":"toolCall",
                             "id":id,
                             "name":name,
-                            "arguments":update.get("rawInput").cloned().unwrap_or_else(|| json!({})),
+                            "arguments":tool_args(&metadata),
+                            "toolMetadata":metadata,
                         }],
                     }));
+                    tools.insert(
+                        id.to_owned(),
+                        HistoryToolState {
+                            index,
+                            name,
+                            metadata,
+                            finished: false,
+                        },
+                    );
+                } else {
+                    let state = tools.get_mut(id).expect("tool checked above");
+                    merge_tool_metadata(&mut state.metadata, update);
+                    if let Some(call) = history
+                        .get_mut(state.index)
+                        .and_then(|message| message.pointer_mut("/content/0"))
+                    {
+                        call["arguments"] = tool_args(&state.metadata);
+                        call["toolMetadata"] = json!(state.metadata);
+                    }
                 }
-            }
-            Some("tool_call_update")
-                if matches!(
-                    update.get("status").and_then(Value::as_str),
-                    Some("completed" | "failed")
-                ) =>
-            {
-                last_chunk = None;
-                if let Some(id) = update.get("toolCallId").and_then(Value::as_str) {
-                    let failed = update.get("status").and_then(Value::as_str) == Some("failed");
+
+                let state = tools.get_mut(id).expect("tool inserted above");
+                let status = update.get("status").and_then(Value::as_str);
+                if matches!(status, Some("completed" | "failed")) && !state.finished {
+                    state.finished = true;
                     history.push(json!({
                         "role":"toolResult",
                         "toolCallId":id,
-                        "toolName":tool_names.get(id).map(String::as_str).unwrap_or("tool"),
-                        "content":tool_content(update),
-                        "isError":failed,
+                        "toolName":state.name,
+                        "content":merged_tool_content(&state.metadata, update),
+                        "isError":status == Some("failed"),
                     }));
                 }
             }
@@ -296,8 +325,9 @@ mod tests {
             notification(
                 json!({"sessionUpdate":"user_message_chunk","messageId":"u1","content":{"type":"text","text":" world"}}),
             ),
+            notification(json!({"sessionUpdate":"tool_call","toolCallId":"t1","title":"Read"})),
             notification(
-                json!({"sessionUpdate":"tool_call","toolCallId":"t1","title":"Read","rawInput":{"path":"README.md"}}),
+                json!({"sessionUpdate":"tool_call_update","toolCallId":"t1","kind":"read","locations":[{"path":"README.md"}],"rawInput":{"path":"README.md"}}),
             ),
             notification(
                 json!({"sessionUpdate":"tool_call_update","toolCallId":"t1","status":"completed","content":[{"type":"text","text":"read"}]}),
@@ -313,6 +343,78 @@ mod tests {
             history[1].pointer("/content/0/type"),
             Some(&json!("toolCall"))
         );
+        assert_eq!(history[1].pointer("/content/0/name"), Some(&json!("Read")));
+        assert_eq!(
+            history[1].pointer("/content/0/arguments/path"),
+            Some(&json!("README.md"))
+        );
+        assert_eq!(
+            history[1].pointer("/content/0/toolMetadata/category"),
+            Some(&json!("read"))
+        );
+        assert_eq!(
+            history[1].pointer("/content/0/toolMetadata/targets/0"),
+            Some(&json!("README.md"))
+        );
+        assert_eq!(
+            history[1].pointer("/content/0/toolMetadata/native/title"),
+            Some(&json!("Read"))
+        );
         assert_eq!(history[2]["role"], "toolResult");
+    }
+
+    #[test]
+    fn replay_retains_output_emitted_before_completion() {
+        let notification = |update| AcpInbound::Notification {
+            method: "session/update".into(),
+            params: json!({"update":update}),
+        };
+        let history = replay_history([
+            notification(json!({
+                "sessionUpdate":"tool_call",
+                "toolCallId":"partial",
+                "title":"Long task"
+            })),
+            notification(json!({
+                "sessionUpdate":"tool_call_update",
+                "toolCallId":"partial",
+                "content":[{"type":"text","text":"output before completion"}]
+            })),
+            notification(json!({
+                "sessionUpdate":"tool_call_update",
+                "toolCallId":"partial",
+                "status":"completed"
+            })),
+        ]);
+        assert_eq!(
+            history[1].pointer("/content/0/text"),
+            Some(&json!("output before completion"))
+        );
+    }
+
+    #[test]
+    fn replay_handles_completed_tool_as_its_first_update() {
+        let history = replay_history([AcpInbound::Notification {
+            method: "session/update".into(),
+            params: json!({"update":{
+                "sessionUpdate":"tool_call_update",
+                "toolCallId":"done",
+                "kind":"fetch",
+                "title":"Fetch docs",
+                "status":"completed",
+                "rawInput":{"url":"https://example.com"},
+                "content":[{"type":"text","text":"done"}]
+            }}),
+        }]);
+        assert_eq!(history.len(), 2);
+        assert_eq!(
+            history[0].pointer("/content/0/name"),
+            Some(&json!("web_fetch"))
+        );
+        assert_eq!(
+            history[0].pointer("/content/0/toolMetadata/category"),
+            Some(&json!("fetch"))
+        );
+        assert_eq!(history[1]["role"], "toolResult");
     }
 }

@@ -46,7 +46,11 @@ impl FarcasterApp {
                 transcript.list.pause_following_tail();
             }
             transcript.disclosure_states.insert(key, expanded);
-            if let Some(index) = transcript.rows.iter().position(|row| row.key() == key) {
+            if let Some(index) = transcript
+                .rows
+                .iter()
+                .position(|row| row.contains_disclosure_key(key))
+            {
                 transcript
                     .list
                     .remeasure_items(index..index.saturating_add(1));

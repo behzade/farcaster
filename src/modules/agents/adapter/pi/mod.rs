@@ -2,11 +2,13 @@ mod framing;
 mod mcp_config;
 mod process;
 mod protocol;
+mod tool;
 pub(super) mod trust;
 mod wire;
 mod worker;
 
 pub(super) use process::PiRpcProcess;
+pub(super) use tool::annotate_pi_message as annotate_history_message;
 pub(super) use worker::PiWorkerFactory;
 
 use super::super::contract::{

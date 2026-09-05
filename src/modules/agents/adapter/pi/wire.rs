@@ -48,6 +48,9 @@ pub(crate) fn parse_frame(frame: &[u8]) -> Result<PiWireMessage, String> {
             if response.success && response.command == "get_session_stats" {
                 add_usage_total(response.data.get_mut("tokens"));
             }
+            if response.success && response.command == "get_entries" {
+                super::tool::annotate_pi_value(&mut response.data);
+            }
             let operation = response_operation(&response.command);
             Ok(PiWireMessage::Response {
                 command: response.command,
@@ -67,6 +70,7 @@ pub(crate) fn parse_frame(frame: &[u8]) -> Result<PiWireMessage, String> {
             if is_turn_end {
                 add_usage_total(value.get_mut("usage"));
             }
+            super::tool::annotate_pi_value(&mut value);
             Ok(PiWireMessage::Event(value))
         }
     }

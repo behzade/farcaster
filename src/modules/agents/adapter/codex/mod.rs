@@ -3,6 +3,7 @@ mod connection;
 #[cfg(test)]
 mod connection_tests;
 mod contract;
+mod tool;
 mod wire;
 mod worker;
 

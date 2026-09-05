@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-use crate::agents::{WorkerActivity, WorkerEvent, WorkerInput};
+use crate::agents::{ToolCategory, ToolMetadata, WorkerActivity, WorkerEvent, WorkerInput};
 
 use super::wire::AcpRequestId;
 
@@ -127,9 +127,15 @@ pub(super) fn plan_input(request: &AcpRequestId, prompt: String) -> WorkerInput 
 }
 
 pub(super) fn notification(method: &str, params: &Value) -> Option<(WorkerEvent, WorkerEvent)> {
-    let (name, result) = match method {
+    let (name, category, title, targets, result) = match method {
         "cursor/task" => (
             "cursor_task",
+            ToolCategory::Delegate,
+            params
+                .get("description")
+                .and_then(Value::as_str)
+                .unwrap_or("Delegate Cursor task"),
+            Vec::new(),
             json!({
                 "description": params.get("description"),
                 "agentId": params.get("agentId"),
@@ -138,10 +144,23 @@ pub(super) fn notification(method: &str, params: &Value) -> Option<(WorkerEvent,
         ),
         "cursor/update_todos" => (
             "cursor_todos",
+            ToolCategory::Change,
+            "Update task list",
+            Vec::new(),
             json!({"todos": params.get("todos"), "merge": params.get("merge")}),
         ),
         "cursor/generate_image" => (
             "cursor_generate_image",
+            ToolCategory::Change,
+            params
+                .get("description")
+                .and_then(Value::as_str)
+                .unwrap_or("Generate image"),
+            params
+                .get("filePath")
+                .and_then(Value::as_str)
+                .map(|path| vec![path.to_owned()])
+                .unwrap_or_default(),
             json!({
                 "description": params.get("description"),
                 "filePath": params.get("filePath"),
@@ -159,6 +178,12 @@ pub(super) fn notification(method: &str, params: &Value) -> Option<(WorkerEvent,
             id: id.clone(),
             name: name.into(),
             args: params.clone(),
+            metadata: ToolMetadata {
+                category: Some(category),
+                title: Some(title.to_owned()),
+                targets,
+                native: Some(params.clone()),
+            },
         }),
         WorkerEvent::Activity(WorkerActivity::ToolFinished {
             id,
@@ -166,6 +191,30 @@ pub(super) fn notification(method: &str, params: &Value) -> Option<(WorkerEvent,
             is_error: false,
         }),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn synthetic_image_has_change_metadata_and_target() {
+        let (started, _) = notification(
+            "cursor/generate_image",
+            &json!({
+                "toolCallId":"image-1",
+                "description":"Create cover art",
+                "filePath":"art/cover.png"
+            }),
+        )
+        .unwrap();
+        let WorkerEvent::Activity(WorkerActivity::ToolStarted { metadata, .. }) = started else {
+            panic!("expected tool start");
+        };
+        assert_eq!(metadata.category, Some(ToolCategory::Change));
+        assert_eq!(metadata.title.as_deref(), Some("Create cover art"));
+        assert_eq!(metadata.targets, ["art/cover.png"]);
+    }
 }
 
 fn request_id(id: &AcpRequestId) -> String {

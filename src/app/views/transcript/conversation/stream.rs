@@ -41,6 +41,13 @@ impl ConversationState {
             .unwrap_or_default();
         let previous_len = self.items.len();
         let previous_live_start = self.live_message.map(|live| live.start);
+        // Completion removes the active lookup. Capture the actual row before
+        // reducing, including results/reviews arriving after other tool calls.
+        let affected_tool = event
+            .get("toolCallId")
+            .or_else(|| event.pointer("/message/toolCallId"))
+            .and_then(Value::as_str)
+            .and_then(|id| self.tools.get(id).copied().or_else(|| self.tool_index(id)));
         let mut incremental_content_changed = true;
         match kind {
             "agent_start" => {
@@ -67,6 +74,9 @@ impl ConversationState {
             "peer_message" => self.peer_message(event),
             "tool_execution_start" => self.start_tool(event),
             "tool_execution_update" => incremental_content_changed = self.update_tool(event),
+            "tool_metadata_changed" => {
+                incremental_content_changed = self.update_tool_metadata(event)
+            }
             "tool_execution_end" => self.end_tool(event),
             "tool_review_changed" => self.review_tool(event),
             "queue_update" => {
@@ -109,19 +119,18 @@ impl ConversationState {
             "message_start" => Some(previous_len.saturating_sub(1)),
             "message_update" if incremental_content_changed => previous_live_start,
             "message_update" => None,
-            "message_end" => {
+            "message_end" => affected_tool.or_else(|| {
                 previous_live_start.map(|start| start.min(previous_len.saturating_sub(1)))
-            }
+            }),
             "peer_message" => Some(previous_len),
-            "tool_execution_update" if !incremental_content_changed => None,
+            "tool_execution_update" | "tool_metadata_changed" if !incremental_content_changed => {
+                None
+            }
             "tool_execution_start"
             | "tool_execution_update"
             | "tool_execution_end"
-            | "tool_review_changed" => event
-                .get("toolCallId")
-                .and_then(Value::as_str)
-                .and_then(|id| self.tools.get(id).copied())
-                .or(Some(previous_len)),
+            | "tool_metadata_changed"
+            | "tool_review_changed" => affected_tool.or(Some(previous_len)),
             "compaction_start"
             | "compaction_end"
             | "auto_retry_start"
@@ -280,12 +289,14 @@ impl ConversationState {
             .into(),
             text: partial.value.clone(),
             images: Arc::default(),
+            files: Arc::default(),
             stream_chunks: partial.chunks.clone(),
             streaming: true,
             is_error: false,
             tool_call_id: None,
             tool_output: String::new(),
             tool_presentation: None,
+            tool_details: None,
             tool_review: None,
             invocation: None,
         });
@@ -311,9 +322,7 @@ impl ConversationState {
                 .get("toolCallId")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            if let Some(index) = self.items.rposition(|item| {
-                item.kind == TranscriptKind::Tool && item.tool_call_id.as_deref() == Some(id)
-            }) {
+            if let Some(index) = self.tool_index(id) {
                 let mut item = self.items[index].clone();
                 apply_tool_result(Arc::make_mut(&mut item), message, true);
                 self.items.set(index, item);
@@ -342,6 +351,7 @@ impl ConversationState {
         {
             let final_user = Arc::make_mut(final_user);
             final_user.text.clone_from(&optimistic.text);
+            final_user.files.clone_from(&optimistic.files);
             final_user.invocation = Some(resolution.to_owned());
         }
         if let Some(live) = self.live_message.take() {
@@ -384,12 +394,14 @@ impl ConversationState {
             label: "Run".into(),
             text,
             images: Arc::default(),
+            files: Arc::default(),
             stream_chunks: Arc::default(),
             streaming: false,
             is_error: false,
             tool_call_id: None,
             tool_output: String::new(),
             tool_presentation: None,
+            tool_details: None,
             tool_review: None,
             invocation: None,
         }));

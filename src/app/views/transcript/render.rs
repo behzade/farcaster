@@ -34,8 +34,6 @@ use crate::{
 
 #[path = "render/chunking.rs"]
 mod chunking;
-#[path = "render/command_summary.rs"]
-mod command_summary;
 #[path = "render/detail_rows.rs"]
 mod detail_rows;
 #[path = "render/message_rows.rs"]
@@ -107,11 +105,25 @@ pub(super) fn message_follows_tool(
         TranscriptRow::ActivityGroup { .. } => false,
     };
     is_first_assistant_row
-        && row
-            .item_start()
-            .checked_sub(1)
-            .and_then(|index| items.get(index))
+        && (0..row.item_start())
+            .rev()
+            .filter_map(|index| items.get(index))
+            .find(|item| item.kind != TranscriptKind::Thinking)
             .is_some_and(|item| item.kind == TranscriptKind::Tool)
+}
+
+pub(super) fn copy_transcript_row_range(
+    items: &PersistentVec<Arc<TranscriptItem>>,
+    rows: &PersistentVec<TranscriptRow>,
+    range: std::ops::RangeInclusive<usize>,
+) -> String {
+    let last = rows.partition_point(|row| row.key() <= *range.end());
+    let end = last
+        .checked_sub(1)
+        .and_then(|index| rows.get(index))
+        .filter(|row| row.key() == *range.end())
+        .map_or(*range.end(), |row| row.item_end().saturating_sub(1));
+    copy_transcript_items(items, *range.start()..=end)
 }
 
 pub(super) fn copy_transcript_items(
@@ -121,7 +133,9 @@ pub(super) fn copy_transcript_items(
     range
         .filter_map(|index| items.get(index))
         .map(|item| {
-            let mut text = item.tool_details.as_ref()
+            let mut text = item
+                .tool_details
+                .as_ref()
                 .map_or_else(|| item.complete_text(), |details| details.inspection_text());
             if !item.images.is_empty() {
                 let label = if item.images.len() == 1 {
@@ -174,12 +188,13 @@ pub(crate) fn render(
     let jump = entity.clone();
     let row_entity = entity;
     let selection_rows = rows.clone();
+    let selection_copy_rows = rows.clone();
     let selection_items = conversation.items.clone();
     let selection_state = list_state.clone();
     let view = transcript_list_grouped(
         list_state.clone(),
         move |index| selection_rows.get(index).map_or(index, TranscriptRow::key),
-        move |range| copy_transcript_items(&selection_items, range),
+        move |range| copy_transcript_row_range(&selection_items, &selection_copy_rows, range),
         move |index, _, cx| {
             let _timing = crate::app::infrastructure::performance::OperationTiming::new(
                 crate::app::infrastructure::performance::OperationKind::TranscriptRow,
@@ -293,7 +308,9 @@ fn transcript_context_menu(
                     .separator();
             }
 
-            if matches!(row, TranscriptRow::Item { index, .. } if tool_rows::opens_file(&items[index])) {
+            if matches!(row, TranscriptRow::ActivityGroup { .. })
+                || matches!(row, TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Tool)
+            {
                 let entity = entity.clone();
                 menu = menu.item(PopupMenuItem::new(if expanded {
                     "Hide raw tool input/output"
@@ -301,7 +318,7 @@ fn transcript_context_menu(
                     "Show raw tool input/output"
                 }).on_click(move |_, _, cx| {
                     let _ = entity.update(cx, |this, cx| {
-                        this.set_transcript_item_expanded(row.key(), !expanded, cx);
+                        this.set_transcript_item_expanded(row.disclosure_key(), !expanded, cx);
                     });
                 })).separator();
             }
@@ -366,9 +383,15 @@ fn render_row(
     let key = row.key();
     let follows_tool = message_follows_tool(row, items);
     match row {
-        TranscriptRow::ActivityGroup { start, len, .. } => {
-            render_activity_group(row.disclosure_key(), items, start, len, expanded, disclosure_states, entity)
-        }
+        TranscriptRow::ActivityGroup { start, len, .. } => render_activity_group(
+            row.disclosure_key(),
+            items,
+            start,
+            len,
+            expanded,
+            disclosure_states,
+            entity,
+        ),
         TranscriptRow::MessageChunk {
             index,
             start,
@@ -599,52 +622,6 @@ fn fenced_text(text: &str) -> String {
         return "No output".into();
     }
     format!("```text\n{}\n```", text.replace("```", "``\\`"))
-}
-
-pub(super) fn tool_target(arguments: &str) -> String {
-    let first = if let Some((_, command)) = conversation::split_command_block(arguments) {
-        return command_summary::command_summary(command);
-    } else {
-        let first = arguments.lines().next().unwrap_or_default();
-        if let Some((name, command)) = arguments.split_once(':')
-            && matches!(name.trim().to_ascii_lowercase().as_str(), "command" | "cmd")
-        {
-            return command_summary::command_summary(command);
-        }
-        first
-            .split_once(':')
-            .map(|(_, value)| value.trim())
-            .filter(|value| !value.is_empty())
-            .unwrap_or(first)
-    };
-    first.chars().take(96).collect()
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct ToolState {
-    pub(super) glyph: &'static str,
-    pub(super) label: &'static str,
-}
-
-pub(super) fn tool_state(running: bool, failed: usize, completed: bool) -> Option<ToolState> {
-    if failed > 0 {
-        Some(ToolState {
-            glyph: "×",
-            label: "Failed",
-        })
-    } else if running {
-        Some(ToolState {
-            glyph: "…",
-            label: "Working",
-        })
-    } else if completed {
-        Some(ToolState {
-            glyph: "✓",
-            label: "Done",
-        })
-    } else {
-        None
-    }
 }
 
 fn item_color(item: &TranscriptItem) -> gpui::Rgba {

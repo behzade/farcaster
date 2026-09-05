@@ -11,42 +11,42 @@ use crate::app::{
         assets::AppIcon,
         persistent_vec::PersistentVec,
         primitives::{AppIconSize, app_icon},
-        theme::{MONO_FONT_FAMILY, THEME},
+        theme::{MONO_FONT_FAMILY, THEME, UI_FONT_FAMILY},
     },
     views::transcript::{
-        conversation::{ToolReviewState, TranscriptItem},
+        conversation::{ToolExecutionState, ToolReviewState, TranscriptItem, TranscriptKind},
         tool_changes,
     },
 };
 
 use super::{
     TRANSCRIPT_HORIZONTAL_PADDING, disclosure_detail, fenced_text, selectable_text, technical_text,
-    toggle_transcript_item, tool_state, tool_target,
+    toggle_transcript_item,
 };
 
-pub(super) fn render_read_group(
+pub(super) fn render_activity_group(
     key: usize,
     items: &PersistentVec<Arc<TranscriptItem>>,
     start: usize,
     len: usize,
     expanded: bool,
+    disclosure_states: &std::collections::HashMap<usize, bool>,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
     let group_items = || items.iter_range(start..start + len);
-    let target = (len == 1).then(|| tool_target(&items[start].text));
-    let summary = if len == 1 {
-        "Read".to_owned()
-    } else {
-        format!("{len} files")
-    };
-    let status = group_status(group_items().map(|item| item_status(item)));
+    let summary = activity_summary(group_items().map(AsRef::as_ref));
+    // Attention states are standalone rows, never members of this group.
+    let status = group_items()
+        .filter(|item| item.kind == TranscriptKind::Tool)
+        .all(|item| item_status(item) == Some(ToolStatus::Succeeded))
+        .then_some(ToolStatus::Succeeded);
     let disclosure_label = format!(
-        "{} read call details for {summary}. {}",
+        "{} activity details for {summary}. {}",
         if expanded { "Collapse" } else { "Expand" },
         status.map_or("No result", ToolStatus::label)
     );
     div()
-        .id(("read-group", key))
+        .id(("activity-group", key))
         .w_full()
         .px(TRANSCRIPT_HORIZONTAL_PADDING)
         .py(px(2.0))
@@ -54,25 +54,27 @@ pub(super) fn render_read_group(
         .flex_col()
         .child(
             tool_changes::title_row(
-                ("read-title", key),
+                ("activity-title", key),
                 disclosure_label,
                 toggle_transcript_item(entity.clone(), key, expanded),
             )
             .aria_expanded(expanded)
-            .child(status_slot(status))
-            .child(tool_changes::tool_label("Read"))
+            .child(app_icon(
+                if expanded {
+                    AppIcon::CaretDown
+                } else {
+                    AppIcon::CaretRight
+                },
+                AppIconSize::Inline,
+            ))
+            .child(tool_changes::tool_label("Activity"))
             .child(
-                technical_text(
-                    ("read-target", key),
-                    target
-                        .filter(|target| !target.is_empty())
-                        .unwrap_or(summary),
-                )
-                .flex_1()
-                .min_w_0()
-                .text_color(THEME.colors.text),
-            )
-            .children(status.and_then(status_badge)),
+                technical_text(("activity-summary", key), summary)
+                    .flex_1()
+                    .min_w_0()
+                    .font_family(UI_FONT_FAMILY)
+                    .text_color(THEME.colors.muted),
+            ),
         )
         .when(expanded, |group| {
             group.child(
@@ -80,8 +82,15 @@ pub(super) fn render_read_group(
                     .flex()
                     .flex_col()
                     .gap(THEME.space.xs)
-                    .children(group_items().enumerate().map(|(index, item)| {
-                        expanded_tool_body(format!("read-detail-{key}-{index}"), item)
+                    .children(group_items().enumerate().map(|(offset, item)| {
+                        let index = start + offset;
+                        let child_expanded =
+                            disclosure_states.get(&index).copied().unwrap_or(false);
+                        if item.kind == TranscriptKind::Thinking {
+                            super::render_thinking(index, item, child_expanded, entity.clone())
+                        } else {
+                            render_tool(index, item, child_expanded, entity.clone())
+                        }
                     })),
             )
         })
@@ -95,27 +104,28 @@ pub(super) fn render_tool(
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
     let status = item_status(item);
-    let presentation = item.tool_presentation.as_ref();
-    let target =
-        presentation.map_or_else(|| tool_target(&item.text), |change| change.path().into());
-    let has_target = !target.is_empty();
-    let detail_label = if has_target {
-        format!("{} tool call details for {target}", item.label)
-    } else {
-        format!("{} tool call details", item.label)
-    };
-    let opens_file = opens_file(item);
-    let disclosure_label = if opens_file {
-        format!("Open {target} in Neovim")
-    } else {
-        format!(
-            "{} {detail_label}. {}",
-            if expanded { "Collapse" } else { "Expand" },
-            status.map_or("No result", ToolStatus::label)
-        )
-    };
-    let source = presentation.cloned().filter(|_| opens_file);
-    let click_entity = entity.clone();
+    let presentation = item.tool_presentation.as_ref().filter(|presentation| {
+        !presentation.path().is_empty()
+            && item
+                .tool_details
+                .as_ref()
+                .is_none_or(|details| details.metadata.targets.len() <= 1)
+    });
+    let summary = item.tool_details.as_ref().map_or_else(
+        || {
+            if item.streaming && item.tool_call_id.is_none() {
+                "Preparing tool call".to_owned()
+            } else {
+                item.label.clone()
+            }
+        },
+        |details| details.summary(),
+    );
+    let disclosure_label = format!(
+        "{} {summary} details. {}",
+        if expanded { "Collapse" } else { "Expand" },
+        status.map_or("No result", ToolStatus::label)
+    );
     div()
         .id(("tool-row", key))
         .w_full()
@@ -124,40 +134,134 @@ pub(super) fn render_tool(
         .flex()
         .flex_col()
         .child(
-            tool_changes::title_row(("tool-title", key), disclosure_label, move |window, cx| {
-                let _ = click_entity.update(cx, |this, cx| {
-                    if let Some(source) = &source {
-                        this.open_file_editor_at_line(
-                            source.path().into(),
-                            source.first_changed_line(),
-                            window,
-                            cx,
-                        );
-                    } else {
-                        this.set_transcript_item_expanded(key, !expanded, cx);
-                    }
-                });
-            })
-            .when(!opens_file, |row| row.aria_expanded(expanded))
+            tool_changes::title_row(
+                ("tool-title", key),
+                disclosure_label,
+                toggle_transcript_item(entity.clone(), key, expanded),
+            )
+            .aria_expanded(expanded)
             .child(status_slot(status))
-            .child(tool_changes::tool_label(item.label.clone()))
             .when_some(presentation, |row, presentation| {
-                row.child(tool_changes::file_summary(presentation))
+                row.child(tool_changes::tool_label(item.label.clone()))
+                    .child(tool_changes::file_summary(presentation))
             })
-            .when(presentation.is_none() && has_target, |row| {
+            .when(presentation.is_none(), |row| {
                 row.child(
-                    technical_text(("tool-target", key), target)
+                    div()
                         .flex_1()
                         .min_w_0()
-                        .text_color(THEME.colors.text),
+                        .truncate()
+                        .text_size(THEME.type_scale.body_small)
+                        .text_color(THEME.colors.muted)
+                        .child(summary),
                 )
             })
             .children(status.and_then(status_badge)),
         )
         .when(expanded, |tool| {
-            tool.child(disclosure_detail().child(expanded_tool_body(("tool-detail", key), item)))
+            tool.child(
+                disclosure_detail()
+                    .children(file_links(key, item, entity))
+                    .child(expanded_tool_body(("tool-detail", key), item)),
+            )
         })
         .into_any_element()
+}
+
+fn activity_summary<'a>(items: impl Iterator<Item = &'a TranscriptItem>) -> String {
+    use crate::agents::ToolCategory;
+    let mut counts = [0usize; 7];
+    let mut calls = 0;
+    let mut unknown = false;
+    for item in items.filter(|item| item.kind == TranscriptKind::Tool) {
+        calls += 1;
+        let category = item
+            .tool_details
+            .as_ref()
+            .and_then(|details| details.metadata.category);
+        let slot = match category {
+            Some(ToolCategory::Read) => 0,
+            Some(ToolCategory::Search) => 1,
+            Some(ToolCategory::List) => 2,
+            Some(ToolCategory::Change) => 3,
+            Some(ToolCategory::Execute) => 4,
+            Some(ToolCategory::Fetch) => 5,
+            Some(ToolCategory::Delegate) => 6,
+            Some(ToolCategory::Other) | None => {
+                unknown = true;
+                continue;
+            }
+        };
+        counts[slot] += 1;
+    }
+    if unknown || counts.iter().filter(|count| **count > 0).count() > 3 {
+        return format!("{calls} {}", if calls == 1 { "call" } else { "calls" });
+    }
+    counts
+        .into_iter()
+        .zip([
+            ("read", "reads"),
+            ("search", "searches"),
+            ("listing", "listings"),
+            ("change", "changes"),
+            ("command", "commands"),
+            ("fetch", "fetches"),
+            ("agent task", "agent tasks"),
+        ])
+        .filter(|(count, _)| *count > 0)
+        .map(|(count, (singular, plural))| {
+            format!("{count} {}", if count == 1 { singular } else { plural })
+        })
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+fn file_links(
+    key: usize,
+    item: &TranscriptItem,
+    entity: WeakEntity<FarcasterApp>,
+) -> Vec<AnyElement> {
+    if !has_file_links(item) {
+        return Vec::new();
+    }
+    let mut paths = item
+        .tool_details
+        .as_ref()
+        .map(|details| details.metadata.targets.clone())
+        .unwrap_or_default();
+    if paths.is_empty()
+        && let Some(presentation) = &item.tool_presentation
+    {
+        paths.push(presentation.path().to_owned());
+    }
+    let mut seen = std::collections::HashSet::new();
+    paths
+        .into_iter()
+        .filter(|path| !path.is_empty() && seen.insert(path.clone()))
+        .enumerate()
+        .map(|(offset, path)| {
+            let entity = entity.clone();
+            let label = format!("Open {path} in Neovim");
+            let line = item
+                .tool_presentation
+                .as_ref()
+                .filter(|presentation| presentation.path() == path)
+                .and_then(|presentation| presentation.first_changed_line());
+            tool_changes::title_row(
+                format!("tool-file-{key}-{offset}"),
+                label.clone(),
+                move |window, cx| {
+                    let _ = entity.update(cx, |this, cx| {
+                        this.open_file_editor_at_line(path.clone().into(), line, window, cx)
+                    });
+                },
+            )
+            .text_size(THEME.type_scale.body_small)
+            .text_color(THEME.colors.accent)
+            .child(label)
+            .into_any_element()
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -196,49 +300,46 @@ impl ToolStatus {
     }
 }
 
-fn status_from_label(label: &str) -> ToolStatus {
-    match label {
-        "Failed" => ToolStatus::Failed,
-        "Working" => ToolStatus::Running,
-        _ => ToolStatus::Succeeded,
-    }
-}
-
 fn item_status(item: &TranscriptItem) -> Option<ToolStatus> {
     match item.tool_review.as_ref().map(|review| review.state) {
         Some(ToolReviewState::Reviewing) => return Some(ToolStatus::Reviewing),
         Some(ToolReviewState::Blocked) => return Some(ToolStatus::Rejected),
         _ => {}
     }
-    tool_state(
-        item.streaming,
-        usize::from(item.is_error),
-        !item.streaming && (item.is_error || !item.tool_output.is_empty()),
-    )
-    .map(|state| status_from_label(state.label))
+    if item.is_error {
+        return Some(ToolStatus::Failed);
+    }
+    if item.streaming {
+        return Some(ToolStatus::Running);
+    }
+    if let Some(details) = &item.tool_details {
+        return match details.state {
+            ToolExecutionState::Pending => None,
+            ToolExecutionState::Running => Some(ToolStatus::Running),
+            ToolExecutionState::Succeeded => Some(ToolStatus::Succeeded),
+            ToolExecutionState::Failed => Some(ToolStatus::Failed),
+        };
+    }
+    (!item.tool_output.is_empty()).then_some(ToolStatus::Succeeded)
 }
 
-fn group_status(statuses: impl Iterator<Item = Option<ToolStatus>>) -> Option<ToolStatus> {
-    let statuses = statuses.collect::<Vec<_>>();
-    [
-        ToolStatus::Reviewing,
-        ToolStatus::Failed,
-        ToolStatus::Rejected,
-        ToolStatus::Running,
-    ]
-    .into_iter()
-    .find(|status| statuses.contains(&Some(*status)))
-    .or_else(|| {
-        (!statuses.is_empty()
-            && statuses
-                .iter()
-                .all(|status| *status == Some(ToolStatus::Succeeded)))
-        .then_some(ToolStatus::Succeeded)
-    })
-}
-
-pub(super) fn opens_file(item: &TranscriptItem) -> bool {
-    item.tool_presentation.is_some() && item_status(item) == Some(ToolStatus::Succeeded)
+fn has_file_links(item: &TranscriptItem) -> bool {
+    use crate::agents::ToolCategory;
+    item_status(item) == Some(ToolStatus::Succeeded)
+        && (item
+            .tool_presentation
+            .as_ref()
+            .is_some_and(|presentation| !presentation.path().is_empty())
+            || item.tool_details.as_ref().is_some_and(|details| {
+                matches!(
+                    details.metadata.category,
+                    Some(ToolCategory::Read | ToolCategory::Change)
+                ) && details
+                    .metadata
+                    .targets
+                    .iter()
+                    .any(|target| !target.is_empty())
+            }))
 }
 
 fn status_slot(status: Option<ToolStatus>) -> AnyElement {
@@ -257,7 +358,7 @@ fn status_slot(status: Option<ToolStatus>) -> AnyElement {
 }
 
 fn status_badge(status: ToolStatus) -> Option<AnyElement> {
-    matches!(status, ToolStatus::Reviewing | ToolStatus::Rejected).then(|| {
+    (status != ToolStatus::Succeeded).then(|| {
         div()
             .flex_none()
             .text_size(THEME.type_scale.caption)
@@ -268,11 +369,11 @@ fn status_badge(status: ToolStatus) -> Option<AnyElement> {
 }
 
 fn expanded_tool_body(id: impl Into<gpui::ElementId>, item: &TranscriptItem) -> AnyElement {
-    let mut detail = String::new();
-    if !item.text.is_empty() {
-        detail.push_str(&item.text);
-    }
-    if !item.tool_output.is_empty() {
+    let mut detail = item
+        .tool_details
+        .as_ref()
+        .map_or_else(|| item.text.clone(), |details| details.inspection_text());
+    if item.tool_details.is_none() && !item.tool_output.is_empty() {
         if !detail.is_empty() {
             detail.push_str("\n\n");
         }
@@ -322,15 +423,20 @@ mod tests {
     #[test]
     fn only_successful_file_changes_open_editor() {
         let mut item = write_item();
-        assert!(opens_file(&item));
+        assert!(has_file_links(&item));
         item.streaming = true;
-        assert!(!opens_file(&item));
+        assert!(!has_file_links(&item));
         item.streaming = false;
         item.is_error = true;
-        assert!(!opens_file(&item));
+        assert!(!has_file_links(&item));
         item.is_error = false;
         item.tool_presentation = None;
-        assert!(!opens_file(&item));
+        assert!(has_file_links(&item)); // Native targets do not require a diff preview.
+        Arc::make_mut(item.tool_details.as_mut().unwrap())
+            .metadata
+            .targets
+            .clear();
+        assert!(!has_file_links(&item));
     }
 
     #[test]
@@ -342,58 +448,72 @@ mod tests {
             detail: None,
         });
         assert_eq!(item_status(&item), Some(ToolStatus::Reviewing));
-        assert!(!opens_file(&item));
+        assert!(!has_file_links(&item));
         item.is_error = true;
         item.tool_review.as_mut().unwrap().state = ToolReviewState::Blocked;
         assert_eq!(item_status(&item), Some(ToolStatus::Rejected));
-        assert!(!opens_file(&item));
+        assert!(!has_file_links(&item));
         item.tool_review.as_mut().unwrap().state = ToolReviewState::Approved;
         assert_eq!(item_status(&item), Some(ToolStatus::Failed));
         item.is_error = false;
         assert_eq!(item_status(&item), Some(ToolStatus::Running));
         item.streaming = false;
         assert_eq!(item_status(&item), Some(ToolStatus::Succeeded));
-        assert!(opens_file(&item));
+        assert!(has_file_links(&item));
     }
 
     #[test]
-    fn rejection_and_failure_have_distinct_labels_and_colors() {
-        assert_eq!(ToolStatus::Rejected.label(), "Rejected");
-        assert_eq!(ToolStatus::Rejected.color(), THEME.colors.warning);
-        assert_eq!(ToolStatus::Failed.label(), "Failed");
-        assert_eq!(ToolStatus::Failed.color(), THEME.colors.error);
-    }
-
-    #[test]
-    fn only_approval_states_need_text_beside_the_status_icon() {
+    fn only_success_is_quiet_beside_the_status_icon() {
+        assert!(status_badge(ToolStatus::Succeeded).is_none());
         for status in [
+            ToolStatus::Reviewing,
+            ToolStatus::Rejected,
             ToolStatus::Running,
-            ToolStatus::Succeeded,
             ToolStatus::Failed,
         ] {
-            assert!(status_badge(status).is_none());
-        }
-        for status in [ToolStatus::Reviewing, ToolStatus::Rejected] {
             assert!(status_badge(status).is_some());
         }
     }
 
     #[test]
-    fn grouped_reads_preserve_approval_and_failure_states() {
-        use ToolStatus::*;
+    fn activity_summary_counts_calls_not_events_or_claimed_files() {
+        let mut state = ConversationState::default();
+        for (id, name, metadata) in [
+            (
+                "a",
+                "read",
+                json!({"category":"read", "targets":["same.rs"]}),
+            ),
+            (
+                "b",
+                "read",
+                json!({"category":"read", "targets":["same.rs"]}),
+            ),
+            ("c", "bash", json!({"category":"execute"})),
+        ] {
+            state.reduce(&json!({"type":"tool_execution_start", "toolCallId":id, "toolName":name, "args":{}, "toolMetadata":metadata}));
+            state.reduce(&json!({"type":"tool_execution_update", "toolCallId":id, "partialResult":{"content":[]}}));
+            state.reduce(&json!({"type":"tool_execution_end", "toolCallId":id, "result":{"content":[]}, "isError":false}));
+        }
         assert_eq!(
-            group_status([Some(Succeeded), Some(Reviewing)].into_iter()),
-            Some(Reviewing)
+            activity_summary(state.items.iter().map(AsRef::as_ref)),
+            "2 reads · 1 command"
         );
+        assert_eq!(item_status(&state.items[2]), Some(ToolStatus::Succeeded));
+        state.reduce(&json!({"type":"tool_execution_start", "toolCallId":"custom", "toolName":"mcp_database", "args":{"path":"not-a-file"}}));
         assert_eq!(
-            group_status([Some(Succeeded), Some(Rejected)].into_iter()),
-            Some(Rejected)
+            activity_summary(state.items.iter().map(AsRef::as_ref)),
+            "4 calls"
         );
-        assert_eq!(
-            group_status([Some(Failed), Some(Succeeded)].into_iter()),
-            Some(Failed)
-        );
-        assert_eq!(group_status([Some(Succeeded), None].into_iter()), None);
-        assert_eq!(group_status([Some(Succeeded)].into_iter()), Some(Succeeded));
+    }
+
+    #[test]
+    fn native_file_targets_are_openable_without_a_diff_preview() {
+        let mut state = ConversationState::default();
+        state.reduce(&json!({"type":"tool_execution_start", "toolCallId":"acp", "toolName":"Inspect", "args":{}, "toolMetadata":{"category":"read", "targets":["src/main.rs"]}}));
+        assert!(!has_file_links(&state.items[0]));
+        state.reduce(&json!({"type":"tool_execution_end", "toolCallId":"acp", "result":{"content":[]}, "isError":false}));
+        assert!(state.items[0].tool_presentation.is_none());
+        assert!(has_file_links(&state.items[0]));
     }
 }

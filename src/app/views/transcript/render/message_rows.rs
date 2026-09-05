@@ -9,7 +9,8 @@ use gpui_component::{
 
 use crate::app::{
     FarcasterApp,
-    ui::theme::{MONO_FONT_FAMILY, THEME},
+    composer::prompt_fragments::invocation_token,
+    ui::theme::THEME,
     views::transcript::{
         attachments::render_attachments,
         conversation::{TranscriptItem, TranscriptKind},
@@ -17,21 +18,16 @@ use crate::app::{
 };
 
 use super::{
-    TRANSCRIPT_HORIZONTAL_PADDING, disclosure_detail, fenced_text, item_color, selectable_text,
-    selectable_text_state, technical_text, transcript_title_row,
+    TRANSCRIPT_HORIZONTAL_PADDING, item_color, selectable_text, selectable_text_state,
+    technical_text,
 };
 
 pub(super) fn render_invocation(
     key: usize,
     item: &TranscriptItem,
-    expanded: bool,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
-    let resolved = invocation_resolution(item);
-    let kind = invocation_kind(&item.text, resolved);
-    let attachments_entity = entity.clone();
-    let resolved_ready = !resolved.is_empty();
-    let skill = kind == "Skill";
+    let skill = invocation_kind(&item.text, invocation_resolution(item)) == "Skill";
     let tooltip = invocation_tooltip_text(item);
     div()
         .id(("invocation-row", key))
@@ -40,75 +36,21 @@ pub(super) fn render_invocation(
         .py(THEME.space.sm)
         .flex()
         .flex_col()
-        .when(!item.images.is_empty(), |row| {
-            row.child(render_attachments(key, item, attachments_entity))
+        .when(item.has_attachments(), |row| {
+            row.child(render_attachments(key, item, entity))
         })
         .child(
-            transcript_title_row(
-                ("invocation-title", key),
-                expanded,
-                resolved_ready,
-                format!("resolved {kind}"),
-                key,
-                entity,
-            )
-            .child(
-                technical_text(("invocation-name", key), item.text.clone())
-                    .flex_1()
-                    .min_w_0()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(if skill {
-                        THEME.colors.skill
-                    } else {
-                        THEME.colors.accent
-                    }),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .px(THEME.space.xs)
-                    .py(px(1.0))
-                    .rounded(THEME.radius)
-                    .border(THEME.border)
-                    .border_color(THEME.colors.border)
-                    .bg(if skill {
-                        THEME.colors.skill_surface
-                    } else {
-                        THEME.colors.panel
-                    })
-                    .text_size(THEME.type_scale.caption)
-                    .text_color(if skill {
-                        THEME.colors.skill
-                    } else {
-                        THEME.colors.muted
-                    })
-                    .child(if resolved_ready { kind } else { "Resolving" }),
-            )
-            .when_some(tooltip, |row, tooltip| {
-                row.tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
-            }),
+            technical_text(("invocation-name", key), item.text.clone())
+                .min_w_0()
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(if skill {
+                    THEME.colors.skill
+                } else {
+                    THEME.colors.accent
+                }),
         )
-        .when(expanded && resolved_ready, |row| {
-            row.child(
-                disclosure_detail()
-                    .id(("invocation-detail-scroll", key))
-                    .max_h(THEME.layout.tool_max_height)
-                    .overflow_y_scroll()
-                    .border_l(THEME.border)
-                    .border_color(if skill {
-                        THEME.colors.skill
-                    } else {
-                        THEME.colors.accent
-                    })
-                    .pl(THEME.space.sm)
-                    .py(THEME.space.xs)
-                    .child(
-                        selectable_text(("invocation-detail", key), fenced_text(resolved))
-                            .font_family(MONO_FONT_FAMILY)
-                            .text_size(THEME.type_scale.body_small)
-                            .text_color(THEME.colors.muted),
-                    ),
-            )
+        .when_some(tooltip, |row, tooltip| {
+            row.tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
         })
         .into_any_element()
 }
@@ -180,13 +122,17 @@ pub(in crate::app::views::transcript) fn is_mixed_invocation_message(
 }
 
 fn is_invocation_token(token: &str) -> bool {
-    token.strip_prefix('$').is_some_and(is_invocation_name)
+    invocation_token(token)
+        .strip_prefix('$')
+        .is_some_and(is_invocation_name)
 }
 
 fn is_prompt_invocation_token(token: &str) -> bool {
-    token.strip_prefix('$').is_some_and(|name| {
-        is_invocation_name(name) && name.chars().any(|character| character.is_ascii_lowercase())
-    })
+    invocation_token(token)
+        .strip_prefix('$')
+        .is_some_and(|name| {
+            is_invocation_name(name) && name.chars().any(|character| character.is_ascii_lowercase())
+        })
 }
 
 fn is_invocation_name(name: &str) -> bool {
@@ -217,8 +163,9 @@ pub(in crate::app::views::transcript) fn highlighted_invocation_markdown(
         .split_inclusive(char::is_whitespace)
         .map(|chunk| {
             let token = chunk.trim_end_matches(char::is_whitespace);
-            let whitespace = &chunk[token.len()..];
-            let name = token.strip_prefix('$').unwrap_or_default();
+            let invocation = invocation_token(token);
+            let suffix = &chunk[invocation.len()..];
+            let name = invocation.strip_prefix('$').unwrap_or_default();
             let bare_name = name.strip_prefix("skill:").unwrap_or(name);
             let recognized = if resolved_contains_skill(resolved) {
                 skill_names.contains(&bare_name)
@@ -226,7 +173,7 @@ pub(in crate::app::views::transcript) fn highlighted_invocation_markdown(
                 is_prompt_invocation_token(token)
             };
             if recognized {
-                format!("`{token}`{whitespace}")
+                format!("`{invocation}`{suffix}")
             } else {
                 chunk.to_owned()
             }
@@ -263,7 +210,7 @@ pub(super) fn render_message(
             row.tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
         })
         .children(role.map(|role| message_role(role, user)))
-        .when(user && !item.images.is_empty(), |row| {
+        .when(user && item.has_attachments(), |row| {
             row.child(render_attachments(key, item, entity))
         })
         .child({
@@ -313,7 +260,7 @@ pub(super) fn render_message_chunk(
                 item_role_label(item, assistant_label).map(|role| message_role(role, user)),
             )
         })
-        .when(first && user && !item.images.is_empty(), |row| {
+        .when(first && user && item.has_attachments(), |row| {
             row.child(render_attachments(key, item, entity))
         })
         .child(

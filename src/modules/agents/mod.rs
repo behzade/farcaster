@@ -3,8 +3,8 @@ mod contract;
 mod core;
 
 pub(crate) use adapter::{
-    app_shell_environment, apply_project_trust, backend_display_name, backend_statuses,
-    default_login_shell, delete_external_session, discover_external_sessions,
+    annotate_history_message, app_shell_environment, apply_project_trust, backend_display_name,
+    backend_statuses, default_login_shell, delete_external_session, discover_external_sessions,
     external_session_identity, generate_session_title, is_external_session,
     load_configuration_catalog, load_external_history, normalize_access_mode, project_trust,
     project_trust_description, rename_session, saved_project_trust, spawn_session,
@@ -20,13 +20,13 @@ pub(crate) use contract::{
     valid_worker_name,
 };
 pub(crate) use core::{
-    CallerContext, CallerRegistry, CommonTool, PromptStore, TokenUsage, ToolReviewState,
-    WorkerActivity, WorkerActivityState, WorkerAssignment, WorkerEvent, WorkerExecution,
-    WorkerFamilyLink, WorkerJudgment, WorkerLaunch, WorkerPool, WorkerSendMode, WorkerSession,
-    WorkerSessionFactory, WorkerTaskDefinition, WorkerTasks, WorkerUsage, begin_prompt,
-    complete_prompt, enqueue_prompt_with_presentation, fail_prompt, has_queued_prompts_for,
-    queued_prompts,
+    CallerContext, CallerProfile, CallerRegistry, CommonTool, PromptStore, TokenUsage,
+    ToolCategory, ToolMetadata, ToolReviewState, WorkerActivity, WorkerActivityState,
+    WorkerAssignment, WorkerEvent, WorkerExecution, WorkerFamilyLink, WorkerJudgment, WorkerLaunch,
+    WorkerPool, WorkerSendMode, WorkerSession, WorkerSessionFactory, WorkerTaskDefinition,
+    WorkerTasks, WorkerUsage, begin_prompt, complete_prompt, enqueue_prompt_with_presentation,
+    fail_prompt, has_queued_prompts_for, queued_prompts,
 };
 
 #[cfg(test)]
-pub(crate) use core::{CallerIdentity, CallerProfile};
+pub(crate) use core::CallerIdentity;

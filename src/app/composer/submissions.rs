@@ -92,7 +92,12 @@ impl FarcasterApp {
                 self.composer_sessions.record_submission(&target, &value);
                 let pending_images = self.composer_images.remove(&target).unwrap_or_default();
                 let pending_pastes = self.composer_pastes.remove(&target).unwrap_or_default();
-                let image_count = pending_images.len();
+                let previews = Arc::new(
+                    pending_images
+                        .iter()
+                        .map(|image| image.preview.clone())
+                        .collect(),
+                );
                 self.pending_submissions.insert(
                     target.clone(),
                     PendingSubmission {
@@ -115,12 +120,20 @@ impl FarcasterApp {
                 if show_in_transcript {
                     match (display_message, invocation) {
                         (Some(display), Some(invocation)) => {
-                            conversation.push_local_invocation(display, image_count, invocation);
+                            conversation.push_local_user_with_images(
+                                display,
+                                previews,
+                                Some(invocation),
+                            );
                         }
                         _ => {
                             let invocation =
                                 user_invocations::contains_invocation(&value, &snapshot.commands);
-                            conversation.push_local_user(message, image_count, invocation);
+                            conversation.push_local_user_with_images(
+                                message,
+                                previews,
+                                invocation.then(String::new),
+                            );
                         }
                     }
                 }

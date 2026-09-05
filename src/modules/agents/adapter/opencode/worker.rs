@@ -8,7 +8,10 @@ use std::{
 
 use serde_json::{Value, json};
 
-use super::{server::OpenCodeServerProcess, tool::normalize_opencode_tool};
+use super::{
+    server::OpenCodeServerProcess,
+    tool::{normalize_opencode_tool, opencode_tool_metadata},
+};
 use crate::{
     agents::{
         AgentLaunchConfig, TokenUsage, WorkerActivity, WorkerActivityState, WorkerContext,
@@ -402,6 +405,8 @@ fn model_variant_efforts(model: &Value) -> Vec<String> {
 struct ActiveOpenCodeTool {
     name: String,
     input: String,
+    args: Option<Value>,
+    native: Value,
     started: bool,
 }
 
@@ -699,6 +704,7 @@ impl OpenCodeWorkerSession {
                         id,
                         ActiveOpenCodeTool {
                             name,
+                            native: event.data.clone(),
                             ..Default::default()
                         },
                     );
@@ -724,6 +730,7 @@ impl OpenCodeWorkerSession {
                         continue;
                     };
                     let tool = self.active_tools.entry(id.clone()).or_default();
+                    merge_opencode_native(&mut tool.native, &event.data);
                     let text = event
                         .data
                         .get("text")
@@ -740,12 +747,15 @@ impl OpenCodeWorkerSession {
                         }
                     };
                     let (name, args) = normalize_opencode_tool(&tool.name, &args);
+                    let metadata = opencode_tool_metadata(&name, &args, tool.native.clone());
                     tool.name.clone_from(&name);
+                    tool.args = Some(args.clone());
                     tool.started = true;
                     return Some(WorkerEvent::Activity(WorkerActivity::ToolStarted {
                         id,
                         name,
                         args,
+                        metadata,
                     }));
                 }
                 "session.tool.called" | "session.next.tool.called" => {
@@ -754,6 +764,7 @@ impl OpenCodeWorkerSession {
                         continue;
                     };
                     let tool = self.active_tools.entry(id.clone()).or_default();
+                    merge_opencode_native(&mut tool.native, &event.data);
                     let reported_name = opencode_tool_name(&event.data)
                         .filter(|name| !name.is_empty())
                         .or_else(|| (!tool.name.is_empty()).then_some(tool.name.as_str()))
@@ -762,14 +773,21 @@ impl OpenCodeWorkerSession {
                         reported_name,
                         event.data.get("input").unwrap_or(&Value::Null),
                     );
+                    let metadata = opencode_tool_metadata(&name, &args, tool.native.clone());
                     tool.name.clone_from(&name);
+                    tool.args = Some(args.clone());
                     if std::mem::replace(&mut tool.started, true) {
-                        continue;
+                        return Some(WorkerEvent::Activity(WorkerActivity::ToolMetadataChanged {
+                            id,
+                            args: Some(args),
+                            metadata,
+                        }));
                     }
                     return Some(WorkerEvent::Activity(WorkerActivity::ToolStarted {
                         id,
                         name,
                         args,
+                        metadata,
                     }));
                 }
                 "session.tool.progress" | "session.next.tool.progress" => {
@@ -777,12 +795,34 @@ impl OpenCodeWorkerSession {
                         log_bad_opencode_event(&event, "tool progress is missing call id");
                         continue;
                     };
-                    return Some(WorkerEvent::Activity(WorkerActivity::ToolUpdated {
+                    let tool = self.active_tools.entry(id.clone()).or_default();
+                    merge_opencode_native(&mut tool.native, &event.data);
+                    let name = tool.name.as_str();
+                    let args = event
+                        .data
+                        .get("input")
+                        .map(|input| normalize_opencode_tool(name, input).1)
+                        .or_else(|| tool.args.clone());
+                    if let Some(args) = &args {
+                        tool.args = Some(args.clone());
+                    }
+                    let metadata = opencode_tool_metadata(
+                        name,
+                        args.as_ref().unwrap_or(&Value::Null),
+                        tool.native.clone(),
+                    );
+                    self.pending
+                        .push_back(WorkerEvent::Activity(WorkerActivity::ToolUpdated {
+                            id: id.clone(),
+                            content: json!([{
+                                "type": "text",
+                                "text": event.data.get("metadata").map(Value::to_string).unwrap_or_default(),
+                            }]),
+                        }));
+                    return Some(WorkerEvent::Activity(WorkerActivity::ToolMetadataChanged {
                         id,
-                        content: json!([{
-                            "type": "text",
-                            "text": event.data.get("metadata").map(Value::to_string).unwrap_or_default(),
-                        }]),
+                        args,
+                        metadata,
                     }));
                 }
                 "session.step.started" | "session.next.step.started" => {
@@ -826,12 +866,31 @@ impl OpenCodeWorkerSession {
                         log_bad_opencode_event(&event, "tool completion is missing call id");
                         continue;
                     };
-                    self.active_tools.remove(&id);
                     let failed = event_type.ends_with("tool.failed");
-                    return Some(WorkerEvent::Activity(WorkerActivity::ToolFinished {
-                        id,
+                    let finished = WorkerEvent::Activity(WorkerActivity::ToolFinished {
+                        id: id.clone(),
                         result: opencode_tool_result(&event.data, failed),
                         is_error: failed,
+                    });
+                    let Some(mut tool) = self.active_tools.remove(&id) else {
+                        return Some(finished);
+                    };
+                    merge_opencode_native(&mut tool.native, &event.data);
+                    let args = event
+                        .data
+                        .get("input")
+                        .map(|input| normalize_opencode_tool(&tool.name, input).1)
+                        .or(tool.args);
+                    let metadata = opencode_tool_metadata(
+                        &tool.name,
+                        args.as_ref().unwrap_or(&Value::Null),
+                        tool.native,
+                    );
+                    self.pending.push_back(finished);
+                    return Some(WorkerEvent::Activity(WorkerActivity::ToolMetadataChanged {
+                        id,
+                        args,
+                        metadata,
                     }));
                 }
                 "session.retry.scheduled" => {
@@ -1194,6 +1253,10 @@ fn opencode_tool_result(data: &Value, failed: bool) -> Value {
     )
 }
 
+fn merge_opencode_native(current: &mut Value, update: &Value) {
+    merge_json(current, update.clone());
+}
+
 fn log_bad_opencode_event(event: &super::contract::OpenCodeEvent, reason: &str) {
     zlog::warn!("OpenCode event was not mapped correctly ({reason}): {event:?}");
 }
@@ -1429,6 +1492,24 @@ mod tests {
             opencode_tool_result(&json!({"error": {"message": "denied"}}), true),
             json!([{"type":"text", "text":"denied"}])
         );
+    }
+
+    #[test]
+    fn tool_native_updates_merge_without_losing_input_or_title() {
+        let mut native = json!({
+            "name": "read_file",
+            "input": {"filePath": "src/main.rs"},
+            "metadata": {"title": "Inspect source", "phase": "starting"}
+        });
+        merge_opencode_native(
+            &mut native,
+            &json!({"metadata": {"phase": "running", "percent": 50}}),
+        );
+        assert_eq!(native["name"], "read_file");
+        assert_eq!(native["input"]["filePath"], "src/main.rs");
+        assert_eq!(native["metadata"]["title"], "Inspect source");
+        assert_eq!(native["metadata"]["phase"], "running");
+        assert_eq!(native["metadata"]["percent"], 50);
     }
 
     #[test]

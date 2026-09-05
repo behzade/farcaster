@@ -279,14 +279,31 @@ impl WorkerSessionTransport {
                     }
                 })
             }
-            WorkerActivity::ToolStarted { id, name, args } => {
+            WorkerActivity::ToolStarted {
+                id,
+                name,
+                args,
+                metadata,
+            } => {
                 self.finish_assistant_message(None);
                 json!({
                     "type": "tool_execution_start",
                     "toolCallId": id,
                     "toolName": name,
                     "args": args,
+                    "toolMetadata": metadata,
                 })
+            }
+            WorkerActivity::ToolMetadataChanged { id, args, metadata } => {
+                let mut event = json!({
+                    "type": "tool_metadata_changed",
+                    "toolCallId": id,
+                    "toolMetadata": metadata,
+                });
+                if let Some(args) = args {
+                    event["args"] = args;
+                }
+                event
             }
             WorkerActivity::ToolUpdated { id, content } => json!({
                 "type": "tool_execution_update",
@@ -846,6 +863,7 @@ mod tests {
             id: "tool-1".into(),
             name: "command".into(),
             args: json!({}),
+            metadata: Default::default(),
         }));
         transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::TextDelta {
             content_index: 0,

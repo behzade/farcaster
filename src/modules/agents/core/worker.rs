@@ -137,6 +137,12 @@ pub(crate) enum WorkerActivity {
         id: String,
         name: String,
         args: Value,
+        metadata: super::ToolMetadata,
+    },
+    ToolMetadataChanged {
+        id: String,
+        args: Option<Value>,
+        metadata: super::ToolMetadata,
     },
     ToolUpdated {
         id: String,

@@ -1,22 +1,35 @@
 use super::*;
 
 impl ConversationState {
+    pub(super) fn tool_index(&self, id: &str) -> Option<usize> {
+        self.items.rposition(|item| {
+            item.kind == TranscriptKind::Tool && item.tool_call_id.as_deref() == Some(id)
+        })
+    }
+
     pub(super) fn start_tool(&mut self, event: &Value) {
         let id = text_field(event, "toolCallId");
         let name = text_field(event, "toolName");
         let args_value = event.get("args");
+        let mut details = ToolDetails::from_call(&name, args_value, event.get("toolMetadata"));
+        details.state = ToolExecutionState::Running;
         let presentation = args_value.and_then(|args| tool_presentation(&name, args));
         let args = args_value
             .map(|args| format_tool_arguments(&name, args))
             .unwrap_or_default();
-        if let Some(index) = self.items.rposition(|item| {
-            item.kind == TranscriptKind::Tool && item.tool_call_id.as_deref() == Some(id.as_str())
-        }) {
+        if let Some(index) = self.tool_index(&id) {
             let mut item = self.items[index].clone();
             let value = Arc::make_mut(&mut item);
             value.label = display_tool_name(&name);
             value.text = args;
             value.tool_presentation = presentation;
+            if let Some(previous) = &value.tool_details {
+                details.result.clone_from(&previous.result);
+                if event.get("toolMetadata").is_none() {
+                    details.metadata.clone_from(&previous.metadata);
+                }
+            }
+            value.tool_details = Some(Arc::new(details));
             value.streaming = true;
             self.items.set(index, item);
             self.tools.insert(id, index);
@@ -27,16 +40,46 @@ impl ConversationState {
             label: display_tool_name(&name),
             text: args,
             images: Arc::default(),
+            files: Arc::default(),
             stream_chunks: Arc::default(),
             streaming: true,
             is_error: false,
             tool_call_id: Some(id.clone()),
             tool_output: String::new(),
             tool_presentation: presentation,
+            tool_details: Some(Arc::new(details)),
             tool_review: None,
             invocation: None,
         }));
         self.tools.insert(id, self.items.len() - 1);
+    }
+
+    pub(super) fn update_tool_metadata(&mut self, event: &Value) -> bool {
+        let id = text_field(event, "toolCallId");
+        let Some(index) = self.tool_index(&id) else {
+            return false;
+        };
+        let mut item = self.items[index].clone();
+        let value = Arc::make_mut(&mut item);
+        let Some(details) = value.tool_details.as_mut().map(Arc::make_mut) else {
+            return false;
+        };
+        if let Some(metadata) = event
+            .get("toolMetadata")
+            .and_then(|metadata| serde_json::from_value(metadata.clone()).ok())
+        {
+            details.metadata = metadata;
+        }
+        if let Some(args) = event.get("args") {
+            details.arguments = args.clone();
+            value.text = format_tool_arguments(&details.name, args);
+            value.tool_presentation = tool_presentation(&details.name, args);
+        }
+        if *self.items[index] == *item {
+            return false;
+        }
+        self.items.set(index, item);
+        true
     }
 
     pub(super) fn update_tool(&mut self, event: &Value) -> bool {
@@ -51,11 +94,21 @@ impl ConversationState {
         let Some(item) = self.items.get(index) else {
             return false;
         };
-        if item.tool_output == output {
+        if item.tool_output == output
+            && item
+                .tool_details
+                .as_ref()
+                .and_then(|details| details.result.as_ref())
+                == event.get("partialResult")
+        {
             return false;
         }
         let mut item = item.clone();
-        Arc::make_mut(&mut item).tool_output = output;
+        let value = Arc::make_mut(&mut item);
+        value.tool_output = output;
+        if let Some(details) = value.tool_details.as_mut().map(Arc::make_mut) {
+            details.result = event.get("partialResult").cloned();
+        }
         self.items.set(index, item);
         true
     }
@@ -76,6 +129,13 @@ impl ConversationState {
             }
             value.streaming = false;
             value.is_error = is_error;
+            if let Some(details) = value.tool_details.as_mut().map(Arc::make_mut) {
+                details.state = if is_error {
+                    ToolExecutionState::Failed
+                } else {
+                    ToolExecutionState::Succeeded
+                };
+            }
             self.items.set(index, item);
         }
     }
@@ -88,12 +148,11 @@ impl ConversationState {
             Some("blocked") => ToolReviewState::Blocked,
             _ => return,
         };
-        let index = self.tools.get(&id).copied().or_else(|| {
-            self.items.rposition(|item| {
-                item.kind == TranscriptKind::Tool
-                    && item.tool_call_id.as_deref() == Some(id.as_str())
-            })
-        });
+        let index = self
+            .tools
+            .get(&id)
+            .copied()
+            .or_else(|| self.tool_index(&id));
         let Some(index) = index else {
             return;
         };
@@ -230,6 +289,14 @@ pub(super) fn apply_tool_result(item: &mut TranscriptItem, result: &Value, messa
         .and_then(Value::as_bool)
         .unwrap_or(false);
     item.streaming = false;
+    if let Some(details) = item.tool_details.as_mut().map(Arc::make_mut) {
+        details.result = Some(result.clone());
+        details.state = if item.is_error {
+            ToolExecutionState::Failed
+        } else {
+            ToolExecutionState::Succeeded
+        };
+    }
     let details = result.get("details");
     if let Some(diff) = details
         .and_then(|details| details.get("diff"))
