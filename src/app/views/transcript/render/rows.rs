@@ -501,20 +501,14 @@ fn text_revision(text: &str) -> usize {
 fn is_routine_activity(item: &TranscriptItem) -> bool {
     use conversation::{ToolExecutionState, ToolReviewState};
     matches!(item.kind, TranscriptKind::Tool | TranscriptKind::Thinking)
-        && !item.streaming
-        && !item.is_error
         && !item.tool_review.as_ref().is_some_and(|review| {
             matches!(
                 review.state,
                 ToolReviewState::Reviewing | ToolReviewState::Blocked
             )
         })
-        && !item.tool_details.as_ref().is_some_and(|details| {
-            matches!(
-                details.state,
-                ToolExecutionState::Pending
-                    | ToolExecutionState::Running
-                    | ToolExecutionState::Failed
-            )
-        })
+        && matches!(
+            item.tool_execution_state(),
+            None | Some(ToolExecutionState::Succeeded)
+        )
 }

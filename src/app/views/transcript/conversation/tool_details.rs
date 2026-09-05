@@ -1,6 +1,8 @@
+use std::sync::Arc;
+
 use serde_json::Value;
 
-use super::display_tool_name;
+use super::{TranscriptItem, display_tool_name};
 use crate::agents::{CommonTool, ToolCategory, ToolMetadata};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -105,6 +107,33 @@ impl ToolDetails {
             text.push_str(&format!("\n\nNative data:\n{}", pretty_json(native)));
         }
         text
+    }
+}
+
+impl TranscriptItem {
+    /// Resolve legacy row flags and structured lifecycle in one place.
+    pub(crate) fn tool_execution_state(&self) -> Option<ToolExecutionState> {
+        if self.is_error {
+            Some(ToolExecutionState::Failed)
+        } else if self.streaming {
+            Some(ToolExecutionState::Running)
+        } else if let Some(details) = &self.tool_details {
+            Some(details.state)
+        } else {
+            (!self.tool_output.is_empty()).then_some(ToolExecutionState::Succeeded)
+        }
+    }
+
+    pub(super) fn finish_tool(&mut self, is_error: bool) {
+        self.streaming = false;
+        self.is_error = is_error;
+        if let Some(details) = self.tool_details.as_mut().map(Arc::make_mut) {
+            details.state = if is_error {
+                ToolExecutionState::Failed
+            } else {
+                ToolExecutionState::Succeeded
+            };
+        }
     }
 }
 

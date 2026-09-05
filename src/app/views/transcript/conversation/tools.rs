@@ -127,15 +127,7 @@ impl ConversationState {
             if let Some(result) = event.get("result") {
                 apply_tool_result(value, result, false);
             }
-            value.streaming = false;
-            value.is_error = is_error;
-            if let Some(details) = value.tool_details.as_mut().map(Arc::make_mut) {
-                details.state = if is_error {
-                    ToolExecutionState::Failed
-                } else {
-                    ToolExecutionState::Succeeded
-                };
-            }
+            value.finish_tool(is_error);
             self.items.set(index, item);
         }
     }
@@ -284,18 +276,14 @@ pub(super) fn apply_tool_result(item: &mut TranscriptItem, result: &Value, messa
     } else {
         result_text(result)
     };
-    item.is_error = result
-        .get("isError")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    item.streaming = false;
+    item.finish_tool(
+        result
+            .get("isError")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    );
     if let Some(details) = item.tool_details.as_mut().map(Arc::make_mut) {
         details.result = Some(result.clone());
-        details.state = if item.is_error {
-            ToolExecutionState::Failed
-        } else {
-            ToolExecutionState::Succeeded
-        };
     }
     let details = result.get("details");
     if let Some(diff) = details
