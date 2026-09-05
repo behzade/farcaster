@@ -1,5 +1,3 @@
-use std::time::{Duration, SystemTime};
-
 use gpui::{
     AnyElement, InteractiveElement as _, IntoElement, ParentElement as _, Role,
     StatefulInteractiveElement as _, Styled as _, WeakEntity, div, px,
@@ -42,7 +40,6 @@ impl FarcasterApp {
         let activity_text = activity.activity.clone();
         let role = activity.role.clone();
         let marker = role_icon(&role);
-        let elapsed = elapsed_label(activity, SystemTime::now());
         let registry = crate::agents::CallerRegistry::shared();
         let profile = registry
             .session_profile(&session.project, &session.harness, &session.id)
@@ -134,20 +131,6 @@ impl FarcasterApp {
                                         .text_ellipsis()
                                         .child(execution),
                                 ),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(THEME.space.xs)
-                                .child(
-                                    div()
-                                        .text_color(lifecycle_color(displayed_lifecycle))
-                                        .child(lifecycle_indicator(displayed_lifecycle)),
-                                )
-                                .text_size(THEME.type_scale.caption)
-                                .text_color(THEME.colors.muted)
-                                .child(format!("{state} · {elapsed}")),
                         ),
                 )
                 .into_any_element(),
@@ -257,58 +240,5 @@ pub(super) fn lifecycle_label(lifecycle: AgentLifecycle) -> &'static str {
         AgentLifecycle::Completed(AgentOutcome::Complete) => "Complete",
         AgentLifecycle::Completed(AgentOutcome::Failed) => "Failed",
         AgentLifecycle::Completed(AgentOutcome::Incomplete) => "Incomplete",
-    }
-}
-
-pub(super) fn lifecycle_icon(lifecycle: AgentLifecycle) -> AppIcon {
-    match lifecycle {
-        AgentLifecycle::NeedsInput | AgentLifecycle::Completed(AgentOutcome::Incomplete) => {
-            AppIcon::WarningCircle
-        }
-        AgentLifecycle::Working => AppIcon::SpinnerGap,
-        AgentLifecycle::Unknown => AppIcon::Question,
-        AgentLifecycle::Completed(AgentOutcome::Complete) => AppIcon::CheckCircle,
-        AgentLifecycle::Completed(AgentOutcome::Failed) => AppIcon::XCircle,
-    }
-}
-
-fn lifecycle_indicator(lifecycle: AgentLifecycle) -> AnyElement {
-    app_icon(lifecycle_icon(lifecycle), AppIconSize::Inline).into_any_element()
-}
-
-fn lifecycle_color(lifecycle: AgentLifecycle) -> gpui::Rgba {
-    match lifecycle {
-        AgentLifecycle::NeedsInput => THEME.colors.warning,
-        AgentLifecycle::Working => THEME.colors.accent,
-        AgentLifecycle::Completed(AgentOutcome::Failed) => THEME.colors.error,
-        AgentLifecycle::Completed(AgentOutcome::Incomplete) => THEME.colors.warning,
-        AgentLifecycle::Completed(AgentOutcome::Complete) => THEME.colors.muted,
-        AgentLifecycle::Unknown => THEME.colors.subtle,
-    }
-}
-
-fn elapsed_label(activity: &AgentActivity, now: SystemTime) -> String {
-    let duration = activity.elapsed.or_else(|| {
-        matches!(
-            activity.lifecycle,
-            AgentLifecycle::NeedsInput | AgentLifecycle::Working
-        )
-        .then(|| now.duration_since(activity.started).ok())
-        .flatten()
-    });
-    format_duration(duration)
-}
-
-pub(super) fn format_duration(duration: Option<Duration>) -> String {
-    let Some(duration) = duration else {
-        return "—".into();
-    };
-    let seconds = duration.as_secs();
-    if seconds >= 3_600 {
-        format!("{}h {}m", seconds / 3_600, seconds % 3_600 / 60)
-    } else if seconds >= 60 {
-        format!("{}m {}s", seconds / 60, seconds % 60)
-    } else {
-        format!("{seconds}s")
     }
 }

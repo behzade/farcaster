@@ -1,9 +1,5 @@
-use std::time::Duration;
-
 use super::{
-    agents::{
-        AgentSection, agent_section, format_duration, lifecycle_icon, lifecycle_label, role_icon,
-    },
+    agents::{AgentSection, agent_section, lifecycle_label, role_icon},
     resize::clamped_run_panel_width,
 };
 use crate::{
@@ -19,35 +15,12 @@ fn run_panel_resize_stays_within_design_bounds() {
 }
 
 #[test]
-fn duration_and_lifecycle_labels_are_truthful() {
-    assert_eq!(format_duration(Some(Duration::from_secs(65))), "1m 5s");
+fn lifecycle_labels_are_truthful() {
     assert_eq!(
         lifecycle_label(AgentLifecycle::Completed(AgentOutcome::Failed)),
         "Failed"
     );
     assert_eq!(lifecycle_label(AgentLifecycle::Unknown), "Unknown");
-}
-
-#[test]
-fn every_lifecycle_has_a_compact_status_icon() {
-    assert_eq!(lifecycle_icon(AgentLifecycle::Working), AppIcon::SpinnerGap);
-    assert_eq!(
-        lifecycle_icon(AgentLifecycle::NeedsInput),
-        AppIcon::WarningCircle
-    );
-    assert_eq!(lifecycle_icon(AgentLifecycle::Unknown), AppIcon::Question);
-    assert_eq!(
-        lifecycle_icon(AgentLifecycle::Completed(AgentOutcome::Complete)),
-        AppIcon::CheckCircle
-    );
-    assert_eq!(
-        lifecycle_icon(AgentLifecycle::Completed(AgentOutcome::Failed)),
-        AppIcon::XCircle
-    );
-    assert_eq!(
-        lifecycle_icon(AgentLifecycle::Completed(AgentOutcome::Incomplete)),
-        AppIcon::WarningCircle
-    );
 }
 
 #[test]
