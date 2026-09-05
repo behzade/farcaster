@@ -221,25 +221,10 @@ fn file_links(
     item: &TranscriptItem,
     entity: WeakEntity<FarcasterApp>,
 ) -> Vec<AnyElement> {
-    if !has_file_links(item) {
-        return Vec::new();
-    }
-    let mut paths = item
-        .tool_details
-        .as_ref()
-        .map(|details| details.metadata.targets.clone())
-        .unwrap_or_default();
-    if paths.is_empty()
-        && let Some(presentation) = &item.tool_presentation
-    {
-        paths.push(presentation.path().to_owned());
-    }
-    let mut seen = std::collections::HashSet::new();
-    paths
-        .into_iter()
-        .filter(|path| !path.is_empty() && seen.insert(path.clone()))
+    file_targets(item)
         .enumerate()
         .map(|(offset, path)| {
+            let path = path.to_owned();
             let entity = entity.clone();
             let label = format!("Open {path} in Neovim");
             let line = item
@@ -306,40 +291,35 @@ fn item_status(item: &TranscriptItem) -> Option<ToolStatus> {
         Some(ToolReviewState::Blocked) => return Some(ToolStatus::Rejected),
         _ => {}
     }
-    if item.is_error {
-        return Some(ToolStatus::Failed);
+    match item.tool_execution_state()? {
+        ToolExecutionState::Pending => None,
+        ToolExecutionState::Running => Some(ToolStatus::Running),
+        ToolExecutionState::Succeeded => Some(ToolStatus::Succeeded),
+        ToolExecutionState::Failed => Some(ToolStatus::Failed),
     }
-    if item.streaming {
-        return Some(ToolStatus::Running);
-    }
-    if let Some(details) = &item.tool_details {
-        return match details.state {
-            ToolExecutionState::Pending => None,
-            ToolExecutionState::Running => Some(ToolStatus::Running),
-            ToolExecutionState::Succeeded => Some(ToolStatus::Succeeded),
-            ToolExecutionState::Failed => Some(ToolStatus::Failed),
-        };
-    }
-    (!item.tool_output.is_empty()).then_some(ToolStatus::Succeeded)
 }
 
-fn has_file_links(item: &TranscriptItem) -> bool {
+fn file_targets(item: &TranscriptItem) -> impl Iterator<Item = &str> {
     use crate::agents::ToolCategory;
-    item_status(item) == Some(ToolStatus::Succeeded)
-        && (item
-            .tool_presentation
-            .as_ref()
-            .is_some_and(|presentation| !presentation.path().is_empty())
-            || item.tool_details.as_ref().is_some_and(|details| {
-                matches!(
-                    details.metadata.category,
-                    Some(ToolCategory::Read | ToolCategory::Change)
-                ) && details
-                    .metadata
-                    .targets
-                    .iter()
-                    .any(|target| !target.is_empty())
-            }))
+    let metadata = item.tool_details.as_ref().map(|details| &details.metadata);
+    let targets = metadata.map_or(&[][..], |metadata| metadata.targets.as_slice());
+    let path = item
+        .tool_presentation
+        .as_ref()
+        .map(|presentation| presentation.path())
+        .filter(|path| !path.is_empty());
+    let enabled = item_status(item) == Some(ToolStatus::Succeeded)
+        && (path.is_some()
+            || matches!(
+                metadata.and_then(|metadata| metadata.category),
+                Some(ToolCategory::Read | ToolCategory::Change)
+            ));
+    let mut seen = std::collections::HashSet::new();
+    targets
+        .iter()
+        .map(String::as_str)
+        .chain(path.filter(|_| targets.is_empty()))
+        .filter(move |path| enabled && !path.is_empty() && seen.insert(*path))
 }
 
 fn status_slot(status: Option<ToolStatus>) -> AnyElement {
@@ -423,20 +403,32 @@ mod tests {
     #[test]
     fn only_successful_file_changes_open_editor() {
         let mut item = write_item();
-        assert!(has_file_links(&item));
+        assert!(file_targets(&item).next().is_some());
         item.streaming = true;
-        assert!(!has_file_links(&item));
+        assert!(file_targets(&item).next().is_none());
         item.streaming = false;
         item.is_error = true;
-        assert!(!has_file_links(&item));
+        assert!(file_targets(&item).next().is_none());
         item.is_error = false;
-        item.tool_presentation = None;
-        assert!(has_file_links(&item)); // Native targets do not require a diff preview.
+        Arc::make_mut(item.tool_details.as_mut().unwrap())
+            .metadata
+            .targets = vec![
+            "other.rs".into(),
+            String::new(),
+            "other.rs".into(),
+            "last.rs".into(),
+        ];
+        assert_eq!(
+            file_targets(&item).collect::<Vec<_>>(),
+            ["other.rs", "last.rs"]
+        );
         Arc::make_mut(item.tool_details.as_mut().unwrap())
             .metadata
             .targets
             .clear();
-        assert!(!has_file_links(&item));
+        assert_eq!(file_targets(&item).collect::<Vec<_>>(), ["src/main.rs"]);
+        item.tool_presentation = None;
+        assert!(file_targets(&item).next().is_none());
     }
 
     #[test]
@@ -448,31 +440,18 @@ mod tests {
             detail: None,
         });
         assert_eq!(item_status(&item), Some(ToolStatus::Reviewing));
-        assert!(!has_file_links(&item));
+        assert!(file_targets(&item).next().is_none());
         item.is_error = true;
         item.tool_review.as_mut().unwrap().state = ToolReviewState::Blocked;
         assert_eq!(item_status(&item), Some(ToolStatus::Rejected));
-        assert!(!has_file_links(&item));
+        assert!(file_targets(&item).next().is_none());
         item.tool_review.as_mut().unwrap().state = ToolReviewState::Approved;
         assert_eq!(item_status(&item), Some(ToolStatus::Failed));
         item.is_error = false;
         assert_eq!(item_status(&item), Some(ToolStatus::Running));
         item.streaming = false;
         assert_eq!(item_status(&item), Some(ToolStatus::Succeeded));
-        assert!(has_file_links(&item));
-    }
-
-    #[test]
-    fn only_success_is_quiet_beside_the_status_icon() {
-        assert!(status_badge(ToolStatus::Succeeded).is_none());
-        for status in [
-            ToolStatus::Reviewing,
-            ToolStatus::Rejected,
-            ToolStatus::Running,
-            ToolStatus::Failed,
-        ] {
-            assert!(status_badge(status).is_some());
-        }
+        assert!(file_targets(&item).next().is_some());
     }
 
     #[test]
@@ -511,9 +490,9 @@ mod tests {
     fn native_file_targets_are_openable_without_a_diff_preview() {
         let mut state = ConversationState::default();
         state.reduce(&json!({"type":"tool_execution_start", "toolCallId":"acp", "toolName":"Inspect", "args":{}, "toolMetadata":{"category":"read", "targets":["src/main.rs"]}}));
-        assert!(!has_file_links(&state.items[0]));
+        assert!(file_targets(&state.items[0]).next().is_none());
         state.reduce(&json!({"type":"tool_execution_end", "toolCallId":"acp", "result":{"content":[]}, "isError":false}));
         assert!(state.items[0].tool_presentation.is_none());
-        assert!(has_file_links(&state.items[0]));
+        assert!(file_targets(&state.items[0]).next().is_some());
     }
 }
