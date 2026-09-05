@@ -112,9 +112,7 @@ impl FarcasterApp {
             match self.surface {
                 AppSurface::Editor if self.editor.is_some() => self.render_editor_surface(),
                 AppSurface::Terminal if self.terminal.is_some() => self.render_terminal_workspace(),
-                _ => {
-                    self.render_chat_main(entity.clone(), mode, viewport_height)
-                }
+                _ => self.render_chat_main(entity.clone(), mode, viewport_height),
             }
         };
 

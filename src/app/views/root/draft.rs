@@ -14,31 +14,27 @@ pub(super) fn render_heading(
     entity: WeakEntity<FarcasterApp>,
 ) -> impl IntoElement {
     let label = session_rail::project_label(&project);
-    div()
-        .flex()
-        .w_full()
-        .items_center()
-        .child(
-            button(
-                "draft-project",
-                label,
-                ButtonTone::Quiet,
-                true,
-                move |window, cx| {
-                    let _ = entity.update(cx, |this, cx| {
-                        this.open_picker(
-                            PickerScope::Projects(ProjectPickerIntent::ChangeDraft),
-                            window,
-                            cx,
-                        );
-                    });
-                },
-            )
-            .tooltip(project.display().to_string())
-            .max_w_full()
-            .px_0()
-            .text_size(THEME.type_scale.display)
-            .font_weight(FontWeight::MEDIUM)
-            .text_color(THEME.colors.accent),
+    div().flex().w_full().items_center().child(
+        button(
+            "draft-project",
+            label,
+            ButtonTone::Quiet,
+            true,
+            move |window, cx| {
+                let _ = entity.update(cx, |this, cx| {
+                    this.open_picker(
+                        PickerScope::Projects(ProjectPickerIntent::ChangeDraft),
+                        window,
+                        cx,
+                    );
+                });
+            },
         )
+        .tooltip(project.display().to_string())
+        .max_w_full()
+        .px_0()
+        .text_size(THEME.type_scale.display)
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(THEME.colors.accent),
+    )
 }
