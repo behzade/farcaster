@@ -61,7 +61,6 @@ pub(super) fn render_read_group(
             .aria_expanded(expanded)
             .child(status_slot(status))
             .child(tool_changes::tool_label("Read"))
-            .children(status.and_then(status_badge))
             .child(
                 technical_text(
                     ("read-target", key),
@@ -72,7 +71,8 @@ pub(super) fn render_read_group(
                 .flex_1()
                 .min_w_0()
                 .text_color(THEME.colors.text),
-            ),
+            )
+            .children(status.and_then(status_badge)),
         )
         .when(expanded, |group| {
             group.child(
@@ -141,7 +141,6 @@ pub(super) fn render_tool(
             .when(!opens_file, |row| row.aria_expanded(expanded))
             .child(status_slot(status))
             .child(tool_changes::tool_label(item.label.clone()))
-            .children(status.and_then(status_badge))
             .when_some(presentation, |row, presentation| {
                 row.child(tool_changes::file_summary(presentation))
             })
@@ -152,7 +151,8 @@ pub(super) fn render_tool(
                         .min_w_0()
                         .text_color(THEME.colors.text),
                 )
-            }),
+            })
+            .children(status.and_then(status_badge)),
         )
         .when(expanded, |tool| {
             tool.child(disclosure_detail().child(expanded_tool_body(("tool-detail", key), item)))
@@ -257,11 +257,7 @@ fn status_slot(status: Option<ToolStatus>) -> AnyElement {
 }
 
 fn status_badge(status: ToolStatus) -> Option<AnyElement> {
-    matches!(
-        status,
-        ToolStatus::Reviewing | ToolStatus::Rejected | ToolStatus::Failed
-    )
-    .then(|| {
+    matches!(status, ToolStatus::Reviewing | ToolStatus::Rejected).then(|| {
         div()
             .flex_none()
             .text_size(THEME.type_scale.caption)
@@ -366,7 +362,20 @@ mod tests {
         assert_eq!(ToolStatus::Rejected.color(), THEME.colors.warning);
         assert_eq!(ToolStatus::Failed.label(), "Failed");
         assert_eq!(ToolStatus::Failed.color(), THEME.colors.error);
-        assert!(status_badge(ToolStatus::Succeeded).is_none());
+    }
+
+    #[test]
+    fn only_approval_states_need_text_beside_the_status_icon() {
+        for status in [
+            ToolStatus::Running,
+            ToolStatus::Succeeded,
+            ToolStatus::Failed,
+        ] {
+            assert!(status_badge(status).is_none());
+        }
+        for status in [ToolStatus::Reviewing, ToolStatus::Rejected] {
+            assert!(status_badge(status).is_some());
+        }
     }
 
     #[test]
