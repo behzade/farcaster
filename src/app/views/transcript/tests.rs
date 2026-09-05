@@ -11,12 +11,14 @@ fn item(kind: TranscriptKind, label: &str, text: &str) -> Arc<TranscriptItem> {
         label: label.into(),
         text: text.into(),
         images: Arc::default(),
+        files: Arc::default(),
         stream_chunks: Arc::default(),
         streaming: false,
         is_error: false,
         tool_call_id: None,
         tool_output: String::new(),
         tool_presentation: None,
+        tool_details: None,
         tool_review: None,
         invocation: None,
     })
@@ -59,7 +61,7 @@ fn expanded_latest_tools_keep_space_above_the_composer() {
         true,
     ));
     assert!(latest_allows_tail_reserve(
-        TranscriptRow::ReadGroup {
+        TranscriptRow::ActivityGroup {
             start: 0,
             len: 1,
             revision: 0,
@@ -70,7 +72,7 @@ fn expanded_latest_tools_keep_space_above_the_composer() {
 }
 
 #[test]
-fn invocation_badges_distinguish_skills_prompts_and_stacks() {
+fn invocation_tooltip_kinds_distinguish_skills_prompts_and_stacks() {
     assert_eq!(
         invocation_kind("$review", "<skill name=\"review\">body</skill>"),
         "Skill"
@@ -95,6 +97,7 @@ fn invocations_choose_standalone_or_user_message_treatment() {
     assert!(!is_mixed_invocation_message("$review $commit", skill));
     assert!(is_mixed_invocation_message("please $review this", skill));
     assert!(!is_mixed_invocation_message("$commit", "expanded prompt"));
+    assert!(!is_mixed_invocation_message("$commit.", "expanded prompt"));
     assert!(is_mixed_invocation_message(
         "$commit\nwhy did this happen",
         "expanded prompt"
@@ -107,6 +110,10 @@ fn invocations_choose_standalone_or_user_message_treatment() {
 
 #[test]
 fn mixed_user_messages_highlight_only_recognized_invocation_tokens() {
+    assert_eq!(
+        highlighted_invocation_markdown("Please $commit.", "expanded prompt"),
+        "Please `$commit`."
+    );
     let skill = "<skill name=\"review\">body</skill>\nPrompt body";
 
     assert_eq!(
@@ -158,15 +165,18 @@ fn markdown_inline_code_uses_the_reading_palette() {
 }
 
 #[test]
-fn consecutive_reads_collapse_into_one_row() {
+fn mixed_completed_tools_collapse_into_one_activity_row() {
     let rows = project_rows(&[
         item(TranscriptKind::User, "", "question"),
         item(TranscriptKind::Tool, "Read", "Path: a"),
         item(TranscriptKind::Tool, "Read", "Path: b"),
         item(TranscriptKind::Tool, "Bash", "Command: true"),
     ]);
-    assert_eq!(rows.len(), 3);
-    assert!(matches!(&rows[1], TranscriptRow::ReadGroup { len: 2, .. }));
+    assert_eq!(rows.len(), 2);
+    assert!(matches!(
+        &rows[1],
+        TranscriptRow::ActivityGroup { len: 3, .. }
+    ));
 }
 
 #[test]
@@ -412,7 +422,7 @@ fn appended_reads_merge_with_the_existing_read_group() {
 
     assert!(matches!(
         rows.iter().copied().collect::<Vec<_>>().as_slice(),
-        [TranscriptRow::ReadGroup { len: 2, .. }]
+        [TranscriptRow::ActivityGroup { len: 2, .. }]
     ));
 }
 
@@ -459,6 +469,24 @@ fn thinking_rows_have_details_only_when_body_exceeds_the_title() {
     assert_eq!(
         thinking_preview_emphasis("ordinary thought"),
         ("ordinary thought", false)
+    );
+}
+
+#[test]
+fn long_worker_messages_remain_one_compact_row() {
+    let items = vec![item(
+        TranscriptKind::PeerMessage,
+        "Worker · reviewer",
+        &"Detailed worker report.\n".repeat(2_000),
+    )];
+    let rows = project_rows(&items);
+
+    assert_eq!(rows.len(), 1);
+    assert!(matches!(rows[0], TranscriptRow::Item { index: 0, .. }));
+    assert!(!expanded_by_default(rows[0], &items));
+    assert_eq!(
+        estimated_row_height(rows[0], &items),
+        TRANSCRIPT_ROW_HEIGHT_HINT
     );
 }
 
@@ -620,4 +648,94 @@ fn host_script_targets_prefer_the_command_over_the_reason() {
         tool_target("Need sudo to install docker\n\nCommand:\nsudo apt install docker"),
         "sudo apt install docker"
     );
+}
+
+#[test]
+fn transcript_copy_keeps_pasted_file_links() {
+    let mut state = conversation::ConversationState::default();
+    state.push_local_user_with_prompt_images(
+        "look here\n\nPasted text files:\n- [paste.txt](</tmp/paste.txt>)".into(),
+        &[],
+        false,
+    );
+    assert_eq!(
+        copy_transcript_items(&state.items, 0..=0),
+        "look here\n\n[Pasted text](</tmp/paste.txt>)"
+    );
+}
+
+#[test]
+fn activity_groups_keep_thinking_inside_and_attention_outside() {
+    use super::conversation::{ToolReview, ToolReviewState};
+    let mut running = item(TranscriptKind::Tool, "Bash", "Command: sleep 1");
+    Arc::make_mut(&mut running).streaming = true;
+    let mut failed = item(TranscriptKind::Tool, "Read", "Path: denied");
+    Arc::make_mut(&mut failed).is_error = true;
+    let mut approval = item(TranscriptKind::Tool, "Bash", "Command: deploy");
+    Arc::make_mut(&mut approval).tool_review = Some(ToolReview { state: ToolReviewState::Reviewing, detail: None });
+    let items = vec![
+        item(TranscriptKind::Tool, "Read", "Path: one"),
+        item(TranscriptKind::Thinking, "", "Inspecting attachments"),
+        item(TranscriptKind::Tool, "Bash", "Command: opaque script"),
+        running, failed, approval,
+        item(TranscriptKind::Assistant, "", "Done"),
+        item(TranscriptKind::Tool, "Read", "Path: two"),
+    ];
+    let rows = project_rows(&items);
+    assert_eq!(rows.len(), 6);
+    assert!(matches!(rows[0], TranscriptRow::ActivityGroup { start: 0, len: 3, .. }));
+    for (row, index) in rows.iter().skip(1).zip(3..8) {
+        assert!(matches!(row, TranscriptRow::Item { index: actual, .. } if *actual == index));
+    }
+}
+
+#[test]
+fn completing_a_tool_merges_activity_without_losing_disclosure_identity() {
+    let mut running = item(TranscriptKind::Tool, "Bash", "Command: opaque");
+    Arc::make_mut(&mut running).streaming = true;
+    let previous = vec![item(TranscriptKind::Thinking, "", "Working"), running];
+    let previous_rows = project_rows(&previous);
+    let mut items = previous.clone();
+    Arc::make_mut(&mut items[1]).streaming = false;
+    let rows = update_rows_from(&previous_rows, &previous, &items, Some(1));
+    assert_eq!(rows, project_rows(&items));
+    assert!(matches!(rows[0], TranscriptRow::ActivityGroup { len: 2, .. }));
+    assert_ne!(rows[0].disclosure_key(), rows[0].key());
+    let states = std::collections::HashMap::from([(rows[0].disclosure_key(), true), (0, false)]);
+    assert!(resolved_expanded(rows[0], &items, &states));
+    assert!(!states[&0]);
+}
+
+#[test]
+fn activity_incremental_projection_matches_full_projection_at_every_boundary() {
+    let mut running = item(TranscriptKind::Tool, "Bash", "Command: test");
+    Arc::make_mut(&mut running).streaming = true;
+    let mut failed = item(TranscriptKind::Tool, "Bash", "Command: test");
+    Arc::make_mut(&mut failed).is_error = true;
+    let sequence = vec![
+        item(TranscriptKind::User, "", "Go"),
+        item(TranscriptKind::Thinking, "", "Inspect"),
+        item(TranscriptKind::Thinking, "", "Inspect further"),
+        item(TranscriptKind::Tool, "Read", "Path: one"),
+        item(TranscriptKind::Tool, "Bash", "Command: unknown"),
+        running, failed,
+        item(TranscriptKind::Tool, "Read", "Path: two"),
+        item(TranscriptKind::Thinking, "", "Review"),
+        item(TranscriptKind::Assistant, "", "Finished"),
+    ];
+    let mut previous = Vec::new();
+    let mut rows = project_rows(&previous);
+    for next in sequence {
+        let mut items = previous.clone();
+        items.push(next);
+        rows = update_rows_from(&rows, &previous, &items, Some(previous.len()));
+        assert_eq!(rows, project_rows(&items));
+        previous = items;
+    }
+    for index in 0..previous.len() {
+        let mut changed = previous.clone();
+        Arc::make_mut(&mut changed[index]).is_error = true;
+        let updated = update_rows_from(&rows, &previous, &changed, Some(index));
+        assert_eq!(updated, project_rows(&changed), "changed index {index}");
+    }
 }
