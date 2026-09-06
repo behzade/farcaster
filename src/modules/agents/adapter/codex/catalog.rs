@@ -24,6 +24,10 @@ const AGENT_SOURCE_KINDS: &[&str] = &[
     "subAgentThreadSpawn",
     "subAgentOther",
 ];
+/// Codex runs approval reviews and other ephemeral subsessions under dedicated
+/// models. They are not long-lived subagents and must not surface in the
+/// session rail.
+const EPHEMERAL_MODELS: &[&str] = &["codex-auto-review"];
 
 pub(in crate::modules::agents::adapter) fn discover(
     locator_root: &Path,
@@ -217,6 +221,11 @@ fn summary(
     let Some(cwd) = string(thread, &["cwd"]) else {
         return Ok(None);
     };
+    if string(thread, &["model"])
+        .is_some_and(|model| EPHEMERAL_MODELS.contains(&model))
+    {
+        return Ok(None);
+    }
     let project = PathBuf::from(cwd);
     if !project.is_dir() || crate::projects::is_temporary_project(&project) {
         return Ok(None);
@@ -459,6 +468,30 @@ mod tests {
         assert_eq!(session.usage.output, 20);
         assert_eq!(session.usage.cache_read, 80);
         assert_eq!(session.usage.total, 120);
+        Ok(())
+    }
+
+    #[test]
+    fn skips_auto_review_subsessions() -> Result<(), String> {
+        let project = std::env::current_dir().map_err(|error| error.to_string())?;
+        let base = json!({
+            "id": "thread-1",
+            "cwd": project,
+            "preview": "reviewing tool call",
+        });
+        assert!(
+            summary(project.as_path(), &base, false)?.is_some(),
+            "regular threads are discovered"
+        );
+        let auto_review = json!({
+            "id": "thread-2",
+            "cwd": project,
+            "model": EPHEMERAL_MODELS[0],
+        });
+        assert!(
+            summary(project.as_path(), &auto_review, false)?.is_none(),
+            "auto-review subsessions are not discovered"
+        );
         Ok(())
     }
 
