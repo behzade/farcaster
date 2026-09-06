@@ -11,15 +11,24 @@ pub(crate) struct ComposerSuggestion {
 }
 
 pub(crate) fn contains_invocation(input: &str, commands: &[SlashCommand]) -> bool {
+    recognized_invocations(input, commands).next().is_some()
+}
+
+/// Exact catalog matches, sharing submission's aliases and punctuation rules.
+pub(crate) fn recognized_invocations(
+    input: &str,
+    commands: &[SlashCommand],
+) -> impl Iterator<Item = (std::ops::Range<usize>, SlashCommandSource)> {
     let invocable = invocable_commands(commands);
-    input.split_whitespace().any(|token| {
-        prompt_fragments::invocation_token(token)
-            .strip_prefix('$')
-            .is_some_and(|name| {
-                invocable
-                    .iter()
-                    .any(|command| invocation_alias(command, &invocable) == name)
-            })
+    let aliases = invocable
+        .iter()
+        .map(|command| (invocation_alias(command, &invocable), command.source))
+        .collect::<Vec<_>>();
+    prompt_fragments::tokens(input).filter_map(move |(start, _, token)| {
+        let token = prompt_fragments::invocation_token(token);
+        let name = token.strip_prefix('$')?;
+        let (_, source) = aliases.iter().find(|(alias, _)| alias == name)?;
+        Some((start..start + token.len(), *source))
     })
 }
 
@@ -169,7 +178,7 @@ mod tests {
                 .into_iter()
                 .map(|suggestion| suggestion.name)
                 .collect::<Vec<_>>(),
-            ["commit", "simplify", "review"]
+            ["commit", "simplify", "show-me", "review"]
         );
         let suggestion = suggestions("please $com", &commands)
             .into_iter()
@@ -185,7 +194,7 @@ mod tests {
             ),
             ("$simplify $commit later".into(), "$simplify $commit ".len())
         );
-        assert_eq!(suggestions("please $", &commands).len(), 3);
+        assert_eq!(suggestions("please $", &commands).len(), 4);
         assert!(suggestions("please$com", &commands).is_empty());
     }
 
@@ -234,5 +243,8 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["prompt:review", "skill:review"]
         );
+        assert!(!contains_invocation("$review", &commands));
+        assert!(contains_invocation("$skill:review", &commands));
+        assert!(contains_invocation("$prompt:review", &commands));
     }
 }

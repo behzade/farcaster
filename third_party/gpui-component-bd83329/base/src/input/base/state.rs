@@ -340,6 +340,7 @@ pub struct InputBaseState<M: InputModeKind> {
     pub(super) editor_scrollbar_snapshot: Cell<Option<EditorScrollbarSnapshot>>,
     pub(super) editor_paddings: Edges<Pixels>,
     pub(super) editor_style: InputEditorStyle,
+    pub(super) text_decorations: Vec<super::TextDecoration>,
 
     /// The mask pattern for formatting the input text
     pub(crate) mask_pattern: MaskPattern,
@@ -637,6 +638,7 @@ impl<M: InputModeKind> InputBaseState<M> {
             mask_pattern: MaskPattern::default(),
             mask_pattern_set: false,
             editor_style: InputEditorStyle::default(),
+            text_decorations: Vec::new(),
             diagnostic_popover: None,
             context_menu_handler: None,
             pending_context_menu: None,
@@ -722,6 +724,13 @@ impl<M: InputModeKind> InputBaseState<M> {
     /// Install a default adapter without replacing an application-provided one.
     pub fn ensure_highlighter_factory(&mut self, factory: InputHighlighterFactory) {
         self.mode.ensure_highlighter_factory(factory);
+    }
+
+    /// Set render-time decorations for any input mode, using UTF-8 byte ranges.
+    /// Like presentation padding, these must be refreshed by the owner when rendering;
+    /// they are not tracked through edits and do not emit change events.
+    pub fn set_text_decorations(&mut self, decorations: Vec<super::TextDecoration>) {
+        self.text_decorations = decorations;
     }
 
     pub fn set_editor_style(&mut self, style: InputEditorStyle) {

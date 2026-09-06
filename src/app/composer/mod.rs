@@ -2,6 +2,7 @@ use super::*;
 
 pub(in crate::app) mod completion;
 pub(in crate::app) mod file_mentions;
+pub(in crate::app) mod highlighting;
 pub(in crate::app) mod images;
 pub(in crate::app) mod pastes;
 pub(crate) mod prompt_fragments;

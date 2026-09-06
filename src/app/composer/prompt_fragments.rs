@@ -75,7 +75,7 @@ pub(crate) fn invocation_token(token: &str) -> &str {
     token.trim_end_matches(['.', ',', ';', ':', '!', '?'])
 }
 
-fn tokens(input: &str) -> impl Iterator<Item = (usize, usize, &str)> {
+pub(super) fn tokens(input: &str) -> impl Iterator<Item = (usize, usize, &str)> {
     let mut start = None;
     input
         .char_indices()

@@ -36,7 +36,21 @@ impl ComposerInput {
 }
 
 impl RenderOnce for ComposerInput {
-    fn render(self, _: &mut gpui::Window, _: &mut App) -> impl IntoElement {
+    fn render(self, _: &mut gpui::Window, cx: &mut App) -> impl IntoElement {
+        let decorations = self
+            .app
+            .upgrade()
+            .map(|app| {
+                let app = app.read(cx);
+                crate::app::composer::highlighting::decorations(
+                    &self.composer.read(cx).value(),
+                    &app.snapshot.commands,
+                    &app.composer_project_files,
+                )
+            })
+            .unwrap_or_default();
+        self.composer
+            .update(cx, |input, _| input.set_text_decorations(decorations));
         let previous_history_entity = self.app.clone();
         let next_history_entity = self.app.clone();
         let previous_completion_entity = self.app.clone();
