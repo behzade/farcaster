@@ -9,9 +9,8 @@ use crate::app::{
     AppSurface,
     ui::{
         layout::{
-            LayoutMode, composer_bottom_clearance, draft_top_padding, shows_draft_inspector,
-            shows_left_inline, shows_right_inline, shows_run_sheet_button,
-            shows_session_sheet_button,
+            LayoutMode, composer_bottom_clearance, draft_top_padding, shows_left_inline,
+            shows_right_inline, shows_run_sheet_button, shows_session_sheet_button,
         },
         theme::THEME,
     },
@@ -37,11 +36,9 @@ impl FarcasterApp {
             .flex()
             .flex_col()
             .when(shows_run_sheet_button(mode) && has_conversation, |main| {
-                main.child(self.render_chat_navigation(
-                    shows_session_sheet_button(mode),
-                    shows_right_inline(mode),
-                    entity.clone(),
-                ))
+                main.child(
+                    self.render_chat_navigation(shows_session_sheet_button(mode), entity.clone()),
+                )
             })
             .child(
                 div()
@@ -174,41 +171,32 @@ impl FarcasterApp {
                 )
             })
             .child(main)
-            .when(
-                if self.surface == AppSurface::Chat
-                    && self.selected_draft_is_empty_and_unsubmitted()
-                {
-                    shows_draft_inspector(mode, self.overlays.draft_inspector)
-                } else {
-                    shows_right_inline(mode)
-                },
-                |shell| {
-                    let resize = entity;
-                    shell.child(
-                        div()
-                            .relative()
-                            .w(run_panel_width)
-                            .min_w(THEME.layout.run_panel_min)
-                            .max_w(THEME.layout.run_panel_max)
-                            .flex_none()
-                            .border_l(THEME.border)
-                            .border_color(THEME.colors.border)
-                            .child(if self.workgraph_inspector_issue.is_some() {
-                                self.workgraph_detail_view.clone().into_any_element()
-                            } else {
-                                self.run_panel_view
-                                    .clone()
-                                    .cached(gpui::StyleRefinement::default().size_full())
-                                    .into_any_element()
-                            })
-                            .child(resize_handle("run-panel-resize", false, move |x, cx| {
-                                let _ = resize.update(cx, |this, cx| {
-                                    this.begin_run_panel_resize(x, cx);
-                                });
-                            })),
-                    )
-                },
-            )
+            .when(shows_right_inline(mode), |shell| {
+                let resize = entity;
+                shell.child(
+                    div()
+                        .relative()
+                        .w(run_panel_width)
+                        .min_w(THEME.layout.run_panel_min)
+                        .max_w(THEME.layout.run_panel_max)
+                        .flex_none()
+                        .border_l(THEME.border)
+                        .border_color(THEME.colors.border)
+                        .child(if self.workgraph_inspector_issue.is_some() {
+                            self.workgraph_detail_view.clone().into_any_element()
+                        } else {
+                            self.run_panel_view
+                                .clone()
+                                .cached(gpui::StyleRefinement::default().size_full())
+                                .into_any_element()
+                        })
+                        .child(resize_handle("run-panel-resize", false, move |x, cx| {
+                            let _ = resize.update(cx, |this, cx| {
+                                this.begin_run_panel_resize(x, cx);
+                            });
+                        })),
+                )
+            })
             .into_any_element()
     }
 }

@@ -138,10 +138,7 @@ impl FarcasterApp {
             image_preview_return_focus: None,
             sheet_focus: cx.focus_handle(),
             sheet_return_focus: None,
-            overlays: views::overlay_state::OverlayViewState {
-                draft_inspector: persisted.draft_inspector,
-                ..Default::default()
-            },
+            overlays: Default::default(),
             performance_monitor: performance.monitor,
             _performance_task: performance.task,
             pending_session_switch: None,

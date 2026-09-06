@@ -102,22 +102,22 @@ impl FarcasterApp {
                             ))
                         },
                     )
-                    .when(crate::app::ui::layout::shows_draft_inspector(mode, self.overlays.draft_inspector), |bar| {
-                        bar.child(button(
-                            "hide-draft-details", "Hide session details", ButtonTone::Quiet, true,
-                            move |_, cx| {
-                                let _ = details.update(cx, |this, cx| {
-                                    this.overlays.draft_inspector = false;
-                                    if let Err(error) = crate::app::infrastructure::persistence::StateStore::open()
-                                        .and_then(|store| store.save_draft_inspector(false))
-                                    {
-                                        this.sessions_error = Some(error);
-                                    }
-                                    cx.notify();
-                                });
-                            },
-                        ))
-                    })
+                    .when(
+                        crate::app::ui::layout::shows_run_sheet_button(mode),
+                        |bar| {
+                            bar.child(button(
+                                "draft-details",
+                                "Session details",
+                                ButtonTone::Quiet,
+                                true,
+                                move |window, cx| {
+                                    let _ = details.update(cx, |this, cx| {
+                                        this.open_run_sheet(window, cx);
+                                    });
+                                },
+                            ))
+                        },
+                    )
                     .child(button(
                         "draft-project-work",
                         "Project work",

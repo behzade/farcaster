@@ -9,7 +9,6 @@ pub(super) struct PersistedState {
     pub(super) composer_sessions: ComposerSessions,
     pub(super) submitted_drafts: HashMap<String, Option<PathBuf>>,
     pub(super) saved_proxy: Option<String>,
-    pub(super) draft_inspector: bool,
 }
 
 pub(super) fn load(project: &Path) -> PersistedState {
@@ -80,15 +79,9 @@ pub(super) fn load(project: &Path) -> PersistedState {
     let submitted_drafts = drafts::submitted_draft_associations(&registry.drafts);
     let proxy_timing =
         crate::app::infrastructure::performance::StartupTiming::new("app.load_proxy");
-    let (saved_proxy, draft_inspector) =
-        crate::app::infrastructure::persistence::StateStore::open()
-            .map(|store| {
-                (
-                    crate::access::load_proxy(&store).unwrap_or(None),
-                    store.load_draft_inspector().unwrap_or(false),
-                )
-            })
-            .unwrap_or_default();
+    let saved_proxy = crate::app::infrastructure::persistence::StateStore::open()
+        .ok()
+        .and_then(|store| crate::access::load_proxy(&store).unwrap_or(None));
     drop(proxy_timing);
 
     PersistedState {
@@ -100,6 +93,5 @@ pub(super) fn load(project: &Path) -> PersistedState {
         composer_sessions,
         submitted_drafts,
         saved_proxy,
-        draft_inspector,
     }
 }

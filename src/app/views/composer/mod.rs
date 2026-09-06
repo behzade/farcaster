@@ -41,7 +41,6 @@ impl FarcasterApp {
             return self.render_composer_request(entity);
         }
 
-        let floating = self.selected_draft_is_empty_and_unsubmitted();
         let composer = self.composer.read(cx);
         let composer_text = composer.value().to_string();
         let composer_cursor = composer.cursor().min(composer_text.len());
@@ -155,12 +154,9 @@ impl FarcasterApp {
                     .border_t(THEME.border)
                     .border_color(THEME.colors.surface)
                     .bg(THEME.colors.panel)
-                    .when(!floating, |footer| footer.rounded_b(THEME.radius))
+                    .rounded_b(THEME.radius)
                     .child(self.render_composer_controls(entity.clone(), footer_scroll)),
-            )
-            .when(floating, |composer| {
-                composer.child(start::shortcuts(entity))
-            });
+            );
 
         div()
             .w_full()

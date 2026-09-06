@@ -12,7 +12,6 @@ impl FarcasterApp {
     pub(in crate::app::views) fn render_chat_navigation(
         &self,
         show_sessions: bool,
-        wide: bool,
         entity: WeakEntity<Self>,
     ) -> impl IntoElement {
         let sessions = entity.clone();
@@ -61,40 +60,12 @@ impl FarcasterApp {
                     ))
                     .child(button(
                         "open-run",
-                        if wide
-                            && self.selected_draft_is_empty_and_unsubmitted()
-                            && self.overlays.draft_inspector
-                        {
-                            "Hide session details"
-                        } else {
-                            "Session details"
-                        },
+                        "Session details",
                         ButtonTone::Quiet,
                         true,
                         move |window, cx| {
                             let _ = entity.update(cx, |this, cx| {
-                                if this.selected_draft_is_empty_and_unsubmitted()
-                                    && crate::app::ui::layout::shows_right_inline(
-                                        crate::app::ui::layout::layout_mode(
-                                            window.viewport_size().width,
-                                        ),
-                                    )
-                                {
-                                    this.overlays.draft_inspector = !this.overlays.draft_inspector;
-                                    if let Err(error) =
-                                        crate::app::infrastructure::persistence::StateStore::open()
-                                            .and_then(|store| {
-                                                store.save_draft_inspector(
-                                                    this.overlays.draft_inspector,
-                                                )
-                                            })
-                                    {
-                                        this.sessions_error = Some(error);
-                                    }
-                                    cx.notify();
-                                } else {
-                                    this.open_run_sheet(window, cx);
-                                }
+                                this.open_run_sheet(window, cx);
                             });
                         },
                     )),
