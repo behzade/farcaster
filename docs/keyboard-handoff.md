@@ -16,11 +16,16 @@ Architecture and invariants: [Keyboard design](keyboard-plan.md).
 - Scoped modal Tab traversal preserves input-owned actions. Badge visibility
   checks window activation. Shared leader hints and wrapping shortcut rows
   keep help/status consistent at narrow widths.
+- Rendered transcript caret, `h/j/k/l`, `w/b`, inclusive `v`/`V`, `y`, native
+  Copy, and Escape. Selection follows wrapping and spans virtualized rows;
+  focus/session changes clear visual state. Markdown stays rendered.
 
 ## Validation
 
-- `cargo test --bin farcaster app::ui::`: 38 passed, including GPUI focus,
+- `cargo test --bin farcaster app::ui::`: 39 passed, including GPUI focus,
   modal/menu, composer Tab, title editing, and direct Cmd regressions.
+- Transcript tests: 111 passed, including grapheme/reverse selection, wrapping,
+  rendered Markdown/code copying, virtualized yank, and reset/following.
 - Transcript-list tests cover top/end jumps, queued scroll cancellation, and
   live-tail following. Narrow-help layout, workspace, picker, session-rail, archive, and window
   activation tests passed; `cargo check --bin farcaster` passed.
@@ -43,6 +48,10 @@ No real Linux/macOS window interaction or screenshot review was performed.
 3. Archive/delete/JJ confirmations over sheets/native surfaces, nested menus,
    and dismissal after the original control disappears.
 4. Narrow help/settings appearance, IME/desktop conflicts, native clipboard.
+5. Transcript caret/highlight appearance, held motions, `v`/`V`/`y` and native
+   Copy; long wrapped/code/table content, collapsed tools, resize/stream updates,
+   pointer selection takeover, and focus return after overlays. Full-transcript
+   yank measures selected rows synchronously; check latency on very large chats.
 
-Visual selection remains deferred. Follow `AGENTS.md`; preserve other agents'
-work, stage only whole task files, and leave unrelated staged files untouched.
+Follow `AGENTS.md`; preserve other agents' work, stage only whole task files,
+and leave unrelated staged files untouched.

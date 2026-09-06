@@ -10,7 +10,8 @@ inside Neovim and the terminal. Double `Ctrl+G` returns to **chat normal mode**.
 
 Activation is not the Space leader: `Ctrl+G 2` switches to session 2;
 `Ctrl+G e` opens the editor, and `Ctrl+G t` opens the terminal.
-All chat-normal commands below are available after activation. A pending Space
+Surface/session commands and transcript scrolling are available after activation.
+Cursor selection requires chat normal ownership (double `Ctrl+G` first). A pending Space
 or `g` refreshes the one-second timeout. A command ends activation; Escape or an unknown key
 cancels it without forwarding that key to the input/editor/shell. Expiry does
 nothing and subsequent keys type normally. Session/surface/focus changes cancel
@@ -25,12 +26,17 @@ In chat normal:
 | `/` | Search sessions |
 | `e` / `t` | Editor / terminal |
 | `Space j` / `Space k` | Next / previous session |
-| `j` / `k` | Scroll transcript down / up |
+| `h` / `l` | Previous / next character (Unicode grapheme) |
+| `j` / `k` | Cursor down / up one rendered line |
+| `w` / `b` | Next / previous word |
 | `gg` | Transcript top |
-| `G` (Shift+g) | Transcript end; resume following new messages |
+| `G` (Shift+g) | Transcript end; resume following unless selecting |
 | `Ctrl+f` / `Ctrl+b` | Page down / up |
 | `Ctrl+d` / `Ctrl+u` | Half-page down / up |
-| `Escape` | Cancel pending Space or g sequence |
+| `v` / `V` | Toggle character / rendered-line visual selection |
+| `y` | Copy selection; return to normal |
+| `Cmd+c` (macOS) / `Ctrl+c` | Copy selection without leaving visual mode |
+| `Escape` | Clear selection / cancel pending Space or g sequence |
 
 Session badges show bare numbers while chat normal owns input. Pointer clicks
 on incidental controls do not take keyboard ownership. Menus/dialogs temporarily
@@ -39,7 +45,22 @@ such as opening the editor can intentionally move focus. Tab navigation remains
 available for controls. Text fields and embedded tools keep their own keys.
 
 Composer Escape retains apply-steer / double-Escape-abort behavior. Use double `Ctrl+G`
-to leave the composer instead. Visual selection is not implemented yet.
+to leave the composer instead.
+
+### Transcript selection
+
+Chat normal has a visible transcript caret. Motions scroll it into view; in
+`VISUAL` / `VISUAL LINE` they extend an inclusive selection from its anchor.
+`V` selects displayed lines, including soft-wrapped lines. Copy uses rendered
+text: prose, code, and visible labels/summaries, not Markdown delimiters, link
+URLs, hidden disclosure contents, or image bytes. Character copying preserves
+text across soft wraps; linewise copying ends with a newline.
+
+Selection pauses live following, including `G` while selecting. After leaving
+visual mode, `G` resumes following. Resize preserves grapheme anchors; replacing
+selected content cancels selection rather than copying a stale range. Switching
+sessions or moving keyboard focus elsewhere clears visual mode. Pointer text
+selection remains available and replaces keyboard selection.
 
 Keyboard help lists these commands first and **Direct** shortcuts separately.
 Settings → **Direct shortcut modifier** changes only those direct shortcuts;

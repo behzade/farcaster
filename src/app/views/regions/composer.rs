@@ -71,7 +71,7 @@ impl Render for ComposerView {
                 app.chat_navigation
                     .pending_key
                     .map(|prefix| prefix.hint())
-                    .unwrap_or("NORMAL"),
+                    .unwrap_or_else(|| app.transcript_view.read(cx).list.keyboard_mode()),
             )
         } else if app.composer_focus.is_focused(window) {
             Some("INSERT")

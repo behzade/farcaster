@@ -70,6 +70,9 @@ impl Render for TranscriptView {
             return gpui::div().into_any_element();
         };
         let app = app.read(cx);
+        self.list.set_keyboard_active(
+            app.chat_navigation.focus.is_focused(window) && window.is_window_active(),
+        );
         let viewport = window.viewport_size();
         transcript::render(
             &self.list,

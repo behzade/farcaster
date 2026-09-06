@@ -284,7 +284,7 @@ impl Element for &'static str {
         _window: &mut Window,
         _cx: &mut App,
     ) {
-        text_layout.prepaint(bounds, self)
+        text_layout.prepaint(bounds, self, _cx)
     }
 
     fn paint(
@@ -358,7 +358,7 @@ impl Element for SharedString {
         _window: &mut Window,
         _cx: &mut App,
     ) {
-        text_layout.prepaint(bounds, self.as_ref())
+        text_layout.prepaint(bounds, self.as_ref(), _cx)
     }
 
     fn paint(
@@ -584,7 +584,7 @@ impl Element for StyledText {
         _window: &mut Window,
         _cx: &mut App,
     ) {
-        self.layout.prepaint(bounds, &self.text)
+        self.layout.prepaint(bounds, &self.text, _cx)
     }
 
     fn paint(
@@ -623,7 +623,30 @@ struct TextLayoutInner {
     bounds: Option<Bounds<Pixels>>,
 }
 
+// A scoped collector, not a persistent window registry. Virtualized readers can
+// inspect exact shaped text in a rollback prepaint without synthesizing input.
+struct TextLayoutCapture(RefCell<Vec<(SharedString, TextLayout)>>);
+impl crate::Global for TextLayoutCapture {}
+
 impl TextLayout {
+    /// Collect shaped text and its geometry while prepainting a subtree.
+    /// Callers may use `Window::transact` to discard measurement-only hitboxes.
+    /// Layouts must be inspected before the subtree is prepainted again.
+    pub fn capture<R>(
+        cx: &mut App,
+        f: impl FnOnce(&mut App) -> R,
+    ) -> (R, Vec<(SharedString, TextLayout)>) {
+        let previous = cx
+            .has_global::<TextLayoutCapture>()
+            .then(|| cx.remove_global::<TextLayoutCapture>());
+        cx.set_global(TextLayoutCapture(RefCell::new(Vec::new())));
+        let result = f(cx);
+        let captured = cx.remove_global::<TextLayoutCapture>().0.into_inner();
+        if let Some(previous) = previous {
+            cx.set_global(previous);
+        }
+        (result, captured)
+    }
     fn layout(
         &self,
         text: SharedString,
@@ -780,13 +803,25 @@ impl TextLayout {
         })
     }
 
-    fn prepaint(&self, bounds: Bounds<Pixels>, text: &str) {
+    fn prepaint(&self, bounds: Bounds<Pixels>, text: &str, cx: &mut App) {
         let mut element_state = self.0.borrow_mut();
         let element_state = element_state
             .as_mut()
             .with_context(|| format!("measurement has not been performed on {text}"))
             .unwrap();
         element_state.bounds = Some(bounds);
+        if let Some(capture) = cx.try_global::<TextLayoutCapture>() {
+            capture.0.borrow_mut().push((
+                element_state
+                    .lines
+                    .iter()
+                    .map(|line| line.text.as_ref())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    .into(),
+                self.clone(),
+            ));
+        }
     }
 
     fn paint(&self, text: &str, window: &mut Window, cx: &mut App) {

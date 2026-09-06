@@ -59,6 +59,7 @@ thiserror = "2.0.19"
 time = { version = "0.3.54", features = ["formatting", "parsing"] }
 tokio = { version = "1.49.0", features = ["net", "rt-multi-thread"] }
 tpt-logfmt-parse = "0.3.0"
+unicode-segmentation = "1.12.0"
 url = "2.5.8"
 workgraph = { path = "workgraph" }
 zlog = { path = "third_party/zed-gpui-cc053a4/crates/zlog" }

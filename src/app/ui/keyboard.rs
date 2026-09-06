@@ -22,6 +22,9 @@ impl FarcasterApp {
     ) {
         let native = matches!(self.surface, AppSurface::Editor | AppSurface::Terminal);
         if !paste && !native {
+            if self.copy_keyboard_selection(window, cx) {
+                return;
+            }
             copy_selection(
                 self.transcript_selected_text(cx),
                 self.composer.read(cx).selected_value().to_string(),

@@ -1815,6 +1815,7 @@ dependencies = [
  "time",
  "tokio",
  "tpt-logfmt-parse",
+ "unicode-segmentation",
  "url",
  "uzers",
  "workgraph",

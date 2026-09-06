@@ -13,7 +13,7 @@ text editing, and explicit surface commands may deliberately move focus.
 `Ctrl+G` activates one app command without moving focus. It is distinct from
 the Space leader. Double `Ctrl+G` returns to chat normal; `i`/`a` enters insert.
 `e`/`t` opens editor/terminal directly in normal mode. `gg` jumps to transcript
-top; `G` jumps to its end and resumes live following. Space is reserved for
+top; `G` jumps to its end and resumes live following outside visual mode. Space is reserved for
 session navigation (`j`/`k`). New sessions enter insert automatically. Async
 session updates preserve the remembered chat owner. Composer Escape keeps steer/double-Escape-abort behavior.
 
@@ -43,9 +43,24 @@ owner; native surfaces restore their own focus. Only repair missing focus—do
 not force an owner on every render. Unhandled Tab bubbles to the innermost
 modal; input-bound actions retain precedence.
 
-## Deferred
+## Transcript cursor and visual selection
 
-Transcript scrolling is implemented; keyboard cursor and visual selection are
-not. Before adding them, agree on block-versus-line selection, stable anchors,
-copy behavior, and return-to-live-tail. Reuse the existing transcript list and
-selection machinery rather than introducing a separate keyboard model.
+`src/app/views/transcript/list/keyboard.rs` owns cursor/anchor coordinates and
+motions inside the existing virtualized list. Coordinates are rendered row and
+Unicode grapheme index, independent of wrapping and source Markdown offsets.
+`j/k` moves by displayed line with a preferred horizontal position; `v` selects
+characters and `V` selects displayed lines. `y` copies and exits; native Copy
+preserves selection. Selection pauses tail following. Focus loss and session
+reset clear visual state; replacing selected rows cancels stale anchors.
+
+A small backend-neutral `TextLayout::capture` seam in vendored GPUI reports the
+exact shaped text and geometry during subtree prepaint. The transcript uses
+rollback prepaint (`Window::transact`) to measure virtualized destinations
+without installing offscreen hitboxes or focus targets. Normal rendering and
+Markdown remain unchanged. The existing palette supplies selection and caret
+colors; status reads `NORMAL`, `VISUAL`, or `VISUAL LINE`.
+
+Geometry is retained only for visible rows and endpoints. Copy lays out missing
+selected rows on demand, then releases their geometry. Pointer selection keeps
+its existing path and cancels keyboard selection. Cursor keys are routed only
+when chat normal owns focus, never through composer/Neovim/terminal input.

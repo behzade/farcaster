@@ -16,8 +16,9 @@ pub(crate) struct ChatNavigation {
 }
 
 mod shortcuts;
+use crate::app::views::transcript::list::KeyboardCommand;
 pub(crate) use shortcuts::{Command, Prefix, command_key, help_shortcuts};
-use shortcuts::{Scroll, normal_command, transcript_scroll};
+use shortcuts::{Scroll, keyboard_command, normal_command, transcript_scroll};
 
 const ACTIVATION_TIMEOUT: Duration = Duration::from_secs(1);
 
@@ -114,6 +115,10 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.transcript_view
+            .read(cx)
+            .list
+            .watch_keyboard_mode(self.composer_view.entity_id());
         let entity = cx.entity().downgrade();
         let window_id = window.window_handle().window_id();
         // Intercept activation AND its continuations before embedded/input keymaps act.
@@ -175,6 +180,10 @@ impl FarcasterApp {
                 }
             }));
         cx.observe_window_activation(window, |this, window, cx| {
+            this.transcript_view.read(cx).list.set_keyboard_active(
+                window.is_window_active() && this.chat_navigation.focus.is_focused(window),
+            );
+            this.notify_transcript(cx);
             if !window.is_window_active() {
                 this.chat_navigation.activation.clear();
                 this.chat_navigation.pending_key = None;
@@ -195,11 +204,21 @@ impl FarcasterApp {
         ] {
             cx.on_focus(focus, window, move |this, window, cx| {
                 this.chat_navigation.normal_mode = normal_mode;
+                this.transcript_view
+                    .read(cx)
+                    .list
+                    .set_keyboard_active(normal_mode);
+                this.notify_transcript(cx);
                 this.set_session_shortcuts_visible(normal_mode && window.is_window_active(), cx);
                 this.notify_composer(cx);
             })
             .detach();
             cx.on_blur(focus, window, |this, _, cx| {
+                this.transcript_view
+                    .read(cx)
+                    .list
+                    .set_keyboard_active(false);
+                this.notify_transcript(cx);
                 this.set_session_shortcuts_visible(false, cx);
                 this.chat_navigation.pending_key = None;
                 this.notify_composer(cx);
@@ -216,6 +235,10 @@ impl FarcasterApp {
         self.chat_navigation.activation.clear();
         self.chat_navigation.normal_mode = true;
         self.chat_navigation.pending_key = None;
+        self.transcript_view
+            .read(cx)
+            .list
+            .set_keyboard_active(false);
         if self.image_preview.is_some() {
             self.close_image_preview(window, cx);
         }
@@ -241,6 +264,7 @@ impl FarcasterApp {
         // synthesizing a response or cancelling the running agent.
         self.enter_chat_surface(self.chat_navigation.focus.clone(), cx);
         self.chat_navigation.focus.focus(window, cx);
+        self.notify_transcript(cx);
         self.notify_composer(cx);
     }
 
@@ -265,16 +289,20 @@ impl FarcasterApp {
             self.chat_navigation.pending_key = None;
             return;
         }
-        let scroll = transcript_scroll(key, modifiers, self.chat_navigation.pending_key);
-        // Holding g must not synthesize gg; only relative scrolling repeats.
-        if event.is_held && !matches!(scroll, Some(Scroll::Lines(_) | Scroll::Pages(_))) {
+        let cursor_command = keyboard_command(key, modifiers, self.chat_navigation.pending_key)
+            .filter(|command| {
+                *command != KeyboardCommand::Copy
+                    || self.transcript_view.read(cx).list.has_keyboard_selection()
+            });
+        // Holding g must not synthesize gg, and held v must not toggle repeatedly.
+        if event.is_held && !cursor_command.is_some_and(KeyboardCommand::repeats) {
             window.prevent_default();
             cx.stop_propagation();
             return;
         }
-        if let Some(scroll) = scroll {
+        if let Some(command) = cursor_command {
             self.chat_navigation.pending_key = None;
-            self.scroll_transcript(scroll, window, cx);
+            self.move_transcript_cursor(command, window, cx);
             window.prevent_default();
             cx.stop_propagation();
             self.notify_composer(cx);
@@ -303,7 +331,36 @@ impl FarcasterApp {
         self.notify_composer(cx);
     }
 
+    pub(in crate::app) fn copy_keyboard_selection(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.chat_navigation.focus.is_focused(window)
+            || !self.transcript_view.read(cx).list.has_keyboard_selection()
+        {
+            return false;
+        }
+        self.move_transcript_cursor(KeyboardCommand::Copy, window, cx);
+        true
+    }
+
+    fn move_transcript_cursor(
+        &mut self,
+        command: KeyboardCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        gpui_base::TextSelection::clear(window, cx);
+        self.transcript_view.read(cx).list.keyboard_command(command);
+        self.notify_transcript(cx);
+    }
+
     fn scroll_transcript(&mut self, scroll: Scroll, window: &mut Window, cx: &mut Context<Self>) {
+        if self.chat_navigation.focus.is_focused(window) {
+            self.move_transcript_cursor(scroll.cursor(), window, cx);
+            return;
+        }
         let list = &self.transcript_view.read(cx).list;
         let distance = match scroll {
             Scroll::Start => {
@@ -576,5 +633,37 @@ mod tests {
             gpui::Modifiers { alt: true, ..ctrl },
             true
         ));
+    }
+
+    #[test]
+    fn visual_keys_respect_prefixes_and_modifiers() {
+        for (key, expected) in [
+            ("h", KeyboardCommand::Left),
+            ("l", KeyboardCommand::Right),
+            ("j", KeyboardCommand::Down),
+            ("k", KeyboardCommand::Up),
+            ("w", KeyboardCommand::WordForward),
+            ("b", KeyboardCommand::WordBackward),
+            ("v", KeyboardCommand::Visual(false)),
+            ("V", KeyboardCommand::Visual(true)),
+            ("y", KeyboardCommand::Yank),
+            ("escape", KeyboardCommand::Cancel),
+        ] {
+            let stroke = gpui::Keystroke::parse(key).unwrap();
+            assert_eq!(
+                keyboard_command(&stroke.key, stroke.modifiers, None),
+                Some(expected),
+                "{key}"
+            );
+            assert_eq!(
+                keyboard_command(&stroke.key, stroke.modifiers, Some(Prefix::Space)),
+                (key == "escape").then_some(KeyboardCommand::Cancel),
+                "{key}"
+            );
+        }
+        for key in ["ctrl-v", "alt-h", "cmd-j", "ctrl-shift-y"] {
+            let stroke = gpui::Keystroke::parse(key).unwrap();
+            assert_eq!(keyboard_command(&stroke.key, stroke.modifiers, None), None);
+        }
     }
 }

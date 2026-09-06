@@ -1,4 +1,6 @@
 //! Shared command definitions for routing, help, and workspace hints.
+use crate::app::views::transcript::list::KeyboardCommand;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Command {
     Composer,
@@ -40,6 +42,18 @@ pub(super) enum Scroll {
     Pages(f32),
 }
 
+impl Scroll {
+    pub(super) fn cursor(self) -> KeyboardCommand {
+        match self {
+            Self::Start => KeyboardCommand::Start,
+            Self::End => KeyboardCommand::End,
+            Self::Lines(lines) if lines > 0.0 => KeyboardCommand::Down,
+            Self::Lines(_) => KeyboardCommand::Up,
+            Self::Pages(pages) => KeyboardCommand::Page(pages),
+        }
+    }
+}
+
 const COMMANDS: &[(&str, &str, Command)] = &[
     ("i", "Focus composer", Command::Composer),
     ("a", "Focus composer (alias)", Command::Composer),
@@ -52,13 +66,40 @@ const COMMANDS: &[(&str, &str, Command)] = &[
 
 const SCROLLS: &[(&str, &str, Scroll)] = &[
     ("g g", "Transcript top", Scroll::Start),
-    ("G", "Transcript end / follow latest", Scroll::End),
-    ("j", "Scroll transcript down", Scroll::Lines(1.0)),
-    ("k", "Scroll transcript up", Scroll::Lines(-1.0)),
+    ("G", "Transcript end (normal: follow latest)", Scroll::End),
+    ("j", "Cursor down one rendered line", Scroll::Lines(1.0)),
+    ("k", "Cursor up one rendered line", Scroll::Lines(-1.0)),
     ("ctrl-f", "Page down", Scroll::Pages(1.0)),
     ("ctrl-b", "Page up", Scroll::Pages(-1.0)),
     ("ctrl-d", "Half-page down", Scroll::Pages(0.5)),
     ("ctrl-u", "Half-page up", Scroll::Pages(-0.5)),
+];
+
+const CURSOR_COMMANDS: &[(&str, &str, KeyboardCommand)] = &[
+    ("h", "Previous character", KeyboardCommand::Left),
+    ("l", "Next character", KeyboardCommand::Right),
+    ("w", "Next word", KeyboardCommand::WordForward),
+    ("b", "Previous word", KeyboardCommand::WordBackward),
+    (
+        "v",
+        "Toggle character selection",
+        KeyboardCommand::Visual(false),
+    ),
+    (
+        "V",
+        "Toggle rendered-line selection",
+        KeyboardCommand::Visual(true),
+    ),
+    (
+        "y",
+        "Copy selection and return to normal",
+        KeyboardCommand::Yank,
+    ),
+    (
+        "escape",
+        "Clear selection / cancel pending sequence",
+        KeyboardCommand::Cancel,
+    ),
 ];
 
 pub(crate) fn command_key(command: Command) -> &'static str {
@@ -141,9 +182,16 @@ pub(crate) fn help_shortcuts() -> Vec<(&'static str, String, &'static str)> {
     rows.extend(
         SCROLLS
             .iter()
-            .map(|(key, label, _)| ("Chat normal", (*key).into(), *label)),
+            .map(|(key, label, _)| ("Chat normal / visual", (*key).into(), *label)),
     );
-    rows.push(("Chat normal", "escape".into(), "Cancel pending sequence"));
+    rows.extend(CURSOR_COMMANDS.iter().map(|(key, label, command)| {
+        let section = if *command == KeyboardCommand::Yank {
+            "Chat visual"
+        } else {
+            "Chat normal / visual"
+        };
+        (section, (*key).into(), *label)
+    }));
     rows
 }
 
@@ -194,4 +242,47 @@ pub(super) fn transcript_scroll(
         ((plain && *sequence == key) || (control && sequence.strip_prefix("ctrl-") == Some(key)))
             .then_some(*scroll)
     })
+}
+
+/// Cursor commands belong only to the transcript's explicit keyboard owner.
+pub(super) fn keyboard_command(
+    key: &str,
+    modifiers: gpui::Modifiers,
+    prefix: Option<Prefix>,
+) -> Option<KeyboardCommand> {
+    use KeyboardCommand::*;
+    if let Some(scroll) = transcript_scroll(key, modifiers, prefix) {
+        return Some(scroll.cursor());
+    }
+    if key == "escape" && !modifiers.modified() {
+        return Some(Cancel);
+    }
+    if prefix.is_some() {
+        return None;
+    }
+    if key == "c"
+        && modifiers
+            == (gpui::Modifiers {
+                platform: cfg!(target_os = "macos"),
+                control: !cfg!(target_os = "macos"),
+                ..Default::default()
+            })
+    {
+        return Some(Copy);
+    }
+    let key = if key == "v"
+        && modifiers
+            == (gpui::Modifiers {
+                shift: true,
+                ..Default::default()
+            }) {
+        "V"
+    } else if modifiers.modified() {
+        return None;
+    } else {
+        key
+    };
+    CURSOR_COMMANDS
+        .iter()
+        .find_map(|(candidate, _, command)| (*candidate == key).then_some(*command))
 }
