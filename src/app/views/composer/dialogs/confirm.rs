@@ -78,7 +78,7 @@ impl RenderOnce for ConfirmRequestView {
                     .gap(THEME.space.xs)
                     .child(button(
                         "confirm-no",
-                        "No",
+                        "[n] No",
                         ButtonTone::Neutral,
                         true,
                         move |window, cx| {
@@ -89,7 +89,7 @@ impl RenderOnce for ConfirmRequestView {
                     ))
                     .child(button(
                         "confirm-yes",
-                        "Yes",
+                        "[y] Yes",
                         ButtonTone::Accent,
                         true,
                         move |window, cx| {

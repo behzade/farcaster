@@ -92,6 +92,7 @@ impl FarcasterApp {
         entity: WeakEntity<Self>,
         mode: LayoutMode,
         viewport_height: gpui::Pixels,
+        request_focused: bool,
     ) -> AnyElement {
         let native_surface = matches!(self.surface, AppSurface::Editor | AppSurface::Terminal);
         let native_surface_covered = native_surface
@@ -129,7 +130,7 @@ impl FarcasterApp {
                             .left_0()
                             .right_0()
                             .bottom_0()
-                            .child(self.render_composer_request(entity)),
+                            .child(self.render_composer_request(entity, request_focused)),
                     )
                 },
             ))

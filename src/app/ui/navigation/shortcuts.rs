@@ -169,6 +169,8 @@ pub(crate) fn help_shortcuts() -> Vec<(&'static str, String, &'static str)> {
     rows.extend([
         ("Chat", "ctrl-k".into(), "Focus transcript (normal mode)"),
         ("Chat", "ctrl-j".into(), "Focus composer"),
+        ("Agent confirmation", "n".into(), "No / deny"),
+        ("Agent confirmation", "y".into(), "Yes / allow"),
     ]);
     rows.extend(
         COMMANDS

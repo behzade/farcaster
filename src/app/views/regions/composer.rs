@@ -84,6 +84,7 @@ impl Render for ComposerView {
             &self.footer_scroll,
             &self.status_scroll,
             mode,
+            app.composer_region_focused(window, cx),
             cx,
         )
         .into_any_element()

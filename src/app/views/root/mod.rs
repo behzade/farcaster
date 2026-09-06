@@ -30,7 +30,12 @@ impl Render for FarcasterApp {
             AppSurface::Editor | AppSurface::Terminal => NATIVE_INPUT_CONTEXT,
         };
         let work_active = self.surface == AppSurface::Work;
-        let main = self.render_workspace_main(entity.clone(), mode, window.viewport_size().height);
+        let main = self.render_workspace_main(
+            entity.clone(),
+            mode,
+            window.viewport_size().height,
+            self.composer_region_focused(window, cx),
+        );
         let session_rail_width = self.session_rail_view.read(cx).width();
         let run_panel_width = self.run_panel_view.read(cx).width();
         let shell = self.render_inline_shell(

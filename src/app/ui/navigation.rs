@@ -1,5 +1,5 @@
 //! Chat-normal navigation plus a one-shot, focus-preserving global activation.
-use gpui::{Context, FocusHandle, KeyDownEvent, Window};
+use gpui::{Context, FocusHandle, Focusable as _, KeyDownEvent, Window};
 use std::time::{Duration, Instant};
 
 use crate::app::{AppSurface, FarcasterApp, PickerScope};
@@ -203,6 +203,8 @@ impl FarcasterApp {
         for (focus, normal_mode) in [
             (&self.chat_navigation.focus, true),
             (&self.composer_focus, false),
+            (&self.dialog_focus, false),
+            (&self.dialog_input.read(cx).focus_handle(cx), false),
         ] {
             cx.on_focus(focus, window, move |this, window, cx| {
                 if normal_mode && this.snapshot.conversation.items.is_empty() {
@@ -284,8 +286,9 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) -> bool {
         if self.surface != AppSurface::Chat
-            || self.native_workspace_covered_by_overlay()
-            || !(self.composer_focus.is_focused(window)
+            || self.native_workspace_modal_active()
+            || !(self.composer_region_focus(cx).is_focused(window)
+                || self.dialog_focus.contains_focused(window, cx)
                 || self.chat_navigation.focus.is_focused(window))
         {
             return false;
@@ -295,10 +298,12 @@ impl FarcasterApp {
             return false;
         };
         self.chat_navigation.pending_key = None;
-        let focus = if normal_mode && !self.snapshot.conversation.items.is_empty() {
-            &self.chat_navigation.focus
+        let normal_mode = normal_mode && !self.snapshot.conversation.items.is_empty();
+        self.chat_navigation.normal_mode = normal_mode;
+        let focus = if normal_mode {
+            self.chat_navigation.focus.clone()
         } else {
-            &self.composer_focus
+            self.composer_region_focus(cx)
         };
         if !focus.is_focused(window) {
             focus.focus(window, cx);

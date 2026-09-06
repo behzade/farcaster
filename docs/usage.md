@@ -19,7 +19,9 @@ pending activation. New sessions automatically focus the composer in insert mode
 
 In chat, `Ctrl+K` focuses the transcript in normal mode and `Ctrl+J` focuses the
 composer. They only switch focus: pressing either in its target region does nothing.
-They do not intercept keys in the editor, terminal, or dialogs.
+They do not intercept keys in the editor, terminal, or app dialogs. When an agent
+request replaces the composer, Ctrl+J focuses that request and Ctrl+K returns to
+the transcript.
 
 In chat normal:
 
@@ -51,6 +53,25 @@ available for controls. Text fields and embedded tools keep their own keys.
 Composer Escape returns to chat normal when idle; while a run is active, it applies
 queued steer / double-Escape aborts. Double `Ctrl+G` leaves the composer even during a run.
 Empty sessions stay in the composer because there is no transcript to navigate.
+
+The composer region (including agent requests replacing it) uses a muted blue-gray
+border while focused, and a muted border when focus is elsewhere or the window
+is inactive.
+
+### Agent requests
+
+Agent requests replace the composer without taking focus from transcript normal /
+visual mode. Use `Ctrl+J` or `i` / `a` to focus a request, and `Ctrl+K` to return to
+the transcript. In normal / visual mode, `y` remains yank and cannot grant permission.
+
+Confirmation buttons show `[n] No` and `[y] Yes`; press the corresponding bare key
+while the request has focus. Select requests show numbered choices. Enter, Space,
+and held keys do not approve requests.
+
+Pending requests do not block session switching: use direct session shortcuts or
+`Ctrl+G` followed by a session number (or `Space j` / `Space k`). Switching away
+leaves the request unanswered; returning restores it. Bare numbers in a request
+choose options rather than switch sessions.
 
 ### Transcript selection
 

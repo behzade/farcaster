@@ -35,10 +35,11 @@ impl FarcasterApp {
         footer_scroll: &gpui::ScrollHandle,
         status_scroll: &gpui::ScrollHandle,
         mode: Option<&'static str>,
+        focused: bool,
         cx: &App,
     ) -> AnyElement {
         if self.extension.dialog.is_some() {
-            return self.render_composer_request(entity);
+            return self.render_composer_request(entity, focused);
         }
 
         let composer = self.composer.read(cx);
@@ -104,7 +105,7 @@ impl FarcasterApp {
             .flex_col()
             .rounded(THEME.radius)
             .border(THEME.border)
-            .border_color(THEME.colors.border)
+            .border_color(composer_border_color(focused))
             .bg(THEME.colors.composer)
             .child(
                 div()
@@ -206,4 +207,12 @@ pub(super) fn composer_primary_action(
     } else {
         "Send"
     })
+}
+
+fn composer_border_color(focused: bool) -> gpui::Rgba {
+    if focused {
+        THEME.colors.focus_border
+    } else {
+        THEME.colors.border
+    }
 }

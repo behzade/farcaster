@@ -51,6 +51,10 @@ const fn should_capture_return_focus(flags: SheetFlags) -> bool {
     !flags.any()
 }
 
+fn request_preserves_transcript(surface: AppSurface, normal_mode: bool) -> bool {
+    surface == AppSurface::Chat && normal_mode
+}
+
 impl FarcasterApp {
     /// A captured control/menu can disappear during an async session update.
     /// Restore the top surviving overlay, otherwise the active surface's owner.
@@ -82,19 +86,36 @@ impl FarcasterApp {
             self.picker_focus(cx)
         } else if self.surface == AppSurface::Work {
             Some(self.workgraph_view.read(cx).focus_handle())
-        } else if let Some(dialog) = &self.extension.dialog {
+        } else if self.extension.dialog.is_some() {
+            // Inline requests replace the composer, not the transcript's keyboard owner.
             Some(
-                if matches!(
-                    dialog,
-                    ExtensionUiRequest::Input { .. } | ExtensionUiRequest::Editor { .. }
-                ) {
-                    self.dialog_input.read(cx).focus_handle(cx)
+                if request_preserves_transcript(self.surface, self.chat_navigation.normal_mode) {
+                    self.chat_navigation.focus.clone()
                 } else {
-                    self.dialog_focus.clone()
+                    self.composer_region_focus(cx)
                 },
             )
         } else {
             None
+        }
+    }
+
+    pub(in crate::app) fn composer_region_focused(&self, window: &Window, cx: &gpui::App) -> bool {
+        let focus = if self.extension.dialog.is_some() {
+            &self.dialog_focus
+        } else {
+            &self.composer_focus
+        };
+        window.is_window_active() && focus.contains_focused(window, cx)
+    }
+
+    pub(in crate::app) fn composer_region_focus(&self, cx: &gpui::App) -> FocusHandle {
+        match self.extension.dialog {
+            Some(ExtensionUiRequest::Input { .. } | ExtensionUiRequest::Editor { .. }) => {
+                self.dialog_input.read(cx).focus_handle(cx)
+            }
+            Some(_) => self.dialog_focus.clone(),
+            None => self.composer_focus.clone(),
         }
     }
 
@@ -527,6 +548,15 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.surface == AppSurface::Chat
+            && self.extension.dialog.is_some()
+            && !self.native_workspace_modal_active()
+        {
+            self.chat_navigation.normal_mode = false;
+            self.composer_region_focus(cx).focus(window, cx);
+            self.notify_composer(cx);
+            return;
+        }
         if self.enter_chat_surface(self.composer_focus.clone(), cx) {
             self.workgraph_view
                 .update(cx, |view, cx| view.prepare_open(window, cx));
@@ -838,6 +868,22 @@ impl Drop for FarcasterApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inline_requests_preserve_chat_normal_ownership_only() {
+        for surface in [
+            AppSurface::Chat,
+            AppSurface::Editor,
+            AppSurface::Terminal,
+            AppSurface::Work,
+        ] {
+            assert_eq!(
+                request_preserves_transcript(surface, true),
+                surface == AppSurface::Chat
+            );
+            assert!(!request_preserves_transcript(surface, false));
+        }
+    }
 
     #[test]
     fn activating_a_sheet_never_stacks_it_with_an_existing_sheet() {

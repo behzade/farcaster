@@ -242,7 +242,9 @@ impl FarcasterApp {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        if self.workspace_switch_blocked() {
+        // Agent requests belong to their session, not the whole workspace.
+        // The runtime retains pending dialogs when selecting another session.
+        if self.native_workspace_modal_active() || self.surface == crate::app::AppSurface::Work {
             return;
         }
         match target {

@@ -28,6 +28,7 @@ impl FarcasterApp {
     pub(in crate::app::views) fn render_composer_request(
         &self,
         entity: WeakEntity<Self>,
+        focused: bool,
     ) -> AnyElement {
         let Some(dialog) = self.extension.dialog.as_ref() else {
             return div().into_any_element();
@@ -104,10 +105,24 @@ impl FarcasterApp {
                 if event.keystroke.modifiers.modified() || !key_focus.contains_focused(window, cx) {
                     return;
                 }
-                // Select choices require an explicit number, never implicit approval.
-                if matches!(keyboard_dialog, ExtensionUiRequest::Select { .. })
-                    && matches!(event.keystroke.key.as_str(), "enter" | "space" | " ")
+                // Require an explicit choice; a held key must not answer the next request.
+                if matches!(
+                    keyboard_dialog,
+                    ExtensionUiRequest::Select { .. } | ExtensionUiRequest::Confirm { .. }
+                ) && (event.is_held
+                    || matches!(event.keystroke.key.as_str(), "enter" | "space" | " "))
                 {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                    return;
+                }
+                if let Some((id, confirmed)) =
+                    dialog_confirmation(&keyboard_dialog, &event.keystroke.key)
+                {
+                    let id = id.to_owned();
+                    let _ = key_entity.update(cx, |this, cx| {
+                        this.respond_confirm(id, confirmed, window, cx);
+                    });
                     window.prevent_default();
                     cx.stop_propagation();
                     return;
@@ -128,7 +143,7 @@ impl FarcasterApp {
             .max_h(THEME.layout.dialog_max_height)
             .overflow_y_scroll()
             .border_t(THEME.border)
-            .border_color(THEME.colors.accent)
+            .border_color(super::composer_border_color(focused))
             .bg(THEME.colors.panel)
             .child(
                 div()
@@ -162,6 +177,17 @@ impl FarcasterApp {
                 )
             })
             .into_any_element()
+    }
+}
+
+fn dialog_confirmation<'a>(dialog: &'a ExtensionUiRequest, key: &str) -> Option<(&'a str, bool)> {
+    let ExtensionUiRequest::Confirm { id, .. } = dialog else {
+        return None;
+    };
+    match key {
+        "n" => Some((id, false)),
+        "y" => Some((id, true)),
+        _ => None,
     }
 }
 
@@ -234,5 +260,17 @@ mod cancel_button_tests {
             timeout: None,
         };
         assert!(!show_cancel_button(&request));
+        assert_eq!(dialog_confirmation(&request, "n"), Some(("request", false)));
+        assert_eq!(dialog_confirmation(&request, "y"), Some(("request", true)));
+        for key in ["enter", "space", "1", "2", "escape"] {
+            assert_eq!(dialog_confirmation(&request, key), None);
+        }
+        let input = ExtensionUiRequest::Input {
+            id: "input".into(),
+            title: "Explain".into(),
+            placeholder: None,
+            timeout: None,
+        };
+        assert_eq!(dialog_confirmation(&input, "y"), None);
     }
 }
