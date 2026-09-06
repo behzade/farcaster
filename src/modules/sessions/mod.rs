@@ -4,13 +4,12 @@ mod contract;
 mod core;
 
 pub(crate) use adapter::{
-    SessionWatcher, configured_session_root, delete_family, destination_directory, discover,
-    load_history, move_family, normalize_session_path, project_display_history,
+    configured_session_root, delete_family, destination_directory, discover, load_history,
+    move_family, normalize_session_path, project_display_history,
 };
 pub(crate) use contract::{
     LoadedHistory, RUNNING_ACTIVITY_TIMEOUT, RestoredQuestion, SessionDiscovery, SessionImport,
-    SessionSummary, SessionTarget, SessionTransfer, SessionWatchEvent, TransferMember,
-    UsageSummary,
+    SessionSummary, SessionTarget, SessionTransfer, TransferMember, UsageSummary,
 };
 pub(crate) use core::{
     CatalogMetrics, ExternalActivityTracker, SessionRootIndex, SessionStore,

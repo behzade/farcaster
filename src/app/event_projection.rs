@@ -29,7 +29,8 @@ impl DirtyRegions {
             }
             RuntimeEvent::Sessions { .. }
             | RuntimeEvent::SessionsFailed { .. }
-            | RuntimeEvent::SessionFilesModified { .. }
+            | RuntimeEvent::ImportPreview { .. }
+            | RuntimeEvent::ImportPreviewFailed { .. }
             | RuntimeEvent::ExtensionUi { .. } => {}
             RuntimeEvent::SessionMoved { .. } | RuntimeEvent::SessionDeleted { .. } => {
                 self.root = true;
@@ -551,6 +552,22 @@ impl FarcasterApp {
                 self.record_session_status(target, session, status);
                 dirty.rail |= self.reconcile_submitted_drafts(cx);
             }
+            RuntimeEvent::ImportPreview {
+                generation,
+                harness,
+                sessions,
+            } => {
+                self.apply_import_preview(generation, harness, sessions, cx);
+                dirty.root = true;
+            }
+            RuntimeEvent::ImportPreviewFailed {
+                generation,
+                harness,
+                message,
+            } => {
+                self.apply_import_preview_failed(generation, harness, message, cx);
+                dirty.root = true;
+            }
             RuntimeEvent::Stopped => Arc::make_mut(&mut self.snapshot).status = "Stopped".into(),
             RuntimeEvent::Snapshot { .. }
             | RuntimeEvent::RefreshCatalog
@@ -559,8 +576,7 @@ impl FarcasterApp {
             | RuntimeEvent::ExtensionUi { .. }
             | RuntimeEvent::PromptResult { .. }
             | RuntimeEvent::Sessions { .. }
-            | RuntimeEvent::SessionsFailed { .. }
-            | RuntimeEvent::SessionFilesModified { .. } => {}
+            | RuntimeEvent::SessionsFailed { .. } => {}
         }
     }
 }

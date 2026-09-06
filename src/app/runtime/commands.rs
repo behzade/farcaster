@@ -148,6 +148,11 @@ impl RuntimeOwner {
             RuntimeCommand::LoadSessions(query) => self.load_sessions(query),
             RuntimeCommand::RefreshSessions => self.refresh_sessions(),
             RuntimeCommand::ScheduleSessionRefresh => self.schedule_session_refresh(),
+            RuntimeCommand::PreviewImport {
+                harness,
+                generation,
+            } => self.preview_import(harness, generation),
+            RuntimeCommand::CommitImport { sessions } => self.commit_import(sessions),
             RuntimeCommand::Shutdown => {}
         }
     }

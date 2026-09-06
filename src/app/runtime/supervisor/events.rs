@@ -235,27 +235,9 @@ impl Supervisor {
                     catalog.send(RuntimeCommand::RefreshSessions);
                 }
             }
-            RuntimeEvent::SessionFilesModified { paths } if key == self.catalog_key => {
-                for (actor_key, path, project, harness) in
-                    changed_external_documents(&self.latest, &paths)
-                {
-                    if let Some(actor) = self.actors.get(&actor_key) {
-                        actor.send(RuntimeCommand::RefreshSessionDocument {
-                            path,
-                            project,
-                            harness,
-                        });
-                    }
-                }
-                let refresh = self.activity_tracker.observe_files(
-                    &rpc_owned_session_paths(&self.latest),
-                    &paths,
-                    Instant::now(),
-                    sessions::normalize_session_path,
-                );
-                if refresh && let Some(catalog) = self.actors.get(&self.catalog_key) {
-                    catalog.send(RuntimeCommand::ScheduleSessionRefresh);
-                }
+            event @ (RuntimeEvent::ImportPreview { .. }
+            | RuntimeEvent::ImportPreviewFailed { .. }) => {
+                let _ = self.event_tx.send(event);
             }
             event @ (RuntimeEvent::Sessions { .. } | RuntimeEvent::SessionsFailed { .. }) => {
                 if key == self.catalog_key
@@ -305,7 +287,6 @@ impl Supervisor {
             | RuntimeEvent::SessionMoved { .. }
             | RuntimeEvent::SessionDeleted { .. }
             | RuntimeEvent::SessionStatus { .. }
-            | RuntimeEvent::SessionFilesModified { .. }
             | RuntimeEvent::SessionReset { .. }
             | RuntimeEvent::HistoryReset { .. } => {}
         }

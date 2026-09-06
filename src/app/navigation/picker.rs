@@ -70,6 +70,7 @@ enum PickerCommand {
     AddProject(Option<ProjectPickerIntent>),
     OpenWorkGraph,
     OpenSettings,
+    ImportSessions,
     NewSession(PathBuf),
     ChangeDraftProject(PathBuf),
     MoveSession { path: PathBuf, project: PathBuf },
@@ -271,6 +272,10 @@ impl FarcasterApp {
                 self.close_picker(window, cx);
                 self.open_settings(window, cx);
             }
+            PickerCommand::ImportSessions => {
+                self.close_picker(window, cx);
+                self.open_session_import(window, cx);
+            }
             PickerCommand::NewSession(project) => {
                 self.close_picker(window, cx);
                 self.new_session(project, window, cx);
@@ -338,6 +343,16 @@ impl FarcasterApp {
                     None,
                     None,
                     "issues tasks",
+                ),
+                picker_row(
+                    &mut commands,
+                    "action:import-sessions",
+                    PickerCommand::ImportSessions,
+                    AppIcon::Binoculars,
+                    "Import sessions…",
+                    None,
+                    None,
+                    "import discover catalog disk harness",
                 ),
                 picker_row(
                     &mut commands,

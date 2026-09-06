@@ -10,17 +10,6 @@ pub(super) fn run(
 ) {
     let (discovery_tx, discovery_rx) = mpsc::channel();
     let (history_tx, history_rx) = mpsc::channel();
-    let (watch_tx, watch_rx) = mpsc::channel();
-    let (session_watcher, watcher_error) = if load_catalog {
-        match configured_session_root()
-            .and_then(|root| SessionWatcher::start(&root, watch_tx, thread::current()))
-        {
-            Ok(watcher) => (Some(watcher), None),
-            Err(error) => (None, Some(error)),
-        }
-    } else {
-        (None, None)
-    };
     let (state, state_error) = match StateStore::open() {
         Ok(state) => (Some(state), None),
         Err(error) => (None, Some(error)),
@@ -73,14 +62,7 @@ pub(super) fn run(
     if load_catalog {
         owner.load_sessions(String::new());
     }
-    if let Some(message) = watcher_error {
-        let _ = owner.event_tx.send(RuntimeEvent::SessionsFailed {
-            generation: owner.session_generation,
-            message,
-        });
-    }
     owner.publish();
-    let _session_watcher = session_watcher;
     let mut running = true;
     let mut stream_publish_due = None;
     while running {
@@ -92,22 +74,6 @@ pub(super) fn run(
         }
         while let Ok(result) = owner.title_generation.receiver.try_recv() {
             owner.apply_generated_session_title(result);
-        }
-        while let Ok(event) = watch_rx.try_recv() {
-            match event {
-                SessionWatchEvent::CatalogChanged => owner.schedule_session_refresh(),
-                SessionWatchEvent::Activity(paths) => {
-                    let _ = owner
-                        .event_tx
-                        .send(RuntimeEvent::SessionFilesModified { paths });
-                }
-                SessionWatchEvent::Failed(message) => {
-                    let _ = owner.event_tx.send(RuntimeEvent::SessionsFailed {
-                        generation: owner.session_generation,
-                        message,
-                    });
-                }
-            }
         }
         owner.poll_deferred_session_refresh(Instant::now());
         let mut immediate_snapshot_change = false;

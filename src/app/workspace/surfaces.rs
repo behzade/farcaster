@@ -85,6 +85,8 @@ impl FarcasterApp {
             Some(pending.focus.clone())
         } else if let Some(pending) = &self.pending_delete {
             Some(pending.focus.clone())
+        } else if let Some(dialog) = &self.session_import {
+            Some(dialog.focus.clone())
         } else if let Some(pending) = &self.pending_archive {
             Some(pending.focus.clone())
         } else if self.current_sheet_flags().any() {
@@ -356,6 +358,7 @@ impl FarcasterApp {
             || self.overlays.project_trust
             || self.pending_archive.is_some()
             || self.pending_delete.is_some()
+            || self.session_import.is_some()
             || self.image_preview.is_some()
             || self.repository.pending_jj_init.is_some()
     }
@@ -839,6 +842,8 @@ impl FarcasterApp {
             self.close_jj_init_confirmation(window, cx);
         } else if self.pending_delete.is_some() {
             self.close_delete_confirmation(window, cx);
+        } else if self.session_import.is_some() {
+            self.close_session_import(window, cx);
         } else if self.pending_archive.is_some() {
             self.close_archive_confirmation(window, cx);
         } else if self.overlays.project_trust {

@@ -254,6 +254,7 @@ pub(crate) struct FarcasterApp {
     post_render_focus: Option<PostRenderFocus>,
     pending_archive: Option<session::archive::PendingArchive>,
     pending_delete: Option<session::deletion::PendingDelete>,
+    session_import: Option<session::import::SessionImportDialog>,
     archived_sessions_expanded: bool,
     project_trust_error: Option<String>,
     project_trust_project: Option<PathBuf>,

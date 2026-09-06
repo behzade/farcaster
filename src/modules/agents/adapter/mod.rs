@@ -375,6 +375,22 @@ pub(crate) fn discover_external_sessions(
     (sessions, exhaustive)
 }
 
+pub(crate) fn discover_external_sessions_for(
+    harness: &str,
+    locator_root: Option<&std::path::Path>,
+    query: &str,
+) -> Result<Vec<crate::agents::DiscoveredSession>, String> {
+    let Some(locator_root) = locator_root else {
+        return Err("session locator root is unavailable".to_owned());
+    };
+    match harness {
+        "codex-cli" => codex::discover(locator_root, query),
+        "cursor-cli" => cursor::discover(locator_root, query),
+        "opencode2" => opencode::discover(locator_root, query),
+        _ => Err(format!("unsupported session harness: {harness}")),
+    }
+}
+
 /// Apply backend-specific presentation facts before history reaches the UI.
 pub(crate) fn annotate_history_message(harness: &str, message: &mut serde_json::Value) {
     if harness == "pi" {

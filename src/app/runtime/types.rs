@@ -87,6 +87,13 @@ pub(crate) enum RuntimeCommand {
     LoadSessions(String),
     RefreshSessions,
     ScheduleSessionRefresh,
+    PreviewImport {
+        harness: String,
+        generation: u64,
+    },
+    CommitImport {
+        sessions: Vec<SessionSummary>,
+    },
     Shutdown,
 }
 
@@ -139,8 +146,15 @@ pub(crate) enum RuntimeEvent {
         session: Option<PathBuf>,
         status: String,
     },
-    SessionFilesModified {
-        paths: Vec<PathBuf>,
+    ImportPreview {
+        generation: u64,
+        harness: String,
+        sessions: Vec<SessionSummary>,
+    },
+    ImportPreviewFailed {
+        generation: u64,
+        harness: String,
+        message: String,
     },
     Stopped,
 }

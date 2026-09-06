@@ -156,6 +156,7 @@ impl FarcasterApp {
             post_render_focus: None,
             pending_archive: None,
             pending_delete: None,
+            session_import: None,
             archived_sessions_expanded: false,
             project_trust_error: None,
             project_trust_project: None,

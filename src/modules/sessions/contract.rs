@@ -137,13 +137,6 @@ pub(crate) struct SessionDiscovery {
     pub exhaustive: bool,
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) enum SessionWatchEvent {
-    CatalogChanged,
-    Activity(Vec<PathBuf>),
-    Failed(String),
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TransferMember {
     pub path: PathBuf,

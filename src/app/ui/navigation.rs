@@ -252,6 +252,7 @@ impl FarcasterApp {
         }
         self.pending_archive = None;
         self.pending_delete = None;
+        self.session_import = None;
         if self.overlays.project_trust {
             self.dismiss_project_trust(window, cx);
         }

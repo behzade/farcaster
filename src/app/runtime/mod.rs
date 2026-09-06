@@ -59,8 +59,8 @@ use crate::{
     },
     sessions::{
         self, ExternalActivityTracker, LoadedHistory, SessionDiscovery, SessionSummary,
-        SessionWatchEvent, SessionWatcher, TransferMember, archived_root_family_for_path,
-        configured_session_root, project_display_history, session_family_for_path,
+        TransferMember, archived_root_family_for_path, configured_session_root,
+        project_display_history, session_family_for_path,
     },
 };
 use session_controls::PendingSessionControls;

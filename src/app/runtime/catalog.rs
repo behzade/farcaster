@@ -207,6 +207,112 @@ impl RuntimeOwner {
         self.session_refresh_due = None;
         self.refresh_sessions();
     }
+
+    pub(super) fn preview_import(&mut self, harness: String, generation: u64) {
+        if !self.owns_session_catalog {
+            let _ = self.event_tx.send(RuntimeEvent::RefreshCatalog);
+            return;
+        }
+        let known = self
+            .state
+            .as_ref()
+            .and_then(|state| crate::sessions::cached_sessions(state, "").ok())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|session| crate::sessions::normalize_session_path(&session.path))
+            .collect::<HashSet<_>>();
+        let locator_root = self.process_command.session_locator_root.clone();
+        let sender = self.event_tx.clone();
+        let _ = thread::Builder::new()
+            .name("farcaster-import".into())
+            .spawn(move || {
+                let result = discover_import(&harness, locator_root.as_deref())
+                    .map(|sessions| unknown_import_candidates(sessions, &known));
+                let event = match result {
+                    Ok(sessions) => RuntimeEvent::ImportPreview {
+                        generation,
+                        harness,
+                        sessions,
+                    },
+                    Err(message) => RuntimeEvent::ImportPreviewFailed {
+                        generation,
+                        harness,
+                        message,
+                    },
+                };
+                let _ = sender.send(event);
+            });
+    }
+
+    pub(super) fn commit_import(&mut self, sessions: Vec<SessionSummary>) {
+        if !self.owns_session_catalog {
+            let _ = self.event_tx.send(RuntimeEvent::RefreshCatalog);
+            return;
+        }
+        if sessions.is_empty() {
+            return;
+        }
+        if let Some(state) = self.state.as_mut() {
+            if let Err(message) = crate::sessions::index_sessions(state, &sessions, false) {
+                let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
+                    generation: self.session_generation,
+                    message,
+                });
+                return;
+            }
+        }
+        self.session_generation = self.session_generation.saturating_add(1);
+        let generation = self.session_generation;
+        if let Some(state) = &self.state {
+            match crate::sessions::cached_sessions(state, "") {
+                Ok(all_sessions) => {
+                    let sessions = crate::sessions::filter_session_tree(
+                        all_sessions.clone(),
+                        &self.session_query,
+                    );
+                    let _ = self.event_tx.send(RuntimeEvent::Sessions {
+                        generation,
+                        sessions,
+                        all_sessions,
+                        activities: None,
+                    });
+                }
+                Err(message) => {
+                    let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
+                        generation,
+                        message,
+                    });
+                }
+            }
+        }
+    }
+}
+
+fn discover_import(
+    harness: &str,
+    locator_root: Option<&std::path::Path>,
+) -> Result<Vec<SessionSummary>, String> {
+    match harness {
+        "pi" => Ok(sessions::discover("")?.sessions),
+        _ => Ok(
+            agents::discover_external_sessions_for(harness, locator_root, "")?
+                .into_iter()
+                .map(import_agent_session)
+                .collect(),
+        ),
+    }
+}
+
+fn unknown_import_candidates(
+    discovered: Vec<SessionSummary>,
+    known_paths: &HashSet<std::path::PathBuf>,
+) -> Vec<SessionSummary> {
+    discovered
+        .into_iter()
+        .filter(|session| {
+            !known_paths.contains(&crate::sessions::normalize_session_path(&session.path))
+        })
+        .collect()
 }
 
 fn add_limited_activity_fallbacks(
@@ -395,6 +501,18 @@ mod tests {
             crate::agent_activity::AgentLifecycle::Unknown
         );
         assert_eq!(activity.role, "External");
+    }
+
+    #[test]
+    fn import_preview_skips_sessions_already_in_the_catalog() {
+        let known = HashSet::from([PathBuf::from("/sessions/known.jsonl")]);
+        let known_session = summary(Path::new("/sessions/known.jsonl"), SystemTime::now(), false);
+        let mut unknown = summary(Path::new("/sessions/new.jsonl"), SystemTime::now(), false);
+        unknown.id = "new".into();
+
+        let candidates = unknown_import_candidates(vec![known_session, unknown.clone()], &known);
+
+        assert_eq!(candidates, vec![unknown]);
     }
 
     #[test]
