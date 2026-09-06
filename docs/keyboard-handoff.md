@@ -6,7 +6,8 @@ Architecture and invariants: [Keyboard design](keyboard-plan.md).
 ## Implemented
 
 - One-second Ctrl+G activation; double chord returns to chat normal. New
-  sessions enter insert. Direct Cmd shortcuts remain supported on macOS.
+  sessions enter insert. Bare `e`/`t` opens editor/terminal; `gg`/`G` jumps to
+  transcript top/end. Direct Cmd shortcuts remain supported on macOS.
 - Guarded focus restoration and surviving-overlay/native-surface fallback.
   Independent confirmation handles, correct stacking/dismissal order, and
   deferred focus checks prevent older overlays from stealing a newer owner.
@@ -18,9 +19,10 @@ Architecture and invariants: [Keyboard design](keyboard-plan.md).
 
 ## Validation
 
-- `cargo test --bin farcaster app::ui::`: 37 passed, including GPUI focus,
+- `cargo test --bin farcaster app::ui::`: 38 passed, including GPUI focus,
   modal/menu, composer Tab, title editing, and direct Cmd regressions.
-- Narrow-help layout, workspace, picker, session-rail, archive, and window
+- Transcript-list tests cover top/end jumps, queued scroll cancellation, and
+  live-tail following. Narrow-help layout, workspace, picker, session-rail, archive, and window
   activation tests passed; `cargo check --bin farcaster` passed.
 - The real headless Neovim buffer/tab preservation test passed with approval
   outside the sandbox; Unix-socket listen is denied inside it. This does not
@@ -35,7 +37,7 @@ Architecture and invariants: [Keyboard design](keyboard-plan.md).
 No real Linux/macOS window interaction or screenshot review was performed.
 
 1. Composer, Neovim insert, running terminal: single/double Ctrl+G, timeout,
-   Ctrl+G 2, Ctrl+G Space e/t/j/k, ordinary Escape/Space, and held keys.
+   Ctrl+G 2/e/t, Ctrl+G Space j/k, gg/G, ordinary Escape/Space, and held keys.
 2. New-session insert and rapid switching during async loads; badges and
    remembered focus through window deactivate/reactivate.
 3. Archive/delete/JJ confirmations over sheets/native surfaces, nested menus,

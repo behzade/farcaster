@@ -9,9 +9,9 @@ leaving insert mode. macOS also accepts `Cmd+G`. These chords are reserved even
 inside Neovim and the terminal. Double `Ctrl+G` returns to **chat normal mode**.
 
 Activation is not the Space leader: `Ctrl+G 2` switches to session 2;
-`Ctrl+G Space e` opens the editor, and `Ctrl+G Space t` opens the terminal.
-All chat-normal commands below are available after activation. Space refreshes
-the one-second timeout. A command ends activation; Escape or an unknown key
+`Ctrl+G e` opens the editor, and `Ctrl+G t` opens the terminal.
+All chat-normal commands below are available after activation. A pending Space
+or `g` refreshes the one-second timeout. A command ends activation; Escape or an unknown key
 cancels it without forwarding that key to the input/editor/shell. Expiry does
 nothing and subsequent keys type normally. Session/surface/focus changes cancel
 pending activation. New sessions automatically focus the composer in insert mode.
@@ -23,12 +23,14 @@ In chat normal:
 | `i` / `a` | Focus composer, preserving draft and caret |
 | `0` / `1`–`9` | First unsubmitted draft / numbered session |
 | `/` | Search sessions |
-| `Space e` / `Space t` | Editor / terminal |
+| `e` / `t` | Editor / terminal |
 | `Space j` / `Space k` | Next / previous session |
 | `j` / `k` | Scroll transcript down / up |
+| `gg` | Transcript top |
+| `G` (Shift+g) | Transcript end; resume following new messages |
 | `Ctrl+f` / `Ctrl+b` | Page down / up |
 | `Ctrl+d` / `Ctrl+u` | Half-page down / up |
-| `Escape` | Cancel pending Space leader |
+| `Escape` | Cancel pending Space or g sequence |
 
 Session badges show bare numbers while chat normal owns input. Pointer clicks
 on incidental controls do not take keyboard ownership. Menus/dialogs temporarily

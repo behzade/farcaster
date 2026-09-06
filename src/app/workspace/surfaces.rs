@@ -133,7 +133,7 @@ impl FarcasterApp {
         self.surface = surface;
         if changed {
             self.chat_navigation.activation.clear();
-            self.chat_navigation.leader_pending = false;
+            self.chat_navigation.pending_key = None;
             // A completion from a previous editor visit must not affect this view.
             self.editor_request_generation = self.editor_request_generation.wrapping_add(1);
             self.notify_session_rail_shell(cx);

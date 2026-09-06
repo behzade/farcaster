@@ -12,8 +12,10 @@ text editing, and explicit surface commands may deliberately move focus.
 
 `Ctrl+G` activates one app command without moving focus. It is distinct from
 the Space leader. Double `Ctrl+G` returns to chat normal; `i`/`a` enters insert.
-New sessions enter insert automatically. Async session updates preserve the
-remembered chat owner. Composer Escape keeps steer/double-Escape-abort behavior.
+`e`/`t` opens editor/terminal directly in normal mode. `gg` jumps to transcript
+top; `G` jumps to its end and resumes live following. Space is reserved for
+session navigation (`j`/`k`). New sessions enter insert automatically. Async
+session updates preserve the remembered chat owner. Composer Escape keeps steer/double-Escape-abort behavior.
 
 Direct shortcuts, including default macOS Cmd bindings, remain supported
 alongside modal navigation. No mutually exclusive keymap profiles.

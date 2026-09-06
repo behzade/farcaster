@@ -323,3 +323,27 @@ fn splice_preserves_anchor_after_rows_before_it_change() {
     assert_eq!(offset.item_ix, 3);
     assert_eq!(offset.offset_in_item, px(5.0));
 }
+
+#[gpui::test]
+fn boundary_jumps_discard_queued_scroll_and_control_tail_following(cx: &mut TestAppContext) {
+    let cx = cx.add_empty_window();
+    let state = state_with_rows(100);
+    state.scroll_to_end();
+    draw_transcript(cx, &state, px(24.0), px(100.0));
+    assert!(state.queue_scroll(px(24.0)).is_some());
+    state.scroll_to_start();
+    draw_transcript(cx, &state, px(24.0), px(100.0));
+    assert_eq!(state.logical_scroll_top().item_ix, 0);
+    assert_eq!(state.logical_scroll_top().offset_in_item, px(0.0));
+    assert!(!state.is_following_tail());
+    assert!(state.queue_scroll(px(-24.0)).is_some());
+    state.scroll_to_end();
+    draw_transcript(cx, &state, px(24.0), px(100.0));
+    assert!(state.is_following_tail());
+    assert_eq!(state.0.borrow().scroll_y, state.0.borrow().maximum_scroll());
+
+    let empty = TranscriptListState::new();
+    empty.scroll_to_start();
+    empty.scroll_to_end();
+    assert_eq!(empty.0.borrow().scroll_y, px(0.0));
+}

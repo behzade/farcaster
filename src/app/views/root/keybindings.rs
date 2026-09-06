@@ -124,7 +124,7 @@ mod tests {
             for key in [
                 "ctrl-g ctrl-g",
                 "cmd-g cmd-g",
-                "ctrl-g space e",
+                "ctrl-g space j",
                 "cmd-shift-n",
             ] {
                 cx.draw(

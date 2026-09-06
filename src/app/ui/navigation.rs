@@ -8,7 +8,7 @@ pub(crate) struct ChatNavigation {
     pub focus: FocusHandle,
     // Remember the chat owner across temporary focus and async session resets.
     pub normal_mode: bool,
-    pub leader_pending: bool,
+    pub pending_key: Option<Prefix>,
     pub activation: Activation,
     pub activation_focus: Option<FocusHandle>,
     pub activation_blur: Option<gpui::Subscription>,
@@ -16,7 +16,7 @@ pub(crate) struct ChatNavigation {
 }
 
 mod shortcuts;
-pub(crate) use shortcuts::{Command, command_key, help_shortcuts, leader_hint};
+pub(crate) use shortcuts::{Command, Prefix, command_key, help_shortcuts};
 use shortcuts::{Scroll, normal_command, transcript_scroll};
 
 const ACTIVATION_TIMEOUT: Duration = Duration::from_secs(1);
@@ -24,7 +24,7 @@ const ACTIVATION_TIMEOUT: Duration = Duration::from_secs(1);
 #[derive(Default)]
 pub(crate) struct Activation {
     deadline: Option<Instant>,
-    leader: bool,
+    prefix: Option<Prefix>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -42,17 +42,15 @@ impl Activation {
         self.deadline
             .filter(|deadline| Instant::now() < *deadline)
             .map(|_| {
-                if self.leader {
-                    leader_hint()
-                } else {
-                    "APP · 0–9 sessions · Space commands · Ctrl+G normal · Esc cancel"
-                }
+                self.prefix.map(Prefix::hint).unwrap_or(
+                    "APP · e editor · t terminal · 0–9 sessions · Ctrl+G normal · Esc cancel",
+                )
             })
     }
 
     pub(in crate::app) fn clear(&mut self) {
         self.deadline = None;
-        self.leader = false;
+        self.prefix = None;
     }
 
     fn key(&mut self, key: &str, modifiers: gpui::Modifiers, now: Instant) -> ActivatedKey {
@@ -70,18 +68,21 @@ impl Activation {
         if self.deadline.is_none() {
             return ActivatedKey::Pass;
         }
-        if !self.leader && key == "space" && !modifiers.modified() {
-            self.leader = true;
+        if self.prefix.is_none()
+            && !modifiers.modified()
+            && let Some(prefix) = Prefix::from_key(key)
+        {
+            self.prefix = Some(prefix);
             self.deadline = Some(now + ACTIVATION_TIMEOUT);
             return ActivatedKey::Pending;
         }
-        let leader = self.leader;
+        let prefix = self.prefix;
         self.clear();
-        if let Some(scroll) = transcript_scroll(key, modifiers, leader) {
+        if let Some(scroll) = transcript_scroll(key, modifiers, prefix) {
             return ActivatedKey::Scroll(scroll);
         }
         if !modifiers.modified()
-            && let Some(command) = normal_command(key, leader)
+            && let Some(command) = normal_command(key, prefix)
         {
             return ActivatedKey::Command(command);
         }
@@ -134,7 +135,7 @@ impl FarcasterApp {
                         match result {
                             ActivatedKey::Pass => return false,
                             ActivatedKey::Pending => {
-                                this.chat_navigation.leader_pending = false;
+                                this.chat_navigation.pending_key = None;
                                 this.chat_navigation.activation_focus = window.focused(cx);
                                 this.chat_navigation.activation_blur =
                                     this.chat_navigation.activation_focus.clone().map(|focus| {
@@ -176,7 +177,7 @@ impl FarcasterApp {
         cx.observe_window_activation(window, |this, window, cx| {
             if !window.is_window_active() {
                 this.chat_navigation.activation.clear();
-                this.chat_navigation.leader_pending = false;
+                this.chat_navigation.pending_key = None;
                 this.notify_composer(cx);
             }
         })
@@ -200,7 +201,7 @@ impl FarcasterApp {
             .detach();
             cx.on_blur(focus, window, |this, _, cx| {
                 this.set_session_shortcuts_visible(false, cx);
-                this.chat_navigation.leader_pending = false;
+                this.chat_navigation.pending_key = None;
                 this.notify_composer(cx);
             })
             .detach();
@@ -214,7 +215,7 @@ impl FarcasterApp {
     ) {
         self.chat_navigation.activation.clear();
         self.chat_navigation.normal_mode = true;
-        self.chat_navigation.leader_pending = false;
+        self.chat_navigation.pending_key = None;
         if self.image_preview.is_some() {
             self.close_image_preview(window, cx);
         }
@@ -255,19 +256,24 @@ impl FarcasterApp {
         // Unhandled Tab still needs to traverse incidental controls explicitly.
         if self.surface == AppSurface::Chat
             && !self.native_workspace_covered_by_overlay()
-            && !self.chat_navigation.leader_pending
+            && self.chat_navigation.pending_key.is_none()
             && super::focus::traverse_tab(event, None, window, cx)
         {
             return;
         }
         if self.surface != AppSurface::Chat || !self.chat_navigation.focus.is_focused(window) {
-            self.chat_navigation.leader_pending = false;
+            self.chat_navigation.pending_key = None;
             return;
         }
-        // Scrolling accepts key repeat, unlike session/surface commands.
-        if let Some(scroll) = transcript_scroll(key, modifiers, self.chat_navigation.leader_pending)
-        {
-            self.chat_navigation.leader_pending = false;
+        let scroll = transcript_scroll(key, modifiers, self.chat_navigation.pending_key);
+        // Holding g must not synthesize gg; only relative scrolling repeats.
+        if event.is_held && !matches!(scroll, Some(Scroll::Lines(_) | Scroll::Pages(_))) {
+            window.prevent_default();
+            cx.stop_propagation();
+            return;
+        }
+        if let Some(scroll) = scroll {
+            self.chat_navigation.pending_key = None;
             self.scroll_transcript(scroll, window, cx);
             window.prevent_default();
             cx.stop_propagation();
@@ -276,24 +282,21 @@ impl FarcasterApp {
         }
         // Never reinterpret a modified shortcut as a bare normal-mode command.
         if modifiers.modified() {
-            self.chat_navigation.leader_pending = false;
+            self.chat_navigation.pending_key = None;
             self.notify_composer(cx);
             return;
         }
-        if event.is_held {
-            window.prevent_default();
-            cx.stop_propagation();
-            return;
-        }
-        let pending = std::mem::take(&mut self.chat_navigation.leader_pending);
-        if !pending && key == "space" {
-            self.chat_navigation.leader_pending = true;
+        let pending = std::mem::take(&mut self.chat_navigation.pending_key);
+        if pending.is_none()
+            && let Some(prefix) = Prefix::from_key(key)
+        {
+            self.chat_navigation.pending_key = Some(prefix);
         } else if let Some(command) = normal_command(key, pending) {
             self.execute_navigation_command(command, true, window, cx);
         }
         // Unknown continuations and Escape cancel; never replay into a new owner.
         // Tab remains available for deliberate accessible focus traversal.
-        if key != "tab" || pending {
+        if key != "tab" || pending.is_some() {
             window.prevent_default();
             cx.stop_propagation();
         }
@@ -303,6 +306,18 @@ impl FarcasterApp {
     fn scroll_transcript(&mut self, scroll: Scroll, window: &mut Window, cx: &mut Context<Self>) {
         let list = &self.transcript_view.read(cx).list;
         let distance = match scroll {
+            Scroll::Start => {
+                self.transcript_view.update(cx, |transcript, cx| {
+                    transcript.list.scroll_to_start();
+                    transcript.following = false;
+                    cx.notify();
+                });
+                return;
+            }
+            Scroll::End => {
+                self.jump_to_latest(cx);
+                return;
+            }
             Scroll::Lines(lines) => super::theme::THEME.type_scale.line_reading * lines,
             Scroll::Pages(pages) => list.viewport_height() * pages,
         };
@@ -361,7 +376,10 @@ mod tests {
         );
         assert_eq!(activated(&mut state, "2", now), ActivatedKey::Pass);
         assert_eq!(activated(&mut state, "ctrl-g", now), ActivatedKey::Pending);
-        assert_eq!(activated(&mut state, "e", now), ActivatedKey::Cancel);
+        assert_eq!(
+            activated(&mut state, "e", now),
+            ActivatedKey::Command(Command::Editor)
+        );
         assert_eq!(activated(&mut state, "ctrl-g", now), ActivatedKey::Pending);
         assert_eq!(activated(&mut state, "ctrl-g", now), ActivatedKey::Return);
         assert!(state.deadline.is_none());
@@ -371,8 +389,6 @@ mod tests {
     fn activation_routes_full_leader_sequences_and_refreshes_timeout() {
         let now = Instant::now();
         for (key, command) in [
-            ("e", Command::Editor),
-            ("t", Command::Terminal),
             ("j", Command::RelativeSession(1)),
             ("k", Command::RelativeSession(-1)),
         ] {
@@ -424,54 +440,111 @@ mod tests {
     }
 
     #[test]
+    fn activation_routes_bare_surfaces_and_transcript_boundaries() {
+        let now = Instant::now();
+        let mut state = Activation::default();
+        for (key, command) in [("e", Command::Editor), ("t", Command::Terminal)] {
+            activated(&mut state, "ctrl-g", now);
+            assert_eq!(
+                activated(&mut state, key, now),
+                ActivatedKey::Command(command)
+            );
+            assert_eq!(activated(&mut state, key, now), ActivatedKey::Pass);
+        }
+        activated(&mut state, "ctrl-g", now);
+        assert_eq!(activated(&mut state, "g", now), ActivatedKey::Pending);
+        assert_eq!(
+            activated(&mut state, "g", now),
+            ActivatedKey::Scroll(Scroll::Start)
+        );
+        activated(&mut state, "ctrl-g", now);
+        assert_eq!(
+            activated(&mut state, "G", now),
+            ActivatedKey::Scroll(Scroll::End)
+        );
+        // A g prefix cannot become an editor command or survive cancellation/expiry.
+        for key in ["e", "escape"] {
+            activated(&mut state, "ctrl-g", now);
+            activated(&mut state, "g", now);
+            assert_eq!(activated(&mut state, key, now), ActivatedKey::Cancel);
+            assert_eq!(activated(&mut state, "g", now), ActivatedKey::Pass);
+        }
+        activated(&mut state, "ctrl-g", now);
+        activated(&mut state, "g", now);
+        assert_eq!(
+            activated(&mut state, "g", now + ACTIVATION_TIMEOUT),
+            ActivatedKey::Pass
+        );
+        assert_eq!(normal_command("e", Some(Prefix::G)), None);
+    }
+
+    #[test]
     fn scrolling_respects_leader_and_exact_modifiers() {
-        for (key, leader, expected) in [
-            ("j", false, Some(Scroll::Lines(1.0))),
-            ("k", false, Some(Scroll::Lines(-1.0))),
-            ("ctrl-f", false, Some(Scroll::Pages(1.0))),
-            ("ctrl-b", false, Some(Scroll::Pages(-1.0))),
-            ("ctrl-d", false, Some(Scroll::Pages(0.5))),
-            ("ctrl-u", false, Some(Scroll::Pages(-0.5))),
-            ("ctrl-f", true, Some(Scroll::Pages(1.0))),
-            ("j", true, None),
-            ("k", true, None),
-            ("ctrl-j", false, None),
-            ("f", false, None),
-            ("ctrl-shift-f", false, None),
-            ("cmd-f", false, None),
+        for (key, prefix, expected) in [
+            ("g", None, None),
+            ("g", Some(Prefix::G), Some(Scroll::Start)),
+            ("g", Some(Prefix::Space), None),
+            ("G", None, Some(Scroll::End)),
+            ("G", Some(Prefix::G), Some(Scroll::End)),
+            ("ctrl-g", Some(Prefix::G), None),
+            ("alt-g", Some(Prefix::G), None),
+            ("ctrl-shift-g", None, None),
+            ("j", None, Some(Scroll::Lines(1.0))),
+            ("k", None, Some(Scroll::Lines(-1.0))),
+            ("ctrl-f", None, Some(Scroll::Pages(1.0))),
+            ("ctrl-b", None, Some(Scroll::Pages(-1.0))),
+            ("ctrl-d", None, Some(Scroll::Pages(0.5))),
+            ("ctrl-u", None, Some(Scroll::Pages(-0.5))),
+            ("ctrl-f", Some(Prefix::Space), Some(Scroll::Pages(1.0))),
+            ("j", Some(Prefix::Space), None),
+            ("k", Some(Prefix::Space), None),
+            ("ctrl-j", None, None),
+            ("f", None, None),
+            ("ctrl-shift-f", None, None),
+            ("cmd-f", None, None),
         ] {
             let stroke = gpui::Keystroke::parse(key).expect("test keystroke");
             assert_eq!(
-                transcript_scroll(&stroke.key, stroke.modifiers, leader),
+                transcript_scroll(&stroke.key, stroke.modifiers, prefix),
                 expected,
-                "{key}, leader={leader}"
+                "{key}, prefix={prefix:?}"
             );
         }
     }
 
     #[test]
     fn normal_and_leader_commands_are_distinct() {
-        for (key, leader, command) in [
-            ("i", false, Command::Composer),
-            ("a", false, Command::Composer),
-            ("/", false, Command::SearchSessions),
-            ("e", true, Command::Editor),
-            ("t", true, Command::Terminal),
-            ("j", true, Command::RelativeSession(1)),
-            ("k", true, Command::RelativeSession(-1)),
+        for (key, prefix, command) in [
+            ("i", None, Command::Composer),
+            ("a", None, Command::Composer),
+            ("/", None, Command::SearchSessions),
+            ("e", None, Command::Editor),
+            ("t", None, Command::Terminal),
+            ("j", Some(Prefix::Space), Command::RelativeSession(1)),
+            ("k", Some(Prefix::Space), Command::RelativeSession(-1)),
         ] {
-            assert_eq!(normal_command(key, leader), Some(command));
-            assert_eq!(normal_command(key, !leader), None);
+            assert_eq!(normal_command(key, prefix), Some(command));
+            assert_eq!(
+                normal_command(
+                    key,
+                    if prefix.is_none() {
+                        Some(Prefix::Space)
+                    } else {
+                        None
+                    }
+                ),
+                None
+            );
         }
-        assert_eq!(normal_command("escape", true), None);
+        assert_eq!(normal_command("escape", Some(Prefix::Space)), None);
     }
 
     #[test]
     fn session_numbers_are_bare_not_leader_commands() {
         for number in 0..=9 {
             let key = number.to_string();
-            assert_eq!(normal_command(&key, false), Some(Command::Session(number)));
-            assert_eq!(normal_command(&key, true), None);
+            assert_eq!(normal_command(&key, None), Some(Command::Session(number)));
+            assert_eq!(normal_command(&key, Some(Prefix::Space)), None);
         }
     }
 

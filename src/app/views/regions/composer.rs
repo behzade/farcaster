@@ -67,13 +67,14 @@ impl Render for ComposerView {
         let mode = if let Some(hint) = app.chat_navigation.activation.hint() {
             Some(hint)
         } else if app.chat_navigation.focus.is_focused(window) {
-            Some(if app.chat_navigation.leader_pending {
-                crate::app::ui::navigation::leader_hint()
-            } else {
-                "NORMAL · CHAT"
-            })
+            Some(
+                app.chat_navigation
+                    .pending_key
+                    .map(|prefix| prefix.hint())
+                    .unwrap_or("NORMAL"),
+            )
         } else if app.composer_focus.is_focused(window) {
-            Some("INSERT · COMPOSER")
+            Some("INSERT")
         } else {
             None
         };

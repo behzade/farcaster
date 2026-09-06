@@ -273,6 +273,13 @@ impl TranscriptListState {
         state.clamp_scroll();
     }
 
+    pub(crate) fn scroll_to_start(&self) {
+        let mut state = self.0.borrow_mut();
+        state.pending_scroll = px(0.0);
+        state.following_tail = false;
+        state.scroll_y = px(0.0);
+    }
+
     pub(crate) fn scroll_to_end(&self) {
         let mut state = self.0.borrow_mut();
         state.pending_scroll = px(0.0);

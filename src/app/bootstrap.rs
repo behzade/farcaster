@@ -125,7 +125,7 @@ impl FarcasterApp {
             chat_navigation: ui::navigation::ChatNavigation {
                 focus: cx.focus_handle(),
                 normal_mode: false,
-                leader_pending: false,
+                pending_key: None,
                 activation: Default::default(),
                 activation_focus: None,
                 activation_blur: None,
