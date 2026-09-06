@@ -1,8 +1,9 @@
 use std::{
+    collections::HashMap,
     io::BufReader,
-    path::Path,
-    process::{ChildStdin, ChildStdout, Stdio},
-    sync::mpsc,
+    path::{Path, PathBuf},
+    process::{Child, ChildStdin, ChildStdout, Stdio},
+    sync::{Mutex, OnceLock, mpsc},
     thread,
     time::Duration,
 };
@@ -46,6 +47,7 @@ pub(in crate::modules::agents::adapter) fn load_configuration(
         {
             metadata.commands = commands;
         }
+        close_session(connection, session_id);
         Ok((metadata, session_id.to_owned()))
     })
 }
@@ -74,15 +76,51 @@ pub(in crate::modules::agents::adapter) fn load_history(
         )?;
         let response = connection.wait_response(&id)?;
         let queued = connection.drain_queued();
-        Ok(DiscoveredHistory {
-            messages: replay_history(queued),
-            model: selected_model(profile, &response),
-            thinking_level: selected_option(&response, &["thought_level", "reasoning", "effort"]),
-        })
+        let history = discovered_history(profile, queued, &response, &locator);
+        close_session(connection, &locator);
+        Ok(history)
     })
 }
 
 type CatalogConnection = AcpConnection<BufReader<ChildStdout>, ChildStdin>;
+
+struct CatalogProcess {
+    child: Option<Child>,
+    connection: Option<CatalogConnection>,
+    project: PathBuf,
+}
+
+impl CatalogProcess {
+    fn take_parts(mut self) -> Option<(Child, CatalogConnection)> {
+        match (self.child.take(), self.connection.take()) {
+            (Some(child), Some(connection)) => Some((child, connection)),
+            (Some(mut child), None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                None
+            }
+            _ => None,
+        }
+    }
+}
+
+impl Drop for CatalogProcess {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+fn catalog_is_reusable(existing_project: &Path, project: &Path, running: bool) -> bool {
+    running && existing_project == project
+}
+
+fn catalog_processes() -> &'static Mutex<HashMap<&'static str, CatalogProcess>> {
+    static PROCESSES: OnceLock<Mutex<HashMap<&'static str, CatalogProcess>>> = OnceLock::new();
+    PROCESSES.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 fn with_connection<T: Send + 'static>(
     profile: &AcpProfile,
@@ -91,6 +129,71 @@ fn with_connection<T: Send + 'static>(
         + Send
         + 'static,
 ) -> Result<T, String> {
+    let mut processes = catalog_processes()
+        .lock()
+        .map_err(|error| format!("{} ACP catalog lock: {error}", profile.name))?;
+    let reused = processes.remove(profile.backend).and_then(|mut process| {
+        let running = matches!(process.child.as_mut().map(Child::try_wait), Some(Ok(None)));
+        if catalog_is_reusable(&process.project, project, running) {
+            process.take_parts()
+        } else {
+            None
+        }
+    });
+    let initialized = reused.is_some();
+    let (mut child, connection) = match reused {
+        Some(parts) => parts,
+        None => spawn_catalog_child(profile, project)?,
+    };
+    let profile_owned = profile.clone();
+    let project_owned = project.to_owned();
+    let result = run_catalog_operation(Duration::from_secs(30), move || {
+        let mut connection = connection;
+        let result = (|| {
+            if !initialized {
+                let initialized = connection.initialize(&profile_owned)?;
+                if initialized.get("protocolVersion").and_then(Value::as_u64) != Some(1) {
+                    return Err(format!(
+                        "{} did not negotiate ACP version 1",
+                        profile_owned.name
+                    ));
+                }
+            } else {
+                let _ = connection.drain_queued();
+            }
+            operation(&mut connection, &profile_owned, &project_owned)
+        })();
+        (result, connection)
+    });
+    match result {
+        Ok((Ok(value), connection)) => {
+            processes.insert(
+                profile.backend,
+                CatalogProcess {
+                    child: Some(child),
+                    connection: Some(connection),
+                    project: project.to_owned(),
+                },
+            );
+            Ok(value)
+        }
+        Ok((Err(error), _)) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            Err(format!("{} ACP catalog: {error}", profile.name))
+        }
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            Err(format!("{} ACP catalog: {error}", profile.name))
+        }
+    }
+}
+
+fn spawn_catalog_child(
+    profile: &AcpProfile,
+    project: &Path,
+) -> Result<(Child, CatalogConnection), String> {
     let config = AgentLaunchConfig {
         program: profile.program(),
         access_mode: HarnessAccessMode::Sandboxed,
@@ -105,34 +208,58 @@ fn with_connection<T: Send + 'static>(
         .spawn()
         .map_err(|error| format!("start {} ACP catalog: {error}", profile.name))?;
     child_stderr::capture(&mut child, "acp-catalog")?;
-    let result = (|| {
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| format!("{} ACP catalog stdin must be piped", profile.name))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| format!("{} ACP catalog stdout must be piped", profile.name))?;
-        let profile = profile.clone();
-        let project = project.to_owned();
-        run_with_timeout(Duration::from_secs(30), move || {
-            let mut connection = AcpConnection::new(BufReader::new(stdout), stdin);
-            let initialized = connection.initialize(&profile)?;
-            if initialized.get("protocolVersion").and_then(Value::as_u64) != Some(1) {
-                return Err(format!("{} did not negotiate ACP version 1", profile.name));
-            }
-            operation(&mut connection, &profile, &project)
+    let stdin = match child.stdin.take() {
+        Some(stdin) => stdin,
+        None => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("{} ACP catalog stdin must be piped", profile.name));
+        }
+    };
+    let stdout = match child.stdout.take() {
+        Some(stdout) => stdout,
+        None => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("{} ACP catalog stdout must be piped", profile.name));
+        }
+    };
+    Ok((child, AcpConnection::new(BufReader::new(stdout), stdin)))
+}
+
+fn close_session(connection: &mut CatalogConnection, session_id: &str) {
+    if let Ok(id) = connection.send_request("session/close", json!({"sessionId": session_id})) {
+        let _ = connection.wait_response(&id);
+    }
+}
+
+fn run_catalog_operation<T: Send + 'static>(
+    timeout: Duration,
+    operation: impl FnOnce() -> (Result<T, String>, CatalogConnection) + Send + 'static,
+) -> Result<(Result<T, String>, CatalogConnection), String> {
+    let (sender, receiver) = mpsc::channel();
+    thread::Builder::new()
+        .name("acp-catalog-handshake".into())
+        .spawn(move || {
+            let _ = sender.send(operation());
         })
-    })();
-    let _ = child.kill();
-    let _ = child.wait();
-    result.map_err(|error| format!("{} ACP catalog: {error}", profile.name))
+        .map_err(|error| format!("start ACP catalog handshake: {error}"))?;
+    match receiver.recv_timeout(timeout) {
+        Ok(result) => Ok(result),
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(format!(
+            "timed out loading configuration after {} seconds; check the agent's authentication and connection",
+            timeout.as_secs()
+        )),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Err("ACP catalog handshake stopped unexpectedly".into())
+        }
+    }
 }
 
 // Bound the entire exchange, not individual reads: authentication, session creation,
 // and a stream of unrelated notifications must all share the same deadline.
 // The caller always kills/reaps the child, including on timeout or worker failure.
+#[cfg(test)]
 fn run_with_timeout<T: Send + 'static>(
     timeout: Duration,
     operation: impl FnOnce() -> Result<T, String> + Send + 'static,
@@ -164,7 +291,28 @@ struct HistoryToolState {
     finished: bool,
 }
 
+pub(super) fn discovered_history(
+    profile: &AcpProfile,
+    queued: impl IntoIterator<Item = AcpInbound>,
+    response: &Value,
+    session_id: &str,
+) -> DiscoveredHistory {
+    DiscoveredHistory {
+        messages: replay_history_for_session(queued, Some(session_id)),
+        model: selected_model(profile, response),
+        thinking_level: selected_option(response, &["thought_level", "reasoning", "effort"]),
+    }
+}
+
+#[cfg(test)]
 fn replay_history(messages: impl IntoIterator<Item = AcpInbound>) -> Vec<Value> {
+    replay_history_for_session(messages, None)
+}
+
+fn replay_history_for_session(
+    messages: impl IntoIterator<Item = AcpInbound>,
+    session_id: Option<&str>,
+) -> Vec<Value> {
     let mut history = Vec::new();
     let mut last_chunk = None;
     let mut tools = std::collections::HashMap::<String, HistoryToolState>::new();
@@ -173,6 +321,12 @@ fn replay_history(messages: impl IntoIterator<Item = AcpInbound>) -> Vec<Value> 
             continue;
         };
         if method != "session/update" {
+            continue;
+        }
+        if let Some(expected) = session_id
+            && let Some(actual) = params.get("sessionId").and_then(Value::as_str)
+            && actual != expected
+        {
             continue;
         }
         let Some(update) = params.get("update") else {
@@ -343,6 +497,8 @@ fn selected_option(response: &Value, categories: &[&str]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::{Path, PathBuf};
+
     use super::*;
     use crate::modules::agents::adapter::acp::wire::AcpInbound;
 
@@ -510,5 +666,86 @@ mod tests {
             Some(&json!("fetch"))
         );
         assert_eq!(history[1]["role"], "toolResult");
+    }
+
+    #[test]
+    fn catalog_reuse_requires_the_same_live_project() {
+        let project = PathBuf::from("/project");
+        assert!(catalog_is_reusable(&project, &project, true));
+        assert!(!catalog_is_reusable(&project, Path::new("/other"), true));
+        assert!(!catalog_is_reusable(&project, &project, false));
+    }
+
+    #[test]
+    fn replay_ignores_updates_from_other_sessions() {
+        let history = replay_history_for_session(
+            [
+                AcpInbound::Notification {
+                    method: "session/update".into(),
+                    params: json!({
+                        "sessionId": "other",
+                        "update": {
+                            "sessionUpdate": "user_message_chunk",
+                            "content": {"type": "text", "text": "stale"}
+                        }
+                    }),
+                },
+                AcpInbound::Notification {
+                    method: "session/update".into(),
+                    params: json!({
+                        "sessionId": "wanted",
+                        "update": {
+                            "sessionUpdate": "user_message_chunk",
+                            "content": {"type": "text", "text": "kept"}
+                        }
+                    }),
+                },
+            ],
+            Some("wanted"),
+        );
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].pointer("/content/0/text"), Some(&json!("kept")));
+    }
+
+    #[test]
+    fn resume_history_uses_the_session_load_replay() {
+        let profile = AcpProfile {
+            backend: "cursor-cli",
+            name: "Cursor",
+            command: "agent",
+            path_environment: "FARCASTER_CURSOR_PATH",
+            arguments: &["acp"],
+            auth_method: Some("cursor_login"),
+            force_argument: Some("--force"),
+        };
+        let history = discovered_history(
+            &profile,
+            [AcpInbound::Notification {
+                method: "session/update".into(),
+                params: json!({
+                    "sessionId": "cursor-historical",
+                    "update": {
+                        "sessionUpdate": "user_message_chunk",
+                        "content": {"type": "text", "text": "replayed"}
+                    }
+                }),
+            }],
+            &json!({
+                "configOptions": [
+                    {"id": "model", "category": "model", "currentValue": "composer-2"},
+                    {"id": "thinking", "category": "thought_level", "currentValue": "high"}
+                ]
+            }),
+            "cursor-historical",
+        );
+        assert_eq!(
+            history.messages[0].pointer("/content/0/text"),
+            Some(&json!("replayed"))
+        );
+        assert_eq!(
+            history.model.as_ref().map(|(provider, id)| (provider.as_str(), id.as_str())),
+            Some(("cursor-cli", "composer-2"))
+        );
+        assert_eq!(history.thinking_level.as_deref(), Some("high"));
     }
 }

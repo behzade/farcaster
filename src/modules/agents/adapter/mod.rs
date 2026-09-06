@@ -224,18 +224,12 @@ pub(crate) fn spawn_session(
         .map(|transport| Box::new(transport) as _);
     }
     if launch.harness == "cursor-cli" {
-        let history = match &launch.start {
-            crate::agents::SessionStart::New => None,
-            crate::agents::SessionStart::Resume(path) => {
-                Some(cursor::load_history_at(path, &launch.project)?)
-            }
-            crate::agents::SessionStart::Fork(_) => {
-                return Err("Cursor ACP does not expose session fork".into());
-            }
-        };
+        if matches!(&launch.start, crate::agents::SessionStart::Fork(_)) {
+            return Err("Cursor ACP does not expose session fork".into());
+        }
         let mut command = config.clone();
         command.program = cursor::PROFILE.program();
-        let (worker, locator, metadata) = cursor::spawn_main(&command, &launch)?;
+        let (worker, locator, metadata, history) = cursor::spawn_main(&command, &launch)?;
         let locator_root = config
             .session_locator_root
             .as_deref()

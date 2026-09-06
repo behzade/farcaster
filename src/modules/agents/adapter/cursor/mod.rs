@@ -82,6 +82,7 @@ pub(super) fn spawn_main(
         Box<dyn crate::agents::WorkerSession>,
         String,
         super::main_session::MainSessionMetadata,
+        Option<crate::agents::DiscoveredHistory>,
     ),
     String,
 > {
@@ -120,20 +121,6 @@ pub(super) fn discover(
 }
 
 pub(super) fn load_history(path: &Path) -> Result<crate::agents::DiscoveredHistory, String> {
-    history(path, None)
-}
-
-pub(super) fn load_history_at(
-    path: &Path,
-    project: &Path,
-) -> Result<crate::agents::DiscoveredHistory, String> {
-    history(path, Some(project))
-}
-
-fn history(
-    path: &Path,
-    project: Option<&Path>,
-) -> Result<crate::agents::DiscoveredHistory, String> {
     let id = super::main_session::external_session_locator(PROFILE.backend, path)
         .ok_or_else(|| format!("invalid Cursor session locator: {}", path.display()))?;
     let (stored_project, unpersisted) = catalog::inspect(&id)?;
@@ -144,7 +131,7 @@ fn history(
             thinking_level: None,
         });
     }
-    super::acp::load_history(&PROFILE, path, project.unwrap_or(&stored_project))
+    super::acp::load_history(&PROFILE, path, &stored_project)
 }
 
 #[cfg(test)]
@@ -159,9 +146,10 @@ mod tests {
             &project,
         )?;
         assert!(!catalog.models.is_empty(), "Cursor returned no models");
-        assert!(catalog.models.iter().all(|model| {
-            model.provider == super::PROFILE.backend && !model.id.is_empty()
-        }));
+        assert!(catalog
+            .models
+            .iter()
+            .all(|model| { model.provider == super::PROFILE.backend && !model.id.is_empty() }));
         eprintln!("Cursor catalog loaded {} models", catalog.models.len());
         Ok(())
     }

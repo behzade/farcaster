@@ -88,7 +88,7 @@ impl WorkerSessionFactory for AcpWorkerFactory {
                 self.profile.name
             ));
         }
-        let (mut session, _) = spawn_session(
+        let (mut session, _, _) = spawn_session(
             &self.command,
             &self.profile,
             &launch.project,
@@ -125,6 +125,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         Box<dyn WorkerSession>,
         String,
         super::super::main_session::MainSessionMetadata,
+        Option<crate::agents::DiscoveredHistory>,
     ),
     String,
 > {
@@ -148,7 +149,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
             return Err(format!("{} does not expose ACP session fork", profile.name));
         }
     };
-    let (session, metadata) = spawn_session(
+    let (session, metadata, history) = spawn_session(
         command,
         profile,
         &launch.project,
@@ -162,6 +163,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         Box::new(session.with_identity(caller_identity)),
         locator,
         metadata,
+        history,
     ))
 }
 
@@ -176,6 +178,7 @@ fn spawn_session(
     (
         AcpWorkerSession,
         super::super::main_session::MainSessionMetadata,
+        Option<crate::agents::DiscoveredHistory>,
     ),
     String,
 > {
@@ -197,6 +200,7 @@ fn spawn_session(
         metadata,
         config_ids,
         features,
+        history,
     } = match setup_connection(&mut child, profile, project, resume, caller_token) {
         Ok(setup) => setup,
         Err(error) => {
@@ -247,6 +251,7 @@ fn spawn_session(
             caller_identity: None,
         },
         metadata,
+        history,
     ))
 }
 
@@ -271,6 +276,7 @@ struct AcpSetup {
     metadata: super::super::main_session::MainSessionMetadata,
     config_ids: ConfigIds,
     features: AcpFeatures,
+    history: Option<crate::agents::DiscoveredHistory>,
 }
 
 fn setup_connection(
@@ -325,6 +331,9 @@ fn setup_connection(
     {
         metadata.commands = commands;
     }
+    let history = resume.is_some().then(|| {
+        super::catalog::discovered_history(profile, queued.iter().cloned(), &response, &session_id)
+    });
     if resume.is_some() {
         queued.clear();
     }
@@ -337,6 +346,7 @@ fn setup_connection(
         metadata,
         config_ids,
         features,
+        history,
     })
 }
 
