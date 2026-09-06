@@ -122,6 +122,7 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             queued_inbound: VecDeque::new(),
             peer_messages: VecDeque::new(),
             events: VecDeque::from([WorkerEvent::SessionChanged { locator: thread_id }]),
+            turn_error: None,
         }))
     }
 }
@@ -257,6 +258,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         queued_inbound: VecDeque::new(),
         peer_messages: VecDeque::new(),
         events: VecDeque::new(),
+        turn_error: None,
     };
     let goal_request =
         session.request("thread/goal/get", json!({"threadId": thread_id.clone()}))?;
@@ -515,6 +517,7 @@ struct CodexWorkerSession {
     queued_inbound: VecDeque<Result<CodexInbound, String>>,
     peer_messages: VecDeque<PeerMessage>,
     events: VecDeque<WorkerEvent>,
+    turn_error: Option<String>,
 }
 
 impl WorkerSession for CodexWorkerSession {
@@ -954,9 +957,9 @@ impl WorkerSession for CodexWorkerSession {
                                 });
                             }
                             if failed {
-                                return Some(WorkerEvent::Failed(
-                                    "Codex worker turn failed".into(),
-                                ));
+                                return Some(WorkerEvent::Failed(codex_turn_failure(
+                                    self.turn_error.take(),
+                                )));
                             }
                             return Some(WorkerEvent::Settled {
                                 output: self.output.clone(),
@@ -964,6 +967,11 @@ impl WorkerSession for CodexWorkerSession {
                         }
                         "item/reasoning/summaryPartAdded" => {
                             self.reasoning_started = true;
+                        }
+                        "error" => {
+                            if let Some(message) = codex_error_message(&params) {
+                                self.turn_error = Some(message);
+                            }
                         }
                         // These notifications update state that the backend-neutral worker
                         // contract does not expose independently.
@@ -1087,6 +1095,7 @@ impl CodexWorkerSession {
         if is_new {
             self.output.clear();
             self.reasoning_started = false;
+            self.turn_error = None;
             if !self.manual_compaction {
                 self.events
                     .push_back(WorkerEvent::Activity(WorkerActivity::ThinkingStarted {
@@ -1337,6 +1346,21 @@ fn log_bad_codex_notification(method: &str, params: &Value, reason: &str) {
     );
 }
 
+/// Records the Codex-reported error for the active turn so a failed turn can
+/// surface the real cause (for example a capacity-limited model) instead of a
+/// generic failure message.
+fn codex_error_message(params: &Value) -> Option<String> {
+    let message = params.pointer("/error/message").and_then(Value::as_str)?;
+    (!message.trim().is_empty()).then(|| message.to_owned())
+}
+
+fn codex_turn_failure(turn_error: Option<String>) -> String {
+    match turn_error {
+        Some(message) => format!("Codex worker turn failed: {message}"),
+        None => "Codex worker turn failed".into(),
+    }
+}
+
 fn is_codex_approval_request(method: &str) -> bool {
     matches!(
         method,
@@ -1496,6 +1520,11 @@ fn codex_tool_end(params: &Value) -> Option<WorkerActivity> {
         json!([{
             "type": "text",
             "text": item.get("path").and_then(Value::as_str).unwrap_or_default(),
+        }])
+    } else if kind == "sleep" {
+        json!([{
+            "type": "text",
+            "text": format!("Waited {}", tool::wait_duration(item)),
         }])
     } else if kind == "collabAgentToolCall" {
         json!([{
@@ -1728,6 +1757,49 @@ mod tests {
                 result: json!([{"type":"text", "text":"Codex app-server protocol"}]),
                 is_error: false,
             })
+        );
+    }
+
+    #[test]
+    fn sleep_items_render_as_waiting_tools() {
+        let started = json!({
+            "item": {
+                "type":"sleep",
+                "id":"call_jmQp",
+                "durationMs":50000
+            }
+        });
+        assert_eq!(
+            codex_tool_start(&started),
+            Some(WorkerActivity::ToolStarted {
+                id: "call_jmQp".into(),
+                name: "wait".into(),
+                args: json!({"durationMs": 50000}),
+                metadata: tool::metadata(&started["item"], "sleep"),
+            })
+        );
+        assert_eq!(
+            codex_tool_end(&started),
+            Some(WorkerActivity::ToolFinished {
+                id: "call_jmQp".into(),
+                result: json!([{"type": "text", "text": "Waited 50s"}]),
+                is_error: false,
+            })
+        );
+    }
+
+    #[test]
+    fn turn_failures_carry_the_reported_codex_error() {
+        let error = json!({
+            "error": {
+                "message": "Selected model is at capacity. Please try a different model.",
+                "codexErrorInfo": "serverOverloaded"
+            },
+            "willRetry": false
+        });
+        assert_eq!(
+            codex_turn_failure(codex_error_message(&error)),
+            "Codex worker turn failed: Selected model is at capacity. Please try a different model."
         );
     }
 

@@ -243,6 +243,17 @@ fn app_proxy_change_waits_for_a_running_turn() {
 }
 
 #[test]
+fn runtime_failure_releases_the_running_flag() {
+    let (mut owner, _events, _discovery) = owner_without_process(std::env::temp_dir());
+    conversation_mut(owner.active_snapshot_mut()).running = true;
+
+    owner.fail("Codex worker turn failed".into());
+
+    assert!(!owner.active_snapshot().conversation.running);
+    assert_eq!(owner.snapshot.status, "Failed");
+}
+
+#[test]
 fn access_mode_changes_during_a_response_keep_latest_and_allow_cancel() {
     let (mut owner, _events, _discovery) = owner_without_process(std::env::temp_dir());
     conversation_mut(owner.active_snapshot_mut()).running = true;

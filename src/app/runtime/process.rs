@@ -379,6 +379,8 @@ impl RuntimeOwner {
         self.mark_outbox_failed(&details);
         self.pending_prompt_id = None;
         self.deferred_prompt = None;
+        // The process is gone; a stale running flag would reject every later prompt.
+        conversation_mut(self.active_snapshot_mut()).running = false;
         self.process_command.access_mode = self
             .access_mode_changes
             .take_requested_mode(self.process_command.access_mode);

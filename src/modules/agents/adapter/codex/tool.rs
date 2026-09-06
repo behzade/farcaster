@@ -28,6 +28,7 @@ pub(super) fn is_tool_kind(kind: &str) -> bool {
             | "collabAgentToolCall"
             | "imageView"
             | "imageGeneration"
+            | "sleep"
     )
 }
 
@@ -77,6 +78,10 @@ pub(super) fn call(item: &Value, kind: &str) -> (String, Value) {
         "webSearch" => (
             "web_search".into(),
             json!({"query": web_search_query(item)}),
+        ),
+        "sleep" => (
+            "wait".into(),
+            json!({"durationMs": item.get("durationMs").cloned().unwrap_or(Value::Null)}),
         ),
         "imageView" => (
             "view_image".into(),
@@ -198,6 +203,7 @@ fn generated_title(
         "collabAgentToolCall" => "Delegate",
         "imageView" => "View image",
         "imageGeneration" => "Generate image",
+        "sleep" => return Some(format!("Waiting {}", wait_duration(item))),
         "mcpToolCall" | "dynamicToolCall" => {
             return item
                 .get("tool")
@@ -235,6 +241,20 @@ fn command_actions_category(item: &Value) -> ToolCategory {
         first
     } else {
         ToolCategory::Execute
+    }
+}
+
+/// Renders a Codex sleep duration as a short human-readable wait time.
+pub(super) fn wait_duration(item: &Value) -> String {
+    let seconds = item
+        .get("durationMs")
+        .and_then(Value::as_u64)
+        .map(|millis| millis / 1000)
+        .unwrap_or(0);
+    if seconds > 0 && seconds % 60 == 0 {
+        format!("{}m", seconds / 60)
+    } else {
+        format!("{}s", seconds)
     }
 }
 
@@ -304,5 +324,18 @@ mod tests {
         assert_eq!(metadata.category, Some(ToolCategory::Change));
         assert_eq!(metadata.targets, ["a.rs", "b.rs"]);
         assert_eq!(metadata.native, Some(item));
+    }
+
+    #[test]
+    fn sleep_projection_reports_the_wait_duration() {
+        let item = json!({
+            "type":"sleep",
+            "id":"call_jmQp",
+            "durationMs":120000
+        });
+        let projection = project(&item, "sleep");
+        assert_eq!(projection.name, "wait");
+        assert_eq!(projection.args, json!({"durationMs": 120000}));
+        assert_eq!(projection.metadata.title.as_deref(), Some("Waiting 2m"));
     }
 }
