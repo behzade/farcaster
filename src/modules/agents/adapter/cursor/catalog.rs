@@ -310,11 +310,9 @@ mod tests {
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].id, "persisted");
         assert_eq!(sessions[0].project, std::env::current_dir().unwrap());
-        assert!(
-            discover_at(root.path(), root.path(), "does-not-match")
-                .unwrap()
-                .is_empty()
-        );
+        assert!(discover_at(root.path(), root.path(), "does-not-match")
+            .unwrap()
+            .is_empty());
         assert!(find_session_at(root.path(), "missing").is_err());
         assert!(find_session_at(root.path(), "../escape").is_err());
         std::fs::write(draft.join("meta.json"), b"broken").unwrap();
