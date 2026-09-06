@@ -166,6 +166,10 @@ pub(crate) fn help_shortcuts() -> Vec<(&'static str, String, &'static str)> {
             })
             .map(|(key, label, _)| ("From anywhere", format!("ctrl-g {key}"), *label)),
     );
+    rows.extend([
+        ("Chat", "ctrl-k".into(), "Focus transcript (normal mode)"),
+        ("Chat", "ctrl-j".into(), "Focus composer"),
+    ]);
     rows.extend(
         COMMANDS
             .iter()
@@ -193,6 +197,23 @@ pub(crate) fn help_shortcuts() -> Vec<(&'static str, String, &'static str)> {
         (section, (*key).into(), *label)
     }));
     rows
+}
+
+/// True selects transcript normal mode; false selects the composer.
+pub(super) fn chat_focus_key(key: &str, modifiers: gpui::Modifiers) -> Option<bool> {
+    if modifiers
+        != (gpui::Modifiers {
+            control: true,
+            ..Default::default()
+        })
+    {
+        return None;
+    }
+    match key {
+        "k" => Some(true),
+        "j" => Some(false),
+        _ => None,
+    }
 }
 
 pub(super) fn normal_command(key: &str, prefix: Option<Prefix>) -> Option<Command> {

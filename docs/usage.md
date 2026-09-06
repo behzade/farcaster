@@ -17,6 +17,10 @@ cancels it without forwarding that key to the input/editor/shell. Expiry does
 nothing and subsequent keys type normally. Session/surface/focus changes cancel
 pending activation. New sessions automatically focus the composer in insert mode.
 
+In chat, `Ctrl+K` focuses the transcript in normal mode and `Ctrl+J` focuses the
+composer. They only switch focus: pressing either in its target region does nothing.
+They do not intercept keys in the editor, terminal, or dialogs.
+
 In chat normal:
 
 | Keys | Action |

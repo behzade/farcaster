@@ -138,7 +138,9 @@ impl FarcasterApp {
                             Instant::now(),
                         );
                         match result {
-                            ActivatedKey::Pass => return false,
+                            ActivatedKey::Pass => {
+                                return this.focus_chat_region(&event.keystroke, window, cx);
+                            }
                             ActivatedKey::Pending => {
                                 this.chat_navigation.pending_key = None;
                                 this.chat_navigation.activation_focus = window.focused(cx);
@@ -273,6 +275,36 @@ impl FarcasterApp {
         focus.focus(window, cx);
         self.notify_transcript(cx);
         self.notify_composer(cx);
+    }
+
+    fn focus_chat_region(
+        &mut self,
+        keystroke: &gpui::Keystroke,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.surface != AppSurface::Chat
+            || self.native_workspace_covered_by_overlay()
+            || !(self.composer_focus.is_focused(window)
+                || self.chat_navigation.focus.is_focused(window))
+        {
+            return false;
+        }
+        let Some(normal_mode) = shortcuts::chat_focus_key(&keystroke.key, keystroke.modifiers)
+        else {
+            return false;
+        };
+        self.chat_navigation.pending_key = None;
+        let focus = if normal_mode && !self.snapshot.conversation.items.is_empty() {
+            &self.chat_navigation.focus
+        } else {
+            &self.composer_focus
+        };
+        if !focus.is_focused(window) {
+            focus.focus(window, cx);
+        }
+        self.notify_composer(cx);
+        true
     }
 
     pub(in crate::app) fn capture_chat_navigation(
@@ -427,6 +459,28 @@ mod tests {
     fn activated(state: &mut Activation, key: &str, now: Instant) -> ActivatedKey {
         let stroke = gpui::Keystroke::parse(key).unwrap();
         state.key(&stroke.key, stroke.modifiers, now)
+    }
+
+    #[test]
+    fn chat_focus_chords_require_exact_control_modifier() {
+        for (key, target) in [
+            ("ctrl-k", Some(true)),
+            ("ctrl-j", Some(false)),
+            ("k", None),
+            ("j", None),
+            ("ctrl-shift-k", None),
+            ("ctrl-alt-j", None),
+            ("cmd-k", None),
+            ("cmd-ctrl-j", None),
+            ("ctrl-g", None),
+        ] {
+            let stroke = gpui::Keystroke::parse(key).unwrap();
+            assert_eq!(
+                shortcuts::chat_focus_key(&stroke.key, stroke.modifiers),
+                target,
+                "{key}",
+            );
+        }
     }
 
     #[test]
