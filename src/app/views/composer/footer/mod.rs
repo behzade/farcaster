@@ -88,6 +88,7 @@ impl FarcasterApp {
             .absolute()
             .right(px(12.0))
             .bottom(px(10.0))
+            .occlude()
             .flex()
             .items_center()
             .child(

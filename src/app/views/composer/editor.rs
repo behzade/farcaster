@@ -66,8 +66,11 @@ impl RenderOnce for ComposerInput {
             .id("composer-input")
             .key_context(COMPOSER_KEY_CONTEXT)
             .relative()
+            .flex()
+            .flex_col()
             .flex_1()
             // The card owns the resting height; attachments share that space.
+            // Fill it so empty chrome is still an editor hitbox.
             .min_h(px(48.0))
             .font_family(UI_FONT_FAMILY)
             .text_size(THEME.type_scale.reading)
@@ -147,6 +150,8 @@ impl RenderOnce for ComposerInput {
             .child(
                 Textarea::new(&self.composer)
                     .w_full()
+                    .h_full()
+                    .flex_1()
                     .appearance(false)
                     .p_0(),
             )
