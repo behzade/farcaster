@@ -103,7 +103,7 @@ fn is_return_chord(key: &str, modifiers: gpui::Modifiers, macos: bool) -> bool {
 
 impl FarcasterApp {
     pub(in crate::app) fn preferred_chat_focus(&self) -> FocusHandle {
-        if self.chat_navigation.normal_mode {
+        if self.chat_navigation.normal_mode && !self.snapshot.conversation.items.is_empty() {
             self.chat_navigation.focus.clone()
         } else {
             self.composer_focus.clone()
@@ -203,6 +203,11 @@ impl FarcasterApp {
             (&self.composer_focus, false),
         ] {
             cx.on_focus(focus, window, move |this, window, cx| {
+                if normal_mode && this.snapshot.conversation.items.is_empty() {
+                    this.chat_navigation.normal_mode = false;
+                    this.composer_focus.focus(window, cx);
+                    return;
+                }
                 this.chat_navigation.normal_mode = normal_mode;
                 this.transcript_view
                     .read(cx)
@@ -233,7 +238,7 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         self.chat_navigation.activation.clear();
-        self.chat_navigation.normal_mode = true;
+        self.chat_navigation.normal_mode = !self.snapshot.conversation.items.is_empty();
         self.chat_navigation.pending_key = None;
         self.transcript_view
             .read(cx)
@@ -262,8 +267,10 @@ impl FarcasterApp {
         }
         // An agent's pending request is not a transient menu: preserve it, without
         // synthesizing a response or cancelling the running agent.
-        self.enter_chat_surface(self.chat_navigation.focus.clone(), cx);
-        self.chat_navigation.focus.focus(window, cx);
+        // Empty sessions have nothing to navigate; return directly to composing.
+        let focus = self.preferred_chat_focus();
+        self.enter_chat_surface(focus.clone(), cx);
+        focus.focus(window, cx);
         self.notify_transcript(cx);
         self.notify_composer(cx);
     }
