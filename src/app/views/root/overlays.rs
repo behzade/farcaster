@@ -115,19 +115,6 @@ impl FarcasterApp {
                     },
                 ))
             })
-            .when_some(
-                dialogs::image_preview::render(self, entity.clone()),
-                |root, preview| root.child(preview),
-            )
-            .when(self.pending_archive.is_some(), |root| {
-                root.child(dialogs::archive_confirmation::render(self, entity.clone()))
-            })
-            .when(self.pending_delete.is_some(), |root| {
-                root.child(dialogs::delete_confirmation::render(self, entity.clone()))
-            })
-            .when(self.repository.pending_jj_init.is_some(), |root| {
-                root.child(dialogs::jj_init_confirmation::render(self, entity.clone()))
-            })
             .when(self.overlays.project_trust, |root| {
                 root.child(dialogs::project_trust::render(self, entity.clone()))
             })
@@ -154,6 +141,19 @@ impl FarcasterApp {
             })
             .when_some(sessions_sheet, |root, sheet| root.child(sheet))
             .when_some(run_sheet, |root, sheet| root.child(sheet))
+            .when(self.pending_archive.is_some(), |root| {
+                root.child(dialogs::archive_confirmation::render(self, entity.clone()))
+            })
+            .when(self.pending_delete.is_some(), |root| {
+                root.child(dialogs::delete_confirmation::render(self, entity.clone()))
+            })
+            .when(self.repository.pending_jj_init.is_some(), |root| {
+                root.child(dialogs::jj_init_confirmation::render(self, entity.clone()))
+            })
+            .when_some(
+                dialogs::image_preview::render(self, entity.clone()),
+                |root, preview| root.child(preview),
+            )
             .when(!self.extension.notifications.is_empty(), |root| {
                 root.child(
                     div()

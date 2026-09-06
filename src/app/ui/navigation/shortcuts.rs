@@ -42,6 +42,22 @@ pub(crate) fn command_key(command: Command) -> &'static str {
         .0
 }
 
+/// Shared with the status strip; adding a leader command updates both surfaces.
+pub(crate) fn leader_hint() -> &'static str {
+    static HINT: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        let commands = COMMANDS
+            .iter()
+            .filter_map(|(key, label, _)| {
+                key.strip_prefix("space ")
+                    .map(|key| format!("{key} {}", label.to_lowercase()))
+            })
+            .collect::<Vec<_>>()
+            .join(" · ");
+        format!("SPACE · {commands} · Esc cancel")
+    });
+    &HINT
+}
+
 /// Section, key sequence, description. Sequences are individual keycaps in help.
 pub(crate) fn help_shortcuts() -> Vec<(&'static str, String, &'static str)> {
     let mut rows = vec![(
@@ -55,6 +71,11 @@ pub(crate) fn help_shortcuts() -> Vec<(&'static str, String, &'static str)> {
             "cmd-g".into(),
             "Activate app keys (macOS alias)",
         ));
+        rows.push((
+            "From anywhere",
+            "cmd-g cmd-g".into(),
+            "Return to chat normal (macOS alias)",
+        ));
     }
     rows.push((
         "From anywhere",
@@ -66,11 +87,12 @@ pub(crate) fn help_shortcuts() -> Vec<(&'static str, String, &'static str)> {
         "ctrl-g 2".into(),
         "Jump to session 2 (0–9 supported)",
     ));
-    rows.push((
-        "From anywhere",
-        "ctrl-g space e".into(),
-        "Run Space command (e/t/j/k)",
-    ));
+    rows.extend(
+        COMMANDS
+            .iter()
+            .filter(|(key, _, _)| key.starts_with("space "))
+            .map(|(key, label, _)| ("From anywhere", format!("ctrl-g {key}"), *label)),
+    );
     rows.extend(
         COMMANDS
             .iter()

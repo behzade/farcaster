@@ -2,7 +2,7 @@
 
 use std::{path::PathBuf, sync::Arc};
 
-use gpui::{Context, FocusHandle, Image, Window, actions};
+use gpui::{Context, FocusHandle, Focusable as _, Image, Window, actions};
 
 use super::{AppSurface, FarcasterApp, ImagePreview, PostRenderFocus};
 actions!(farcaster, [CycleWorkspaceForward, CycleWorkspaceBackward]);
@@ -52,6 +52,78 @@ const fn should_capture_return_focus(flags: SheetFlags) -> bool {
 }
 
 impl FarcasterApp {
+    /// A captured control/menu can disappear during an async session update.
+    /// Restore the top surviving overlay, otherwise the active surface's owner.
+    pub(in crate::app) fn recover_keyboard_focus(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(focus) = self.keyboard_overlay_focus(cx) {
+            focus.focus(window, cx);
+        } else {
+            self.request_active_surface_focus(None);
+            self.apply_post_render_focus(window, cx);
+        }
+    }
+
+    pub(in crate::app) fn keyboard_overlay_focus(&self, cx: &gpui::App) -> Option<FocusHandle> {
+        if self.image_preview.is_some() {
+            Some(self.image_preview_focus.clone())
+        } else if let Some(pending) = &self.repository.pending_jj_init {
+            Some(pending.focus.clone())
+        } else if let Some(pending) = &self.pending_delete {
+            Some(pending.focus.clone())
+        } else if let Some(pending) = &self.pending_archive {
+            Some(pending.focus.clone())
+        } else if self.current_sheet_flags().any() {
+            Some(self.sheet_focus.clone())
+        } else if self.picker.is_some() {
+            self.picker_focus(cx)
+        } else if self.surface == AppSurface::Work {
+            Some(self.workgraph_view.read(cx).focus_handle())
+        } else if let Some(dialog) = &self.extension.dialog {
+            Some(
+                if matches!(
+                    dialog,
+                    ExtensionUiRequest::Input { .. } | ExtensionUiRequest::Editor { .. }
+                ) {
+                    self.dialog_input.read(cx).focus_handle(cx)
+                } else {
+                    self.dialog_focus.clone()
+                },
+            )
+        } else {
+            None
+        }
+    }
+
+    pub(in crate::app) fn restore_overlay_focus(
+        &mut self,
+        target: Option<FocusHandle>,
+        closing: &FocusHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let overlay = self.keyboard_overlay_focus(cx);
+        let restored = crate::app::ui::focus::restore(
+            target,
+            closing,
+            &self.chat_navigation.focus,
+            overlay
+                .clone()
+                .unwrap_or_else(|| self.preferred_chat_focus()),
+            window,
+            cx,
+        );
+        if restored == crate::app::ui::focus::Restoration::Fallback
+            && overlay.is_none()
+            && matches!(self.surface, AppSurface::Editor | AppSurface::Terminal)
+        {
+            self.request_active_surface_focus(None);
+        }
+    }
+
     pub(in crate::app) fn set_surface(
         &mut self,
         surface: AppSurface,
@@ -234,6 +306,7 @@ impl FarcasterApp {
                 }
                 match self.surface {
                     AppSurface::Chat => chat
+                        .filter(|focus| self.chat_navigation.focus.contains(focus, window))
                         .unwrap_or_else(|| self.preferred_chat_focus())
                         .focus(window, cx),
                     AppSurface::Editor => {
@@ -407,11 +480,8 @@ impl FarcasterApp {
     }
 
     fn restore_dialog_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let focus = self
-            .dialog_return_focus
-            .take()
-            .unwrap_or_else(|| self.preferred_chat_focus());
-        focus.focus(window, cx);
+        let target = self.dialog_return_focus.take();
+        self.restore_overlay_focus(target, &self.dialog_focus.clone(), window, cx);
         self.restore_active_native_workspace_surface(window, cx);
         cx.notify();
     }
@@ -658,11 +728,9 @@ impl FarcasterApp {
 
     fn open_sheet(&mut self, sheet: AppSheet, window: &mut Window, cx: &mut Context<Self>) {
         self.cover_native_workspace_surface(cx);
-        if self.picker.take().is_some() {
-            self.picker_return_focus = None;
-        }
+        let picker_return = self.picker.take().map(|_| self.picker_return_focus.take());
         if should_capture_return_focus(self.current_sheet_flags()) {
-            self.sheet_return_focus = window.focused(cx);
+            self.sheet_return_focus = picker_return.unwrap_or_else(|| window.focused(cx));
         }
         self.apply_sheet_flags(sheet_flags(Some(sheet)));
         self.overlays.pending_setup = true;
@@ -716,35 +784,35 @@ impl FarcasterApp {
         if self.image_preview.take().is_none() {
             return;
         }
-        self.image_preview_return_focus
-            .take()
-            .unwrap_or_else(|| self.preferred_chat_focus())
-            .focus(window, cx);
+        let target = self.image_preview_return_focus.take();
+        self.restore_overlay_focus(target, &self.image_preview_focus.clone(), window, cx);
         self.restore_active_native_workspace_surface(window, cx);
         cx.notify();
     }
 
     pub(in crate::app) fn close_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.current_sheet_flags().any() {
+            return;
+        }
         self.apply_sheet_flags(sheet_flags(None));
         self.overlays.pending_setup = false;
-        let focus = self
-            .sheet_return_focus
-            .take()
-            .unwrap_or_else(|| self.preferred_chat_focus());
-        focus.focus(window, cx);
+        let target = self.sheet_return_focus.take();
+        self.restore_overlay_focus(target, &self.sheet_focus.clone(), window, cx);
         self.restore_active_native_workspace_surface(window, cx);
         cx.notify();
     }
 
     pub(in crate::app) fn dismiss_surface(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Mirror visual stacking. A settings sheet above an agent request must
+        // close itself, never cancel the request hidden underneath it.
         if self.image_preview.is_some() {
             self.close_image_preview(window, cx);
         } else if self.repository.pending_jj_init.is_some() {
             self.close_jj_init_confirmation(window, cx);
-        } else if self.picker.is_some() {
-            self.close_picker(window, cx);
-        } else if self.extension.dialog.is_some() {
-            self.cancel_dialog(window, cx);
+        } else if self.pending_delete.is_some() {
+            self.close_delete_confirmation(window, cx);
+        } else if self.pending_archive.is_some() {
+            self.close_archive_confirmation(window, cx);
         } else if self.overlays.project_trust {
             self.dismiss_project_trust(window, cx);
         } else if self.overlays.sessions
@@ -753,6 +821,10 @@ impl FarcasterApp {
             || self.overlays.settings
         {
             self.close_sheet(window, cx);
+        } else if self.picker.is_some() {
+            self.close_picker(window, cx);
+        } else if self.extension.dialog.is_some() {
+            self.cancel_dialog(window, cx);
         }
     }
 }

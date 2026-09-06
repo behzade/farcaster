@@ -169,6 +169,8 @@ fn builtin_mcp_setting(enabled: bool, entity: WeakEntity<FarcasterApp>) -> AnyEl
 
 fn setting_label(title: &'static str, description: &'static str) -> AnyElement {
     div()
+        .min_w_0()
+        .max_w_full()
         .flex()
         .flex_col()
         .gap(THEME.space.xs)
@@ -191,11 +193,12 @@ fn modifier_setting(selected: ApplicationModifier, entity: WeakEntity<FarcasterA
     div()
         .flex()
         .items_center()
+        .flex_wrap()
         .justify_between()
         .gap(THEME.space.md)
         .child(setting_label(
             "Direct shortcut modifier",
-            "Optional direct shortcuts. Does not change chat-normal keys, the Space leader, or return-to-chat shortcuts.",
+            "Direct shortcuts stay available alongside modal navigation (Cmd on macOS by default). This modifier does not change Ctrl+G activation or Space commands.",
         ))
         .child(
             dropdown_button(

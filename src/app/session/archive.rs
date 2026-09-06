@@ -10,6 +10,7 @@ use crate::{
 };
 
 pub(in crate::app) struct PendingArchive {
+    pub(in crate::app) focus: FocusHandle,
     path: PathBuf,
     return_focus: Option<FocusHandle>,
     next_app_session_id: Option<i64>,
@@ -29,12 +30,14 @@ impl FarcasterApp {
         }
 
         self.cover_native_workspace_surface(cx);
-        self.pending_archive = Some(PendingArchive {
+        let pending = PendingArchive {
+            focus: cx.focus_handle(),
             path,
             return_focus: window.focused(cx),
             next_app_session_id: None,
-        });
-        self.sheet_focus.focus(window, cx);
+        };
+        pending.focus.focus(window, cx);
+        self.pending_archive = Some(pending);
         cx.notify();
     }
 
@@ -74,10 +77,7 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) -> Option<(PathBuf, Option<i64>)> {
         let pending = self.pending_archive.take()?;
-        pending
-            .return_focus
-            .unwrap_or_else(|| self.composer_focus.clone())
-            .focus(window, cx);
+        self.restore_overlay_focus(pending.return_focus.clone(), &pending.focus, window, cx);
         self.restore_active_native_workspace_surface(window, cx);
         cx.notify();
         Some((pending.path, pending.next_app_session_id))

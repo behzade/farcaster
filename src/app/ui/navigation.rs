@@ -16,7 +16,7 @@ pub(crate) struct ChatNavigation {
 }
 
 mod shortcuts;
-pub(crate) use shortcuts::{Command, command_key, help_shortcuts};
+pub(crate) use shortcuts::{Command, command_key, help_shortcuts, leader_hint};
 use shortcuts::{Scroll, normal_command, transcript_scroll};
 
 const ACTIVATION_TIMEOUT: Duration = Duration::from_secs(1);
@@ -43,7 +43,7 @@ impl Activation {
             .filter(|deadline| Instant::now() < *deadline)
             .map(|_| {
                 if self.leader {
-                    "APP · SPACE · e editor · t terminal · j/k sessions · Esc cancel"
+                    leader_hint()
                 } else {
                     "APP · 0–9 sessions · Space commands · Ctrl+G normal · Esc cancel"
                 }
@@ -181,13 +181,20 @@ impl FarcasterApp {
             }
         })
         .detach();
+        cx.on_focus_lost(window, |this, window, cx| {
+            // Only repair missing render-tree targets, never ordinary focus changes.
+            if !this.chat_navigation.focus.contains_focused(window, cx) {
+                this.recover_keyboard_focus(window, cx);
+            }
+        })
+        .detach();
         for (focus, normal_mode) in [
             (&self.chat_navigation.focus, true),
             (&self.composer_focus, false),
         ] {
-            cx.on_focus(focus, window, move |this, _, cx| {
+            cx.on_focus(focus, window, move |this, window, cx| {
                 this.chat_navigation.normal_mode = normal_mode;
-                this.set_session_shortcuts_visible(normal_mode, cx);
+                this.set_session_shortcuts_visible(normal_mode && window.is_window_active(), cx);
                 this.notify_composer(cx);
             })
             .detach();
@@ -247,22 +254,10 @@ impl FarcasterApp {
         // Root Tab bindings are intentionally unbound for composer commands.
         // Unhandled Tab still needs to traverse incidental controls explicitly.
         if self.surface == AppSurface::Chat
-            && key == "tab"
-            && (modifiers == gpui::Modifiers::default()
-                || modifiers
-                    == (gpui::Modifiers {
-                        shift: true,
-                        ..Default::default()
-                    }))
+            && !self.native_workspace_covered_by_overlay()
             && !self.chat_navigation.leader_pending
+            && super::focus::traverse_tab(event, None, window, cx)
         {
-            if modifiers.shift {
-                window.focus_prev(cx);
-            } else {
-                window.focus_next(cx);
-            }
-            window.prevent_default();
-            cx.stop_propagation();
             return;
         }
         if self.surface != AppSurface::Chat || !self.chat_navigation.focus.is_focused(window) {

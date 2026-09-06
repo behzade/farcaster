@@ -68,7 +68,7 @@ impl Render for ComposerView {
             Some(hint)
         } else if app.chat_navigation.focus.is_focused(window) {
             Some(if app.chat_navigation.leader_pending {
-                "SPACE · e editor · t terminal · j/k sessions · Esc cancel"
+                crate::app::ui::navigation::leader_hint()
             } else {
                 "NORMAL · CHAT"
             })

@@ -13,9 +13,13 @@ pub(crate) fn modal(
     on_dismiss: impl Fn(&mut Window, &mut App) + 'static,
     configure: impl FnOnce(Stateful<Div>) -> Stateful<Div>,
 ) -> Stateful<Div> {
+    let traversal_scope = focus.clone();
     let surface = configure(dialog_surface(format!("{id}-surface"), label))
         .track_focus(focus)
         .key_context(key_context)
+        .on_key_down(move |event, window, cx| {
+            crate::app::ui::focus::traverse_tab(event, Some(&traversal_scope), window, cx);
+        })
         .focus_trap(format!("{id}-focus-trap"), focus);
     dialog_backdrop(format!("{id}-backdrop"), on_dismiss).child(surface)
 }

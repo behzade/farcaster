@@ -26,6 +26,7 @@ struct RefreshCompletion {
 }
 
 pub(in crate::app) struct PendingJjInit {
+    pub(in crate::app) focus: FocusHandle,
     pub(in crate::app) repository: PathBuf,
     project: PathBuf,
     return_focus: Option<FocusHandle>,
@@ -235,13 +236,15 @@ impl FarcasterApp {
                     .transpose()
             }) {
                 Ok(Some((location, true))) => {
-                    self.repository.pending_jj_init = Some(PendingJjInit {
+                    let pending = PendingJjInit {
+                        focus: cx.focus_handle(),
                         repository: location.workspace_root.clone(),
                         project: self.repository.project.clone(),
                         return_focus: window.focused(cx),
-                    });
+                    };
                     self.cover_native_workspace_surface(cx);
-                    self.sheet_focus.focus(window, cx);
+                    pending.focus.focus(window, cx);
+                    self.repository.pending_jj_init = Some(pending);
                     cx.notify();
                     return;
                 }
@@ -282,11 +285,7 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) -> Option<PendingJjInit> {
         let pending = self.repository.pending_jj_init.take()?;
-        pending
-            .return_focus
-            .clone()
-            .unwrap_or_else(|| self.composer_focus.clone())
-            .focus(window, cx);
+        self.restore_overlay_focus(pending.return_focus.clone(), &pending.focus, window, cx);
         self.restore_active_native_workspace_surface(window, cx);
         cx.notify();
         Some(pending)

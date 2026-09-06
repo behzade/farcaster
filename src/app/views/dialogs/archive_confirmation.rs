@@ -15,7 +15,7 @@ pub(in crate::app::views) fn render(
     modal(
         "archive-active-session",
         "Session is active",
-        &app.sheet_focus,
+        &app.pending_archive.as_ref().expect("visible confirmation").focus,
         OVERLAY_KEY_CONTEXT,
         move |window, cx| {
             let _ = dismiss.update(cx, |this, cx| {

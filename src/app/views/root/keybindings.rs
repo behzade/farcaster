@@ -6,7 +6,7 @@ use crate::app::ui::theme::THEME;
 pub(super) fn render_help() -> impl IntoElement {
     let shortcuts = crate::app::ui::navigation::help_shortcuts()
         .into_iter()
-        .map(|(section, key, label)| (section.to_owned(), key, label.to_owned()))
+        .map(|(section, key, label)| (section.to_owned(), key, label))
         .chain(
             crate::app::ui::keybindings::registry()
                 .into_iter()
@@ -15,7 +15,7 @@ pub(super) fn render_help() -> impl IntoElement {
                     (
                         format!("Direct · {}", shortcut.section),
                         shortcut.keystroke,
-                        shortcut.label.to_owned(),
+                        shortcut.label,
                     )
                 }),
         );
@@ -65,31 +65,89 @@ pub(super) fn render_help() -> impl IntoElement {
             );
         }
 
-        let keys = div().flex().items_center().gap(THEME.space.xs).children(
-            keystroke.split_whitespace().map(|key| {
-                Kbd::new(gpui::Keystroke::parse(key).expect("registered shortcut must parse"))
-            }),
-        );
-        section = section.map(|section| {
-            section.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap(THEME.space.md)
-                    .min_h(THEME.controls.utility_row)
-                    .px(THEME.space.sm)
-                    .py(THEME.space.xs)
-                    .rounded(THEME.radius)
-                    .bg(THEME.colors.surface)
-                    .child(label)
-                    .child(keys),
-            )
-        });
+        section = section.map(|section| section.child(shortcut_row(&keystroke, label)));
     }
 
     if let Some(section) = section {
         content = content.child(section);
     }
     content
+}
+
+fn shortcut_row(keystroke: &str, label: &str) -> impl IntoElement {
+    use gpui::InteractiveElement as _;
+    let keys = div()
+        .debug_selector(|| "shortcut-keys".into())
+        .flex()
+        .flex_wrap()
+        .flex_none()
+        .max_w_full()
+        .items_center()
+        .gap(THEME.space.xs)
+        .children(keystroke.split_whitespace().map(|key| {
+            Kbd::new(gpui::Keystroke::parse(key).expect("registered shortcut must parse"))
+        }));
+    div()
+        .debug_selector(|| "shortcut-row".into())
+        .w_full()
+        .min_w_0()
+        .flex()
+        .items_center()
+        .justify_between()
+        .flex_wrap()
+        .gap(THEME.space.md)
+        .min_h(THEME.controls.utility_row)
+        .px(THEME.space.sm)
+        .py(THEME.space.xs)
+        .rounded(THEME.radius)
+        .bg(THEME.colors.surface)
+        .child(
+            div()
+                .debug_selector(|| "shortcut-label".into())
+                .min_w_0()
+                .max_w_full()
+                .child(label.to_owned()),
+        )
+        .child(keys)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{point, px, size};
+
+    #[gpui::test]
+    fn long_labels_and_multi_chord_keys_fit_narrow_help(cx: &mut gpui::TestAppContext) {
+        cx.update(gpui_component::init);
+        let cx = cx.add_empty_window();
+        for width in [240.0, 320.0, 488.0] {
+            for key in [
+                "ctrl-g ctrl-g",
+                "cmd-g cmd-g",
+                "ctrl-g space e",
+                "cmd-shift-n",
+            ] {
+                cx.draw(
+                    point(px(0.0), px(0.0)),
+                    size(px(width), px(300.0)),
+                    |_, _| {
+                        div().w(px(width)).child(shortcut_row(
+                            key,
+                            "Activate app keys without changing keyboard focus",
+                        ))
+                    },
+                );
+                let row = cx.debug_bounds("shortcut-row").unwrap();
+                for selector in ["shortcut-keys", "shortcut-label"] {
+                    let bounds = cx.debug_bounds(selector).unwrap();
+                    assert!(bounds.left() >= row.left());
+                    assert!(
+                        bounds.right() <= row.right(),
+                        "{key} at {width}: {bounds:?} > {row:?}"
+                    );
+                    assert!(bounds.bottom() <= row.bottom());
+                }
+            }
+        }
+    }
 }

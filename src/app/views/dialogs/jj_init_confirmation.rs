@@ -21,7 +21,7 @@ pub(in crate::app::views) fn render(
     modal(
         "initialize-jj-repository",
         "Initialize Jujutsu repository?",
-        &app.sheet_focus,
+        &app.repository.pending_jj_init.as_ref().expect("visible confirmation").focus,
         OVERLAY_KEY_CONTEXT,
         move |window, cx| {
             let _ = dismiss.update(cx, |this, cx| {

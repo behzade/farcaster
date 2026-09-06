@@ -15,7 +15,7 @@ pub(in crate::app::views) fn render(
     modal(
         "delete-session",
         "Delete session permanently?",
-        &app.sheet_focus,
+        &app.pending_delete.as_ref().expect("visible confirmation").focus,
         OVERLAY_KEY_CONTEXT,
         move |window, cx| {
             let _ = dismiss.update(cx, |this, cx| {

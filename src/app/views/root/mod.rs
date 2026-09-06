@@ -51,6 +51,17 @@ impl Render for FarcasterApp {
             .capture_key_down(cx.listener(|this, event, window, cx| {
                 this.capture_chat_navigation(event, window, cx);
             }))
+            .on_key_down(cx.listener(|this, event, window, cx| {
+                if this.extension.dialog.is_some() && this.dialog_focus.contains_focused(window, cx)
+                {
+                    crate::app::ui::focus::traverse_tab(
+                        event,
+                        Some(&this.dialog_focus),
+                        window,
+                        cx,
+                    );
+                }
+            }))
             .text_color(THEME.colors.text)
             .text_size(THEME.type_scale.body);
         let root = actions::bind(root, cx).child(shell);

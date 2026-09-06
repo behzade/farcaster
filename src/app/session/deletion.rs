@@ -6,6 +6,7 @@ use super::FarcasterApp;
 use crate::{runtime::RuntimeCommand, sessions::archived_root_family_for_path};
 
 pub(in crate::app) struct PendingDelete {
+    pub(in crate::app) focus: FocusHandle,
     path: PathBuf,
     family_paths: HashSet<PathBuf>,
     return_focus: Option<FocusHandle>,
@@ -34,12 +35,14 @@ impl FarcasterApp {
             .map(|session| session.path.clone())
             .collect();
         self.cover_native_workspace_surface(cx);
-        self.pending_delete = Some(PendingDelete {
+        let pending = PendingDelete {
+            focus: cx.focus_handle(),
             path,
             family_paths,
             return_focus: window.focused(cx),
-        });
-        self.sheet_focus.focus(window, cx);
+        };
+        pending.focus.focus(window, cx);
+        self.pending_delete = Some(pending);
         cx.notify();
     }
 
@@ -69,11 +72,7 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) -> Option<PendingDelete> {
         let pending = self.pending_delete.take()?;
-        pending
-            .return_focus
-            .clone()
-            .unwrap_or_else(|| self.composer_focus.clone())
-            .focus(window, cx);
+        self.restore_overlay_focus(pending.return_focus.clone(), &pending.focus, window, cx);
         self.restore_active_native_workspace_surface(window, cx);
         cx.notify();
         Some(pending)

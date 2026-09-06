@@ -21,7 +21,11 @@ impl FarcasterApp {
         if self.overlays.pending_setup {
             self.overlays.pending_setup = false;
             let focus = self.sheet_focus.clone();
-            cx.defer_in(window, move |_, window, cx| focus.focus(window, cx));
+            cx.defer_in(window, move |this, window, cx| {
+                if this.keyboard_overlay_focus(cx).as_ref() == Some(&focus) {
+                    focus.focus(window, cx);
+                }
+            });
         }
         if self.pending_dialog_setup {
             if self.dialog_return_focus.is_none() {
@@ -42,19 +46,35 @@ impl FarcasterApp {
                 dialog,
                 Some(ExtensionUiRequest::Input { .. } | ExtensionUiRequest::Editor { .. })
             );
+            let dialog_id = dialog
+                .and_then(ExtensionUiRequest::dialog_id)
+                .map(str::to_owned);
             let input = self.dialog_input.clone();
             let focus = if uses_textarea {
                 input.read(cx).focus_handle(cx)
             } else {
                 self.dialog_focus.clone()
             };
-            cx.defer_in(window, move |_, window, cx| {
+            cx.defer_in(window, move |this, window, cx| {
+                if dialog_id.is_none()
+                    || this
+                        .extension
+                        .dialog
+                        .as_ref()
+                        .and_then(ExtensionUiRequest::dialog_id)
+                        != dialog_id.as_deref()
+                {
+                    return;
+                }
                 if uses_textarea {
                     input.update(cx, |state, cx| {
                         state.set_value(prefill, window, cx);
                     });
                 }
-                focus.focus(window, cx);
+                // A new sheet/confirmation may have opened since this was queued.
+                if this.keyboard_overlay_focus(cx).as_ref() == Some(&focus) {
+                    focus.focus(window, cx);
+                }
             });
         }
         if self.native_surface_covered && !self.native_workspace_covered_by_overlay() {

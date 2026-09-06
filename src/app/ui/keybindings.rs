@@ -568,6 +568,31 @@ mod tests {
     }
 
     #[test]
+    fn command_direct_shortcuts_remain_global_alongside_activation() {
+        use super::registry_for_modifier;
+        let keymap = gpui::Keymap::new(
+            registry_for_modifier(ApplicationModifier::Command)
+                .into_iter()
+                .map(|shortcut| shortcut.binding)
+                .collect(),
+        );
+        for context in ["FarcasterComposer", "FarcasterNative", "Input", "Terminal"] {
+            let contexts = [gpui::KeyContext::parse(context).unwrap()];
+            for key in ["cmd-2", "cmd-t", "cmd-e", "cmd-j", "cmd-k", "cmd-q"] {
+                let (bindings, _) =
+                    keymap.bindings_for_input(&[gpui::Keystroke::parse(key).unwrap()], &contexts);
+                assert!(!bindings.is_empty(), "{key} missing in {context}");
+            }
+        }
+        // Activation aliases are intercepted separately, not ordinary direct bindings.
+        assert!(
+            registry_for_modifier(ApplicationModifier::Command)
+                .iter()
+                .all(|shortcut| shortcut.keystroke != "cmd-g")
+        );
+    }
+
+    #[test]
     fn copy_shortcuts_route_through_the_application_command() {
         let shortcuts = registry();
         assert!(shortcuts.iter().any(|shortcut| {

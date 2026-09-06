@@ -86,6 +86,12 @@ pub(in crate::app) struct PickerState {
 }
 
 impl FarcasterApp {
+    pub(in crate::app) fn picker_focus(&self, cx: &gpui::App) -> Option<gpui::FocusHandle> {
+        self.picker
+            .as_ref()
+            .map(|picker| picker.list.read(cx).focus_handle(cx))
+    }
+
     pub(in crate::app) fn open_picker(
         &mut self,
         scope: PickerScope,
@@ -94,8 +100,10 @@ impl FarcasterApp {
     ) {
         self.cover_native_workspace_surface(cx);
         if self.picker.is_none() {
-            let sheet_open =
-                self.overlays.sessions || self.overlays.run || self.overlays.keybindings;
+            let sheet_open = self.overlays.sessions
+                || self.overlays.run
+                || self.overlays.keybindings
+                || self.overlays.settings;
             self.picker_return_focus = if sheet_open {
                 self.sheet_return_focus
                     .clone()
@@ -107,6 +115,7 @@ impl FarcasterApp {
                 self.overlays.sessions = false;
                 self.overlays.run = false;
                 self.overlays.keybindings = false;
+                self.overlays.settings = false;
                 self.overlays.pending_setup = false;
                 self.sheet_return_focus = None;
             }
@@ -153,13 +162,12 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn close_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(_picker) = self.picker.take() else {
+        let Some(picker) = self.picker.take() else {
             return;
         };
-        self.picker_return_focus
-            .take()
-            .unwrap_or_else(|| self.preferred_chat_focus())
-            .focus(window, cx);
+        let target = self.picker_return_focus.take();
+        let focus = picker.list.read(cx).focus_handle(cx);
+        self.restore_overlay_focus(target, &focus, window, cx);
         self.restore_active_native_workspace_surface(window, cx);
         cx.notify();
     }
@@ -244,6 +252,8 @@ impl FarcasterApp {
         else {
             return;
         };
+        let return_to_normal =
+            self.picker_return_focus.as_ref() == Some(&self.chat_navigation.focus);
         match command {
             PickerCommand::OpenProjects(intent) => {
                 self.open_picker(PickerScope::Projects(intent), window, cx);
@@ -277,8 +287,6 @@ impl FarcasterApp {
                 self.move_session(path, project, window, cx);
             }
             PickerCommand::SelectSession { path, project } => {
-                let return_to_normal =
-                    self.picker_return_focus.as_ref() == Some(&self.chat_navigation.focus);
                 self.close_picker(window, cx);
                 self.select_session(path, project, window, cx);
                 if return_to_normal {
@@ -288,6 +296,9 @@ impl FarcasterApp {
             PickerCommand::ResumeDraft { id, project } => {
                 self.close_picker(window, cx);
                 self.resume_draft(id, project, window, cx);
+                if return_to_normal {
+                    self.return_to_chat_normal(window, cx);
+                }
             }
         }
     }

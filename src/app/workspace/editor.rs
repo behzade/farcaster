@@ -199,7 +199,7 @@ impl FarcasterApp {
         let focus = self
             .editor_return_focus
             .take()
-            .unwrap_or_else(|| self.composer_focus.clone());
+            .unwrap_or_else(|| self.preferred_chat_focus());
         self.enter_chat_surface(focus, cx);
         self.request_repository_refresh(cx);
     }
