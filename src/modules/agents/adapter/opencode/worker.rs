@@ -113,8 +113,7 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
             reasoning_started: false,
             text_streams: HashMap::new(),
             reasoning_streams: HashMap::new(),
-            session_usage: TokenUsage::default(),
-            last_turn_usage: None,
+            usage: OpenCodeUsageTracker::default(),
             context_window: 0,
             pending_inputs: HashMap::new(),
             pending_deliveries: HashMap::new(),
@@ -235,8 +234,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
             reasoning_started: false,
             text_streams: HashMap::new(),
             reasoning_streams: HashMap::new(),
-            session_usage: TokenUsage::default(),
-            last_turn_usage: None,
+            usage: OpenCodeUsageTracker::default(),
             context_window,
             pending_inputs: HashMap::new(),
             pending_deliveries: HashMap::new(),
@@ -442,6 +440,31 @@ fn variant_for_model(effort: Option<&str>, known: Option<&Vec<String>>) -> Optio
     }
 }
 
+/// Token accounting for OpenCode usage events.
+///
+/// `session.step.ended` carries one step's provider usage, which is also the
+/// current context size. `session.usage.updated` carries session-cumulative
+/// totals that count every cache re-read, so they must be adopted as the
+/// session total and never used as the context metric.
+#[derive(Default)]
+struct OpenCodeUsageTracker {
+    session: TokenUsage,
+    context: TokenUsage,
+}
+
+impl OpenCodeUsageTracker {
+    fn step_ended(&mut self, turn: TokenUsage) -> (TokenUsage, TokenUsage) {
+        self.context = turn;
+        self.session = self.session.saturating_add(turn);
+        (turn, self.session)
+    }
+
+    fn session_total(&mut self, total: TokenUsage) -> (TokenUsage, TokenUsage) {
+        self.session = total;
+        (self.context, self.session)
+    }
+}
+
 #[derive(Default)]
 struct ActiveOpenCodeTool {
     name: String,
@@ -474,8 +497,7 @@ struct OpenCodeWorkerSession {
     reasoning_started: bool,
     text_streams: HashMap<String, String>,
     reasoning_streams: HashMap<String, String>,
-    session_usage: TokenUsage,
-    last_turn_usage: Option<TokenUsage>,
+    usage: OpenCodeUsageTracker,
     context_window: u64,
     pending_inputs: HashMap<String, PendingOpenCodeInput>,
     pending_deliveries: HashMap<String, (WorkerSendMode, String)>,
@@ -868,7 +890,6 @@ impl OpenCodeWorkerSession {
                     }));
                 }
                 "session.step.started" | "session.next.step.started" => {
-                    self.last_turn_usage = None;
                     return Some(WorkerEvent::Activity(WorkerActivity::TurnStarted));
                 }
                 "session.step.ended" | "session.next.step.ended" => {
@@ -876,27 +897,22 @@ impl OpenCodeWorkerSession {
                         log_bad_opencode_event(&event, "step end is missing token usage");
                         continue;
                     };
-                    self.last_turn_usage = Some(turn);
-                    self.session_usage = self.session_usage.saturating_add(turn);
+                    let (turn, session) = self.usage.step_ended(turn);
                     return Some(WorkerEvent::Activity(WorkerActivity::Usage(WorkerUsage {
                         turn,
-                        session: self.session_usage,
+                        session,
                         context_window: self.context_window,
                     })));
                 }
                 "session.usage.updated" | "session.usage.recorded" => {
-                    let Some(turn) = opencode_event_usage(&event.data) else {
+                    let Some(total) = opencode_event_usage(&event.data) else {
                         log_bad_opencode_event(&event, "usage event is missing token usage");
                         continue;
                     };
-                    if self.last_turn_usage == Some(turn) {
-                        continue;
-                    }
-                    self.last_turn_usage = Some(turn);
-                    self.session_usage = self.session_usage.saturating_add(turn);
+                    let (turn, session) = self.usage.session_total(total);
                     return Some(WorkerEvent::Activity(WorkerActivity::Usage(WorkerUsage {
                         turn,
-                        session: self.session_usage,
+                        session,
                         context_window: self.context_window,
                     })));
                 }
@@ -1612,6 +1628,38 @@ mod tests {
             Some(&vec!["none".to_owned(), "low".to_owned(), "high".to_owned()])
         );
         assert!(!catalog.contains_key(&("opencode".to_owned(), "legacy".to_owned())));
+    }
+
+    #[test]
+    fn session_usage_totals_are_adopted_without_inflating_the_context_metric() {
+        let mut tracker = OpenCodeUsageTracker::default();
+        let tokens = |input: u64, output: u64, read: u64| TokenUsage {
+            input,
+            output,
+            cache_read: read,
+            cache_write: 0,
+        };
+
+        // Turn 1: fresh step, then the cumulative session update that follows.
+        let (turn, session) = tracker.step_ended(tokens(3837, 3, 0));
+        assert_eq!((turn.total(), session.total()), (3840, 3840));
+        let (turn, session) = tracker.session_total(tokens(4356, 14, 0));
+        // The cumulative total must not become the context metric, and must
+        // not be added on top of the step usage again.
+        assert_eq!((turn.total(), session.total()), (3840, 4370));
+
+        // Turn 2: context is mostly cached; cumulative totals keep growing.
+        let (turn, session) = tracker.step_ended(tokens(72, 4, 3776));
+        assert_eq!((turn.total(), session.total()), (3852, 8222));
+        let (turn, session) = tracker.session_total(tokens(4428, 18, 3776));
+        assert_eq!(
+            (turn.input, turn.cache_read, turn.output),
+            (72, 3776, 4)
+        );
+        assert_eq!(
+            (session.input, session.cache_read, session.output),
+            (4428, 3776, 18)
+        );
     }
 
     #[test]
