@@ -404,7 +404,7 @@ impl Element for TranscriptList {
         cx: &mut App,
     ) -> Self::PrepaintState {
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
-        let (_, scrolled) = self.state.0.borrow_mut().begin_frame(bounds.size);
+        let (_, viewport_scrolled) = self.state.0.borrow_mut().begin_frame(bounds.size);
         let keyboard_changed = self.prepare_keyboard(bounds, window, cx);
         let (anchor, handler, scrolled) = {
             let mut state = self.state.0.borrow_mut();
@@ -419,7 +419,7 @@ impl Element for TranscriptList {
             (
                 anchor,
                 state.scroll_handler.clone(),
-                scrolled || keyboard_changed,
+                viewport_scrolled || keyboard_changed,
             )
         };
 
@@ -471,7 +471,10 @@ impl Element for TranscriptList {
             }
 
             let mut state = self.state.0.borrow_mut();
-            state.resume_tail_at_end();
+            // Being at the bottom after a caret motion is not a request to follow.
+            if !state.keyboard.active || viewport_scrolled {
+                state.resume_tail_at_end();
+            }
             let visible = state.layout_range(px(0.0));
             if visible.clone().all(|index| frame_rows.contains_key(&index)) {
                 break (state.scroll_y, state.following_tail, visible);

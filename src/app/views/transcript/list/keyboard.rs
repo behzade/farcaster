@@ -131,6 +131,8 @@ pub(super) struct Keyboard {
     linewise: bool,
     preferred_x: Option<Pixels>,
     geometry_dirty: bool,
+    recent_motion: bool,
+    caret_timeout: Option<gpui::Task<()>>,
     pending: std::collections::VecDeque<KeyboardCommand>,
     cache: BTreeMap<usize, TextRow>,
 }
@@ -174,6 +176,10 @@ impl Keyboard {
         self.cache.insert(index, row);
     }
 
+    fn caret_visible(&self) -> bool {
+        self.active && (self.recent_motion || self.has_selection())
+    }
+
     pub(super) fn has_selection(&self) -> bool {
         self.anchor.is_some()
     }
@@ -193,6 +199,8 @@ impl Keyboard {
             self.clear_geometry();
             self.cursor = None;
             self.preferred_x = None;
+            self.recent_motion = false;
+            self.caret_timeout = None;
         }
     }
 
@@ -367,8 +375,9 @@ impl Keyboard {
         viewport_height: Pixels,
         mut resume_tail: bool,
         load: &mut impl FnMut(usize) -> TextRow,
-    ) -> (Option<String>, bool) {
+    ) -> (Option<String>, bool, bool) {
         let mut copied = None;
+        let mut moved = false;
         while let Some(command) = self.pending.pop_front() {
             let Some(pos) = self.cursor else { break };
             use KeyboardCommand::*;
@@ -411,13 +420,14 @@ impl Keyboard {
                     pos
                 }
             };
+            moved |= next != pos;
             self.cursor = Some(next);
             resume_tail = command == End && self.anchor.is_none();
             if !matches!(command, Up | Down | Page(_)) {
                 self.preferred_x = None;
             }
         }
-        (copied, resume_tail)
+        (copied, resume_tail, moved)
     }
 
     fn selected_range(&self, row: usize) -> Option<Range<usize>> {
@@ -545,7 +555,7 @@ impl TranscriptList {
         let changed = std::mem::take(&mut keyboard.geometry_dirty) || has_commands;
         let initializing = keyboard.cursor.is_none();
         let resume_tail = !has_commands && following;
-        let (copied, resume_tail) = {
+        let (copied, resume_tail, moved) = {
             let mut load = |index| self.keyboard_row(index, bounds, window, cx);
             if let Some(pos) = keyboard.cursor {
                 let len = keyboard.row(pos.row.min(count - 1), &mut load).cells.len();
@@ -584,6 +594,24 @@ impl TranscriptList {
         };
         if let Some(text) = copied {
             cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+        }
+        if moved {
+            keyboard.recent_motion = true;
+            let state = Rc::downgrade(&self.state.0);
+            let timer = cx
+                .background_executor()
+                .timer(std::time::Duration::from_secs(2));
+            keyboard.caret_timeout = Some(cx.spawn(async move |cx| {
+                timer.await;
+                let _ = cx.update(|cx| {
+                    let Some(state) = state.upgrade() else { return };
+                    let mut state = state.borrow_mut();
+                    state.keyboard.recent_motion = false;
+                    if let Some(view) = state.keyboard_observer {
+                        cx.notify(view);
+                    }
+                });
+            }));
         }
         let mut state = self.state.0.borrow_mut();
         if changed {
@@ -630,7 +658,8 @@ impl TranscriptList {
                     ));
                 }
             }
-            if let Some(cursor) = keyboard.cursor.filter(|cursor| cursor.row == row)
+            if keyboard.caret_visible()
+                && let Some(cursor) = keyboard.cursor.filter(|cursor| cursor.row == row)
                 && let Some(cell) = text.cells.get(cursor.cell)
             {
                 window.paint_quad(gpui::fill(

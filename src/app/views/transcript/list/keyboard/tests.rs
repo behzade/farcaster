@@ -231,3 +231,75 @@ fn markdown_copy_uses_rendered_prose_and_code_not_markup(cx: &mut TestAppContext
         "{copied:?}"
     );
 }
+
+#[gpui::test]
+fn caret_motion_at_viewport_end_does_not_resume_tail(cx: &mut TestAppContext) {
+    let cx = cx.add_empty_window();
+    let texts = vec!["first line\nsecond line\nlast line".into()];
+    let state = TranscriptListState::new();
+    state.splice_with_size_hints(0..0, [px(60.0)]);
+    for command in [KeyboardCommand::Left, KeyboardCommand::Up] {
+        state.keyboard_command(KeyboardCommand::End);
+        draw(cx, &state, &texts, 240.0, false);
+        assert!(state.is_following_tail());
+        let end = state.0.borrow().keyboard.cursor.unwrap();
+
+        state.keyboard_command(command);
+        draw(cx, &state, &texts, 240.0, false);
+        let moved = state.0.borrow().keyboard.cursor.unwrap();
+        assert!(moved < end);
+        assert_eq!(state.0.borrow().scroll_y, state.0.borrow().maximum_scroll());
+        assert!(!state.is_following_tail());
+
+        // Idle repaint used to snap the caret back to the end.
+        draw(cx, &state, &texts, 240.0, false);
+        assert_eq!(state.0.borrow().keyboard.cursor, Some(moved));
+        assert!(!state.is_following_tail());
+    }
+}
+
+#[gpui::test]
+fn caret_hides_after_last_motion_but_stays_visible_in_visual_mode(cx: &mut TestAppContext) {
+    use std::time::Duration;
+
+    let cx = cx.add_empty_window();
+    let texts = vec!["some text".into()];
+    let state = TranscriptListState::new();
+    state.splice_with_size_hints(0..0, [px(20.0)]);
+    state.set_keyboard_active(true);
+    draw(cx, &state, &texts, 240.0, false);
+    let visible = || state.0.borrow().keyboard.caret_visible();
+    assert!(!visible());
+
+    state.keyboard_command(KeyboardCommand::End);
+    draw(cx, &state, &texts, 240.0, false);
+    assert!(visible());
+    cx.executor().advance_clock(Duration::from_secs(1));
+    state.keyboard_command(KeyboardCommand::Left);
+    draw(cx, &state, &texts, 240.0, false);
+    cx.executor().advance_clock(Duration::from_secs(1));
+    assert!(visible(), "new motion must replace the old timeout");
+    cx.executor().advance_clock(Duration::from_secs(1));
+    assert!(!visible());
+
+    state.keyboard_command(KeyboardCommand::Visual(false));
+    draw(cx, &state, &texts, 240.0, false);
+    assert!(visible());
+    state.keyboard_command(KeyboardCommand::Left);
+    draw(cx, &state, &texts, 240.0, false);
+    cx.executor().advance_clock(Duration::from_secs(2));
+    assert!(visible(), "visual caret must outlive the motion timeout");
+    state.keyboard_command(KeyboardCommand::Cancel);
+    draw(cx, &state, &texts, 240.0, false);
+    assert!(!visible());
+
+    state.keyboard_command(KeyboardCommand::Right);
+    draw(cx, &state, &texts, 240.0, false);
+    assert!(visible());
+    state.set_keyboard_active(false);
+    state.set_keyboard_active(true);
+    assert!(
+        !visible(),
+        "refocusing must not restore the old caret timer"
+    );
+}
