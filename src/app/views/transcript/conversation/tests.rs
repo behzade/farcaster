@@ -177,6 +177,25 @@ fn assembles_ordered_text_thinking_and_tool_arguments_by_index() {
 }
 
 #[test]
+fn thinking_delta_without_start_projects_as_thinking_while_streaming() {
+    let mut state = ConversationState::default();
+    state.reduce(&json!({"type":"message_start","message":{"role":"assistant","content":[]}}));
+    state.reduce(&json!({
+        "type":"message_update",
+        "assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"draft thought"}
+    }));
+
+    assert_eq!(state.items[0].kind, TranscriptKind::Thinking);
+    assert_eq!(state.items[0].text, "draft thought");
+
+    state.reduce(&json!({
+        "type":"message_end",
+        "message":{"role":"assistant","content":[{"type":"thinking","thinking":"draft thought"}]}
+    }));
+    assert_eq!(state.items[0].kind, TranscriptKind::Thinking);
+}
+
+#[test]
 fn updating_one_partial_keeps_other_live_blocks_shared() {
     let mut state = ConversationState::default();
     state.reduce(&json!({"type":"message_start","message":{"role":"assistant","content":[]}}));

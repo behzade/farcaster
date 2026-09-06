@@ -209,7 +209,11 @@ impl ConversationState {
             "text_delta" => append_delta(partial, delta),
             "text_end" => finish_content(partial, delta),
             "thinking_start" => reset_partial(partial, PartialKind::Thinking),
-            "thinking_delta" => append_delta(partial, delta),
+            "thinking_delta" => {
+                let kind_changed = partial.kind != PartialKind::Thinking;
+                partial.kind = PartialKind::Thinking;
+                append_delta(partial, delta) || kind_changed
+            }
             "thinking_end" => finish_content(partial, delta),
             "toolcall_start" => {
                 let label = delta
